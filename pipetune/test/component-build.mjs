@@ -17,6 +17,8 @@ const fail = (message, command) => {
 const run = (command, commandArguments) =>
   spawnSync(command, commandArguments, { encoding: "utf8" });
 
+const overriddenVersion = "9.8.7-test";
+
 const [cmake, sourceDirectory] = process.argv.slice(2);
 if (!cmake || !sourceDirectory) {
   fail("component build test arguments are incomplete");
@@ -32,6 +34,7 @@ if (!cmake || !sourceDirectory) {
       buildDirectory,
       "-DCMAKE_BUILD_TYPE=Release",
       "-DBUILD_TESTING=OFF",
+      `-DPIPETUNE_BUILD_VERSION=${overriddenVersion}`,
     ]);
     if (configured.status !== 0) {
       fail("standalone PipeTune component configuration failed", configured);
@@ -50,9 +53,12 @@ if (!cmake || !sourceDirectory) {
         const version = run(join(buildDirectory, "pipetune"), ["--version"]);
         if (
           version.status !== 0 ||
-          !version.stdout.startsWith("pipetune ")
+          version.stdout !== `pipetune ${overriddenVersion}\n`
         ) {
-          fail("standalone PipeTune component is not runnable", version);
+          fail(
+            "standalone PipeTune component did not use the overridden version",
+            version,
+          );
         }
       }
     }

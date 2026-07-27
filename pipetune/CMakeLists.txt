@@ -1,6 +1,14 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(PipeTune VERSION 0.1.0 LANGUAGES C CXX)
+file(
+  STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION"
+  PIPETUNE_PROJECT_VERSION
+  LIMIT_COUNT 1)
+if(NOT PIPETUNE_PROJECT_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+  message(FATAL_ERROR "VERSION must contain a semantic version")
+endif()
+
+project(PipeTune VERSION "${PIPETUNE_PROJECT_VERSION}" LANGUAGES C CXX)
 
 include(CTest)
 include(GNUInstallDirs)
@@ -11,6 +19,15 @@ set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+set(
+  PIPETUNE_BUILD_VERSION
+  "${PIPETUNE_PROJECT_VERSION}"
+  CACHE STRING
+  "Version reported by PipeTune executables")
+if(NOT PIPETUNE_BUILD_VERSION MATCHES "^[0-9][-0-9A-Za-z.+:~]*$")
+  message(FATAL_ERROR "PIPETUNE_BUILD_VERSION is not a valid package version")
+endif()
 
 get_filename_component(
   PIPETUNE_DEFAULT_DEPS_DIR
@@ -46,6 +63,10 @@ file(
   CONFIGURE_DEPENDS
   "${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/*/params.json")
 set(PIPETUNE_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+configure_file(
+  src/version.cpp.in
+  "${PIPETUNE_GENERATED_DIR}/version.cpp"
+  @ONLY)
 set(PIPETUNE_GENERATED_DSP_CATALOG
     "${PIPETUNE_GENERATED_DIR}/dsp_catalog.generated.cpp")
 add_custom_command(
@@ -73,7 +94,7 @@ set_target_properties(yyjson PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(
   pipetune_core STATIC
-  src/version.cpp
+  "${PIPETUNE_GENERATED_DIR}/version.cpp"
   src/audio_bridge.cpp
   src/dsp_catalog.cpp
   src/dsp_pipeline.cpp
