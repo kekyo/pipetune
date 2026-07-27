@@ -1,14 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-file(
-  STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION"
-  PIPETUNE_PROJECT_VERSION
-  LIMIT_COUNT 1)
-if(NOT PIPETUNE_PROJECT_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
-  message(FATAL_ERROR "VERSION must contain a semantic version")
-endif()
-
-project(PipeTune VERSION "${PIPETUNE_PROJECT_VERSION}" LANGUAGES C CXX)
+project(PipeTune LANGUAGES C CXX)
 
 include(CTest)
 include(GNUInstallDirs)
@@ -20,11 +12,24 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-set(
-  PIPETUNE_BUILD_VERSION
-  "${PIPETUNE_PROJECT_VERSION}"
-  CACHE STRING
-  "Version reported by PipeTune executables")
+if(NOT DEFINED PIPETUNE_BUILD_VERSION)
+  find_program(PIPETUNE_NPX_EXECUTABLE npx REQUIRED)
+  execute_process(
+    COMMAND
+      "${PIPETUNE_NPX_EXECUTABLE}" screw-up format -e "{version}" -f
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    RESULT_VARIABLE PIPETUNE_VERSION_RESULT
+    OUTPUT_VARIABLE PIPETUNE_BUILD_VERSION
+    ERROR_VARIABLE PIPETUNE_VERSION_ERROR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_STRIP_TRAILING_WHITESPACE)
+  if(NOT PIPETUNE_VERSION_RESULT EQUAL 0)
+    message(
+      FATAL_ERROR
+      "screw-up could not resolve the PipeTune version: "
+      "${PIPETUNE_VERSION_ERROR}")
+  endif()
+endif()
 if(NOT PIPETUNE_BUILD_VERSION MATCHES "^[0-9][-0-9A-Za-z.+:~]*$")
   message(FATAL_ERROR "PIPETUNE_BUILD_VERSION is not a valid package version")
 endif()
@@ -513,7 +518,8 @@ if(BUILD_TESTING)
       ${PIPETUNE_NODE_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/test/component-build.mjs
       ${CMAKE_COMMAND}
-      ${CMAKE_CURRENT_SOURCE_DIR})
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      $<TARGET_FILE:pipetune>)
   set_tests_properties(
     pipetune_component_build PROPERTIES TIMEOUT 180)
 endif()

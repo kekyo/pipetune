@@ -105,6 +105,10 @@ parity, native DSP output parity, GTK lifecycle tests, and staged install
 validation. Tests that require a live PipeWire user session report a skip only
 when its session socket is unavailable.
 
+Node.js and `npx` are required. Unless `PIPETUNE_BUILD_VERSION` is supplied to
+CMake, the version embedded in both executables is resolved from the repository
+Git metadata with `npx screw-up format -e '{version}' -f`.
+
 Before changing the session default, verify a preset and PipeWire negotiation:
 
 ```sh
