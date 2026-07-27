@@ -83,6 +83,8 @@ public:
   ProcessStatus process(std::span<float> planarSamples, std::uint32_t channelCount,
                         std::uint32_t frameCount, double timeSeconds) noexcept;
 
+  /** Returns the sample rate supplied at construction. */
+  float sampleRate() const noexcept;
   /** Returns the maximum channel count supplied at construction. */
   std::uint32_t maxChannels() const noexcept;
   /** Returns the maximum frame count supplied at construction. */

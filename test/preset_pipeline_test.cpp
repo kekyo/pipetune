@@ -159,7 +159,9 @@ static bool testRuntimeBounds(const std::filesystem::path &directory) {
     return false;
   }
   auto samples = std::vector<float>(32, 0.25F);
-  if (!check(result.pipeline->process(samples, 8, 4, 0.0) == pipetune::ProcessStatus::ok,
+  if (!check(result.pipeline->sampleRate() == 192000.0F,
+             "pipeline must report its prepared sample rate") ||
+      !check(result.pipeline->process(samples, 8, 4, 0.0) == pipetune::ProcessStatus::ok,
              "maximum supported channel/rate configuration must process") ||
       !check(std::ranges::all_of(samples, [](float value) { return value == 0.25F; }),
              "an empty pipeline must be transparent")) {

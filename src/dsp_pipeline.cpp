@@ -31,6 +31,7 @@ constexpr auto kPipelineDescriptorNodeBytes = std::size_t{12};
 
 struct DspPipeline::Impl {
   et_engine engine = 0;
+  float sampleRate = 0.0F;
   std::uint32_t maxChannels = 0;
   std::uint32_t maxFrames = 0;
   std::uint32_t latencyFrames = 0;
@@ -293,6 +294,10 @@ std::uint32_t DspPipeline::maxChannels() const noexcept {
   return implementation_ == nullptr ? 0 : implementation_->maxChannels;
 }
 
+float DspPipeline::sampleRate() const noexcept {
+  return implementation_ == nullptr ? 0.0F : implementation_->sampleRate;
+}
+
 std::uint32_t DspPipeline::maxFrames() const noexcept {
   return implementation_ == nullptr ? 0 : implementation_->maxFrames;
 }
@@ -344,6 +349,7 @@ PipelineLoadResult loadDspPipeline(const std::filesystem::path &presetPath,
   }
 
   auto implementation = std::make_unique<DspPipeline::Impl>();
+  implementation->sampleRate = options.sampleRate;
   implementation->maxChannels = options.maxChannels;
   implementation->maxFrames = options.maxFrames;
   implementation->engine = et_engine_create();

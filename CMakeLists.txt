@@ -11,6 +11,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3)
+
 find_program(PIPETUNE_NODE_EXECUTABLE node REQUIRED)
 file(
   GLOB_RECURSE PIPETUNE_DSP_PARAM_SPECS
@@ -43,6 +46,7 @@ set_target_properties(yyjson PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(
   pipetune_core STATIC
   src/version.cpp
+  src/audio_bridge.cpp
   src/dsp_catalog.cpp
   src/dsp_pipeline.cpp
   "${PIPETUNE_GENERATED_DSP_CATALOG}")
@@ -55,12 +59,37 @@ else()
   target_compile_options(pipetune_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
 endif()
 
+add_library(
+  pipetune_pipewire STATIC
+  src/command_line.cpp
+  src/pipewire_pipeline.cpp)
+target_include_directories(pipetune_pipewire PUBLIC include PRIVATE src)
+target_link_libraries(
+  pipetune_pipewire PUBLIC pipetune_core PRIVATE PkgConfig::PIPEWIRE)
+if(MSVC)
+  target_compile_options(pipetune_pipewire PRIVATE /W4 /WX)
+else()
+  target_compile_options(
+    pipetune_pipewire PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+
 add_executable(pipetune src/main.cpp)
-target_link_libraries(pipetune PRIVATE pipetune_core)
+target_include_directories(pipetune PRIVATE src)
+target_link_libraries(pipetune PRIVATE pipetune_pipewire)
+if(MSVC)
+  target_compile_options(pipetune PRIVATE /W4 /WX)
+else()
+  target_compile_options(pipetune PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
 
 install(TARGETS pipetune RUNTIME DESTINATION bin)
 
 if(BUILD_TESTING)
+  add_test(NAME pipetune_cli_help COMMAND pipetune --help)
+  set_tests_properties(
+    pipetune_cli_help PROPERTIES
+    PASS_REGULAR_EXPRESSION "\\.effetune_preset")
+
   add_executable(pipetune_bootstrap_tests test/bootstrap_test.cpp)
   target_link_libraries(pipetune_bootstrap_tests PRIVATE pipetune_core)
   if(MSVC)
@@ -84,6 +113,54 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_preset_pipeline_tests
     COMMAND pipetune_preset_pipeline_tests)
+
+  add_executable(
+    pipetune_audio_bridge_tests
+    test/audio_bridge_test.cpp)
+  target_include_directories(pipetune_audio_bridge_tests PRIVATE src)
+  target_link_libraries(pipetune_audio_bridge_tests PRIVATE pipetune_core)
+  if(MSVC)
+    target_compile_options(pipetune_audio_bridge_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_audio_bridge_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_audio_bridge_tests
+    COMMAND pipetune_audio_bridge_tests)
+
+  add_executable(
+    pipetune_pipewire_pipeline_tests
+    test/pipewire_pipeline_test.cpp)
+  target_link_libraries(
+    pipetune_pipewire_pipeline_tests PRIVATE pipetune_pipewire)
+  if(MSVC)
+    target_compile_options(pipetune_pipewire_pipeline_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_pipewire_pipeline_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_pipewire_pipeline_tests
+    COMMAND pipetune_pipewire_pipeline_tests)
+  set_tests_properties(
+    pipetune_pipewire_pipeline_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 20)
+
+  add_executable(
+    pipetune_command_line_tests
+    test/command_line_test.cpp)
+  target_include_directories(pipetune_command_line_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_command_line_tests PRIVATE pipetune_pipewire)
+  if(MSVC)
+    target_compile_options(pipetune_command_line_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_command_line_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_command_line_tests
+    COMMAND pipetune_command_line_tests)
 
   add_executable(
     pipetune_param_packer_runner
