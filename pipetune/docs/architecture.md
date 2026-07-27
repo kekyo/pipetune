@@ -137,4 +137,3 @@ listener.
 - Effective DSP latency is not yet published to the wider PipeWire graph for
   audio/video latency compensation.
 - Fail-open recovery permits a short dropout.
-

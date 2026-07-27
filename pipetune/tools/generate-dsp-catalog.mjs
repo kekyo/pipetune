@@ -3,10 +3,10 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { loadParamSpecs } from '../deps/effetune/scripts/gen-dsp-params.mjs';
+import { loadParamSpecs } from '../../deps/effetune/scripts/gen-dsp-params.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const effetuneRoot = path.join(projectRoot, 'deps/effetune');
+const effetuneRoot = path.join(projectRoot, '../deps/effetune');
 
 const fail = message => {
   throw new Error(message);
