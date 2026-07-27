@@ -1,0 +1,7 @@
+[submodule "deps/effetune"]
+	path = deps/effetune
+	url = https://github.com/Frieve-A/effetune.git
+	branch = main
+[submodule "deps/yyjson"]
+	path = deps/yyjson
+	url = https://github.com/ibireme/yyjson.git
