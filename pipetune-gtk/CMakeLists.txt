@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-2.0 gio-unix-2.0)
+pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0 gdk-x11-3.0)
 
 add_library(
   pipetune_gtk_core STATIC
@@ -25,7 +26,45 @@ else()
     pipetune_gtk_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
 endif()
 
+add_library(
+  pipetune_gtk_ui_core STATIC
+  src/launch-options.cpp
+  src/tray-backend.cpp)
+target_include_directories(pipetune_gtk_ui_core PUBLIC src)
+target_link_libraries(
+  pipetune_gtk_ui_core
+  PUBLIC PkgConfig::GTK3)
+if(MSVC)
+  target_compile_options(pipetune_gtk_ui_core PRIVATE /W4 /WX)
+else()
+  target_compile_options(
+    pipetune_gtk_ui_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+
+add_executable(pipetune-gtk src/main.cpp)
+set_target_properties(
+  pipetune-gtk PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+target_link_libraries(
+  pipetune-gtk
+  PRIVATE pipetune_gtk_core pipetune_gtk_ui_core pipetune_core
+          PkgConfig::GTK3)
+if(MSVC)
+  target_compile_options(pipetune-gtk PRIVATE /W4 /WX)
+else()
+  target_compile_options(
+    pipetune-gtk PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+
 if(BUILD_TESTING)
+  add_test(NAME pipetune_gtk_help COMMAND pipetune-gtk --help)
+  set_tests_properties(
+    pipetune_gtk_help PROPERTIES
+    PASS_REGULAR_EXPRESSION "--hidden")
+  add_test(NAME pipetune_gtk_version COMMAND pipetune-gtk --version)
+  set_tests_properties(
+    pipetune_gtk_version PROPERTIES
+    PASS_REGULAR_EXPRESSION "pipetune-gtk")
+
   add_executable(
     pipetune_gtk_state_config_tests
     test/state-config-test.cpp)
@@ -60,4 +99,51 @@ if(BUILD_TESTING)
     COMMAND pipetune_gtk_control_client_tests)
   set_tests_properties(
     pipetune_gtk_control_client_tests PROPERTIES TIMEOUT 10)
+
+  add_executable(
+    pipetune_gtk_tray_backend_tests
+    test/tray-backend-test.cpp)
+  target_link_libraries(
+    pipetune_gtk_tray_backend_tests PRIVATE pipetune_gtk_ui_core)
+  if(MSVC)
+    target_compile_options(pipetune_gtk_tray_backend_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_tray_backend_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_gtk_tray_backend_tests
+    COMMAND pipetune_gtk_tray_backend_tests)
+
+  add_executable(
+    pipetune_gtk_launch_options_tests
+    test/launch-options-test.cpp)
+  target_link_libraries(
+    pipetune_gtk_launch_options_tests PRIVATE pipetune_gtk_ui_core)
+  if(MSVC)
+    target_compile_options(pipetune_gtk_launch_options_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_launch_options_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_gtk_launch_options_tests
+    COMMAND pipetune_gtk_launch_options_tests)
+
+  find_program(PIPETUNE_GTK_NODE_EXECUTABLE node REQUIRED)
+  find_program(PIPETUNE_GTK_DBUS_RUN_SESSION dbus-run-session REQUIRED)
+  find_program(PIPETUNE_GTK_XVFB_RUN xvfb-run REQUIRED)
+  add_test(
+    NAME pipetune_gtk_application_lifecycle
+    COMMAND
+      ${PIPETUNE_GTK_DBUS_RUN_SESSION}
+      --config-file=${CMAKE_CURRENT_SOURCE_DIR}/test/dbus-session.conf --
+      ${PIPETUNE_GTK_XVFB_RUN} -a
+      ${PIPETUNE_GTK_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/application-lifecycle.mjs
+      $<TARGET_FILE:pipetune-gtk>)
+  set_tests_properties(
+    pipetune_gtk_application_lifecycle PROPERTIES TIMEOUT 20)
 endif()
