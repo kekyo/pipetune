@@ -58,6 +58,7 @@ find_package(Threads REQUIRED)
 pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3)
 
 find_program(PIPETUNE_NODE_EXECUTABLE node REQUIRED)
+find_program(PIPETUNE_SYSTEMCTL_EXECUTABLE systemctl REQUIRED)
 file(
   GLOB_RECURSE PIPETUNE_DSP_PARAM_SPECS
   CONFIGURE_DEPENDS
@@ -66,6 +67,13 @@ set(PIPETUNE_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 configure_file(
   src/version.cpp.in
   "${PIPETUNE_GENERATED_DIR}/version.cpp"
+  @ONLY)
+set(
+  PIPETUNE_INSTALLED_GTK_EXECUTABLE
+  "${CMAKE_INSTALL_FULL_BINDIR}/pipetune-gtk")
+configure_file(
+  src/installed_tools.h.in
+  "${PIPETUNE_GENERATED_DIR}/installed_tools.h"
   @ONLY)
 set(PIPETUNE_GENERATED_DSP_CATALOG
     "${PIPETUNE_GENERATED_DIR}/dsp_catalog.generated.cpp")
@@ -125,12 +133,15 @@ endif()
 
 add_library(
   pipetune_pipewire STATIC
+  src/autostart_override.cpp
   src/bypass_command.cpp
   src/command_line.cpp
   src/default_sink_restore.cpp
   src/dsp_pipeline_slot.cpp
   src/output_device_tracker.cpp
-  src/pipewire_pipeline.cpp)
+  src/pipewire_pipeline.cpp
+  src/process_runner.cpp
+  src/user_setup.cpp)
 target_include_directories(pipetune_pipewire PUBLIC include PRIVATE src)
 target_link_libraries(
   pipetune_pipewire
@@ -146,7 +157,7 @@ endif()
 add_executable(pipetune src/main.cpp)
 set_target_properties(
   pipetune PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
-target_include_directories(pipetune PRIVATE src)
+target_include_directories(pipetune PRIVATE src "${PIPETUNE_GENERATED_DIR}")
 target_link_libraries(pipetune PRIVATE pipetune_pipewire)
 if(MSVC)
   target_compile_options(pipetune PRIVATE /W4 /WX)
@@ -314,6 +325,56 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_bypass_command_tests
     COMMAND pipetune_bypass_command_tests)
+
+  add_executable(
+    pipetune_process_runner_tests
+    test/process_runner_test.cpp)
+  target_include_directories(pipetune_process_runner_tests PRIVATE src)
+  target_link_libraries(pipetune_process_runner_tests PRIVATE pipetune_pipewire)
+  if(MSVC)
+    target_compile_options(pipetune_process_runner_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_process_runner_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_process_runner_tests
+    COMMAND pipetune_process_runner_tests)
+
+  add_executable(
+    pipetune_autostart_override_tests
+    test/autostart_override_test.cpp)
+  target_include_directories(pipetune_autostart_override_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_autostart_override_tests PRIVATE pipetune_pipewire)
+  if(MSVC)
+    target_compile_options(pipetune_autostart_override_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_autostart_override_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_autostart_override_tests
+    COMMAND pipetune_autostart_override_tests)
+
+  add_executable(
+    pipetune_user_setup_tests
+    test/user_setup_test.cpp)
+  target_include_directories(pipetune_user_setup_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_user_setup_tests PRIVATE pipetune_pipewire)
+  if(MSVC)
+    target_compile_options(pipetune_user_setup_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_user_setup_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_user_setup_tests
+    COMMAND pipetune_user_setup_tests)
 
   add_executable(
     pipetune_output_device_tracker_tests

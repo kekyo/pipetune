@@ -717,6 +717,10 @@ static gint onApplicationCommandLine(GApplication *,
                                         parsed.error.c_str());
     return 2;
   }
+  if (parsed.options.action == LaunchAction::quit) {
+    requestQuit(runtime);
+    return 0;
+  }
 
   if (!runtime->activationHandled) {
     runtime->activationHandled = true;

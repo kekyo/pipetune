@@ -16,7 +16,9 @@ enum class LaunchAction {
   /** Print command-line help. */
   help,
   /** Print the application version. */
-  version
+  version,
+  /** Ask the running tray application to quit. */
+  quit
 };
 
 /**

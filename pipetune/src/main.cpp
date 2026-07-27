@@ -2,20 +2,25 @@
 
 #include "bypass_command.h"
 #include "default_sink_restore.h"
+#include "installed_tools.h"
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
 #include "pipetune/dsp_pipeline.h"
 #include "pipetune/pipewire_pipeline.h"
 #include "pipetune/startup_config.h"
 #include "pipetune/version.h"
+#include "process_runner.h"
 #include "startup_pipeline.h"
+#include "user_setup.h"
 
 #include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
+#include <span>
 #include <string>
 #include <string_view>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -41,6 +46,110 @@ static pipetune::StartupConfigPathResult resolveUserStartupConfigPath() {
                                : std::string_view(xdgConfigHome),
       home == nullptr ? std::filesystem::path{}
                       : std::filesystem::path(home));
+}
+
+static pipetune::ProcessResult runUserManagementProcess(
+    const std::filesystem::path &executable,
+    std::span<const std::string> arguments,
+    pipetune::ProcessWaitMode mode, void *) {
+  return pipetune::runProcess(executable, arguments, mode);
+}
+
+static pipetune::DefaultSinkRestoreResult restoreUserDefaultSink(
+    std::string excludedNodeName, void *) {
+  return pipetune::restorePipeWireDefaultSink(
+      std::move(excludedNodeName));
+}
+
+static pipetune::UserManagementPathResult
+resolveInstalledUserManagementPaths() {
+  const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
+  const auto *home = std::getenv("HOME");
+  return pipetune::resolveUserManagementPaths(
+      xdgConfigHome == nullptr ? std::string_view{}
+                               : std::string_view(xdgConfigHome),
+      home == nullptr ? std::filesystem::path{}
+                      : std::filesystem::path(home),
+      std::filesystem::path{
+          std::string(pipetune::installedSystemctlPath)},
+      std::filesystem::path{std::string(pipetune::installedGtkPath)});
+}
+
+static void printUserManagementWarnings(
+    const std::vector<std::string> &warnings) {
+  for (const auto &warning : warnings) {
+    std::cerr << "pipetune: warning: " << warning << '\n';
+  }
+}
+
+static int runSetupCommand(
+    const pipetune::CommandLineOptions &options) {
+  if (geteuid() == 0) {
+    std::cerr << "pipetune: setup must be run as a non-root user\n";
+    return 1;
+  }
+  const auto paths = resolveInstalledUserManagementPaths();
+  if (!paths.error.empty()) {
+    std::cerr << "pipetune: " << paths.error << '\n';
+    return 1;
+  }
+
+  const auto presetSpecified = !options.presetPath.empty();
+  auto presetPath = std::filesystem::path{};
+  if (presetSpecified) {
+    auto pathError = std::string{};
+    presetPath = absolutePresetPath(options.presetPath, pathError);
+    if (!pathError.empty()) {
+      std::cerr << "pipetune: " << pathError << '\n';
+      return 1;
+    }
+  }
+  const auto result = pipetune::executeUserSetup(
+      {.effectiveUserId = static_cast<std::uint32_t>(geteuid()),
+       .presetSpecified = presetSpecified,
+       .presetPath = std::move(presetPath),
+       .paths = paths.paths,
+       .processRunner = runUserManagementProcess,
+       .processUserData = nullptr});
+  printUserManagementWarnings(result.warnings);
+  if (!result.success) {
+    std::cerr << "pipetune: " << result.error << '\n';
+    return 1;
+  }
+  std::cout << "PipeTune is enabled and running for the current user.\n";
+  return 0;
+}
+
+static int runUnsetupCommand(
+    const pipetune::CommandLineOptions &options) {
+  if (geteuid() == 0) {
+    std::cerr << "pipetune: unsetup must be run as a non-root user\n";
+    return 1;
+  }
+  const auto paths = resolveInstalledUserManagementPaths();
+  if (!paths.error.empty()) {
+    std::cerr << "pipetune: " << paths.error << '\n';
+    return 1;
+  }
+  const auto result = pipetune::executeUserUnsetup(
+      {.effectiveUserId = static_cast<std::uint32_t>(geteuid()),
+       .purge = options.purge,
+       .paths = paths.paths,
+       .processRunner = runUserManagementProcess,
+       .processUserData = nullptr,
+       .restoreDefaultSink = restoreUserDefaultSink,
+       .restoreUserData = nullptr});
+  printUserManagementWarnings(result.warnings);
+  if (!result.success) {
+    std::cerr << "pipetune: " << result.error << '\n';
+    return 1;
+  }
+  std::cout << "PipeTune is disabled for the current user";
+  if (options.purge) {
+    std::cout << " and its application configuration was removed";
+  }
+  std::cout << ".\n";
+  return 0;
 }
 
 static int runControlClient(const pipetune::CommandLineOptions &options) {
@@ -206,6 +315,12 @@ int main(int argc, char **argv) {
   }
   if (parsed.options.action == pipetune::CommandLineAction::bypass) {
     return runPersistentBypass(parsed.options);
+  }
+  if (parsed.options.action == pipetune::CommandLineAction::setup) {
+    return runSetupCommand(parsed.options);
+  }
+  if (parsed.options.action == pipetune::CommandLineAction::unsetup) {
+    return runUnsetupCommand(parsed.options);
   }
   if (parsed.options.action ==
       pipetune::CommandLineAction::restoreDefault) {

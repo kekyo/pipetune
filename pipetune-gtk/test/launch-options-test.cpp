@@ -22,6 +22,9 @@ int main() {
   const auto versionArguments =
       std::array<std::string_view, 1>{"--version"};
   const auto version = pipetune_gtk::parseLaunchOptions(versionArguments);
+  const auto quitArguments =
+      std::array<std::string_view, 1>{"--quit"};
+  const auto quit = pipetune_gtk::parseLaunchOptions(quitArguments);
   const auto invalidArguments =
       std::array<std::string_view, 1>{"unexpected"};
   const auto invalid = pipetune_gtk::parseLaunchOptions(invalidArguments);
@@ -40,11 +43,15 @@ int main() {
                            version.options.action ==
                                pipetune_gtk::LaunchAction::version,
                        "version launch option differs") &&
+                 check(quit.error.empty() &&
+                           quit.options.action ==
+                               pipetune_gtk::LaunchAction::quit,
+                       "quit launch option differs") &&
                  check(!invalid.error.empty(),
                        "positional arguments must be rejected") &&
                  check(pipetune_gtk::launchOptionsUsage().find(
-                           "--hidden") != std::string_view::npos,
-                       "usage must document hidden startup")
+                           "--quit") != std::string_view::npos,
+                       "usage must document remote shutdown")
              ? 0
              : 1;
 }

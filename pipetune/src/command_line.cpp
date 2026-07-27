@@ -16,7 +16,8 @@ static CommandLineOptions defaultOptions() {
           .sinkName = "pipetune_sink",
           .sampleRate = 48000,
           .channelCount = 2,
-          .checkOnly = false};
+          .checkOnly = false,
+          .purge = false};
 }
 
 static CommandLineParseResult parseError(CommandLineOptions options,
@@ -92,6 +93,51 @@ static CommandLineParseResult parseBypassCommandLine(
   return {.options = std::move(options), .error = {}};
 }
 
+static CommandLineParseResult parseSetupCommandLine(
+    std::span<const std::string_view> arguments) {
+  auto options = defaultOptions();
+  options.action = CommandLineAction::setup;
+  auto sawPreset = false;
+  for (auto index = std::size_t{0}; index < arguments.size(); ++index) {
+    const auto argument = arguments[index];
+    if (argument != "--preset") {
+      return parseError(std::move(options),
+                        "unknown setup option: " + std::string(argument));
+    }
+    if (sawPreset) {
+      return parseError(std::move(options), "duplicate option: --preset");
+    }
+    if (index + 1 >= arguments.size()) {
+      return parseError(std::move(options), "missing value for --preset");
+    }
+    const auto value = arguments[++index];
+    if (value.empty()) {
+      return parseError(std::move(options), "--preset must not be empty");
+    }
+    sawPreset = true;
+    options.presetPath = value;
+  }
+  return {.options = std::move(options), .error = {}};
+}
+
+static CommandLineParseResult parseUnsetupCommandLine(
+    std::span<const std::string_view> arguments) {
+  auto options = defaultOptions();
+  options.action = CommandLineAction::unsetup;
+  for (const auto argument : arguments) {
+    if (argument != "--purge") {
+      return parseError(std::move(options),
+                        "unknown unsetup option: " +
+                            std::string(argument));
+    }
+    if (options.purge) {
+      return parseError(std::move(options), "duplicate option: --purge");
+    }
+    options.purge = true;
+  }
+  return {.options = std::move(options), .error = {}};
+}
+
 CommandLineParseResult parseCommandLine(
     std::span<const std::string_view> arguments) {
   auto options = defaultOptions();
@@ -108,6 +154,12 @@ CommandLineParseResult parseCommandLine(
   }
   if (!arguments.empty() && arguments.front() == "bypass") {
     return parseBypassCommandLine(arguments.subspan(1));
+  }
+  if (!arguments.empty() && arguments.front() == "setup") {
+    return parseSetupCommandLine(arguments.subspan(1));
+  }
+  if (!arguments.empty() && arguments.front() == "unsetup") {
+    return parseUnsetupCommandLine(arguments.subspan(1));
   }
   for (const auto argument : arguments) {
     if (argument == "--help" || argument == "--version") {
@@ -283,6 +335,8 @@ std::string_view commandLineUsage() noexcept {
   return "Usage:\n"
          "  pipetune daemon [--config PATH]\n"
          "  pipetune bypass [--socket PATH]\n"
+         "  pipetune setup [--preset FILE]\n"
+         "  pipetune unsetup [--purge]\n"
          "  pipetune --preset FILE [--target OBJECT] [--sink-name NAME]\n"
          "           [--rate HZ] [--channels COUNT] [--socket PATH] [--check]\n"
          "  pipetune --load-preset FILE [--socket PATH]\n"
@@ -294,6 +348,9 @@ std::string_view commandLineUsage() noexcept {
          "Options:\n"
          "  --config PATH    Read daemon startup configuration from PATH.\n"
          "  bypass           Disable DSP live and for future daemon starts.\n"
+         "  setup            Enable PipeTune for the current user.\n"
+         "  unsetup          Disable PipeTune for the current user.\n"
+         "  --purge          Remove PipeTune app configuration during unsetup.\n"
          "  --preset FILE     Load a formal .effetune_preset file.\n"
          "  --load-preset FILE\n"
          "                    Replace the preset in a running PipeTune process.\n"

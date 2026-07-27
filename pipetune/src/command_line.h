@@ -19,6 +19,10 @@ enum class CommandLineAction {
   daemon,
   /** Bypass live and startup DSP processing. */
   bypass,
+  /** Configure and start PipeTune for the current user. */
+  setup,
+  /** Stop and disable PipeTune for the current user. */
+  unsetup,
   /** Ask a running PipeTune process to activate a preset. */
   loadPreset,
   /** Ask a running PipeTune process for its current status. */
@@ -53,6 +57,8 @@ struct CommandLineOptions {
   std::uint32_t channelCount;
   /** True to stop once both PipeWire streams are ready. */
   bool checkOnly;
+  /** True to remove app configuration during unsetup. */
+  bool purge;
 };
 
 /**

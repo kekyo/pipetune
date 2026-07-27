@@ -44,6 +44,16 @@ const waitForWindow = async () => {
   );
 };
 
+const waitForExit = async () => {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline && applicationExit === undefined) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  if (applicationExit === undefined) {
+    throw new Error('remote --quit did not terminate the primary instance');
+  }
+};
+
 try {
   const initialTree = await waitForWindow();
   const activation = await execFileAsync(executable, [], {
@@ -68,10 +78,22 @@ try {
       `single-instance window identity differs: ${initialWindows.join(',')}/${activatedWindows.join(',')}`
     );
   }
-} finally {
-  application.kill('SIGTERM');
-  await new Promise((resolve) => {
-    application.once('exit', resolve);
-    setTimeout(resolve, 2000);
+  const quit = await execFileAsync(executable, ['--quit'], {
+    encoding: 'utf8',
   });
+  if (quit.stderr !== '') {
+    throw new Error(`remote quit failed: ${quit.stderr}`);
+  }
+  await waitForExit();
+  await execFileAsync(executable, ['--quit'], {
+    encoding: 'utf8',
+  });
+} finally {
+  if (applicationExit === undefined) {
+    application.kill('SIGTERM');
+    await new Promise((resolve) => {
+      application.once('exit', resolve);
+      setTimeout(resolve, 2000);
+    });
+  }
 }

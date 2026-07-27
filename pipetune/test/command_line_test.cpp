@@ -112,6 +112,40 @@ static bool testBypassAction() {
                "explicit bypass socket differs");
 }
 
+static bool testUserSetupActions() {
+  constexpr auto setup = std::array<std::string_view, 1>{"setup"};
+  constexpr auto setupPreset = std::array<std::string_view, 3>{
+      "setup", "--preset", "/tmp/setup.effetune_preset"};
+  constexpr auto unsetup = std::array<std::string_view, 1>{"unsetup"};
+  constexpr auto purge =
+      std::array<std::string_view, 2>{"unsetup", "--purge"};
+  const auto setupResult = pipetune::parseCommandLine(setup);
+  const auto presetResult = pipetune::parseCommandLine(setupPreset);
+  const auto unsetupResult = pipetune::parseCommandLine(unsetup);
+  const auto purgeResult = pipetune::parseCommandLine(purge);
+  return check(setupResult.error.empty(), setupResult.error) &&
+         check(setupResult.options.action ==
+                   pipetune::CommandLineAction::setup &&
+                   setupResult.options.presetPath.empty(),
+               "setup without a preset must preserve startup selection") &&
+         check(presetResult.error.empty(), presetResult.error) &&
+         check(presetResult.options.action ==
+                   pipetune::CommandLineAction::setup &&
+                   presetResult.options.presetPath ==
+                       "/tmp/setup.effetune_preset",
+               "setup preset selection differs") &&
+         check(unsetupResult.error.empty(), unsetupResult.error) &&
+         check(unsetupResult.options.action ==
+                   pipetune::CommandLineAction::unsetup &&
+                   !unsetupResult.options.purge,
+               "unsetup defaults differ") &&
+         check(purgeResult.error.empty(), purgeResult.error) &&
+         check(purgeResult.options.action ==
+                   pipetune::CommandLineAction::unsetup &&
+                   purgeResult.options.purge,
+               "unsetup --purge selection differs");
+}
+
 static bool testDefaultRestorationAction() {
   constexpr auto defaultArguments =
       std::array<std::string_view, 1>{"--restore-default"};
@@ -151,7 +185,15 @@ static bool testInformationalActions() {
          check(pipetune::commandLineUsage().find(
                    "pipetune bypass [--socket PATH]") !=
                    std::string_view::npos,
-               "usage must explain persistent bypass");
+               "usage must explain persistent bypass") &&
+         check(pipetune::commandLineUsage().find(
+                   "pipetune setup [--preset FILE]") !=
+                   std::string_view::npos,
+               "usage must explain per-user setup") &&
+         check(pipetune::commandLineUsage().find(
+                   "pipetune unsetup [--purge]") !=
+                   std::string_view::npos,
+               "usage must explain per-user unsetup");
 }
 
 static bool testRejectedArguments() {
@@ -190,6 +232,15 @@ static bool testRejectedArguments() {
       "bypass", "--preset", "x.effetune_preset"};
   constexpr auto duplicateBypassSocket = std::array<std::string_view, 5>{
       "bypass", "--socket", "/tmp/a", "--socket", "/tmp/b"};
+  constexpr auto setupWithPurge =
+      std::array<std::string_view, 2>{"setup", "--purge"};
+  constexpr auto duplicateSetupPreset = std::array<std::string_view, 5>{
+      "setup", "--preset", "/tmp/a.effetune_preset", "--preset",
+      "/tmp/b.effetune_preset"};
+  constexpr auto unsetupWithPreset = std::array<std::string_view, 3>{
+      "unsetup", "--preset", "/tmp/a.effetune_preset"};
+  constexpr auto duplicatePurge =
+      std::array<std::string_view, 3>{"unsetup", "--purge", "--purge"};
 
   return check(!pipetune::parseCommandLine(missingPreset).error.empty(),
                "missing preset must fail") &&
@@ -226,13 +277,22 @@ static bool testRejectedArguments() {
          check(!pipetune::parseCommandLine(bypassWithPreset).error.empty(),
                "bypass must reject preset arguments") &&
          check(!pipetune::parseCommandLine(duplicateBypassSocket).error.empty(),
-               "bypass must reject duplicate socket paths");
+               "bypass must reject duplicate socket paths") &&
+         check(!pipetune::parseCommandLine(setupWithPurge).error.empty(),
+               "setup must reject --purge") &&
+         check(!pipetune::parseCommandLine(duplicateSetupPreset).error.empty(),
+               "setup must reject duplicate presets") &&
+         check(!pipetune::parseCommandLine(unsetupWithPreset).error.empty(),
+               "unsetup must reject preset selection") &&
+         check(!pipetune::parseCommandLine(duplicatePurge).error.empty(),
+               "unsetup must reject duplicate --purge");
 }
 
 int main() {
   const auto passed = testRunDefaults() && testExplicitOptions() &&
                       testControlActions() && testDaemonAction() &&
                       testBypassAction() &&
+                      testUserSetupActions() &&
                       testDefaultRestorationAction() &&
                       testInformationalActions() && testRejectedArguments();
   return passed ? 0 : 1;
