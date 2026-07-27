@@ -37,6 +37,16 @@ static bool testRequests() {
     return false;
   }
 
+  const auto bypassJson = pipetune::makeBypassControlRequest();
+  const auto bypass = pipetune::parseControlRequest(bypassJson);
+  if (!check(bypass.error.empty(), bypass.error) ||
+      !check(bypass.request.command == pipetune::ControlCommand::bypass,
+             "bypass request command differs") ||
+      !check(bypass.request.presetPath.empty(),
+             "bypass request must not contain a preset")) {
+    return false;
+  }
+
   const auto loadJson = pipetune::makeLoadPresetControlRequest(
       "/tmp/music \"wide\".effetune_preset");
   const auto load = pipetune::parseControlRequest(loadJson);
@@ -49,11 +59,12 @@ static bool testRequests() {
 }
 
 static bool testRejectedRequests() {
-  constexpr auto inputs = std::array<std::string_view, 7>{
+  constexpr auto inputs = std::array<std::string_view, 8>{
       "",
       "[]",
       R"json({"command":"unknown"})json",
       R"json({"command":"status","preset":"unexpected"})json",
+      R"json({"command":"bypass","preset":"unexpected"})json",
       R"json({"command":"load"})json",
       R"json({"command":"load","preset":42})json",
       R"json({"command":"load","preset":""})json"};
@@ -72,7 +83,9 @@ static bool testSuccessResponse() {
                                .pluginName = "Future DSP",
                                .reason = "not available"}};
   const auto response = pipetune::makeControlSuccessResponse(
-      {.activePreset = "/tmp/live.effetune_preset",
+      {.processingMode = pipetune::ProcessingMode::preset,
+       .activePreset = "/tmp/live.effetune_preset",
+       .configurationError = {},
        .activePluginCount = 7,
        .selectedTarget = "alsa_output.speaker",
        .defaultSinkActive = true,
@@ -88,6 +101,9 @@ static bool testSuccessResponse() {
       !check(parsed.success, "parsed response must report success") ||
       !check(parsed.kind == pipetune::ControlResponseKind::response,
              "ordinary response kind differs") ||
+      !check(parsed.status.processingMode ==
+                 pipetune::ProcessingMode::preset,
+             "parsed response processing mode differs") ||
       !check(parsed.status.activePreset ==
                  "/tmp/live.effetune_preset",
              "parsed response preset differs") ||
@@ -117,8 +133,12 @@ static bool testSuccessResponse() {
   auto *warningArray = yyjson_obj_get(root, "warnings");
   const auto correct =
       yyjson_get_bool(yyjson_obj_get(root, "ok")) &&
+      std::string_view(
+          yyjson_get_str(yyjson_obj_get(root, "processingMode"))) ==
+          "preset" &&
       std::string_view(yyjson_get_str(yyjson_obj_get(root, "preset"))) ==
           "/tmp/live.effetune_preset" &&
+      yyjson_is_null(yyjson_obj_get(root, "configurationError")) &&
       yyjson_get_uint(yyjson_obj_get(root, "activePluginCount")) == 7 &&
       std::string_view(
           yyjson_get_str(yyjson_obj_get(root, "selectedTarget"))) ==
@@ -136,7 +156,9 @@ static bool testSuccessResponse() {
 
 static bool testStatusEvent() {
   const auto event = pipetune::makeControlStatusEvent(
-      {.activePreset = "/tmp/event.effetune_preset",
+      {.processingMode = pipetune::ProcessingMode::preset,
+       .activePreset = "/tmp/event.effetune_preset",
+       .configurationError = {},
        .activePluginCount = 2,
        .selectedTarget = "alsa_output.headphones",
        .defaultSinkActive = false,
@@ -148,6 +170,9 @@ static bool testStatusEvent() {
          check(parsed.success, "status event must report success") &&
          check(parsed.kind == pipetune::ControlResponseKind::statusEvent,
                "status event kind differs") &&
+         check(parsed.status.processingMode ==
+                   pipetune::ProcessingMode::preset,
+               "status event processing mode differs") &&
          check(parsed.status.activePreset ==
                    "/tmp/event.effetune_preset",
                "status event preset differs") &&
@@ -164,6 +189,51 @@ static bool testStatusEvent() {
                "status event counters differ") &&
          check(parsed.warnings.empty(),
                "status event must not contain warnings");
+}
+
+static bool testBypassStatus() {
+  const auto response = pipetune::makeControlSuccessResponse(
+      {.processingMode = pipetune::ProcessingMode::bypass,
+       .activePreset = {},
+       .configurationError = "configured preset is unavailable",
+       .activePluginCount = 0,
+       .selectedTarget = "alsa_output.speaker",
+       .defaultSinkActive = true,
+       .overrunFrames = 0,
+       .underrunFrames = 0,
+       .processingErrors = 0},
+      {});
+  const auto parsed = pipetune::parseControlResponse(response);
+  if (!check(parsed.valid, parsed.error) ||
+      !check(parsed.success, "bypass response must report success") ||
+      !check(parsed.status.processingMode ==
+                 pipetune::ProcessingMode::bypass,
+             "bypass response must preserve its processing mode") ||
+      !check(parsed.status.activePreset.empty(),
+             "bypass response must not report an active preset") ||
+      !check(parsed.status.configurationError ==
+                 "configured preset is unavailable",
+             "bypass response must preserve the startup diagnostic") ||
+      !check(parsed.status.activePluginCount == 0,
+             "bypass response must report zero active plugins")) {
+    return false;
+  }
+
+  auto *document = yyjson_read(response.data(), response.size(), 0);
+  if (!check(document != nullptr, "bypass response must be valid JSON")) {
+    return false;
+  }
+  auto *root = yyjson_doc_get_root(document);
+  const auto correct =
+      std::string_view(
+          yyjson_get_str(yyjson_obj_get(root, "processingMode"))) ==
+          "bypass" &&
+      yyjson_is_null(yyjson_obj_get(root, "preset")) &&
+      std::string_view(
+          yyjson_get_str(yyjson_obj_get(root, "configurationError"))) ==
+          "configured preset is unavailable";
+  yyjson_doc_free(document);
+  return check(correct, "bypass response fields differ");
 }
 
 static bool testErrorResponse() {
@@ -183,7 +253,7 @@ static bool testErrorResponse() {
 
 int main() {
   return testRequests() && testRejectedRequests() && testSuccessResponse() &&
-                 testStatusEvent() && testErrorResponse()
+                 testStatusEvent() && testBypassStatus() && testErrorResponse()
              ? 0
              : 1;
 }

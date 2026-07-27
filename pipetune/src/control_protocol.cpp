@@ -42,6 +42,13 @@ static bool addString(yyjson_mut_doc *document, yyjson_mut_val *object,
                                     value.size());
 }
 
+static bool addNullableString(yyjson_mut_doc *document,
+                              yyjson_mut_val *object, const char *key,
+                              std::string_view value) {
+  return value.empty() ? yyjson_mut_obj_add_null(document, object, key)
+                       : addString(document, object, key, value);
+}
+
 static std::string writeDocument(yyjson_mut_doc *document) {
   auto length = std::size_t{0};
   auto *encoded = yyjson_mut_write(document, kJsonWriteFlags, &length);
@@ -95,6 +102,13 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
     return {.request = {.command = ControlCommand::status, .presetPath = {}},
             .error = {}};
   }
+  if (command == "bypass") {
+    if (yyjson_obj_size(root) != 1) {
+      return requestError("bypass request accepts only the command field");
+    }
+    return {.request = {.command = ControlCommand::bypass, .presetPath = {}},
+            .error = {}};
+  }
   if (command == "subscribe") {
     if (yyjson_obj_size(root) != 1) {
       return requestError("subscribe request accepts only the command field");
@@ -132,6 +146,10 @@ std::string makeSubscribeControlRequest() {
   return R"json({"command":"subscribe"})json";
 }
 
+std::string makeBypassControlRequest() {
+  return R"json({"command":"bypass"})json";
+}
+
 std::string
 makeLoadPresetControlRequest(const std::filesystem::path &presetPath) {
   yyjson_mut_val *root = nullptr;
@@ -148,13 +166,27 @@ makeLoadPresetControlRequest(const std::filesystem::path &presetPath) {
 static std::string makeControlStatusMessage(
     const ControlRuntimeStatus &status,
     std::span<const ControlWarning> warnings, bool statusEvent) {
+  if ((status.processingMode == ProcessingMode::preset &&
+       status.activePreset.empty()) ||
+      (status.processingMode == ProcessingMode::bypass &&
+       !status.activePreset.empty())) {
+    return makeControlErrorResponse("cannot encode inconsistent processing status");
+  }
+
   yyjson_mut_val *root = nullptr;
   auto document = createObjectDocument(root);
+  const auto processingMode =
+      status.processingMode == ProcessingMode::bypass ? "bypass" : "preset";
   if (document == nullptr ||
       !yyjson_mut_obj_add_bool(document.get(), root, "ok", true) ||
       (statusEvent &&
        !yyjson_mut_obj_add_str(document.get(), root, "event", "status")) ||
-      !addString(document.get(), root, "preset", status.activePreset) ||
+      !yyjson_mut_obj_add_str(document.get(), root, "processingMode",
+                              processingMode) ||
+      !addNullableString(document.get(), root, "preset",
+                         status.activePreset) ||
+      !addNullableString(document.get(), root, "configurationError",
+                         status.configurationError) ||
       !yyjson_mut_obj_add_uint(document.get(), root, "activePluginCount",
                                status.activePluginCount) ||
       !addString(document.get(), root, "selectedTarget",
@@ -221,7 +253,9 @@ static ControlResponseParseResult responseError(std::string error) {
   return {.valid = false,
           .success = false,
           .kind = ControlResponseKind::response,
-          .status = {.activePreset = {},
+          .status = {.processingMode = ProcessingMode::bypass,
+                     .activePreset = {},
+                     .configurationError = {},
                      .activePluginCount = 0,
                      .selectedTarget = {},
                      .defaultSinkActive = false,
@@ -240,6 +274,38 @@ static bool readStringField(yyjson_val *object, const char *key,
   }
   value.assign(yyjson_get_str(field), yyjson_get_len(field));
   return true;
+}
+
+static bool readNullableStringField(yyjson_val *object, const char *key,
+                                    std::string &value) {
+  auto *field = yyjson_obj_get(object, key);
+  if (yyjson_is_null(field)) {
+    value.clear();
+    return true;
+  }
+  if (!yyjson_is_str(field)) {
+    return false;
+  }
+  value.assign(yyjson_get_str(field), yyjson_get_len(field));
+  return true;
+}
+
+static bool readProcessingMode(yyjson_val *object, ProcessingMode &mode) {
+  auto *field = yyjson_obj_get(object, "processingMode");
+  if (!yyjson_is_str(field)) {
+    return false;
+  }
+  const auto value =
+      std::string_view(yyjson_get_str(field), yyjson_get_len(field));
+  if (value == "bypass") {
+    mode = ProcessingMode::bypass;
+    return true;
+  }
+  if (value == "preset") {
+    mode = ProcessingMode::preset;
+    return true;
+  }
+  return false;
 }
 
 static bool readSizeField(yyjson_val *object, const char *key,
@@ -302,7 +368,9 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
     return {.valid = true,
             .success = false,
             .kind = kind,
-            .status = {.activePreset = {},
+            .status = {.processingMode = ProcessingMode::bypass,
+                       .activePreset = {},
+                       .configurationError = {},
                        .activePluginCount = 0,
                        .selectedTarget = {},
                        .defaultSinkActive = false,
@@ -314,7 +382,9 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
   }
 
   auto status = ControlRuntimeStatus{
+      .processingMode = ProcessingMode::bypass,
       .activePreset = {},
+      .configurationError = {},
       .activePluginCount = 0,
       .selectedTarget = {},
       .defaultSinkActive = false,
@@ -323,7 +393,10 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       .processingErrors = 0,
   };
   auto *defaultSinkActive = yyjson_obj_get(root, "defaultSinkActive");
-  if (!readStringField(root, "preset", status.activePreset) ||
+  if (!readProcessingMode(root, status.processingMode) ||
+      !readNullableStringField(root, "preset", status.activePreset) ||
+      !readNullableStringField(root, "configurationError",
+                               status.configurationError) ||
       !readSizeField(root, "activePluginCount",
                      status.activePluginCount) ||
       !readStringField(root, "selectedTarget", status.selectedTarget) ||
@@ -333,6 +406,12 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       !readCounterField(root, "processingErrors",
                         status.processingErrors)) {
     return responseError("successful control response has invalid status");
+  }
+  if ((status.processingMode == ProcessingMode::preset &&
+       status.activePreset.empty()) ||
+      (status.processingMode == ProcessingMode::bypass &&
+       !status.activePreset.empty())) {
+    return responseError("successful control response has inconsistent processing status");
   }
   status.defaultSinkActive = yyjson_get_bool(defaultSinkActive);
 

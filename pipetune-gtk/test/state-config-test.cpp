@@ -24,7 +24,9 @@ static pipetune::ControlResponseParseResult statusResponse(
     std::span<const pipetune::ControlWarning> warnings) {
   return pipetune::parseControlResponse(
       pipetune::makeControlSuccessResponse(
-          {.activePreset = "/tmp/active.effetune_preset",
+          {.processingMode = pipetune::ProcessingMode::preset,
+           .activePreset = "/tmp/active.effetune_preset",
+           .configurationError = {},
            .activePluginCount = 4,
            .selectedTarget = "alsa_output.speaker",
            .defaultSinkActive = defaultSinkActive,

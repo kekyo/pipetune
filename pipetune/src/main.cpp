@@ -149,6 +149,7 @@ int main(int argc, char **argv) {
        .sinkDescription = "PipeTune Processed Audio",
        .targetObject = parsed.options.targetObject,
        .initialPresetPath = presetPath,
+       .initialConfigurationError = {},
        .controlSocketPath = controlSocket,
        .sampleRate = parsed.options.sampleRate,
        .channelCount = parsed.options.channelCount,

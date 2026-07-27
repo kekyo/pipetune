@@ -19,6 +19,8 @@ enum class ControlCommand {
   status,
   /** Build and activate a preset without stopping audio. */
   loadPreset,
+  /** Replace the active DSP pipeline with transparent pass-through. */
+  bypass,
   /** Keep the connection open and publish status changes. */
   subscribe
 };
@@ -44,11 +46,25 @@ struct ControlRequestParseResult {
 };
 
 /**
+ * Identifies how the daemon currently handles captured PCM.
+ */
+enum class ProcessingMode {
+  /** Forward PCM without invoking an EffeTune DSP engine. */
+  bypass,
+  /** Process PCM through the active preset pipeline. */
+  preset
+};
+
+/**
  * Describes the current daemon state returned over the control socket.
  */
 struct ControlRuntimeStatus {
-  /** Active preset path as supplied by the user. */
+  /** Current PCM processing mode. */
+  ProcessingMode processingMode;
+  /** Active preset path, or empty while processingMode is bypass. */
   std::string activePreset;
+  /** Startup configuration diagnostic, or empty when configuration is valid. */
+  std::string configurationError;
   /** Number of enabled native DSP nodes. */
   std::size_t activePluginCount;
   /** Current physical PipeWire output node name, or empty while unavailable. */
@@ -128,6 +144,9 @@ std::string makeStatusControlRequest();
 
 /** Returns a JSON subscription request without framing newline. */
 std::string makeSubscribeControlRequest();
+
+/** Returns a JSON live-bypass request without framing newline. */
+std::string makeBypassControlRequest();
 
 /**
  * Returns a JSON live-preset request without framing newline.

@@ -8,7 +8,9 @@ ApplicationState initialApplicationState() {
       .hasRuntimeStatus = false,
       .runtime =
           {
+              .processingMode = pipetune::ProcessingMode::bypass,
               .activePreset = {},
+              .configurationError = {},
               .activePluginCount = 0,
               .selectedTarget = {},
               .defaultSinkActive = false,

@@ -71,7 +71,9 @@ struct PipeWireRuntime {
   std::atomic<std::uint64_t> processingErrors;
   std::atomic<bool> defaultSinkActive;
   std::uint64_t processedInputFrames;
+  ProcessingMode processingMode;
   std::string activePreset;
+  std::string configurationError;
   std::mutex playbackTargetMutex;
   std::unique_ptr<ControlServer> controlServer;
   pw_main_loop *mainLoop;
@@ -122,7 +124,11 @@ struct PipeWireRuntime {
                             runtimeOptions.maxFrames,
                         0.0F),
         processingErrors(0), defaultSinkActive(false), processedInputFrames(0),
+        processingMode(runtimeOptions.initialPresetPath.empty()
+                           ? ProcessingMode::bypass
+                           : ProcessingMode::preset),
         activePreset(runtimeOptions.initialPresetPath.string()),
+        configurationError(runtimeOptions.initialConfigurationError),
         playbackTargetMutex(), controlServer(), mainLoop(nullptr),
         captureStream(nullptr), playbackStream(nullptr), trackingCore(nullptr),
         registry(nullptr), defaultMetadata(nullptr), timeoutSource(nullptr),
@@ -944,7 +950,9 @@ static void maybeActivateDefaultSink(PipeWireRuntime &runtime) {
 }
 
 static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
-  return {.activePreset = runtime.activePreset,
+  return {.processingMode = runtime.processingMode,
+          .activePreset = runtime.activePreset,
+          .configurationError = runtime.configurationError,
           .activePluginCount = runtime.pipeline.activePluginCount(),
           .selectedTarget = currentPlaybackTarget(runtime),
           .defaultSinkActive =
@@ -982,6 +990,22 @@ static ControlMessageResult handleControlRequest(std::string_view message,
   }
 
   auto warnings = std::vector<ControlWarning>{};
+  if (request.request.command == ControlCommand::bypass) {
+    auto created = createBypassDspPipeline(
+        {.sampleRate = static_cast<float>(runtime.options.sampleRate),
+         .maxChannels = runtime.options.channelCount,
+         .maxFrames = runtime.options.maxFrames});
+    if (created.pipeline == nullptr) {
+      return closeControlResponse(makeControlErrorResponse(created.error),
+                                  false);
+    }
+    runtime.pipeline.replace(std::move(created.pipeline));
+    runtime.processingMode = ProcessingMode::bypass;
+    runtime.activePreset.clear();
+    runtime.configurationError.clear();
+    return closeControlResponse(
+        makeControlSuccessResponse(controlStatus(runtime), warnings), true);
+  }
   if (request.request.command == ControlCommand::loadPreset) {
     auto loaded = loadDspPipeline(
         request.request.presetPath,
@@ -999,7 +1023,9 @@ static ControlMessageResult handleControlRequest(std::string_view message,
                           .reason = std::move(warning.reason)});
     }
     runtime.pipeline.replace(std::move(loaded.pipeline));
+    runtime.processingMode = ProcessingMode::preset;
     runtime.activePreset = request.request.presetPath.string();
+    runtime.configurationError.clear();
     return closeControlResponse(
         makeControlSuccessResponse(controlStatus(runtime), warnings), true);
   }
@@ -1148,10 +1174,6 @@ static std::string validateOptions(const DspPipeline &pipeline,
   if (options.initialPresetPath.string().find('\0') != std::string::npos ||
       options.controlSocketPath.string().find('\0') != std::string::npos) {
     return "preset and control socket paths must not contain NUL";
-  }
-  if (!options.controlSocketPath.empty() &&
-      options.initialPresetPath.empty()) {
-    return "an initial preset path is required when live control is enabled";
   }
   if (options.sampleRate < 32000 || options.sampleRate > 192000) {
     return "PipeWire sample rate must be between 32000 and 192000 Hz";

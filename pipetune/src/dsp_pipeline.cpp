@@ -31,6 +31,7 @@ constexpr auto kPipelineDescriptorNodeBytes = std::size_t{12};
 
 struct DspPipeline::Impl {
   et_engine engine = 0;
+  bool bypass = false;
   float sampleRate = 0.0F;
   std::uint32_t maxChannels = 0;
   std::uint32_t maxFrames = 0;
@@ -72,6 +73,20 @@ using JsonDocument = std::unique_ptr<yyjson_doc, JsonDocumentDeleter>;
 static PipelineLoadResult loadError(std::string message,
                                     std::vector<PipelineWarning> warnings = {}) {
   return {.pipeline = nullptr, .warnings = std::move(warnings), .error = std::move(message)};
+}
+
+static std::string validateBuildOptions(const PipelineBuildOptions &options) {
+  if (!std::isfinite(options.sampleRate) || options.sampleRate < 32000.0F ||
+      options.sampleRate > 192000.0F) {
+    return "sample rate must be between 32000 and 192000 Hz";
+  }
+  if (options.maxChannels == 0 || options.maxChannels > 8) {
+    return "maximum channel count must be between one and eight";
+  }
+  if (options.maxFrames < 32) {
+    return "maximum frame count must be at least 32";
+  }
+  return {};
 }
 
 static std::string nodeError(std::size_t index, std::string_view message) {
@@ -275,6 +290,9 @@ ProcessStatus DspPipeline::process(std::span<float> planarSamples, std::uint32_t
       planarSamples.size() != static_cast<std::size_t>(channelCount) * frameCount) {
     return ProcessStatus::invalidBuffer;
   }
+  if (implementation_->bypass) {
+    return ProcessStatus::ok;
+  }
   auto *arena = et_arena_combined_ptr(implementation_->engine);
   if (arena == nullptr) {
     return ProcessStatus::dspError;
@@ -310,20 +328,31 @@ std::size_t DspPipeline::activePluginCount() const noexcept {
   return implementation_ == nullptr ? 0 : implementation_->activePluginCount;
 }
 
+PipelineCreateResult
+createBypassDspPipeline(const PipelineBuildOptions &options) {
+  const auto validation = validateBuildOptions(options);
+  if (!validation.empty()) {
+    return {.pipeline = nullptr, .error = validation};
+  }
+
+  auto implementation = std::make_unique<DspPipeline::Impl>();
+  implementation->bypass = true;
+  implementation->sampleRate = options.sampleRate;
+  implementation->maxChannels = options.maxChannels;
+  implementation->maxFrames = options.maxFrames;
+  auto pipeline =
+      std::unique_ptr<DspPipeline>(new DspPipeline(std::move(implementation)));
+  return {.pipeline = std::move(pipeline), .error = {}};
+}
+
 PipelineLoadResult loadDspPipeline(const std::filesystem::path &presetPath,
                                    const PipelineBuildOptions &options) {
   if (presetPath.extension() != ".effetune_preset") {
     return loadError("preset path must use the exact .effetune_preset extension");
   }
-  if (!std::isfinite(options.sampleRate) || options.sampleRate < 32000.0F ||
-      options.sampleRate > 192000.0F) {
-    return loadError("sample rate must be between 32000 and 192000 Hz");
-  }
-  if (options.maxChannels == 0 || options.maxChannels > 8) {
-    return loadError("maximum channel count must be between one and eight");
-  }
-  if (options.maxFrames < 32) {
-    return loadError("maximum frame count must be at least 32");
+  const auto validation = validateBuildOptions(options);
+  if (!validation.empty()) {
+    return loadError(validation);
   }
 
   auto fileError = std::error_code{};

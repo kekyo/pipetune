@@ -33,6 +33,40 @@ static bool approximately(float actual, float expected, float tolerance = 1.0e-6
   return std::abs(actual - expected) <= tolerance;
 }
 
+static bool testBypassPipeline() {
+  const auto result = pipetune::createBypassDspPipeline(
+      {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+  if (!check(result.pipeline != nullptr, result.error) ||
+      !check(result.pipeline->sampleRate() == 48000.0F,
+             "bypass pipeline must report its prepared sample rate") ||
+      !check(result.pipeline->maxChannels() == 2,
+             "bypass pipeline must report its prepared channel count") ||
+      !check(result.pipeline->maxFrames() == 64,
+             "bypass pipeline must report its prepared frame count") ||
+      !check(result.pipeline->activePluginCount() == 0,
+             "bypass pipeline must not contain native DSP nodes") ||
+      !check(result.pipeline->latencyFrames() == 0,
+             "bypass pipeline must not add latency")) {
+    return false;
+  }
+
+  auto samples =
+      std::vector<float>{0.75F, -0.25F, 0.125F, -0.5F, 0.25F, -0.125F};
+  const auto original = samples;
+  if (!check(result.pipeline->process(samples, 2, 3, 1.5) ==
+                 pipetune::ProcessStatus::ok,
+             "bypass pipeline processing failed") ||
+      !check(samples == original,
+             "bypass pipeline must leave every PCM sample unchanged")) {
+    return false;
+  }
+
+  auto invalid = std::vector<float>{0.5F};
+  return check(result.pipeline->process(invalid, 2, 1, 1.5) ==
+                   pipetune::ProcessStatus::invalidBuffer,
+               "bypass pipeline must retain runtime buffer validation");
+}
+
 static bool testCanonicalPreset(const std::filesystem::path &directory) {
   const auto path = writePreset(
       directory, "canonical.effetune_preset",
@@ -179,9 +213,10 @@ int main() {
       ("pipetune-preset-test-" + std::to_string(static_cast<long long>(getpid())));
   std::filesystem::create_directories(directory);
 
-  const auto passed = testCanonicalPreset(directory) && testLegacyPreset(directory) &&
-                      testRawLegacyPipeline(directory) && testRejectedInputs(directory) &&
-                      testRuntimeBounds(directory);
+  const auto passed =
+      testBypassPipeline() && testCanonicalPreset(directory) &&
+      testLegacyPreset(directory) && testRawLegacyPipeline(directory) &&
+      testRejectedInputs(directory) && testRuntimeBounds(directory);
   std::filesystem::remove_all(directory);
   return passed ? 0 : 1;
 }

@@ -30,8 +30,10 @@ struct PipeWirePipelineOptions {
   std::string sinkDescription;
   /** Target sink node name or object serial; empty selects the current default. */
   std::string targetObject;
-  /** Initial preset path reported by the local control endpoint. */
+  /** Initial preset path, or empty when the supplied pipeline is bypass. */
   std::filesystem::path initialPresetPath;
+  /** Startup configuration diagnostic reported until a live mode change. */
+  std::string initialConfigurationError;
   /** User-only control socket path, or empty to disable live control. */
   std::filesystem::path controlSocketPath;
   /** Fixed stream sample rate in hertz, from 32000 through 192000. */

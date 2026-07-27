@@ -21,7 +21,9 @@ struct ServerState {
 
 static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
   auto lock = std::scoped_lock(state.mutex);
-  return {.activePreset = state.activePreset,
+  return {.processingMode = pipetune::ProcessingMode::preset,
+          .activePreset = state.activePreset,
+          .configurationError = {},
           .activePluginCount = 3,
           .selectedTarget = "alsa_output.test",
           .defaultSinkActive = true,

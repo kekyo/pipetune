@@ -48,6 +48,7 @@ enum class ProcessStatus {
 };
 
 class DspPipeline;
+struct PipelineCreateResult;
 struct PipelineLoadResult;
 
 /**
@@ -98,10 +99,35 @@ private:
   explicit DspPipeline(std::unique_ptr<Impl> implementation);
   std::unique_ptr<Impl> implementation_;
 
+  friend struct PipelineCreateResult;
   friend struct PipelineLoadResult;
+  friend PipelineCreateResult
+  createBypassDspPipeline(const PipelineBuildOptions &options);
   friend PipelineLoadResult loadDspPipeline(const std::filesystem::path &presetPath,
                                             const PipelineBuildOptions &options);
 };
+
+/**
+ * Result of preparing a pipeline that does not invoke a DSP engine.
+ */
+struct PipelineCreateResult {
+  /** Prepared bypass pipeline, or null when error is non-empty. */
+  std::unique_ptr<DspPipeline> pipeline;
+  /** Fatal construction diagnostic. */
+  std::string error;
+};
+
+/**
+ * Prepares a transparent pipeline without constructing an EffeTune engine.
+ *
+ * The returned pipeline validates process buffers against options and leaves
+ * valid PCM samples unchanged.
+ *
+ * @param options Maximum processing format for the prepared pipeline.
+ * @return A bypass pipeline or a fatal diagnostic.
+ */
+PipelineCreateResult
+createBypassDspPipeline(const PipelineBuildOptions &options);
 
 /**
  * Result of parsing a preset and preparing its native DSP pipeline.
