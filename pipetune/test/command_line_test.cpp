@@ -91,6 +91,27 @@ static bool testDaemonAction() {
                "explicit daemon configuration path differs");
 }
 
+static bool testBypassAction() {
+  constexpr auto defaults = std::array<std::string_view, 1>{"bypass"};
+  constexpr auto explicitSocket = std::array<std::string_view, 3>{
+      "bypass", "--socket", "/tmp/pipetune.sock"};
+  const auto defaultResult = pipetune::parseCommandLine(defaults);
+  const auto explicitResult = pipetune::parseCommandLine(explicitSocket);
+  return check(defaultResult.error.empty(), defaultResult.error) &&
+         check(defaultResult.options.action ==
+                   pipetune::CommandLineAction::bypass,
+               "bypass subcommand must select persistent bypass") &&
+         check(defaultResult.options.controlSocketPath.empty(),
+               "bypass socket must default to XDG resolution") &&
+         check(explicitResult.error.empty(), explicitResult.error) &&
+         check(explicitResult.options.action ==
+                   pipetune::CommandLineAction::bypass,
+               "explicit bypass action differs") &&
+         check(explicitResult.options.controlSocketPath ==
+                   "/tmp/pipetune.sock",
+               "explicit bypass socket differs");
+}
+
 static bool testDefaultRestorationAction() {
   constexpr auto defaultArguments =
       std::array<std::string_view, 1>{"--restore-default"};
@@ -126,7 +147,11 @@ static bool testInformationalActions() {
          check(pipetune::commandLineUsage().find(
                    "pipetune daemon [--config PATH]") !=
                    std::string_view::npos,
-               "usage must explain daemon startup");
+               "usage must explain daemon startup") &&
+         check(pipetune::commandLineUsage().find(
+                   "pipetune bypass [--socket PATH]") !=
+                   std::string_view::npos,
+               "usage must explain persistent bypass");
 }
 
 static bool testRejectedArguments() {
@@ -161,6 +186,10 @@ static bool testRejectedArguments() {
       "daemon", "--config", "/tmp/a", "--config", "/tmp/b"};
   constexpr auto topLevelConfig =
       std::array<std::string_view, 2>{"--config", "/tmp/a"};
+  constexpr auto bypassWithPreset = std::array<std::string_view, 3>{
+      "bypass", "--preset", "x.effetune_preset"};
+  constexpr auto duplicateBypassSocket = std::array<std::string_view, 5>{
+      "bypass", "--socket", "/tmp/a", "--socket", "/tmp/b"};
 
   return check(!pipetune::parseCommandLine(missingPreset).error.empty(),
                "missing preset must fail") &&
@@ -193,12 +222,17 @@ static bool testRejectedArguments() {
          check(!pipetune::parseCommandLine(duplicateConfig).error.empty(),
                "daemon must reject duplicate configuration paths") &&
          check(!pipetune::parseCommandLine(topLevelConfig).error.empty(),
-               "--config must be scoped to the daemon subcommand");
+               "--config must be scoped to the daemon subcommand") &&
+         check(!pipetune::parseCommandLine(bypassWithPreset).error.empty(),
+               "bypass must reject preset arguments") &&
+         check(!pipetune::parseCommandLine(duplicateBypassSocket).error.empty(),
+               "bypass must reject duplicate socket paths");
 }
 
 int main() {
   const auto passed = testRunDefaults() && testExplicitOptions() &&
                       testControlActions() && testDaemonAction() &&
+                      testBypassAction() &&
                       testDefaultRestorationAction() &&
                       testInformationalActions() && testRejectedArguments();
   return passed ? 0 : 1;

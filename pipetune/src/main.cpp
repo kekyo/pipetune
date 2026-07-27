@@ -1,5 +1,6 @@
 #include "command_line.h"
 
+#include "bypass_command.h"
 #include "default_sink_restore.h"
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
@@ -30,6 +31,16 @@ static std::filesystem::path absolutePresetPath(
     return {};
   }
   return absolute.lexically_normal();
+}
+
+static pipetune::StartupConfigPathResult resolveUserStartupConfigPath() {
+  const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
+  const auto *home = std::getenv("HOME");
+  return pipetune::resolveStartupConfigPath(
+      xdgConfigHome == nullptr ? std::string_view{}
+                               : std::string_view(xdgConfigHome),
+      home == nullptr ? std::filesystem::path{}
+                      : std::filesystem::path(home));
 }
 
 static int runControlClient(const pipetune::CommandLineOptions &options) {
@@ -76,13 +87,7 @@ static int runControlClient(const pipetune::CommandLineOptions &options) {
 static int runDaemon(const pipetune::CommandLineOptions &options) {
   auto configPath = options.configPath;
   if (configPath.empty()) {
-    const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
-    const auto *home = std::getenv("HOME");
-    const auto resolved = pipetune::resolveStartupConfigPath(
-        xdgConfigHome == nullptr ? std::string_view{}
-                                 : std::string_view(xdgConfigHome),
-        home == nullptr ? std::filesystem::path{}
-                        : std::filesystem::path(home));
+    const auto resolved = resolveUserStartupConfigPath();
     if (!resolved.error.empty()) {
       std::cerr << "pipetune: " << resolved.error << '\n';
       return 1;
@@ -144,6 +149,38 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
   return 0;
 }
 
+static int runPersistentBypass(
+    const pipetune::CommandLineOptions &options) {
+  const auto config = resolveUserStartupConfigPath();
+  if (!config.error.empty()) {
+    std::cerr << "pipetune: " << config.error << '\n';
+    return 1;
+  }
+  const auto socket =
+      pipetune::resolveControlSocketPath(options.controlSocketPath);
+  if (!socket.error.empty()) {
+    std::cerr << "pipetune: " << socket.error << '\n';
+    return 1;
+  }
+
+  const auto result = pipetune::executePersistentBypass(
+      {.configPath = config.path, .socketPath = socket.path});
+  if (!result.success) {
+    std::cerr << "pipetune: " << result.error << '\n';
+    return 1;
+  }
+  if (result.liveApplied) {
+    std::cout << "DSP bypass is active and saved for future starts.\n";
+  } else {
+    std::cout << "DSP bypass is saved for the next daemon start";
+    if (!result.notice.empty()) {
+      std::cout << " (" << result.notice << ')';
+    }
+    std::cout << ".\n";
+  }
+  return 0;
+}
+
 int main(int argc, char **argv) {
   auto arguments = std::vector<std::string_view>{};
   arguments.reserve(argc > 1 ? static_cast<std::size_t>(argc - 1) : 0);
@@ -166,6 +203,9 @@ int main(int argc, char **argv) {
   }
   if (parsed.options.action == pipetune::CommandLineAction::daemon) {
     return runDaemon(parsed.options);
+  }
+  if (parsed.options.action == pipetune::CommandLineAction::bypass) {
+    return runPersistentBypass(parsed.options);
   }
   if (parsed.options.action ==
       pipetune::CommandLineAction::restoreDefault) {

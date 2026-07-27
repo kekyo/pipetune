@@ -488,4 +488,11 @@ void loadControlPresetAsync(ControlClient *client,
                callback, userData);
 }
 
+void bypassControlAsync(ControlClient *client,
+                        ControlClientReplyCallback callback,
+                        void *userData) {
+  startRequest(client, pipetune::makeBypassControlRequest(), callback,
+               userData);
+}
+
 } // namespace pipetune_gtk

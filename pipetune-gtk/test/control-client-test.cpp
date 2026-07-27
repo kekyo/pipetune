@@ -17,14 +17,18 @@
 struct ServerState {
   std::mutex mutex;
   std::string activePreset;
+  bool bypassed;
 };
 
 static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
   auto lock = std::scoped_lock(state.mutex);
-  return {.processingMode = pipetune::ProcessingMode::preset,
-          .activePreset = state.activePreset,
+  return {.processingMode = state.bypassed
+                                ? pipetune::ProcessingMode::bypass
+                                : pipetune::ProcessingMode::preset,
+          .activePreset = state.bypassed ? std::string{}
+                                         : state.activePreset,
           .configurationError = {},
-          .activePluginCount = 3,
+          .activePluginCount = state.bypassed ? 0u : 3u,
           .selectedTarget = "alsa_output.test",
           .defaultSinkActive = true,
           .overrunFrames = 0,
@@ -55,6 +59,18 @@ static pipetune::ControlMessageResult handleRequest(
     {
       auto lock = std::scoped_lock(state.mutex);
       state.activePreset = request.request.presetPath.string();
+      state.bypassed = false;
+    }
+    return {.response = pipetune::makeControlSuccessResponse(
+                serverStatus(state), {}),
+            .connectionMode = pipetune::ControlConnectionMode::close,
+            .publishStatus = true};
+  }
+  if (request.request.command == pipetune::ControlCommand::bypass) {
+    {
+      auto lock = std::scoped_lock(state.mutex);
+      state.activePreset.clear();
+      state.bypassed = true;
     }
     return {.response = pipetune::makeControlSuccessResponse(
                 serverStatus(state), {}),
@@ -75,6 +91,8 @@ struct ClientTestState {
   bool initialStatus;
   bool loadReply;
   bool publishedStatus;
+  bool bypassReply;
+  bool publishedBypass;
   bool disconnected;
   bool timedOut;
   bool failed;
@@ -87,9 +105,25 @@ static gboolean stopServer(gpointer userData) {
 }
 
 static void maybeStopServer(ClientTestState &state) {
-  if (state.loadReply && state.publishedStatus && *state.server != nullptr) {
+  if (state.loadReply && state.publishedStatus && state.bypassReply &&
+      state.publishedBypass && *state.server != nullptr) {
     g_idle_add(stopServer, &state);
   }
+}
+
+static void onBypassReply(
+    const pipetune_gtk::ControlClientReply &reply, void *userData) {
+  auto &state = *static_cast<ClientTestState *>(userData);
+  if (!reply.transportError.empty() || !reply.response.valid ||
+      !reply.response.success ||
+      reply.response.status.processingMode !=
+          pipetune::ProcessingMode::bypass ||
+      !reply.response.status.activePreset.empty()) {
+    state.failed = true;
+  } else {
+    state.bypassReply = true;
+  }
+  maybeStopServer(state);
 }
 
 static void onLoadReply(
@@ -123,7 +157,15 @@ static void onMessage(
     }
   } else if (message.status.activePreset ==
              "/tmp/selected.effetune_preset") {
-    state.publishedStatus = true;
+    if (!state.publishedStatus) {
+      state.publishedStatus = true;
+      pipetune_gtk::bypassControlAsync(
+          state.client, onBypassReply, &state);
+    }
+  } else if (message.status.processingMode ==
+                 pipetune::ProcessingMode::bypass &&
+             message.status.activePreset.empty()) {
+    state.publishedBypass = true;
   } else {
     state.failed = true;
   }
@@ -157,7 +199,9 @@ int main() {
        std::to_string(static_cast<long long>(getpid())));
   const auto socketPath = directory / "control.sock";
   auto serverState =
-      ServerState{.mutex = {}, .activePreset = "/tmp/initial.effetune_preset"};
+      ServerState{.mutex = {},
+                  .activePreset = "/tmp/initial.effetune_preset",
+                  .bypassed = false};
   auto started = pipetune::startControlServer(
       socketPath,
       {.handler = handleRequest,
@@ -178,6 +222,8 @@ int main() {
       .initialStatus = false,
       .loadReply = false,
       .publishedStatus = false,
+      .bypassReply = false,
+      .publishedBypass = false,
       .disconnected = false,
       .timedOut = false,
       .failed = false,
@@ -200,7 +246,8 @@ int main() {
 
   if (state.failed || state.timedOut || !state.connected ||
       !state.initialStatus || !state.loadReply ||
-      !state.publishedStatus || !state.disconnected) {
+      !state.publishedStatus || !state.bypassReply ||
+      !state.publishedBypass || !state.disconnected) {
     std::cerr << "asynchronous control client lifecycle differs\n";
     return 1;
   }

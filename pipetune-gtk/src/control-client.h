@@ -122,6 +122,17 @@ void loadControlPresetAsync(ControlClient *client,
                             ControlClientReplyCallback callback,
                             void *userData);
 
+/**
+ * Requests live DSP bypass.
+ *
+ * @param client Client used for the request.
+ * @param callback Non-null completion callback.
+ * @param userData Opaque callback argument.
+ */
+void bypassControlAsync(ControlClient *client,
+                        ControlClientReplyCallback callback,
+                        void *userData);
+
 } // namespace pipetune_gtk
 
 #endif

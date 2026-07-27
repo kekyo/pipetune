@@ -42,6 +42,7 @@ struct GtkRuntime {
   GtkWidget *window;
   GtkWidget *statusImage;
   GtkWidget *statusLabel;
+  GtkWidget *processingModeLabel;
   GtkWidget *activePresetLabel;
   GtkWidget *startupPresetLabel;
   GtkWidget *pluginCountLabel;
@@ -52,6 +53,7 @@ struct GtkRuntime {
   GtkWidget *noticeLabel;
   GtkWidget *presetChooser;
   GtkWidget *applyButton;
+  GtkWidget *bypassButton;
   GtkWidget *refreshButton;
 };
 
@@ -136,15 +138,27 @@ static void render(GtkRuntime *runtime) {
   gtk_image_set_from_icon_name(GTK_IMAGE(runtime->statusImage), statusIcon,
                                GTK_ICON_SIZE_DIALOG);
 
+  const auto processingMode =
+      runtime->state.hasRuntimeStatus
+          ? (runtime->state.runtime.processingMode ==
+                     pipetune::ProcessingMode::bypass
+                 ? "Bypass"
+                 : "Preset")
+          : "—";
+  gtk_label_set_text(GTK_LABEL(runtime->processingModeLabel),
+                     processingMode);
   const auto activePreset =
       runtime->state.hasRuntimeStatus
-          ? pathText(runtime->state.runtime.activePreset)
+          ? (runtime->state.runtime.processingMode ==
+                     pipetune::ProcessingMode::bypass
+                 ? std::string("None — pass-through")
+                 : pathText(runtime->state.runtime.activePreset))
           : std::string("—");
   gtk_label_set_text(GTK_LABEL(runtime->activePresetLabel),
                      activePreset.c_str());
   const auto startupPreset =
       runtime->hasStartupPreset ? pathText(runtime->startupPreset)
-                                : std::string("—");
+                                : std::string("Bypass");
   gtk_label_set_text(GTK_LABEL(runtime->startupPresetLabel),
                      startupPreset.c_str());
   const auto pluginCount =
@@ -186,6 +200,13 @@ static void render(GtkRuntime *runtime) {
           ? "Apply and Save"
           : "Save for Next Start");
   gtk_widget_set_sensitive(runtime->applyButton,
+                           !runtime->state.operationPending);
+  gtk_button_set_label(
+      GTK_BUTTON(runtime->bypassButton),
+      runtime->state.connection == ControlConnectionState::connected
+          ? "Bypass and Save"
+          : "Save Bypass");
+  gtk_widget_set_sensitive(runtime->bypassButton,
                            !runtime->state.operationPending);
   gtk_widget_set_sensitive(
       runtime->refreshButton,
@@ -321,6 +342,19 @@ static std::string savePendingPreset(GtkRuntime *runtime) {
   return error;
 }
 
+static std::string saveStartupBypass(GtkRuntime *runtime) {
+  if (runtime->startupConfigPath.empty()) {
+    return "startup configuration path is unavailable";
+  }
+  const auto error =
+      pipetune::clearStartupPreset(runtime->startupConfigPath);
+  if (error.empty()) {
+    runtime->startupPreset.clear();
+    runtime->hasStartupPreset = false;
+  }
+  return error;
+}
+
 static void onLoadReply(const ControlClientReply &reply, void *userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
   setControlOperationPending(runtime->state, false);
@@ -386,6 +420,69 @@ static void onApplyClicked(GtkButton *, gpointer userData) {
                          onLoadReply, runtime);
 }
 
+static void onBypassReply(const ControlClientReply &reply,
+                          void *userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  setControlOperationPending(runtime->state, false);
+  if (!reply.transportError.empty()) {
+    markControlDisconnected(runtime->state, reply.transportError);
+    scheduleReconnect(runtime);
+    const auto saveError = saveStartupBypass(runtime);
+    if (saveError.empty()) {
+      setControlDiagnostic(
+          runtime->state,
+          "Daemon disconnected; DSP bypass was saved for the next start");
+    } else {
+      setControlDiagnostic(
+          runtime->state,
+          "Daemon disconnected and startup bypass could not be saved: " +
+              saveError);
+    }
+    render(runtime);
+    return;
+  }
+
+  applyControlResponse(runtime->state, reply.response);
+  if (!reply.response.valid || !reply.response.success) {
+    render(runtime);
+    return;
+  }
+  if (reply.response.status.processingMode !=
+          pipetune::ProcessingMode::bypass ||
+      !reply.response.status.activePreset.empty()) {
+    setControlDiagnostic(runtime->state,
+                         "Daemon did not confirm DSP bypass");
+    render(runtime);
+    return;
+  }
+  const auto saveError = saveStartupBypass(runtime);
+  if (!saveError.empty()) {
+    setControlDiagnostic(
+        runtime->state,
+        "DSP bypass was applied, but startup persistence failed: " +
+            saveError);
+  }
+  render(runtime);
+}
+
+static void onBypassClicked(GtkButton *, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  clearControlNotice(runtime->state);
+  if (runtime->state.connection !=
+      ControlConnectionState::connected) {
+    const auto error = saveStartupBypass(runtime);
+    if (!error.empty()) {
+      setControlDiagnostic(runtime->state, error);
+    }
+    render(runtime);
+    return;
+  }
+
+  setControlOperationPending(runtime->state, true);
+  render(runtime);
+  bypassControlAsync(runtime->controlClient, onBypassReply, runtime);
+}
+
 static GtkWidget *createMainWindow(GtkRuntime *runtime) {
   auto *window = gtk_application_window_new(runtime->application);
   gtk_window_set_title(GTK_WINDOW(window), "PipeTune");
@@ -423,18 +520,20 @@ static GtkWidget *createMainWindow(GtkRuntime *runtime) {
   auto *grid = gtk_grid_new();
   gtk_grid_set_column_spacing(GTK_GRID(grid), 18);
   gtk_grid_set_row_spacing(GTK_GRID(grid), 10);
+  runtime->processingModeLabel =
+      addDetailRow(GTK_GRID(grid), 0, "DSP mode");
   runtime->activePresetLabel =
-      addDetailRow(GTK_GRID(grid), 0, "Active preset");
+      addDetailRow(GTK_GRID(grid), 1, "Active preset");
   runtime->startupPresetLabel =
-      addDetailRow(GTK_GRID(grid), 1, "Startup preset");
+      addDetailRow(GTK_GRID(grid), 2, "Startup preset");
   runtime->pluginCountLabel =
-      addDetailRow(GTK_GRID(grid), 2, "Active DSP nodes");
+      addDetailRow(GTK_GRID(grid), 3, "Active DSP nodes");
   runtime->targetLabel =
-      addDetailRow(GTK_GRID(grid), 3, "Output target");
+      addDetailRow(GTK_GRID(grid), 4, "Output target");
   runtime->defaultSinkLabel =
-      addDetailRow(GTK_GRID(grid), 4, "Default sink");
+      addDetailRow(GTK_GRID(grid), 5, "Default sink");
   runtime->counterLabel =
-      addDetailRow(GTK_GRID(grid), 5, "Runtime counters");
+      addDetailRow(GTK_GRID(grid), 6, "Runtime counters");
   gtk_box_pack_start(GTK_BOX(root), grid, FALSE, FALSE, 0);
 
   runtime->noticeBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -469,9 +568,12 @@ static GtkWidget *createMainWindow(GtkRuntime *runtime) {
                               filter);
   gtk_widget_set_hexpand(runtime->presetChooser, TRUE);
   runtime->applyButton = gtk_button_new_with_label("Save for Next Start");
+  runtime->bypassButton = gtk_button_new_with_label("Save Bypass");
   gtk_box_pack_start(GTK_BOX(presetBox), runtime->presetChooser, TRUE, TRUE,
                      0);
   gtk_box_pack_end(GTK_BOX(presetBox), runtime->applyButton, FALSE, FALSE, 0);
+  gtk_box_pack_end(GTK_BOX(presetBox), runtime->bypassButton, FALSE, FALSE,
+                   0);
   gtk_box_pack_start(GTK_BOX(root), presetBox, FALSE, FALSE, 0);
 
   g_signal_connect(window, "delete-event", G_CALLBACK(onWindowDelete),
@@ -481,6 +583,8 @@ static GtkWidget *createMainWindow(GtkRuntime *runtime) {
                    G_CALLBACK(onRefreshClicked), runtime);
   g_signal_connect(runtime->applyButton, "clicked",
                    G_CALLBACK(onApplyClicked), runtime);
+  g_signal_connect(runtime->bypassButton, "clicked",
+                   G_CALLBACK(onBypassClicked), runtime);
   g_signal_connect(dismiss, "clicked", G_CALLBACK(onNoticeDismiss), runtime);
   return window;
 }
@@ -669,6 +773,7 @@ static int runApplication(int argc, char **argv) {
       .window = nullptr,
       .statusImage = nullptr,
       .statusLabel = nullptr,
+      .processingModeLabel = nullptr,
       .activePresetLabel = nullptr,
       .startupPresetLabel = nullptr,
       .pluginCountLabel = nullptr,
@@ -679,6 +784,7 @@ static int runApplication(int argc, char **argv) {
       .noticeLabel = nullptr,
       .presetChooser = nullptr,
       .applyButton = nullptr,
+      .bypassButton = nullptr,
       .refreshButton = nullptr,
   };
   g_signal_connect(application, "startup",

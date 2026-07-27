@@ -17,6 +17,8 @@ enum class CommandLineAction {
   run,
   /** Run the managed per-user daemon from optional startup configuration. */
   daemon,
+  /** Bypass live and startup DSP processing. */
+  bypass,
   /** Ask a running PipeTune process to activate a preset. */
   loadPreset,
   /** Ask a running PipeTune process for its current status. */

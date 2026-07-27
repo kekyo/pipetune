@@ -65,6 +65,33 @@ static CommandLineParseResult parseDaemonCommandLine(
   return {.options = std::move(options), .error = {}};
 }
 
+static CommandLineParseResult parseBypassCommandLine(
+    std::span<const std::string_view> arguments) {
+  auto options = defaultOptions();
+  options.action = CommandLineAction::bypass;
+  auto sawSocket = false;
+  for (auto index = std::size_t{0}; index < arguments.size(); ++index) {
+    const auto argument = arguments[index];
+    if (argument != "--socket") {
+      return parseError(std::move(options),
+                        "unknown bypass option: " + std::string(argument));
+    }
+    if (sawSocket) {
+      return parseError(std::move(options), "duplicate option: --socket");
+    }
+    if (index + 1 >= arguments.size()) {
+      return parseError(std::move(options), "missing value for --socket");
+    }
+    const auto value = arguments[++index];
+    if (value.empty()) {
+      return parseError(std::move(options), "--socket must not be empty");
+    }
+    sawSocket = true;
+    options.controlSocketPath = value;
+  }
+  return {.options = std::move(options), .error = {}};
+}
+
 CommandLineParseResult parseCommandLine(
     std::span<const std::string_view> arguments) {
   auto options = defaultOptions();
@@ -78,6 +105,9 @@ CommandLineParseResult parseCommandLine(
   }
   if (!arguments.empty() && arguments.front() == "daemon") {
     return parseDaemonCommandLine(arguments.subspan(1));
+  }
+  if (!arguments.empty() && arguments.front() == "bypass") {
+    return parseBypassCommandLine(arguments.subspan(1));
   }
   for (const auto argument : arguments) {
     if (argument == "--help" || argument == "--version") {
@@ -252,6 +282,7 @@ CommandLineParseResult parseCommandLine(
 std::string_view commandLineUsage() noexcept {
   return "Usage:\n"
          "  pipetune daemon [--config PATH]\n"
+         "  pipetune bypass [--socket PATH]\n"
          "  pipetune --preset FILE [--target OBJECT] [--sink-name NAME]\n"
          "           [--rate HZ] [--channels COUNT] [--socket PATH] [--check]\n"
          "  pipetune --load-preset FILE [--socket PATH]\n"
@@ -262,6 +293,7 @@ std::string_view commandLineUsage() noexcept {
          "\n"
          "Options:\n"
          "  --config PATH    Read daemon startup configuration from PATH.\n"
+         "  bypass           Disable DSP live and for future daemon starts.\n"
          "  --preset FILE     Load a formal .effetune_preset file.\n"
          "  --load-preset FILE\n"
          "                    Replace the preset in a running PipeTune process.\n"
