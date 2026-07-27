@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
+include(GNUInstallDirs)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -54,6 +56,35 @@ else()
   target_compile_options(
     pipetune-gtk PRIVATE -Wall -Wextra -Wpedantic -Werror)
 endif()
+
+set(
+  PIPETUNE_GTK_APPLICATION_DIR
+  "${CMAKE_INSTALL_DATADIR}/applications"
+  CACHE PATH
+  "Installation directory for desktop applications")
+set(
+  PIPETUNE_GTK_AUTOSTART_DIR
+  "/etc/xdg/autostart"
+  CACHE PATH
+  "Installation directory for system-wide XDG autostart entries")
+set(
+  PIPETUNE_GTK_ICON_DIR
+  "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps"
+  CACHE PATH
+  "Installation directory for scalable application icons")
+
+install(
+  TARGETS pipetune-gtk
+  RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+install(
+  FILES packaging/applications/net.kekyo.pipetune-gtk.desktop
+  DESTINATION "${PIPETUNE_GTK_APPLICATION_DIR}")
+install(
+  FILES packaging/autostart/net.kekyo.pipetune-gtk.desktop
+  DESTINATION "${PIPETUNE_GTK_AUTOSTART_DIR}")
+install(
+  FILES packaging/icons/hicolor/scalable/apps/pipetune.svg
+  DESTINATION "${PIPETUNE_GTK_ICON_DIR}")
 
 if(BUILD_TESTING)
   add_test(NAME pipetune_gtk_help COMMAND pipetune-gtk --help)
@@ -135,6 +166,10 @@ if(BUILD_TESTING)
   find_program(PIPETUNE_GTK_NODE_EXECUTABLE node REQUIRED)
   find_program(PIPETUNE_GTK_DBUS_RUN_SESSION dbus-run-session REQUIRED)
   find_program(PIPETUNE_GTK_XVFB_RUN xvfb-run REQUIRED)
+  find_program(
+    PIPETUNE_GTK_DESKTOP_FILE_VALIDATE desktop-file-validate REQUIRED)
+  find_program(
+    PIPETUNE_GTK_PIXBUF_THUMBNAILER gdk-pixbuf-thumbnailer REQUIRED)
   add_test(
     NAME pipetune_gtk_application_lifecycle
     COMMAND
@@ -146,4 +181,19 @@ if(BUILD_TESTING)
       $<TARGET_FILE:pipetune-gtk>)
   set_tests_properties(
     pipetune_gtk_application_lifecycle PROPERTIES TIMEOUT 20)
+
+  add_test(
+    NAME pipetune_gtk_install_layout
+    COMMAND
+      ${PIPETUNE_GTK_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/install-layout.mjs
+      ${CMAKE_COMMAND}
+      ${CMAKE_BINARY_DIR}
+      ${PIPETUNE_GTK_DESKTOP_FILE_VALIDATE}
+      ${PIPETUNE_GTK_PIXBUF_THUMBNAILER}
+      ${CMAKE_INSTALL_PREFIX}
+      ${CMAKE_INSTALL_BINDIR}
+      ${PIPETUNE_GTK_APPLICATION_DIR}
+      ${PIPETUNE_GTK_AUTOSTART_DIR}
+      ${PIPETUNE_GTK_ICON_DIR})
 endif()

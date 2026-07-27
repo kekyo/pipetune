@@ -7,6 +7,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 EnvironmentFile=%h/.config/pipetune/environment
+EnvironmentFile=-%E/pipetune/environment.gtk
 ExecStart=@PIPETUNE_INSTALLED_EXECUTABLE@ --preset ${PIPETUNE_PRESET}
 ExecStopPost=-@PIPETUNE_INSTALLED_EXECUTABLE@ --restore-default --sink-name pipetune_sink
 Restart=on-failure

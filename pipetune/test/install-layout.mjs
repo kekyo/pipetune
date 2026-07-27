@@ -1,4 +1,10 @@
-import { constants, accessSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  constants,
+  accessSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -69,6 +75,21 @@ if (
       }
 
       if (process.exitCode !== 1) {
+        const environmentFiles = readFileSync(service, "utf8")
+          .split(/\r?\n/u)
+          .filter((line) => line.startsWith("EnvironmentFile="));
+        if (
+          environmentFiles.join("\n") !==
+          [
+            "EnvironmentFile=%h/.config/pipetune/environment",
+            "EnvironmentFile=-%E/pipetune/environment.gtk",
+          ].join("\n")
+        ) {
+          fail(
+            "PipeTune user service does not apply the GTK preset override last",
+          );
+        }
+
         const version = spawnSync(executable, ["--version"], {
           encoding: "utf8",
         });

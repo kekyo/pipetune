@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.5
+Type=Application
+Name=PipeTune
+GenericName=Audio DSP Control
+Comment=Control PipeTune audio processing
+TryExec=pipetune-gtk
+Exec=pipetune-gtk
+Icon=pipetune
+Terminal=false
+Categories=AudioVideo;Audio;Settings;
+StartupNotify=true
+StartupWMClass=Pipetune-gtk

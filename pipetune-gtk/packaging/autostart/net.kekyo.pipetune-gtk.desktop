@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.5
+Type=Application
+Name=PipeTune
+Comment=Keep PipeTune audio controls available
+TryExec=pipetune-gtk
+Exec=pipetune-gtk --hidden
+Icon=pipetune
+Terminal=false
+NoDisplay=true
+StartupNotify=false
