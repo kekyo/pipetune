@@ -2,7 +2,7 @@
 
 ----
 
-[(English language is here)](https://github.com/kekyo/scheme-cd-ripper)
+[(English language is here)](./README.md)
 
 ## これは何?
 
@@ -19,6 +19,8 @@ PipeTuneは、Linuxのデスクトップセッションの音声に
 - 有効なEffeTuneネイティブDSPパイプラインをデスクトップ音声へ適用します。
 - 既定の物理出力を追跡し、既定デバイスの変更やデバイスの着脱に追従します。
 - デーモンを再起動せずにプリセットを変更できます。
+- プリセットが未選択の場合は、安全なパススルーモードで起動します。
+- CLIコマンド1つで、ユーザーごとの設定または解除を行えます。
 - GTKアプリケーションに実行状態と音声エラーカウンターを表示します。
 - StatusNotifierItemまたは互換性のための`GtkStatusIcon`フォールバックを使用し、
   `pipetune-gtk`をシステムトレイで実行します。
@@ -79,42 +81,27 @@ pipetune-gtk --version
 
 ## 初期設定
 
-ユーザーごとに必要なサービス設定を作成します。
+`sudo`を付けず、デスクトップを使用する一般ユーザーとしてsetupを実行します。
 
 ```sh
-install -d -m 700 "$HOME/.config/pipetune"
-install -m 600 \
-  /usr/share/doc/pipetune/environment.example \
-  "$HOME/.config/pipetune/environment"
+pipetune setup
 ```
 
-`~/.config/pipetune/environment`を編集し、EffeTuneプリセットの絶対パスを
-設定します。
+プリセットの指定は必須ではありません。新規インストール時はバイパスモードで起動し、
+仮想シンクから物理出力へ音声を流しますが、DSP処理は行いません。
+既に設定がある状態で`--preset`を省略してsetupを再実行した場合は、現在の起動設定を
+保持します。
 
-```text
-PIPETUNE_PRESET=/home/user/presets/example.effetune_preset
-```
-
-パスに空白が含まれる場合は、値を引用符で囲みます。
-
-```text
-PIPETUNE_PRESET="/home/user/My Presets/example.effetune_preset"
-```
-
-現在のユーザー用にPipeTuneを有効化して起動します。
+setupと同時にプリセットを選択する場合は、パスを指定します。
 
 ```sh
-systemctl --user daemon-reload
-systemctl --user enable --now pipetune.service
-systemctl --user status pipetune.service
+pipetune setup --preset /absolute/path/to/example.effetune_preset
 ```
 
-デスクトップのアプリケーションメニューまたはターミナルからPipeTune GTKを
-起動します。
-
-```sh
-pipetune-gtk
-```
+明示的に指定したプリセットは、サービス設定を変更する前に検証されます。
+setupはsystemdユーザーサービスを再読み込み、有効化、再起動し、active状態を確認して
+からPipeTune GTKを非表示で起動します。互換性のあるシステムトレイがない場合は、
+操作不能なバックグラウンドプロセスにならないようGTKウィンドウを表示します。
 
 GTKアプリケーションでプリセットを選択すると、デーモンへの接続中はすぐに適用され、
 以降のサービス起動で使用するために保存されます。互換性のあるシステムトレイが
@@ -142,16 +129,28 @@ pipetune --restore-default
 PipeTuneを更新するには、
 [GitHub Releases](https://github.com/kekyo/pipetune/releases)から新しい対応パッケージを
 ダウンロードし、同じ`sudo apt install ./pipetune-*.deb`コマンドでインストールします。
+その後、デスクトップを使用する一般ユーザーとして`pipetune setup`を実行します。
+`--preset`を省略すると、現在の選択を保持したまま更新後のサービスを再読み込みして
+再起動します。
 
-PipeTuneを削除するには、次のコマンドを実行します。
+パッケージを削除する前に、デスクトップを使用する一般ユーザーとしてユーザーごとの
+設定を解除します。
 
 ```sh
-systemctl --user disable --now pipetune.service
+pipetune unsetup
 sudo apt remove pipetune
-systemctl --user daemon-reload
 ```
 
-パッケージを削除しても、`~/.config/pipetune`内の設定ファイルは削除されません。
+`unsetup`はGTKアプリケーションを終了し、ユーザーサービスを無効化・停止し、
+既定の出力を物理出力へ戻します。また、GTKアプリケーションが自動起動しないよう
+ユーザー用の自動起動マスクを作成します。起動時のプリセット選択は保持されます。
+PipeTuneのアプリケーション設定も削除する場合は、`pipetune unsetup --purge`を
+使用します。
+
+独自のユーザー用自動起動エントリーをマスクする必要がある場合、`unsetup`は
+PipeTune管理のバックアップとして保存します。後で`pipetune setup`を実行すると、
+そのバックアップを上書きせずに復元します。パッケージの削除だけでは、
+ユーザーごとの設定や自動起動オーバーライドは削除されません。
 
 ## 関連情報
 

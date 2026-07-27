@@ -9,6 +9,7 @@ desktop system tray.
 The window displays:
 
 - daemon connection state;
+- active processing mode (`Preset` or `Bypass`);
 - active and startup preset paths;
 - active native DSP node count;
 - selected physical output target;
@@ -16,25 +17,26 @@ The window displays:
 - overrun, underrun, and DSP processing error counters; and
 - warnings for preset nodes omitted by the daemon.
 
-Select an `.effetune_preset` file and use the action button to change the
-startup selection. When the daemon is connected, the GUI first applies the
-preset live and writes the startup override only after that succeeds. A daemon
+Select an `.effetune_preset` file and use **Apply and Save** to change the
+startup selection, or use **Bypass and Save** to pass audio through without
+DSP. When the daemon is connected, the GUI first applies the selected mode
+live and writes the startup configuration only after that succeeds. A daemon
 rejection therefore leaves the previous startup selection unchanged. If the
-live apply succeeds but persistence fails, the new DSP remains active and the
-window reports that partial success.
+live apply succeeds but persistence fails, the new processing mode remains
+active and the window reports that partial success.
 
 When the daemon is disconnected, the selection is saved without a live apply
 and takes effect on the next successful service start. The GUI writes:
 
 ```text
-$XDG_CONFIG_HOME/pipetune/environment.gtk
+$XDG_CONFIG_HOME/pipetune/environment
 ```
 
 When `XDG_CONFIG_HOME` is unset, this resolves to
-`~/.config/pipetune/environment.gtk`. The directory is mode `0700`, the file
-is mode `0600`, and replacement is atomic. The installed systemd user unit
-reads the normal `environment` file first and this optional GUI-managed file
-second, so the GUI selection wins.
+`~/.config/pipetune/environment`. The directory is mode `0700`, the file is
+mode `0600`, and replacement is atomic. A file containing
+`PIPETUNE_PRESET` selects a preset. An absent file or a saved bypass selection
+contains no preset assignment and starts the daemon in pass-through mode.
 
 ## Status subscription
 
@@ -79,8 +81,15 @@ Start without initially presenting the window:
 ```
 
 A later ordinary launch activates the existing instance and presents its
-window. Use `pipetune-gtk --help` and `pipetune-gtk --version` for the remaining
-command-line information.
+window. Ask the running singleton to exit with:
+
+```sh
+./build/release/pipetune-gtk --quit
+```
+
+The same command exits successfully without presenting a window when no
+instance is running. Use `pipetune-gtk --help` and `pipetune-gtk --version` for
+the remaining command-line information.
 
 ## Install and autostart
 
@@ -105,16 +114,24 @@ With that prefix, the GUI integration is installed as:
 /etc/xdg/autostart/net.kekyo.pipetune-gtk.desktop
 ```
 
-The autostart entry runs `pipetune-gtk --hidden` at desktop login. A user can
-disable it without modifying the system file:
+The system autostart entry runs `pipetune-gtk --hidden` at desktop login.
+Normal per-user setup restores PipeTune-managed autostart state and starts the
+GTK application immediately:
 
 ```sh
-install -d "$HOME/.config/autostart"
-cp /etc/xdg/autostart/net.kekyo.pipetune-gtk.desktop \
-  "$HOME/.config/autostart/"
-desktop-file-edit --set-key=Hidden --set-value=true \
-  "$HOME/.config/autostart/net.kekyo.pipetune-gtk.desktop"
+pipetune setup
 ```
 
-Before enabling the daemon service, create its required base environment as
-described in the [PipeTune documentation](../pipetune/README.md).
+Disable the GTK application and the daemon together with:
+
+```sh
+pipetune unsetup
+```
+
+Unsetup writes a user override with `Hidden=true` and a PipeTune ownership
+marker at the same desktop filename. If a custom override already exists, it
+is moved to a non-desktop backup first; an existing backup is never
+overwritten. A later setup removes only PipeTune's own mask and restores the
+backup. Unmanaged targets and orphaned backups are preserved with warnings.
+See the [PipeTune documentation](../pipetune/README.md#install-as-a-user-service)
+for service behavior, optional presets, purge semantics, and recovery.

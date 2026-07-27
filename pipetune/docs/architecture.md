@@ -25,7 +25,8 @@ application streams ──> PipeTune Audio/Sink
                               |
                        F32P capture callback
                               |
-                    native EffeTune pipeline
+                  native EffeTune pipeline
+                     or explicit bypass
                               |
                     preallocated planar ring
                               |
@@ -122,6 +123,7 @@ Supported commands are:
 
 - status;
 - load and atomically activate another `.effetune_preset`;
+- bypass DSP and atomically activate pass-through processing;
 - subscribe to an initial status event and later status publications.
 
 The subscriber server uses an `eventfd` wakeup and bounded, coalescing output
@@ -129,6 +131,36 @@ per client. Preset activation and relevant PipeWire state transitions request
 a fresh publication outside the real-time callbacks. Slow subscribers cannot
 accumulate an unbounded history. The server runs outside the PipeWire process
 callbacks. There is no network listener.
+
+## Managed startup and bypass
+
+The systemd user unit starts `pipetune daemon` with the optional configuration
+path `$XDG_CONFIG_HOME/pipetune/environment`. A valid absolute
+`PIPETUNE_PRESET` assignment constructs the native DSP graph. A missing file,
+an empty configuration without that assignment, or an explicit saved bypass
+selection creates no EffeTune engine and copies captured samples into the
+output ring unchanged.
+
+Malformed configuration, an unavailable preset, or a preset that fails
+validation also degrades to bypass instead of terminating the audio service.
+The diagnostic is retained in runtime status so the CLI and GTK application
+can distinguish an intentional bypass from a configuration failure. Live load
+and bypass commands atomically replace the pipeline slot and publish the
+resulting state.
+
+The `setup` and `unsetup` coordinators run external `systemctl` and
+`pipetune-gtk` operations with direct argument vectors and no shell. Default
+sink restoration runs inside the unsetup process. Setup validates an explicit
+preset before external changes, snapshots the previous configuration and
+service state, enables and restarts the unit, verifies it is active, restores
+managed autostart state, and launches GTK detached. A later failure triggers
+best-effort rollback.
+
+Unsetup first installs a same-name user XDG autostart mask. A custom existing
+override is moved to a reserved non-desktop backup and is never overwritten.
+It then remotely quits GTK, disables and stops the service, and restores a
+physical default sink. Configuration purge is deferred until those required
+shutdown operations succeed. Both commands reject effective user ID zero.
 
 ## GTK control plane
 
@@ -143,17 +175,17 @@ path used by elder-terms. A hidden start falls back to presenting the main
 window when neither tray transport has a host, so the process never becomes
 inaccessible.
 
-Preset persistence is separate from daemon control. The GUI atomically writes
-`$XDG_CONFIG_HOME/pipetune/environment.gtk` with user-only permissions. The
-systemd user unit reads the required base environment first and this optional
-GUI file second. A connected apply is persisted only after the daemon accepts
+Startup persistence is separate from daemon control. The GUI and CLI
+atomically write the shared optional
+`$XDG_CONFIG_HOME/pipetune/environment` file with user-only permissions. A
+connected preset or bypass change is persisted only after the daemon accepts
 it; a disconnected selection is saved for the next daemon start.
 
 ## Known MVP limits
 
 - Linux PipeWire 0.3 and systemd user sessions only.
-- Host-native build only; cross-compilation and distribution packages are not
-  yet provided.
+- Each build contains native DSP code for one target architecture; no portable
+  runtime DSP object is distributed.
 - Standalone PulseAudio without `pipewire-pulse` is unsupported.
 - DSPs requiring external assets are skipped.
 - The configured stream rate and channel count are fixed for one process run.

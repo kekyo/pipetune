@@ -1,2 +1,3 @@
-# Use an absolute path. Quote the value when the path contains spaces.
-PIPETUNE_PRESET=/absolute/path/to/preset.effetune_preset
+# Leave PIPETUNE_PRESET unset to start in DSP bypass mode.
+# To select a preset, use an absolute path and quote paths containing spaces.
+# PIPETUNE_PRESET=/absolute/path/to/preset.effetune_preset

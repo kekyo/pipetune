@@ -16,6 +16,7 @@ PipeTune virtual default sink
         |
         v
 native EffeTune C++ DSP pipeline
+        or pass-through bypass
         |
         v
 selected physical PipeWire sink
@@ -37,7 +38,10 @@ not supported by this MVP.
 - Tracks the physical default output, follows default-device and hotplug
   changes, and can instead target a specific `node.name` or `object.serial`.
 - Replaces the preset in a running process through a same-user Unix socket.
+- Switches live and future startup processing to explicit DSP bypass.
 - Publishes initial and changed runtime state to same-user local subscribers.
+- Starts the managed daemon without a preset and passes audio through unchanged.
+- Automates per-user service, GTK, and autostart setup and removal.
 - Temporarily makes PipeTune the effective PipeWire default without changing
   WirePlumber's persistent configured default.
 - Restores a physical default on orderly shutdown. The installed systemd unit
@@ -134,10 +138,17 @@ Inspect or replace the running pipeline:
   --load-preset /absolute/path/to/bar.effetune_preset
 ```
 
-The status response includes the active preset, native DSP count, physical
-target, whether PipeTune owns the effective default, and audio bridge error
-counters. A live replacement made directly with the CLI is not persisted to a
-systemd environment file.
+The status response includes the processing mode, active preset when
+applicable, native DSP count, physical target, whether PipeTune owns the
+effective default, configuration diagnostics, and audio bridge error counters.
+A live replacement made directly with `--load-preset` is not persisted.
+
+Switch live processing to bypass and save that selection for future daemon
+starts with:
+
+```sh
+./build/release/pipetune bypass
+```
 
 Run the graphical control application with:
 
@@ -145,8 +156,9 @@ Run the graphical control application with:
 ./build/release/pipetune-gtk
 ```
 
-It subscribes to daemon status changes, applies a selected preset live, and
-persists a successful selection for later service starts. See the
+It subscribes to daemon status changes, applies a selected preset or bypass
+live, and persists a successful selection in the shared startup configuration.
+See the
 [PipeTune GTK documentation](../pipetune-gtk/README.md) for the exact failure
 and persistence behavior.
 
@@ -228,67 +240,84 @@ sudo make install PREFIX=/usr
 For end-user installation from a prebuilt Debian package, see the
 [workspace installation guide](../README.md#download-and-install).
 
-Create the per-user service configuration:
+Configure and start PipeTune as the desktop user, without `sudo`:
 
 ```sh
-install -d -m 700 "$HOME/.config/pipetune"
-install -m 600 \
-  /usr/share/doc/pipetune/environment.example \
-  "$HOME/.config/pipetune/environment"
+pipetune setup
 ```
 
-Edit `~/.config/pipetune/environment` and assign an absolute preset path:
+The preset is optional. With no existing selection, setup starts the daemon in
+bypass mode: audio passes through PipeTune without DSP processing. When a
+selection already exists, omitting `--preset` preserves it.
+
+To validate and select a preset before starting the service:
+
+```sh
+pipetune setup --preset /absolute/path/to/foo.effetune_preset
+```
+
+Setup performs the following operations:
+
+- rejects effective user ID 0 so that state is never written to root's home;
+- validates an explicitly supplied preset before making external changes;
+- saves that preset atomically with user-only permissions, or preserves the
+  existing startup selection when omitted;
+- reloads, enables, and restarts `pipetune.service`, then verifies it is
+  active;
+- removes a PipeTune-managed GTK autostart mask and safely restores any custom
+  override that was backed up by `unsetup`; and
+- launches `pipetune-gtk --hidden`.
+
+If a required service operation or GTK launch fails, setup reports the failure
+and attempts to restore the previous startup configuration and service state.
+Unmanaged or orphaned autostart files are preserved and reported as warnings.
+
+The daemon and GTK application share one optional startup configuration:
 
 ```text
-PIPETUNE_PRESET=/home/user/presets/foo.effetune_preset
+$XDG_CONFIG_HOME/pipetune/environment
 ```
 
-Quote the value when it contains spaces:
+When `XDG_CONFIG_HOME` is unset, it resolves to
+`~/.config/pipetune/environment`. The only setting is an absolute preset path:
 
 ```text
 PIPETUNE_PRESET="/home/user/My Presets/foo.effetune_preset"
 ```
 
-Enable it for the current user:
+An absent file or absent `PIPETUNE_PRESET` means bypass. An invalid
+configuration or unusable startup preset is reported in daemon status, but the
+daemon still starts in bypass so the audio path remains available. The GUI and
+`pipetune bypass` atomically update this same file.
 
-```sh
-systemctl --user daemon-reload
-systemctl --user enable --now pipetune.service
-systemctl --user status pipetune.service
-```
-
-This applies to every application's final output in that user's PipeWire
+This service affects every application's final output in that user's PipeWire
 session. It is not a machine-wide service shared by multiple logged-in users.
 
-The installed unit reads configuration in this order:
-
-1. `~/.config/pipetune/environment`, which remains the required base
-   configuration;
-2. `$XDG_CONFIG_HOME/pipetune/environment.gtk` (normally
-   `~/.config/pipetune/environment.gtk`), when that GUI-managed file exists.
-
-The second file is optional and its `PIPETUNE_PRESET` value overrides the base
-file. Do not edit it while `pipetune-gtk` is running. To return to the base
-selection, quit the GUI and move the override aside:
-
-```sh
-mv "$HOME/.config/pipetune/environment.gtk" \
-  "$HOME/.config/pipetune/environment.gtk.disabled"
-systemctl --user restart pipetune.service
-```
-
-After changing the configured preset:
-
-```sh
-systemctl --user restart pipetune.service
-```
-
-Logs and shutdown:
+Logs:
 
 ```sh
 journalctl --user -u pipetune.service
-systemctl --user disable --now pipetune.service
 ```
+
+Undo PipeTune's per-user integration as the same non-root user:
+
+```sh
+pipetune unsetup
+```
+
+This installs a managed user XDG autostart mask, asks the GTK singleton to
+quit, disables and stops the service, and restores a physical default sink.
+Existing PipeTune configuration is retained so a later `pipetune setup`
+resumes the same selection. Use `pipetune unsetup --purge` to additionally
+delete the shared startup configuration and the obsolete
+`environment.gtk` file from older installations. The autostart mask and any
+custom override backup are deliberately retained by `--purge`.
+
+If a custom user file already occupies
+`$XDG_CONFIG_HOME/autostart/net.kekyo.pipetune-gtk.desktop`, unsetup moves it
+to a non-desktop PipeTune backup before writing the mask. It refuses to
+overwrite an existing backup. Setup restores that backup exactly. Repeated
+setup and unsetup calls are safe for PipeTune-managed state.
 
 If a manually launched process is killed without restoration, recover
 immediately with:
