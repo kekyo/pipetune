@@ -98,6 +98,8 @@ add_library(
   src/audio_bridge.cpp
   src/dsp_catalog.cpp
   src/dsp_pipeline.cpp
+  src/startup_config.cpp
+  src/startup_pipeline.cpp
   "${PIPETUNE_GENERATED_DSP_CATALOG}")
 target_include_directories(pipetune_core PUBLIC include PRIVATE src)
 target_link_libraries(pipetune_core PUBLIC effetune_dsp_core yyjson)
@@ -200,6 +202,36 @@ if(BUILD_TESTING)
       pipetune_bootstrap_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   endif()
   add_test(NAME pipetune_bootstrap_tests COMMAND pipetune_bootstrap_tests)
+
+  add_executable(
+    pipetune_startup_config_tests
+    test/startup_config_test.cpp)
+  target_link_libraries(pipetune_startup_config_tests PRIVATE pipetune_core)
+  if(MSVC)
+    target_compile_options(pipetune_startup_config_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_startup_config_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_startup_config_tests
+    COMMAND pipetune_startup_config_tests)
+
+  add_executable(
+    pipetune_startup_pipeline_tests
+    test/startup_pipeline_test.cpp)
+  target_include_directories(pipetune_startup_pipeline_tests PRIVATE src)
+  target_link_libraries(pipetune_startup_pipeline_tests PRIVATE pipetune_core)
+  if(MSVC)
+    target_compile_options(pipetune_startup_pipeline_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_startup_pipeline_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_startup_pipeline_tests
+    COMMAND pipetune_startup_pipeline_tests)
 
   add_executable(
     pipetune_preset_pipeline_tests

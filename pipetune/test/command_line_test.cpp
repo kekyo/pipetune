@@ -70,6 +70,27 @@ static bool testControlActions() {
                "status socket path differs");
 }
 
+static bool testDaemonAction() {
+  constexpr auto defaults = std::array<std::string_view, 1>{"daemon"};
+  constexpr auto configured = std::array<std::string_view, 3>{
+      "daemon", "--config", "/tmp/pipetune/environment"};
+  const auto defaultResult = pipetune::parseCommandLine(defaults);
+  const auto configuredResult = pipetune::parseCommandLine(configured);
+  return check(defaultResult.error.empty(), defaultResult.error) &&
+         check(defaultResult.options.action ==
+                   pipetune::CommandLineAction::daemon,
+               "daemon subcommand must select daemon mode") &&
+         check(defaultResult.options.configPath.empty(),
+               "daemon configuration path must default to XDG resolution") &&
+         check(configuredResult.error.empty(), configuredResult.error) &&
+         check(configuredResult.options.action ==
+                   pipetune::CommandLineAction::daemon,
+               "configured daemon action differs") &&
+         check(configuredResult.options.configPath ==
+                   "/tmp/pipetune/environment",
+               "explicit daemon configuration path differs");
+}
+
 static bool testDefaultRestorationAction() {
   constexpr auto defaultArguments =
       std::array<std::string_view, 1>{"--restore-default"};
@@ -102,9 +123,10 @@ static bool testInformationalActions() {
          check(versionResult.error.empty() &&
                    versionResult.options.action == pipetune::CommandLineAction::version,
                "--version must select version") &&
-         check(pipetune::commandLineUsage().find("--preset FILE") !=
+         check(pipetune::commandLineUsage().find(
+                   "pipetune daemon [--config PATH]") !=
                    std::string_view::npos,
-               "usage must explain the required preset");
+               "usage must explain daemon startup");
 }
 
 static bool testRejectedArguments() {
@@ -131,6 +153,14 @@ static bool testRejectedArguments() {
       "--status", "--socket", "/tmp/a", "--socket", "/tmp/b"};
   constexpr auto restoreWithPreset = std::array<std::string_view, 3>{
       "--restore-default", "--preset", "x.effetune_preset"};
+  constexpr auto daemonWithPreset = std::array<std::string_view, 3>{
+      "daemon", "--preset", "x.effetune_preset"};
+  constexpr auto missingConfig =
+      std::array<std::string_view, 2>{"daemon", "--config"};
+  constexpr auto duplicateConfig = std::array<std::string_view, 5>{
+      "daemon", "--config", "/tmp/a", "--config", "/tmp/b"};
+  constexpr auto topLevelConfig =
+      std::array<std::string_view, 2>{"--config", "/tmp/a"};
 
   return check(!pipetune::parseCommandLine(missingPreset).error.empty(),
                "missing preset must fail") &&
@@ -155,12 +185,21 @@ static bool testRejectedArguments() {
          check(!pipetune::parseCommandLine(duplicateSocket).error.empty(),
                "duplicate socket options must fail") &&
          check(!pipetune::parseCommandLine(restoreWithPreset).error.empty(),
-               "restoration must reject preset options");
+               "restoration must reject preset options") &&
+         check(!pipetune::parseCommandLine(daemonWithPreset).error.empty(),
+               "daemon must reject legacy run options") &&
+         check(!pipetune::parseCommandLine(missingConfig).error.empty(),
+               "daemon configuration requires a path") &&
+         check(!pipetune::parseCommandLine(duplicateConfig).error.empty(),
+               "daemon must reject duplicate configuration paths") &&
+         check(!pipetune::parseCommandLine(topLevelConfig).error.empty(),
+               "--config must be scoped to the daemon subcommand");
 }
 
 int main() {
   const auto passed = testRunDefaults() && testExplicitOptions() &&
-                      testControlActions() && testDefaultRestorationAction() &&
+                      testControlActions() && testDaemonAction() &&
+                      testDefaultRestorationAction() &&
                       testInformationalActions() && testRejectedArguments();
   return passed ? 0 : 1;
 }

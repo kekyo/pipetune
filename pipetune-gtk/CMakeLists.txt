@@ -14,12 +14,11 @@ pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0 gdk-x11-3.0)
 add_library(
   pipetune_gtk_core STATIC
   src/application-state.cpp
-  src/control-client.cpp
-  src/startup-config.cpp)
+  src/control-client.cpp)
 target_include_directories(pipetune_gtk_core PUBLIC src)
 target_link_libraries(
   pipetune_gtk_core
-  PUBLIC pipetune_control
+  PUBLIC pipetune_control pipetune_core
   PRIVATE PkgConfig::GIO)
 if(MSVC)
   target_compile_options(pipetune_gtk_core PRIVATE /W4 /WX)

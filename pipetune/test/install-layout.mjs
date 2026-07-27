@@ -75,19 +75,25 @@ if (
       }
 
       if (process.exitCode !== 1) {
-        const environmentFiles = readFileSync(service, "utf8")
-          .split(/\r?\n/u)
-          .filter((line) => line.startsWith("EnvironmentFile="));
-        if (
-          environmentFiles.join("\n") !==
-          [
-            "EnvironmentFile=%h/.config/pipetune/environment",
-            "EnvironmentFile=-%E/pipetune/environment.gtk",
-          ].join("\n")
-        ) {
+        const serviceLines = readFileSync(service, "utf8")
+          .split(/\r?\n/u);
+        const environmentFiles = serviceLines.filter((line) =>
+          line.startsWith("EnvironmentFile="),
+        );
+        const execStart = serviceLines.find((line) =>
+          line.startsWith("ExecStart="),
+        );
+        if (environmentFiles.length !== 0) {
           fail(
-            "PipeTune user service does not apply the GTK preset override last",
+            "PipeTune user service must let the daemon parse its configuration",
           );
+        }
+        if (
+          !execStart?.endsWith(
+            " daemon --config %E/pipetune/environment",
+          )
+        ) {
+          fail("PipeTune user service does not launch the daemon subcommand");
         }
 
         const version = spawnSync(executable, ["--version"], {

@@ -76,7 +76,9 @@ TrayVisualState trayVisualState(const ApplicationState &state) {
     return TrayVisualState::disconnected;
   }
   if (!state.hasRuntimeStatus || !state.diagnostic.empty() ||
-      !state.warnings.empty() || !state.runtime.defaultSinkActive ||
+      !state.warnings.empty() ||
+      !state.runtime.configurationError.empty() ||
+      !state.runtime.defaultSinkActive ||
       state.runtime.selectedTarget.empty() ||
       state.runtime.overrunFrames != 0 ||
       state.runtime.underrunFrames != 0 ||

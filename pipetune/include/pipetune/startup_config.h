@@ -1,27 +1,27 @@
-#ifndef PIPETUNE_GTK_STARTUP_CONFIG_H
-#define PIPETUNE_GTK_STARTUP_CONFIG_H
+#ifndef PIPETUNE_STARTUP_CONFIG_H
+#define PIPETUNE_STARTUP_CONFIG_H
 
 #include <filesystem>
 #include <string>
 #include <string_view>
 
-namespace pipetune_gtk {
+namespace pipetune {
 
 /**
- * Reports a resolved GTK-managed environment override path.
+ * Reports the canonical per-user PipeTune configuration path.
  */
 struct StartupConfigPathResult {
-  /** `$XDG_CONFIG_HOME/pipetune/environment.gtk` or its HOME fallback. */
+  /** `$XDG_CONFIG_HOME/pipetune/environment` or its HOME fallback. */
   std::filesystem::path path;
   /** Resolution diagnostic, or empty on success. */
   std::string error;
 };
 
 /**
- * Reports the preset stored in the GTK-managed environment override.
+ * Reports the optional preset stored in the startup configuration.
  */
 struct StartupPresetLoadResult {
-  /** True when an override file and preset assignment exist. */
+  /** True when the configuration contains a preset assignment. */
   bool found;
   /** Absolute preset path when found is true. */
   std::filesystem::path presetPath;
@@ -30,7 +30,7 @@ struct StartupPresetLoadResult {
 };
 
 /**
- * Resolves the GTK-managed systemd environment override.
+ * Resolves the canonical per-user PipeTune configuration file.
  *
  * @param xdgConfigHome Value of XDG_CONFIG_HOME, or empty for HOME fallback.
  * @param homeDirectory Value of HOME.
@@ -41,26 +41,35 @@ resolveStartupConfigPath(std::string_view xdgConfigHome,
                          const std::filesystem::path &homeDirectory);
 
 /**
- * Loads a preset from a GTK-managed environment override.
+ * Loads the optional startup preset from a PipeTune configuration file.
  *
- * A missing file is successful with found set to false.
+ * A missing file or a file without PIPETUNE_PRESET is successful with found
+ * set to false.
  *
- * @param configPath Override file path.
- * @return Loaded preset, missing state, or diagnostic.
+ * @param configPath Configuration file path.
+ * @return Loaded preset, intentional bypass state, or diagnostic.
  */
 StartupPresetLoadResult
 loadStartupPreset(const std::filesystem::path &configPath);
 
 /**
- * Atomically stores the startup preset in a private environment override.
+ * Atomically stores an absolute startup preset in a private configuration.
  *
- * @param configPath Override file path.
+ * @param configPath Configuration file path.
  * @param presetPath Absolute preset path to store.
  * @return Empty on success, otherwise a human-readable diagnostic.
  */
 std::string saveStartupPreset(const std::filesystem::path &configPath,
                               const std::filesystem::path &presetPath);
 
-} // namespace pipetune_gtk
+/**
+ * Atomically stores an intentional startup-bypass configuration.
+ *
+ * @param configPath Configuration file path.
+ * @return Empty on success, otherwise a human-readable diagnostic.
+ */
+std::string clearStartupPreset(const std::filesystem::path &configPath);
+
+} // namespace pipetune
 
 #endif

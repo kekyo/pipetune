@@ -1,10 +1,10 @@
 #include "application-state.h"
 #include "control-client.h"
 #include "launch-options.h"
-#include "startup-config.h"
 #include "tray-backend.h"
 
 #include "pipetune/control_socket.h"
+#include "pipetune/startup_config.h"
 #include "pipetune/version.h"
 
 #include <gtk/gtk.h>
@@ -102,6 +102,14 @@ static std::string trayTooltip(const ApplicationState &state) {
 
 static std::string noticeText(const ApplicationState &state) {
   auto notice = state.diagnostic;
+  if (state.hasRuntimeStatus &&
+      !state.runtime.configurationError.empty()) {
+    if (!notice.empty()) {
+      notice.push_back('\n');
+    }
+    notice += "Startup configuration: " +
+              state.runtime.configurationError;
+  }
   for (const auto &warning : state.warnings) {
     if (!notice.empty()) {
       notice.push_back('\n');
@@ -304,7 +312,8 @@ static std::string savePendingPreset(GtkRuntime *runtime) {
     return "startup configuration path is unavailable";
   }
   const auto error =
-      saveStartupPreset(runtime->startupConfigPath, runtime->pendingPreset);
+      pipetune::saveStartupPreset(runtime->startupConfigPath,
+                                  runtime->pendingPreset);
   if (error.empty()) {
     runtime->startupPreset = runtime->pendingPreset;
     runtime->hasStartupPreset = true;
@@ -518,7 +527,7 @@ static void onTrayAvailabilityChanged(
 static void initializeStartupConfig(GtkRuntime *runtime) {
   const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
   const auto *home = std::getenv("HOME");
-  const auto resolved = resolveStartupConfigPath(
+  const auto resolved = pipetune::resolveStartupConfigPath(
       xdgConfigHome == nullptr ? std::string_view{}
                                : std::string_view(xdgConfigHome),
       home == nullptr ? std::filesystem::path{}
@@ -528,7 +537,7 @@ static void initializeStartupConfig(GtkRuntime *runtime) {
     return;
   }
   runtime->startupConfigPath = resolved.path;
-  const auto loaded = loadStartupPreset(runtime->startupConfigPath);
+  const auto loaded = pipetune::loadStartupPreset(runtime->startupConfigPath);
   if (!loaded.error.empty()) {
     setControlDiagnostic(runtime->state, loaded.error);
     return;

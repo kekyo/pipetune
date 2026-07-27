@@ -10,6 +10,7 @@ namespace pipetune {
 static CommandLineOptions defaultOptions() {
   return {.action = CommandLineAction::run,
           .presetPath = {},
+          .configPath = {},
           .controlSocketPath = {},
           .targetObject = {},
           .sinkName = "pipetune_sink",
@@ -37,6 +38,33 @@ static bool parseUnsigned(std::string_view text, std::uint32_t &output) {
   return true;
 }
 
+static CommandLineParseResult parseDaemonCommandLine(
+    std::span<const std::string_view> arguments) {
+  auto options = defaultOptions();
+  options.action = CommandLineAction::daemon;
+  auto sawConfig = false;
+  for (auto index = std::size_t{0}; index < arguments.size(); ++index) {
+    const auto argument = arguments[index];
+    if (argument != "--config") {
+      return parseError(std::move(options),
+                        "unknown daemon option: " + std::string(argument));
+    }
+    if (sawConfig) {
+      return parseError(std::move(options), "duplicate option: --config");
+    }
+    if (index + 1 >= arguments.size()) {
+      return parseError(std::move(options), "missing value for --config");
+    }
+    const auto value = arguments[++index];
+    if (value.empty()) {
+      return parseError(std::move(options), "--config must not be empty");
+    }
+    sawConfig = true;
+    options.configPath = value;
+  }
+  return {.options = std::move(options), .error = {}};
+}
+
 CommandLineParseResult parseCommandLine(
     std::span<const std::string_view> arguments) {
   auto options = defaultOptions();
@@ -47,6 +75,9 @@ CommandLineParseResult parseCommandLine(
   if (arguments.size() == 1 && arguments[0] == "--version") {
     options.action = CommandLineAction::version;
     return {.options = std::move(options), .error = {}};
+  }
+  if (!arguments.empty() && arguments.front() == "daemon") {
+    return parseDaemonCommandLine(arguments.subspan(1));
   }
   for (const auto argument : arguments) {
     if (argument == "--help" || argument == "--version") {
@@ -220,6 +251,7 @@ CommandLineParseResult parseCommandLine(
 
 std::string_view commandLineUsage() noexcept {
   return "Usage:\n"
+         "  pipetune daemon [--config PATH]\n"
          "  pipetune --preset FILE [--target OBJECT] [--sink-name NAME]\n"
          "           [--rate HZ] [--channels COUNT] [--socket PATH] [--check]\n"
          "  pipetune --load-preset FILE [--socket PATH]\n"
@@ -229,6 +261,7 @@ std::string_view commandLineUsage() noexcept {
          "  pipetune --help\n"
          "\n"
          "Options:\n"
+         "  --config PATH    Read daemon startup configuration from PATH.\n"
          "  --preset FILE     Load a formal .effetune_preset file.\n"
          "  --load-preset FILE\n"
          "                    Replace the preset in a running PipeTune process.\n"

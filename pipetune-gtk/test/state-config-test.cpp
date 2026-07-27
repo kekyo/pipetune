@@ -1,16 +1,12 @@
 #include "application-state.h"
-#include "startup-config.h"
 
 #include "pipetune/control_protocol.h"
 
 #include <array>
-#include <filesystem>
 #include <iostream>
 #include <span>
 #include <string>
 #include <string_view>
-#include <sys/stat.h>
-#include <unistd.h>
 
 static bool check(bool condition, std::string_view message) {
   if (!condition) {
@@ -21,12 +17,13 @@ static bool check(bool condition, std::string_view message) {
 
 static pipetune::ControlResponseParseResult statusResponse(
     bool defaultSinkActive,
-    std::span<const pipetune::ControlWarning> warnings) {
+    std::span<const pipetune::ControlWarning> warnings,
+    std::string_view configurationError) {
   return pipetune::parseControlResponse(
       pipetune::makeControlSuccessResponse(
           {.processingMode = pipetune::ProcessingMode::preset,
            .activePreset = "/tmp/active.effetune_preset",
-           .configurationError = {},
+           .configurationError = std::string(configurationError),
            .activePluginCount = 4,
            .selectedTarget = "alsa_output.speaker",
            .defaultSinkActive = defaultSinkActive,
@@ -48,7 +45,7 @@ static bool testApplicationState() {
   }
 
   pipetune_gtk::markControlConnecting(state);
-  const auto healthy = statusResponse(true, {});
+  const auto healthy = statusResponse(true, {}, {});
   pipetune_gtk::applyControlResponse(state, healthy);
   if (!check(state.connection ==
                  pipetune_gtk::ControlConnectionState::connected,
@@ -66,7 +63,8 @@ static bool testApplicationState() {
       pipetune::ControlWarning{.nodeIndex = 2,
                                .pluginName = "Unavailable DSP",
                                .reason = "not built"}};
-  pipetune_gtk::applyControlResponse(state, statusResponse(true, warnings));
+  pipetune_gtk::applyControlResponse(state,
+                                     statusResponse(true, warnings, {}));
   if (!check(state.warnings.size() == 1,
              "ordinary response warnings were not retained") ||
       !check(pipetune_gtk::trayVisualState(state) ==
@@ -89,12 +87,20 @@ static bool testApplicationState() {
     return false;
   }
 
-  pipetune_gtk::applyControlResponse(state, statusResponse(false, {}));
+  pipetune_gtk::applyControlResponse(state, statusResponse(false, {}, {}));
   if (!check(pipetune_gtk::trayVisualState(state) ==
                  pipetune_gtk::TrayVisualState::attention,
              "an inactive default sink must request attention")) {
     return false;
   }
+  pipetune_gtk::applyControlResponse(
+      state, statusResponse(true, {}, "configured preset is unavailable"));
+  if (!check(pipetune_gtk::trayVisualState(state) ==
+                 pipetune_gtk::TrayVisualState::attention,
+             "a startup configuration error must request attention")) {
+    return false;
+  }
+
   pipetune_gtk::markControlDisconnected(state, "daemon stopped");
   return check(state.connection ==
                    pipetune_gtk::ControlConnectionState::disconnected,
@@ -106,58 +112,6 @@ static bool testApplicationState() {
                "disconnected tray state differs");
 }
 
-static bool testStartupConfig() {
-  const auto explicitPath = pipetune_gtk::resolveStartupConfigPath(
-      "/tmp/xdg-config", "/tmp/home");
-  const auto fallbackPath =
-      pipetune_gtk::resolveStartupConfigPath({}, "/tmp/home");
-  if (!check(explicitPath.error.empty() &&
-                 explicitPath.path ==
-                     "/tmp/xdg-config/pipetune/environment.gtk",
-             "XDG startup config path differs") ||
-      !check(fallbackPath.error.empty() &&
-                 fallbackPath.path ==
-                     "/tmp/home/.config/pipetune/environment.gtk",
-             "fallback startup config path differs")) {
-    return false;
-  }
-
-  const auto directory =
-      std::filesystem::temp_directory_path() /
-      ("pipetune-gtk-config-test-" +
-       std::to_string(static_cast<long long>(getpid())));
-  const auto configPath = directory / "pipetune" / "environment.gtk";
-  const auto presetPath =
-      std::filesystem::path("/tmp/Music \"wide\" \\\\ room.effetune_preset");
-  const auto saved =
-      pipetune_gtk::saveStartupPreset(configPath, presetPath);
-  if (!check(saved.empty(), saved)) {
-    std::filesystem::remove_all(directory);
-    return false;
-  }
-
-  struct stat status {};
-  const auto loaded = pipetune_gtk::loadStartupPreset(configPath);
-  const auto valid =
-      check(loaded.error.empty(), loaded.error) &&
-      check(loaded.found, "saved startup preset was not found") &&
-      check(loaded.presetPath == presetPath,
-            "startup preset did not round-trip") &&
-      check(stat(configPath.c_str(), &status) == 0 &&
-                (status.st_mode & 0777) == 0600,
-            "startup override must be private");
-  const auto invalid =
-      pipetune_gtk::saveStartupPreset(configPath, "relative.effetune_preset");
-  const auto stillLoaded = pipetune_gtk::loadStartupPreset(configPath);
-  const auto preserved =
-      check(!invalid.empty(), "relative presets must be rejected") &&
-      check(stillLoaded.error.empty() && stillLoaded.found &&
-                stillLoaded.presetPath == presetPath,
-            "a rejected save must preserve the previous startup preset");
-  std::filesystem::remove_all(directory);
-  return valid && preserved;
-}
-
 int main() {
-  return testApplicationState() && testStartupConfig() ? 0 : 1;
+  return testApplicationState() ? 0 : 1;
 }

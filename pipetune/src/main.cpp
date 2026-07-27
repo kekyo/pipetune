@@ -5,8 +5,11 @@
 #include "pipetune/control_socket.h"
 #include "pipetune/dsp_pipeline.h"
 #include "pipetune/pipewire_pipeline.h"
+#include "pipetune/startup_config.h"
 #include "pipetune/version.h"
+#include "startup_pipeline.h"
 
+#include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
@@ -70,6 +73,77 @@ static int runControlClient(const pipetune::CommandLineOptions &options) {
   return inspection.success ? 0 : 1;
 }
 
+static int runDaemon(const pipetune::CommandLineOptions &options) {
+  auto configPath = options.configPath;
+  if (configPath.empty()) {
+    const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
+    const auto *home = std::getenv("HOME");
+    const auto resolved = pipetune::resolveStartupConfigPath(
+        xdgConfigHome == nullptr ? std::string_view{}
+                                 : std::string_view(xdgConfigHome),
+        home == nullptr ? std::filesystem::path{}
+                        : std::filesystem::path(home));
+    if (!resolved.error.empty()) {
+      std::cerr << "pipetune: " << resolved.error << '\n';
+      return 1;
+    }
+    configPath = resolved.path;
+  }
+
+  auto prepared = pipetune::prepareStartupPipeline(
+      configPath,
+      {.sampleRate = 48000.0F,
+       .maxChannels = 2,
+       .maxFrames = kMaximumProcessFrames});
+  if (prepared.pipeline == nullptr) {
+    std::cerr << "pipetune: " << prepared.error << '\n';
+    return 1;
+  }
+  if (!prepared.configurationError.empty()) {
+    std::cerr << "pipetune: warning: " << prepared.configurationError
+              << "; DSP processing is bypassed\n";
+  }
+  for (const auto &warning : prepared.warnings) {
+    std::cerr << "pipetune: warning: preset node " << warning.nodeIndex
+              << " (\"" << warning.pluginName
+              << "\") was skipped: " << warning.reason << '\n';
+  }
+
+  const auto socket = pipetune::resolveControlSocketPath({});
+  if (!socket.error.empty()) {
+    std::cerr << "pipetune: " << socket.error << '\n';
+    return 1;
+  }
+  const auto result = pipetune::runPipeWirePipeline(
+      std::move(prepared.pipeline),
+      {.sinkName = "pipetune_sink",
+       .sinkDescription = "PipeTune Processed Audio",
+       .targetObject = {},
+       .initialPresetPath = prepared.activePresetPath,
+       .initialConfigurationError = prepared.configurationError,
+       .controlSocketPath = socket.path,
+       .sampleRate = 48000,
+       .channelCount = 2,
+       .maxFrames = kMaximumProcessFrames,
+       .ringCapacityFrames = kRingCapacityFrames,
+       .manageDefaultSink = true,
+       .readyCallback = nullptr,
+       .readyUserData = nullptr},
+      pipetune::PipeWireRunMode::untilInterrupted);
+  if (!result.success) {
+    std::cerr << "pipetune: " << result.error << '\n';
+    return 1;
+  }
+  if (result.overrunFrames != 0 || result.underrunFrames != 0 ||
+      result.processingErrors != 0) {
+    std::cerr << "pipetune: audio bridge summary: " << result.overrunFrames
+              << " overrun frames, " << result.underrunFrames
+              << " underrun frames, " << result.processingErrors
+              << " DSP processing errors\n";
+  }
+  return 0;
+}
+
 int main(int argc, char **argv) {
   auto arguments = std::vector<std::string_view>{};
   arguments.reserve(argc > 1 ? static_cast<std::size_t>(argc - 1) : 0);
@@ -89,6 +163,9 @@ int main(int argc, char **argv) {
   if (parsed.options.action == pipetune::CommandLineAction::version) {
     std::cout << "pipetune " << pipetune::version() << '\n';
     return 0;
+  }
+  if (parsed.options.action == pipetune::CommandLineAction::daemon) {
+    return runDaemon(parsed.options);
   }
   if (parsed.options.action ==
       pipetune::CommandLineAction::restoreDefault) {
