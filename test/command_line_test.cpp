@@ -70,6 +70,27 @@ static bool testControlActions() {
                "status socket path differs");
 }
 
+static bool testDefaultRestorationAction() {
+  constexpr auto defaultArguments =
+      std::array<std::string_view, 1>{"--restore-default"};
+  constexpr auto namedArguments = std::array<std::string_view, 3>{
+      "--restore-default", "--sink-name", "custom_sink"};
+  const auto defaultResult = pipetune::parseCommandLine(defaultArguments);
+  const auto namedResult = pipetune::parseCommandLine(namedArguments);
+  return check(defaultResult.error.empty(), defaultResult.error) &&
+         check(defaultResult.options.action ==
+                   pipetune::CommandLineAction::restoreDefault,
+               "--restore-default must select fail-open restoration") &&
+         check(defaultResult.options.sinkName == "pipetune_sink",
+               "restoration default sink name differs") &&
+         check(namedResult.error.empty(), namedResult.error) &&
+         check(namedResult.options.action ==
+                   pipetune::CommandLineAction::restoreDefault,
+               "named restoration action differs") &&
+         check(namedResult.options.sinkName == "custom_sink",
+               "restoration exclusion name differs");
+}
+
 static bool testInformationalActions() {
   constexpr auto help = std::array<std::string_view, 1>{"--help"};
   constexpr auto version = std::array<std::string_view, 1>{"--version"};
@@ -108,6 +129,8 @@ static bool testRejectedArguments() {
       std::array<std::string_view, 1>{"--load-preset"};
   constexpr auto duplicateSocket = std::array<std::string_view, 5>{
       "--status", "--socket", "/tmp/a", "--socket", "/tmp/b"};
+  constexpr auto restoreWithPreset = std::array<std::string_view, 3>{
+      "--restore-default", "--preset", "x.effetune_preset"};
 
   return check(!pipetune::parseCommandLine(missingPreset).error.empty(),
                "missing preset must fail") &&
@@ -130,12 +153,14 @@ static bool testRejectedArguments() {
          check(!pipetune::parseCommandLine(missingLoadValue).error.empty(),
                "live loading requires a preset value") &&
          check(!pipetune::parseCommandLine(duplicateSocket).error.empty(),
-               "duplicate socket options must fail");
+               "duplicate socket options must fail") &&
+         check(!pipetune::parseCommandLine(restoreWithPreset).error.empty(),
+               "restoration must reject preset options");
 }
 
 int main() {
   const auto passed = testRunDefaults() && testExplicitOptions() &&
-                      testControlActions() && testInformationalActions() &&
-                      testRejectedArguments();
+                      testControlActions() && testDefaultRestorationAction() &&
+                      testInformationalActions() && testRejectedArguments();
   return passed ? 0 : 1;
 }

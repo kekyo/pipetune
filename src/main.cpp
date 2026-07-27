@@ -2,6 +2,7 @@
 
 #include "control_protocol.h"
 #include "control_socket.h"
+#include "default_sink_restore.h"
 #include "pipetune/dsp_pipeline.h"
 #include "pipetune/pipewire_pipeline.h"
 #include "pipetune/version.h"
@@ -89,6 +90,18 @@ int main(int argc, char **argv) {
     std::cout << "pipetune " << pipetune::version() << '\n';
     return 0;
   }
+  if (parsed.options.action ==
+      pipetune::CommandLineAction::restoreDefault) {
+    const auto restored =
+        pipetune::restorePipeWireDefaultSink(parsed.options.sinkName);
+    if (!restored.success) {
+      std::cerr << "pipetune: " << restored.error << '\n';
+      return 1;
+    }
+    std::cout << "Restored PipeWire default sink: "
+              << restored.selectedTarget << '\n';
+    return 0;
+  }
   if (parsed.options.action == pipetune::CommandLineAction::loadPreset ||
       parsed.options.action == pipetune::CommandLineAction::status) {
     return runControlClient(parsed.options);
@@ -141,6 +154,7 @@ int main(int argc, char **argv) {
        .channelCount = parsed.options.channelCount,
        .maxFrames = kMaximumProcessFrames,
        .ringCapacityFrames = kRingCapacityFrames,
+       .manageDefaultSink = !parsed.options.checkOnly,
        .readyCallback = nullptr,
        .readyUserData = nullptr},
       mode);

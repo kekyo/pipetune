@@ -1,0 +1,2 @@
+# Use an absolute path. Quote the value when the path contains spaces.
+PIPETUNE_PRESET=/absolute/path/to/preset.effetune_preset

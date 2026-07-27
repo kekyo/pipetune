@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.24)
 project(PipeTune VERSION 0.1.0 LANGUAGES C CXX)
 
 include(CTest)
+include(GNUInstallDirs)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -65,6 +66,7 @@ add_library(
   src/command_line.cpp
   src/control_protocol.cpp
   src/control_socket.cpp
+  src/default_sink_restore.cpp
   src/dsp_pipeline_slot.cpp
   src/output_device_tracker.cpp
   src/pipewire_pipeline.cpp)
@@ -89,7 +91,39 @@ else()
   target_compile_options(pipetune PRIVATE -Wall -Wextra -Wpedantic -Werror)
 endif()
 
-install(TARGETS pipetune RUNTIME DESTINATION bin)
+set(
+  PIPETUNE_SYSTEMD_USER_UNIT_DIR
+  "lib/systemd/user"
+  CACHE PATH
+  "Installation directory for systemd user units")
+set(
+  PIPETUNE_INSTALLED_EXECUTABLE
+  "${CMAKE_INSTALL_FULL_BINDIR}/pipetune")
+configure_file(
+  packaging/systemd/pipetune.service.in
+  "${CMAKE_CURRENT_BINARY_DIR}/pipetune.service"
+  @ONLY)
+if(BUILD_TESTING)
+  set(
+    PIPETUNE_INSTALLED_EXECUTABLE
+    "${CMAKE_CURRENT_BINARY_DIR}/pipetune")
+  configure_file(
+    packaging/systemd/pipetune.service.in
+    "${CMAKE_CURRENT_BINARY_DIR}/pipetune.test.service"
+    @ONLY)
+endif()
+set(
+  PIPETUNE_DOCUMENTATION_DIR
+  "${CMAKE_INSTALL_DATADIR}/doc/pipetune")
+
+install(TARGETS pipetune RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+install(
+  FILES "${CMAKE_CURRENT_BINARY_DIR}/pipetune.service"
+  DESTINATION "${PIPETUNE_SYSTEMD_USER_UNIT_DIR}")
+install(
+  FILES packaging/pipetune.environment.example
+  DESTINATION "${PIPETUNE_DOCUMENTATION_DIR}"
+  RENAME environment.example)
 
 if(BUILD_TESTING)
   add_test(NAME pipetune_cli_help COMMAND pipetune --help)
@@ -239,6 +273,26 @@ if(BUILD_TESTING)
     COMMAND pipetune_control_socket_tests)
 
   add_executable(
+    pipetune_default_sink_restore_tests
+    test/default_sink_restore_test.cpp)
+  target_include_directories(pipetune_default_sink_restore_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_default_sink_restore_tests PRIVATE pipetune_pipewire)
+  if(MSVC)
+    target_compile_options(pipetune_default_sink_restore_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_default_sink_restore_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_default_sink_restore_tests
+    COMMAND pipetune_default_sink_restore_tests)
+  set_tests_properties(
+    pipetune_default_sink_restore_tests
+    PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 10)
+
+  add_executable(
     pipetune_param_packer_runner
     test/param_packer_runner.cpp)
   target_include_directories(pipetune_param_packer_runner PRIVATE src)
@@ -267,4 +321,19 @@ if(BUILD_TESTING)
       --root ${CMAKE_CURRENT_SOURCE_DIR}/deps/effetune
       --native-runner
       ${CMAKE_CURRENT_BINARY_DIR}/effetune-dsp/effetune-dsp-parity-runner)
+
+  find_program(PIPETUNE_SYSTEMD_ANALYZE_EXECUTABLE systemd-analyze REQUIRED)
+  add_test(
+    NAME pipetune_install_layout
+    COMMAND
+      ${PIPETUNE_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/install-layout.mjs
+      ${CMAKE_COMMAND}
+      ${CMAKE_CURRENT_BINARY_DIR}
+      ${PIPETUNE_SYSTEMD_ANALYZE_EXECUTABLE}
+      ${CMAKE_INSTALL_PREFIX}
+      ${CMAKE_INSTALL_BINDIR}
+      ${PIPETUNE_SYSTEMD_USER_UNIT_DIR}
+      ${PIPETUNE_DOCUMENTATION_DIR}
+      ${CMAKE_CURRENT_BINARY_DIR}/pipetune.test.service)
 endif()

@@ -3,6 +3,7 @@
 #include "audio_bridge.h"
 #include "control_protocol.h"
 #include "control_socket.h"
+#include "default_sink_restore.h"
 #include "dsp_pipeline_slot.h"
 #include "output_device_tracker.h"
 
@@ -13,8 +14,6 @@
 #include <spa/param/buffers.h>
 #include <spa/param/format.h>
 #include <spa/pod/builder.h>
-#include <yyjson.h>
-
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -48,6 +47,19 @@ struct StreamCallbackContext {
   bool capture;
 };
 
+enum class CoreSyncPurpose {
+  enumeration,
+  defaultActivation,
+  defaultRestoration
+};
+
+enum class DefaultSinkTransition {
+  inactive,
+  activating,
+  active,
+  restoring
+};
+
 struct PipeWireRuntime {
   DspPipelineSlot pipeline;
   PipeWirePipelineOptions options;
@@ -57,6 +69,7 @@ struct PipeWireRuntime {
   std::vector<float> captureScratch;
   std::vector<float> playbackScratch;
   std::atomic<std::uint64_t> processingErrors;
+  std::atomic<bool> defaultSinkActive;
   std::uint64_t processedInputFrames;
   std::string activePreset;
   std::mutex playbackTargetMutex;
@@ -82,7 +95,12 @@ struct PipeWireRuntime {
   StreamCallbackContext playbackContext;
   std::uint32_t defaultMetadataId;
   int trackingSyncSequence;
+  CoreSyncPurpose trackingSyncPurpose;
+  DefaultSinkTransition defaultSinkTransition;
   bool trackingReady;
+  bool shutdownRequested;
+  std::string observedDefaultSink;
+  std::string defaultMetadataValue;
   std::string playbackTarget;
   bool captureReady;
   bool playbackReady;
@@ -103,7 +121,7 @@ struct PipeWireRuntime {
         playbackScratch(static_cast<std::size_t>(runtimeOptions.channelCount) *
                             runtimeOptions.maxFrames,
                         0.0F),
-        processingErrors(0), processedInputFrames(0),
+        processingErrors(0), defaultSinkActive(false), processedInputFrames(0),
         activePreset(runtimeOptions.initialPresetPath.string()),
         playbackTargetMutex(), controlServer(), mainLoop(nullptr),
         captureStream(nullptr), playbackStream(nullptr), trackingCore(nullptr),
@@ -113,7 +131,10 @@ struct PipeWireRuntime {
         coreListener{}, registryListener{}, metadataListener{},
         captureContext{this, true}, playbackContext{this, false},
         defaultMetadataId(PW_ID_ANY), trackingSyncSequence(0),
-        trackingReady(false), playbackTarget(),
+        trackingSyncPurpose(CoreSyncPurpose::enumeration),
+        defaultSinkTransition(DefaultSinkTransition::inactive),
+        trackingReady(false), shutdownRequested(false),
+        observedDefaultSink(), defaultMetadataValue(), playbackTarget(),
         captureReady(false), playbackReady(false), readyNotified(false),
         completed(false), error() {}
 
@@ -177,6 +198,8 @@ static std::string systemError(std::string_view operation, int result) {
 }
 
 static void applyTrackedTarget(PipeWireRuntime &runtime);
+static void finishReadinessCheck(PipeWireRuntime &runtime);
+static void maybeActivateDefaultSink(PipeWireRuntime &runtime);
 
 static std::string currentPlaybackTarget(PipeWireRuntime &runtime) {
   auto lock = std::scoped_lock(runtime.playbackTargetMutex);
@@ -191,22 +214,6 @@ static void failRuntime(PipeWireRuntime &runtime, std::string message) {
   if (runtime.mainLoop != nullptr) {
     pw_main_loop_quit(runtime.mainLoop);
   }
-}
-
-static std::string defaultTargetFromMetadata(const char *value) {
-  if (value == nullptr) {
-    return {};
-  }
-  auto *document = yyjson_read(value, std::strlen(value), 0);
-  if (document == nullptr) {
-    return {};
-  }
-  auto *root = yyjson_doc_get_root(document);
-  auto *name = yyjson_is_obj(root) ? yyjson_obj_get(root, "name") : nullptr;
-  auto target = yyjson_is_str(name) ? std::string(yyjson_get_str(name))
-                                    : std::string{};
-  yyjson_doc_free(document);
-  return target;
 }
 
 static std::int32_t parsePriority(const char *value) noexcept {
@@ -224,7 +231,8 @@ static bool parseBooleanProperty(const char *value) noexcept {
          (std::string_view(value) == "true" || std::string_view(value) == "1");
 }
 
-static void requestTrackingSync(PipeWireRuntime &runtime) {
+static void requestTrackingSync(PipeWireRuntime &runtime,
+                                CoreSyncPurpose purpose) {
   const auto sequence = pw_core_sync(runtime.trackingCore, PW_ID_CORE, 0);
   if (sequence < 0) {
     failRuntime(runtime, systemError("cannot synchronize PipeWire registry",
@@ -232,6 +240,41 @@ static void requestTrackingSync(PipeWireRuntime &runtime) {
     return;
   }
   runtime.trackingSyncSequence = sequence;
+  runtime.trackingSyncPurpose = purpose;
+}
+
+static void completeRuntime(PipeWireRuntime &runtime) {
+  runtime.completed = true;
+  pw_main_loop_quit(runtime.mainLoop);
+}
+
+static bool writeEffectiveDefaultSink(
+    PipeWireRuntime &runtime, std::string_view target,
+    DefaultSinkTransition transition, CoreSyncPurpose syncPurpose,
+    std::string_view operation) {
+  if (runtime.defaultMetadata == nullptr) {
+    failRuntime(runtime, "PipeWire default metadata is unavailable");
+    return false;
+  }
+  runtime.defaultMetadataValue =
+      target.empty() ? std::string{} : makeDefaultSinkMetadataValue(target);
+  if (!target.empty() && runtime.defaultMetadataValue.empty()) {
+    failRuntime(runtime, "cannot encode PipeWire default sink metadata");
+    return false;
+  }
+
+  runtime.defaultSinkTransition = transition;
+  runtime.defaultSinkActive.store(false, std::memory_order_release);
+  const auto result = pw_metadata_set_property(
+      runtime.defaultMetadata, PW_ID_CORE, "default.audio.sink",
+      target.empty() ? nullptr : "Spa:String:JSON",
+      target.empty() ? nullptr : runtime.defaultMetadataValue.c_str());
+  if (result < 0) {
+    failRuntime(runtime, systemError(operation, result));
+    return false;
+  }
+  requestTrackingSync(runtime, syncPurpose);
+  return runtime.error.empty();
 }
 
 static void trackingCoreDone(void *data, std::uint32_t id, int sequence) {
@@ -239,9 +282,33 @@ static void trackingCoreDone(void *data, std::uint32_t id, int sequence) {
   if (id != PW_ID_CORE || sequence != runtime.trackingSyncSequence) {
     return;
   }
+  if (runtime.trackingSyncPurpose == CoreSyncPurpose::defaultActivation) {
+    if (runtime.observedDefaultSink != runtime.options.sinkName) {
+      runtime.defaultSinkTransition = DefaultSinkTransition::inactive;
+      maybeActivateDefaultSink(runtime);
+      return;
+    }
+    runtime.defaultSinkTransition = DefaultSinkTransition::active;
+    runtime.defaultSinkActive.store(true, std::memory_order_release);
+    finishReadinessCheck(runtime);
+    return;
+  }
+  if (runtime.trackingSyncPurpose == CoreSyncPurpose::defaultRestoration) {
+    runtime.defaultSinkTransition = DefaultSinkTransition::inactive;
+    runtime.defaultSinkActive.store(false, std::memory_order_release);
+    completeRuntime(runtime);
+    return;
+  }
+
   runtime.trackingReady = true;
   runtime.deviceTracker.commitSelection();
   applyTrackedTarget(runtime);
+  if (runtime.options.manageDefaultSink &&
+      runtime.defaultMetadata == nullptr) {
+    failRuntime(runtime, "PipeWire default metadata is unavailable");
+    return;
+  }
+  maybeActivateDefaultSink(runtime);
 }
 
 static void trackingCoreError(void *data, std::uint32_t, int, int result,
@@ -260,17 +327,30 @@ static int defaultMetadataProperty(void *data, std::uint32_t subject,
     return 0;
   }
   if (key == nullptr) {
+    runtime.observedDefaultSink.clear();
     if (runtime.deviceTracker.setDefaultTarget({}) && runtime.trackingReady) {
       applyTrackedTarget(runtime);
+    }
+    if (runtime.options.manageDefaultSink && !runtime.shutdownRequested &&
+        runtime.defaultSinkTransition == DefaultSinkTransition::active) {
+      runtime.defaultSinkTransition = DefaultSinkTransition::inactive;
+      maybeActivateDefaultSink(runtime);
     }
     return 0;
   }
   if (std::string_view(key) != "default.audio.sink") {
     return 0;
   }
-  if (runtime.deviceTracker.setDefaultTarget(defaultTargetFromMetadata(value)) &&
+  runtime.observedDefaultSink = defaultSinkNameFromMetadata(value);
+  if (runtime.deviceTracker.setDefaultTarget(runtime.observedDefaultSink) &&
       runtime.trackingReady) {
     applyTrackedTarget(runtime);
+  }
+  if (runtime.options.manageDefaultSink && !runtime.shutdownRequested &&
+      runtime.defaultSinkTransition == DefaultSinkTransition::active &&
+      runtime.observedDefaultSink != runtime.options.sinkName) {
+    runtime.defaultSinkTransition = DefaultSinkTransition::inactive;
+    maybeActivateDefaultSink(runtime);
   }
   return 0;
 }
@@ -333,7 +413,7 @@ static void registryGlobal(void *data, std::uint32_t id, std::uint32_t,
                             listenerResult));
     return;
   }
-  requestTrackingSync(runtime);
+  requestTrackingSync(runtime, CoreSyncPurpose::enumeration);
 }
 
 static void registryGlobalRemoved(void *data, std::uint32_t id) {
@@ -344,7 +424,14 @@ static void registryGlobalRemoved(void *data, std::uint32_t id) {
     pw_proxy_destroy(reinterpret_cast<pw_proxy *>(runtime.defaultMetadata));
     runtime.defaultMetadata = nullptr;
     runtime.defaultMetadataId = PW_ID_ANY;
+    runtime.defaultSinkTransition = DefaultSinkTransition::inactive;
+    runtime.defaultSinkActive.store(false, std::memory_order_release);
+    runtime.observedDefaultSink.clear();
     changed = runtime.deviceTracker.setDefaultTarget({}) || changed;
+    if (runtime.shutdownRequested) {
+      completeRuntime(runtime);
+      return;
+    }
   }
   if (changed && runtime.trackingReady) {
     applyTrackedTarget(runtime);
@@ -357,6 +444,11 @@ static bool isReadyState(pw_stream_state state) noexcept {
 
 static void finishReadinessCheck(PipeWireRuntime &runtime) {
   if (!runtime.captureReady || !runtime.playbackReady) {
+    return;
+  }
+  maybeActivateDefaultSink(runtime);
+  if (runtime.options.manageDefaultSink &&
+      !runtime.defaultSinkActive.load(std::memory_order_acquire)) {
     return;
   }
   if (!runtime.readyNotified) {
@@ -681,8 +773,21 @@ static void readinessTimedOut(void *data, std::uint64_t) {
 
 static void interrupted(void *data, int) {
   auto &runtime = *static_cast<PipeWireRuntime *>(data);
-  runtime.completed = true;
-  pw_main_loop_quit(runtime.mainLoop);
+  if (runtime.shutdownRequested) {
+    return;
+  }
+  runtime.shutdownRequested = true;
+  if (!runtime.options.manageDefaultSink ||
+      runtime.defaultSinkTransition == DefaultSinkTransition::inactive ||
+      runtime.defaultMetadata == nullptr) {
+    completeRuntime(runtime);
+    return;
+  }
+  const auto target = currentPlaybackTarget(runtime);
+  static_cast<void>(writeEffectiveDefaultSink(
+      runtime, target, DefaultSinkTransition::restoring,
+      CoreSyncPurpose::defaultRestoration,
+      "cannot restore PipeWire default sink"));
 }
 
 static pw_properties *makeCommonProperties(const PipeWireRuntime &runtime,
@@ -810,12 +915,31 @@ static void applyTrackedTarget(PipeWireRuntime &runtime) {
   if (!target.empty()) {
     createPlaybackStream(runtime, target);
   }
+  maybeActivateDefaultSink(runtime);
+}
+
+static void maybeActivateDefaultSink(PipeWireRuntime &runtime) {
+  if (!runtime.options.manageDefaultSink || runtime.shutdownRequested ||
+      !runtime.trackingReady || !runtime.captureReady ||
+      !runtime.playbackReady ||
+      runtime.defaultSinkTransition == DefaultSinkTransition::activating ||
+      runtime.defaultSinkTransition == DefaultSinkTransition::restoring ||
+      runtime.defaultSinkTransition == DefaultSinkTransition::active ||
+      currentPlaybackTarget(runtime).empty()) {
+    return;
+  }
+  static_cast<void>(writeEffectiveDefaultSink(
+      runtime, runtime.options.sinkName, DefaultSinkTransition::activating,
+      CoreSyncPurpose::defaultActivation,
+      "cannot make PipeTune the PipeWire default sink"));
 }
 
 static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
   return {.activePreset = runtime.activePreset,
           .activePluginCount = runtime.pipeline.activePluginCount(),
           .selectedTarget = currentPlaybackTarget(runtime),
+          .defaultSinkActive =
+              runtime.defaultSinkActive.load(std::memory_order_acquire),
           .overrunFrames = runtime.ring.overrunFrames(),
           .underrunFrames = runtime.ring.underrunFrames(),
           .processingErrors =
@@ -933,7 +1057,7 @@ static bool createStreams(PipeWireRuntime &runtime) {
                                      registryListenerResult));
     return false;
   }
-  requestTrackingSync(runtime);
+  requestTrackingSync(runtime, CoreSyncPurpose::enumeration);
   return runtime.error.empty();
 }
 

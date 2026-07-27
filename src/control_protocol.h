@@ -51,6 +51,8 @@ struct ControlRuntimeStatus {
   std::size_t activePluginCount;
   /** Current physical PipeWire output node name, or empty while unavailable. */
   std::string selectedTarget;
+  /** True after PipeTune's virtual sink became the effective default. */
+  bool defaultSinkActive;
   /** Input frames discarded because the bridge was full. */
   std::uint64_t overrunFrames;
   /** Output frames replaced by silence because the bridge was empty. */

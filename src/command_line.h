@@ -19,6 +19,8 @@ enum class CommandLineAction {
   loadPreset,
   /** Ask a running PipeTune process for its current status. */
   status,
+  /** Restore an available physical sink as the PipeWire default. */
+  restoreDefault,
   /** Print command usage. */
   help,
   /** Print the PipeTune version. */

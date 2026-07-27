@@ -42,6 +42,13 @@ struct PipeWirePipelineOptions {
   std::uint32_t maxFrames;
   /** Inter-stream ring capacity; must be at least maxFrames. */
   std::uint32_t ringCapacityFrames;
+  /**
+   * True to make the virtual sink the effective system default for the run.
+   *
+   * The configured session-manager default is not changed. An orderly signal
+   * restores the selected physical sink before the function returns.
+   */
+  bool manageDefaultSink;
   /** One-shot readiness callback, or null when no notification is needed. */
   PipeWireReadyCallback readyCallback;
   /** Opaque argument passed to readyCallback. */

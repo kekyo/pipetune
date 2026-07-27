@@ -58,6 +58,7 @@ CommandLineParseResult parseCommandLine(
   auto sawPreset = false;
   auto sawLoadPreset = false;
   auto sawStatus = false;
+  auto sawRestoreDefault = false;
   auto sawSocket = false;
   auto sawTarget = false;
   auto sawSinkName = false;
@@ -71,6 +72,14 @@ CommandLineParseResult parseCommandLine(
         return parseError(std::move(options), "duplicate option: --status");
       }
       sawStatus = true;
+      continue;
+    }
+    if (argument == "--restore-default") {
+      if (sawRestoreDefault) {
+        return parseError(std::move(options),
+                          "duplicate option: --restore-default");
+      }
+      sawRestoreDefault = true;
       continue;
     }
     if (argument == "--check") {
@@ -177,11 +186,21 @@ CommandLineParseResult parseCommandLine(
 
   const auto actionCount = static_cast<unsigned>(sawPreset) +
                            static_cast<unsigned>(sawLoadPreset) +
-                           static_cast<unsigned>(sawStatus);
+                           static_cast<unsigned>(sawStatus) +
+                           static_cast<unsigned>(sawRestoreDefault);
   if (actionCount > 1) {
     return parseError(
         std::move(options),
-        "--preset, --load-preset, and --status are mutually exclusive");
+        "top-level action options are mutually exclusive");
+  }
+  if (sawRestoreDefault) {
+    if (sawTarget || sawRate || sawChannels || sawCheck || sawSocket) {
+      return parseError(
+          std::move(options),
+          "only --sink-name may modify --restore-default");
+    }
+    options.action = CommandLineAction::restoreDefault;
+    return {.options = std::move(options), .error = {}};
   }
   if (sawLoadPreset || sawStatus) {
     if (sawTarget || sawSinkName || sawRate || sawChannels || sawCheck) {
@@ -205,6 +224,7 @@ std::string_view commandLineUsage() noexcept {
          "           [--rate HZ] [--channels COUNT] [--socket PATH] [--check]\n"
          "  pipetune --load-preset FILE [--socket PATH]\n"
          "  pipetune --status [--socket PATH]\n"
+         "  pipetune --restore-default [--sink-name NAME]\n"
          "  pipetune --version\n"
          "  pipetune --help\n"
          "\n"
@@ -213,6 +233,8 @@ std::string_view commandLineUsage() noexcept {
          "  --load-preset FILE\n"
          "                    Replace the preset in a running PipeTune process.\n"
          "  --status          Print the running PipeTune process status as JSON.\n"
+         "  --restore-default\n"
+         "                    Restore an available physical PipeWire sink.\n"
          "  --socket PATH     Use this control socket instead of the XDG default.\n"
          "  --target OBJECT   Send processed audio to this PipeWire sink.\n"
          "                    The current default sink is used when omitted.\n"

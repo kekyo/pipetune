@@ -3,6 +3,7 @@
 
 #include "control_protocol.h"
 #include "control_socket.h"
+#include "default_sink_restore.h"
 
 #include <yyjson.h>
 
@@ -57,7 +58,8 @@ static void reportReadyToParent(void *userData) {
 
 static bool responseHasLivePreset(std::string_view response,
                                   const std::filesystem::path &presetPath,
-                                  std::size_t expectedWarningCount) {
+                                  std::size_t expectedWarningCount,
+                                  bool expectedDefaultSinkActive) {
   auto *document = yyjson_read(response.data(), response.size(), 0);
   if (document == nullptr) {
     return false;
@@ -66,11 +68,17 @@ static bool responseHasLivePreset(std::string_view response,
   auto *preset = yyjson_is_obj(root) ? yyjson_obj_get(root, "preset") : nullptr;
   auto *warnings =
       yyjson_is_obj(root) ? yyjson_obj_get(root, "warnings") : nullptr;
+  auto *defaultSinkActive =
+      yyjson_is_obj(root)
+          ? yyjson_obj_get(root, "defaultSinkActive")
+          : nullptr;
   const auto matches =
       yyjson_is_str(preset) &&
       std::string_view(yyjson_get_str(preset), yyjson_get_len(preset)) ==
       presetPath.string() &&
       yyjson_get_uint(yyjson_obj_get(root, "activePluginCount")) == 1 &&
+      yyjson_is_bool(defaultSinkActive) &&
+      yyjson_get_bool(defaultSinkActive) == expectedDefaultSinkActive &&
       yyjson_is_arr(warnings) &&
       yyjson_arr_size(warnings) == expectedWarningCount;
   yyjson_doc_free(document);
@@ -108,6 +116,7 @@ static bool testOrderlySignalShutdown(
          .channelCount = 2,
          .maxFrames = 8192,
          .ringCapacityFrames = 16384,
+         .manageDefaultSink = true,
          .readyCallback = reportReadyToParent,
          .readyUserData = &descriptors[1]},
         pipetune::PipeWireRunMode::untilInterrupted);
@@ -145,7 +154,8 @@ static bool testOrderlySignalShutdown(
   if (!check(load.error.empty(), load.error) ||
       !check(pipetune::inspectControlResponse(load.response).success,
              "live preset request failed") ||
-      !check(responseHasLivePreset(load.response, replacementPresetPath, 1),
+      !check(responseHasLivePreset(load.response, replacementPresetPath, 1,
+                                   true),
              "live preset response does not report the active replacement")) {
     kill(child, SIGTERM);
     auto childStatus = 0;
@@ -164,7 +174,7 @@ static bool testOrderlySignalShutdown(
              "missing live preset must be rejected") ||
       !check(statusAfterFailure.error.empty(), statusAfterFailure.error) ||
       !check(responseHasLivePreset(statusAfterFailure.response,
-                                   replacementPresetPath, 0),
+                                   replacementPresetPath, 0, true),
              "failed loading must leave the previous preset active")) {
     kill(child, SIGTERM);
     auto childStatus = 0;
@@ -183,9 +193,92 @@ static bool testOrderlySignalShutdown(
   do {
     waitResult = waitpid(child, &childStatus, 0);
   } while (waitResult < 0 && errno == EINTR);
-  return check(waitResult == child && WIFEXITED(childStatus) &&
-                   WEXITSTATUS(childStatus) == 0,
-               "SIGTERM must stop the PipeWire pipeline orderly");
+  if (!check(waitResult == child && WIFEXITED(childStatus) &&
+                 WEXITSTATUS(childStatus) == 0,
+             "SIGTERM must stop the PipeWire pipeline orderly")) {
+    return false;
+  }
+  const auto restored = pipetune::restorePipeWireDefaultSink(
+      "pipetune_signal_test_" + std::string(processId));
+  return check(restored.success, restored.error) &&
+         check(restored.selectedTarget !=
+                   "pipetune_signal_test_" + std::string(processId),
+               "orderly shutdown must leave a physical default sink");
+}
+
+static bool testCrashRecovery(
+    std::unique_ptr<pipetune::DspPipeline> pipeline,
+    std::string_view processId,
+    const std::filesystem::path &initialPresetPath) {
+  auto descriptors = std::array<int, 2>{-1, -1};
+  if (!check(pipe(descriptors.data()) == 0,
+             "cannot create readiness pipe for crash test")) {
+    return false;
+  }
+
+  const auto sinkName =
+      "pipetune_crash_test_" + std::string(processId);
+  const auto child = fork();
+  if (child < 0) {
+    close(descriptors[0]);
+    close(descriptors[1]);
+    return check(false, "cannot fork PipeWire crash test");
+  }
+  if (child == 0) {
+    close(descriptors[0]);
+    const auto result = pipetune::runPipeWirePipeline(
+        std::move(pipeline),
+        {.sinkName = sinkName,
+         .sinkDescription = "PipeTune crash integration test",
+         .targetObject = "",
+         .initialPresetPath = initialPresetPath,
+         .controlSocketPath = {},
+         .sampleRate = 48000,
+         .channelCount = 2,
+         .maxFrames = 8192,
+         .ringCapacityFrames = 16384,
+         .manageDefaultSink = true,
+         .readyCallback = reportReadyToParent,
+         .readyUserData = &descriptors[1]},
+        pipetune::PipeWireRunMode::untilInterrupted);
+    close(descriptors[1]);
+    _exit(result.success ? 0 : 1);
+  }
+
+  close(descriptors[1]);
+  auto marker = char{0};
+  auto readResult = ssize_t{-1};
+  do {
+    readResult = read(descriptors[0], &marker, 1);
+  } while (readResult < 0 && errno == EINTR);
+  close(descriptors[0]);
+  if (readResult != 1 || marker != 'R') {
+    auto childStatus = 0;
+    waitpid(child, &childStatus, 0);
+    return check(false, "crash-test pipeline did not report readiness");
+  }
+
+  if (kill(child, SIGKILL) != 0) {
+    auto childStatus = 0;
+    waitpid(child, &childStatus, 0);
+    return check(false, "cannot kill child PipeWire pipeline");
+  }
+  auto childStatus = 0;
+  auto waitResult = pid_t{-1};
+  do {
+    waitResult = waitpid(child, &childStatus, 0);
+  } while (waitResult < 0 && errno == EINTR);
+  if (!check(waitResult == child && WIFSIGNALED(childStatus) &&
+                 WTERMSIG(childStatus) == SIGKILL,
+             "crash-test child must terminate by SIGKILL")) {
+    return false;
+  }
+
+  const auto restored =
+      pipetune::restorePipeWireDefaultSink(sinkName);
+  return check(restored.success, restored.error) &&
+         check(restored.selectedTarget != sinkName,
+               "crash recovery must select a physical default sink");
 }
 
 int main() {
@@ -228,6 +321,16 @@ int main() {
     return 1;
   }
 
+  auto crashPipeline = pipetune::loadDspPipeline(
+      presetPath,
+      {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 8192});
+  if (!check(crashPipeline.pipeline != nullptr, crashPipeline.error) ||
+      !testCrashRecovery(std::move(crashPipeline.pipeline), processId,
+                         presetPath)) {
+    std::filesystem::remove_all(directory);
+    return 1;
+  }
+
   auto readyPipeline = pipetune::loadDspPipeline(
       presetPath,
       {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 8192});
@@ -247,6 +350,7 @@ int main() {
        .channelCount = 2,
        .maxFrames = 8192,
        .ringCapacityFrames = 16384,
+       .manageDefaultSink = false,
        .readyCallback = countReadyNotification,
        .readyUserData = &readyNotifications},
       pipetune::PipeWireRunMode::untilReady);

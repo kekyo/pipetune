@@ -144,6 +144,8 @@ std::string makeControlSuccessResponse(
                                status.activePluginCount) ||
       !addString(document.get(), root, "selectedTarget",
                  status.selectedTarget) ||
+      !yyjson_mut_obj_add_bool(document.get(), root, "defaultSinkActive",
+                               status.defaultSinkActive) ||
       !yyjson_mut_obj_add_uint(document.get(), root, "overrunFrames",
                                status.overrunFrames) ||
       !yyjson_mut_obj_add_uint(document.get(), root, "underrunFrames",

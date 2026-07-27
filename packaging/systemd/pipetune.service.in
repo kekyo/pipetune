@@ -1,0 +1,18 @@
+[Unit]
+Description=System-wide EffeTune DSP for PipeWire
+After=pipewire.service wireplumber.service
+Wants=pipewire.service wireplumber.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/pipetune/environment
+ExecStart=@PIPETUNE_INSTALLED_EXECUTABLE@ --preset ${PIPETUNE_PRESET}
+ExecStopPost=-@PIPETUNE_INSTALLED_EXECUTABLE@ --restore-default --sink-name pipetune_sink
+Restart=on-failure
+RestartSec=1s
+TimeoutStopSec=10s
+UMask=0077
+
+[Install]
+WantedBy=default.target

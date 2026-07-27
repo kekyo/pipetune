@@ -64,6 +64,7 @@ static bool testSuccessResponse() {
       {.activePreset = "/tmp/live.effetune_preset",
        .activePluginCount = 7,
        .selectedTarget = "alsa_output.speaker",
+       .defaultSinkActive = true,
        .overrunFrames = 11,
        .underrunFrames = 12,
        .processingErrors = 13},
@@ -88,6 +89,7 @@ static bool testSuccessResponse() {
       std::string_view(
           yyjson_get_str(yyjson_obj_get(root, "selectedTarget"))) ==
           "alsa_output.speaker" &&
+      yyjson_get_bool(yyjson_obj_get(root, "defaultSinkActive")) &&
       yyjson_get_uint(yyjson_obj_get(root, "overrunFrames")) == 11 &&
       yyjson_get_uint(yyjson_obj_get(root, "underrunFrames")) == 12 &&
       yyjson_get_uint(yyjson_obj_get(root, "processingErrors")) == 13 &&
