@@ -25,8 +25,11 @@ static bool testAutomaticDefaultAndFallback() {
   if (!check(tracker.updateDevice(device(10, "speaker", "100", 100)),
              "first physical sink must become selected") ||
       !check(tracker.selectedTarget() == "speaker",
-             "first automatic target differs") ||
-      !check(!tracker.updateDevice(device(20, "headphones", "200", 200)),
+             "first automatic target differs")) {
+    return false;
+  }
+  tracker.commitSelection();
+  if (!check(!tracker.updateDevice(device(20, "headphones", "200", 200)),
              "adding a device must not interrupt a usable current target") ||
       !check(tracker.setDefaultTarget("headphones"),
              "physical default change must change target") ||
@@ -42,6 +45,18 @@ static bool testAutomaticDefaultAndFallback() {
          check(tracker.removeDevice(10), "removing the last sink must clear target") &&
          check(tracker.selectedTarget().empty(),
                "no target may remain after all physical sinks disappear");
+}
+
+static bool testInitialEnumerationChoosesHighestPriority() {
+  auto tracker = pipetune::OutputDeviceTracker("pipetune_sink", "");
+  return check(tracker.updateDevice(device(20, "low", "20", 100)),
+               "first enumerated sink must create an initial candidate") &&
+         check(tracker.updateDevice(device(30, "high", "30", 300)),
+               "a better initial candidate must replace a lower priority one") &&
+         check(tracker.updateDevice(device(10, "high-earlier", "10", 300)),
+               "lower global id must break an initial priority tie") &&
+         check(tracker.selectedTarget() == "high-earlier",
+               "initial enumeration must select the best physical sink");
 }
 
 static bool testVirtualAndSelfAreExcluded() {
@@ -114,6 +129,7 @@ static bool testInitialPriorityTieBreak() {
 
 int main() {
   const auto passed = testAutomaticDefaultAndFallback() &&
+                      testInitialEnumerationChoosesHighestPriority() &&
                       testVirtualAndSelfAreExcluded() &&
                       testExplicitTargetWaitsAndReturns() &&
                       testInitialPriorityTieBreak();

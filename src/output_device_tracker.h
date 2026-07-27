@@ -62,6 +62,15 @@ public:
    */
   bool setDefaultTarget(std::string nodeName);
 
+  /**
+   * Marks initial registry enumeration complete.
+   *
+   * Before this call fallback selection follows every newly discovered
+   * priority improvement. Afterwards a usable current fallback is retained
+   * until the session default changes or the device disappears.
+   */
+  void commitSelection() noexcept;
+
   /** Returns the selected physical node.name, or empty when none is usable. */
   std::string_view selectedTarget() const noexcept;
   /** Returns true when an explicit target was requested. */
@@ -76,6 +85,7 @@ private:
   std::string defaultTarget_;
   std::string selectedTarget_;
   std::unordered_map<std::uint32_t, OutputDevice> devices_;
+  bool selectionCommitted_;
 };
 
 } // namespace pipetune

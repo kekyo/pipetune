@@ -11,7 +11,7 @@ OutputDeviceTracker::OutputDeviceTracker(std::string excludedNodeName,
                                          std::string requestedTarget)
     : excludedNodeName_(std::move(excludedNodeName)),
       requestedTarget_(std::move(requestedTarget)), defaultTarget_(),
-      selectedTarget_(), devices_() {}
+      selectedTarget_(), devices_(), selectionCommitted_(false) {}
 
 bool OutputDeviceTracker::updateDevice(OutputDevice device) {
   devices_.insert_or_assign(device.id, std::move(device));
@@ -28,6 +28,10 @@ bool OutputDeviceTracker::removeDevice(std::uint32_t id) {
 bool OutputDeviceTracker::setDefaultTarget(std::string nodeName) {
   defaultTarget_ = std::move(nodeName);
   return recomputeSelection();
+}
+
+void OutputDeviceTracker::commitSelection() noexcept {
+  selectionCommitted_ = true;
 }
 
 std::string_view OutputDeviceTracker::selectedTarget() const noexcept {
@@ -65,7 +69,8 @@ bool OutputDeviceTracker::recomputeSelection() {
       }
     }
 
-    if (nextTarget.empty() && !selectedTarget_.empty()) {
+    if (selectionCommitted_ && nextTarget.empty() &&
+        !selectedTarget_.empty()) {
       for (const auto &[id, device] : devices_) {
         static_cast<void>(id);
         if (isEligible(device) && device.name == selectedTarget_) {

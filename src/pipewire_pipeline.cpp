@@ -240,6 +240,7 @@ static void trackingCoreDone(void *data, std::uint32_t id, int sequence) {
     return;
   }
   runtime.trackingReady = true;
+  runtime.deviceTracker.commitSelection();
   applyTrackedTarget(runtime);
 }
 
