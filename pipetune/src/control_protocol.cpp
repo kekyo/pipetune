@@ -1,10 +1,11 @@
-#include "control_protocol.h"
+#include "pipetune/control_protocol.h"
 
 #include <yyjson.h>
 
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -94,6 +95,14 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
     return {.request = {.command = ControlCommand::status, .presetPath = {}},
             .error = {}};
   }
+  if (command == "subscribe") {
+    if (yyjson_obj_size(root) != 1) {
+      return requestError("subscribe request accepts only the command field");
+    }
+    return {.request = {.command = ControlCommand::subscribe,
+                        .presetPath = {}},
+            .error = {}};
+  }
   if (command != "load") {
     return requestError("unsupported control command");
   }
@@ -119,6 +128,10 @@ std::string makeStatusControlRequest() {
   return R"json({"command":"status"})json";
 }
 
+std::string makeSubscribeControlRequest() {
+  return R"json({"command":"subscribe"})json";
+}
+
 std::string
 makeLoadPresetControlRequest(const std::filesystem::path &presetPath) {
   yyjson_mut_val *root = nullptr;
@@ -132,13 +145,15 @@ makeLoadPresetControlRequest(const std::filesystem::path &presetPath) {
   return writeDocument(document.get());
 }
 
-std::string makeControlSuccessResponse(
+static std::string makeControlStatusMessage(
     const ControlRuntimeStatus &status,
-    std::span<const PipelineWarning> warnings) {
+    std::span<const ControlWarning> warnings, bool statusEvent) {
   yyjson_mut_val *root = nullptr;
   auto document = createObjectDocument(root);
   if (document == nullptr ||
       !yyjson_mut_obj_add_bool(document.get(), root, "ok", true) ||
+      (statusEvent &&
+       !yyjson_mut_obj_add_str(document.get(), root, "event", "status")) ||
       !addString(document.get(), root, "preset", status.activePreset) ||
       !yyjson_mut_obj_add_uint(document.get(), root, "activePluginCount",
                                status.activePluginCount) ||
@@ -177,6 +192,17 @@ std::string makeControlSuccessResponse(
              : encoded;
 }
 
+std::string makeControlSuccessResponse(
+    const ControlRuntimeStatus &status,
+    std::span<const ControlWarning> warnings) {
+  return makeControlStatusMessage(status, warnings, false);
+}
+
+std::string makeControlStatusEvent(const ControlRuntimeStatus &status) {
+  return makeControlStatusMessage(
+      status, std::span<const ControlWarning>{}, true);
+}
+
 std::string makeControlErrorResponse(std::string_view error) {
   yyjson_mut_val *root = nullptr;
   auto document = createObjectDocument(root);
@@ -189,6 +215,157 @@ std::string makeControlErrorResponse(std::string_view error) {
   return encoded.empty()
              ? R"json({"ok":false,"error":"cannot encode control response"})json"
              : encoded;
+}
+
+static ControlResponseParseResult responseError(std::string error) {
+  return {.valid = false,
+          .success = false,
+          .kind = ControlResponseKind::response,
+          .status = {.activePreset = {},
+                     .activePluginCount = 0,
+                     .selectedTarget = {},
+                     .defaultSinkActive = false,
+                     .overrunFrames = 0,
+                     .underrunFrames = 0,
+                     .processingErrors = 0},
+          .warnings = {},
+          .error = std::move(error)};
+}
+
+static bool readStringField(yyjson_val *object, const char *key,
+                            std::string &value) {
+  auto *field = yyjson_obj_get(object, key);
+  if (!yyjson_is_str(field)) {
+    return false;
+  }
+  value.assign(yyjson_get_str(field), yyjson_get_len(field));
+  return true;
+}
+
+static bool readSizeField(yyjson_val *object, const char *key,
+                          std::size_t &value) {
+  auto *field = yyjson_obj_get(object, key);
+  if (!yyjson_is_uint(field) ||
+      yyjson_get_uint(field) >
+          static_cast<std::uint64_t>(
+              std::numeric_limits<std::size_t>::max())) {
+    return false;
+  }
+  value = static_cast<std::size_t>(yyjson_get_uint(field));
+  return true;
+}
+
+static bool readCounterField(yyjson_val *object, const char *key,
+                             std::uint64_t &value) {
+  auto *field = yyjson_obj_get(object, key);
+  if (!yyjson_is_uint(field)) {
+    return false;
+  }
+  value = yyjson_get_uint(field);
+  return true;
+}
+
+ControlResponseParseResult parseControlResponse(std::string_view json) {
+  auto document =
+      JsonDocument(yyjson_read(json.data(), json.size(), YYJSON_READ_NOFLAG));
+  if (document == nullptr) {
+    return responseError("control response is not valid JSON");
+  }
+  auto *root = yyjson_doc_get_root(document.get());
+  if (!yyjson_is_obj(root)) {
+    return responseError("control response root must be an object");
+  }
+  auto *ok = yyjson_obj_get(root, "ok");
+  if (!yyjson_is_bool(ok)) {
+    return responseError("control response lacks a boolean ok field");
+  }
+
+  auto kind = ControlResponseKind::response;
+  auto *event = yyjson_obj_get(root, "event");
+  if (event != nullptr) {
+    if (!yyjson_is_str(event) ||
+        std::string_view(yyjson_get_str(event), yyjson_get_len(event)) !=
+            "status") {
+      return responseError("control response has an unsupported event");
+    }
+    kind = ControlResponseKind::statusEvent;
+  }
+
+  if (!yyjson_get_bool(ok)) {
+    auto error = std::string{};
+    if (kind != ControlResponseKind::response) {
+      return responseError("failed control response must not be an event");
+    }
+    if (!readStringField(root, "error", error)) {
+      return responseError("failed control response lacks an error string");
+    }
+    return {.valid = true,
+            .success = false,
+            .kind = kind,
+            .status = {.activePreset = {},
+                       .activePluginCount = 0,
+                       .selectedTarget = {},
+                       .defaultSinkActive = false,
+                       .overrunFrames = 0,
+                       .underrunFrames = 0,
+                       .processingErrors = 0},
+            .warnings = {},
+            .error = std::move(error)};
+  }
+
+  auto status = ControlRuntimeStatus{
+      .activePreset = {},
+      .activePluginCount = 0,
+      .selectedTarget = {},
+      .defaultSinkActive = false,
+      .overrunFrames = 0,
+      .underrunFrames = 0,
+      .processingErrors = 0,
+  };
+  auto *defaultSinkActive = yyjson_obj_get(root, "defaultSinkActive");
+  if (!readStringField(root, "preset", status.activePreset) ||
+      !readSizeField(root, "activePluginCount",
+                     status.activePluginCount) ||
+      !readStringField(root, "selectedTarget", status.selectedTarget) ||
+      !yyjson_is_bool(defaultSinkActive) ||
+      !readCounterField(root, "overrunFrames", status.overrunFrames) ||
+      !readCounterField(root, "underrunFrames", status.underrunFrames) ||
+      !readCounterField(root, "processingErrors",
+                        status.processingErrors)) {
+    return responseError("successful control response has invalid status");
+  }
+  status.defaultSinkActive = yyjson_get_bool(defaultSinkActive);
+
+  auto *warningArray = yyjson_obj_get(root, "warnings");
+  if (!yyjson_is_arr(warningArray)) {
+    return responseError(
+        "successful control response lacks a warnings array");
+  }
+  auto warnings = std::vector<ControlWarning>{};
+  warnings.reserve(yyjson_arr_size(warningArray));
+  for (auto index = std::size_t{0}; index < yyjson_arr_size(warningArray);
+       ++index) {
+    auto *item = yyjson_arr_get(warningArray, index);
+    auto warning = ControlWarning{
+        .nodeIndex = 0,
+        .pluginName = {},
+        .reason = {},
+    };
+    if (!yyjson_is_obj(item) ||
+        !readSizeField(item, "nodeIndex", warning.nodeIndex) ||
+        !readStringField(item, "pluginName", warning.pluginName) ||
+        !readStringField(item, "reason", warning.reason)) {
+      return responseError(
+          "successful control response has an invalid warning");
+    }
+    warnings.push_back(std::move(warning));
+  }
+  return {.valid = true,
+          .success = true,
+          .kind = kind,
+          .status = std::move(status),
+          .warnings = std::move(warnings),
+          .error = {}};
 }
 
 ControlResponseInspection inspectControlResponse(std::string_view json) {

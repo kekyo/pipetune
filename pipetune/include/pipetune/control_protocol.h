@@ -1,13 +1,13 @@
 #ifndef PIPETUNE_CONTROL_PROTOCOL_H
 #define PIPETUNE_CONTROL_PROTOCOL_H
 
-#include "pipetune/dsp_pipeline.h"
-
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace pipetune {
 
@@ -18,7 +18,9 @@ enum class ControlCommand {
   /** Return the running pipeline status. */
   status,
   /** Build and activate a preset without stopping audio. */
-  loadPreset
+  loadPreset,
+  /** Keep the connection open and publish status changes. */
+  subscribe
 };
 
 /**
@@ -27,7 +29,7 @@ enum class ControlCommand {
 struct ControlRequest {
   /** Requested operation. */
   ControlCommand command;
-  /** Preset path for loadPreset, or empty for status. */
+  /** Preset path for loadPreset, or empty for other commands. */
   std::filesystem::path presetPath;
 };
 
@@ -62,6 +64,46 @@ struct ControlRuntimeStatus {
 };
 
 /**
+ * Describes one preset node omitted while loading a pipeline.
+ */
+struct ControlWarning {
+  /** Zero-based node index in the preset graph. */
+  std::size_t nodeIndex;
+  /** Preset plugin name. */
+  std::string pluginName;
+  /** Human-readable reason the node was omitted. */
+  std::string reason;
+};
+
+/**
+ * Identifies an ordinary reply or an asynchronous status publication.
+ */
+enum class ControlResponseKind {
+  /** Reply to a status or load request. */
+  response,
+  /** Status published on a subscription connection. */
+  statusEvent
+};
+
+/**
+ * Reports a fully parsed control response.
+ */
+struct ControlResponseParseResult {
+  /** True when all required protocol fields are valid. */
+  bool valid;
+  /** Value of the response's ok field when valid is true. */
+  bool success;
+  /** Ordinary response or subscribed status event. */
+  ControlResponseKind kind;
+  /** Runtime status for a successful response. */
+  ControlRuntimeStatus status;
+  /** Preset warnings for a successful response. */
+  std::vector<ControlWarning> warnings;
+  /** Remote diagnostic, or a local protocol diagnostic when invalid. */
+  std::string error;
+};
+
+/**
  * Reports whether a JSON control response can be used by a client.
  */
 struct ControlResponseInspection {
@@ -84,6 +126,9 @@ ControlRequestParseResult parseControlRequest(std::string_view json);
 /** Returns a JSON status request without framing newline. */
 std::string makeStatusControlRequest();
 
+/** Returns a JSON subscription request without framing newline. */
+std::string makeSubscribeControlRequest();
+
 /**
  * Returns a JSON live-preset request without framing newline.
  *
@@ -102,7 +147,15 @@ makeLoadPresetControlRequest(const std::filesystem::path &presetPath);
  */
 std::string makeControlSuccessResponse(
     const ControlRuntimeStatus &status,
-    std::span<const PipelineWarning> warnings);
+    std::span<const ControlWarning> warnings);
+
+/**
+ * Returns a subscribed status event without framing newline.
+ *
+ * @param status Current daemon status.
+ * @return Encoded JSON event.
+ */
+std::string makeControlStatusEvent(const ControlRuntimeStatus &status);
 
 /**
  * Returns a failed response without framing newline.
@@ -111,6 +164,14 @@ std::string makeControlSuccessResponse(
  * @return Encoded JSON response.
  */
 std::string makeControlErrorResponse(std::string_view error);
+
+/**
+ * Parses and validates one complete server response or status event.
+ *
+ * @param json Complete JSON message without framing newline.
+ * @return Parsed status, warnings, kind, and any diagnostic.
+ */
+ControlResponseParseResult parseControlResponse(std::string_view json);
 
 /**
  * Validates the success envelope of one server response.

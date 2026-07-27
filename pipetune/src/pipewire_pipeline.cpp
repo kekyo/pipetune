@@ -1,11 +1,11 @@
 #include "pipetune/pipewire_pipeline.h"
 
 #include "audio_bridge.h"
-#include "control_protocol.h"
-#include "control_socket.h"
 #include "default_sink_restore.h"
 #include "dsp_pipeline_slot.h"
 #include "output_device_tracker.h"
+#include "pipetune/control_protocol.h"
+#include "pipetune/control_socket.h"
 
 #include <pipewire/pipewire.h>
 #include <pipewire/extensions/metadata.h>
@@ -206,6 +206,10 @@ static std::string currentPlaybackTarget(PipeWireRuntime &runtime) {
   return runtime.playbackTarget;
 }
 
+static void requestControlStatusUpdate(PipeWireRuntime &runtime) {
+  publishControlStatus(runtime.controlServer.get());
+}
+
 static void failRuntime(PipeWireRuntime &runtime, std::string message) {
   if (!runtime.error.empty()) {
     return;
@@ -265,6 +269,7 @@ static bool writeEffectiveDefaultSink(
 
   runtime.defaultSinkTransition = transition;
   runtime.defaultSinkActive.store(false, std::memory_order_release);
+  requestControlStatusUpdate(runtime);
   const auto result = pw_metadata_set_property(
       runtime.defaultMetadata, PW_ID_CORE, "default.audio.sink",
       target.empty() ? nullptr : "Spa:String:JSON",
@@ -290,12 +295,14 @@ static void trackingCoreDone(void *data, std::uint32_t id, int sequence) {
     }
     runtime.defaultSinkTransition = DefaultSinkTransition::active;
     runtime.defaultSinkActive.store(true, std::memory_order_release);
+    requestControlStatusUpdate(runtime);
     finishReadinessCheck(runtime);
     return;
   }
   if (runtime.trackingSyncPurpose == CoreSyncPurpose::defaultRestoration) {
     runtime.defaultSinkTransition = DefaultSinkTransition::inactive;
     runtime.defaultSinkActive.store(false, std::memory_order_release);
+    requestControlStatusUpdate(runtime);
     completeRuntime(runtime);
     return;
   }
@@ -426,6 +433,7 @@ static void registryGlobalRemoved(void *data, std::uint32_t id) {
     runtime.defaultMetadataId = PW_ID_ANY;
     runtime.defaultSinkTransition = DefaultSinkTransition::inactive;
     runtime.defaultSinkActive.store(false, std::memory_order_release);
+    requestControlStatusUpdate(runtime);
     runtime.observedDefaultSink.clear();
     changed = runtime.deviceTracker.setDefaultTarget({}) || changed;
     if (runtime.shutdownRequested) {
@@ -912,6 +920,7 @@ static void applyTrackedTarget(PipeWireRuntime &runtime) {
     auto lock = std::scoped_lock(runtime.playbackTargetMutex);
     runtime.playbackTarget = target;
   }
+  requestControlStatusUpdate(runtime);
   if (!target.empty()) {
     createPlaybackStream(runtime, target);
   }
@@ -946,15 +955,33 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
               runtime.processingErrors.load(std::memory_order_relaxed)};
 }
 
-static std::string handleControlRequest(std::string_view message,
-                                        void *userData) {
+static ControlMessageResult closeControlResponse(std::string response,
+                                                 bool publishStatus) {
+  return {.response = std::move(response),
+          .connectionMode = ControlConnectionMode::close,
+          .publishStatus = publishStatus};
+}
+
+static std::string provideControlStatus(void *userData) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(userData);
+  return makeControlStatusEvent(controlStatus(runtime));
+}
+
+static ControlMessageResult handleControlRequest(std::string_view message,
+                                                 void *userData) {
   auto &runtime = *static_cast<PipeWireRuntime *>(userData);
   const auto request = parseControlRequest(message);
   if (!request.error.empty()) {
-    return makeControlErrorResponse(request.error);
+    return closeControlResponse(makeControlErrorResponse(request.error),
+                                false);
+  }
+  if (request.request.command == ControlCommand::subscribe) {
+    return {.response = provideControlStatus(&runtime),
+            .connectionMode = ControlConnectionMode::subscribe,
+            .publishStatus = false};
   }
 
-  auto warnings = std::vector<PipelineWarning>{};
+  auto warnings = std::vector<ControlWarning>{};
   if (request.request.command == ControlCommand::loadPreset) {
     auto loaded = loadDspPipeline(
         request.request.presetPath,
@@ -962,21 +989,35 @@ static std::string handleControlRequest(std::string_view message,
          .maxChannels = runtime.options.channelCount,
          .maxFrames = runtime.options.maxFrames});
     if (loaded.pipeline == nullptr) {
-      return makeControlErrorResponse(loaded.error);
+      return closeControlResponse(makeControlErrorResponse(loaded.error),
+                                  false);
     }
-    warnings = std::move(loaded.warnings);
+    warnings.reserve(loaded.warnings.size());
+    for (auto &warning : loaded.warnings) {
+      warnings.push_back({.nodeIndex = warning.nodeIndex,
+                          .pluginName = std::move(warning.pluginName),
+                          .reason = std::move(warning.reason)});
+    }
     runtime.pipeline.replace(std::move(loaded.pipeline));
     runtime.activePreset = request.request.presetPath.string();
+    return closeControlResponse(
+        makeControlSuccessResponse(controlStatus(runtime), warnings), true);
   }
-  return makeControlSuccessResponse(controlStatus(runtime), warnings);
+  return closeControlResponse(
+      makeControlSuccessResponse(controlStatus(runtime), warnings), false);
 }
 
 static bool createControlServer(PipeWireRuntime &runtime) {
   if (runtime.options.controlSocketPath.empty()) {
     return true;
   }
-  auto started = startControlServer(runtime.options.controlSocketPath,
-                                    handleControlRequest, &runtime);
+  const auto options = ControlServerOptions{
+      .handler = handleControlRequest,
+      .statusProvider = provideControlStatus,
+      .userData = &runtime,
+  };
+  auto started =
+      startControlServer(runtime.options.controlSocketPath, options);
   if (started.server == nullptr) {
     failRuntime(runtime,
                 "cannot start PipeTune control server: " + started.error);

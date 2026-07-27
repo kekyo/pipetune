@@ -88,10 +88,21 @@ else()
 endif()
 
 add_library(
+  pipetune_control STATIC
+  src/control_protocol.cpp
+  src/control_socket.cpp)
+target_include_directories(pipetune_control PUBLIC include)
+target_link_libraries(pipetune_control PUBLIC yyjson PRIVATE Threads::Threads)
+if(MSVC)
+  target_compile_options(pipetune_control PRIVATE /W4 /WX)
+else()
+  target_compile_options(
+    pipetune_control PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+
+add_library(
   pipetune_pipewire STATIC
   src/command_line.cpp
-  src/control_protocol.cpp
-  src/control_socket.cpp
   src/default_sink_restore.cpp
   src/dsp_pipeline_slot.cpp
   src/output_device_tracker.cpp
@@ -99,7 +110,7 @@ add_library(
 target_include_directories(pipetune_pipewire PUBLIC include PRIVATE src)
 target_link_libraries(
   pipetune_pipewire
-  PUBLIC pipetune_core
+  PUBLIC pipetune_core pipetune_control
   PRIVATE PkgConfig::PIPEWIRE Threads::Threads)
 if(MSVC)
   target_compile_options(pipetune_pipewire PRIVATE /W4 /WX)
@@ -269,9 +280,8 @@ if(BUILD_TESTING)
   add_executable(
     pipetune_control_protocol_tests
     test/control_protocol_test.cpp)
-  target_include_directories(pipetune_control_protocol_tests PRIVATE src)
   target_link_libraries(
-    pipetune_control_protocol_tests PRIVATE pipetune_pipewire)
+    pipetune_control_protocol_tests PRIVATE pipetune_control)
   if(MSVC)
     target_compile_options(pipetune_control_protocol_tests PRIVATE /W4 /WX)
   else()
@@ -286,9 +296,8 @@ if(BUILD_TESTING)
   add_executable(
     pipetune_control_socket_tests
     test/control_socket_test.cpp)
-  target_include_directories(pipetune_control_socket_tests PRIVATE src)
   target_link_libraries(
-    pipetune_control_socket_tests PRIVATE pipetune_pipewire Threads::Threads)
+    pipetune_control_socket_tests PRIVATE pipetune_control Threads::Threads)
   if(MSVC)
     target_compile_options(pipetune_control_socket_tests PRIVATE /W4 /WX)
   else()

@@ -1,4 +1,4 @@
-#include "control_protocol.h"
+#include "pipetune/control_protocol.h"
 
 #include <yyjson.h>
 
@@ -23,6 +23,17 @@ static bool testRequests() {
              "status request command differs") ||
       !check(status.request.presetPath.empty(),
              "status request must not contain a preset")) {
+    return false;
+  }
+
+  const auto subscribeJson = pipetune::makeSubscribeControlRequest();
+  const auto subscribe = pipetune::parseControlRequest(subscribeJson);
+  if (!check(subscribe.error.empty(), subscribe.error) ||
+      !check(subscribe.request.command ==
+                 pipetune::ControlCommand::subscribe,
+             "subscribe request command differs") ||
+      !check(subscribe.request.presetPath.empty(),
+             "subscribe request must not contain a preset")) {
     return false;
   }
 
@@ -56,10 +67,10 @@ static bool testRejectedRequests() {
 }
 
 static bool testSuccessResponse() {
-  const auto warnings = std::array<pipetune::PipelineWarning, 1>{
-      pipetune::PipelineWarning{.nodeIndex = 3,
-                                .pluginName = "Future DSP",
-                                .reason = "not available"}};
+  const auto warnings = std::array<pipetune::ControlWarning, 1>{
+      pipetune::ControlWarning{.nodeIndex = 3,
+                               .pluginName = "Future DSP",
+                               .reason = "not available"}};
   const auto response = pipetune::makeControlSuccessResponse(
       {.activePreset = "/tmp/live.effetune_preset",
        .activePluginCount = 7,
@@ -70,8 +81,31 @@ static bool testSuccessResponse() {
        .processingErrors = 13},
       warnings);
   const auto inspection = pipetune::inspectControlResponse(response);
+  const auto parsed = pipetune::parseControlResponse(response);
   if (!check(inspection.valid, inspection.error) ||
-      !check(inspection.success, "success response must report success")) {
+      !check(inspection.success, "success response must report success") ||
+      !check(parsed.valid, parsed.error) ||
+      !check(parsed.success, "parsed response must report success") ||
+      !check(parsed.kind == pipetune::ControlResponseKind::response,
+             "ordinary response kind differs") ||
+      !check(parsed.status.activePreset ==
+                 "/tmp/live.effetune_preset",
+             "parsed response preset differs") ||
+      !check(parsed.status.activePluginCount == 7,
+             "parsed response plugin count differs") ||
+      !check(parsed.status.selectedTarget == "alsa_output.speaker",
+             "parsed response target differs") ||
+      !check(parsed.status.defaultSinkActive,
+             "parsed response default state differs") ||
+      !check(parsed.status.overrunFrames == 11 &&
+                 parsed.status.underrunFrames == 12 &&
+                 parsed.status.processingErrors == 13,
+             "parsed response counters differ") ||
+      !check(parsed.warnings.size() == 1 &&
+                 parsed.warnings.front().nodeIndex == 3 &&
+                 parsed.warnings.front().pluginName == "Future DSP" &&
+                 parsed.warnings.front().reason == "not available",
+             "parsed response warnings differ")) {
     return false;
   }
 
@@ -100,19 +134,56 @@ static bool testSuccessResponse() {
   return check(correct, "success response fields differ");
 }
 
+static bool testStatusEvent() {
+  const auto event = pipetune::makeControlStatusEvent(
+      {.activePreset = "/tmp/event.effetune_preset",
+       .activePluginCount = 2,
+       .selectedTarget = "alsa_output.headphones",
+       .defaultSinkActive = false,
+       .overrunFrames = 21,
+       .underrunFrames = 22,
+       .processingErrors = 23});
+  const auto parsed = pipetune::parseControlResponse(event);
+  return check(parsed.valid, parsed.error) &&
+         check(parsed.success, "status event must report success") &&
+         check(parsed.kind == pipetune::ControlResponseKind::statusEvent,
+               "status event kind differs") &&
+         check(parsed.status.activePreset ==
+                   "/tmp/event.effetune_preset",
+               "status event preset differs") &&
+         check(parsed.status.activePluginCount == 2,
+               "status event plugin count differs") &&
+         check(parsed.status.selectedTarget ==
+                   "alsa_output.headphones",
+               "status event target differs") &&
+         check(!parsed.status.defaultSinkActive,
+               "status event default state differs") &&
+         check(parsed.status.overrunFrames == 21 &&
+                   parsed.status.underrunFrames == 22 &&
+                   parsed.status.processingErrors == 23,
+               "status event counters differ") &&
+         check(parsed.warnings.empty(),
+               "status event must not contain warnings");
+}
+
 static bool testErrorResponse() {
   const auto response =
       pipetune::makeControlErrorResponse("cannot load \"broken\" preset");
   const auto inspection = pipetune::inspectControlResponse(response);
+  const auto parsed = pipetune::parseControlResponse(response);
   return check(inspection.valid, inspection.error) &&
          check(!inspection.success, "error response must not report success") &&
          check(inspection.error == "cannot load \"broken\" preset",
-               "error response diagnostic differs");
+               "error response diagnostic differs") &&
+         check(parsed.valid, parsed.error) &&
+         check(!parsed.success, "parsed error must not report success") &&
+         check(parsed.error == "cannot load \"broken\" preset",
+               "parsed error diagnostic differs");
 }
 
 int main() {
   return testRequests() && testRejectedRequests() && testSuccessResponse() &&
-                 testErrorResponse()
+                 testStatusEvent() && testErrorResponse()
              ? 0
              : 1;
 }

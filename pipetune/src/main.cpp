@@ -1,8 +1,8 @@
 #include "command_line.h"
 
-#include "control_protocol.h"
-#include "control_socket.h"
 #include "default_sink_restore.h"
+#include "pipetune/control_protocol.h"
+#include "pipetune/control_socket.h"
 #include "pipetune/dsp_pipeline.h"
 #include "pipetune/pipewire_pipeline.h"
 #include "pipetune/version.h"

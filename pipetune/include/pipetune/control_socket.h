@@ -29,14 +29,56 @@ ControlSocketPathResult
 resolveControlSocketPath(const std::filesystem::path &configuredPath);
 
 /**
+ * Selects the lifetime of a handled control connection.
+ */
+enum class ControlConnectionMode {
+  /** Close the connection after sending the response. */
+  close,
+  /** Keep the connection open for status publications. */
+  subscribe
+};
+
+/**
+ * Describes the result of handling one control message.
+ */
+struct ControlMessageResult {
+  /** Response body without framing newline. */
+  std::string response;
+  /** Whether the connection becomes a subscriber. */
+  ControlConnectionMode connectionMode;
+  /** Whether all subscribers should receive a fresh status. */
+  bool publishStatus;
+};
+
+/**
  * Handles one complete control message outside the audio thread.
  *
  * @param request Message body without framing newline.
  * @param userData Opaque pointer supplied to startControlServer().
- * @return Response body without framing newline.
+ * @return Response and connection behavior.
  */
 using ControlMessageHandler =
-    std::string (*)(std::string_view request, void *userData);
+    ControlMessageResult (*)(std::string_view request, void *userData);
+
+/**
+ * Produces a fresh status event on the control service thread.
+ *
+ * @param userData Opaque pointer supplied to startControlServer().
+ * @return Event body without framing newline.
+ */
+using ControlStatusProvider = std::string (*)(void *userData);
+
+/**
+ * Configures callbacks for a control server.
+ */
+struct ControlServerOptions {
+  /** Non-null request callback. */
+  ControlMessageHandler handler;
+  /** Status callback required when subscriptions are accepted. */
+  ControlStatusProvider statusProvider;
+  /** Opaque argument passed to both callbacks. */
+  void *userData;
+};
 
 struct ControlServerStartResult;
 
@@ -61,7 +103,8 @@ private:
 
   friend ControlServerStartResult
   startControlServer(const std::filesystem::path &socketPath,
-                     ControlMessageHandler handler, void *userData);
+                     const ControlServerOptions &options);
+  friend void publishControlStatus(ControlServer *server);
 };
 
 /**
@@ -81,13 +124,22 @@ struct ControlServerStartResult {
  * socket owned by the effective user and no process accepts connections.
  *
  * @param socketPath Filesystem path for the Unix-domain socket.
- * @param handler Non-null message callback executed on the service thread.
- * @param userData Opaque callback argument.
+ * @param options Server callbacks and their opaque argument.
  * @return Running server or a startup diagnostic.
  */
 ControlServerStartResult
 startControlServer(const std::filesystem::path &socketPath,
-                   ControlMessageHandler handler, void *userData);
+                   const ControlServerOptions &options);
+
+/**
+ * Coalesces a request to publish fresh status to all subscribers.
+ *
+ * The configured status provider runs later on the control service thread.
+ * A null server is ignored.
+ *
+ * @param server Running server, or null.
+ */
+void publishControlStatus(ControlServer *server);
 
 /**
  * Reports one synchronous client exchange.

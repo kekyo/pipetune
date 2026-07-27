@@ -2,7 +2,7 @@
 #define _GNU_SOURCE
 #endif
 
-#include "control_socket.h"
+#include "pipetune/control_socket.h"
 
 #include <array>
 #include <cerrno>
@@ -10,7 +10,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fcntl.h>
 #include <memory>
+#include <optional>
 #include <poll.h>
 #include <stdexcept>
 #include <string>
@@ -22,28 +24,32 @@
 #include <thread>
 #include <unistd.h>
 #include <utility>
+#include <vector>
 
 namespace pipetune {
 
 constexpr auto kMaximumControlRequestBytes = std::size_t{64 * 1024};
 constexpr auto kMaximumControlResponseBytes = std::size_t{256 * 1024};
 constexpr auto kControlBacklog = 8;
+constexpr auto kMaximumControlSubscribers = std::size_t{8};
 constexpr auto kClientTimeoutSeconds = 5;
 
 struct ControlServer::Impl {
   std::filesystem::path socketPath;
   ControlMessageHandler handler;
+  ControlStatusProvider statusProvider;
   void *userData;
   int listener;
   int stopEvent;
+  int publishEvent;
   bool ownsSocket;
   std::thread thread;
 
-  Impl(std::filesystem::path path, ControlMessageHandler messageHandler,
-       void *messageUserData)
-      : socketPath(std::move(path)), handler(messageHandler),
-        userData(messageUserData), listener(-1), stopEvent(-1),
-        ownsSocket(false), thread() {}
+  Impl(std::filesystem::path path, const ControlServerOptions &options)
+      : socketPath(std::move(path)), handler(options.handler),
+        statusProvider(options.statusProvider), userData(options.userData),
+        listener(-1), stopEvent(-1), publishEvent(-1), ownsSocket(false),
+        thread() {}
 
   ~Impl() {
     if (thread.joinable()) {
@@ -56,6 +62,9 @@ struct ControlServer::Impl {
     }
     if (stopEvent >= 0) {
       close(stopEvent);
+    }
+    if (publishEvent >= 0) {
+      close(publishEvent);
     }
     if (ownsSocket) {
       unlink(socketPath.c_str());
@@ -224,58 +233,224 @@ static bool writeServerResponse(int descriptor, int stopEvent,
   return true;
 }
 
-static void handleClient(ControlServer::Impl &implementation,
-                         int descriptor) {
+struct ControlSubscriber {
+  int descriptor;
+  std::string output;
+  std::size_t outputOffset;
+  std::optional<std::string> pendingOutput;
+};
+
+static std::string framedMessage(std::string_view message) {
+  auto framed = std::string(message);
+  framed.push_back('\n');
+  return framed;
+}
+
+static void closeSubscriber(ControlSubscriber &subscriber) {
+  if (subscriber.descriptor >= 0) {
+    close(subscriber.descriptor);
+    subscriber.descriptor = -1;
+  }
+}
+
+static bool configureSubscriber(int descriptor) {
+  const auto flags = fcntl(descriptor, F_GETFL, 0);
+  return flags >= 0 &&
+         fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0;
+}
+
+static void queueSubscriberMessage(ControlSubscriber &subscriber,
+                                   std::string_view message) {
+  auto framed = framedMessage(message);
+  if (subscriber.output.empty()) {
+    subscriber.output = std::move(framed);
+    subscriber.outputOffset = 0;
+    return;
+  }
+  subscriber.pendingOutput = std::move(framed);
+}
+
+static bool flushSubscriber(ControlSubscriber &subscriber) {
+  while (!subscriber.output.empty()) {
+    const auto count =
+        send(subscriber.descriptor,
+             subscriber.output.data() + subscriber.outputOffset,
+             subscriber.output.size() - subscriber.outputOffset,
+             MSG_NOSIGNAL | MSG_DONTWAIT);
+    if (count > 0) {
+      subscriber.outputOffset += static_cast<std::size_t>(count);
+      if (subscriber.outputOffset < subscriber.output.size()) {
+        continue;
+      }
+      subscriber.output.clear();
+      subscriber.outputOffset = 0;
+      if (subscriber.pendingOutput.has_value()) {
+        subscriber.output = std::move(*subscriber.pendingOutput);
+        subscriber.pendingOutput.reset();
+      }
+      continue;
+    }
+    if (count < 0 && errno == EINTR) {
+      continue;
+    }
+    return count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK);
+  }
+  return true;
+}
+
+static void publishToSubscribers(
+    ControlServer::Impl &implementation,
+    std::vector<ControlSubscriber> &subscribers) {
+  if (subscribers.empty() || implementation.statusProvider == nullptr) {
+    return;
+  }
+  auto message = std::string{};
+  try {
+    message = implementation.statusProvider(implementation.userData);
+  } catch (const std::exception &) {
+    return;
+  }
+  if (message.empty() || message.size() > kMaximumControlResponseBytes ||
+      message.find('\n') != std::string::npos) {
+    return;
+  }
+  for (auto &subscriber : subscribers) {
+    queueSubscriberMessage(subscriber, message);
+  }
+}
+
+static bool handleClient(ControlServer::Impl &implementation, int descriptor,
+                         std::vector<ControlSubscriber> &subscribers) {
   if (!sameUserPeer(descriptor)) {
     close(descriptor);
-    return;
+    return false;
   }
   auto request = std::string{};
   if (!readServerRequest(descriptor, implementation.stopEvent, request)) {
     close(descriptor);
-    return;
+    return false;
   }
-  auto response = std::string{};
+  auto result = ControlMessageResult{
+      .response = {},
+      .connectionMode = ControlConnectionMode::close,
+      .publishStatus = false,
+  };
   try {
-    response = implementation.handler(request, implementation.userData);
+    result = implementation.handler(request, implementation.userData);
   } catch (const std::exception &) {
-    response =
+    result.response =
         R"json({"ok":false,"error":"control request handler failed"})json";
   }
-  if (response.empty() || response.size() > kMaximumControlResponseBytes) {
-    response =
+  if (result.response.empty() ||
+      result.response.size() > kMaximumControlResponseBytes ||
+      result.response.find('\n') != std::string::npos) {
+    result.response =
         R"json({"ok":false,"error":"control response is unavailable"})json";
+    result.connectionMode = ControlConnectionMode::close;
+    result.publishStatus = false;
   }
-  static_cast<void>(
-      writeServerResponse(descriptor, implementation.stopEvent, response));
-  close(descriptor);
+  if (!writeServerResponse(descriptor, implementation.stopEvent,
+                           result.response)) {
+    close(descriptor);
+    return result.publishStatus;
+  }
+  if (result.connectionMode == ControlConnectionMode::subscribe &&
+      implementation.statusProvider != nullptr &&
+      subscribers.size() < kMaximumControlSubscribers &&
+      configureSubscriber(descriptor)) {
+    subscribers.push_back({.descriptor = descriptor,
+                           .output = {},
+                           .outputOffset = 0,
+                           .pendingOutput = std::nullopt});
+  } else {
+    close(descriptor);
+  }
+  return result.publishStatus;
+}
+
+static void drainEvent(int descriptor) {
+  auto value = eventfd_t{0};
+  while (eventfd_read(descriptor, &value) == 0) {
+  }
+}
+
+static void closeSubscribers(
+    std::vector<ControlSubscriber> &subscribers) {
+  for (auto &subscriber : subscribers) {
+    closeSubscriber(subscriber);
+  }
+  subscribers.clear();
+}
+
+static void removeClosedSubscribers(
+    std::vector<ControlSubscriber> &subscribers) {
+  std::erase_if(subscribers, [](const ControlSubscriber &subscriber) {
+    return subscriber.descriptor < 0;
+  });
 }
 
 static void runControlServer(ControlServer::Impl *implementation) {
-  auto descriptors = std::array<pollfd, 2>{
-      pollfd{.fd = implementation->listener,
-             .events = POLLIN,
-             .revents = 0},
-      pollfd{.fd = implementation->stopEvent,
-             .events = POLLIN,
-             .revents = 0}};
+  auto subscribers = std::vector<ControlSubscriber>{};
   while (true) {
+    auto descriptors = std::vector<pollfd>{};
+    descriptors.reserve(3 + subscribers.size());
+    descriptors.push_back(pollfd{.fd = implementation->listener,
+                                 .events = POLLIN,
+                                 .revents = 0});
+    descriptors.push_back(pollfd{.fd = implementation->stopEvent,
+                                 .events = POLLIN,
+                                 .revents = 0});
+    descriptors.push_back(pollfd{.fd = implementation->publishEvent,
+                                 .events = POLLIN,
+                                 .revents = 0});
+    for (const auto &subscriber : subscribers) {
+      auto events = static_cast<short>(POLLIN);
+      if (!subscriber.output.empty()) {
+        events = static_cast<short>(events | POLLOUT);
+      }
+      descriptors.push_back(pollfd{.fd = subscriber.descriptor,
+                                   .events = events,
+                                   .revents = 0});
+    }
+
     auto result = int{-1};
     do {
       result = poll(descriptors.data(), descriptors.size(), -1);
     } while (result < 0 && errno == EINTR);
     if (result <= 0 || (descriptors[1].revents & POLLIN) != 0) {
+      closeSubscribers(subscribers);
       return;
     }
-    if ((descriptors[0].revents & POLLIN) == 0) {
-      continue;
+    if ((descriptors[2].revents & POLLIN) != 0) {
+      drainEvent(implementation->publishEvent);
+      publishToSubscribers(*implementation, subscribers);
     }
-    const auto client =
-        accept4(implementation->listener, nullptr, nullptr, SOCK_CLOEXEC);
-    if (client >= 0) {
-      handleClient(*implementation, client);
-    } else if (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK) {
-      return;
+
+    for (auto index = std::size_t{0}; index < subscribers.size(); ++index) {
+      const auto revents = descriptors[index + 3].revents;
+      auto &subscriber = subscribers[index];
+      if ((revents & static_cast<short>(POLLHUP | POLLERR | POLLNVAL |
+                                       POLLIN)) != 0) {
+        closeSubscriber(subscriber);
+      } else if ((revents & POLLOUT) != 0 &&
+                 !flushSubscriber(subscriber)) {
+        closeSubscriber(subscriber);
+      }
+    }
+    removeClosedSubscribers(subscribers);
+
+    if ((descriptors[0].revents & POLLIN) != 0) {
+      const auto client =
+          accept4(implementation->listener, nullptr, nullptr, SOCK_CLOEXEC);
+      if (client >= 0) {
+        if (handleClient(*implementation, client, subscribers)) {
+          publishToSubscribers(*implementation, subscribers);
+        }
+      } else if (errno != EINTR && errno != EAGAIN &&
+                 errno != EWOULDBLOCK) {
+        closeSubscribers(subscribers);
+        return;
+      }
     }
   }
 }
@@ -303,8 +478,8 @@ resolveControlSocketPath(const std::filesystem::path &configuredPath) {
 
 ControlServerStartResult
 startControlServer(const std::filesystem::path &socketPath,
-                   ControlMessageHandler handler, void *userData) {
-  if (handler == nullptr) {
+                   const ControlServerOptions &options) {
+  if (options.handler == nullptr) {
     return {.server = nullptr,
             .error = "control message handler must not be null"};
   }
@@ -331,7 +506,7 @@ startControlServer(const std::filesystem::path &socketPath,
   }
 
   auto implementation =
-      std::make_unique<ControlServer::Impl>(socketPath, handler, userData);
+      std::make_unique<ControlServer::Impl>(socketPath, options);
   implementation->listener =
       socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
   if (implementation->listener < 0) {
@@ -342,6 +517,11 @@ startControlServer(const std::filesystem::path &socketPath,
   if (implementation->stopEvent < 0) {
     return {.server = nullptr,
             .error = socketError("cannot create control stop event")};
+  }
+  implementation->publishEvent = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+  if (implementation->publishEvent < 0) {
+    return {.server = nullptr,
+            .error = socketError("cannot create control publish event")};
   }
   if (!bindListener(*implementation, address, addressLength, error)) {
     return {.server = nullptr, .error = std::move(error)};
@@ -357,6 +537,18 @@ startControlServer(const std::filesystem::path &socketPath,
   return {.server = std::unique_ptr<ControlServer>(
               new ControlServer(std::move(implementation))),
           .error = {}};
+}
+
+void publishControlStatus(ControlServer *server) {
+  if (server == nullptr || server->implementation_ == nullptr ||
+      server->implementation_->publishEvent < 0) {
+    return;
+  }
+  const auto wake = eventfd_t{1};
+  if (eventfd_write(server->implementation_->publishEvent, wake) != 0 &&
+      errno != EAGAIN) {
+    return;
+  }
 }
 
 static bool configureClientTimeouts(int descriptor, std::string &error) {
