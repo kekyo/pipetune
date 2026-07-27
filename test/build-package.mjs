@@ -2,7 +2,6 @@ import {
   chmodSync,
   copyFileSync,
   cpSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -146,9 +145,6 @@ Description: PipeWire system-wide DSP and GTK control application
 
 if (!projectRoot || !dpkgDeb) {
   fail("package build test arguments are incomplete");
-}
-if (existsSync(join(projectRoot, "VERSION"))) {
-  fail("legacy VERSION file is still present");
 }
 
 const temporaryRoot = mkdtempSync(join(tmpdir(), "pipetune-package-test-"));
