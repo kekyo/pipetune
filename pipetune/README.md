@@ -75,6 +75,18 @@ git submodule update --init --recursive
 `deps/effetune` is pinned to the EffeTune main-branch revision used by this
 checkout. `deps/yyjson` is pinned to yyjson 0.12.0.
 
+## Workspace layout
+
+This repository is organized as a multi-component workspace:
+
+- [`pipetune/`](../pipetune/) contains the native DSP daemon, command-line
+  control operations, tests, packaging, and daemon documentation.
+- [`pipetune-gtk/`](../pipetune-gtk/) contains the GTK control window,
+  system-tray backends, XDG autostart integration, and desktop packaging.
+- `deps/` contains dependencies shared at the workspace level.
+
+The root CMake project discovers and builds both components.
+
 ## Build and test
 
 ```sh
@@ -140,6 +152,71 @@ and persistence behavior.
 
 Use `pipetune --help` for the complete CLI.
 
+## Debian package builds
+
+The packaging entry points follow the same prerequisite-image and build-script
+structure as `scheme-cd-ripper`. They create one `pipetune` package containing
+the daemon, GTK application, systemd user unit, desktop and XDG autostart
+entries, icon, configuration example, documentation, and license notices.
+
+The supported package matrix is:
+
+| Distribution | Release | Architectures |
+| --- | --- | --- |
+| Debian | bookworm | amd64, i386, arm64, armhf |
+| Debian | trixie | amd64, i386, arm64, armhf, riscv64 |
+| Ubuntu | 24.04 | amd64, arm64 |
+| Ubuntu | 26.04 | amd64, arm64 |
+
+The host requires Podman, binfmt/QEMU support for non-native targets,
+`dpkg-deb`, `readelf`, Node.js, and `npx`. Build all prerequisite images once,
+then build the complete matrix from the workspace root:
+
+```sh
+./prereq.sh
+./build_package_all.sh
+```
+
+Prerequisite images are reused. Rebuild them after changing their dependency
+set with:
+
+```sh
+./prereq.sh --force
+```
+
+Both commands accept `--distro`, `--release`, `--arch`, and `--jobs` filters.
+For example, a native Ubuntu 24.04 build is:
+
+```sh
+./prereq.sh \
+  --distro ubuntu --release 24.04 --arch amd64
+./build_package.sh \
+  --target deb --distro ubuntu --release 24.04 --arch amd64
+```
+
+Architecture aliases such as `amd64`, `i386`, `armhf`, and `aarch64` are
+accepted. Release aliases `noble` and `resolute` resolve to Ubuntu 24.04 and
+26.04 respectively. Use `--debug` to retain debug information.
+
+Unless `--version` is supplied, the package version is resolved in the
+repository root with:
+
+```sh
+npx screw-up format -e '{version}' -f
+```
+
+The resolved package version is also compiled into both executables. Generated
+packages are written to `artifacts/deb/`, with names such as:
+
+```text
+pipetune-VERSION-ubuntu-24.04-amd64.deb
+```
+
+Each package is checked for its control metadata, runtime dependencies,
+installed file layout, and ELF architecture. It is then installed into a fresh
+container for its target distribution and architecture, where both
+`pipetune --version` and `pipetune-gtk --version` are executed.
+
 ## Install as a user service
 
 Install under `/usr`:
@@ -147,6 +224,9 @@ Install under `/usr`:
 ```sh
 sudo make install PREFIX=/usr
 ```
+
+For end-user installation from a prebuilt Debian package, see the
+[workspace installation guide](../README.md#download-and-install).
 
 Create the per-user service configuration:
 

@@ -91,6 +91,11 @@ autostart entry, and icon together:
 sudo make install PREFIX=/usr
 ```
 
+For end-user installation from a prebuilt Debian package, see the
+[workspace installation guide](../README.md#download-and-install). Developers
+can build the complete package matrix using the
+[Debian package build instructions](../pipetune/README.md#debian-package-builds).
+
 With that prefix, the GUI integration is installed as:
 
 ```text

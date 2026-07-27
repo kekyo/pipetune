@@ -1,54 +1,164 @@
-# PipeTune workspace
+# PipeTune
 
-PipeTune applies an [EffeTune](https://github.com/Frieve-A/effetune) DSP preset to all audio in one Linux desktop session.
-It runs EffeTune's C++ DSP engine as native host code and inserts a virtual PipeWire sink in front of the selected physical output.
-The workspace also includes `pipetune-gtk`, a GTK 3 control application that
-stays available through the desktop system tray.
+----
 
-## Supported behavior
+[(Japanese language is here/日本語はこちら)](./README_ja.md)
 
-- Loads canonical and legacy EffeTune preset JSON from files whose extension is
-  exactly `.effetune_preset`.
-- Builds every enabled DSP found in the checked-out EffeTune native registry,
-  including bus and channel routing.
-- Skips unknown DSPs and DSPs that require external assets, with a warning for
-  each omitted node.
-- Tracks the physical default output, follows default-device and hotplug
-  changes, and can instead target a specific `node.name` or `object.serial`.
-- Replaces the preset in a running process through a same-user Unix socket.
-- Publishes daemon status changes to local subscribers without status polling.
-- Displays runtime state and applies or persists presets from a single-instance
-  GTK 3 application.
-- Temporarily makes PipeTune the effective PipeWire default without changing
-  WirePlumber's persistent configured default.
-- Restores a physical default on orderly shutdown. The installed systemd unit
-  also invokes an independent restoration command after a crash and restarts
-  PipeTune.
+> Please note that this English version of the document was machine-translated and then partially edited, so it may contain inaccuracies.
+> We welcome pull requests to correct any errors in the text.
 
-The default stream format is 48 kHz stereo. The CLI accepts 32–192 kHz and one
-through eight channels. PipeWire performs conversion for clients that use
-another format.
+## What Is This?
+
+PipeTune applies an [EffeTune](https://github.com/Frieve-A/effetune) DSP preset
+to all audio in one Linux desktop session.
+
+It inserts a virtual PipeWire sink in front of the selected physical output and includes a GTK 3 control
+application that remains available through the desktop system tray.
+
+### Features
+
+- Loads canonical and legacy EffeTune preset files with the
+  `.effetune_preset` extension.
+- Applies the enabled native EffeTune DSP pipeline to desktop audio.
+- Tracks the physical default output and follows default-device and hotplug
+  changes.
+- Changes presets without restarting the daemon.
+- Displays runtime state and audio error counters in the GTK application.
+- Runs `pipetune-gtk` in the system tray using StatusNotifierItem or the
+  `GtkStatusIcon` compatibility fallback.
+- Restores a physical default output when PipeTune stops.
+
+The default stream format is 48 kHz stereo. PipeWire converts streams from
+applications that use another format.
+
+### Supported systems
+
+PipeTune requires a PipeWire desktop session and systemd user services. A
+standalone PulseAudio session is not supported.
+
+Prebuilt Debian packages are published for:
+
+| Distribution | Release | Architectures |
+| --- | --- | --- |
+| Debian | bookworm | amd64, i386, arm64, armhf |
+| Debian | trixie | amd64, i386, arm64, armhf, riscv64 |
+| Ubuntu | 24.04 | amd64, arm64 |
+| Ubuntu | 26.04 | amd64, arm64 |
+
+Use the following command if you are unsure which package architecture to
+download:
+
+```sh
+dpkg --print-architecture
+```
 
 ---
 
-This repository is organized as a multi-component workspace:
+## Download and install
 
-- [`pipetune/`](pipetune/) contains the native DSP daemon, its command-line
-  control operations, tests, packaging, and detailed documentation.
-- [`pipetune-gtk/`](pipetune-gtk/) contains the GTK control window, system-tray
-  backends, XDG autostart integration, and desktop packaging.
-- `deps/` contains dependencies shared at the workspace level.
+Download the `.deb` matching your distribution, release, and architecture
+from the [PipeTune GitHub Releases page](https://github.com/kekyo/pipetune/releases/).
 
-The root CMake project discovers each component. Existing build, test, and
-installation commands remain available from the repository root:
+Open a terminal in the directory containing the downloaded package. If that
+directory contains only the intended PipeTune package, install it with:
 
 ```sh
-make
-make test
-sudo make install PREFIX=/usr
+sudo apt install ./pipetune-*.deb
 ```
 
-See the [PipeTune component documentation](pipetune/README.md) for daemon
-requirements, operation, service installation, and recovery behavior. See the
-[PipeTune GTK documentation](pipetune-gtk/README.md) for its controls, tray
-compatibility, persistence rules, and autostart behavior.
+`apt` installs the package and its required runtime dependencies. The package
+contains the PipeTune daemon, GTK application, systemd user service, desktop
+entry, system-tray autostart entry, icon, and configuration example.
+
+Verify the installation:
+
+```sh
+pipetune --version
+pipetune-gtk --version
+```
+
+---
+
+## Initial configuration
+
+Create the required per-user service configuration:
+
+```sh
+install -d -m 700 "$HOME/.config/pipetune"
+install -m 600 \
+  /usr/share/doc/pipetune/environment.example \
+  "$HOME/.config/pipetune/environment"
+```
+
+Edit `~/.config/pipetune/environment` and set an absolute path to an EffeTune
+preset:
+
+```text
+PIPETUNE_PRESET=/home/user/presets/example.effetune_preset
+```
+
+Quote the value if the path contains spaces:
+
+```text
+PIPETUNE_PRESET="/home/user/My Presets/example.effetune_preset"
+```
+
+Enable and start PipeTune for the current user:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now pipetune.service
+systemctl --user status pipetune.service
+```
+
+Launch PipeTune GTK from the desktop application menu or a terminal:
+
+```sh
+pipetune-gtk
+```
+
+Selecting a preset in the GTK application applies it immediately when the
+daemon is connected and saves it for later service starts. Closing the window
+hides it while a compatible system tray is available. The installed XDG
+autostart entry starts it hidden at later desktop logins.
+
+## Logs and recovery
+
+View daemon logs with:
+
+```sh
+journalctl --user -u pipetune.service
+```
+
+If a manually launched PipeTune process was terminated without restoring the
+physical default output, recover it with:
+
+```sh
+pipetune --restore-default
+```
+
+## Update or remove
+
+To update PipeTune, download a newer matching package from
+[GitHub Releases](https://github.com/kekyo/pipetune/releases) and install it
+with the same `sudo apt install ./pipetune-*.deb` command.
+
+To remove PipeTune:
+
+```sh
+systemctl --user disable --now pipetune.service
+sudo apt remove pipetune
+systemctl --user daemon-reload
+```
+
+The package removal does not delete configuration files in
+`~/.config/pipetune`.
+
+## More information
+
+- [Daemon operation and developer documentation](pipetune/README.md)
+- [GTK application behavior](pipetune-gtk/README.md)
+
+## License
+
+MIT
