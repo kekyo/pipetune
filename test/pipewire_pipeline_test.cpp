@@ -1,6 +1,11 @@
 #include "pipetune/dsp_pipeline.h"
 #include "pipetune/pipewire_pipeline.h"
 
+#include "control_protocol.h"
+#include "control_socket.h"
+
+#include <yyjson.h>
+
 #include <array>
 #include <cstdlib>
 #include <cerrno>
@@ -50,8 +55,34 @@ static void reportReadyToParent(void *userData) {
   } while (result < 0 && errno == EINTR);
 }
 
-static bool testOrderlySignalShutdown(pipetune::DspPipeline &pipeline,
-                                      std::string_view processId) {
+static bool responseHasLivePreset(std::string_view response,
+                                  const std::filesystem::path &presetPath,
+                                  std::size_t expectedWarningCount) {
+  auto *document = yyjson_read(response.data(), response.size(), 0);
+  if (document == nullptr) {
+    return false;
+  }
+  auto *root = yyjson_doc_get_root(document);
+  auto *preset = yyjson_is_obj(root) ? yyjson_obj_get(root, "preset") : nullptr;
+  auto *warnings =
+      yyjson_is_obj(root) ? yyjson_obj_get(root, "warnings") : nullptr;
+  const auto matches =
+      yyjson_is_str(preset) &&
+      std::string_view(yyjson_get_str(preset), yyjson_get_len(preset)) ==
+      presetPath.string() &&
+      yyjson_get_uint(yyjson_obj_get(root, "activePluginCount")) == 1 &&
+      yyjson_is_arr(warnings) &&
+      yyjson_arr_size(warnings) == expectedWarningCount;
+  yyjson_doc_free(document);
+  return matches;
+}
+
+static bool testOrderlySignalShutdown(
+    std::unique_ptr<pipetune::DspPipeline> pipeline,
+    std::string_view processId,
+    const std::filesystem::path &initialPresetPath,
+    const std::filesystem::path &replacementPresetPath,
+    const std::filesystem::path &socketPath) {
   auto descriptors = std::array<int, 2>{-1, -1};
   if (!check(pipe(descriptors.data()) == 0,
              "cannot create readiness pipe for signal test")) {
@@ -67,10 +98,12 @@ static bool testOrderlySignalShutdown(pipetune::DspPipeline &pipeline,
   if (child == 0) {
     close(descriptors[0]);
     const auto result = pipetune::runPipeWirePipeline(
-        pipeline,
+        std::move(pipeline),
         {.sinkName = "pipetune_signal_test_" + std::string(processId),
          .sinkDescription = "PipeTune signal integration test",
          .targetObject = "",
+         .initialPresetPath = initialPresetPath,
+         .controlSocketPath = socketPath,
          .sampleRate = 48000,
          .channelCount = 2,
          .maxFrames = 8192,
@@ -94,6 +127,51 @@ static bool testOrderlySignalShutdown(pipetune::DspPipeline &pipeline,
     waitpid(child, &childStatus, 0);
     return check(false, "child pipeline did not report readiness");
   }
+
+  const auto status = pipetune::exchangeControlMessage(
+      socketPath, pipetune::makeStatusControlRequest());
+  if (!check(status.error.empty(), status.error) ||
+      !check(pipetune::inspectControlResponse(status.response).success,
+             "initial status request failed")) {
+    kill(child, SIGTERM);
+    auto childStatus = 0;
+    waitpid(child, &childStatus, 0);
+    return false;
+  }
+
+  const auto load = pipetune::exchangeControlMessage(
+      socketPath,
+      pipetune::makeLoadPresetControlRequest(replacementPresetPath));
+  if (!check(load.error.empty(), load.error) ||
+      !check(pipetune::inspectControlResponse(load.response).success,
+             "live preset request failed") ||
+      !check(responseHasLivePreset(load.response, replacementPresetPath, 1),
+             "live preset response does not report the active replacement")) {
+    kill(child, SIGTERM);
+    auto childStatus = 0;
+    waitpid(child, &childStatus, 0);
+    return false;
+  }
+
+  const auto rejected = pipetune::exchangeControlMessage(
+      socketPath, pipetune::makeLoadPresetControlRequest(
+                      replacementPresetPath.parent_path() /
+                      "missing.effetune_preset"));
+  const auto statusAfterFailure = pipetune::exchangeControlMessage(
+      socketPath, pipetune::makeStatusControlRequest());
+  if (!check(rejected.error.empty(), rejected.error) ||
+      !check(!pipetune::inspectControlResponse(rejected.response).success,
+             "missing live preset must be rejected") ||
+      !check(statusAfterFailure.error.empty(), statusAfterFailure.error) ||
+      !check(responseHasLivePreset(statusAfterFailure.response,
+                                   replacementPresetPath, 0),
+             "failed loading must leave the previous preset active")) {
+    kill(child, SIGTERM);
+    auto childStatus = 0;
+    waitpid(child, &childStatus, 0);
+    return false;
+  }
+
   if (kill(child, SIGTERM) != 0) {
     auto childStatus = 0;
     waitpid(child, &childStatus, 0);
@@ -125,25 +203,46 @@ int main() {
     auto preset = std::ofstream(presetPath, std::ios::binary);
     preset << R"json({"name":"PipeWire test","pipeline":[],"timestamp":1})json";
   }
+  const auto replacementPresetPath =
+      directory / "replacement.effetune_preset";
+  {
+    auto preset = std::ofstream(replacementPresetPath, std::ios::binary);
+    preset << R"json({"pipeline":[
+      {"name":"Future DSP","enabled":true,"parameters":{}},
+      {"name":"Volume","enabled":true,"parameters":{"vl":-6},"channel":"A"}
+    ]})json";
+  }
+  const auto socketPath = directory / "control.sock";
 
-  auto loaded = pipetune::loadDspPipeline(
+  auto signalPipeline = pipetune::loadDspPipeline(
       presetPath, {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 8192});
-  if (!check(loaded.pipeline != nullptr, loaded.error)) {
+  if (!check(signalPipeline.pipeline != nullptr, signalPipeline.error)) {
     std::filesystem::remove_all(directory);
     return 1;
   }
 
-  if (!testOrderlySignalShutdown(*loaded.pipeline, processId)) {
+  if (!testOrderlySignalShutdown(
+          std::move(signalPipeline.pipeline), processId, presetPath,
+          replacementPresetPath, socketPath)) {
     std::filesystem::remove_all(directory);
     return 1;
   }
 
+  auto readyPipeline = pipetune::loadDspPipeline(
+      presetPath,
+      {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 8192});
+  if (!check(readyPipeline.pipeline != nullptr, readyPipeline.error)) {
+    std::filesystem::remove_all(directory);
+    return 1;
+  }
   auto readyNotifications = 0;
   const auto result = pipetune::runPipeWirePipeline(
-      *loaded.pipeline,
+      std::move(readyPipeline.pipeline),
       {.sinkName = "pipetune_test_" + processId,
        .sinkDescription = "PipeTune integration test",
        .targetObject = "",
+       .initialPresetPath = presetPath,
+       .controlSocketPath = {},
        .sampleRate = 48000,
        .channelCount = 2,
        .maxFrames = 8192,
@@ -155,7 +254,11 @@ int main() {
   std::filesystem::remove_all(directory);
   return check(result.success, result.error) &&
                  check(readyNotifications == 1,
-                       "PipeWire readiness must be reported exactly once")
+                       "PipeWire readiness must be reported exactly once") &&
+                 check(!result.selectedTarget.empty() &&
+                           result.selectedTarget !=
+                               "pipetune_test_" + processId,
+                       "automatic tracking must select a non-PipeTune sink")
              ? 0
              : 1;
 }

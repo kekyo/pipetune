@@ -21,6 +21,8 @@ static bool testRunDefaults() {
                "preset arguments must select run mode") &&
          check(result.options.presetPath == "music.effetune_preset",
                "preset path differs") &&
+         check(result.options.controlSocketPath.empty(),
+               "default control socket path must be automatic") &&
          check(result.options.targetObject.empty(), "default target must be automatic") &&
          check(result.options.sinkName == "pipetune_sink", "default sink name differs") &&
          check(result.options.sampleRate == 48000, "default rate differs") &&
@@ -29,17 +31,43 @@ static bool testRunDefaults() {
 }
 
 static bool testExplicitOptions() {
-  constexpr auto arguments = std::array<std::string_view, 11>{
+  constexpr auto arguments = std::array<std::string_view, 13>{
       "--check",   "--channels", "8",          "--target",
       "alsa_out", "--rate",     "192000",     "--sink-name",
-      "studio",   "--preset",   "studio.effetune_preset"};
+      "studio",   "--socket",   "/tmp/pipetune.sock", "--preset",
+      "studio.effetune_preset"};
   const auto result = pipetune::parseCommandLine(arguments);
   return check(result.error.empty(), result.error) &&
          check(result.options.checkOnly, "--check must select readiness mode") &&
          check(result.options.channelCount == 8, "explicit channels differ") &&
          check(result.options.sampleRate == 192000, "explicit rate differs") &&
          check(result.options.targetObject == "alsa_out", "explicit target differs") &&
-         check(result.options.sinkName == "studio", "explicit sink name differs");
+         check(result.options.sinkName == "studio", "explicit sink name differs") &&
+         check(result.options.controlSocketPath == "/tmp/pipetune.sock",
+               "explicit control socket differs");
+}
+
+static bool testControlActions() {
+  constexpr auto load = std::array<std::string_view, 4>{
+      "--load-preset", "live.effetune_preset", "--socket", "/tmp/live.sock"};
+  constexpr auto status =
+      std::array<std::string_view, 3>{"--status", "--socket", "/tmp/live.sock"};
+  const auto loadResult = pipetune::parseCommandLine(load);
+  const auto statusResult = pipetune::parseCommandLine(status);
+  return check(loadResult.error.empty(), loadResult.error) &&
+         check(loadResult.options.action ==
+                   pipetune::CommandLineAction::loadPreset,
+               "--load-preset must select live loading") &&
+         check(loadResult.options.presetPath == "live.effetune_preset",
+               "live preset path differs") &&
+         check(loadResult.options.controlSocketPath == "/tmp/live.sock",
+               "load socket path differs") &&
+         check(statusResult.error.empty(), statusResult.error) &&
+         check(statusResult.options.action ==
+                   pipetune::CommandLineAction::status,
+               "--status must select status retrieval") &&
+         check(statusResult.options.controlSocketPath == "/tmp/live.sock",
+               "status socket path differs");
 }
 
 static bool testInformationalActions() {
@@ -71,6 +99,15 @@ static bool testRejectedArguments() {
       std::array<std::string_view, 3>{"--preset", "x.effetune_preset", "--future"};
   constexpr auto mixedAction =
       std::array<std::string_view, 3>{"--help", "--preset", "x.effetune_preset"};
+  constexpr auto mixedRunAndLoad = std::array<std::string_view, 4>{
+      "--preset", "x.effetune_preset", "--load-preset",
+      "y.effetune_preset"};
+  constexpr auto runOptionForStatus =
+      std::array<std::string_view, 3>{"--status", "--target", "speaker"};
+  constexpr auto missingLoadValue =
+      std::array<std::string_view, 1>{"--load-preset"};
+  constexpr auto duplicateSocket = std::array<std::string_view, 5>{
+      "--status", "--socket", "/tmp/a", "--socket", "/tmp/b"};
 
   return check(!pipetune::parseCommandLine(missingPreset).error.empty(),
                "missing preset must fail") &&
@@ -85,11 +122,20 @@ static bool testRejectedArguments() {
          check(!pipetune::parseCommandLine(unknown).error.empty(),
                "unknown options must fail") &&
          check(!pipetune::parseCommandLine(mixedAction).error.empty(),
-               "informational actions must stand alone");
+               "informational actions must stand alone") &&
+         check(!pipetune::parseCommandLine(mixedRunAndLoad).error.empty(),
+               "run and live-load actions must be exclusive") &&
+         check(!pipetune::parseCommandLine(runOptionForStatus).error.empty(),
+               "run-only options must fail with status") &&
+         check(!pipetune::parseCommandLine(missingLoadValue).error.empty(),
+               "live loading requires a preset value") &&
+         check(!pipetune::parseCommandLine(duplicateSocket).error.empty(),
+               "duplicate socket options must fail");
 }
 
 int main() {
   const auto passed = testRunDefaults() && testExplicitOptions() &&
-                      testInformationalActions() && testRejectedArguments();
+                      testControlActions() && testInformationalActions() &&
+                      testRejectedArguments();
   return passed ? 0 : 1;
 }

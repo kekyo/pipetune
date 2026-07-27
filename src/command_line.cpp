@@ -10,6 +10,7 @@ namespace pipetune {
 static CommandLineOptions defaultOptions() {
   return {.action = CommandLineAction::run,
           .presetPath = {},
+          .controlSocketPath = {},
           .targetObject = {},
           .sinkName = "pipetune_sink",
           .sampleRate = 48000,
@@ -55,6 +56,9 @@ CommandLineParseResult parseCommandLine(
   }
 
   auto sawPreset = false;
+  auto sawLoadPreset = false;
+  auto sawStatus = false;
+  auto sawSocket = false;
   auto sawTarget = false;
   auto sawSinkName = false;
   auto sawRate = false;
@@ -62,6 +66,13 @@ CommandLineParseResult parseCommandLine(
   auto sawCheck = false;
   for (auto index = std::size_t{0}; index < arguments.size(); ++index) {
     const auto argument = arguments[index];
+    if (argument == "--status") {
+      if (sawStatus) {
+        return parseError(std::move(options), "duplicate option: --status");
+      }
+      sawStatus = true;
+      continue;
+    }
     if (argument == "--check") {
       if (sawCheck) {
         return parseError(std::move(options), "duplicate option: --check");
@@ -71,7 +82,8 @@ CommandLineParseResult parseCommandLine(
       continue;
     }
 
-    if (argument != "--preset" && argument != "--target" &&
+    if (argument != "--preset" && argument != "--load-preset" &&
+        argument != "--socket" && argument != "--target" &&
         argument != "--sink-name" && argument != "--rate" &&
         argument != "--channels") {
       return parseError(std::move(options),
@@ -83,6 +95,19 @@ CommandLineParseResult parseCommandLine(
     }
     const auto value = arguments[++index];
 
+    if (argument == "--load-preset") {
+      if (sawLoadPreset) {
+        return parseError(std::move(options),
+                          "duplicate option: --load-preset");
+      }
+      if (value.empty()) {
+        return parseError(std::move(options),
+                          "--load-preset must not be empty");
+      }
+      sawLoadPreset = true;
+      options.presetPath = std::string(value);
+      continue;
+    }
     if (argument == "--preset") {
       if (sawPreset) {
         return parseError(std::move(options), "duplicate option: --preset");
@@ -92,6 +117,17 @@ CommandLineParseResult parseCommandLine(
       }
       sawPreset = true;
       options.presetPath = std::string(value);
+      continue;
+    }
+    if (argument == "--socket") {
+      if (sawSocket) {
+        return parseError(std::move(options), "duplicate option: --socket");
+      }
+      if (value.empty()) {
+        return parseError(std::move(options), "--socket must not be empty");
+      }
+      sawSocket = true;
+      options.controlSocketPath = std::string(value);
       continue;
     }
     if (argument == "--target") {
@@ -139,6 +175,24 @@ CommandLineParseResult parseCommandLine(
     options.channelCount = channels;
   }
 
+  const auto actionCount = static_cast<unsigned>(sawPreset) +
+                           static_cast<unsigned>(sawLoadPreset) +
+                           static_cast<unsigned>(sawStatus);
+  if (actionCount > 1) {
+    return parseError(
+        std::move(options),
+        "--preset, --load-preset, and --status are mutually exclusive");
+  }
+  if (sawLoadPreset || sawStatus) {
+    if (sawTarget || sawSinkName || sawRate || sawChannels || sawCheck) {
+      return parseError(
+          std::move(options),
+          "PipeWire run options cannot be used with control actions");
+    }
+    options.action = sawLoadPreset ? CommandLineAction::loadPreset
+                                   : CommandLineAction::status;
+    return {.options = std::move(options), .error = {}};
+  }
   if (!sawPreset) {
     return parseError(std::move(options), "--preset FILE is required");
   }
@@ -148,12 +202,18 @@ CommandLineParseResult parseCommandLine(
 std::string_view commandLineUsage() noexcept {
   return "Usage:\n"
          "  pipetune --preset FILE [--target OBJECT] [--sink-name NAME]\n"
-         "           [--rate HZ] [--channels COUNT] [--check]\n"
+         "           [--rate HZ] [--channels COUNT] [--socket PATH] [--check]\n"
+         "  pipetune --load-preset FILE [--socket PATH]\n"
+         "  pipetune --status [--socket PATH]\n"
          "  pipetune --version\n"
          "  pipetune --help\n"
          "\n"
          "Options:\n"
          "  --preset FILE     Load a formal .effetune_preset file.\n"
+         "  --load-preset FILE\n"
+         "                    Replace the preset in a running PipeTune process.\n"
+         "  --status          Print the running PipeTune process status as JSON.\n"
+         "  --socket PATH     Use this control socket instead of the XDG default.\n"
          "  --target OBJECT   Send processed audio to this PipeWire sink.\n"
          "                    The current default sink is used when omitted.\n"
          "  --sink-name NAME  Publish this virtual sink name (default: "

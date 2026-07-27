@@ -1,17 +1,73 @@
 #include "command_line.h"
 
+#include "control_protocol.h"
+#include "control_socket.h"
 #include "pipetune/dsp_pipeline.h"
 #include "pipetune/pipewire_pipeline.h"
 #include "pipetune/version.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 constexpr auto kMaximumProcessFrames = std::uint32_t{8192};
 constexpr auto kRingCapacityFrames = std::uint32_t{16384};
+
+static std::filesystem::path absolutePresetPath(
+    const std::filesystem::path &path, std::string &error) {
+  auto filesystemError = std::error_code{};
+  auto absolute = std::filesystem::absolute(path, filesystemError);
+  if (filesystemError) {
+    error = "cannot resolve preset path: " + filesystemError.message();
+    return {};
+  }
+  return absolute.lexically_normal();
+}
+
+static int runControlClient(const pipetune::CommandLineOptions &options) {
+  const auto socket =
+      pipetune::resolveControlSocketPath(options.controlSocketPath);
+  if (!socket.error.empty()) {
+    std::cerr << "pipetune: " << socket.error << '\n';
+    return 1;
+  }
+
+  auto request = std::string{};
+  if (options.action == pipetune::CommandLineAction::status) {
+    request = pipetune::makeStatusControlRequest();
+  } else {
+    auto pathError = std::string{};
+    const auto preset = absolutePresetPath(options.presetPath, pathError);
+    if (!pathError.empty()) {
+      std::cerr << "pipetune: " << pathError << '\n';
+      return 1;
+    }
+    request = pipetune::makeLoadPresetControlRequest(preset);
+    if (request.empty()) {
+      std::cerr << "pipetune: cannot encode live preset request\n";
+      return 1;
+    }
+  }
+
+  const auto exchange =
+      pipetune::exchangeControlMessage(socket.path, request);
+  if (!exchange.error.empty()) {
+    std::cerr << "pipetune: " << exchange.error << '\n';
+    return 1;
+  }
+  const auto inspection =
+      pipetune::inspectControlResponse(exchange.response);
+  if (!inspection.valid) {
+    std::cerr << "pipetune: " << inspection.error << '\n';
+    return 1;
+  }
+  std::cout << exchange.response << '\n';
+  return inspection.success ? 0 : 1;
+}
 
 int main(int argc, char **argv) {
   auto arguments = std::vector<std::string_view>{};
@@ -33,9 +89,21 @@ int main(int argc, char **argv) {
     std::cout << "pipetune " << pipetune::version() << '\n';
     return 0;
   }
+  if (parsed.options.action == pipetune::CommandLineAction::loadPreset ||
+      parsed.options.action == pipetune::CommandLineAction::status) {
+    return runControlClient(parsed.options);
+  }
+
+  auto pathError = std::string{};
+  const auto presetPath =
+      absolutePresetPath(parsed.options.presetPath, pathError);
+  if (!pathError.empty()) {
+    std::cerr << "pipetune: " << pathError << '\n';
+    return 1;
+  }
 
   auto loaded = pipetune::loadDspPipeline(
-      parsed.options.presetPath,
+      presetPath,
       {.sampleRate = static_cast<float>(parsed.options.sampleRate),
        .maxChannels = parsed.options.channelCount,
        .maxFrames = kMaximumProcessFrames});
@@ -52,11 +120,23 @@ int main(int argc, char **argv) {
   const auto mode = parsed.options.checkOnly
                         ? pipetune::PipeWireRunMode::untilReady
                         : pipetune::PipeWireRunMode::untilInterrupted;
+  auto controlSocket = std::filesystem::path{};
+  if (!parsed.options.checkOnly) {
+    const auto resolved =
+        pipetune::resolveControlSocketPath(parsed.options.controlSocketPath);
+    if (!resolved.error.empty()) {
+      std::cerr << "pipetune: " << resolved.error << '\n';
+      return 1;
+    }
+    controlSocket = resolved.path;
+  }
   const auto result = pipetune::runPipeWirePipeline(
-      *loaded.pipeline,
+      std::move(loaded.pipeline),
       {.sinkName = parsed.options.sinkName,
        .sinkDescription = "PipeTune Processed Audio",
        .targetObject = parsed.options.targetObject,
+       .initialPresetPath = presetPath,
+       .controlSocketPath = controlSocket,
        .sampleRate = parsed.options.sampleRate,
        .channelCount = parsed.options.channelCount,
        .maxFrames = kMaximumProcessFrames,

@@ -1,27 +1,38 @@
 #include "pipetune/pipewire_pipeline.h"
 
 #include "audio_bridge.h"
+#include "control_protocol.h"
+#include "control_socket.h"
+#include "dsp_pipeline_slot.h"
+#include "output_device_tracker.h"
 
 #include <pipewire/pipewire.h>
+#include <pipewire/extensions/metadata.h>
 #include <spa/buffer/buffer.h>
 #include <spa/param/audio/raw-utils.h>
 #include <spa/param/buffers.h>
 #include <spa/param/format.h>
 #include <spa/pod/builder.h>
+#include <yyjson.h>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <cerrno>
 #include <climits>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <ctime>
 #include <exception>
+#include <filesystem>
+#include <limits>
+#include <memory>
+#include <mutex>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -38,34 +49,53 @@ struct StreamCallbackContext {
 };
 
 struct PipeWireRuntime {
-  DspPipeline &pipeline;
+  DspPipelineSlot pipeline;
   PipeWirePipelineOptions options;
   PipeWireRunMode mode;
+  OutputDeviceTracker deviceTracker;
   PlanarAudioRing ring;
   std::vector<float> captureScratch;
   std::vector<float> playbackScratch;
   std::atomic<std::uint64_t> processingErrors;
   std::uint64_t processedInputFrames;
+  std::string activePreset;
+  std::mutex playbackTargetMutex;
+  std::unique_ptr<ControlServer> controlServer;
   pw_main_loop *mainLoop;
   pw_stream *captureStream;
   pw_stream *playbackStream;
+  pw_core *trackingCore;
+  pw_registry *registry;
+  pw_metadata *defaultMetadata;
   spa_source *timeoutSource;
   spa_source *interruptSource;
   spa_source *terminateSource;
   pw_stream_events captureEvents;
   pw_stream_events playbackEvents;
+  pw_core_events coreEvents;
+  pw_registry_events registryEvents;
+  pw_metadata_events metadataEvents;
+  spa_hook coreListener;
+  spa_hook registryListener;
+  spa_hook metadataListener;
   StreamCallbackContext captureContext;
   StreamCallbackContext playbackContext;
+  std::uint32_t defaultMetadataId;
+  int trackingSyncSequence;
+  bool trackingReady;
+  std::string playbackTarget;
   bool captureReady;
   bool playbackReady;
   bool readyNotified;
   bool completed;
   std::string error;
 
-  PipeWireRuntime(DspPipeline &preparedPipeline,
+  PipeWireRuntime(std::unique_ptr<DspPipeline> preparedPipeline,
                   const PipeWirePipelineOptions &runtimeOptions,
                   PipeWireRunMode runtimeMode)
-      : pipeline(preparedPipeline), options(runtimeOptions), mode(runtimeMode),
+      : pipeline(std::move(preparedPipeline)), options(runtimeOptions),
+        mode(runtimeMode),
+        deviceTracker(runtimeOptions.sinkName, runtimeOptions.targetObject),
         ring(runtimeOptions.channelCount, runtimeOptions.ringCapacityFrames),
         captureScratch(static_cast<std::size_t>(runtimeOptions.channelCount) *
                            runtimeOptions.maxFrames,
@@ -73,19 +103,38 @@ struct PipeWireRuntime {
         playbackScratch(static_cast<std::size_t>(runtimeOptions.channelCount) *
                             runtimeOptions.maxFrames,
                         0.0F),
-        processingErrors(0), processedInputFrames(0), mainLoop(nullptr),
-        captureStream(nullptr), playbackStream(nullptr), timeoutSource(nullptr),
+        processingErrors(0), processedInputFrames(0),
+        activePreset(runtimeOptions.initialPresetPath.string()),
+        playbackTargetMutex(), controlServer(), mainLoop(nullptr),
+        captureStream(nullptr), playbackStream(nullptr), trackingCore(nullptr),
+        registry(nullptr), defaultMetadata(nullptr), timeoutSource(nullptr),
         interruptSource(nullptr), terminateSource(nullptr), captureEvents{},
-        playbackEvents{}, captureContext{this, true}, playbackContext{this, false},
+        playbackEvents{}, coreEvents{}, registryEvents{}, metadataEvents{},
+        coreListener{}, registryListener{}, metadataListener{},
+        captureContext{this, true}, playbackContext{this, false},
+        defaultMetadataId(PW_ID_ANY), trackingSyncSequence(0),
+        trackingReady(false), playbackTarget(),
         captureReady(false), playbackReady(false), readyNotified(false),
         completed(false), error() {}
 
   ~PipeWireRuntime() {
-    if (captureStream != nullptr) {
-      pw_stream_destroy(captureStream);
-    }
+    controlServer.reset();
     if (playbackStream != nullptr) {
       pw_stream_destroy(playbackStream);
+    }
+    if (defaultMetadata != nullptr) {
+      spa_hook_remove(&metadataListener);
+      pw_proxy_destroy(reinterpret_cast<pw_proxy *>(defaultMetadata));
+    }
+    if (registry != nullptr) {
+      spa_hook_remove(&registryListener);
+      pw_proxy_destroy(reinterpret_cast<pw_proxy *>(registry));
+    }
+    if (trackingCore != nullptr) {
+      spa_hook_remove(&coreListener);
+    }
+    if (captureStream != nullptr) {
+      pw_stream_destroy(captureStream);
     }
     if (mainLoop != nullptr) {
       auto *loop = pw_main_loop_get_loop(mainLoop);
@@ -118,12 +167,20 @@ static PipeWireRunResult validationError(std::string message) {
           .error = std::move(message),
           .overrunFrames = 0,
           .underrunFrames = 0,
-          .processingErrors = 0};
+          .processingErrors = 0,
+          .selectedTarget = {}};
 }
 
 static std::string systemError(std::string_view operation, int result) {
   const auto errorNumber = result < 0 ? -result : errno;
   return std::string(operation) + ": " + std::strerror(errorNumber);
+}
+
+static void applyTrackedTarget(PipeWireRuntime &runtime);
+
+static std::string currentPlaybackTarget(PipeWireRuntime &runtime) {
+  auto lock = std::scoped_lock(runtime.playbackTargetMutex);
+  return runtime.playbackTarget;
 }
 
 static void failRuntime(PipeWireRuntime &runtime, std::string message) {
@@ -133,6 +190,163 @@ static void failRuntime(PipeWireRuntime &runtime, std::string message) {
   runtime.error = std::move(message);
   if (runtime.mainLoop != nullptr) {
     pw_main_loop_quit(runtime.mainLoop);
+  }
+}
+
+static std::string defaultTargetFromMetadata(const char *value) {
+  if (value == nullptr) {
+    return {};
+  }
+  auto *document = yyjson_read(value, std::strlen(value), 0);
+  if (document == nullptr) {
+    return {};
+  }
+  auto *root = yyjson_doc_get_root(document);
+  auto *name = yyjson_is_obj(root) ? yyjson_obj_get(root, "name") : nullptr;
+  auto target = yyjson_is_str(name) ? std::string(yyjson_get_str(name))
+                                    : std::string{};
+  yyjson_doc_free(document);
+  return target;
+}
+
+static std::int32_t parsePriority(const char *value) noexcept {
+  if (value == nullptr) {
+    return 0;
+  }
+  auto priority = std::int32_t{0};
+  const auto end = value + std::strlen(value);
+  const auto result = std::from_chars(value, end, priority);
+  return result.ec == std::errc{} && result.ptr == end ? priority : 0;
+}
+
+static bool parseBooleanProperty(const char *value) noexcept {
+  return value != nullptr &&
+         (std::string_view(value) == "true" || std::string_view(value) == "1");
+}
+
+static void requestTrackingSync(PipeWireRuntime &runtime) {
+  const auto sequence = pw_core_sync(runtime.trackingCore, PW_ID_CORE, 0);
+  if (sequence < 0) {
+    failRuntime(runtime, systemError("cannot synchronize PipeWire registry",
+                                     sequence));
+    return;
+  }
+  runtime.trackingSyncSequence = sequence;
+}
+
+static void trackingCoreDone(void *data, std::uint32_t id, int sequence) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  if (id != PW_ID_CORE || sequence != runtime.trackingSyncSequence) {
+    return;
+  }
+  runtime.trackingReady = true;
+  applyTrackedTarget(runtime);
+}
+
+static void trackingCoreError(void *data, std::uint32_t, int, int result,
+                              const char *message) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  const auto detail = message == nullptr ? systemError("PipeWire core error", result)
+                                         : std::string(message);
+  failRuntime(runtime, "PipeWire device tracking failed: " + detail);
+}
+
+static int defaultMetadataProperty(void *data, std::uint32_t subject,
+                                   const char *key, const char *,
+                                   const char *value) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  if (subject != PW_ID_CORE) {
+    return 0;
+  }
+  if (key == nullptr) {
+    if (runtime.deviceTracker.setDefaultTarget({}) && runtime.trackingReady) {
+      applyTrackedTarget(runtime);
+    }
+    return 0;
+  }
+  if (std::string_view(key) != "default.audio.sink") {
+    return 0;
+  }
+  if (runtime.deviceTracker.setDefaultTarget(defaultTargetFromMetadata(value)) &&
+      runtime.trackingReady) {
+    applyTrackedTarget(runtime);
+  }
+  return 0;
+}
+
+static void registryGlobal(void *data, std::uint32_t id, std::uint32_t,
+                           const char *type, std::uint32_t version,
+                           const spa_dict *properties) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  if (type == nullptr || properties == nullptr) {
+    return;
+  }
+  if (std::string_view(type) == PW_TYPE_INTERFACE_Node) {
+    const auto *mediaClass = spa_dict_lookup(properties, PW_KEY_MEDIA_CLASS);
+    const auto *name = spa_dict_lookup(properties, PW_KEY_NODE_NAME);
+    if (mediaClass == nullptr || std::string_view(mediaClass) != "Audio/Sink" ||
+        name == nullptr) {
+      return;
+    }
+    const auto *serial = spa_dict_lookup(properties, PW_KEY_OBJECT_SERIAL);
+    const auto *priority = spa_dict_lookup(properties, PW_KEY_PRIORITY_SESSION);
+    const auto *virtualNode = spa_dict_lookup(properties, PW_KEY_NODE_VIRTUAL);
+    const auto changed = runtime.deviceTracker.updateDevice(
+        {.id = id,
+         .name = name,
+         .objectSerial = serial == nullptr ? std::string{} : std::string(serial),
+         .priority = parsePriority(priority),
+         .virtualNode = parseBooleanProperty(virtualNode)});
+    if (changed && runtime.trackingReady) {
+      applyTrackedTarget(runtime);
+    }
+    return;
+  }
+  if (std::string_view(type) != PW_TYPE_INTERFACE_Metadata ||
+      runtime.defaultMetadata != nullptr) {
+    return;
+  }
+  const auto *metadataName =
+      spa_dict_lookup(properties, PW_KEY_METADATA_NAME);
+  if (metadataName == nullptr || std::string_view(metadataName) != "default") {
+    return;
+  }
+
+  runtime.defaultMetadata = static_cast<pw_metadata *>(pw_registry_bind(
+      runtime.registry, id, type,
+      std::min(version, static_cast<std::uint32_t>(PW_VERSION_METADATA)), 0));
+  if (runtime.defaultMetadata == nullptr) {
+    failRuntime(runtime, systemError("cannot bind PipeWire default metadata",
+                                     -errno));
+    return;
+  }
+  runtime.defaultMetadataId = id;
+  runtime.metadataEvents.version = PW_VERSION_METADATA_EVENTS;
+  runtime.metadataEvents.property = defaultMetadataProperty;
+  const auto listenerResult =
+      pw_metadata_add_listener(runtime.defaultMetadata, &runtime.metadataListener,
+                               &runtime.metadataEvents, &runtime);
+  if (listenerResult < 0) {
+    failRuntime(runtime,
+                systemError("cannot monitor PipeWire default metadata",
+                            listenerResult));
+    return;
+  }
+  requestTrackingSync(runtime);
+}
+
+static void registryGlobalRemoved(void *data, std::uint32_t id) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  auto changed = runtime.deviceTracker.removeDevice(id);
+  if (id == runtime.defaultMetadataId && runtime.defaultMetadata != nullptr) {
+    spa_hook_remove(&runtime.metadataListener);
+    pw_proxy_destroy(reinterpret_cast<pw_proxy *>(runtime.defaultMetadata));
+    runtime.defaultMetadata = nullptr;
+    runtime.defaultMetadataId = PW_ID_ANY;
+    changed = runtime.deviceTracker.setDefaultTarget({}) || changed;
+  }
+  if (changed && runtime.trackingReady) {
+    applyTrackedTarget(runtime);
   }
 }
 
@@ -161,6 +375,10 @@ static void streamStateChanged(void *data, pw_stream_state,
   auto &context = *static_cast<StreamCallbackContext *>(data);
   auto &runtime = *context.runtime;
   if (state == PW_STREAM_STATE_ERROR) {
+    if (!context.capture) {
+      runtime.playbackReady = false;
+      return;
+    }
     const auto detail = error == nullptr ? std::string("unknown PipeWire stream error")
                                          : std::string(error);
     failRuntime(runtime, (context.capture ? "virtual sink: " : "playback stream: ") +
@@ -504,7 +722,8 @@ static pw_properties *makeCaptureProperties(const PipeWireRuntime &runtime) {
   return properties;
 }
 
-static pw_properties *makePlaybackProperties(const PipeWireRuntime &runtime) {
+static pw_properties *makePlaybackProperties(const PipeWireRuntime &runtime,
+                                             std::string_view target) {
   auto *properties =
       makeCommonProperties(runtime, runtime.options.sinkName + ".output");
   if (properties == nullptr) {
@@ -513,15 +732,14 @@ static pw_properties *makePlaybackProperties(const PipeWireRuntime &runtime) {
   pw_properties_set(properties, PW_KEY_MEDIA_CLASS, "Stream/Output/Audio");
   pw_properties_set(properties, PW_KEY_MEDIA_CATEGORY, "Playback");
   pw_properties_set(properties, PW_KEY_NODE_PASSIVE, "true");
-  if (!runtime.options.targetObject.empty()) {
-    pw_properties_set(properties, PW_KEY_TARGET_OBJECT,
-                      runtime.options.targetObject.c_str());
-  }
+  pw_properties_set(properties, PW_KEY_TARGET_OBJECT,
+                    std::string(target).c_str());
   return properties;
 }
 
 static bool connectStream(PipeWireRuntime &runtime, pw_stream *stream,
-                          pw_direction direction, bool autoconnect) {
+                          pw_direction direction, bool autoconnect,
+                          bool dontReconnect) {
   auto storage = std::array<std::uint8_t, 1024>{};
   auto builder = spa_pod_builder{};
   spa_pod_builder_init(&builder, storage.data(), storage.size());
@@ -532,6 +750,9 @@ static bool connectStream(PipeWireRuntime &runtime, pw_stream *stream,
   if (autoconnect) {
     flags |= PW_STREAM_FLAG_AUTOCONNECT;
   }
+  if (dontReconnect) {
+    flags |= PW_STREAM_FLAG_DONT_RECONNECT;
+  }
   const auto result =
       pw_stream_connect(stream, direction, PW_ID_ANY,
                         static_cast<pw_stream_flags>(flags), parameters, 1);
@@ -539,6 +760,104 @@ static bool connectStream(PipeWireRuntime &runtime, pw_stream *stream,
     failRuntime(runtime, systemError("cannot connect PipeWire stream", result));
     return false;
   }
+  return true;
+}
+
+static bool createPlaybackStream(PipeWireRuntime &runtime,
+                                 std::string_view target) {
+  auto *properties = makePlaybackProperties(runtime, target);
+  if (properties == nullptr) {
+    failRuntime(runtime, "cannot allocate PipeWire playback properties");
+    return false;
+  }
+  runtime.playbackStream =
+      pw_stream_new_simple(pw_main_loop_get_loop(runtime.mainLoop),
+                           "PipeTune playback", properties,
+                           &runtime.playbackEvents, &runtime.playbackContext);
+  if (runtime.playbackStream == nullptr) {
+    failRuntime(runtime, systemError("cannot create PipeWire playback stream",
+                                     -errno));
+    return false;
+  }
+  if (!connectStream(runtime, runtime.playbackStream, PW_DIRECTION_OUTPUT, true,
+                     true)) {
+    pw_stream_destroy(runtime.playbackStream);
+    runtime.playbackStream = nullptr;
+    return false;
+  }
+  return true;
+}
+
+static void applyTrackedTarget(PipeWireRuntime &runtime) {
+  if (!runtime.trackingReady) {
+    return;
+  }
+  const auto target = std::string(runtime.deviceTracker.selectedTarget());
+  if (target == currentPlaybackTarget(runtime) &&
+      runtime.playbackStream != nullptr) {
+    return;
+  }
+  if (runtime.playbackStream != nullptr) {
+    pw_stream_destroy(runtime.playbackStream);
+    runtime.playbackStream = nullptr;
+  }
+  runtime.playbackReady = false;
+  {
+    auto lock = std::scoped_lock(runtime.playbackTargetMutex);
+    runtime.playbackTarget = target;
+  }
+  if (!target.empty()) {
+    createPlaybackStream(runtime, target);
+  }
+}
+
+static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
+  return {.activePreset = runtime.activePreset,
+          .activePluginCount = runtime.pipeline.activePluginCount(),
+          .selectedTarget = currentPlaybackTarget(runtime),
+          .overrunFrames = runtime.ring.overrunFrames(),
+          .underrunFrames = runtime.ring.underrunFrames(),
+          .processingErrors =
+              runtime.processingErrors.load(std::memory_order_relaxed)};
+}
+
+static std::string handleControlRequest(std::string_view message,
+                                        void *userData) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(userData);
+  const auto request = parseControlRequest(message);
+  if (!request.error.empty()) {
+    return makeControlErrorResponse(request.error);
+  }
+
+  auto warnings = std::vector<PipelineWarning>{};
+  if (request.request.command == ControlCommand::loadPreset) {
+    auto loaded = loadDspPipeline(
+        request.request.presetPath,
+        {.sampleRate = static_cast<float>(runtime.options.sampleRate),
+         .maxChannels = runtime.options.channelCount,
+         .maxFrames = runtime.options.maxFrames});
+    if (loaded.pipeline == nullptr) {
+      return makeControlErrorResponse(loaded.error);
+    }
+    warnings = std::move(loaded.warnings);
+    runtime.pipeline.replace(std::move(loaded.pipeline));
+    runtime.activePreset = request.request.presetPath.string();
+  }
+  return makeControlSuccessResponse(controlStatus(runtime), warnings);
+}
+
+static bool createControlServer(PipeWireRuntime &runtime) {
+  if (runtime.options.controlSocketPath.empty()) {
+    return true;
+  }
+  auto started = startControlServer(runtime.options.controlSocketPath,
+                                    handleControlRequest, &runtime);
+  if (started.server == nullptr) {
+    failRuntime(runtime,
+                "cannot start PipeTune control server: " + started.error);
+    return false;
+  }
+  runtime.controlServer = std::move(started.server);
   return true;
 }
 
@@ -561,26 +880,60 @@ static bool createStreams(PipeWireRuntime &runtime) {
   runtime.playbackEvents.param_changed = streamParameterChanged;
   runtime.playbackEvents.process = playbackProcess;
 
-  runtime.captureStream =
-      pw_stream_new_simple(pw_main_loop_get_loop(runtime.mainLoop),
-                           "PipeTune virtual sink", makeCaptureProperties(runtime),
-                           &runtime.captureEvents, &runtime.captureContext);
+  auto *captureProperties = makeCaptureProperties(runtime);
+  if (captureProperties == nullptr) {
+    failRuntime(runtime, "cannot allocate PipeWire virtual sink properties");
+    return false;
+  }
+  runtime.captureStream = pw_stream_new_simple(
+      pw_main_loop_get_loop(runtime.mainLoop), "PipeTune virtual sink",
+      captureProperties, &runtime.captureEvents, &runtime.captureContext);
   if (runtime.captureStream == nullptr) {
     failRuntime(runtime, systemError("cannot create PipeWire virtual sink", -errno));
     return false;
   }
 
-  runtime.playbackStream =
-      pw_stream_new_simple(pw_main_loop_get_loop(runtime.mainLoop),
-                           "PipeTune playback", makePlaybackProperties(runtime),
-                           &runtime.playbackEvents, &runtime.playbackContext);
-  if (runtime.playbackStream == nullptr) {
-    failRuntime(runtime, systemError("cannot create PipeWire playback stream", -errno));
+  if (!connectStream(runtime, runtime.captureStream, PW_DIRECTION_INPUT, false,
+                     false)) {
     return false;
   }
 
-  return connectStream(runtime, runtime.captureStream, PW_DIRECTION_INPUT, false) &&
-         connectStream(runtime, runtime.playbackStream, PW_DIRECTION_OUTPUT, true);
+  runtime.trackingCore = pw_stream_get_core(runtime.captureStream);
+  if (runtime.trackingCore == nullptr) {
+    failRuntime(runtime, "cannot access PipeWire core for device tracking");
+    return false;
+  }
+  runtime.coreEvents.version = PW_VERSION_CORE_EVENTS;
+  runtime.coreEvents.done = trackingCoreDone;
+  runtime.coreEvents.error = trackingCoreError;
+  const auto coreListenerResult =
+      pw_core_add_listener(runtime.trackingCore, &runtime.coreListener,
+                           &runtime.coreEvents, &runtime);
+  if (coreListenerResult < 0) {
+    failRuntime(runtime,
+                systemError("cannot monitor PipeWire core", coreListenerResult));
+    return false;
+  }
+
+  runtime.registry =
+      pw_core_get_registry(runtime.trackingCore, PW_VERSION_REGISTRY, 0);
+  if (runtime.registry == nullptr) {
+    failRuntime(runtime, systemError("cannot access PipeWire registry", -errno));
+    return false;
+  }
+  runtime.registryEvents.version = PW_VERSION_REGISTRY_EVENTS;
+  runtime.registryEvents.global = registryGlobal;
+  runtime.registryEvents.global_remove = registryGlobalRemoved;
+  const auto registryListenerResult =
+      pw_registry_add_listener(runtime.registry, &runtime.registryListener,
+                               &runtime.registryEvents, &runtime);
+  if (registryListenerResult < 0) {
+    failRuntime(runtime, systemError("cannot monitor PipeWire registry",
+                                     registryListenerResult));
+    return false;
+  }
+  requestTrackingSync(runtime);
+  return runtime.error.empty();
 }
 
 static bool configureCompletionSources(PipeWireRuntime &runtime) {
@@ -626,6 +979,14 @@ static std::string validateOptions(const DspPipeline &pipeline,
   if (options.targetObject == options.sinkName) {
     return "PipeWire playback target must not be the PipeTune virtual sink";
   }
+  if (options.initialPresetPath.string().find('\0') != std::string::npos ||
+      options.controlSocketPath.string().find('\0') != std::string::npos) {
+    return "preset and control socket paths must not contain NUL";
+  }
+  if (!options.controlSocketPath.empty() &&
+      options.initialPresetPath.empty()) {
+    return "an initial preset path is required when live control is enabled";
+  }
   if (options.sampleRate < 32000 || options.sampleRate > 192000) {
     return "PipeWire sample rate must be between 32000 and 192000 Hz";
   }
@@ -647,19 +1008,22 @@ static std::string validateOptions(const DspPipeline &pipeline,
   return {};
 }
 
-PipeWireRunResult runPipeWirePipeline(DspPipeline &pipeline,
+PipeWireRunResult runPipeWirePipeline(std::unique_ptr<DspPipeline> pipeline,
                                       const PipeWirePipelineOptions &options,
                                       PipeWireRunMode mode) {
-  const auto validation = validateOptions(pipeline, options);
+  if (pipeline == nullptr) {
+    return validationError("DSP pipeline must not be null");
+  }
+  const auto validation = validateOptions(*pipeline, options);
   if (!validation.empty()) {
     return validationError(validation);
   }
 
   try {
     auto library = PipeWireLibraryScope{};
-    auto runtime = PipeWireRuntime(pipeline, options, mode);
+    auto runtime = PipeWireRuntime(std::move(pipeline), options, mode);
     if (createMainLoop(runtime) && configureCompletionSources(runtime) &&
-        createStreams(runtime)) {
+        createControlServer(runtime) && createStreams(runtime)) {
       const auto runResult = pw_main_loop_run(runtime.mainLoop);
       if (runResult < 0 && runtime.error.empty()) {
         failRuntime(runtime, systemError("PipeWire main loop failed", runResult));
@@ -667,12 +1031,14 @@ PipeWireRunResult runPipeWirePipeline(DspPipeline &pipeline,
         failRuntime(runtime, "PipeWire main loop stopped before completion");
       }
     }
+    const auto selectedTarget = currentPlaybackTarget(runtime);
     return {.success = runtime.completed && runtime.error.empty(),
             .error = runtime.error,
             .overrunFrames = runtime.ring.overrunFrames(),
             .underrunFrames = runtime.ring.underrunFrames(),
             .processingErrors =
-                runtime.processingErrors.load(std::memory_order_relaxed)};
+                runtime.processingErrors.load(std::memory_order_relaxed),
+            .selectedTarget = selectedTarget};
   } catch (const std::exception &error) {
     return validationError(std::string("cannot prepare PipeWire pipeline: ") +
                            error.what());

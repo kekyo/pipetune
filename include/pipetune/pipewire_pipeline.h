@@ -4,6 +4,8 @@
 #include "pipetune/dsp_pipeline.h"
 
 #include <cstdint>
+#include <filesystem>
+#include <memory>
 #include <string>
 
 namespace pipetune {
@@ -28,6 +30,10 @@ struct PipeWirePipelineOptions {
   std::string sinkDescription;
   /** Target sink node name or object serial; empty selects the current default. */
   std::string targetObject;
+  /** Initial preset path reported by the local control endpoint. */
+  std::filesystem::path initialPresetPath;
+  /** User-only control socket path, or empty to disable live control. */
+  std::filesystem::path controlSocketPath;
   /** Fixed stream sample rate in hertz, from 32000 through 192000. */
   std::uint32_t sampleRate;
   /** Fixed planar channel count, from one through eight. */
@@ -66,21 +72,25 @@ struct PipeWireRunResult {
   std::uint64_t underrunFrames;
   /** DSP blocks that could not be processed and were passed through. */
   std::uint64_t processingErrors;
+  /** Last physical node.name selected for playback, or empty when unavailable. */
+  std::string selectedTarget;
 };
 
 /**
  * Publishes a virtual sink and forwards its processed PCM to a real sink.
  *
  * The supplied DSP pipeline must have been prepared for the same sample rate,
- * at least channelCount channels, and at least maxFrames frames. This function
- * blocks according to mode and does not allocate in PipeWire process callbacks.
+ * at least channelCount channels, and at least maxFrames frames. Ownership is
+ * retained for the complete run so control requests can replace the pipeline.
+ * This function blocks according to mode and does not allocate in PipeWire
+ * process callbacks.
  *
- * @param pipeline Prepared native EffeTune pipeline.
+ * @param pipeline Owned prepared native EffeTune pipeline.
  * @param options PipeWire stream and bridge configuration.
  * @param mode Main-loop completion condition.
  * @return Completion status and bridge counters.
  */
-PipeWireRunResult runPipeWirePipeline(DspPipeline &pipeline,
+PipeWireRunResult runPipeWirePipeline(std::unique_ptr<DspPipeline> pipeline,
                                       const PipeWirePipelineOptions &options,
                                       PipeWireRunMode mode);
 

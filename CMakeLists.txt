@@ -12,6 +12,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(PkgConfig REQUIRED)
+find_package(Threads REQUIRED)
 pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3)
 
 find_program(PIPETUNE_NODE_EXECUTABLE node REQUIRED)
@@ -62,10 +63,16 @@ endif()
 add_library(
   pipetune_pipewire STATIC
   src/command_line.cpp
+  src/control_protocol.cpp
+  src/control_socket.cpp
+  src/dsp_pipeline_slot.cpp
+  src/output_device_tracker.cpp
   src/pipewire_pipeline.cpp)
 target_include_directories(pipetune_pipewire PUBLIC include PRIVATE src)
 target_link_libraries(
-  pipetune_pipewire PUBLIC pipetune_core PRIVATE PkgConfig::PIPEWIRE)
+  pipetune_pipewire
+  PUBLIC pipetune_core
+  PRIVATE PkgConfig::PIPEWIRE Threads::Threads)
 if(MSVC)
   target_compile_options(pipetune_pipewire PRIVATE /W4 /WX)
 else()
@@ -132,6 +139,7 @@ if(BUILD_TESTING)
   add_executable(
     pipetune_pipewire_pipeline_tests
     test/pipewire_pipeline_test.cpp)
+  target_include_directories(pipetune_pipewire_pipeline_tests PRIVATE src)
   target_link_libraries(
     pipetune_pipewire_pipeline_tests PRIVATE pipetune_pipewire)
   if(MSVC)
@@ -161,6 +169,74 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_command_line_tests
     COMMAND pipetune_command_line_tests)
+
+  add_executable(
+    pipetune_output_device_tracker_tests
+    test/output_device_tracker_test.cpp)
+  target_include_directories(pipetune_output_device_tracker_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_output_device_tracker_tests PRIVATE pipetune_pipewire)
+  if(MSVC)
+    target_compile_options(pipetune_output_device_tracker_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_output_device_tracker_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_output_device_tracker_tests
+    COMMAND pipetune_output_device_tracker_tests)
+
+  add_executable(
+    pipetune_dsp_pipeline_slot_tests
+    test/dsp_pipeline_slot_test.cpp)
+  target_include_directories(pipetune_dsp_pipeline_slot_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_dsp_pipeline_slot_tests PRIVATE pipetune_pipewire Threads::Threads)
+  if(MSVC)
+    target_compile_options(pipetune_dsp_pipeline_slot_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_dsp_pipeline_slot_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_dsp_pipeline_slot_tests
+    COMMAND pipetune_dsp_pipeline_slot_tests)
+
+  add_executable(
+    pipetune_control_protocol_tests
+    test/control_protocol_test.cpp)
+  target_include_directories(pipetune_control_protocol_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_control_protocol_tests PRIVATE pipetune_pipewire)
+  if(MSVC)
+    target_compile_options(pipetune_control_protocol_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_control_protocol_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_control_protocol_tests
+    COMMAND pipetune_control_protocol_tests)
+
+  add_executable(
+    pipetune_control_socket_tests
+    test/control_socket_test.cpp)
+  target_include_directories(pipetune_control_socket_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_control_socket_tests PRIVATE pipetune_pipewire Threads::Threads)
+  if(MSVC)
+    target_compile_options(pipetune_control_socket_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_control_socket_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_control_socket_tests
+    COMMAND pipetune_control_socket_tests)
 
   add_executable(
     pipetune_param_packer_runner

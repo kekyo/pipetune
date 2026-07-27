@@ -15,6 +15,10 @@ namespace pipetune {
 enum class CommandLineAction {
   /** Load a preset and run or check the PipeWire pipeline. */
   run,
+  /** Ask a running PipeTune process to activate a preset. */
+  loadPreset,
+  /** Ask a running PipeTune process for its current status. */
+  status,
   /** Print command usage. */
   help,
   /** Print the PipeTune version. */
@@ -29,6 +33,8 @@ struct CommandLineOptions {
   CommandLineAction action;
   /** Formal EffeTune preset path. */
   std::filesystem::path presetPath;
+  /** Explicit control socket path, or empty for the XDG runtime default. */
+  std::filesystem::path controlSocketPath;
   /** PipeWire target object, or empty for the current default sink. */
   std::string targetObject;
   /** Stable virtual sink node name. */
