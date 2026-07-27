@@ -121,10 +121,33 @@ newline-framed JSON, and only the owning effective user is accepted.
 Supported commands are:
 
 - status;
-- load and atomically activate another `.effetune_preset`.
+- load and atomically activate another `.effetune_preset`;
+- subscribe to an initial status event and later status publications.
 
-The server runs outside the PipeWire process callbacks. There is no network
-listener.
+The subscriber server uses an `eventfd` wakeup and bounded, coalescing output
+per client. Preset activation and relevant PipeWire state transitions request
+a fresh publication outside the real-time callbacks. Slow subscribers cannot
+accumulate an unbounded history. The server runs outside the PipeWire process
+callbacks. There is no network listener.
+
+## GTK control plane
+
+`pipetune-gtk` is a single-instance `GtkApplication`. Its GIO client keeps one
+asynchronous subscription connection and uses separate asynchronous requests
+for explicit refreshes and preset loads. A retry timer reconnects a lost
+subscription; status itself is not polled.
+
+The tray backend discovers a StatusNotifierItem host first. If none is
+available on X11, it creates the same `GtkStatusIcon`/XEmbed compatibility
+path used by elder-terms. A hidden start falls back to presenting the main
+window when neither tray transport has a host, so the process never becomes
+inaccessible.
+
+Preset persistence is separate from daemon control. The GUI atomically writes
+`$XDG_CONFIG_HOME/pipetune/environment.gtk` with user-only permissions. The
+systemd user unit reads the required base environment first and this optional
+GUI file second. A connected apply is persisted only after the daemon accepts
+it; a disconnected selection is saved for the next daemon start.
 
 ## Known MVP limits
 

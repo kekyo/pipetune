@@ -37,6 +37,7 @@ not supported by this MVP.
 - Tracks the physical default output, follows default-device and hotplug
   changes, and can instead target a specific `node.name` or `object.serial`.
 - Replaces the preset in a running process through a same-user Unix socket.
+- Publishes initial and changed runtime state to same-user local subscribers.
 - Temporarily makes PipeTune the effective PipeWire default without changing
   WirePlumber's persistent configured default.
 - Restores a physical default on orderly shutdown. The installed systemd unit
@@ -52,11 +53,16 @@ another format.
 On Ubuntu 24.04:
 
 ```sh
-sudo apt install build-essential cmake git libpipewire-0.3-dev nodejs pkg-config
+sudo apt install \
+  build-essential cmake dbus-x11 desktop-file-utils git \
+  libgdk-pixbuf2.0-bin libgtk-3-dev libpipewire-0.3-dev \
+  nodejs pkg-config x11-utils xvfb
 ```
 
 PipeTune requires CMake 3.24 or newer, a C++20 GCC toolchain, Node.js, PipeWire
-0.3 development files, and systemd's `systemd-analyze` when tests are enabled.
+0.3 development files, and GTK 3 development files. The complete test suite
+also uses `systemd-analyze`, an isolated D-Bus session, Xvfb, X11 utilities,
+`desktop-file-validate`, and the GdkPixbuf thumbnailer.
 
 Clone with both pinned dependencies:
 
@@ -76,11 +82,12 @@ make
 make test
 ```
 
-`make` produces `build/release/pipetune`. `make test` always runs PipeTune's
-complete CTest suite, EffeTune's native DSP tests, JavaScript/native parameter
-packing parity, and native DSP output parity. Tests that require a live
-PipeWire user session report a skip only when its session socket is
-unavailable.
+`make` produces `build/release/pipetune` and
+`build/release/pipetune-gtk`. `make test` always runs PipeTune's complete
+CTest suite, EffeTune's native DSP tests, JavaScript/native parameter packing
+parity, native DSP output parity, GTK lifecycle tests, and staged install
+validation. Tests that require a live PipeWire user session report a skip only
+when its session socket is unavailable.
 
 Before changing the session default, verify a preset and PipeWire negotiation:
 
@@ -117,8 +124,19 @@ Inspect or replace the running pipeline:
 
 The status response includes the active preset, native DSP count, physical
 target, whether PipeTune owns the effective default, and audio bridge error
-counters. A live replacement is not persisted to the systemd environment
-file.
+counters. A live replacement made directly with the CLI is not persisted to a
+systemd environment file.
+
+Run the graphical control application with:
+
+```sh
+./build/release/pipetune-gtk
+```
+
+It subscribes to daemon status changes, applies a selected preset live, and
+persists a successful selection for later service starts. See the
+[PipeTune GTK documentation](../pipetune-gtk/README.md) for the exact failure
+and persistence behavior.
 
 Use `pipetune --help` for the complete CLI.
 
@@ -161,6 +179,23 @@ systemctl --user status pipetune.service
 
 This applies to every application's final output in that user's PipeWire
 session. It is not a machine-wide service shared by multiple logged-in users.
+
+The installed unit reads configuration in this order:
+
+1. `~/.config/pipetune/environment`, which remains the required base
+   configuration;
+2. `$XDG_CONFIG_HOME/pipetune/environment.gtk` (normally
+   `~/.config/pipetune/environment.gtk`), when that GUI-managed file exists.
+
+The second file is optional and its `PIPETUNE_PRESET` value overrides the base
+file. Do not edit it while `pipetune-gtk` is running. To return to the base
+selection, quit the GUI and move the override aside:
+
+```sh
+mv "$HOME/.config/pipetune/environment.gtk" \
+  "$HOME/.config/pipetune/environment.gtk.disabled"
+systemctl --user restart pipetune.service
+```
 
 After changing the configured preset:
 
