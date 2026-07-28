@@ -5,8 +5,23 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 namespace pipetune {
+
+/**
+ * Identifies why an output is currently selected.
+ */
+enum class OutputSelectionReason {
+  /** No usable physical output is available. */
+  unavailable,
+  /** No preference exists, so the physical system default is selected. */
+  systemDefault,
+  /** The available user-preferred output is selected. */
+  preferred,
+  /** The preference is unavailable and a physical fallback is selected. */
+  fallback
+};
 
 /**
  * Describes one PipeWire Audio/Sink candidate.
@@ -16,8 +31,8 @@ struct OutputDevice {
   std::uint32_t id;
   /** Stable node.name used as target.object. */
   std::string name;
-  /** Decimal object.serial value, when available. */
-  std::string objectSerial;
+  /** Human-readable node description, falling back to node.name. */
+  std::string description;
   /** Session-manager preference; larger values are preferred. */
   std::int32_t priority;
   /** True for software or other virtual sinks. */
@@ -26,6 +41,11 @@ struct OutputDevice {
 
 /**
  * Selects a non-PipeTune physical output as registry state changes.
+ *
+ * An available user preference wins. Otherwise the tracker uses the remembered
+ * physical system default and retains that fallback until it changes or
+ * disappears. A missing preference remains configured so that hotplug can
+ * restore it automatically.
  */
 class OutputDeviceTracker final {
 public:
@@ -33,10 +53,11 @@ public:
    * Creates an empty tracker.
    *
    * @param excludedNodeName PipeTune virtual sink name.
-   * @param requestedTarget Explicit node name/object serial, or empty for
-   * automatic default-device tracking.
+   * @param preferredTarget User-preferred node.name, or empty for automatic
+   * default-device tracking.
    */
-  OutputDeviceTracker(std::string excludedNodeName, std::string requestedTarget);
+  OutputDeviceTracker(std::string excludedNodeName,
+                      std::string preferredTarget);
 
   /**
    * Adds or replaces an Audio/Sink description.
@@ -57,10 +78,30 @@ public:
   /**
    * Updates default.audio.sink from PipeWire metadata.
    *
-   * @param nodeName Default node name, or empty when unset.
+   * Empty and PipeTune's own node name are ignored so that making PipeTune the
+   * effective default does not overwrite the last physical fallback.
+   *
+   * @param nodeName Physical default node.name.
    * @return True when selectedTarget() changed.
    */
   bool setDefaultTarget(std::string nodeName);
+
+  /**
+   * Replaces the user-preferred output.
+   *
+   * An unavailable name remains configured while a physical fallback is used.
+   *
+   * @param nodeName Preferred node.name, or empty to clear the preference.
+   * @return True when the preference, selected output, or reason changed.
+   */
+  bool setPreferredTarget(std::string nodeName);
+
+  /**
+   * Clears the user preference and selects the physical system default.
+   *
+   * @return True when the preference, selected output, or reason changed.
+   */
+  bool clearPreferredTarget();
 
   /**
    * Marks initial registry enumeration complete.
@@ -73,17 +114,32 @@ public:
 
   /** Returns the selected physical node.name, or empty when none is usable. */
   std::string_view selectedTarget() const noexcept;
-  /** Returns true when an explicit target was requested. */
-  bool hasExplicitTarget() const noexcept;
+  /** Returns the configured preferred node.name, or empty when automatic. */
+  std::string_view preferredTarget() const noexcept;
+  /** Returns the remembered physical system-default node.name. */
+  std::string_view systemDefaultTarget() const noexcept;
+  /** Returns true when a user preference is configured. */
+  bool hasPreferredTarget() const noexcept;
+  /** Returns why the current output was selected. */
+  OutputSelectionReason selectionReason() const noexcept;
+
+  /**
+   * Returns eligible devices sorted by description and node.name.
+   *
+   * @return Presentation-ready copy of the current physical outputs.
+   */
+  std::vector<OutputDevice> availableDevices() const;
 
 private:
   bool recomputeSelection();
   bool isEligible(const OutputDevice &device) const noexcept;
+  const OutputDevice *findEligibleByName(std::string_view name) const noexcept;
 
   std::string excludedNodeName_;
-  std::string requestedTarget_;
+  std::string preferredTarget_;
   std::string defaultTarget_;
   std::string selectedTarget_;
+  OutputSelectionReason selectionReason_;
   std::unordered_map<std::uint32_t, OutputDevice> devices_;
   bool selectionCommitted_;
 };

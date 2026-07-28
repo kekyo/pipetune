@@ -84,8 +84,32 @@ static bool testMalformedBufferIsRejected() {
                "rejected shapes must not change xrun counters");
 }
 
+static bool testQueuedAudioCanBeDiscardedBeforeChangingOutput() {
+  auto ring = pipetune::PlanarAudioRing(2, 4);
+  const auto oldOutput =
+      std::vector<float>{1.0F, 2.0F, 11.0F, 12.0F};
+  const auto newOutput =
+      std::vector<float>{3.0F, 4.0F, 13.0F, 14.0F};
+  auto output = std::vector<float>(4, 0.0F);
+
+  return check(ring.write(oldOutput, 2) == 2,
+               "old output frames must be queued") &&
+         check(ring.discardQueuedFrames() == 2,
+               "discard must report every removed frame") &&
+         check(ring.write(newOutput, 2) == 2,
+               "new output frames must be accepted after discard") &&
+         check(ring.read(output, 2) == 2,
+               "new output frames must remain readable") &&
+         check(output == newOutput,
+               "discarded output must not play on the new device") &&
+         check(ring.overrunFrames() == 0 && ring.underrunFrames() == 0,
+               "intentional discard must not be counted as an xrun");
+}
+
 int main() {
   const auto passed = testPlanarWraparound() && testUnderrunSilence() &&
-                      testOverrunDropsNewestTail() && testMalformedBufferIsRejected();
+                      testOverrunDropsNewestTail() &&
+                      testMalformedBufferIsRejected() &&
+                      testQueuedAudioCanBeDiscardedBeforeChangingOutput();
   return passed ? 0 : 1;
 }

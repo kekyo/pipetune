@@ -88,6 +88,14 @@ std::uint32_t PlanarAudioRing::read(std::span<float> planarSamples,
   return copiedFrames;
 }
 
+std::uint32_t PlanarAudioRing::discardQueuedFrames() noexcept {
+  const auto writeFrame = writeFrame_.load(std::memory_order_acquire);
+  const auto readFrame =
+      readFrame_.exchange(writeFrame, std::memory_order_acq_rel);
+  return static_cast<std::uint32_t>(
+      std::min<std::uint64_t>(writeFrame - readFrame, capacityFrames_));
+}
+
 std::uint32_t PlanarAudioRing::channelCount() const noexcept {
   return channelCount_;
 }

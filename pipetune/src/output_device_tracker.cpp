@@ -1,17 +1,21 @@
 #include "output_device_tracker.h"
 
+#include <algorithm>
 #include <cstdint>
-#include <limits>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace pipetune {
 
 OutputDeviceTracker::OutputDeviceTracker(std::string excludedNodeName,
-                                         std::string requestedTarget)
+                                         std::string preferredTarget)
     : excludedNodeName_(std::move(excludedNodeName)),
-      requestedTarget_(std::move(requestedTarget)), defaultTarget_(),
-      selectedTarget_(), devices_(), selectionCommitted_(false) {}
+      preferredTarget_(std::move(preferredTarget)), defaultTarget_(),
+      selectedTarget_(),
+      selectionReason_(OutputSelectionReason::unavailable), devices_(),
+      selectionCommitted_(false) {}
 
 bool OutputDeviceTracker::updateDevice(OutputDevice device) {
   devices_.insert_or_assign(device.id, std::move(device));
@@ -26,8 +30,32 @@ bool OutputDeviceTracker::removeDevice(std::uint32_t id) {
 }
 
 bool OutputDeviceTracker::setDefaultTarget(std::string nodeName) {
+  if (nodeName.empty() || nodeName == excludedNodeName_) {
+    return false;
+  }
+  if (nodeName == defaultTarget_) {
+    return false;
+  }
   defaultTarget_ = std::move(nodeName);
   return recomputeSelection();
+}
+
+bool OutputDeviceTracker::setPreferredTarget(std::string nodeName) {
+  if (nodeName == preferredTarget_) {
+    return false;
+  }
+  preferredTarget_ = std::move(nodeName);
+  static_cast<void>(recomputeSelection());
+  return true;
+}
+
+bool OutputDeviceTracker::clearPreferredTarget() {
+  if (preferredTarget_.empty()) {
+    return false;
+  }
+  preferredTarget_.clear();
+  static_cast<void>(recomputeSelection());
+  return true;
 }
 
 void OutputDeviceTracker::commitSelection() noexcept {
@@ -38,8 +66,21 @@ std::string_view OutputDeviceTracker::selectedTarget() const noexcept {
   return selectedTarget_;
 }
 
-bool OutputDeviceTracker::hasExplicitTarget() const noexcept {
-  return !requestedTarget_.empty();
+std::string_view OutputDeviceTracker::preferredTarget() const noexcept {
+  return preferredTarget_;
+}
+
+std::string_view OutputDeviceTracker::systemDefaultTarget() const noexcept {
+  return defaultTarget_;
+}
+
+bool OutputDeviceTracker::hasPreferredTarget() const noexcept {
+  return !preferredTarget_.empty();
+}
+
+OutputSelectionReason
+OutputDeviceTracker::selectionReason() const noexcept {
+  return selectionReason_;
 }
 
 bool OutputDeviceTracker::isEligible(const OutputDevice &device) const noexcept {
@@ -47,36 +88,54 @@ bool OutputDeviceTracker::isEligible(const OutputDevice &device) const noexcept 
          device.name != excludedNodeName_;
 }
 
+const OutputDevice *
+OutputDeviceTracker::findEligibleByName(std::string_view name) const noexcept {
+  if (name.empty()) {
+    return nullptr;
+  }
+  for (const auto &[id, device] : devices_) {
+    static_cast<void>(id);
+    if (isEligible(device) && device.name == name) {
+      return &device;
+    }
+  }
+  return nullptr;
+}
+
+std::vector<OutputDevice> OutputDeviceTracker::availableDevices() const {
+  auto available = std::vector<OutputDevice>{};
+  available.reserve(devices_.size());
+  for (const auto &[id, device] : devices_) {
+    static_cast<void>(id);
+    if (isEligible(device)) {
+      available.push_back(device);
+    }
+  }
+  std::sort(available.begin(), available.end(),
+            [](const OutputDevice &left, const OutputDevice &right) {
+              if (left.description != right.description) {
+                return left.description < right.description;
+              }
+              return left.name < right.name;
+            });
+  return available;
+}
+
 bool OutputDeviceTracker::recomputeSelection() {
   auto nextTarget = std::string{};
-  if (!requestedTarget_.empty()) {
-    auto selectedId = std::numeric_limits<std::uint32_t>::max();
-    for (const auto &[id, device] : devices_) {
-      if (isEligible(device) &&
-          (device.name == requestedTarget_ ||
-           device.objectSerial == requestedTarget_) &&
-          id < selectedId) {
-        selectedId = id;
-        nextTarget = device.name;
-      }
-    }
+  auto nextReason = OutputSelectionReason::unavailable;
+  const auto *preferred = findEligibleByName(preferredTarget_);
+  if (preferred != nullptr) {
+    nextTarget = preferred->name;
+    nextReason = OutputSelectionReason::preferred;
   } else {
-    for (const auto &[id, device] : devices_) {
-      static_cast<void>(id);
-      if (isEligible(device) && device.name == defaultTarget_) {
-        nextTarget = device.name;
-        break;
-      }
-    }
-
-    if (selectionCommitted_ && nextTarget.empty() &&
-        !selectedTarget_.empty()) {
-      for (const auto &[id, device] : devices_) {
-        static_cast<void>(id);
-        if (isEligible(device) && device.name == selectedTarget_) {
-          nextTarget = selectedTarget_;
-          break;
-        }
+    const auto *systemDefault = findEligibleByName(defaultTarget_);
+    if (systemDefault != nullptr) {
+      nextTarget = systemDefault->name;
+    } else if (selectionCommitted_) {
+      const auto *retained = findEligibleByName(selectedTarget_);
+      if (retained != nullptr) {
+        nextTarget = retained->name;
       }
     }
 
@@ -97,12 +156,18 @@ bool OutputDeviceTracker::recomputeSelection() {
         nextTarget = bestDevice->name;
       }
     }
+    if (!nextTarget.empty()) {
+      nextReason = preferredTarget_.empty()
+                       ? OutputSelectionReason::systemDefault
+                       : OutputSelectionReason::fallback;
+    }
   }
 
-  if (nextTarget == selectedTarget_) {
+  if (nextTarget == selectedTarget_ && nextReason == selectionReason_) {
     return false;
   }
   selectedTarget_ = std::move(nextTarget);
+  selectionReason_ = nextReason;
   return true;
 }
 

@@ -52,6 +52,7 @@ struct StreamCallbackContext {
 enum class CoreSyncPurpose {
   enumeration,
   defaultActivation,
+  defaultRelease,
   defaultRestoration
 };
 
@@ -59,6 +60,7 @@ enum class DefaultSinkTransition {
   inactive,
   activating,
   active,
+  releasing,
   restoring
 };
 
@@ -224,6 +226,7 @@ static std::uint64_t currentUnixMilliseconds() noexcept {
 static void applyTrackedTarget(PipeWireRuntime &runtime);
 static void finishReadinessCheck(PipeWireRuntime &runtime);
 static void maybeActivateDefaultSink(PipeWireRuntime &runtime);
+static void maybeReleaseDefaultSink(PipeWireRuntime &runtime);
 
 static std::string currentPlaybackTarget(PipeWireRuntime &runtime) {
   auto lock = std::scoped_lock(runtime.playbackTargetMutex);
@@ -318,9 +321,20 @@ static void trackingCoreDone(void *data, std::uint32_t id, int sequence) {
       return;
     }
     runtime.defaultSinkTransition = DefaultSinkTransition::active;
+    if (currentPlaybackTarget(runtime).empty()) {
+      maybeReleaseDefaultSink(runtime);
+      return;
+    }
     runtime.defaultSinkActive.store(true, std::memory_order_release);
     requestControlStatusUpdate(runtime);
     finishReadinessCheck(runtime);
+    return;
+  }
+  if (runtime.trackingSyncPurpose == CoreSyncPurpose::defaultRelease) {
+    runtime.defaultSinkTransition = DefaultSinkTransition::inactive;
+    runtime.defaultSinkActive.store(false, std::memory_order_release);
+    requestControlStatusUpdate(runtime);
+    maybeActivateDefaultSink(runtime);
     return;
   }
   if (runtime.trackingSyncPurpose == CoreSyncPurpose::defaultRestoration) {
@@ -359,9 +373,6 @@ static int defaultMetadataProperty(void *data, std::uint32_t subject,
   }
   if (key == nullptr) {
     runtime.observedDefaultSink.clear();
-    if (runtime.deviceTracker.setDefaultTarget({}) && runtime.trackingReady) {
-      applyTrackedTarget(runtime);
-    }
     if (runtime.options.manageDefaultSink && !runtime.shutdownRequested &&
         runtime.defaultSinkTransition == DefaultSinkTransition::active) {
       runtime.defaultSinkTransition = DefaultSinkTransition::inactive;
@@ -400,13 +411,20 @@ static void registryGlobal(void *data, std::uint32_t id, std::uint32_t,
         name == nullptr) {
       return;
     }
-    const auto *serial = spa_dict_lookup(properties, PW_KEY_OBJECT_SERIAL);
+    const auto *description =
+        spa_dict_lookup(properties, PW_KEY_NODE_DESCRIPTION);
+    if (description == nullptr || description[0] == '\0') {
+      description = spa_dict_lookup(properties, PW_KEY_NODE_NICK);
+    }
+    if (description == nullptr || description[0] == '\0') {
+      description = name;
+    }
     const auto *priority = spa_dict_lookup(properties, PW_KEY_PRIORITY_SESSION);
     const auto *virtualNode = spa_dict_lookup(properties, PW_KEY_NODE_VIRTUAL);
     const auto changed = runtime.deviceTracker.updateDevice(
         {.id = id,
          .name = name,
-         .objectSerial = serial == nullptr ? std::string{} : std::string(serial),
+         .description = description,
          .priority = parsePriority(priority),
          .virtualNode = parseBooleanProperty(virtualNode)});
     if (changed && runtime.trackingReady) {
@@ -459,7 +477,6 @@ static void registryGlobalRemoved(void *data, std::uint32_t id) {
     runtime.defaultSinkActive.store(false, std::memory_order_release);
     requestControlStatusUpdate(runtime);
     runtime.observedDefaultSink.clear();
-    changed = runtime.deviceTracker.setDefaultTarget({}) || changed;
     if (runtime.shutdownRequested) {
       completeRuntime(runtime);
       return;
@@ -941,8 +958,13 @@ static void applyTrackedTarget(PipeWireRuntime &runtime) {
     return;
   }
   const auto target = std::string(runtime.deviceTracker.selectedTarget());
-  if (target == currentPlaybackTarget(runtime) &&
-      runtime.playbackStream != nullptr) {
+  const auto targetUnchanged = target == currentPlaybackTarget(runtime);
+  if (targetUnchanged &&
+      ((target.empty() && runtime.playbackStream == nullptr) ||
+       (!target.empty() && runtime.playbackStream != nullptr))) {
+    if (target.empty()) {
+      maybeReleaseDefaultSink(runtime);
+    }
     return;
   }
   if (runtime.playbackStream != nullptr) {
@@ -950,6 +972,7 @@ static void applyTrackedTarget(PipeWireRuntime &runtime) {
     runtime.playbackStream = nullptr;
   }
   runtime.playbackReady = false;
+  static_cast<void>(runtime.ring.discardQueuedFrames());
   {
     auto lock = std::scoped_lock(runtime.playbackTargetMutex);
     runtime.playbackTarget = target;
@@ -958,7 +981,25 @@ static void applyTrackedTarget(PipeWireRuntime &runtime) {
   if (!target.empty()) {
     createPlaybackStream(runtime, target);
   }
+  maybeReleaseDefaultSink(runtime);
   maybeActivateDefaultSink(runtime);
+}
+
+static void maybeReleaseDefaultSink(PipeWireRuntime &runtime) {
+  if (!runtime.options.manageDefaultSink || runtime.shutdownRequested ||
+      !runtime.trackingReady || runtime.defaultMetadata == nullptr ||
+      !currentPlaybackTarget(runtime).empty() ||
+      runtime.defaultSinkTransition == DefaultSinkTransition::activating ||
+      runtime.defaultSinkTransition == DefaultSinkTransition::releasing ||
+      runtime.defaultSinkTransition == DefaultSinkTransition::restoring ||
+      (runtime.defaultSinkTransition != DefaultSinkTransition::active &&
+       runtime.observedDefaultSink != runtime.options.sinkName)) {
+    return;
+  }
+  static_cast<void>(writeEffectiveDefaultSink(
+      runtime, {}, DefaultSinkTransition::releasing,
+      CoreSyncPurpose::defaultRelease,
+      "cannot release PipeTune as the PipeWire default sink"));
 }
 
 static void maybeActivateDefaultSink(PipeWireRuntime &runtime) {
@@ -966,6 +1007,7 @@ static void maybeActivateDefaultSink(PipeWireRuntime &runtime) {
       !runtime.trackingReady || !runtime.captureReady ||
       !runtime.playbackReady ||
       runtime.defaultSinkTransition == DefaultSinkTransition::activating ||
+      runtime.defaultSinkTransition == DefaultSinkTransition::releasing ||
       runtime.defaultSinkTransition == DefaultSinkTransition::restoring ||
       runtime.defaultSinkTransition == DefaultSinkTransition::active ||
       currentPlaybackTarget(runtime).empty()) {

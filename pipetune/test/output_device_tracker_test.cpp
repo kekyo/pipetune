@@ -11,25 +11,31 @@ static bool check(bool condition, std::string_view message) {
 }
 
 static pipetune::OutputDevice device(std::uint32_t id, std::string name,
-                                     std::string serial, std::int32_t priority,
+                                     std::string description,
+                                     std::int32_t priority,
                                      bool virtualNode = false) {
   return {.id = id,
           .name = std::move(name),
-          .objectSerial = std::move(serial),
+          .description = std::move(description),
           .priority = priority,
           .virtualNode = virtualNode};
 }
 
 static bool testAutomaticDefaultAndFallback() {
   auto tracker = pipetune::OutputDeviceTracker("pipetune_sink", "");
-  if (!check(tracker.updateDevice(device(10, "speaker", "100", 100)),
+  if (!check(tracker.updateDevice(
+                 device(10, "speaker", "Built-in Speakers", 100)),
              "first physical sink must become selected") ||
       !check(tracker.selectedTarget() == "speaker",
-             "first automatic target differs")) {
+             "first automatic target differs") ||
+      !check(tracker.selectionReason() ==
+                 pipetune::OutputSelectionReason::systemDefault,
+             "automatic selection must report the system-default reason")) {
     return false;
   }
   tracker.commitSelection();
-  if (!check(!tracker.updateDevice(device(20, "headphones", "200", 200)),
+  if (!check(!tracker.updateDevice(
+                 device(20, "headphones", "USB Headphones", 200)),
              "adding a device must not interrupt a usable current target") ||
       !check(tracker.setDefaultTarget("headphones"),
              "physical default change must change target") ||
@@ -49,11 +55,12 @@ static bool testAutomaticDefaultAndFallback() {
 
 static bool testInitialEnumerationChoosesHighestPriority() {
   auto tracker = pipetune::OutputDeviceTracker("pipetune_sink", "");
-  return check(tracker.updateDevice(device(20, "low", "20", 100)),
+  return check(tracker.updateDevice(device(20, "low", "Low", 100)),
                "first enumerated sink must create an initial candidate") &&
-         check(tracker.updateDevice(device(30, "high", "30", 300)),
+         check(tracker.updateDevice(device(30, "high", "High", 300)),
                "a better initial candidate must replace a lower priority one") &&
-         check(tracker.updateDevice(device(10, "high-earlier", "10", 300)),
+         check(tracker.updateDevice(
+                   device(10, "high-earlier", "High earlier", 300)),
                "lower global id must break an initial priority tie") &&
          check(tracker.selectedTarget() == "high-earlier",
                "initial enumeration must select the best physical sink");
@@ -61,58 +68,115 @@ static bool testInitialEnumerationChoosesHighestPriority() {
 
 static bool testVirtualAndSelfAreExcluded() {
   auto tracker = pipetune::OutputDeviceTracker("pipetune_sink", "");
-  return check(!tracker.updateDevice(device(1, "pipetune_sink", "1", 1000, true)),
+  return check(!tracker.updateDevice(
+                   device(1, "pipetune_sink", "PipeTune", 1000, true)),
                "PipeTune sink must not become a target") &&
-         check(!tracker.updateDevice(device(2, "virtual_effect", "2", 900, true)),
+         check(!tracker.updateDevice(
+                   device(2, "virtual_effect", "Virtual Effect", 900, true)),
                "other virtual sinks must not become automatic targets") &&
          check(!tracker.setDefaultTarget("pipetune_sink"),
                "self default must not create a loop") &&
          check(tracker.selectedTarget().empty(),
                "virtual-only registry must have no physical target") &&
-         check(tracker.updateDevice(device(3, "physical", "3", 10)),
+         check(tracker.selectionReason() ==
+                   pipetune::OutputSelectionReason::unavailable,
+               "virtual-only registry must report unavailable output") &&
+         check(tracker.updateDevice(
+                   device(3, "physical", "Physical Output", 10)),
                "physical sink must become usable") &&
          check(tracker.selectedTarget() == "physical",
                "physical sink selection differs");
 }
 
-static bool testExplicitTargetWaitsAndReturns() {
-  auto tracker = pipetune::OutputDeviceTracker("pipetune_sink", "42");
-  if (!check(tracker.hasExplicitTarget(), "explicit target must be reported") ||
-      !check(!tracker.updateDevice(device(1, "other", "10", 100)),
-             "unrequested sink must not be selected") ||
-      !check(tracker.selectedTarget().empty(),
-             "explicit tracker must wait for requested sink") ||
-      !check(tracker.updateDevice(device(2, "requested", "42", 1)),
-             "matching object serial must select its node name") ||
-      !check(tracker.selectedTarget() == "requested",
-             "serial target must resolve to node.name")) {
+static bool testPreferredTargetFallsBackAndReturns() {
+  auto tracker = pipetune::OutputDeviceTracker("pipetune_sink", "usb");
+  if (!check(tracker.hasPreferredTarget(),
+             "preferred target must be reported") ||
+      !check(tracker.preferredTarget() == "usb",
+             "preferred target name differs") ||
+      !check(tracker.updateDevice(
+                 device(1, "speaker", "Built-in Speakers", 100)),
+             "fallback sink must become selected") ||
+      !check(!tracker.setDefaultTarget("speaker"),
+             "setting the already selected fallback must not change it") ||
+      !check(tracker.selectedTarget() == "speaker",
+             "missing preference must use the system default") ||
+      !check(tracker.selectionReason() ==
+                 pipetune::OutputSelectionReason::fallback,
+             "missing preference must report fallback")) {
     return false;
   }
 
-  if (!check(tracker.removeDevice(2),
-             "explicit target removal must clear selection") ||
-      !check(tracker.selectedTarget().empty(),
-             "explicit tracker must not fall back to another sink") ||
-      !check(tracker.updateDevice(device(3, "restored", "42", 1)),
-             "matching object serial must restore explicit target") ||
-      !check(tracker.selectedTarget() == "restored",
-             "restored serial target differs")) {
+  tracker.commitSelection();
+  if (!check(tracker.updateDevice(device(2, "usb", "USB DAC", 1)),
+             "available preference must replace the fallback") ||
+      !check(tracker.selectedTarget() == "usb",
+             "preferred sink must become selected") ||
+      !check(tracker.selectionReason() ==
+                 pipetune::OutputSelectionReason::preferred,
+             "preferred sink must report preferred selection") ||
+      !check(tracker.removeDevice(2),
+             "preferred target removal must select the fallback") ||
+      !check(tracker.selectedTarget() == "speaker",
+             "preferred target removal must restore the system default") ||
+      !check(tracker.selectionReason() ==
+                 pipetune::OutputSelectionReason::fallback,
+             "preferred target removal must report fallback") ||
+      !check(tracker.updateDevice(device(3, "usb", "USB DAC", 1)),
+             "returning preference must replace the fallback") ||
+      !check(tracker.selectedTarget() == "usb",
+             "returning preference must be restored automatically")) {
     return false;
   }
 
-  auto namedTracker = pipetune::OutputDeviceTracker("pipetune_sink", "named");
-  return check(namedTracker.updateDevice(device(4, "named", "99", 1)),
-               "matching node name must select an explicit target") &&
-         check(namedTracker.selectedTarget() == "named",
-               "node-name target differs");
+  return check(tracker.clearPreferredTarget(),
+               "clearing a preference must change the selection") &&
+         check(!tracker.hasPreferredTarget(),
+               "cleared preference must no longer be reported") &&
+         check(tracker.selectedTarget() == "speaker",
+               "clearing a preference must select the system default") &&
+         check(tracker.selectionReason() ==
+                   pipetune::OutputSelectionReason::systemDefault,
+               "clearing a preference must report system-default") &&
+         check(!tracker.removeDevice(3),
+               "removing an unpreferred sink must not change selection") &&
+         check(!tracker.updateDevice(device(4, "usb", "USB DAC", 1)),
+               "returning a cleared preference must not change selection") &&
+         check(tracker.selectedTarget() == "speaker",
+               "a cleared preference must not be restored");
+}
+
+static bool testDefaultChangesWhilePreferredTargetIsActive() {
+  auto tracker = pipetune::OutputDeviceTracker("pipetune_sink", "usb");
+  tracker.updateDevice(device(1, "speaker", "Built-in Speakers", 100));
+  tracker.updateDevice(device(2, "headphones", "Headphones", 200));
+  tracker.updateDevice(device(3, "usb", "USB DAC", 10));
+  tracker.setDefaultTarget("speaker");
+  tracker.commitSelection();
+
+  return check(!tracker.setDefaultTarget("pipetune_sink"),
+               "PipeTune becoming default must not replace physical fallback") &&
+         check(tracker.systemDefaultTarget() == "speaker",
+               "self default must preserve the physical default") &&
+         check(!tracker.setDefaultTarget("headphones"),
+               "default changes must not interrupt an available preference") &&
+         check(tracker.systemDefaultTarget() == "headphones",
+               "new physical default must be remembered") &&
+         check(tracker.selectedTarget() == "usb",
+               "preferred sink must remain selected") &&
+         check(tracker.removeDevice(3),
+               "removing preference must activate the new physical default") &&
+         check(tracker.selectedTarget() == "headphones",
+               "latest physical default must be used as fallback");
 }
 
 static bool testInitialPriorityTieBreak() {
   auto tracker = pipetune::OutputDeviceTracker("pipetune_sink", "");
-  tracker.updateDevice(device(20, "later-id", "20", 100));
+  tracker.updateDevice(device(20, "later-id", "Later", 100));
   tracker.removeDevice(20);
-  tracker.updateDevice(device(20, "later-id", "20", 100));
-  tracker.updateDevice(device(10, "higher-priority", "10", 200));
+  tracker.updateDevice(device(20, "later-id", "Later", 100));
+  tracker.updateDevice(
+      device(10, "higher-priority", "Higher priority", 200));
   tracker.removeDevice(20);
   if (!check(tracker.selectedTarget() == "higher-priority",
              "highest priority must win when selecting a fallback")) {
@@ -120,18 +184,37 @@ static bool testInitialPriorityTieBreak() {
   }
 
   tracker.removeDevice(10);
-  tracker.updateDevice(device(20, "later-id", "20", 100));
-  tracker.updateDevice(device(10, "earlier-id", "10", 100));
+  tracker.updateDevice(device(20, "later-id", "Later", 100));
+  tracker.updateDevice(device(10, "earlier-id", "Earlier", 100));
   tracker.removeDevice(20);
   return check(tracker.selectedTarget() == "earlier-id",
                "lower global id must break equal-priority fallback ties");
+}
+
+static bool testAvailableDevicesAreSortedForPresentation() {
+  auto tracker = pipetune::OutputDeviceTracker("pipetune_sink", "usb");
+  tracker.updateDevice(device(20, "z-name", "Speakers", 10));
+  tracker.updateDevice(device(30, "usb", "Headphones", 20));
+  tracker.updateDevice(device(10, "a-name", "Speakers", 30));
+  tracker.updateDevice(
+      device(40, "virtual", "Ignored virtual sink", 100, true));
+  const auto available = tracker.availableDevices();
+
+  return check(available.size() == 3,
+               "only eligible physical devices must be listed") &&
+         check(available[0].name == "usb" &&
+                   available[1].name == "a-name" &&
+                   available[2].name == "z-name",
+               "devices must be sorted by description and node name");
 }
 
 int main() {
   const auto passed = testAutomaticDefaultAndFallback() &&
                       testInitialEnumerationChoosesHighestPriority() &&
                       testVirtualAndSelfAreExcluded() &&
-                      testExplicitTargetWaitsAndReturns() &&
-                      testInitialPriorityTieBreak();
+                      testPreferredTargetFallsBackAndReturns() &&
+                      testDefaultChangesWhilePreferredTargetIsActive() &&
+                      testInitialPriorityTieBreak() &&
+                      testAvailableDevicesAreSortedForPresentation();
   return passed ? 0 : 1;
 }

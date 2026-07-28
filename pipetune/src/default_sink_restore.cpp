@@ -279,7 +279,14 @@ static void restoreRegistryGlobal(void *data, std::uint32_t id,
         name == nullptr) {
       return;
     }
-    const auto *serial = spa_dict_lookup(properties, PW_KEY_OBJECT_SERIAL);
+    const auto *description =
+        spa_dict_lookup(properties, PW_KEY_NODE_DESCRIPTION);
+    if (description == nullptr || description[0] == '\0') {
+      description = spa_dict_lookup(properties, PW_KEY_NODE_NICK);
+    }
+    if (description == nullptr || description[0] == '\0') {
+      description = name;
+    }
     const auto *priority =
         spa_dict_lookup(properties, PW_KEY_PRIORITY_SESSION);
     const auto *virtualNode =
@@ -287,8 +294,7 @@ static void restoreRegistryGlobal(void *data, std::uint32_t id,
     runtime.tracker.updateDevice(
         {.id = id,
          .name = name,
-         .objectSerial =
-             serial == nullptr ? std::string{} : std::string(serial),
+         .description = description,
          .priority = restorePriority(priority),
          .virtualNode = restoreBoolean(virtualNode)});
     return;

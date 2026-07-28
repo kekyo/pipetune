@@ -57,6 +57,17 @@ public:
   std::uint32_t read(std::span<float> planarSamples,
                      std::uint32_t frameCount) noexcept;
 
+  /**
+   * Discards all frames that were fully queued before this call.
+   *
+   * The consumer must be stopped while this function runs. The producer may
+   * continue writing; frames committed after the discard snapshot are kept.
+   * Intentional discards do not change the xrun counters.
+   *
+   * @return Number of queued frames discarded.
+   */
+  std::uint32_t discardQueuedFrames() noexcept;
+
   /** Returns the configured planar channel count. */
   std::uint32_t channelCount() const noexcept;
   /** Returns the frame capacity. */

@@ -28,7 +28,12 @@ struct PipeWirePipelineOptions {
   std::string sinkName;
   /** Human-readable virtual sink description. */
   std::string sinkDescription;
-  /** Target sink node name or object serial; empty selects the current default. */
+  /**
+   * Preferred sink node.name; empty follows the physical system default.
+   *
+   * A missing preference falls back to the physical system default and is
+   * restored automatically when the preferred node returns.
+   */
   std::string targetObject;
   /** Initial preset path, or empty when the supplied pipeline is bypass. */
   std::filesystem::path initialPresetPath;
