@@ -140,9 +140,16 @@ static bool testOrderlySignalShutdown(
 
   const auto status = pipetune::exchangeControlMessage(
       socketPath, pipetune::makeStatusControlRequest());
+  const auto parsedStatus =
+      pipetune::parseControlResponse(status.response);
   if (!check(status.error.empty(), status.error) ||
       !check(pipetune::inspectControlResponse(status.response).success,
-             "initial status request failed")) {
+             "initial status request failed") ||
+      !check(parsedStatus.valid, parsedStatus.error) ||
+      !check(parsedStatus.status.inputSampleFormat == "F32P" &&
+                 parsedStatus.status.inputSampleRate == 48000 &&
+                 parsedStatus.status.inputChannelCount == 2,
+             "initial status does not report the negotiated input format")) {
     kill(child, SIGTERM);
     auto childStatus = 0;
     waitpid(child, &childStatus, 0);

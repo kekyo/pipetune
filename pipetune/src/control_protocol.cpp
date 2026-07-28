@@ -198,7 +198,18 @@ static std::string makeControlStatusMessage(
       !yyjson_mut_obj_add_uint(document.get(), root, "underrunFrames",
                                status.underrunFrames) ||
       !yyjson_mut_obj_add_uint(document.get(), root, "processingErrors",
-                               status.processingErrors)) {
+                               status.processingErrors) ||
+      !addNullableString(document.get(), root, "inputSampleFormat",
+                         status.inputSampleFormat) ||
+      !yyjson_mut_obj_add_uint(document.get(), root, "inputSampleRate",
+                               status.inputSampleRate) ||
+      !yyjson_mut_obj_add_uint(document.get(), root, "inputChannelCount",
+                               status.inputChannelCount) ||
+      !yyjson_mut_obj_add_uint(document.get(), root, "inputFramesReceived",
+                               status.inputFramesReceived) ||
+      !yyjson_mut_obj_add_uint(
+          document.get(), root, "inputLastReceivedUnixMilliseconds",
+          status.inputLastReceivedUnixMilliseconds)) {
     return makeControlErrorResponse("cannot encode control response");
   }
 
@@ -261,7 +272,12 @@ static ControlResponseParseResult responseError(std::string error) {
                      .defaultSinkActive = false,
                      .overrunFrames = 0,
                      .underrunFrames = 0,
-                     .processingErrors = 0},
+                     .processingErrors = 0,
+                     .inputSampleFormat = {},
+                     .inputSampleRate = 0,
+                     .inputChannelCount = 0,
+                     .inputFramesReceived = 0,
+                     .inputLastReceivedUnixMilliseconds = 0},
           .warnings = {},
           .error = std::move(error)};
 }
@@ -331,6 +347,19 @@ static bool readCounterField(yyjson_val *object, const char *key,
   return true;
 }
 
+static bool readUint32Field(yyjson_val *object, const char *key,
+                            std::uint32_t &value) {
+  auto *field = yyjson_obj_get(object, key);
+  if (!yyjson_is_uint(field) ||
+      yyjson_get_uint(field) >
+          static_cast<std::uint64_t>(
+              std::numeric_limits<std::uint32_t>::max())) {
+    return false;
+  }
+  value = static_cast<std::uint32_t>(yyjson_get_uint(field));
+  return true;
+}
+
 ControlResponseParseResult parseControlResponse(std::string_view json) {
   auto document =
       JsonDocument(yyjson_read(json.data(), json.size(), YYJSON_READ_NOFLAG));
@@ -376,7 +405,12 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
                        .defaultSinkActive = false,
                        .overrunFrames = 0,
                        .underrunFrames = 0,
-                       .processingErrors = 0},
+                       .processingErrors = 0,
+                       .inputSampleFormat = {},
+                       .inputSampleRate = 0,
+                       .inputChannelCount = 0,
+                       .inputFramesReceived = 0,
+                       .inputLastReceivedUnixMilliseconds = 0},
             .warnings = {},
             .error = std::move(error)};
   }
@@ -391,6 +425,11 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       .overrunFrames = 0,
       .underrunFrames = 0,
       .processingErrors = 0,
+      .inputSampleFormat = {},
+      .inputSampleRate = 0,
+      .inputChannelCount = 0,
+      .inputFramesReceived = 0,
+      .inputLastReceivedUnixMilliseconds = 0,
   };
   auto *defaultSinkActive = yyjson_obj_get(root, "defaultSinkActive");
   if (!readProcessingMode(root, status.processingMode) ||
@@ -404,7 +443,16 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       !readCounterField(root, "overrunFrames", status.overrunFrames) ||
       !readCounterField(root, "underrunFrames", status.underrunFrames) ||
       !readCounterField(root, "processingErrors",
-                        status.processingErrors)) {
+                        status.processingErrors) ||
+      !readNullableStringField(root, "inputSampleFormat",
+                               status.inputSampleFormat) ||
+      !readUint32Field(root, "inputSampleRate", status.inputSampleRate) ||
+      !readUint32Field(root, "inputChannelCount",
+                       status.inputChannelCount) ||
+      !readCounterField(root, "inputFramesReceived",
+                        status.inputFramesReceived) ||
+      !readCounterField(root, "inputLastReceivedUnixMilliseconds",
+                        status.inputLastReceivedUnixMilliseconds)) {
     return responseError("successful control response has invalid status");
   }
   if ((status.processingMode == ProcessingMode::preset &&
@@ -412,6 +460,14 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       (status.processingMode == ProcessingMode::bypass &&
        !status.activePreset.empty())) {
     return responseError("successful control response has inconsistent processing status");
+  }
+  const auto hasInputFormat = !status.inputSampleFormat.empty();
+  if (hasInputFormat !=
+          (status.inputSampleRate != 0 && status.inputChannelCount != 0) ||
+      (status.inputFramesReceived == 0) !=
+          (status.inputLastReceivedUnixMilliseconds == 0)) {
+    return responseError(
+        "successful control response has inconsistent input telemetry");
   }
   status.defaultSinkActive = yyjson_get_bool(defaultSinkActive);
 

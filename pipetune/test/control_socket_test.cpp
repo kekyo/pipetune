@@ -239,6 +239,18 @@ int main() {
     return 1;
   }
 
+  const auto periodicPublication = readLine(subscriber);
+  if (!check(periodicPublication.has_value(),
+             "subscriber did not receive a periodic status publication") ||
+      !check(periodicPublication.value_or("") ==
+                 R"json({"event":"status","sequence":2})json",
+             "periodic subscription status differs")) {
+    close(subscriber);
+    started.server.reset();
+    std::filesystem::remove_all(directory);
+    return 1;
+  }
+
   auto duplicate = pipetune::startControlServer(socketPath, options);
   if (!check(duplicate.server == nullptr,
              "a second server must not replace an active socket") ||

@@ -3,6 +3,7 @@
 #include "audio_bridge.h"
 #include "default_sink_restore.h"
 #include "dsp_pipeline_slot.h"
+#include "input_telemetry.h"
 #include "output_device_tracker.h"
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
@@ -17,6 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <charconv>
 #include <cerrno>
 #include <climits>
@@ -70,6 +72,8 @@ struct PipeWireRuntime {
   std::vector<float> playbackScratch;
   std::atomic<std::uint64_t> processingErrors;
   std::atomic<bool> defaultSinkActive;
+  InputTelemetry inputTelemetry;
+  std::atomic<bool> inputFormatNegotiated;
   std::uint64_t processedInputFrames;
   ProcessingMode processingMode;
   std::string activePreset;
@@ -123,7 +127,8 @@ struct PipeWireRuntime {
         playbackScratch(static_cast<std::size_t>(runtimeOptions.channelCount) *
                             runtimeOptions.maxFrames,
                         0.0F),
-        processingErrors(0), defaultSinkActive(false), processedInputFrames(0),
+        processingErrors(0), defaultSinkActive(false), inputTelemetry(),
+        inputFormatNegotiated(false), processedInputFrames(0),
         processingMode(runtimeOptions.initialPresetPath.empty()
                            ? ProcessingMode::bypass
                            : ProcessingMode::preset),
@@ -201,6 +206,19 @@ static PipeWireRunResult validationError(std::string message) {
 static std::string systemError(std::string_view operation, int result) {
   const auto errorNumber = result < 0 ? -result : errno;
   return std::string(operation) + ": " + std::strerror(errorNumber);
+}
+
+static std::int64_t currentMonotonicNanoseconds() noexcept {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+static std::uint64_t currentUnixMilliseconds() noexcept {
+  return static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::system_clock::now().time_since_epoch())
+          .count());
 }
 
 static void applyTrackedTarget(PipeWireRuntime &runtime);
@@ -457,7 +475,8 @@ static bool isReadyState(pw_stream_state state) noexcept {
 }
 
 static void finishReadinessCheck(PipeWireRuntime &runtime) {
-  if (!runtime.captureReady || !runtime.playbackReady) {
+  if (!runtime.captureReady || !runtime.playbackReady ||
+      !runtime.inputFormatNegotiated.load(std::memory_order_acquire)) {
     return;
   }
   maybeActivateDefaultSink(runtime);
@@ -494,6 +513,8 @@ static void streamStateChanged(void *data, pw_stream_state,
   }
   if (context.capture) {
     runtime.captureReady = isReadyState(state);
+    runtime.inputFormatNegotiated.store(runtime.captureReady,
+                                        std::memory_order_release);
   } else {
     runtime.playbackReady = isReadyState(state);
   }
@@ -610,6 +631,9 @@ static void streamParameterChanged(void *data, std::uint32_t id,
   const auto updateResult = pw_stream_update_params(stream, parameters, 1);
   if (updateResult < 0) {
     failRuntime(runtime, systemError("cannot configure PipeWire buffers", updateResult));
+  } else if (context.capture) {
+    runtime.inputFormatNegotiated.store(true, std::memory_order_release);
+    finishReadinessCheck(runtime);
   }
 }
 
@@ -665,6 +689,10 @@ static void captureProcess(void *data) {
     pipeWireBuffer->size = 0;
     pw_stream_queue_buffer(runtime.captureStream, pipeWireBuffer);
     return;
+  }
+  if (frameCount != 0) {
+    recordInputFrames(runtime.inputTelemetry, frameCount,
+                      currentMonotonicNanoseconds());
   }
 
   auto sourceFrame = std::uint32_t{0};
@@ -950,6 +978,11 @@ static void maybeActivateDefaultSink(PipeWireRuntime &runtime) {
 }
 
 static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
+  const auto input = snapshotInputTelemetry(
+      runtime.inputTelemetry, currentMonotonicNanoseconds(),
+      currentUnixMilliseconds());
+  const auto inputFormatNegotiated =
+      runtime.inputFormatNegotiated.load(std::memory_order_acquire);
   return {.processingMode = runtime.processingMode,
           .activePreset = runtime.activePreset,
           .configurationError = runtime.configurationError,
@@ -960,7 +993,16 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .overrunFrames = runtime.ring.overrunFrames(),
           .underrunFrames = runtime.ring.underrunFrames(),
           .processingErrors =
-              runtime.processingErrors.load(std::memory_order_relaxed)};
+              runtime.processingErrors.load(std::memory_order_relaxed),
+          .inputSampleFormat =
+              inputFormatNegotiated ? std::string("F32P") : std::string{},
+          .inputSampleRate =
+              inputFormatNegotiated ? runtime.options.sampleRate : 0,
+          .inputChannelCount =
+              inputFormatNegotiated ? runtime.options.channelCount : 0,
+          .inputFramesReceived = input.framesReceived,
+          .inputLastReceivedUnixMilliseconds =
+              input.lastReceivedUnixMilliseconds};
 }
 
 static ControlMessageResult closeControlResponse(std::string response,

@@ -80,7 +80,12 @@ static pipetune::ControlResponseParseResult emptyResponse() {
                      .defaultSinkActive = false,
                      .overrunFrames = 0,
                      .underrunFrames = 0,
-                     .processingErrors = 0},
+                     .processingErrors = 0,
+                     .inputSampleFormat = {},
+                     .inputSampleRate = 0,
+                     .inputChannelCount = 0,
+                     .inputFramesReceived = 0,
+                     .inputLastReceivedUnixMilliseconds = 0},
           .warnings = {},
           .error = {}};
 }

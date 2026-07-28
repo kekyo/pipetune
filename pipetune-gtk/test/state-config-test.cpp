@@ -29,7 +29,12 @@ static pipetune::ControlResponseParseResult statusResponse(
            .defaultSinkActive = defaultSinkActive,
            .overrunFrames = 0,
            .underrunFrames = 0,
-           .processingErrors = 0},
+           .processingErrors = 0,
+           .inputSampleFormat = {},
+           .inputSampleRate = 0,
+           .inputChannelCount = 0,
+           .inputFramesReceived = 0,
+           .inputLastReceivedUnixMilliseconds = 0},
           warnings));
 }
 
@@ -44,7 +49,12 @@ static pipetune::ControlResponseParseResult bypassStatusResponse() {
            .defaultSinkActive = true,
            .overrunFrames = 0,
            .underrunFrames = 0,
-           .processingErrors = 0},
+           .processingErrors = 0,
+           .inputSampleFormat = {},
+           .inputSampleRate = 0,
+           .inputChannelCount = 0,
+           .inputFramesReceived = 0,
+           .inputLastReceivedUnixMilliseconds = 0},
           {}));
 }
 

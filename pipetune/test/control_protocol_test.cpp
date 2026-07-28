@@ -15,6 +15,16 @@ static bool check(bool condition, std::string_view message) {
   return condition;
 }
 
+static bool replaceOnce(std::string &value, std::string_view from,
+                        std::string_view to) {
+  const auto position = value.find(from);
+  if (position == std::string::npos) {
+    return false;
+  }
+  value.replace(position, from.size(), to);
+  return true;
+}
+
 static bool testRequests() {
   const auto statusJson = pipetune::makeStatusControlRequest();
   const auto status = pipetune::parseControlRequest(statusJson);
@@ -91,7 +101,12 @@ static bool testSuccessResponse() {
        .defaultSinkActive = true,
        .overrunFrames = 11,
        .underrunFrames = 12,
-       .processingErrors = 13},
+       .processingErrors = 13,
+       .inputSampleFormat = "F32P",
+       .inputSampleRate = 48000,
+       .inputChannelCount = 2,
+       .inputFramesReceived = 96000,
+       .inputLastReceivedUnixMilliseconds = 1720000000123},
       warnings);
   const auto inspection = pipetune::inspectControlResponse(response);
   const auto parsed = pipetune::parseControlResponse(response);
@@ -117,6 +132,14 @@ static bool testSuccessResponse() {
                  parsed.status.underrunFrames == 12 &&
                  parsed.status.processingErrors == 13,
              "parsed response counters differ") ||
+      !check(parsed.status.inputSampleFormat == "F32P" &&
+                 parsed.status.inputSampleRate == 48000 &&
+                 parsed.status.inputChannelCount == 2,
+             "parsed response input format differs") ||
+      !check(parsed.status.inputFramesReceived == 96000 &&
+                 parsed.status.inputLastReceivedUnixMilliseconds ==
+                     1720000000123ULL,
+             "parsed response input telemetry differs") ||
       !check(parsed.warnings.size() == 1 &&
                  parsed.warnings.front().nodeIndex == 3 &&
                  parsed.warnings.front().pluginName == "Future DSP" &&
@@ -147,6 +170,15 @@ static bool testSuccessResponse() {
       yyjson_get_uint(yyjson_obj_get(root, "overrunFrames")) == 11 &&
       yyjson_get_uint(yyjson_obj_get(root, "underrunFrames")) == 12 &&
       yyjson_get_uint(yyjson_obj_get(root, "processingErrors")) == 13 &&
+      std::string_view(
+          yyjson_get_str(yyjson_obj_get(root, "inputSampleFormat"))) ==
+          "F32P" &&
+      yyjson_get_uint(yyjson_obj_get(root, "inputSampleRate")) == 48000 &&
+      yyjson_get_uint(yyjson_obj_get(root, "inputChannelCount")) == 2 &&
+      yyjson_get_uint(yyjson_obj_get(root, "inputFramesReceived")) == 96000 &&
+      yyjson_get_uint(
+          yyjson_obj_get(root, "inputLastReceivedUnixMilliseconds")) ==
+          1720000000123ULL &&
       yyjson_is_arr(warningArray) && yyjson_arr_size(warningArray) == 1 &&
       yyjson_get_uint(
           yyjson_obj_get(yyjson_arr_get(warningArray, 0), "nodeIndex")) == 3;
@@ -164,7 +196,12 @@ static bool testStatusEvent() {
        .defaultSinkActive = false,
        .overrunFrames = 21,
        .underrunFrames = 22,
-       .processingErrors = 23});
+       .processingErrors = 23,
+       .inputSampleFormat = "F32P",
+       .inputSampleRate = 44100,
+       .inputChannelCount = 2,
+       .inputFramesReceived = 44100,
+       .inputLastReceivedUnixMilliseconds = 1720000001000});
   const auto parsed = pipetune::parseControlResponse(event);
   return check(parsed.valid, parsed.error) &&
          check(parsed.success, "status event must report success") &&
@@ -187,6 +224,13 @@ static bool testStatusEvent() {
                    parsed.status.underrunFrames == 22 &&
                    parsed.status.processingErrors == 23,
                "status event counters differ") &&
+         check(parsed.status.inputSampleFormat == "F32P" &&
+                   parsed.status.inputSampleRate == 44100 &&
+                   parsed.status.inputChannelCount == 2 &&
+                   parsed.status.inputFramesReceived == 44100 &&
+                   parsed.status.inputLastReceivedUnixMilliseconds ==
+                       1720000001000ULL,
+               "status event input telemetry differs") &&
          check(parsed.warnings.empty(),
                "status event must not contain warnings");
 }
@@ -201,7 +245,12 @@ static bool testBypassStatus() {
        .defaultSinkActive = true,
        .overrunFrames = 0,
        .underrunFrames = 0,
-       .processingErrors = 0},
+       .processingErrors = 0,
+       .inputSampleFormat = {},
+       .inputSampleRate = 0,
+       .inputChannelCount = 0,
+       .inputFramesReceived = 0,
+       .inputLastReceivedUnixMilliseconds = 0},
       {});
   const auto parsed = pipetune::parseControlResponse(response);
   if (!check(parsed.valid, parsed.error) ||
@@ -231,9 +280,55 @@ static bool testBypassStatus() {
       yyjson_is_null(yyjson_obj_get(root, "preset")) &&
       std::string_view(
           yyjson_get_str(yyjson_obj_get(root, "configurationError"))) ==
-          "configured preset is unavailable";
+          "configured preset is unavailable" &&
+      yyjson_is_null(yyjson_obj_get(root, "inputSampleFormat")) &&
+      yyjson_get_uint(yyjson_obj_get(root, "inputSampleRate")) == 0 &&
+      yyjson_get_uint(yyjson_obj_get(root, "inputChannelCount")) == 0 &&
+      yyjson_get_uint(yyjson_obj_get(root, "inputFramesReceived")) == 0 &&
+      yyjson_get_uint(
+          yyjson_obj_get(root, "inputLastReceivedUnixMilliseconds")) == 0;
   yyjson_doc_free(document);
   return check(correct, "bypass response fields differ");
+}
+
+static bool testRejectedInputTelemetry() {
+  const auto response = pipetune::makeControlSuccessResponse(
+      {.processingMode = pipetune::ProcessingMode::bypass,
+       .activePreset = {},
+       .configurationError = {},
+       .activePluginCount = 0,
+       .selectedTarget = "alsa_output.speaker",
+       .defaultSinkActive = true,
+       .overrunFrames = 0,
+       .underrunFrames = 0,
+       .processingErrors = 0,
+       .inputSampleFormat = "F32P",
+       .inputSampleRate = 48000,
+       .inputChannelCount = 2,
+       .inputFramesReceived = 48000,
+       .inputLastReceivedUnixMilliseconds = 1720000000000},
+      {});
+  auto outOfRangeRate = response;
+  auto missingFormat = response;
+  auto wrongCounterType = response;
+  if (!check(replaceOnce(outOfRangeRate, R"json("inputSampleRate":48000)json",
+                         R"json("inputSampleRate":4294967296)json"),
+             "cannot prepare out-of-range input rate") ||
+      !check(replaceOnce(missingFormat, "inputSampleFormat",
+                         "missingInputSampleFormat"),
+             "cannot prepare missing input format") ||
+      !check(replaceOnce(wrongCounterType,
+                         R"json("inputFramesReceived":48000)json",
+                         R"json("inputFramesReceived":"48000")json"),
+             "cannot prepare invalid input counter")) {
+    return false;
+  }
+  return check(!pipetune::parseControlResponse(outOfRangeRate).valid,
+               "out-of-range input rate must be rejected") &&
+         check(!pipetune::parseControlResponse(missingFormat).valid,
+               "missing input format must be rejected") &&
+         check(!pipetune::parseControlResponse(wrongCounterType).valid,
+               "non-numeric input counter must be rejected");
 }
 
 static bool testErrorResponse() {
@@ -253,7 +348,8 @@ static bool testErrorResponse() {
 
 int main() {
   return testRequests() && testRejectedRequests() && testSuccessResponse() &&
-                 testStatusEvent() && testBypassStatus() && testErrorResponse()
+                 testStatusEvent() && testBypassStatus() &&
+                 testRejectedInputTelemetry() && testErrorResponse()
              ? 0
              : 1;
 }

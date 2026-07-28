@@ -175,6 +175,7 @@ add_library(
   src/command_line.cpp
   src/default_sink_restore.cpp
   src/dsp_pipeline_slot.cpp
+  src/input_telemetry.cpp
   src/output_device_tracker.cpp
   src/pipewire_pipeline.cpp
   src/process_runner.cpp
@@ -310,6 +311,23 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_audio_bridge_tests
     COMMAND pipetune_audio_bridge_tests)
+
+  add_executable(
+    pipetune_input_telemetry_tests
+    test/input_telemetry_test.cpp)
+  target_include_directories(pipetune_input_telemetry_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_input_telemetry_tests PRIVATE pipetune_pipewire)
+  if(MSVC)
+    target_compile_options(pipetune_input_telemetry_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_input_telemetry_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_input_telemetry_tests
+    COMMAND pipetune_input_telemetry_tests)
 
   add_executable(
     pipetune_pipewire_pipeline_tests

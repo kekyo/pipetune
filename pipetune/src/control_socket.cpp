@@ -4,8 +4,10 @@
 
 #include "pipetune/control_socket.h"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -33,6 +35,7 @@ constexpr auto kMaximumControlResponseBytes = std::size_t{256 * 1024};
 constexpr auto kControlBacklog = 8;
 constexpr auto kMaximumControlSubscribers = std::size_t{8};
 constexpr auto kClientTimeoutSeconds = 5;
+constexpr auto kStatusPublicationInterval = std::chrono::seconds{1};
 
 struct ControlServer::Impl {
   std::filesystem::path socketPath;
@@ -391,7 +394,23 @@ static void removeClosedSubscribers(
 
 static void runControlServer(ControlServer::Impl *implementation) {
   auto subscribers = std::vector<ControlSubscriber>{};
+  auto nextPublication =
+      std::optional<std::chrono::steady_clock::time_point>{};
   while (true) {
+    const auto beforePoll = std::chrono::steady_clock::now();
+    if (subscribers.empty()) {
+      nextPublication.reset();
+    } else if (!nextPublication.has_value()) {
+      nextPublication = beforePoll + kStatusPublicationInterval;
+    }
+    const auto timeout =
+        nextPublication.has_value()
+            ? static_cast<int>(
+                  std::chrono::ceil<std::chrono::milliseconds>(
+                      std::max(std::chrono::steady_clock::duration::zero(),
+                               *nextPublication - beforePoll))
+                      .count())
+            : -1;
     auto descriptors = std::vector<pollfd>{};
     descriptors.reserve(3 + subscribers.size());
     descriptors.push_back(pollfd{.fd = implementation->listener,
@@ -415,11 +434,18 @@ static void runControlServer(ControlServer::Impl *implementation) {
 
     auto result = int{-1};
     do {
-      result = poll(descriptors.data(), descriptors.size(), -1);
+      result = poll(descriptors.data(), descriptors.size(), timeout);
     } while (result < 0 && errno == EINTR);
-    if (result <= 0 || (descriptors[1].revents & POLLIN) != 0) {
+    if (result < 0 || (descriptors[1].revents & POLLIN) != 0) {
       closeSubscribers(subscribers);
       return;
+    }
+    const auto afterPoll = std::chrono::steady_clock::now();
+    if (nextPublication.has_value() && afterPoll >= *nextPublication) {
+      publishToSubscribers(*implementation, subscribers);
+      do {
+        *nextPublication += kStatusPublicationInterval;
+      } while (afterPoll >= *nextPublication);
     }
     if ((descriptors[2].revents & POLLIN) != 0) {
       drainEvent(implementation->publishEvent);

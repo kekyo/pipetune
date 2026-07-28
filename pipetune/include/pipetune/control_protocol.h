@@ -77,6 +77,16 @@ struct ControlRuntimeStatus {
   std::uint64_t underrunFrames;
   /** DSP blocks that could not be processed. */
   std::uint64_t processingErrors;
+  /** Negotiated PipeWire input sample format, or empty before negotiation. */
+  std::string inputSampleFormat;
+  /** Negotiated PipeWire input sample rate, or zero before negotiation. */
+  std::uint32_t inputSampleRate;
+  /** Negotiated PipeWire input channel count, or zero before negotiation. */
+  std::uint32_t inputChannelCount;
+  /** Total valid PCM frames received from PipeWire. */
+  std::uint64_t inputFramesReceived;
+  /** Unix time of the latest received frame in milliseconds, or zero before input. */
+  std::uint64_t inputLastReceivedUnixMilliseconds;
 };
 
 /**
