@@ -55,6 +55,18 @@ struct EffeTunePresetCatalogResult {
 };
 
 /**
+ * Holds one attempted read of EffeTune's saved-preset JSON file.
+ */
+struct EffeTuneSavedPresetLoadResult {
+  /** Saved choices parsed from the complete file. */
+  std::vector<PresetChoice> choices;
+  /** Whether the file was parsed as a preset object. */
+  bool parsed;
+  /** Read, parse, or invalid-entry diagnostics. */
+  std::vector<std::string> diagnostics;
+};
+
+/**
  * Reports the standalone preset path resolved for a catalog choice.
  */
 struct PresetChoicePathResult {
@@ -92,6 +104,33 @@ EffeTuneUserPresetPathResult resolveEffeTuneUserPresetPath(
 EffeTunePresetCatalogResult loadEffeTunePresetCatalog(
     const std::filesystem::path &standardPresetDirectory,
     const std::filesystem::path &userPresetFile);
+
+/**
+ * Loads only the named presets saved by the EffeTune desktop application.
+ *
+ * A missing file or malformed root is reported with `parsed` set to false.
+ * A valid empty object is successful and returns an empty choice list.
+ *
+ * @param userPresetFile EffeTune desktop `effetune_presets.json` path.
+ * @return Saved choices, parse state, and non-fatal diagnostics.
+ */
+EffeTuneSavedPresetLoadResult loadEffeTuneSavedPresets(
+    const std::filesystem::path &userPresetFile);
+
+/**
+ * Applies one saved-preset file refresh to the current catalog choices.
+ *
+ * Standard choices are always retained. Saved choices are completely
+ * replaced only when the refreshed file parsed successfully; otherwise the
+ * previous saved choices are retained.
+ *
+ * @param currentChoices Current standard and saved choices.
+ * @param refresh Newly loaded saved-preset file state.
+ * @return Updated standard and saved choices.
+ */
+std::vector<PresetChoice> applyEffeTuneSavedPresetRefresh(
+    const std::vector<PresetChoice> &currentChoices,
+    const EffeTuneSavedPresetLoadResult &refresh);
 
 /**
  * Resolves a catalog choice to a standalone `.effetune_preset` file.

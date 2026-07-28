@@ -69,6 +69,7 @@ add_library(
   src/output-operation.cpp
   src/output-selection-model.cpp
   src/preset-catalog.cpp
+  src/preset-file-monitor.cpp
   src/status-text.cpp)
 target_include_directories(pipetune_gtk_core PUBLIC src)
 target_link_libraries(
@@ -253,7 +254,8 @@ if(BUILD_TESTING)
     pipetune_gtk_preset_catalog_tests
     test/preset-catalog-test.cpp)
   target_link_libraries(
-    pipetune_gtk_preset_catalog_tests PRIVATE pipetune_gtk_core)
+    pipetune_gtk_preset_catalog_tests
+    PRIVATE pipetune_gtk_core PkgConfig::GIO)
   if(MSVC)
     target_compile_options(pipetune_gtk_preset_catalog_tests PRIVATE /W4 /WX)
   else()

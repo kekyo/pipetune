@@ -1,6 +1,9 @@
 #include "preset-catalog.h"
+#include "preset-file-monitor.h"
 
 #include "pipetune/dsp_pipeline.h"
+
+#include <glib.h>
 
 #include <cmath>
 #include <filesystem>
@@ -10,6 +13,7 @@
 #include <string_view>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <vector>
 
 static bool check(bool condition, std::string_view message) {
   if (!condition) {
@@ -27,6 +31,78 @@ static void writeFile(const std::filesystem::path &path,
 
 static bool approximately(float actual, float expected) {
   return std::abs(actual - expected) <= 1.0e-6F;
+}
+
+static void replaceFile(const std::filesystem::path &path,
+                        std::string_view contents) {
+  const auto temporaryPath = path.string() + ".new";
+  writeFile(temporaryPath, contents);
+  std::filesystem::rename(temporaryPath, path);
+}
+
+struct MonitorTestState {
+  std::filesystem::path userFile;
+  std::vector<pipetune_gtk::PresetChoice> choices;
+  GMainLoop *loop;
+  std::size_t notificationCount;
+  bool timedOut;
+  bool lastRefreshParsed;
+  std::vector<std::string> lastDiagnostics;
+};
+
+static void onPresetFileChanged(void *userData) {
+  auto *state = static_cast<MonitorTestState *>(userData);
+  const auto refresh =
+      pipetune_gtk::loadEffeTuneSavedPresets(state->userFile);
+  state->choices = pipetune_gtk::applyEffeTuneSavedPresetRefresh(
+      state->choices, refresh);
+  state->lastRefreshParsed = refresh.parsed;
+  state->lastDiagnostics = refresh.diagnostics;
+  ++state->notificationCount;
+  if (state->loop != nullptr) {
+    g_main_loop_quit(state->loop);
+  }
+}
+
+static gboolean onMonitorWaitTimeout(gpointer userData) {
+  auto *state = static_cast<MonitorTestState *>(userData);
+  state->timedOut = true;
+  if (state->loop != nullptr) {
+    g_main_loop_quit(state->loop);
+  }
+  return G_SOURCE_REMOVE;
+}
+
+static bool waitForMonitorNotification(
+    MonitorTestState &state, std::size_t previousNotificationCount,
+    std::string_view operation) {
+  state.timedOut = false;
+  state.loop = g_main_loop_new(nullptr, FALSE);
+  const auto timeoutSource =
+      g_timeout_add_seconds(5, onMonitorWaitTimeout, &state);
+  g_main_loop_run(state.loop);
+  if (!state.timedOut) {
+    g_source_remove(timeoutSource);
+  }
+  g_main_loop_unref(state.loop);
+  state.loop = nullptr;
+  return check(!state.timedOut,
+               std::string(operation) +
+                   " did not produce a file monitor notification") &&
+         check(state.notificationCount > previousNotificationCount,
+               std::string(operation) +
+                   " did not refresh the saved preset list");
+}
+
+static bool hasChoice(
+    const std::vector<pipetune_gtk::PresetChoice> &choices,
+    pipetune_gtk::PresetSource source, std::string_view name) {
+  for (const auto &choice : choices) {
+    if (choice.source == source && choice.name == name) {
+      return true;
+    }
+  }
+  return false;
 }
 
 static bool testStoragePathResolution(
@@ -216,6 +292,162 @@ static bool testMissingAndMalformedSources(
                "malformed user storage must add a diagnostic");
 }
 
+static bool testSavedPresetFileMonitoring(
+    const std::filesystem::path &directory) {
+  const auto userFile =
+      directory / "monitored-xdg" / "effetune" /
+      "effetune_presets.json";
+  const auto snapshotDirectory =
+      directory / "monitored-snapshots";
+  auto state = MonitorTestState{
+      .userFile = userFile,
+      .choices =
+          {
+              {.source = pipetune_gtk::PresetSource::standard,
+               .name = "Standard reference",
+               .category = "Reference",
+               .path = directory / "standard.effetune_preset",
+               .serializedPreset = {}},
+          },
+      .loop = nullptr,
+      .notificationCount = 0,
+      .timedOut = false,
+      .lastRefreshParsed = false,
+      .lastDiagnostics = {},
+  };
+  const auto created = pipetune_gtk::createEffeTunePresetFileMonitor(
+      userFile, onPresetFileChanged, &state);
+  if (!check(created.error.empty(), created.error) ||
+      !check(created.monitor != nullptr,
+             "saved preset file monitor was not created")) {
+    return false;
+  }
+
+  auto passed = true;
+  auto previousNotifications = state.notificationCount;
+  replaceFile(
+      userFile,
+      R"json({"Old":{"plugins":[{"nm":"Volume","en":true,"vl":6,"ch":"A"}]}})json");
+  passed =
+      waitForMonitorNotification(state, previousNotifications,
+                                 "initial saved preset creation") &&
+      check(state.lastRefreshParsed,
+            "valid saved preset creation must parse") &&
+      check(state.choices.size() == 2,
+            "valid creation must append one saved preset") &&
+      check(hasChoice(state.choices,
+                      pipetune_gtk::PresetSource::standard,
+                      "Standard reference"),
+            "saved preset creation removed a standard preset") &&
+      check(hasChoice(state.choices, pipetune_gtk::PresetSource::saved,
+                      "Old"),
+            "created saved preset is unavailable");
+
+  auto snapshot = pipetune_gtk::PresetChoicePathResult{};
+  if (passed) {
+    snapshot = pipetune_gtk::resolvePresetChoicePath(
+        state.choices[1], snapshotDirectory);
+    passed =
+        check(snapshot.error.empty(), snapshot.error) &&
+        check(std::filesystem::is_regular_file(snapshot.path),
+              "loaded saved preset snapshot is unavailable");
+  }
+
+  if (passed) {
+    previousNotifications = state.notificationCount;
+    replaceFile(userFile, R"json({"unfinished":)json");
+    passed =
+        waitForMonitorNotification(state, previousNotifications,
+                                   "malformed saved preset update") &&
+        check(!state.lastRefreshParsed,
+              "malformed saved preset update must not parse") &&
+        check(!state.lastDiagnostics.empty(),
+              "malformed update must report a diagnostic") &&
+        check(state.choices.size() == 2 &&
+                  hasChoice(state.choices,
+                            pipetune_gtk::PresetSource::standard,
+                            "Standard reference") &&
+                  hasChoice(state.choices,
+                            pipetune_gtk::PresetSource::saved, "Old"),
+              "malformed update changed existing preset entries");
+  }
+
+  if (passed) {
+    previousNotifications = state.notificationCount;
+    std::filesystem::remove(userFile);
+    passed =
+        waitForMonitorNotification(state, previousNotifications,
+                                   "saved preset deletion") &&
+        check(!state.lastRefreshParsed,
+              "deleted saved preset file must not parse") &&
+        check(state.choices.size() == 2 &&
+                  hasChoice(state.choices,
+                            pipetune_gtk::PresetSource::standard,
+                            "Standard reference") &&
+                  hasChoice(state.choices,
+                            pipetune_gtk::PresetSource::saved, "Old"),
+              "file deletion changed existing preset entries");
+  }
+
+  if (passed) {
+    previousNotifications = state.notificationCount;
+    replaceFile(
+        userFile,
+        R"json({"New":{"plugins":[{"nm":"Volume","en":true,"vl":-6,"ch":"A"}]}})json");
+    passed =
+        waitForMonitorNotification(state, previousNotifications,
+                                   "valid saved preset replacement") &&
+        check(state.lastRefreshParsed,
+              "valid replacement must parse") &&
+        check(state.choices.size() == 2 &&
+                  hasChoice(state.choices,
+                            pipetune_gtk::PresetSource::standard,
+                            "Standard reference") &&
+                  hasChoice(state.choices,
+                            pipetune_gtk::PresetSource::saved, "New") &&
+                  !hasChoice(state.choices,
+                             pipetune_gtk::PresetSource::saved, "Old"),
+              "valid replacement did not replace only saved entries");
+  }
+
+  if (passed) {
+    previousNotifications = state.notificationCount;
+    replaceFile(userFile, "{}");
+    passed =
+        waitForMonitorNotification(state, previousNotifications,
+                                   "empty saved preset replacement") &&
+        check(state.lastRefreshParsed,
+              "empty object replacement must parse") &&
+        check(state.choices.size() == 1 &&
+                  hasChoice(state.choices,
+                            pipetune_gtk::PresetSource::standard,
+                            "Standard reference"),
+              "empty saved preset update removed a standard preset");
+  }
+
+  if (passed) {
+    const auto loaded = pipetune::loadDspPipeline(
+        snapshot.path,
+        {.sampleRate = 48000.0F, .maxChannels = 1, .maxFrames = 32});
+    if (!check(loaded.pipeline != nullptr, loaded.error)) {
+      passed = false;
+    } else {
+      auto samples = std::vector<float>{0.25F};
+      passed =
+          check(loaded.pipeline->process(samples, 1, 1, 0.0) ==
+                    pipetune::ProcessStatus::ok,
+                "existing loaded preset snapshot processing failed") &&
+          check(approximately(
+                    samples[0],
+                    0.25F * std::pow(10.0F, 6.0F / 20.0F)),
+                "JSON refresh changed an existing loaded preset snapshot");
+    }
+  }
+
+  pipetune_gtk::destroyEffeTunePresetFileMonitor(created.monitor);
+  return passed;
+}
+
 static bool testBundledStandardPresets(
     const std::filesystem::path &standardDirectory) {
   const auto catalog = pipetune_gtk::loadEffeTunePresetCatalog(
@@ -257,6 +489,7 @@ int main(int argc, char **argv) {
       testStoragePathResolution(directory) &&
       testCatalogAndMaterialization(directory) &&
       testMissingAndMalformedSources(directory) &&
+      testSavedPresetFileMonitoring(directory) &&
       testBundledStandardPresets(argv[1]);
   std::filesystem::remove_all(directory);
   return passed ? 0 : 1;

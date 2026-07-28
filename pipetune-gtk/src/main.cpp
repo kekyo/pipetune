@@ -6,6 +6,7 @@
 #include "output-operation.h"
 #include "output-selection-model.h"
 #include "preset-catalog.h"
+#include "preset-file-monitor.h"
 #include "status-icon.h"
 #include "status-text.h"
 #include "tray-backend.h"
@@ -43,7 +44,11 @@ struct GtkRuntime {
   bool hasStartupPreset;
   std::filesystem::path pendingPreset;
   std::vector<PresetChoice> presetChoices;
+  std::filesystem::path effetuneUserPresetPath;
+  EffeTunePresetFileMonitor *presetFileMonitor;
   bool updatingPresetCombo;
+  std::string presetCatalogSourceDiagnostic;
+  std::string presetCatalogSavedDiagnostic;
   std::string presetCatalogDiagnostic;
   std::vector<OutputDeviceChoice> outputChoices;
   bool updatingOutputCombo;
@@ -333,6 +338,8 @@ static void onWindowDestroy(GtkWidget *, gpointer userData) {
 static void onNoticeDismiss(GtkButton *, gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
   clearControlNotice(runtime->state);
+  runtime->presetCatalogSourceDiagnostic.clear();
+  runtime->presetCatalogSavedDiagnostic.clear();
   runtime->presetCatalogDiagnostic.clear();
   render(runtime);
 }
@@ -614,7 +621,15 @@ static std::string catalogDiagnosticText(
   return text;
 }
 
-static void reloadPresetCatalog(GtkRuntime *runtime) {
+static void updatePresetCatalogDiagnostic(GtkRuntime *runtime) {
+  runtime->presetCatalogDiagnostic =
+      runtime->presetCatalogSourceDiagnostic;
+  appendNotice(runtime->presetCatalogDiagnostic,
+               runtime->presetCatalogSavedDiagnostic);
+}
+
+static void replacePresetChoices(
+    GtkRuntime *runtime, std::vector<PresetChoice> choices) {
   auto preserveChoice = false;
   auto preservedSource = PresetSource::standard;
   auto preservedName = std::string{};
@@ -631,20 +646,7 @@ static void reloadPresetCatalog(GtkRuntime *runtime) {
     preservedName = choice.name;
     preservedPreset = choice.serializedPreset;
   }
-
-  const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
-  const auto *home = std::getenv("HOME");
-  const auto userPath = resolveEffeTuneUserPresetPath(
-      xdgConfigHome == nullptr ? std::string_view{}
-                               : std::string_view(xdgConfigHome),
-      home == nullptr ? std::filesystem::path{}
-                      : std::filesystem::path(home));
-  const auto catalog = loadEffeTunePresetCatalog(
-      kEffeTuneStandardPresetDirectory,
-      userPath.error.empty() ? userPath.path : std::filesystem::path{});
-  runtime->presetChoices = catalog.choices;
-  runtime->presetCatalogDiagnostic =
-      catalogDiagnosticText(catalog.diagnostics, userPath.error);
+  runtime->presetChoices = std::move(choices);
 
   runtime->updatingPresetCombo = true;
   gtk_combo_box_text_remove_all(
@@ -674,6 +676,61 @@ static void reloadPresetCatalog(GtkRuntime *runtime) {
   runtime->updatingPresetCombo = false;
   gtk_widget_set_sensitive(runtime->ui.presetCombo,
                            !runtime->presetChoices.empty());
+}
+
+static void refreshSavedPresetCatalog(GtkRuntime *runtime) {
+  if (runtime->effetuneUserPresetPath.empty()) {
+    return;
+  }
+  const auto refresh =
+      loadEffeTuneSavedPresets(runtime->effetuneUserPresetPath);
+  auto choices = applyEffeTuneSavedPresetRefresh(
+      runtime->presetChoices, refresh);
+  runtime->presetCatalogSavedDiagnostic =
+      catalogDiagnosticText(refresh.diagnostics, {});
+  replacePresetChoices(runtime, std::move(choices));
+  updatePresetCatalogDiagnostic(runtime);
+}
+
+static void onEffeTunePresetFileChanged(void *userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (runtime->shuttingDown) {
+    return;
+  }
+  refreshSavedPresetCatalog(runtime);
+  render(runtime);
+}
+
+static void initializePresetCatalog(GtkRuntime *runtime) {
+  const auto standard = loadEffeTunePresetCatalog(
+      kEffeTuneStandardPresetDirectory, {});
+  runtime->presetCatalogSourceDiagnostic =
+      catalogDiagnosticText(standard.diagnostics, {});
+  replacePresetChoices(runtime, standard.choices);
+
+  const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
+  const auto *home = std::getenv("HOME");
+  const auto userPath = resolveEffeTuneUserPresetPath(
+      xdgConfigHome == nullptr ? std::string_view{}
+                               : std::string_view(xdgConfigHome),
+      home == nullptr ? std::filesystem::path{}
+                      : std::filesystem::path(home));
+  appendNotice(runtime->presetCatalogSourceDiagnostic,
+               userPath.error);
+  if (!userPath.error.empty()) {
+    updatePresetCatalogDiagnostic(runtime);
+    return;
+  }
+
+  runtime->effetuneUserPresetPath = userPath.path;
+  refreshSavedPresetCatalog(runtime);
+  const auto monitor = createEffeTunePresetFileMonitor(
+      runtime->effetuneUserPresetPath,
+      onEffeTunePresetFileChanged, runtime);
+  runtime->presetFileMonitor = monitor.monitor;
+  appendNotice(runtime->presetCatalogSourceDiagnostic,
+               monitor.error);
+  updatePresetCatalogDiagnostic(runtime);
 }
 
 static void onPresetComboChanged(GtkComboBox *combo,
@@ -757,7 +814,7 @@ static void presentWindow(GtkRuntime *runtime,
   if (runtime == nullptr || runtime->ui.window == nullptr) {
     return;
   }
-  reloadPresetCatalog(runtime);
+  refreshSavedPresetCatalog(runtime);
   presentMainWindow(runtime->ui, userInteractionTime);
   const auto notice =
       noticeText(runtime->state, runtime->presetCatalogDiagnostic);
@@ -838,7 +895,7 @@ static void onApplicationStartup(GApplication *, gpointer userData) {
   initializeStatusArtwork(runtime);
   connectMainWindowSignals(runtime);
   initializeStartupConfig(runtime);
-  reloadPresetCatalog(runtime);
+  initializePresetCatalog(runtime);
   g_application_hold(G_APPLICATION(runtime->application));
   runtime->applicationHeld = true;
   runtime->trayBackend = createTrayBackend({
@@ -911,6 +968,8 @@ static void onApplicationShutdown(GApplication *, gpointer userData) {
     g_source_remove(runtime->reconnectSource);
     runtime->reconnectSource = 0;
   }
+  destroyEffeTunePresetFileMonitor(runtime->presetFileMonitor);
+  runtime->presetFileMonitor = nullptr;
   destroyControlClient(runtime->controlClient);
   runtime->controlClient = nullptr;
   destroyTrayBackend(runtime->trayBackend);
@@ -934,7 +993,11 @@ static int runApplication(int argc, char **argv) {
       .hasStartupPreset = false,
       .pendingPreset = {},
       .presetChoices = {},
+      .effetuneUserPresetPath = {},
+      .presetFileMonitor = nullptr,
       .updatingPresetCombo = false,
+      .presetCatalogSourceDiagnostic = {},
+      .presetCatalogSavedDiagnostic = {},
       .presetCatalogDiagnostic = {},
       .outputChoices = {},
       .updatingOutputCombo = false,

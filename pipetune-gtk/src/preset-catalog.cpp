@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <memory>
 #include <set>
 #include <sstream>
@@ -196,22 +197,26 @@ static std::string serializePreset(yyjson_val *value) {
   return serialized;
 }
 
-static void loadSavedPresets(
-    const std::filesystem::path &path,
-    EffeTunePresetCatalogResult &result) {
+EffeTuneSavedPresetLoadResult loadEffeTuneSavedPresets(
+    const std::filesystem::path &path) {
+  auto result = EffeTuneSavedPresetLoadResult{
+      .choices = {},
+      .parsed = false,
+      .diagnostics = {},
+  };
   if (path.empty()) {
-    return;
+    return result;
   }
   auto filesystemError = std::error_code{};
   const auto exists = std::filesystem::exists(path, filesystemError);
   if (!exists && !filesystemError) {
-    return;
+    return result;
   }
   if (filesystemError) {
     result.diagnostics.push_back(
         "Cannot inspect EffeTune saved presets: " +
         filesystemError.message());
-    return;
+    return result;
   }
 
   auto contents = std::string{};
@@ -219,7 +224,7 @@ static void loadSavedPresets(
   if (!readLimitedFile(path, kMaximumUserPresetBytes, contents, error)) {
     result.diagnostics.push_back(
         "Cannot read EffeTune saved presets: " + error);
-    return;
+    return result;
   }
   auto document =
       JsonDocument(yyjson_read(contents.data(), contents.size(),
@@ -229,10 +234,10 @@ static void loadSavedPresets(
   if (!yyjson_is_obj(root)) {
     result.diagnostics.push_back(
         "EffeTune saved presets contain invalid JSON");
-    return;
+    return result;
   }
+  result.parsed = true;
 
-  auto savedChoices = std::vector<PresetChoice>{};
   auto names = std::set<std::string>{};
   auto iterator = yyjson_obj_iter_with(root);
   while (auto *key = yyjson_obj_iter_next(&iterator)) {
@@ -249,7 +254,7 @@ static void loadSavedPresets(
           "\" has an invalid pipeline and was omitted");
       continue;
     }
-    savedChoices.push_back(
+    result.choices.push_back(
         {.source = PresetSource::saved,
          .name = name,
          .category = {},
@@ -257,11 +262,9 @@ static void loadSavedPresets(
          .serializedPreset = serialized});
   }
   std::ranges::sort(
-      savedChoices, {},
+      result.choices, {},
       [](const PresetChoice &choice) { return choice.name; });
-  result.choices.insert(result.choices.end(),
-                        std::make_move_iterator(savedChoices.begin()),
-                        std::make_move_iterator(savedChoices.end()));
+  return result;
 }
 
 static std::uint64_t presetNameHash(std::string_view name) {
@@ -429,8 +432,36 @@ EffeTunePresetCatalogResult loadEffeTunePresetCatalog(
     const std::filesystem::path &userPresetFile) {
   auto result = EffeTunePresetCatalogResult{};
   loadStandardPresets(standardPresetDirectory, result);
-  loadSavedPresets(userPresetFile, result);
+  auto saved = loadEffeTuneSavedPresets(userPresetFile);
+  result.choices.insert(
+      result.choices.end(),
+      std::make_move_iterator(saved.choices.begin()),
+      std::make_move_iterator(saved.choices.end()));
+  result.diagnostics.insert(
+      result.diagnostics.end(),
+      std::make_move_iterator(saved.diagnostics.begin()),
+      std::make_move_iterator(saved.diagnostics.end()));
   return result;
+}
+
+std::vector<PresetChoice> applyEffeTuneSavedPresetRefresh(
+    const std::vector<PresetChoice> &currentChoices,
+    const EffeTuneSavedPresetLoadResult &refresh) {
+  auto updated = std::vector<PresetChoice>{};
+  updated.reserve(currentChoices.size() + refresh.choices.size());
+  std::ranges::copy_if(
+      currentChoices, std::back_inserter(updated),
+      [](const PresetChoice &choice) {
+        return choice.source == PresetSource::standard;
+      });
+  const auto &savedChoices =
+      refresh.parsed ? refresh.choices : currentChoices;
+  std::ranges::copy_if(
+      savedChoices, std::back_inserter(updated),
+      [](const PresetChoice &choice) {
+        return choice.source == PresetSource::saved;
+      });
+  return updated;
 }
 
 PresetChoicePathResult resolvePresetChoicePath(
