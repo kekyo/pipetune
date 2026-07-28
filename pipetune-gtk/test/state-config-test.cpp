@@ -33,11 +33,28 @@ static pipetune::ControlResponseParseResult statusResponse(
           warnings));
 }
 
+static pipetune::ControlResponseParseResult bypassStatusResponse() {
+  return pipetune::parseControlResponse(
+      pipetune::makeControlSuccessResponse(
+          {.processingMode = pipetune::ProcessingMode::bypass,
+           .activePreset = {},
+           .configurationError = {},
+           .activePluginCount = 0,
+           .selectedTarget = "alsa_output.speaker",
+           .defaultSinkActive = true,
+           .overrunFrames = 0,
+           .underrunFrames = 0,
+           .processingErrors = 0},
+          {}));
+}
+
 static bool testApplicationState() {
   auto state = pipetune_gtk::initialApplicationState();
   if (!check(state.connection ==
                  pipetune_gtk::ControlConnectionState::disconnected,
              "initial connection state differs") ||
+      !check(!pipetune_gtk::isPresetApplied(state),
+             "initial state must not confirm an applied preset") ||
       !check(pipetune_gtk::trayVisualState(state) ==
                  pipetune_gtk::TrayVisualState::disconnected,
              "initial tray state differs")) {
@@ -45,6 +62,10 @@ static bool testApplicationState() {
   }
 
   pipetune_gtk::markControlConnecting(state);
+  if (!check(!pipetune_gtk::isPresetApplied(state),
+             "connecting state must not confirm an applied preset")) {
+    return false;
+  }
   const auto healthy = statusResponse(true, {}, {});
   pipetune_gtk::applyControlResponse(state, healthy);
   if (!check(state.connection ==
@@ -53,9 +74,31 @@ static bool testApplicationState() {
       !check(state.hasRuntimeStatus &&
                  state.runtime.activePluginCount == 4,
              "runtime status was not retained") ||
+      !check(pipetune_gtk::isPresetApplied(state),
+             "preset runtime must confirm an applied preset") ||
       !check(pipetune_gtk::trayVisualState(state) ==
                  pipetune_gtk::TrayVisualState::active,
              "healthy runtime must use the active tray state")) {
+    return false;
+  }
+
+  auto reconnectingState = state;
+  pipetune_gtk::markControlConnecting(reconnectingState);
+  const auto connectionError = pipetune::parseControlResponse(
+      pipetune::makeControlErrorResponse("subscription failed"));
+  pipetune_gtk::applyControlResponse(reconnectingState,
+                                     connectionError);
+  if (!check(!reconnectingState.hasRuntimeStatus &&
+                 !pipetune_gtk::isPresetApplied(reconnectingState),
+             "failed reconnection must invalidate the applied preset")) {
+    return false;
+  }
+
+  auto bypassState = state;
+  pipetune_gtk::applyControlResponse(bypassState,
+                                     bypassStatusResponse());
+  if (!check(!pipetune_gtk::isPresetApplied(bypassState),
+             "bypass runtime must not confirm an applied preset")) {
     return false;
   }
 
@@ -67,6 +110,8 @@ static bool testApplicationState() {
                                      statusResponse(true, warnings, {}));
   if (!check(state.warnings.size() == 1,
              "ordinary response warnings were not retained") ||
+      !check(pipetune_gtk::isPresetApplied(state),
+             "warnings must not hide an applied preset") ||
       !check(pipetune_gtk::trayVisualState(state) ==
                  pipetune_gtk::TrayVisualState::attention,
              "warnings must request attention")) {
@@ -107,6 +152,8 @@ static bool testApplicationState() {
                "disconnect state differs") &&
          check(state.diagnostic == "daemon stopped",
                "disconnect diagnostic differs") &&
+         check(!pipetune_gtk::isPresetApplied(state),
+               "disconnection must invalidate the applied preset") &&
          check(pipetune_gtk::trayVisualState(state) ==
                    pipetune_gtk::TrayVisualState::disconnected,
                "disconnected tray state differs");

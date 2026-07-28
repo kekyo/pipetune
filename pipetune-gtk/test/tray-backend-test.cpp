@@ -19,21 +19,44 @@ static bool check(bool condition, std::string_view message) {
 int main() {
   const auto iconSizes = std::array<int, 8>{
       16, 22, 24, 32, 48, 64, 128, 256};
-  const auto iconPixmaps = pipetune_gtk::loadTrayIconPixmaps();
+  const auto iconPixmaps = pipetune_gtk::loadTrayIconPixmaps(
+      pipetune_gtk::TrayIconColorMode::color);
+  const auto grayscalePixmaps = pipetune_gtk::loadTrayIconPixmaps(
+      pipetune_gtk::TrayIconColorMode::grayscale);
   if (!check(iconPixmaps.size() == iconSizes.size(),
-             "embedded tray icon size count differs")) {
+             "embedded tray icon size count differs") ||
+      !check(grayscalePixmaps.size() == iconPixmaps.size(),
+             "grayscale tray icon size count differs")) {
     return 1;
   }
   for (auto index = std::size_t{0}; index < iconSizes.size(); ++index) {
     const auto expectedSize = iconSizes[index];
     const auto &pixmap = iconPixmaps[index];
+    const auto &grayscalePixmap = grayscalePixmaps[index];
     if (!check(pixmap.width == expectedSize &&
                    pixmap.height == expectedSize &&
                    pixmap.argbPixels.size() ==
                        static_cast<std::size_t>(expectedSize) *
                            static_cast<std::size_t>(expectedSize) * 4U,
-               "embedded tray icon pixmap differs")) {
+               "embedded tray icon pixmap differs") ||
+        !check(grayscalePixmap.width == pixmap.width &&
+                   grayscalePixmap.height == pixmap.height &&
+                   grayscalePixmap.argbPixels.size() ==
+                       pixmap.argbPixels.size(),
+               "grayscale tray icon pixmap differs")) {
       return 1;
+    }
+    for (auto offset = std::size_t{0};
+         offset < grayscalePixmap.argbPixels.size(); offset += 4U) {
+      if (!check(grayscalePixmap.argbPixels[offset] ==
+                     pixmap.argbPixels[offset] &&
+                     grayscalePixmap.argbPixels[offset + 1U] ==
+                         grayscalePixmap.argbPixels[offset + 2U] &&
+                     grayscalePixmap.argbPixels[offset + 2U] ==
+                         grayscalePixmap.argbPixels[offset + 3U],
+                 "grayscale tray icon pixel differs")) {
+        return 1;
+      }
     }
   }
 
@@ -56,16 +79,13 @@ int main() {
                  pipetune_gtk::TrayBackendKind::none,
              "unavailable transports must select no backend") ||
       !check(pipetune_gtk::trayIconName(
-                 pipetune_gtk::TrayIconState::active) == "pipetune",
-             "active icon name differs") ||
-      !check(pipetune_gtk::trayIconName(
-                 pipetune_gtk::TrayIconState::attention) ==
+                 pipetune_gtk::TrayIconColorMode::color) ==
                  "pipetune",
-             "attention icon name differs") ||
+             "color icon name differs") ||
       !check(pipetune_gtk::trayIconName(
-                 pipetune_gtk::TrayIconState::disconnected) ==
-                 "pipetune",
-             "disconnected icon name differs")) {
+                 pipetune_gtk::TrayIconColorMode::grayscale)
+                 .empty(),
+             "grayscale icon name must defer to its pixmap")) {
     return 1;
   }
 
@@ -78,7 +98,6 @@ int main() {
              "RGBA to SNI ARGB conversion differs")) {
     return 1;
   }
-
   auto *variant = pipetune_gtk::buildTrayIconPixmapVariant(
       {{.width = 1, .height = 1, .argbPixels = argb}});
   const auto valid =

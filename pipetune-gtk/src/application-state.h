@@ -61,6 +61,9 @@ ApplicationState initialApplicationState();
 /**
  * Marks an in-progress subscription connection.
  *
+ * Any runtime status from a previous connection is no longer considered
+ * current.
+ *
  * @param state State to update.
  */
 void markControlConnecting(ApplicationState &state);
@@ -110,6 +113,14 @@ void setControlDiagnostic(ApplicationState &state,
  * @param state State to update.
  */
 void clearControlNotice(ApplicationState &state);
+
+/**
+ * Returns whether a confirmed preset pipeline is currently applied.
+ *
+ * @param state State to inspect.
+ * @return True only while a connected daemon confirms preset processing.
+ */
+bool isPresetApplied(const ApplicationState &state);
 
 /**
  * Selects the tray icon semantics for the current state.

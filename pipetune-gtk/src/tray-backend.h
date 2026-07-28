@@ -46,6 +46,16 @@ struct TrayBackendAvailability {
 };
 
 /**
+ * Selects whether the tray artwork retains its source colors.
+ */
+enum class TrayIconColorMode {
+  /** Render the source artwork unchanged. */
+  color,
+  /** Render the source artwork in grayscale. */
+  grayscale
+};
+
+/**
  * Selects the semantic state shown by the tray icon.
  */
 enum class TrayIconState {
@@ -93,6 +103,8 @@ struct TrayBackendOptions {
   std::string title;
   /** Initial semantic icon state. */
   TrayIconState iconState;
+  /** Initial artwork color mode. */
+  TrayIconColorMode colorMode;
   /** Initial tooltip text. */
   std::string tooltip;
   /** Backend callbacks. */
@@ -119,12 +131,12 @@ TrayBackendKind
 selectTrayBackendKind(const TrayBackendAvailability &availability);
 
 /**
- * Maps semantic state to the public icon theme name.
+ * Maps a color mode to the public icon theme name.
  *
- * @param state Semantic tray state.
- * @return Stable icon name.
+ * @param colorMode Requested artwork color mode.
+ * @return Stable icon name, or empty when a pixmap must be used.
  */
-std::string_view trayIconName(TrayIconState state);
+std::string_view trayIconName(TrayIconColorMode colorMode);
 
 /**
  * Converts RGB or RGBA pixbuf bytes to SNI ARGB bytes.
@@ -153,10 +165,12 @@ buildTrayIconPixmapVariant(const std::vector<TrayIconPixmap> &pixmaps);
 /**
  * Loads the embedded PipeTune artwork at the SNI icon sizes.
  *
+ * @param colorMode Requested artwork color mode.
  * @return Valid ARGB pixmaps, or an empty vector when the artwork cannot
  *         be loaded.
  */
-std::vector<TrayIconPixmap> loadTrayIconPixmaps();
+std::vector<TrayIconPixmap>
+loadTrayIconPixmaps(TrayIconColorMode colorMode);
 
 /**
  * Starts asynchronous SNI discovery with GtkStatusIcon fallback.
@@ -171,9 +185,11 @@ TrayBackendState *createTrayBackend(TrayBackendOptions options);
  *
  * @param state Backend state, or null.
  * @param iconState New semantic state.
+ * @param colorMode New artwork color mode.
  * @param tooltip New tooltip text.
  */
 void updateTrayBackend(TrayBackendState *state, TrayIconState iconState,
+                       TrayIconColorMode colorMode,
                        std::string_view tooltip);
 
 /**

@@ -73,6 +73,12 @@ static TrayIconState iconStateForApplication(
   return TrayIconState::active;
 }
 
+static TrayIconColorMode iconColorModeForApplication(
+    const ApplicationState &state) {
+  return isPresetApplied(state) ? TrayIconColorMode::color
+                                : TrayIconColorMode::grayscale;
+}
+
 static std::string connectionText(const ApplicationState &state) {
   if (state.connection == ControlConnectionState::connecting) {
     return "Connecting to PipeTune…";
@@ -214,6 +220,7 @@ static void render(GtkRuntime *runtime) {
           !runtime->state.operationPending);
   updateTrayBackend(runtime->trayBackend,
                     iconStateForApplication(runtime->state),
+                    iconColorModeForApplication(runtime->state),
                     trayTooltip(runtime->state));
 }
 
@@ -681,6 +688,7 @@ static void onApplicationStartup(GApplication *, gpointer userData) {
       .identifier = "pipetune",
       .title = "PipeTune",
       .iconState = TrayIconState::disconnected,
+      .colorMode = TrayIconColorMode::grayscale,
       .tooltip = "PipeTune: disconnected",
       .callbacks =
           {

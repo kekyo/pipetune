@@ -26,6 +26,7 @@ ApplicationState initialApplicationState() {
 
 void markControlConnecting(ApplicationState &state) {
   state.connection = ControlConnectionState::connecting;
+  state.hasRuntimeStatus = false;
   state.diagnostic.clear();
 }
 
@@ -69,6 +70,13 @@ void setControlDiagnostic(ApplicationState &state,
 void clearControlNotice(ApplicationState &state) {
   state.warnings.clear();
   state.diagnostic.clear();
+}
+
+bool isPresetApplied(const ApplicationState &state) {
+  return state.connection == ControlConnectionState::connected &&
+         state.hasRuntimeStatus &&
+         state.runtime.processingMode == pipetune::ProcessingMode::preset &&
+         !state.runtime.activePreset.empty();
 }
 
 TrayVisualState trayVisualState(const ApplicationState &state) {

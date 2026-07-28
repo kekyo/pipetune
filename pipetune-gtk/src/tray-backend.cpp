@@ -139,6 +139,7 @@ struct TrayBackendImplementation {
   TrayBackendKind kind;
   TrayBackendAvailabilityState availability;
   TrayIconState iconState;
+  TrayIconColorMode colorMode;
   std::string tooltip;
   bool destroyed;
   GDBusConnection *connection;
@@ -152,7 +153,8 @@ struct TrayBackendImplementation {
   explicit TrayBackendImplementation(TrayBackendOptions backendOptions)
       : options(std::move(backendOptions)), kind(TrayBackendKind::none),
         availability(TrayBackendAvailabilityState::pending),
-        iconState(options.iconState), tooltip(options.tooltip),
+        iconState(options.iconState), colorMode(options.colorMode),
+        tooltip(options.tooltip),
         destroyed(false), connection(nullptr),
         cancellable(g_cancellable_new()), itemRegistrationId(0),
         menuRegistrationId(0), statusIcon(nullptr), statusMenu(nullptr),
@@ -202,9 +204,9 @@ selectTrayBackendKind(const TrayBackendAvailability &availability) {
   return TrayBackendKind::none;
 }
 
-std::string_view trayIconName(TrayIconState state) {
-  static_cast<void>(state);
-  return "pipetune";
+std::string_view trayIconName(TrayIconColorMode colorMode) {
+  return colorMode == TrayIconColorMode::color ? "pipetune"
+                                               : std::string_view{};
 }
 
 std::vector<std::uint8_t>
@@ -267,7 +269,47 @@ static void ensureTrayIconResourceRegistered() {
   static_cast<void>(registered);
 }
 
-static GdkPixbuf *loadTrayIconPixbuf(int size) {
+static std::uint8_t grayscaleValue(std::uint8_t red,
+                                   std::uint8_t green,
+                                   std::uint8_t blue) {
+  const auto weighted = 77U * red + 150U * green + 29U * blue + 128U;
+  return static_cast<std::uint8_t>(weighted >> 8U);
+}
+
+static void applyTrayIconColorMode(GdkPixbuf *pixbuf,
+                                   TrayIconColorMode colorMode) {
+  if (pixbuf == nullptr || colorMode != TrayIconColorMode::grayscale) {
+    return;
+  }
+  auto *pixels = gdk_pixbuf_get_pixels(pixbuf);
+  const auto width = gdk_pixbuf_get_width(pixbuf);
+  const auto height = gdk_pixbuf_get_height(pixbuf);
+  const auto rowstride = gdk_pixbuf_get_rowstride(pixbuf);
+  const auto channelCount = gdk_pixbuf_get_n_channels(pixbuf);
+  if (pixels == nullptr || width <= 0 || height <= 0 ||
+      (channelCount != 3 && channelCount != 4) ||
+      rowstride < width * channelCount) {
+    return;
+  }
+  for (auto y = int{0}; y < height; ++y) {
+    auto *row =
+        pixels + static_cast<std::size_t>(y) *
+                     static_cast<std::size_t>(rowstride);
+    for (auto x = int{0}; x < width; ++x) {
+      auto *pixel =
+          row + static_cast<std::size_t>(x) *
+                    static_cast<std::size_t>(channelCount);
+      const auto grayscale =
+          grayscaleValue(pixel[0], pixel[1], pixel[2]);
+      pixel[0] = grayscale;
+      pixel[1] = grayscale;
+      pixel[2] = grayscale;
+    }
+  }
+}
+
+static GdkPixbuf *loadTrayIconPixbuf(int size,
+                                     TrayIconColorMode colorMode) {
   if (size <= 0) {
     return nullptr;
   }
@@ -280,14 +322,16 @@ static GdkPixbuf *loadTrayIconPixbuf(int size) {
               << error->message << '\n';
     g_error_free(error);
   }
+  applyTrayIconColorMode(pixbuf, colorMode);
   return pixbuf;
 }
 
-std::vector<TrayIconPixmap> loadTrayIconPixmaps() {
+std::vector<TrayIconPixmap>
+loadTrayIconPixmaps(TrayIconColorMode colorMode) {
   auto pixmaps = std::vector<TrayIconPixmap>{};
   pixmaps.reserve(kTrayIconSizes.size());
   for (const auto size : kTrayIconSizes) {
-    auto *pixbuf = loadTrayIconPixbuf(size);
+    auto *pixbuf = loadTrayIconPixbuf(size, colorMode);
     if (pixbuf == nullptr) {
       continue;
     }
@@ -555,11 +599,12 @@ static GVariant *statusNotifierProperty(
     return g_variant_new_boolean(FALSE);
   }
   if (std::strcmp(propertyName, "IconName") == 0) {
-    const auto name = trayIconName(implementation->iconState);
+    const auto name = trayIconName(implementation->colorMode);
     return g_variant_new_string(std::string(name).c_str());
   }
   if (std::strcmp(propertyName, "IconPixmap") == 0) {
-    return buildTrayIconPixmapVariant(loadTrayIconPixmaps());
+    return buildTrayIconPixmapVariant(
+        loadTrayIconPixmaps(implementation->colorMode));
   }
   if (std::strcmp(propertyName, "OverlayIconName") == 0) {
     return g_variant_new_string("");
@@ -577,14 +622,15 @@ static GVariant *statusNotifierProperty(
     if (implementation->iconState == TrayIconState::active) {
       return g_variant_new_string("");
     }
-    const auto name = trayIconName(implementation->iconState);
+    const auto name = trayIconName(implementation->colorMode);
     return g_variant_new_string(std::string(name).c_str());
   }
   if (std::strcmp(propertyName, "AttentionIconPixmap") == 0) {
     if (implementation->iconState == TrayIconState::active) {
       return buildTrayIconPixmapVariant({});
     }
-    return buildTrayIconPixmapVariant(loadTrayIconPixmaps());
+    return buildTrayIconPixmapVariant(
+        loadTrayIconPixmaps(implementation->colorMode));
   }
   if (std::strcmp(propertyName, "AttentionAccessibleDesc") == 0) {
     return g_variant_new_string(implementation->tooltip.c_str());
@@ -717,7 +763,8 @@ static void updateStatusIcon(
   if (implementation->statusIcon == nullptr) {
     return;
   }
-  auto *pixbuf = loadTrayIconPixbuf(24);
+  auto *pixbuf =
+      loadTrayIconPixbuf(24, implementation->colorMode);
   if (pixbuf != nullptr) {
     gtk_status_icon_set_from_pixbuf(implementation->statusIcon, pixbuf);
     g_object_unref(pixbuf);
@@ -759,7 +806,8 @@ static void onStatusIconEmbeddedChanged(GObject *object, GParamSpec *,
 static void createXEmbedBackend(
     TrayBackendImplementation *implementation) {
   implementation->kind = TrayBackendKind::xembed;
-  auto *pixbuf = loadTrayIconPixbuf(24);
+  auto *pixbuf =
+      loadTrayIconPixbuf(24, implementation->colorMode);
   implementation->statusIcon =
       pixbuf == nullptr ? gtk_status_icon_new()
                         : gtk_status_icon_new_from_pixbuf(pixbuf);
@@ -1026,12 +1074,14 @@ static void emitStatusNotifierSignal(
 }
 
 void updateTrayBackend(TrayBackendState *state, TrayIconState iconState,
+                       TrayIconColorMode colorMode,
                        std::string_view tooltip) {
   if (state == nullptr || state->implementation->destroyed) {
     return;
   }
   auto &implementation = *state->implementation;
   implementation.iconState = iconState;
+  implementation.colorMode = colorMode;
   implementation.tooltip = tooltip;
   updateStatusIcon(&implementation);
   emitStatusNotifierSignal(&implementation, "NewIcon", nullptr);
