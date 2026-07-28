@@ -1,3 +1,7 @@
 # Leave PIPETUNE_PRESET unset to start in DSP bypass mode.
 # To select a preset, use an absolute path and quote paths containing spaces.
 # PIPETUNE_PRESET=/absolute/path/to/preset.effetune_preset
+
+# Leave PIPETUNE_TARGET unset to follow the physical system default.
+# Use a stable PipeWire node.name; PipeTune falls back while it is unavailable.
+# PIPETUNE_TARGET=alsa_output.usb-example

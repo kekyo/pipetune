@@ -18,13 +18,39 @@ to all audio in one Linux desktop session.
 It inserts a virtual PipeWire sink in front of the selected physical output and includes a GTK 3 control
 application that remains available through the desktop system tray.
 
+### How the audio stream is connected
+
+The solid arrows below show the order in which audio travels. PipeTune becomes
+the session's virtual default output, so the OS audio routing sends application
+streams through the DSP before they reach the real device.
+
+```mermaid
+flowchart LR
+    app["1. Application<br/>Browser / player / game"]
+    os["2. OS audio settings<br/>(PipeWire default output)"]
+    tune["3. PipeTune<br/>Virtual sink → EffeTune DSP"]
+    device["4. Audio device<br/>Built-in audio / USB DAC"]
+    physical["5. Physical device<br/>Speakers / headphones"]
+
+    app -->|"① sends audio"| os
+    os -->|"② routes the default stream"| tune
+    tune -->|"③ sends processed audio"| device
+    device -->|"④ produces sound"| physical
+```
+
+PipeTune sends step ③ to the user's preferred audio device when it is
+available. Otherwise it uses the current system default. If a preferred USB
+device is unplugged, playback falls back automatically and returns to that
+device when it is reconnected.
+
 ### Features
 
 - Loads canonical and legacy EffeTune preset files with the
   `.effetune_preset` extension.
 - Applies the enabled native EffeTune DSP pipeline to desktop audio.
-- Tracks the physical default output and follows default-device and hotplug
-  changes.
+- Lets the user choose a physical output from the CLI or GTK application.
+- Falls back to the physical system default when the preferred output is
+  unavailable, and returns automatically after hotplug.
 - Changes presets without restarting the daemon.
 - Starts safely in pass-through mode when no preset has been selected.
 - Sets up or removes all per-user integration with one CLI command.
@@ -110,6 +136,32 @@ Selecting a preset in the GTK application applies it immediately when the
 daemon is connected and saves it for later service starts. Closing the window
 hides it while a compatible system tray is available. The installed XDG
 autostart entry starts it hidden at later desktop logins.
+
+## Choose an audio output
+
+The GTK window provides an **Output preference** drop-down. Its first item,
+**System default**, clears an explicit preference. It also shows the effective
+output and whether it was selected as the preference, the system default, or a
+fallback.
+
+The same operations are available from the CLI:
+
+```sh
+pipetune output list
+pipetune output get
+pipetune output select
+pipetune output set alsa_output.example
+pipetune output clear
+```
+
+These commands require the per-user daemon to be running. `output select`
+offers a numbered menu in an interactive terminal. `output set` stores the
+stable PipeWire `node.name`, including for a device that is temporarily
+disconnected. `output clear` removes that preference.
+
+With no preference, PipeTune follows the physical system default. If no audio
+output exists at all, the daemon remains running and watches for hotplug, but
+audio playback is unavailable until a device appears.
 
 ## Logs and recovery
 

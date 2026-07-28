@@ -77,14 +77,33 @@ pipeline active.
 ## Output selection
 
 The registry tracker accepts only non-virtual `Audio/Sink` nodes and always
-excludes PipeTune's own node. Without `--target`, initial enumeration chooses
-the effective physical default or the highest session priority. Once selected,
-the device remains stable until the session default changes or the device
-disappears. With `--target`, PipeTune waits for the requested `node.name` or
-`object.serial` and resumes it after hotplug.
+excludes PipeTune's own node. The user's optional preference is a stable
+`node.name`; the CLI and GTK application do not perform target selection
+themselves.
+
+The tracker applies this order:
+
+1. use the preferred output when it is available;
+2. otherwise use the physical system default as a fallback;
+3. if the default has not yet been observed, retain a usable fallback or use
+   the highest-priority eligible physical output; and
+4. report output as unavailable when no eligible node exists.
+
+An unavailable preference remains configured. Registry hotplug therefore
+restores it automatically when the matching `node.name` returns. Clearing the
+preference switches back to system-default tracking.
 
 Changing the target destroys and recreates only the non-real-time output
-stream. The virtual sink and prepared DSP pipeline remain present.
+stream. The virtual sink and prepared DSP pipeline remain present. Queued
+frames for the previous device are discarded so stale audio is not replayed
+after a switch.
+
+When every physical output disappears, PipeTune destroys the playback stream,
+reports a null effective target with reason `unavailable`, and releases its
+effective-default claim. The daemon and registry monitoring remain alive. A
+new device creates and negotiates a playback stream first; only then does
+PipeTune reclaim the effective default and resume audio. A retained preference
+is not cleared during this state.
 
 ## Default-sink ownership and fail-open behavior
 
@@ -124,7 +143,13 @@ Supported commands are:
 - status;
 - load and atomically activate another `.effetune_preset`;
 - bypass DSP and atomically activate pass-through processing;
+- set a preferred physical output by `node.name`;
+- clear the preferred output and follow the physical system default; and
 - subscribe to an initial status event and later status publications.
+
+Successful status and mutation replies include the preference, effective
+target, selection reason, and sorted eligible output list. Registry, default
+device, and preference changes publish fresh state to subscribers.
 
 The subscriber server uses an `eventfd` wakeup and bounded, coalescing output
 per client. Preset activation and relevant PipeWire state transitions request
@@ -132,7 +157,7 @@ a fresh publication outside the real-time callbacks. Slow subscribers cannot
 accumulate an unbounded history. The server runs outside the PipeWire process
 callbacks. There is no network listener.
 
-## Managed startup and bypass
+## Managed startup and preferences
 
 The systemd user unit starts `pipetune daemon` with the optional configuration
 path `$XDG_CONFIG_HOME/pipetune/environment`. A valid absolute
@@ -140,6 +165,10 @@ path `$XDG_CONFIG_HOME/pipetune/environment`. A valid absolute
 an empty configuration without that assignment, or an explicit saved bypass
 selection creates no EffeTune engine and copies captured samples into the
 output ring unchanged.
+
+An optional `PIPETUNE_TARGET` assignment stores the preferred physical
+`node.name`. Its absence selects system-default mode. Preset and output updates
+use one atomic writer and preserve the other independent assignment.
 
 Malformed configuration, an unavailable preset, or a preset that fails
 validation also degrades to bypass instead of terminating the audio service.
@@ -166,8 +195,8 @@ shutdown operations succeed. Both commands reject effective user ID zero.
 
 `pipetune-gtk` is a single-instance `GtkApplication`. Its GIO client keeps one
 asynchronous subscription connection and uses separate asynchronous requests
-for explicit refreshes and preset loads. A retry timer reconnects a lost
-subscription; status itself is not polled.
+for explicit refreshes, preset changes, and output preference changes. A retry
+timer reconnects a lost subscription; status itself is not polled.
 
 The tray backend discovers a StatusNotifierItem host first. If none is
 available on X11, it creates the same `GtkStatusIcon`/XEmbed compatibility
@@ -179,7 +208,11 @@ Startup persistence is separate from daemon control. The GUI and CLI
 atomically write the shared optional
 `$XDG_CONFIG_HOME/pipetune/environment` file with user-only permissions. A
 connected preset or bypass change is persisted only after the daemon accepts
-it; a disconnected selection is saved for the next daemon start.
+it; a disconnected DSP selection is saved for the next daemon start. Output
+selection is disabled while disconnected. A connected output change is also
+persisted only after daemon confirmation, and persistence failure leaves the
+live engine choice active. The GUI presents the engine's candidates and reason
+without implementing fallback or hotplug policy.
 
 ## Known MVP limits
 

@@ -12,7 +12,8 @@ The window displays:
 - active processing mode (`Preset` or `Bypass`);
 - active and startup preset paths;
 - active native DSP node count;
-- selected physical output target;
+- selectable and preferred physical outputs;
+- effective physical output and the engine's selection reason;
 - effective-default-sink state;
 - overrun, underrun, and DSP processing error counters; and
 - warnings for preset nodes omitted by the daemon.
@@ -25,7 +26,21 @@ rejection therefore leaves the previous startup selection unchanged. If the
 live apply succeeds but persistence fails, the new processing mode remains
 active and the window reports that partial success.
 
-When the daemon is disconnected, the selection is saved without a live apply
+The **Output preference** drop-down starts with **System default**, followed by
+the physical outputs enumerated by the daemon. If a persisted preference is
+currently disconnected, an unavailable row keeps that preference visible.
+The effective-output and reason fields show whether the daemon is using the
+preference, the system default, a fallback, or no device.
+
+Output changes are available only while connected. The GUI sends the requested
+preference or clear operation to the daemon first and persists it only after
+confirmation. The drop-down is disabled while that request is pending. A
+rejection restores the engine-reported selection; a later persistence failure
+leaves the confirmed live change active and reports partial success. The GUI
+does not calculate fallback or hotplug behavior.
+
+Preset and bypass controls retain their existing disconnected behavior: when
+the daemon is disconnected, that DSP selection is saved without a live apply
 and takes effect on the next successful service start. The GUI writes:
 
 ```text
@@ -34,9 +49,11 @@ $XDG_CONFIG_HOME/pipetune/environment
 
 When `XDG_CONFIG_HOME` is unset, this resolves to
 `~/.config/pipetune/environment`. The directory is mode `0700`, the file is
-mode `0600`, and replacement is atomic. A file containing
-`PIPETUNE_PRESET` selects a preset. An absent file or a saved bypass selection
-contains no preset assignment and starts the daemon in pass-through mode.
+mode `0600`, and replacement is atomic. A `PIPETUNE_PRESET` assignment selects
+a preset; its absence starts the daemon in pass-through mode. A
+`PIPETUNE_TARGET` assignment stores a preferred PipeWire `node.name`; its
+absence follows the physical system default. Updates to either setting
+preserve the other.
 
 ## Status subscription
 

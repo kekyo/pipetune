@@ -35,8 +35,8 @@ not supported by this MVP.
   including bus and channel routing.
 - Skips unknown DSPs and DSPs that require external assets, with a warning for
   each omitted node.
-- Tracks the physical default output, follows default-device and hotplug
-  changes, and can instead target a specific `node.name` or `object.serial`.
+- Follows the physical system default when no preference exists, or persists a
+  preferred `node.name` with automatic fallback and hotplug restoration.
 - Replaces the preset in a running process through a same-user Unix socket.
 - Switches live and future startup processing to explicit DSP bypass.
 - Publishes initial and changed runtime state to same-user local subscribers.
@@ -126,13 +126,16 @@ sink.
 
 The process runs until `SIGINT` or `SIGTERM`, publishes
 `pipetune_sink`, and makes that sink the effective default. To select a
-particular physical output:
+particular physical output for this direct process run:
 
 ```sh
 ./build/release/pipetune \
   --preset /absolute/path/to/foo.effetune_preset \
   --target alsa_output.example
 ```
+
+The direct `--target` value is a PipeWire `node.name` and is not persisted.
+Managed daemon output preferences use the `pipetune output` commands below.
 
 Inspect or replace the running pipeline:
 
@@ -143,9 +146,10 @@ Inspect or replace the running pipeline:
 ```
 
 The status response includes the processing mode, active preset when
-applicable, native DSP count, physical target, whether PipeTune owns the
-effective default, configuration diagnostics, and audio bridge error counters.
-A live replacement made directly with `--load-preset` is not persisted.
+applicable, native DSP count, preferred and effective physical outputs, output
+selection reason, selectable output list, whether PipeTune owns the effective
+default, configuration diagnostics, and audio bridge error counters. A live
+replacement made directly with `--load-preset` is not persisted.
 
 Switch live processing to bypass and save that selection for future daemon
 starts with:
@@ -153,6 +157,23 @@ starts with:
 ```sh
 ./build/release/pipetune bypass
 ```
+
+List, inspect, choose, or clear the managed daemon's output preference with:
+
+```sh
+./build/release/pipetune output list
+./build/release/pipetune output get
+./build/release/pipetune output select
+./build/release/pipetune output set alsa_output.example
+./build/release/pipetune output clear
+```
+
+`list` and `get` also accept `--json`. `select` requires an interactive
+terminal and displays a numbered list. All five operations require a reachable
+daemon. A set or clear request changes the daemon first and updates the shared
+startup configuration only after the daemon confirms it. If persistence then
+fails, the command exits nonzero and reports that the live change remains
+active.
 
 Run the graphical control application with:
 
@@ -297,16 +318,26 @@ $XDG_CONFIG_HOME/pipetune/environment
 ```
 
 When `XDG_CONFIG_HOME` is unset, it resolves to
-`~/.config/pipetune/environment`. The only setting is an absolute preset path:
+`~/.config/pipetune/environment`. It can store an absolute preset path and a
+stable PipeWire output `node.name`:
 
 ```text
 PIPETUNE_PRESET="/home/user/My Presets/foo.effetune_preset"
+PIPETUNE_TARGET="alsa_output.usb-example"
 ```
 
 An absent file or absent `PIPETUNE_PRESET` means bypass. An invalid
 configuration or unusable startup preset is reported in daemon status, but the
 daemon still starts in bypass so the audio path remains available. The GUI and
-`pipetune bypass` atomically update this same file.
+CLI atomically preserve and update the two independent assignments in this
+same file.
+
+An absent `PIPETUNE_TARGET` means to follow the physical system default. When
+the configured target is unavailable, PipeTune retains the preference and
+uses the current physical system default as a fallback. It returns to the
+preferred target automatically after hotplug. With no physical output at all,
+the daemon remains alive, releases PipeTune's effective-default claim, and
+waits for a device before resuming playback.
 
 This service affects every application's final output in that user's PipeWire
 session. It is not a machine-wide service shared by multiple logged-in users.
