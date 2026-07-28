@@ -9,6 +9,22 @@
       <object class="GtkHeaderBar" id="headerBar">
         <property name="subtitle">PipeWire DSP control</property>
         <property name="show-close-button">True</property>
+        <child>
+          <object class="GtkButton" id="aboutButton">
+            <property name="tooltip-text">About PipeTune</property>
+            <property name="valign">center</property>
+            <child>
+              <object class="GtkImage">
+                <property name="visible">True</property>
+                <property name="icon-name">help-about-symbolic</property>
+                <property name="icon-size">1</property>
+              </object>
+            </child>
+          </object>
+          <packing>
+            <property name="pack-type">end</property>
+          </packing>
+        </child>
       </object>
     </child>
     <child>

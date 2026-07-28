@@ -60,7 +60,32 @@ static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
          check(GTK_IS_BUTTON(ui.bypassButton),
                "bypass button type differs") &&
          check(GTK_IS_BUTTON(ui.dismissButton),
-               "dismiss button type differs");
+               "dismiss button type differs") &&
+         check(GTK_IS_BUTTON(ui.aboutButton),
+               "about button type differs") &&
+         check(GTK_IS_ABOUT_DIALOG(ui.aboutDialog),
+               "about dialog type differs");
+}
+
+static bool checkAboutDialog(
+    const pipetune_gtk::MainWindowUi &ui) {
+  if (!GTK_IS_ABOUT_DIALOG(ui.aboutDialog)) {
+    return false;
+  }
+  auto *dialog = GTK_ABOUT_DIALOG(ui.aboutDialog);
+  return check(std::string_view(
+                   gtk_about_dialog_get_program_name(dialog)) ==
+                   "PipeTune",
+               "about dialog program name differs") &&
+         check(std::string_view(gtk_about_dialog_get_version(dialog)) ==
+                   "1.2.3",
+               "PipeTune version differs") &&
+         check(std::string_view(gtk_about_dialog_get_comments(dialog)) ==
+                   "EffeTune DSP 4.5.6",
+               "EffeTune DSP version differs") &&
+         check(gtk_window_get_transient_for(GTK_WINDOW(ui.aboutDialog)) ==
+                   GTK_WINDOW(ui.window),
+               "about dialog parent differs");
 }
 
 int main(int argc, char **argv) {
@@ -71,21 +96,28 @@ int main(int argc, char **argv) {
   auto *application = gtk_application_new(
       "net.kekyo.pipetune-gtk.tests", G_APPLICATION_NON_UNIQUE);
   auto ui = pipetune_gtk::createMainWindowUi(
-      application, "PipeTune GTK test");
+      application, "1.2.3", "4.5.6");
 
   auto width = int{0};
   auto height = int{0};
   gtk_window_get_default_size(GTK_WINDOW(ui.window), &width, &height);
+  auto *headerBar = gtk_builder_get_object(ui.builder, "headerBar");
   const auto valid =
       check(ui.builder != nullptr, "main window builder is unavailable") &&
       checkWidgetTypes(ui) &&
+      checkAboutDialog(ui) &&
       check(gtk_window_get_application(GTK_WINDOW(ui.window)) ==
                 application,
             "main window application differs") &&
       check(std::string_view(
                 gtk_window_get_title(GTK_WINDOW(ui.window))) ==
-                "PipeTune GTK test",
+                "PipeTune",
             "main window title differs") &&
+      check(GTK_IS_HEADER_BAR(headerBar),
+            "header bar type differs") &&
+      check(std::string_view(gtk_header_bar_get_title(
+                GTK_HEADER_BAR(headerBar))) == "PipeTune",
+            "header bar title differs") &&
       check(width == 680 && height == 580,
             "main window default size differs") &&
       check(gtk_builder_get_object(ui.builder, "refreshButton") == nullptr,
@@ -107,7 +139,19 @@ int main(int argc, char **argv) {
       check(gtk_widget_get_visible(ui.window) != FALSE,
             "presenting the main window must make it visible");
 
+  gtk_button_clicked(GTK_BUTTON(ui.aboutButton));
+  const auto aboutOpens =
+      check(gtk_widget_get_visible(ui.aboutDialog) != FALSE,
+            "about button must display the version dialog");
+  gtk_dialog_response(GTK_DIALOG(ui.aboutDialog), GTK_RESPONSE_CANCEL);
+  const auto aboutCloses =
+      check(gtk_widget_get_visible(ui.aboutDialog) == FALSE,
+            "about dialog response must hide the dialog");
+
   pipetune_gtk::destroyMainWindowUi(ui);
   g_object_unref(application);
-  return valid && selectionWorks && presentationWorks ? 0 : 1;
+  return valid && selectionWorks && presentationWorks && aboutOpens &&
+                 aboutCloses
+             ? 0
+             : 1;
 }

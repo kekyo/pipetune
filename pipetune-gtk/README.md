@@ -15,8 +15,12 @@ The window displays:
 - selectable and preferred physical outputs;
 - effective physical output and the engine's selection reason;
 - effective-default-sink state;
+- average native EffeTune DSP processing time per frame;
 - overrun, underrun, and DSP processing error counters; and
 - warnings for preset nodes omitted by the daemon.
+
+The main window title is **PipeTune**. Use the About button in its header bar
+to view the PipeTune and EffeTune DSP versions.
 
 Select an `.effetune_preset` file and use **Apply and Save** to change the
 startup selection, or use **Bypass and Save** to pass audio through without

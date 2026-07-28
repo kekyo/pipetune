@@ -673,8 +673,9 @@ static void initializeControlClient(GtkRuntime *runtime) {
 
 static void onApplicationStartup(GApplication *, gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
-  runtime->ui =
-      createMainWindowUi(runtime->application, versionText());
+  runtime->ui = createMainWindowUi(
+      runtime->application, pipetune::version(),
+      pipetune::effetuneVersion());
   initializeStatusArtwork(runtime);
   connectMainWindowSignals(runtime);
   initializeStartupConfig(runtime);

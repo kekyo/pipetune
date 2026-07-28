@@ -61,6 +61,10 @@ struct MainWindowUi {
   GtkWidget *bypassButton = nullptr;
   /** Notice dismissal button. */
   GtkWidget *dismissButton = nullptr;
+  /** Opens the application version dialog. */
+  GtkWidget *aboutButton = nullptr;
+  /** Dialog displaying PipeTune and EffeTune DSP versions. */
+  GtkWidget *aboutDialog = nullptr;
 };
 
 /**
@@ -70,11 +74,13 @@ struct MainWindowUi {
  * defects.
  *
  * @param application Application that owns the returned window.
- * @param title Runtime-generated window and header title.
+ * @param pipeTuneVersion PipeTune package version shown in the About dialog.
+ * @param effetuneDspVersion EffeTune DSP version shown in the About dialog.
  * @return Builder and borrowed widget pointers for the window controller.
  */
 MainWindowUi createMainWindowUi(GtkApplication *application,
-                                std::string_view title);
+                                std::string_view pipeTuneVersion,
+                                std::string_view effetuneDspVersion);
 
 /**
  * Shows and presents the main window for a user interaction.

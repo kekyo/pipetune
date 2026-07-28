@@ -46,12 +46,8 @@ application.on('exit', (code, signal) => {
   applicationExit = `${code ?? 'null'}/${signal ?? 'none'}`;
 });
 
-const escapedVersionText = expectedVersionText.replace(
-  /[.*+?^${}()|[\]\\]/gu,
-  '\\$&'
-);
 const mainWindowPattern = new RegExp(
-  `^\\s+(0x[0-9a-f]+) "${escapedVersionText}":.*?\\s(\\d+)x(\\d+)[+-]`,
+  '^\\s+(0x[0-9a-f]+) "PipeTune":.*?\\s(\\d+)x(\\d+)[+-]',
   'gmu'
 );
 const mainWindowIds = (tree) =>
