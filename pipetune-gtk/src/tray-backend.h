@@ -151,6 +151,14 @@ GVariant *
 buildTrayIconPixmapVariant(const std::vector<TrayIconPixmap> &pixmaps);
 
 /**
+ * Loads the embedded PipeTune artwork at the SNI icon sizes.
+ *
+ * @return Valid ARGB pixmaps, or an empty vector when the artwork cannot
+ *         be loaded.
+ */
+std::vector<TrayIconPixmap> loadTrayIconPixmaps();
+
+/**
  * Starts asynchronous SNI discovery with GtkStatusIcon fallback.
  *
  * @param options Application identity, state, and callbacks.

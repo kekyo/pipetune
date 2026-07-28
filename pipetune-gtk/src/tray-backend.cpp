@@ -1,12 +1,14 @@
 #include "tray-backend.h"
 
+extern "C" {
+#include "pipetune-gtk-resources.h"
+}
+
 #include <gdk/gdkx.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #include <gtk/gtk.h>
 
-#include <algorithm>
 #include <array>
-#include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <iostream>
@@ -32,6 +34,8 @@ constexpr char kDbusMenuInterface[] = "com.canonical.dbusmenu";
 constexpr auto kDbusMenuRevision = int{1};
 constexpr auto kOpenMenuItemId = int{1};
 constexpr auto kQuitMenuItemId = int{2};
+constexpr char kTrayIconResourcePath[] =
+    "/net/kekyo/pipetune-gtk/icons/pipetune.svg";
 constexpr auto kTrayIconSizes =
     std::array<int, 8>{16, 22, 24, 32, 48, 64, 128, 256};
 
@@ -199,12 +203,7 @@ selectTrayBackendKind(const TrayBackendAvailability &availability) {
 }
 
 std::string_view trayIconName(TrayIconState state) {
-  if (state == TrayIconState::attention) {
-    return "pipetune-attention";
-  }
-  if (state == TrayIconState::disconnected) {
-    return "pipetune-disconnected";
-  }
+  static_cast<void>(state);
   return "pipetune";
 }
 
@@ -260,87 +259,48 @@ buildTrayIconPixmapVariant(const std::vector<TrayIconPixmap> &pixmaps) {
   return g_variant_builder_end(&builder);
 }
 
-static std::array<std::uint8_t, 3>
-iconColor(TrayIconState state) {
-  if (state == TrayIconState::attention) {
-    return {222U, 146U, 28U};
-  }
-  if (state == TrayIconState::disconnected) {
-    return {105U, 113U, 126U};
-  }
-  return {31U, 157U, 121U};
+static void ensureTrayIconResourceRegistered() {
+  static const auto registered = [] {
+    pipetune_gtk_resources_register_resource();
+    return true;
+  }();
+  static_cast<void>(registered);
 }
 
-static GdkPixbuf *createTrayIconPixbuf(TrayIconState state, int size) {
-  auto *pixbuf =
-      gdk_pixbuf_new(GDK_COLORSPACE_RGB, TRUE, 8, size, size);
-  if (pixbuf == nullptr) {
+static GdkPixbuf *loadTrayIconPixbuf(int size) {
+  if (size <= 0) {
     return nullptr;
   }
-  gdk_pixbuf_fill(pixbuf, 0x00000000U);
-  auto *pixels = gdk_pixbuf_get_pixels(pixbuf);
-  const auto rowstride = gdk_pixbuf_get_rowstride(pixbuf);
-  const auto channels = gdk_pixbuf_get_n_channels(pixbuf);
-  const auto color = iconColor(state);
-  const auto center = (static_cast<double>(size) - 1.0) / 2.0;
-  const auto radius = static_cast<double>(size) * 0.46;
-  const auto lineHalfWidth = std::max(1, size / 14);
-  const auto nodeRadius = std::max(1, size / 9);
-  for (auto y = int{0}; y < size; ++y) {
-    auto *row = pixels + y * rowstride;
-    for (auto x = int{0}; x < size; ++x) {
-      auto *pixel = row + x * channels;
-      const auto dx = static_cast<double>(x) - center;
-      const auto dy = static_cast<double>(y) - center;
-      if (dx * dx + dy * dy > radius * radius) {
-        continue;
-      }
-      pixel[0] = color[0];
-      pixel[1] = color[1];
-      pixel[2] = color[2];
-      pixel[3] = 0xffU;
-
-      const auto horizontal =
-          std::abs(y - size / 2) <= lineHalfWidth &&
-          x >= size / 5 && x <= (size * 4) / 5;
-      const auto leftNode =
-          (x - size / 3) * (x - size / 3) +
-                  (y - size / 2) * (y - size / 2) <=
-              nodeRadius * nodeRadius;
-      const auto rightNode =
-          (x - (size * 2) / 3) * (x - (size * 2) / 3) +
-                  (y - size / 2) * (y - size / 2) <=
-              nodeRadius * nodeRadius;
-      const auto disconnectedSlash =
-          state == TrayIconState::disconnected &&
-          std::abs((x + y) - (size - 1)) <= lineHalfWidth;
-      if (horizontal || leftNode || rightNode || disconnectedSlash) {
-        pixel[0] = 0xffU;
-        pixel[1] = 0xffU;
-        pixel[2] = 0xffU;
-      }
-    }
+  ensureTrayIconResourceRegistered();
+  auto *error = static_cast<GError *>(nullptr);
+  auto *pixbuf = gdk_pixbuf_new_from_resource_at_scale(
+      kTrayIconResourcePath, size, size, TRUE, &error);
+  if (error != nullptr) {
+    std::cerr << "pipetune-gtk: cannot load tray icon: "
+              << error->message << '\n';
+    g_error_free(error);
   }
   return pixbuf;
 }
 
-static std::vector<TrayIconPixmap>
-createTrayIconPixmaps(TrayIconState state) {
+std::vector<TrayIconPixmap> loadTrayIconPixmaps() {
   auto pixmaps = std::vector<TrayIconPixmap>{};
   pixmaps.reserve(kTrayIconSizes.size());
   for (const auto size : kTrayIconSizes) {
-    auto *pixbuf = createTrayIconPixbuf(state, size);
+    auto *pixbuf = loadTrayIconPixbuf(size);
     if (pixbuf == nullptr) {
       continue;
     }
+    const auto width = gdk_pixbuf_get_width(pixbuf);
+    const auto height = gdk_pixbuf_get_height(pixbuf);
     auto pixels = convertTrayIconPixelsToArgb(
-        gdk_pixbuf_get_pixels(pixbuf), size, size,
+        gdk_pixbuf_get_pixels(pixbuf), width, height,
         gdk_pixbuf_get_rowstride(pixbuf),
         gdk_pixbuf_get_n_channels(pixbuf));
     g_object_unref(pixbuf);
     if (!pixels.empty()) {
-      pixmaps.push_back({.width = size,
-                         .height = size,
+      pixmaps.push_back({.width = width,
+                         .height = height,
                          .argbPixels = std::move(pixels)});
     }
   }
@@ -599,8 +559,7 @@ static GVariant *statusNotifierProperty(
     return g_variant_new_string(std::string(name).c_str());
   }
   if (std::strcmp(propertyName, "IconPixmap") == 0) {
-    return buildTrayIconPixmapVariant(
-        createTrayIconPixmaps(implementation->iconState));
+    return buildTrayIconPixmapVariant(loadTrayIconPixmaps());
   }
   if (std::strcmp(propertyName, "OverlayIconName") == 0) {
     return g_variant_new_string("");
@@ -625,8 +584,7 @@ static GVariant *statusNotifierProperty(
     if (implementation->iconState == TrayIconState::active) {
       return buildTrayIconPixmapVariant({});
     }
-    return buildTrayIconPixmapVariant(
-        createTrayIconPixmaps(implementation->iconState));
+    return buildTrayIconPixmapVariant(loadTrayIconPixmaps());
   }
   if (std::strcmp(propertyName, "AttentionAccessibleDesc") == 0) {
     return g_variant_new_string(implementation->tooltip.c_str());
@@ -759,7 +717,7 @@ static void updateStatusIcon(
   if (implementation->statusIcon == nullptr) {
     return;
   }
-  auto *pixbuf = createTrayIconPixbuf(implementation->iconState, 24);
+  auto *pixbuf = loadTrayIconPixbuf(24);
   if (pixbuf != nullptr) {
     gtk_status_icon_set_from_pixbuf(implementation->statusIcon, pixbuf);
     g_object_unref(pixbuf);
@@ -801,7 +759,7 @@ static void onStatusIconEmbeddedChanged(GObject *object, GParamSpec *,
 static void createXEmbedBackend(
     TrayBackendImplementation *implementation) {
   implementation->kind = TrayBackendKind::xembed;
-  auto *pixbuf = createTrayIconPixbuf(implementation->iconState, 24);
+  auto *pixbuf = loadTrayIconPixbuf(24);
   implementation->statusIcon =
       pixbuf == nullptr ? gtk_status_icon_new()
                         : gtk_status_icon_new_from_pixbuf(pixbuf);

@@ -17,6 +17,26 @@ static bool check(bool condition, std::string_view message) {
 }
 
 int main() {
+  const auto iconSizes = std::array<int, 8>{
+      16, 22, 24, 32, 48, 64, 128, 256};
+  const auto iconPixmaps = pipetune_gtk::loadTrayIconPixmaps();
+  if (!check(iconPixmaps.size() == iconSizes.size(),
+             "embedded tray icon size count differs")) {
+    return 1;
+  }
+  for (auto index = std::size_t{0}; index < iconSizes.size(); ++index) {
+    const auto expectedSize = iconSizes[index];
+    const auto &pixmap = iconPixmaps[index];
+    if (!check(pixmap.width == expectedSize &&
+                   pixmap.height == expectedSize &&
+                   pixmap.argbPixels.size() ==
+                       static_cast<std::size_t>(expectedSize) *
+                           static_cast<std::size_t>(expectedSize) * 4U,
+               "embedded tray icon pixmap differs")) {
+      return 1;
+    }
+  }
+
   if (!check(
           std::string(pipetune_gtk::applicationId()) ==
               "net.kekyo.pipetune-gtk",
@@ -40,11 +60,11 @@ int main() {
              "active icon name differs") ||
       !check(pipetune_gtk::trayIconName(
                  pipetune_gtk::TrayIconState::attention) ==
-                 "pipetune-attention",
+                 "pipetune",
              "attention icon name differs") ||
       !check(pipetune_gtk::trayIconName(
                  pipetune_gtk::TrayIconState::disconnected) ==
-                 "pipetune-disconnected",
+                 "pipetune",
              "disconnected icon name differs")) {
     return 1;
   }

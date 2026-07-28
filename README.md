@@ -1,5 +1,9 @@
 # PipeTune
 
+Applies an EffeTune DSP preset to all audio in one Linux desktop session.
+
+![PipeTune](./images/pipetune-120.png)
+
 ----
 
 [(Japanese language is here/日本語はこちら)](./README_ja.md)
@@ -11,7 +15,6 @@
 
 PipeTune applies an [EffeTune](https://github.com/Frieve-A/effetune) DSP preset
 to all audio in one Linux desktop session.
-
 It inserts a virtual PipeWire sink in front of the selected physical output and includes a GTK 3 control
 application that remains available through the desktop system tray.
 
@@ -26,8 +29,6 @@ application that remains available through the desktop system tray.
 - Starts safely in pass-through mode when no preset has been selected.
 - Sets up or removes all per-user integration with one CLI command.
 - Displays runtime state and audio error counters in the GTK application.
-- Runs `pipetune-gtk` in the system tray using StatusNotifierItem or the
-  `GtkStatusIcon` compatibility fallback.
 - Restores a physical default output when PipeTune stops.
 
 The default stream format is 48 kHz stereo. PipeWire converts streams from

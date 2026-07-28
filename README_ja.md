@@ -1,5 +1,9 @@
 # PipeTune
 
+Linuxのデスクトップセッションの音声に、EffeTuneで構築したDSPプリセットを適用
+
+![PipeTune](./images/pipetune-120.png)
+
 ----
 
 [(English language is here)](./README.md)
@@ -22,8 +26,6 @@ PipeTuneは、Linuxのデスクトップセッションの音声に
 - プリセットが未選択の場合は、安全なパススルーモードで起動します。
 - CLIコマンド1つで、ユーザーごとの設定または解除を行えます。
 - GTKアプリケーションに実行状態と音声エラーカウンターを表示します。
-- StatusNotifierItemまたは互換性のための`GtkStatusIcon`フォールバックを使用し、
-  `pipetune-gtk`をシステムトレイで実行します。
 - PipeTuneの停止時に、既定の出力を物理出力へ戻します。
 
 既定のストリーム形式は48 kHzステレオです。異なる形式を使用するアプリケーションの
@@ -154,8 +156,8 @@ PipeTune管理のバックアップとして保存します。後で`pipetune se
 
 ## 関連情報
 
-- [デーモンの操作方法と開発者向けドキュメント](pipetune/README.md)
-- [GTKアプリケーションの動作](pipetune-gtk/README.md)
+- [デーモンの操作方法と開発者向けドキュメント (英語)](pipetune/README.md)
+- [GTKアプリケーションの動作 (英語)](pipetune-gtk/README.md)
 
 ## ライセンス
 

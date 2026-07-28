@@ -10,6 +10,53 @@ find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-2.0 gio-unix-2.0)
 pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0 gdk-x11-3.0)
+find_program(
+  PIPETUNE_GTK_GLIB_COMPILE_RESOURCES
+  glib-compile-resources
+  REQUIRED)
+
+set(
+  PIPETUNE_GTK_RESOURCE_MANIFEST
+  "${CMAKE_CURRENT_SOURCE_DIR}/resources/pipetune-gtk.gresource.xml")
+set(
+  PIPETUNE_GTK_ICON_SOURCE
+  "${CMAKE_CURRENT_SOURCE_DIR}/packaging/icons/hicolor/scalable/apps/pipetune.svg")
+set(
+  PIPETUNE_GTK_RESOURCE_DIRECTORY
+  "${CMAKE_CURRENT_BINARY_DIR}/generated")
+set(
+  PIPETUNE_GTK_RESOURCE_SOURCE
+  "${PIPETUNE_GTK_RESOURCE_DIRECTORY}/pipetune-gtk-resources.c")
+set(
+  PIPETUNE_GTK_RESOURCE_HEADER
+  "${PIPETUNE_GTK_RESOURCE_DIRECTORY}/pipetune-gtk-resources.h")
+add_custom_command(
+  OUTPUT
+    "${PIPETUNE_GTK_RESOURCE_SOURCE}"
+    "${PIPETUNE_GTK_RESOURCE_HEADER}"
+  COMMAND
+    "${CMAKE_COMMAND}" -E make_directory
+    "${PIPETUNE_GTK_RESOURCE_DIRECTORY}"
+  COMMAND
+    "${PIPETUNE_GTK_GLIB_COMPILE_RESOURCES}"
+    "${PIPETUNE_GTK_RESOURCE_MANIFEST}"
+    --sourcedir=${CMAKE_CURRENT_SOURCE_DIR}
+    --target=${PIPETUNE_GTK_RESOURCE_SOURCE}
+    --generate-source
+    --manual-register
+    --c-name=pipetune_gtk_resources
+  COMMAND
+    "${PIPETUNE_GTK_GLIB_COMPILE_RESOURCES}"
+    "${PIPETUNE_GTK_RESOURCE_MANIFEST}"
+    --sourcedir=${CMAKE_CURRENT_SOURCE_DIR}
+    --target=${PIPETUNE_GTK_RESOURCE_HEADER}
+    --generate-header
+    --manual-register
+    --c-name=pipetune_gtk_resources
+  DEPENDS
+    "${PIPETUNE_GTK_RESOURCE_MANIFEST}"
+    "${PIPETUNE_GTK_ICON_SOURCE}"
+  VERBATIM)
 
 add_library(
   pipetune_gtk_core STATIC
@@ -29,9 +76,13 @@ endif()
 
 add_library(
   pipetune_gtk_ui_core STATIC
+  "${PIPETUNE_GTK_RESOURCE_SOURCE}"
   src/launch-options.cpp
   src/tray-backend.cpp)
-target_include_directories(pipetune_gtk_ui_core PUBLIC src)
+target_include_directories(
+  pipetune_gtk_ui_core
+  PUBLIC src
+  PRIVATE "${PIPETUNE_GTK_RESOURCE_DIRECTORY}")
 target_link_libraries(
   pipetune_gtk_ui_core
   PUBLIC PkgConfig::GTK3)
