@@ -152,33 +152,24 @@ With no preference, PipeTune follows the physical system default. If no audio
 output exists at all, the daemon remains running and watches for hotplug, but
 audio playback is unavailable until a device appears.
 
-## Selecting an EffeTune preset
+## Selecting an EffeTune DSP preset
 
-The GTK window keeps direct `.effetune_preset` file selection and also offers
-two EffeTune-compatible lists:
+When loading an EffeTune DSP preset into PipeTune, you can select from:
 
-- **Standard** entries are the presets distributed with the pinned EffeTune
-  release. PipeTune installs its own copies because an AppImage exposes its
-  bundled presets only through a temporary `app.asar` mount while it is
-  running.
-- **Saved in EffeTune** entries come from
-  `$XDG_CONFIG_HOME/effetune/effetune_presets.json`, or
-  `~/.config/effetune/effetune_presets.json` when `XDG_CONFIG_HOME` is unset.
-  EffeTune stores all named presets in that one JSON file rather than as
-  separate `.effetune_preset` files. PipeTune atomically creates a private
-  standalone snapshot when one is selected. PipeTune monitors the JSON while
-  running. A successfully parsed update completely replaces only the
-  **Saved in EffeTune** entries; standard entries and the currently selected
-  or loaded preset remain unchanged. A malformed update or file deletion
-  keeps the previous entries.
-- **Preset file** remains available for any other `.effetune_preset` file.
-- EffeTune preset files use the `.effetune_preset` extension.
-- `Bypass and Save` ignores the preset file and passes the audio stream
-  through without DSP processing.
-- `Apply and Save` loads the selected preset file and starts processing audio
-  with the EffeTune DSP engine.
+- EffeTune's standard DSP presets
+- User presets saved by EffeTune for Linux AppImage
+- An individual `*.effetune_preset` file
 
-The same operations are available from the CLI:
+The user preset file saved by the Linux AppImage is located at
+`$XDG_CONFIG_HOME/effetune/effetune_presets.json` (or
+`~/.config/effetune/effetune_presets.json`).
+
+Select a preset from the list or specify a file, then click
+`Apply and Save` to load the preset into the DSP and start processing with the
+EffeTune DSP engine. `Bypass and Save` ignores the preset file and bypasses
+the audio stream without DSP processing.
+
+From the CLI, you can specify either a preset file path or bypass mode:
 
 ```sh
 pipetune setup --preset /absolute/path/to/example.effetune_preset

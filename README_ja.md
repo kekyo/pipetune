@@ -144,30 +144,22 @@ pipetune output clear
 音声出力が1台も存在しない場合もデーモンは終了せず、デバイスの接続を監視しますが、
 デバイスが現れるまで音声は再生されません。
 
-## EffeTuneプリセット選択
+## EffeTune DSPプリセット選択
 
-GTKウインドウでは、従来の`.effetune_preset`ファイル選択を残したまま、
-次のEffeTune互換リストからも選択できます:
+EffeTune DSPプリセットをPipeTuneにロードする場合、以下のファイルを選択できます:
 
-- **Standard**には、固定しているEffeTuneリリースの標準プリセットを表示します。
-  AppImage内の標準プリセットは、実行中だけ一時的な`app.asar`マウントから参照できる
-  ため、PipeTuneパッケージに同じプリセットを収録してインストールします。
-- **Saved in EffeTune**には、
-  `$XDG_CONFIG_HOME/effetune/effetune_presets.json`を表示します。
-  `XDG_CONFIG_HOME`が未設定の場合は
-  `~/.config/effetune/effetune_presets.json`です。EffeTuneは名前付きプリセットを
-  個別ファイルではなく、この単一JSONファイルへまとめて保存します。PipeTuneは
-  選択された項目を、デーモンが読み込める非公開の単独ファイルへ原子的に
-  スナップショットします。PipeTuneは実行中もJSONの更新を監視し、更新後の
-  JSONを正常に解析できた場合に限り、**Saved in EffeTune**項目だけを完全に
-  置き換えます。標準項目と現在選択・ロード済みのプリセットは変更しません。
-  不正なJSONへの更新またはファイル削除では、以前の項目を維持します。
-- **Preset file**では、上記以外の`.effetune_preset`ファイルを従来どおり選択できます。
-- EffeTuneプリセットファイルは、`*.effetune_preset` のような拡張子で保存されます。
-- `Bypass and Save` ボタンは、プリセットファイルを無視してDSP処理を行わずに、音声ストリームをバイパスします。
-- `Apply and Save` ボタンは、指定されたプリセットファイルをDSPにロードして、EffeTune DSPエンジンが計算を開始します。
+- EffeTune標準のDSPプリセット群
+- EffeTune (Linux AppImage版)で保存されたユーザープリセット群
+- 個別の `*.effetune_preset` ファイル
 
-CLIでは同じ操作を次のコマンドで行えます。
+このうち、Linux AppImageで保存されるユーザープリセットファイルは `$XDG_CONFIG_HOME/effetune/effetune_presets.json`
+（あるいは `~/.config/effetune/effetune_presets.json`）に存在します。
+
+リストからプリセットを選択するか、ファイルを指定して
+`Apply and Save` ボタンをクリックすると、指定されたプリセットファイルをDSPにロードして、EffeTune DSPエンジンが計算を開始します。
+`Bypass and Save` ボタンは、プリセットファイルを無視してDSP処理を行わずに、音声ストリームをバイパスします。
+
+CLIでは、プリセットファイルのパスを指定するか、またはバイパスモードを指定することが出来ます。
 
 ```sh
 pipetune setup --preset /absolute/path/to/example.effetune_preset
