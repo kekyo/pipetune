@@ -84,8 +84,13 @@ struct TrayIconPixmap {
  * Receives tray backend actions.
  */
 struct TrayBackendCallbacks {
-  /** Opens or presents the PipeTune window. */
-  std::function<void()> activate;
+  /**
+   * Opens or presents the PipeTune window.
+   *
+   * The argument is the GDK timestamp of the user interaction, or
+   * GDK_CURRENT_TIME when the tray transport does not provide one.
+   */
+  std::function<void(std::uint32_t)> activate;
   /** Requests an explicit application quit. */
   std::function<void()> quit;
   /** Reports discovery and host availability changes. */

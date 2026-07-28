@@ -59,22 +59,40 @@ const mainWindowIds = (tree) =>
     .filter((match) => Number(match[2]) >= 100 && Number(match[3]) >= 100)
     .map((match) => match[1]);
 
+const windowTree = async () => {
+  const { stdout } = await execFileAsync('xwininfo', ['-root', '-tree'], {
+    encoding: 'utf8',
+  });
+  return stdout;
+};
+
 const waitForWindow = async () => {
   const deadline = Date.now() + 5000;
   let lastTree = '';
   while (Date.now() < deadline) {
-    const { stdout } = await execFileAsync('xwininfo', ['-root', '-tree'], {
-      encoding: 'utf8',
-    });
-    lastTree = stdout;
-    if (mainWindowIds(stdout).length === 1) {
-      return stdout;
+    lastTree = await windowTree();
+    if (mainWindowIds(lastTree).length === 1) {
+      return lastTree;
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(
-    `hidden fallback window did not appear; exit=${applicationExit}; stderr=${stderr}; tree=${lastTree}`
+    `activated window did not appear; exit=${applicationExit}; stderr=${stderr}; tree=${lastTree}`
   );
+};
+
+const verifyWindowStaysHidden = async () => {
+  const deadline = Date.now() + 1000;
+  let lastTree = '';
+  while (Date.now() < deadline) {
+    lastTree = await windowTree();
+    if (mainWindowIds(lastTree).length !== 0) {
+      throw new Error(
+        `hidden startup displayed the main window; exit=${applicationExit}; stderr=${stderr}; tree=${lastTree}`
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
 };
 
 const waitForExit = async () => {
@@ -88,27 +106,41 @@ const waitForExit = async () => {
 };
 
 try {
-  const initialTree = await waitForWindow();
+  const hiddenActivation = await execFileAsync(executable, ['--hidden'], {
+    encoding: 'utf8',
+  });
+  if (hiddenActivation.stderr !== '') {
+    throw new Error(
+      `secondary hidden activation failed: ${hiddenActivation.stderr}`
+    );
+  }
+  await verifyWindowStaysHidden();
+
   const activation = await execFileAsync(executable, [], {
     encoding: 'utf8',
   });
   if (activation.stderr !== '') {
     throw new Error(`secondary activation failed: ${activation.stderr}`);
   }
-  const { stdout: activatedTree } = await execFileAsync(
-    'xwininfo',
-    ['-root', '-tree'],
-    { encoding: 'utf8' }
-  );
-  const initialWindows = mainWindowIds(initialTree);
+  const activatedTree = await waitForWindow();
+  const repeatedActivation = await execFileAsync(executable, [], {
+    encoding: 'utf8',
+  });
+  if (repeatedActivation.stderr !== '') {
+    throw new Error(
+      `repeated secondary activation failed: ${repeatedActivation.stderr}`
+    );
+  }
+  const repeatedTree = await waitForWindow();
   const activatedWindows = mainWindowIds(activatedTree);
+  const repeatedWindows = mainWindowIds(repeatedTree);
   if (
-    initialWindows.length !== 1 ||
     activatedWindows.length !== 1 ||
-    initialWindows[0] !== activatedWindows[0]
+    repeatedWindows.length !== 1 ||
+    activatedWindows[0] !== repeatedWindows[0]
   ) {
     throw new Error(
-      `single-instance window identity differs: ${initialWindows.join(',')}/${activatedWindows.join(',')}`
+      `single-instance window identity differs: ${activatedWindows.join(',')}/${repeatedWindows.join(',')}`
     );
   }
   const quit = await execFileAsync(executable, ['--quit'], {

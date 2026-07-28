@@ -414,10 +414,11 @@ static void setAvailability(
   }
 }
 
-static void activateBackend(TrayBackendImplementation *implementation) {
+static void activateBackend(TrayBackendImplementation *implementation,
+                            std::uint32_t userInteractionTime) {
   if (implementation != nullptr && !implementation->destroyed &&
       implementation->options.callbacks.activate) {
-    implementation->options.callbacks.activate();
+    implementation->options.callbacks.activate(userInteractionTime);
   }
 }
 
@@ -429,12 +430,13 @@ static void quitBackend(TrayBackendImplementation *implementation) {
 }
 
 static void handleMenuEvent(TrayBackendImplementation *implementation,
-                            int itemId, const char *eventId) {
+                            int itemId, const char *eventId,
+                            std::uint32_t userInteractionTime) {
   if (eventId == nullptr || std::strcmp(eventId, "clicked") != 0) {
     return;
   }
   if (itemId == kOpenMenuItemId) {
-    activateBackend(implementation);
+    activateBackend(implementation, userInteractionTime);
   } else if (itemId == kQuitMenuItemId) {
     quitBackend(implementation);
   }
@@ -445,7 +447,7 @@ static void handleStatusNotifierMethod(
     GDBusMethodInvocation *invocation) {
   if (std::strcmp(methodName, "Activate") == 0 ||
       std::strcmp(methodName, "SecondaryActivate") == 0) {
-    activateBackend(implementation);
+    activateBackend(implementation, GDK_CURRENT_TIME);
     g_dbus_method_invocation_return_value(invocation, nullptr);
     return;
   }
@@ -492,8 +494,7 @@ static void handleDbusMenuMethod(
     auto timestamp = guint{0};
     g_variant_get(parameters, "(i&svu)", &itemId, &eventId, &data,
                   &timestamp);
-    static_cast<void>(timestamp);
-    handleMenuEvent(implementation, itemId, eventId);
+    handleMenuEvent(implementation, itemId, eventId, timestamp);
     g_variant_unref(data);
     g_dbus_method_invocation_return_value(invocation, nullptr);
     return;
@@ -511,8 +512,7 @@ static void handleDbusMenuMethod(
       auto timestamp = guint{0};
       g_variant_get(event, "(i&svu)", &itemId, &eventId, &data,
                     &timestamp);
-      static_cast<void>(timestamp);
-      handleMenuEvent(implementation, itemId, eventId);
+      handleMenuEvent(implementation, itemId, eventId, timestamp);
       g_variant_unref(data);
       g_variant_unref(event);
     }
@@ -764,7 +764,8 @@ static void updateStatusIcon(
 }
 
 static void onStatusIconActivate(GtkStatusIcon *, gpointer userData) {
-  activateBackend(static_cast<TrayBackendImplementation *>(userData));
+  activateBackend(static_cast<TrayBackendImplementation *>(userData),
+                  gtk_get_current_event_time());
 }
 
 static void onStatusIconPopup(GtkStatusIcon *statusIcon, guint button,
@@ -777,7 +778,8 @@ static void onStatusIconPopup(GtkStatusIcon *statusIcon, guint button,
 }
 
 static void onStatusIconOpen(GtkMenuItem *, gpointer userData) {
-  activateBackend(static_cast<TrayBackendImplementation *>(userData));
+  activateBackend(static_cast<TrayBackendImplementation *>(userData),
+                  gtk_get_current_event_time());
 }
 
 static void onStatusIconQuit(GtkMenuItem *, gpointer userData) {

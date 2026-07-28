@@ -202,9 +202,10 @@ subscription; status itself is not polled.
 
 The tray backend discovers a StatusNotifierItem host first. If none is
 available on X11, it creates the same `GtkStatusIcon`/XEmbed compatibility
-path used by elder-terms. A hidden start falls back to presenting the main
-window when neither tray transport has a host, so the process never becomes
-inaccessible.
+path used by elder-terms. A hidden start remains unmapped even when neither
+tray transport has a host, ensuring desktop-session autostart never opens a
+GTK window. A later explicit application or tray activation presents the
+existing single-instance window.
 
 Startup persistence is separate from daemon control. The GUI and CLI
 atomically write the shared optional

@@ -93,6 +93,16 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
   return ui;
 }
 
+void presentMainWindow(const MainWindowUi &ui,
+                       guint32 userInteractionTime) noexcept {
+  if (ui.window == nullptr) {
+    return;
+  }
+  gtk_widget_show_all(ui.window);
+  gtk_window_present_with_time(GTK_WINDOW(ui.window),
+                               userInteractionTime);
+}
+
 void destroyMainWindowUi(MainWindowUi &ui) noexcept {
   if (ui.window != nullptr) {
     gtk_widget_destroy(ui.window);

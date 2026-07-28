@@ -72,10 +72,10 @@ The tray backend prefers a StatusNotifierItem host. On X11 it falls back to
 compatibility with those notification areas is a project requirement.
 
 Closing the window hides it while a tray host is available. The tray icon
-opens the window, and its menu provides Open PipeTune and Quit actions. If a
-hidden start cannot find either a StatusNotifierItem host or an XEmbed tray
-host, the main window is shown instead of leaving an unreachable background
-process.
+opens and presents the window, and its menu provides Open PipeTune and Quit
+actions. A `--hidden` start remains unmapped regardless of tray discovery, so
+desktop-session autostart does not open a GTK window. In a session without a
+tray host, run `pipetune-gtk` normally to present the existing instance.
 
 ## Run
 

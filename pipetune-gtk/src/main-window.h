@@ -77,6 +77,16 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
                                 std::string_view title);
 
 /**
+ * Shows and presents the main window for a user interaction.
+ *
+ * @param ui UI state containing the main window.
+ * @param userInteractionTime GDK timestamp captured from the interaction, or
+ * GDK_CURRENT_TIME when the source does not provide one.
+ */
+void presentMainWindow(const MainWindowUi &ui,
+                       guint32 userInteractionTime) noexcept;
+
+/**
  * Destroys the main window and releases its GtkBuilder.
  *
  * @param ui UI state to release and reset.

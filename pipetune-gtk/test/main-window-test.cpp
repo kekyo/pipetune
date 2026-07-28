@@ -101,7 +101,13 @@ int main(int argc, char **argv) {
       check(gtk_combo_box_get_active(GTK_COMBO_BOX(ui.outputCombo)) == 1,
             "output combo-box selection differs");
 
+  gtk_widget_hide(ui.window);
+  pipetune_gtk::presentMainWindow(ui, 1234);
+  const auto presentationWorks =
+      check(gtk_widget_get_visible(ui.window) != FALSE,
+            "presenting the main window must make it visible");
+
   pipetune_gtk::destroyMainWindowUi(ui);
   g_object_unref(application);
-  return valid && selectionWorks ? 0 : 1;
+  return valid && selectionWorks && presentationWorks ? 0 : 1;
 }

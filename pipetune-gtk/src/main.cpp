@@ -48,7 +48,6 @@ struct GtkRuntime {
   guint reconnectSource;
   bool applicationHeld;
   bool activationHandled;
-  bool startedHidden;
   bool shuttingDown;
   bool quitting;
   MainWindowUi ui;
@@ -295,7 +294,8 @@ static void render(GtkRuntime *runtime) {
                     trayTooltip(runtime->state));
 }
 
-static void presentWindow(GtkRuntime *runtime);
+static void presentWindow(GtkRuntime *runtime,
+                          guint32 userInteractionTime);
 static void requestQuit(GtkRuntime *runtime);
 
 static gboolean onWindowDelete(GtkWidget *, GdkEvent *, gpointer userData) {
@@ -595,14 +595,14 @@ static void connectMainWindowSignals(GtkRuntime *runtime) {
                    G_CALLBACK(onNoticeDismiss), runtime);
 }
 
-static void presentWindow(GtkRuntime *runtime) {
+static void presentWindow(GtkRuntime *runtime,
+                          guint32 userInteractionTime) {
   if (runtime == nullptr || runtime->ui.window == nullptr) {
     return;
   }
-  gtk_widget_show_all(runtime->ui.window);
+  presentMainWindow(runtime->ui, userInteractionTime);
   const auto notice = noticeText(runtime->state);
   gtk_widget_set_visible(runtime->ui.noticeBox, !notice.empty());
-  gtk_window_present(GTK_WINDOW(runtime->ui.window));
 }
 
 static void releaseApplicationHold(GtkRuntime *runtime) {
@@ -627,10 +627,6 @@ static void onTrayAvailabilityChanged(
     return;
   }
   runtime->trayAvailability = availability;
-  if (availability == TrayBackendAvailabilityState::unavailable &&
-      runtime->activationHandled && runtime->startedHidden) {
-    presentWindow(runtime);
-  }
 }
 
 static void initializeStartupConfig(GtkRuntime *runtime) {
@@ -693,7 +689,10 @@ static void onApplicationStartup(GApplication *, gpointer userData) {
       .tooltip = "PipeTune: disconnected",
       .callbacks =
           {
-              .activate = [runtime]() { presentWindow(runtime); },
+              .activate =
+                  [runtime](std::uint32_t userInteractionTime) {
+                    presentWindow(runtime, userInteractionTime);
+                  },
               .quit = [runtime]() { requestQuit(runtime); },
               .availabilityChanged =
                   [runtime](TrayBackendAvailabilityState availability) {
@@ -733,16 +732,13 @@ static gint onApplicationCommandLine(GApplication *,
 
   if (!runtime->activationHandled) {
     runtime->activationHandled = true;
-    runtime->startedHidden = parsed.options.hidden;
-    if (!parsed.options.hidden ||
-        runtime->trayAvailability ==
-            TrayBackendAvailabilityState::unavailable) {
-      presentWindow(runtime);
+    if (!parsed.options.hidden) {
+      presentWindow(runtime, GDK_CURRENT_TIME);
     }
     return 0;
   }
   if (!parsed.options.hidden) {
-    presentWindow(runtime);
+    presentWindow(runtime, GDK_CURRENT_TIME);
   }
   return 0;
 }
@@ -784,7 +780,6 @@ static int runApplication(int argc, char **argv) {
       .reconnectSource = 0,
       .applicationHeld = false,
       .activationHandled = false,
-      .startedHidden = false,
       .shuttingDown = false,
       .quitting = false,
       .ui = {},
