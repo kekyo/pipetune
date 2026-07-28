@@ -3,4 +3,7 @@
   <gresource prefix="/net/kekyo/pipetune-gtk/icons">
     <file alias="pipetune.svg">packaging/icons/hicolor/scalable/apps/pipetune.svg</file>
   </gresource>
+  <gresource prefix="/net/kekyo/pipetune-gtk/ui">
+    <file alias="main-window.ui" compressed="true">resources/main-window.ui</file>
+  </gresource>
 </gresources>

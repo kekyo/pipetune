@@ -22,6 +22,9 @@ set(
   PIPETUNE_GTK_ICON_SOURCE
   "${CMAKE_CURRENT_SOURCE_DIR}/packaging/icons/hicolor/scalable/apps/pipetune.svg")
 set(
+  PIPETUNE_GTK_MAIN_WINDOW_UI
+  "${CMAKE_CURRENT_SOURCE_DIR}/resources/main-window.ui")
+set(
   PIPETUNE_GTK_RESOURCE_DIRECTORY
   "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(
@@ -56,6 +59,7 @@ add_custom_command(
   DEPENDS
     "${PIPETUNE_GTK_RESOURCE_MANIFEST}"
     "${PIPETUNE_GTK_ICON_SOURCE}"
+    "${PIPETUNE_GTK_MAIN_WINDOW_UI}"
   VERBATIM)
 
 add_library(
@@ -78,7 +82,9 @@ endif()
 add_library(
   pipetune_gtk_ui_core STATIC
   "${PIPETUNE_GTK_RESOURCE_SOURCE}"
+  src/gtk-resources.cpp
   src/launch-options.cpp
+  src/main-window.cpp
   src/tray-backend.cpp)
 target_include_directories(
   pipetune_gtk_ui_core
@@ -138,6 +144,8 @@ install(
   DESTINATION "${PIPETUNE_GTK_ICON_DIR}")
 
 if(BUILD_TESTING)
+  find_program(PIPETUNE_GTK_XVFB_RUN xvfb-run REQUIRED)
+
   add_test(NAME pipetune_gtk_help COMMAND pipetune-gtk --help)
   set_tests_properties(
     pipetune_gtk_help PROPERTIES
@@ -215,6 +223,24 @@ if(BUILD_TESTING)
     COMMAND pipetune_gtk_tray_backend_tests)
 
   add_executable(
+    pipetune_gtk_main_window_tests
+    test/main-window-test.cpp)
+  target_link_libraries(
+    pipetune_gtk_main_window_tests PRIVATE pipetune_gtk_ui_core)
+  if(MSVC)
+    target_compile_options(pipetune_gtk_main_window_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_main_window_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_gtk_main_window_tests
+    COMMAND
+      ${PIPETUNE_GTK_XVFB_RUN} -a
+      $<TARGET_FILE:pipetune_gtk_main_window_tests>)
+
+  add_executable(
     pipetune_gtk_launch_options_tests
     test/launch-options-test.cpp)
   target_link_libraries(
@@ -232,7 +258,6 @@ if(BUILD_TESTING)
 
   find_program(PIPETUNE_GTK_NODE_EXECUTABLE node REQUIRED)
   find_program(PIPETUNE_GTK_DBUS_RUN_SESSION dbus-run-session REQUIRED)
-  find_program(PIPETUNE_GTK_XVFB_RUN xvfb-run REQUIRED)
   find_program(
     PIPETUNE_GTK_DESKTOP_FILE_VALIDATE desktop-file-validate REQUIRED)
   find_program(

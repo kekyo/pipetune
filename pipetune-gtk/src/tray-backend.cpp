@@ -1,8 +1,6 @@
 #include "tray-backend.h"
 
-extern "C" {
-#include "pipetune-gtk-resources.h"
-}
+#include "gtk-resources.h"
 
 #include <gdk/gdkx.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
@@ -261,14 +259,6 @@ buildTrayIconPixmapVariant(const std::vector<TrayIconPixmap> &pixmaps) {
   return g_variant_builder_end(&builder);
 }
 
-static void ensureTrayIconResourceRegistered() {
-  static const auto registered = [] {
-    pipetune_gtk_resources_register_resource();
-    return true;
-  }();
-  static_cast<void>(registered);
-}
-
 static std::uint8_t grayscaleValue(std::uint8_t red,
                                    std::uint8_t green,
                                    std::uint8_t blue) {
@@ -313,7 +303,7 @@ static GdkPixbuf *loadTrayIconPixbuf(int size,
   if (size <= 0) {
     return nullptr;
   }
-  ensureTrayIconResourceRegistered();
+  ensureGtkResourcesRegistered();
   auto *error = static_cast<GError *>(nullptr);
   auto *pixbuf = gdk_pixbuf_new_from_resource_at_scale(
       kTrayIconResourcePath, size, size, TRUE, &error);

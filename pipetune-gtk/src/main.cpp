@@ -1,6 +1,7 @@
 #include "application-state.h"
 #include "control-client.h"
 #include "launch-options.h"
+#include "main-window.h"
 #include "status-text.h"
 #include "tray-backend.h"
 
@@ -41,26 +42,7 @@ struct GtkRuntime {
   bool startedHidden;
   bool shuttingDown;
   bool quitting;
-  GtkWidget *window;
-  GtkWidget *statusImage;
-  GtkWidget *statusLabel;
-  GtkWidget *processingModeLabel;
-  GtkWidget *activePresetLabel;
-  GtkWidget *startupPresetLabel;
-  GtkWidget *pluginCountLabel;
-  GtkWidget *targetLabel;
-  GtkWidget *defaultSinkLabel;
-  GtkWidget *inputFrameRateLabel;
-  GtkWidget *lastInputLabel;
-  GtkWidget *pcmDataRateLabel;
-  GtkWidget *streamFormatLabel;
-  GtkWidget *counterLabel;
-  GtkWidget *noticeBox;
-  GtkWidget *noticeLabel;
-  GtkWidget *presetChooser;
-  GtkWidget *applyButton;
-  GtkWidget *bypassButton;
-  GtkWidget *refreshButton;
+  MainWindowUi ui;
 };
 
 static std::string pathText(const std::filesystem::path &path) {
@@ -149,19 +131,19 @@ static std::string noticeText(const ApplicationState &state) {
 }
 
 static void render(GtkRuntime *runtime) {
-  if (runtime == nullptr || runtime->window == nullptr) {
+  if (runtime == nullptr || runtime->ui.window == nullptr) {
     return;
   }
   const auto status = connectionText(runtime->state);
-  gtk_label_set_text(GTK_LABEL(runtime->statusLabel), status.c_str());
+  gtk_label_set_text(GTK_LABEL(runtime->ui.statusLabel), status.c_str());
   const auto statusIcon =
       runtime->state.connection == ControlConnectionState::connected
           ? (trayVisualState(runtime->state) == TrayVisualState::active
                  ? "emblem-ok-symbolic"
                  : "dialog-warning-symbolic")
           : "network-offline-symbolic";
-  gtk_image_set_from_icon_name(GTK_IMAGE(runtime->statusImage), statusIcon,
-                               GTK_ICON_SIZE_DIALOG);
+  gtk_image_set_from_icon_name(GTK_IMAGE(runtime->ui.statusImage),
+                               statusIcon, GTK_ICON_SIZE_DIALOG);
 
   const auto processingMode =
       runtime->state.hasRuntimeStatus
@@ -170,7 +152,7 @@ static void render(GtkRuntime *runtime) {
                  ? "Bypass"
                  : "Preset")
           : "—";
-  gtk_label_set_text(GTK_LABEL(runtime->processingModeLabel),
+  gtk_label_set_text(GTK_LABEL(runtime->ui.processingModeLabel),
                      processingMode);
   const auto activePreset =
       runtime->state.hasRuntimeStatus
@@ -179,18 +161,18 @@ static void render(GtkRuntime *runtime) {
                  ? std::string("None — pass-through")
                  : pathText(runtime->state.runtime.activePreset))
           : std::string("—");
-  gtk_label_set_text(GTK_LABEL(runtime->activePresetLabel),
+  gtk_label_set_text(GTK_LABEL(runtime->ui.activePresetLabel),
                      activePreset.c_str());
   const auto startupPreset =
       runtime->hasStartupPreset ? pathText(runtime->startupPreset)
                                 : std::string("Bypass");
-  gtk_label_set_text(GTK_LABEL(runtime->startupPresetLabel),
+  gtk_label_set_text(GTK_LABEL(runtime->ui.startupPresetLabel),
                      startupPreset.c_str());
   const auto pluginCount =
       runtime->state.hasRuntimeStatus
           ? std::to_string(runtime->state.runtime.activePluginCount)
           : std::string("—");
-  gtk_label_set_text(GTK_LABEL(runtime->pluginCountLabel),
+  gtk_label_set_text(GTK_LABEL(runtime->ui.pluginCountLabel),
                      pluginCount.c_str());
   const auto target =
       runtime->state.hasRuntimeStatus
@@ -198,22 +180,23 @@ static void render(GtkRuntime *runtime) {
                  ? std::string("Unavailable")
                  : runtime->state.runtime.selectedTarget)
           : std::string("—");
-  gtk_label_set_text(GTK_LABEL(runtime->targetLabel), target.c_str());
+  gtk_label_set_text(GTK_LABEL(runtime->ui.targetLabel), target.c_str());
   const auto defaultSink =
       runtime->state.hasRuntimeStatus
           ? (runtime->state.runtime.defaultSinkActive ? "Active"
                                                       : "Inactive")
           : "—";
-  gtk_label_set_text(GTK_LABEL(runtime->defaultSinkLabel), defaultSink);
+  gtk_label_set_text(GTK_LABEL(runtime->ui.defaultSinkLabel),
+                     defaultSink);
   const auto inputText =
       inputStatusText(runtime->state, currentUnixMilliseconds());
-  gtk_label_set_text(GTK_LABEL(runtime->inputFrameRateLabel),
+  gtk_label_set_text(GTK_LABEL(runtime->ui.inputFrameRateLabel),
                      inputText.frameRate.c_str());
-  gtk_label_set_text(GTK_LABEL(runtime->lastInputLabel),
+  gtk_label_set_text(GTK_LABEL(runtime->ui.lastInputLabel),
                      inputText.lastReceived.c_str());
-  gtk_label_set_text(GTK_LABEL(runtime->pcmDataRateLabel),
+  gtk_label_set_text(GTK_LABEL(runtime->ui.pcmDataRateLabel),
                      inputText.pcmDataRate.c_str());
-  gtk_label_set_text(GTK_LABEL(runtime->streamFormatLabel),
+  gtk_label_set_text(GTK_LABEL(runtime->ui.streamFormatLabel),
                      inputText.streamFormat.c_str());
   const auto counters =
       runtime->state.hasRuntimeStatus
@@ -224,50 +207,34 @@ static void render(GtkRuntime *runtime) {
                 "  •  Processing " +
                 std::to_string(runtime->state.runtime.processingErrors)
           : std::string("—");
-  gtk_label_set_text(GTK_LABEL(runtime->counterLabel), counters.c_str());
+  gtk_label_set_text(GTK_LABEL(runtime->ui.counterLabel),
+                     counters.c_str());
 
   const auto notice = noticeText(runtime->state);
-  gtk_label_set_text(GTK_LABEL(runtime->noticeLabel), notice.c_str());
-  gtk_widget_set_visible(runtime->noticeBox, !notice.empty());
+  gtk_label_set_text(GTK_LABEL(runtime->ui.noticeLabel), notice.c_str());
+  gtk_widget_set_visible(runtime->ui.noticeBox, !notice.empty());
   gtk_button_set_label(
-      GTK_BUTTON(runtime->applyButton),
+      GTK_BUTTON(runtime->ui.applyButton),
       runtime->state.connection == ControlConnectionState::connected
           ? "Apply and Save"
           : "Save for Next Start");
-  gtk_widget_set_sensitive(runtime->applyButton,
+  gtk_widget_set_sensitive(runtime->ui.applyButton,
                            !runtime->state.operationPending);
   gtk_button_set_label(
-      GTK_BUTTON(runtime->bypassButton),
+      GTK_BUTTON(runtime->ui.bypassButton),
       runtime->state.connection == ControlConnectionState::connected
           ? "Bypass and Save"
           : "Save Bypass");
-  gtk_widget_set_sensitive(runtime->bypassButton,
+  gtk_widget_set_sensitive(runtime->ui.bypassButton,
                            !runtime->state.operationPending);
   gtk_widget_set_sensitive(
-      runtime->refreshButton,
+      runtime->ui.refreshButton,
       runtime->controlClient != nullptr &&
           !runtime->state.operationPending);
   updateTrayBackend(runtime->trayBackend,
                     iconStateForApplication(runtime->state),
                     iconColorModeForApplication(runtime->state),
                     trayTooltip(runtime->state));
-}
-
-static GtkWidget *addDetailRow(GtkGrid *grid, int row,
-                               const char *title) {
-  auto *titleLabel = gtk_label_new(title);
-  gtk_label_set_xalign(GTK_LABEL(titleLabel), 0.0F);
-  gtk_style_context_add_class(
-      gtk_widget_get_style_context(titleLabel), "dim-label");
-  gtk_grid_attach(grid, titleLabel, 0, row, 1, 1);
-
-  auto *valueLabel = gtk_label_new("—");
-  gtk_label_set_xalign(GTK_LABEL(valueLabel), 0.0F);
-  gtk_label_set_selectable(GTK_LABEL(valueLabel), TRUE);
-  gtk_label_set_ellipsize(GTK_LABEL(valueLabel), PANGO_ELLIPSIZE_MIDDLE);
-  gtk_widget_set_hexpand(valueLabel, TRUE);
-  gtk_grid_attach(grid, valueLabel, 1, row, 1, 1);
-  return valueLabel;
 }
 
 static void presentWindow(GtkRuntime *runtime);
@@ -278,7 +245,7 @@ static gboolean onWindowDelete(GtkWidget *, GdkEvent *, gpointer userData) {
   if (!runtime->quitting &&
       runtime->trayAvailability ==
           TrayBackendAvailabilityState::available) {
-    gtk_widget_hide(runtime->window);
+    gtk_widget_hide(runtime->ui.window);
     return TRUE;
   }
   requestQuit(runtime);
@@ -287,7 +254,7 @@ static gboolean onWindowDelete(GtkWidget *, GdkEvent *, gpointer userData) {
 
 static void onWindowDestroy(GtkWidget *, gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
-  runtime->window = nullptr;
+  runtime->ui.window = nullptr;
 }
 
 static void onNoticeDismiss(GtkButton *, gpointer userData) {
@@ -422,7 +389,7 @@ static void onLoadReply(const ControlClientReply &reply, void *userData) {
 static void onApplyClicked(GtkButton *, gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
   auto *filename = gtk_file_chooser_get_filename(
-      GTK_FILE_CHOOSER(runtime->presetChooser));
+      GTK_FILE_CHOOSER(runtime->ui.presetChooser));
   if (filename == nullptr) {
     setControlDiagnostic(runtime->state,
                          "Select an EffeTune preset first");
@@ -523,129 +490,29 @@ static void onBypassClicked(GtkButton *, gpointer userData) {
   bypassControlAsync(runtime->controlClient, onBypassReply, runtime);
 }
 
-static GtkWidget *createMainWindow(GtkRuntime *runtime) {
-  auto *window = gtk_application_window_new(runtime->application);
-  const auto title = versionText();
-  gtk_window_set_title(GTK_WINDOW(window), title.c_str());
-  gtk_window_set_default_size(GTK_WINDOW(window), 680, 580);
-  gtk_window_set_position(GTK_WINDOW(window), GTK_WIN_POS_CENTER);
-
-  auto *header = gtk_header_bar_new();
-  gtk_header_bar_set_title(GTK_HEADER_BAR(header), title.c_str());
-  gtk_header_bar_set_subtitle(GTK_HEADER_BAR(header),
-                              "PipeWire DSP control");
-  gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(header), TRUE);
-  runtime->refreshButton =
-      gtk_button_new_from_icon_name("view-refresh-symbolic",
-                                    GTK_ICON_SIZE_BUTTON);
-  gtk_widget_set_tooltip_text(runtime->refreshButton, "Refresh status");
-  gtk_header_bar_pack_end(GTK_HEADER_BAR(header), runtime->refreshButton);
-  gtk_window_set_titlebar(GTK_WINDOW(window), header);
-
-  auto *root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 18);
-  gtk_container_set_border_width(GTK_CONTAINER(root), 20);
-  gtk_container_add(GTK_CONTAINER(window), root);
-
-  auto *statusBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-  runtime->statusImage =
-      gtk_image_new_from_icon_name("network-offline-symbolic",
-                                   GTK_ICON_SIZE_DIALOG);
-  runtime->statusLabel = gtk_label_new("PipeTune is disconnected");
-  gtk_label_set_xalign(GTK_LABEL(runtime->statusLabel), 0.0F);
-  gtk_widget_set_hexpand(runtime->statusLabel, TRUE);
-  gtk_box_pack_start(GTK_BOX(statusBox), runtime->statusImage, FALSE, FALSE,
-                     0);
-  gtk_box_pack_start(GTK_BOX(statusBox), runtime->statusLabel, TRUE, TRUE, 0);
-  gtk_box_pack_start(GTK_BOX(root), statusBox, FALSE, FALSE, 0);
-
-  auto *grid = gtk_grid_new();
-  gtk_grid_set_column_spacing(GTK_GRID(grid), 18);
-  gtk_grid_set_row_spacing(GTK_GRID(grid), 10);
-  runtime->processingModeLabel =
-      addDetailRow(GTK_GRID(grid), 0, "DSP mode");
-  runtime->activePresetLabel =
-      addDetailRow(GTK_GRID(grid), 1, "Active preset");
-  runtime->startupPresetLabel =
-      addDetailRow(GTK_GRID(grid), 2, "Startup preset");
-  runtime->pluginCountLabel =
-      addDetailRow(GTK_GRID(grid), 3, "Active DSP nodes");
-  runtime->targetLabel =
-      addDetailRow(GTK_GRID(grid), 4, "Output target");
-  runtime->defaultSinkLabel =
-      addDetailRow(GTK_GRID(grid), 5, "Default sink");
-  runtime->inputFrameRateLabel =
-      addDetailRow(GTK_GRID(grid), 6, "Input frame rate");
-  runtime->lastInputLabel =
-      addDetailRow(GTK_GRID(grid), 7, "Last input");
-  runtime->pcmDataRateLabel =
-      addDetailRow(GTK_GRID(grid), 8, "PCM data rate");
-  runtime->streamFormatLabel =
-      addDetailRow(GTK_GRID(grid), 9, "Stream format");
-  runtime->counterLabel =
-      addDetailRow(GTK_GRID(grid), 10, "Runtime counters");
-  gtk_box_pack_start(GTK_BOX(root), grid, FALSE, FALSE, 0);
-
-  runtime->noticeBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-  gtk_style_context_add_class(
-      gtk_widget_get_style_context(runtime->noticeBox), "warning");
-  runtime->noticeLabel = gtk_label_new("");
-  gtk_label_set_xalign(GTK_LABEL(runtime->noticeLabel), 0.0F);
-  gtk_label_set_line_wrap(GTK_LABEL(runtime->noticeLabel), TRUE);
-  gtk_widget_set_hexpand(runtime->noticeLabel, TRUE);
-  auto *dismiss =
-      gtk_button_new_from_icon_name("window-close-symbolic",
-                                    GTK_ICON_SIZE_BUTTON);
-  gtk_widget_set_tooltip_text(dismiss, "Dismiss");
-  gtk_box_pack_start(GTK_BOX(runtime->noticeBox), runtime->noticeLabel,
-                     TRUE, TRUE, 0);
-  gtk_box_pack_end(GTK_BOX(runtime->noticeBox), dismiss, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(root), runtime->noticeBox, FALSE, FALSE, 0);
-
-  auto *separator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
-  gtk_box_pack_start(GTK_BOX(root), separator, FALSE, FALSE, 0);
-  auto *presetTitle = gtk_label_new(nullptr);
-  gtk_label_set_markup(GTK_LABEL(presetTitle), "<b>Preset selection</b>");
-  gtk_label_set_xalign(GTK_LABEL(presetTitle), 0.0F);
-  gtk_box_pack_start(GTK_BOX(root), presetTitle, FALSE, FALSE, 0);
-  auto *presetBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-  runtime->presetChooser = gtk_file_chooser_button_new(
-      "Select an EffeTune preset", GTK_FILE_CHOOSER_ACTION_OPEN);
-  auto *filter = gtk_file_filter_new();
-  gtk_file_filter_set_name(filter, "EffeTune presets");
-  gtk_file_filter_add_pattern(filter, "*.effetune_preset");
-  gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(runtime->presetChooser),
-                              filter);
-  gtk_widget_set_hexpand(runtime->presetChooser, TRUE);
-  runtime->applyButton = gtk_button_new_with_label("Save for Next Start");
-  runtime->bypassButton = gtk_button_new_with_label("Save Bypass");
-  gtk_box_pack_start(GTK_BOX(presetBox), runtime->presetChooser, TRUE, TRUE,
-                     0);
-  gtk_box_pack_end(GTK_BOX(presetBox), runtime->applyButton, FALSE, FALSE, 0);
-  gtk_box_pack_end(GTK_BOX(presetBox), runtime->bypassButton, FALSE, FALSE,
-                   0);
-  gtk_box_pack_start(GTK_BOX(root), presetBox, FALSE, FALSE, 0);
-
-  g_signal_connect(window, "delete-event", G_CALLBACK(onWindowDelete),
-                   runtime);
-  g_signal_connect(window, "destroy", G_CALLBACK(onWindowDestroy), runtime);
-  g_signal_connect(runtime->refreshButton, "clicked",
+static void connectMainWindowSignals(GtkRuntime *runtime) {
+  g_signal_connect(runtime->ui.window, "delete-event",
+                   G_CALLBACK(onWindowDelete), runtime);
+  g_signal_connect(runtime->ui.window, "destroy",
+                   G_CALLBACK(onWindowDestroy), runtime);
+  g_signal_connect(runtime->ui.refreshButton, "clicked",
                    G_CALLBACK(onRefreshClicked), runtime);
-  g_signal_connect(runtime->applyButton, "clicked",
+  g_signal_connect(runtime->ui.applyButton, "clicked",
                    G_CALLBACK(onApplyClicked), runtime);
-  g_signal_connect(runtime->bypassButton, "clicked",
+  g_signal_connect(runtime->ui.bypassButton, "clicked",
                    G_CALLBACK(onBypassClicked), runtime);
-  g_signal_connect(dismiss, "clicked", G_CALLBACK(onNoticeDismiss), runtime);
-  return window;
+  g_signal_connect(runtime->ui.dismissButton, "clicked",
+                   G_CALLBACK(onNoticeDismiss), runtime);
 }
 
 static void presentWindow(GtkRuntime *runtime) {
-  if (runtime == nullptr || runtime->window == nullptr) {
+  if (runtime == nullptr || runtime->ui.window == nullptr) {
     return;
   }
-  gtk_widget_show_all(runtime->window);
+  gtk_widget_show_all(runtime->ui.window);
   const auto notice = noticeText(runtime->state);
-  gtk_widget_set_visible(runtime->noticeBox, !notice.empty());
-  gtk_window_present(GTK_WINDOW(runtime->window));
+  gtk_widget_set_visible(runtime->ui.noticeBox, !notice.empty());
+  gtk_window_present(GTK_WINDOW(runtime->ui.window));
   requestFreshStatus(runtime);
 }
 
@@ -699,7 +566,7 @@ static void initializeStartupConfig(GtkRuntime *runtime) {
   runtime->startupPreset = loaded.presetPath;
   if (loaded.found && std::filesystem::exists(loaded.presetPath)) {
     gtk_file_chooser_set_filename(
-        GTK_FILE_CHOOSER(runtime->presetChooser),
+        GTK_FILE_CHOOSER(runtime->ui.presetChooser),
         loaded.presetPath.c_str());
   }
 }
@@ -721,7 +588,9 @@ static void initializeControlClient(GtkRuntime *runtime) {
 
 static void onApplicationStartup(GApplication *, gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
-  runtime->window = createMainWindow(runtime);
+  runtime->ui =
+      createMainWindowUi(runtime->application, versionText());
+  connectMainWindowSignals(runtime);
   initializeStartupConfig(runtime);
   g_application_hold(G_APPLICATION(runtime->application));
   runtime->applicationHeld = true;
@@ -799,9 +668,7 @@ static void onApplicationShutdown(GApplication *, gpointer userData) {
   runtime->controlClient = nullptr;
   destroyTrayBackend(runtime->trayBackend);
   runtime->trayBackend = nullptr;
-  if (runtime->window != nullptr) {
-    gtk_widget_destroy(runtime->window);
-  }
+  destroyMainWindowUi(runtime->ui);
   releaseApplicationHold(runtime);
 }
 
@@ -824,26 +691,7 @@ static int runApplication(int argc, char **argv) {
       .startedHidden = false,
       .shuttingDown = false,
       .quitting = false,
-      .window = nullptr,
-      .statusImage = nullptr,
-      .statusLabel = nullptr,
-      .processingModeLabel = nullptr,
-      .activePresetLabel = nullptr,
-      .startupPresetLabel = nullptr,
-      .pluginCountLabel = nullptr,
-      .targetLabel = nullptr,
-      .defaultSinkLabel = nullptr,
-      .inputFrameRateLabel = nullptr,
-      .lastInputLabel = nullptr,
-      .pcmDataRateLabel = nullptr,
-      .streamFormatLabel = nullptr,
-      .counterLabel = nullptr,
-      .noticeBox = nullptr,
-      .noticeLabel = nullptr,
-      .presetChooser = nullptr,
-      .applyButton = nullptr,
-      .bypassButton = nullptr,
-      .refreshButton = nullptr,
+      .ui = {},
   };
   g_signal_connect(application, "startup",
                    G_CALLBACK(onApplicationStartup), &runtime);
