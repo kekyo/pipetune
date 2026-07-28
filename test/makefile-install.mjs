@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -118,6 +119,54 @@ printf '%s\\n' "$@" >>"$PIPETUNE_TEST_CMAKE_INVOCATIONS"
     ]),
     JSON.stringify(runMake("build-install")),
     "make build-install must configure, build, and install",
+  );
+
+  const installedRoot = join(temporaryRoot, "installed");
+  const installedExecutable = join(installedRoot, "bin", "pipetune");
+  const installedIcon = join(
+    installedRoot,
+    "share",
+    "PipeTune icons",
+    "pipetune.svg",
+  );
+  const unrelatedFile = join(installedRoot, "bin", "keep");
+  mkdirSync(join(installedRoot, "bin"), { recursive: true });
+  mkdirSync(join(installedRoot, "share", "PipeTune icons"), {
+    recursive: true,
+  });
+  writeFileSync(installedExecutable, "pipetune\n");
+  writeFileSync(installedIcon, "icon\n");
+  writeFileSync(unrelatedFile, "keep\n");
+  mkdirSync(buildDirectory, { recursive: true });
+  writeFileSync(
+    join(buildDirectory, "install_manifest.txt"),
+    `${installedExecutable}\n${installedIcon}\n`,
+  );
+
+  assertEqual(
+    JSON.stringify([]),
+    JSON.stringify(runMake("uninstall")),
+    "make uninstall must not configure or build",
+  );
+  assertEqual(
+    false,
+    existsSync(installedExecutable),
+    "make uninstall did not remove the installed executable",
+  );
+  assertEqual(
+    false,
+    existsSync(installedIcon),
+    "make uninstall did not remove the installed path containing spaces",
+  );
+  assertEqual(
+    true,
+    existsSync(unrelatedFile),
+    "make uninstall removed a file absent from the install manifest",
+  );
+  assertEqual(
+    JSON.stringify([]),
+    JSON.stringify(runMake("uninstall")),
+    "make uninstall must be repeatable",
   );
 } finally {
   rmSync(temporaryRoot, { recursive: true, force: true });

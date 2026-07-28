@@ -4,7 +4,7 @@ BUILD_TYPE ?= Release
 PREFIX ?= /usr/local
 DESTDIR ?=
 
-.PHONY: all test install build-install
+.PHONY: all test install build-install uninstall
 
 all:
 	cmake -S . -B "$(BUILD_DIR)" -DCMAKE_BUILD_TYPE="$(BUILD_TYPE)" -DCMAKE_INSTALL_PREFIX="$(PREFIX)" -DBUILD_TESTING=OFF
@@ -20,3 +20,16 @@ install:
 
 build-install: all
 	cmake --install "$(BUILD_DIR)" --prefix "$(PREFIX)" --strip
+
+uninstall:
+	@test -f "$(BUILD_DIR)/install_manifest.txt" || { \
+		echo "Install manifest not found: $(BUILD_DIR)/install_manifest.txt" >&2; \
+		exit 1; \
+	}
+	@set -e; \
+	while IFS= read -r installed_file; do \
+		if [ -n "$$installed_file" ]; then \
+			printf 'Removing %s\n' "$$installed_file"; \
+			rm -f -- "$$installed_file"; \
+		fi; \
+	done < "$(BUILD_DIR)/install_manifest.txt"

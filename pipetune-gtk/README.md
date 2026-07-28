@@ -101,6 +101,12 @@ make PREFIX=/usr
 sudo make install PREFIX=/usr
 ```
 
+Remove files recorded by the most recent installation with:
+
+```sh
+sudo make uninstall
+```
+
 For end-user installation from a prebuilt Debian package, see the
 [workspace installation guide](../README.md#download-and-install). Developers
 can build the complete package matrix using the

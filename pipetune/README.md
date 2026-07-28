@@ -246,6 +246,15 @@ For a user-writable prefix, `make build-install PREFIX=...` retains the
 combined configure, build, and install workflow. Do not run `build-install`
 with `sudo`.
 
+Files recorded by the most recent installation can be removed with:
+
+```sh
+sudo make uninstall
+```
+
+This removes installed files but does not remove user configuration or empty
+installation directories.
+
 For end-user installation from a prebuilt Debian package, see the
 [workspace installation guide](../README.md#download-and-install).
 
