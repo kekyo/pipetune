@@ -85,6 +85,33 @@ static bool testUnavailableAndIdleText() {
                "44.1 kHz stream-format text differs");
 }
 
+static bool testRuntimeText() {
+  const auto unavailable =
+      pipetune_gtk::runtimeStatusText(
+          pipetune_gtk::initialApplicationState());
+  if (!check(unavailable.dspProcessingTime == "—" &&
+                 unavailable.counters == "—",
+             "disconnected runtime text must be unavailable")) {
+    return false;
+  }
+
+  auto state = activeState();
+  state.dspTiming.hasAverage = true;
+  state.dspTiming.nanosecondsPerFrame = 2500.0;
+  state.runtime.overrunFrames = 4;
+  state.runtime.underrunFrames = 5;
+  state.runtime.processingErrors = 6;
+  const auto runtime = pipetune_gtk::runtimeStatusText(state);
+  return check(runtime.dspProcessingTime == "2.50 µs/frame",
+               "DSP processing-time text differs") &&
+         check(runtime.counters ==
+                   "Overrun 4  •  Underrun 5  •  Processing 6",
+               "runtime counter text differs");
+}
+
 int main() {
-  return testActiveText() && testUnavailableAndIdleText() ? 0 : 1;
+  return testActiveText() && testUnavailableAndIdleText() &&
+                 testRuntimeText()
+             ? 0
+             : 1;
 }

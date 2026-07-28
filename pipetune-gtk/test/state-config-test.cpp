@@ -39,6 +39,8 @@ static pipetune::ControlResponseParseResult statusResponse(
            .overrunFrames = 0,
            .underrunFrames = 0,
            .processingErrors = 0,
+           .dspProcessedFrames = 0,
+           .dspProcessingNanoseconds = 0,
            .inputSampleFormat = {},
            .inputSampleRate = 0,
            .inputChannelCount = 0,
@@ -68,6 +70,8 @@ static pipetune::ControlResponseParseResult bypassStatusResponse() {
            .overrunFrames = 0,
            .underrunFrames = 0,
            .processingErrors = 0,
+           .dspProcessedFrames = 0,
+           .dspProcessingNanoseconds = 0,
            .inputSampleFormat = {},
            .inputSampleRate = 0,
            .inputChannelCount = 0,
@@ -98,6 +102,8 @@ static pipetune::ControlResponseParseResult inputStatusResponse(
            .overrunFrames = 0,
            .underrunFrames = 0,
            .processingErrors = 0,
+           .dspProcessedFrames = 0,
+           .dspProcessingNanoseconds = 0,
            .inputSampleFormat = "F32P",
            .inputSampleRate = sampleRate,
            .inputChannelCount = 2,
@@ -105,6 +111,22 @@ static pipetune::ControlResponseParseResult inputStatusResponse(
            .inputLastReceivedUnixMilliseconds =
                framesReceived == 0 ? 0 : 1704164645000ULL},
           {}));
+}
+
+static pipetune::ControlResponseParseResult dspStatusEvent(
+    std::uint64_t processedFrames,
+    std::uint64_t processingNanoseconds,
+    std::uint64_t overrunFrames,
+    std::uint64_t underrunFrames,
+    std::uint64_t processingErrors) {
+  auto status = statusResponse(true, {}, {}).status;
+  status.dspProcessedFrames = processedFrames;
+  status.dspProcessingNanoseconds = processingNanoseconds;
+  status.overrunFrames = overrunFrames;
+  status.underrunFrames = underrunFrames;
+  status.processingErrors = processingErrors;
+  return pipetune::parseControlResponse(
+      pipetune::makeControlStatusEvent(status));
 }
 
 static bool testApplicationState() {
@@ -278,6 +300,38 @@ static bool testInputRateState() {
                "reconnection must reset input rate measurements");
 }
 
+static bool testPeriodicRuntimeMeasurements() {
+  auto state = pipetune_gtk::initialApplicationState();
+  pipetune_gtk::applyControlResponse(
+      state, dspStatusEvent(48000, 96000000, 1, 2, 3), 1000);
+  if (!check(state.dspTiming.hasBaseline &&
+                 !state.dspTiming.hasAverage,
+             "first DSP status must establish a timing baseline")) {
+    return false;
+  }
+
+  pipetune_gtk::applyControlResponse(
+      state, dspStatusEvent(96000, 216000000, 4, 5, 6), 2000);
+  if (!check(state.dspTiming.hasAverage &&
+                 state.dspTiming.nanosecondsPerFrame == 2500.0,
+             "periodic DSP time average differs") ||
+      !check(state.runtime.overrunFrames == 4 &&
+                 state.runtime.underrunFrames == 5 &&
+                 state.runtime.processingErrors == 6,
+             "periodic runtime counters were not refreshed")) {
+    return false;
+  }
+
+  pipetune_gtk::applyControlResponse(
+      state, bypassStatusResponse(), 3000);
+  return check(!state.dspTiming.hasBaseline &&
+                   !state.dspTiming.hasAverage,
+               "bypass must clear the DSP timing measurement");
+}
+
 int main() {
-  return testApplicationState() && testInputRateState() ? 0 : 1;
+  return testApplicationState() && testInputRateState() &&
+                 testPeriodicRuntimeMeasurements()
+             ? 0
+             : 1;
 }

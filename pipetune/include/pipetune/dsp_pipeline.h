@@ -47,7 +47,18 @@ enum class ProcessStatus {
   dspError
 };
 
+/**
+ * Reports cumulative native EffeTune processing work.
+ */
+struct DspPerformanceCounters {
+  /** Frames passed to the native EffeTune engine. */
+  std::uint64_t processedFrames;
+  /** Nanoseconds spent inside native EffeTune pipeline processing. */
+  std::uint64_t processingNanoseconds;
+};
+
 class DspPipeline;
+class DspPipelineSlot;
 struct PipelineCreateResult;
 struct PipelineLoadResult;
 
@@ -97,8 +108,10 @@ public:
 
 private:
   explicit DspPipeline(std::unique_ptr<Impl> implementation);
+  bool usesNativeDsp() const noexcept;
   std::unique_ptr<Impl> implementation_;
 
+  friend class DspPipelineSlot;
   friend struct PipelineCreateResult;
   friend struct PipelineLoadResult;
   friend PipelineCreateResult

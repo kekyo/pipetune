@@ -119,6 +119,10 @@ struct ControlRuntimeStatus {
   std::uint64_t underrunFrames;
   /** DSP blocks that could not be processed. */
   std::uint64_t processingErrors;
+  /** Frames passed to the native EffeTune engine. */
+  std::uint64_t dspProcessedFrames;
+  /** Nanoseconds spent inside native EffeTune pipeline processing. */
+  std::uint64_t dspProcessingNanoseconds;
   /** Negotiated PipeWire input sample format, or empty before negotiation. */
   std::string inputSampleFormat;
   /** Negotiated PipeWire input sample rate, or zero before negotiation. */

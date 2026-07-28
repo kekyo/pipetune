@@ -142,6 +142,8 @@ static bool testSuccessResponse() {
        .overrunFrames = 11,
        .underrunFrames = 12,
        .processingErrors = 13,
+       .dspProcessedFrames = 96000,
+       .dspProcessingNanoseconds = 240000000,
        .inputSampleFormat = "F32P",
        .inputSampleRate = 48000,
        .inputChannelCount = 2,
@@ -181,6 +183,9 @@ static bool testSuccessResponse() {
                  parsed.status.underrunFrames == 12 &&
                  parsed.status.processingErrors == 13,
              "parsed response counters differ") ||
+      !check(parsed.status.dspProcessedFrames == 96000 &&
+                 parsed.status.dspProcessingNanoseconds == 240000000,
+             "parsed response DSP performance counters differ") ||
       !check(parsed.status.inputSampleFormat == "F32P" &&
                  parsed.status.inputSampleRate == 48000 &&
                  parsed.status.inputChannelCount == 2,
@@ -228,6 +233,9 @@ static bool testSuccessResponse() {
       yyjson_get_uint(yyjson_obj_get(root, "overrunFrames")) == 11 &&
       yyjson_get_uint(yyjson_obj_get(root, "underrunFrames")) == 12 &&
       yyjson_get_uint(yyjson_obj_get(root, "processingErrors")) == 13 &&
+      yyjson_get_uint(yyjson_obj_get(root, "dspProcessedFrames")) == 96000 &&
+      yyjson_get_uint(
+          yyjson_obj_get(root, "dspProcessingNanoseconds")) == 240000000 &&
       std::string_view(
           yyjson_get_str(yyjson_obj_get(root, "inputSampleFormat"))) ==
           "F32P" &&
@@ -264,6 +272,8 @@ static bool testStatusEvent() {
        .overrunFrames = 21,
        .underrunFrames = 22,
        .processingErrors = 23,
+       .dspProcessedFrames = 44100,
+       .dspProcessingNanoseconds = 110250000,
        .inputSampleFormat = "F32P",
        .inputSampleRate = 44100,
        .inputChannelCount = 2,
@@ -291,6 +301,9 @@ static bool testStatusEvent() {
                    parsed.status.underrunFrames == 22 &&
                    parsed.status.processingErrors == 23,
                "status event counters differ") &&
+         check(parsed.status.dspProcessedFrames == 44100 &&
+                   parsed.status.dspProcessingNanoseconds == 110250000,
+               "status event DSP performance counters differ") &&
          check(parsed.status.inputSampleFormat == "F32P" &&
                    parsed.status.inputSampleRate == 44100 &&
                    parsed.status.inputChannelCount == 2 &&
@@ -322,6 +335,8 @@ static bool testBypassStatus() {
        .overrunFrames = 0,
        .underrunFrames = 0,
        .processingErrors = 0,
+       .dspProcessedFrames = 0,
+       .dspProcessingNanoseconds = 0,
        .inputSampleFormat = {},
        .inputSampleRate = 0,
        .inputChannelCount = 0,
@@ -382,6 +397,8 @@ static bool testUnavailableOutputStatus() {
        .overrunFrames = 0,
        .underrunFrames = 0,
        .processingErrors = 0,
+       .dspProcessedFrames = 0,
+       .dspProcessingNanoseconds = 0,
        .inputSampleFormat = {},
        .inputSampleRate = 0,
        .inputChannelCount = 0,
@@ -437,6 +454,8 @@ static bool testRejectedOutputStatus() {
        .overrunFrames = 0,
        .underrunFrames = 0,
        .processingErrors = 0,
+       .dspProcessedFrames = 0,
+       .dspProcessingNanoseconds = 0,
        .inputSampleFormat = {},
        .inputSampleRate = 0,
        .inputChannelCount = 0,
@@ -481,6 +500,8 @@ static bool testRejectedInputTelemetry() {
        .overrunFrames = 0,
        .underrunFrames = 0,
        .processingErrors = 0,
+       .dspProcessedFrames = 0,
+       .dspProcessingNanoseconds = 0,
        .inputSampleFormat = "F32P",
        .inputSampleRate = 48000,
        .inputChannelCount = 2,

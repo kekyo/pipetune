@@ -195,8 +195,10 @@ shutdown operations succeed. Both commands reject effective user ID zero.
 
 `pipetune-gtk` is a single-instance `GtkApplication`. Its GIO client keeps one
 asynchronous subscription connection and uses separate asynchronous requests
-for explicit refreshes, preset changes, and output preference changes. A retry
-timer reconnects a lost subscription; status itself is not polled.
+for preset changes and output preference changes. Runtime counters and
+cumulative native EffeTune processing time are published once per second; the
+GUI derives a per-frame interval average. A retry timer reconnects a lost
+subscription; status itself is not polled.
 
 The tray backend discovers a StatusNotifierItem host first. If none is
 available on X11, it creates the same `GtkStatusIcon`/XEmbed compatibility

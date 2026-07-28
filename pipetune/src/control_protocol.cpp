@@ -336,6 +336,11 @@ static std::string makeControlStatusMessage(
                                status.underrunFrames) ||
       !yyjson_mut_obj_add_uint(document.get(), root, "processingErrors",
                                status.processingErrors) ||
+      !yyjson_mut_obj_add_uint(document.get(), root, "dspProcessedFrames",
+                               status.dspProcessedFrames) ||
+      !yyjson_mut_obj_add_uint(
+          document.get(), root, "dspProcessingNanoseconds",
+          status.dspProcessingNanoseconds) ||
       !addNullableString(document.get(), root, "inputSampleFormat",
                          status.inputSampleFormat) ||
       !yyjson_mut_obj_add_uint(document.get(), root, "inputSampleRate",
@@ -435,6 +440,8 @@ static ControlResponseParseResult responseError(std::string error) {
                      .overrunFrames = 0,
                      .underrunFrames = 0,
                      .processingErrors = 0,
+                     .dspProcessedFrames = 0,
+                     .dspProcessingNanoseconds = 0,
                      .inputSampleFormat = {},
                      .inputSampleRate = 0,
                      .inputChannelCount = 0,
@@ -643,6 +650,8 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
                        .overrunFrames = 0,
                        .underrunFrames = 0,
                        .processingErrors = 0,
+                       .dspProcessedFrames = 0,
+                       .dspProcessingNanoseconds = 0,
                        .inputSampleFormat = {},
                        .inputSampleRate = 0,
                        .inputChannelCount = 0,
@@ -666,6 +675,8 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       .overrunFrames = 0,
       .underrunFrames = 0,
       .processingErrors = 0,
+      .dspProcessedFrames = 0,
+      .dspProcessingNanoseconds = 0,
       .inputSampleFormat = {},
       .inputSampleRate = 0,
       .inputChannelCount = 0,
@@ -690,6 +701,10 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       !readCounterField(root, "underrunFrames", status.underrunFrames) ||
       !readCounterField(root, "processingErrors",
                         status.processingErrors) ||
+      !readCounterField(root, "dspProcessedFrames",
+                        status.dspProcessedFrames) ||
+      !readCounterField(root, "dspProcessingNanoseconds",
+                        status.dspProcessingNanoseconds) ||
       !readNullableStringField(root, "inputSampleFormat",
                                status.inputSampleFormat) ||
       !readUint32Field(root, "inputSampleRate", status.inputSampleRate) ||

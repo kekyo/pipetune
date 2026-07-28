@@ -50,6 +50,8 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
           .overrunFrames = 0,
           .underrunFrames = 0,
           .processingErrors = 0,
+          .dspProcessedFrames = 0,
+          .dspProcessingNanoseconds = 0,
           .inputSampleFormat = {},
           .inputSampleRate = 0,
           .inputChannelCount = 0,

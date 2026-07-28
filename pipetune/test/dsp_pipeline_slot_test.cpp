@@ -60,10 +60,15 @@ static bool testReplacementChangesPcm(
              "initial slot processing failed") ||
       !check(approximately(samples[0],
                            0.25F * std::pow(10.0F, 6.0F / 20.0F)),
-             "initial slot PCM differs")) {
+             "initial slot PCM differs") ||
+      !check(slot.performanceCounters().processedFrames == 1,
+             "initial DSP frame count differs") ||
+      !check(slot.performanceCounters().processingNanoseconds > 0,
+             "initial DSP processing time was not measured")) {
     return false;
   }
 
+  const auto initialCounters = slot.performanceCounters();
   slot.replace(std::move(replacement));
   samples[0] = 0.25F;
   return check(slot.process(samples, 1, 1, 0.1) ==
@@ -73,7 +78,31 @@ static bool testReplacementChangesPcm(
                              0.25F * std::pow(10.0F, -6.0F / 20.0F)),
                "replacement slot PCM differs") &&
          check(slot.activePluginCount() == 1,
-               "slot must report replacement plugin count");
+               "slot must report replacement plugin count") &&
+         check(slot.performanceCounters().processedFrames == 2,
+               "DSP frame count must survive pipeline replacement") &&
+         check(slot.performanceCounters().processingNanoseconds >=
+                   initialCounters.processingNanoseconds,
+               "DSP processing time must survive pipeline replacement");
+}
+
+static bool testBypassDoesNotReportDspWork() {
+  auto created = pipetune::createBypassDspPipeline(
+      {.sampleRate = 48000.0F, .maxChannels = 1, .maxFrames = 32});
+  if (!check(created.pipeline != nullptr, created.error)) {
+    return false;
+  }
+  auto slot = pipetune::DspPipelineSlot(std::move(created.pipeline));
+  auto samples = std::vector<float>(32, 0.25F);
+  if (!check(slot.process(samples, 1, 32, 0.0) ==
+                 pipetune::ProcessStatus::ok,
+             "bypass slot processing failed")) {
+    return false;
+  }
+  const auto counters = slot.performanceCounters();
+  return check(counters.processedFrames == 0 &&
+                   counters.processingNanoseconds == 0,
+               "bypass must not be counted as EffeTune DSP work");
 }
 
 static bool testConcurrentReplacementProducesOnlyCompletePipelines(
@@ -136,6 +165,7 @@ int main() {
       writeVolumePreset(directory, "negative.effetune_preset", -6);
 
   const auto passed = testReplacementChangesPcm(positive, negative) &&
+                      testBypassDoesNotReportDspWork() &&
                       testConcurrentReplacementProducesOnlyCompletePipelines(
                           positive, negative);
   std::filesystem::remove_all(directory);

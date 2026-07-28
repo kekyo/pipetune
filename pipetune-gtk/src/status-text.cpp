@@ -42,6 +42,12 @@ static std::string trimmedDecimal(double value, int precision) {
   return result;
 }
 
+static std::string fixedDecimal(double value, int precision) {
+  auto stream = std::ostringstream{};
+  stream << std::fixed << std::setprecision(precision) << value;
+  return stream.str();
+}
+
 static std::string frameRateText(const InputRateState &inputRate) {
   if (!inputRate.hasRate || !std::isfinite(inputRate.framesPerSecond) ||
       inputRate.framesPerSecond < 0.0) {
@@ -142,6 +148,30 @@ InputStatusText inputStatusText(const ApplicationState &state,
           currentUnixMilliseconds),
       .pcmDataRate = pcmDataRateText(state),
       .streamFormat = streamFormatText(state.runtime),
+  };
+}
+
+RuntimeStatusText runtimeStatusText(const ApplicationState &state) {
+  if (state.connection != ControlConnectionState::connected ||
+      !state.hasRuntimeStatus) {
+    return {.dspProcessingTime = "—", .counters = "—"};
+  }
+  const auto dspProcessingTime =
+      state.dspTiming.hasAverage &&
+              std::isfinite(state.dspTiming.nanosecondsPerFrame) &&
+              state.dspTiming.nanosecondsPerFrame >= 0.0
+          ? fixedDecimal(
+                state.dspTiming.nanosecondsPerFrame / 1000.0, 2) +
+                " µs/frame"
+          : std::string("—");
+  return {
+      .dspProcessingTime = dspProcessingTime,
+      .counters =
+          "Overrun " + std::to_string(state.runtime.overrunFrames) +
+          "  •  Underrun " +
+          std::to_string(state.runtime.underrunFrames) +
+          "  •  Processing " +
+          std::to_string(state.runtime.processingErrors),
   };
 }
 

@@ -1076,6 +1076,7 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
       currentUnixMilliseconds());
   const auto inputFormatNegotiated =
       runtime.inputFormatNegotiated.load(std::memory_order_acquire);
+  const auto dspPerformance = runtime.pipeline.performanceCounters();
   auto preferredTarget = std::string{};
   auto selectedTarget = std::string{};
   auto systemDefaultTarget = std::string{};
@@ -1117,6 +1118,9 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .underrunFrames = runtime.ring.underrunFrames(),
           .processingErrors =
               runtime.processingErrors.load(std::memory_order_relaxed),
+          .dspProcessedFrames = dspPerformance.processedFrames,
+          .dspProcessingNanoseconds =
+              dspPerformance.processingNanoseconds,
           .inputSampleFormat =
               inputFormatNegotiated ? std::string("F32P") : std::string{},
           .inputSampleRate =

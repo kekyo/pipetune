@@ -17,6 +17,16 @@ static InputRateState initialInputRateState() {
   };
 }
 
+static DspTimingState initialDspTimingState() {
+  return {
+      .hasBaseline = false,
+      .baselineFrames = 0,
+      .baselineNanoseconds = 0,
+      .hasAverage = false,
+      .nanosecondsPerFrame = 0.0,
+  };
+}
+
 static bool inputFormatMatches(const InputRateState &inputRate,
                                const pipetune::ControlRuntimeStatus &status) {
   return inputRate.baselineSampleFormat == status.inputSampleFormat &&
@@ -75,6 +85,44 @@ static void updateInputRate(
       receivedAtMonotonicMilliseconds;
 }
 
+static void establishDspTimingBaseline(
+    DspTimingState &timing,
+    const pipetune::ControlRuntimeStatus &status) {
+  timing.hasBaseline = true;
+  timing.baselineFrames = status.dspProcessedFrames;
+  timing.baselineNanoseconds = status.dspProcessingNanoseconds;
+  timing.hasAverage = false;
+  timing.nanosecondsPerFrame = 0.0;
+}
+
+static void updateDspTiming(
+    DspTimingState &timing,
+    const pipetune::ControlRuntimeStatus &status) {
+  if (status.processingMode != pipetune::ProcessingMode::preset) {
+    timing = initialDspTimingState();
+    return;
+  }
+  if (!timing.hasBaseline ||
+      status.dspProcessedFrames < timing.baselineFrames ||
+      status.dspProcessingNanoseconds < timing.baselineNanoseconds) {
+    establishDspTimingBaseline(timing, status);
+    return;
+  }
+
+  const auto processedFrames =
+      status.dspProcessedFrames - timing.baselineFrames;
+  const auto processingNanoseconds =
+      status.dspProcessingNanoseconds - timing.baselineNanoseconds;
+  if (processedFrames != 0) {
+    timing.nanosecondsPerFrame =
+        static_cast<double>(processingNanoseconds) /
+        static_cast<double>(processedFrames);
+    timing.hasAverage = true;
+  }
+  timing.baselineFrames = status.dspProcessedFrames;
+  timing.baselineNanoseconds = status.dspProcessingNanoseconds;
+}
+
 ApplicationState initialApplicationState() {
   return {
       .connection = ControlConnectionState::disconnected,
@@ -94,6 +142,8 @@ ApplicationState initialApplicationState() {
               .overrunFrames = 0,
               .underrunFrames = 0,
               .processingErrors = 0,
+              .dspProcessedFrames = 0,
+              .dspProcessingNanoseconds = 0,
               .inputSampleFormat = {},
               .inputSampleRate = 0,
               .inputChannelCount = 0,
@@ -104,6 +154,7 @@ ApplicationState initialApplicationState() {
       .diagnostic = {},
       .operationPending = false,
       .inputRate = initialInputRateState(),
+      .dspTiming = initialDspTimingState(),
   };
 }
 
@@ -112,6 +163,7 @@ void markControlConnecting(ApplicationState &state) {
   state.hasRuntimeStatus = false;
   state.diagnostic.clear();
   state.inputRate = initialInputRateState();
+  state.dspTiming = initialDspTimingState();
 }
 
 void applyControlResponse(
@@ -132,6 +184,7 @@ void applyControlResponse(
   state.runtime = response.status;
   updateInputRate(state.inputRate, response.status,
                   receivedAtMonotonicMilliseconds);
+  updateDspTiming(state.dspTiming, response.status);
   if (response.kind == pipetune::ControlResponseKind::response) {
     state.warnings = response.warnings;
     state.diagnostic.clear();
@@ -144,6 +197,7 @@ void markControlDisconnected(ApplicationState &state,
   state.operationPending = false;
   state.diagnostic = diagnostic;
   state.inputRate = initialInputRateState();
+  state.dspTiming = initialDspTimingState();
 }
 
 void setControlOperationPending(ApplicationState &state, bool pending) {

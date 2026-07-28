@@ -45,6 +45,8 @@ static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
                "PCM data-rate label type differs") &&
          check(GTK_IS_LABEL(ui.streamFormatLabel),
                "stream format label type differs") &&
+         check(GTK_IS_LABEL(ui.dspProcessingTimeLabel),
+               "DSP processing-time label type differs") &&
          check(GTK_IS_LABEL(ui.counterLabel),
                "counter label type differs") &&
          check(GTK_IS_BOX(ui.noticeBox),
@@ -57,8 +59,6 @@ static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
                "apply button type differs") &&
          check(GTK_IS_BUTTON(ui.bypassButton),
                "bypass button type differs") &&
-         check(GTK_IS_BUTTON(ui.refreshButton),
-               "refresh button type differs") &&
          check(GTK_IS_BUTTON(ui.dismissButton),
                "dismiss button type differs");
 }
@@ -88,6 +88,8 @@ int main(int argc, char **argv) {
             "main window title differs") &&
       check(width == 680 && height == 580,
             "main window default size differs") &&
+      check(gtk_builder_get_object(ui.builder, "refreshButton") == nullptr,
+            "periodically updated status must not expose a refresh button") &&
       check(gtk_widget_get_hexpand(ui.statusLabel) != FALSE,
             "status label must expand");
   gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ui.outputCombo),

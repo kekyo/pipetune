@@ -9,21 +9,6 @@
       <object class="GtkHeaderBar" id="headerBar">
         <property name="subtitle">PipeWire DSP control</property>
         <property name="show-close-button">True</property>
-        <child>
-          <object class="GtkButton" id="refreshButton">
-            <property name="tooltip-text">Refresh status</property>
-            <child>
-              <object class="GtkImage">
-                <property name="visible">True</property>
-                <property name="icon-name">view-refresh-symbolic</property>
-                <property name="icon-size">4</property>
-              </object>
-            </child>
-          </object>
-          <packing>
-            <property name="pack-type">end</property>
-          </packing>
-        </child>
       </object>
     </child>
     <child>
@@ -340,7 +325,7 @@
             </child>
             <child>
               <object class="GtkLabel">
-                <property name="label">Runtime counters</property>
+                <property name="label">EffeTune DSP time</property>
                 <property name="xalign">0</property>
                 <style>
                   <class name="dim-label"/>
@@ -349,6 +334,32 @@
               <packing>
                 <property name="left-attach">0</property>
                 <property name="top-attach">10</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel" id="dspProcessingTimeLabel">
+                <property name="label">—</property>
+                <property name="xalign">0</property>
+                <property name="selectable">True</property>
+                <property name="ellipsize">middle</property>
+                <property name="hexpand">True</property>
+              </object>
+              <packing>
+                <property name="left-attach">1</property>
+                <property name="top-attach">10</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Runtime counters</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+              <packing>
+                <property name="left-attach">0</property>
+                <property name="top-attach">11</property>
               </packing>
             </child>
             <child>
@@ -361,7 +372,7 @@
               </object>
               <packing>
                 <property name="left-attach">1</property>
-                <property name="top-attach">10</property>
+                <property name="top-attach">11</property>
               </packing>
             </child>
           </object>

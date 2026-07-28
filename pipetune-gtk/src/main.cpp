@@ -265,17 +265,12 @@ static void render(GtkRuntime *runtime) {
                      inputText.pcmDataRate.c_str());
   gtk_label_set_text(GTK_LABEL(runtime->ui.streamFormatLabel),
                      inputText.streamFormat.c_str());
-  const auto counters =
-      runtime->state.hasRuntimeStatus
-          ? "Overrun " +
-                std::to_string(runtime->state.runtime.overrunFrames) +
-                "  •  Underrun " +
-                std::to_string(runtime->state.runtime.underrunFrames) +
-                "  •  Processing " +
-                std::to_string(runtime->state.runtime.processingErrors)
-          : std::string("—");
+  const auto runtimeText = runtimeStatusText(runtime->state);
+  gtk_label_set_text(
+      GTK_LABEL(runtime->ui.dspProcessingTimeLabel),
+      runtimeText.dspProcessingTime.c_str());
   gtk_label_set_text(GTK_LABEL(runtime->ui.counterLabel),
-                     counters.c_str());
+                     runtimeText.counters.c_str());
 
   const auto notice = noticeText(runtime->state);
   gtk_label_set_text(GTK_LABEL(runtime->ui.noticeLabel), notice.c_str());
@@ -294,10 +289,6 @@ static void render(GtkRuntime *runtime) {
           : "Save Bypass");
   gtk_widget_set_sensitive(runtime->ui.bypassButton,
                            !runtime->state.operationPending);
-  gtk_widget_set_sensitive(
-      runtime->ui.refreshButton,
-      runtime->controlClient != nullptr &&
-          !runtime->state.operationPending);
   updateTrayBackend(runtime->trayBackend,
                     iconStateForApplication(runtime->state),
                     iconPresentation.colorMode,
@@ -373,31 +364,6 @@ static void scheduleReconnect(GtkRuntime *runtime) {
   }
   runtime->reconnectSource = g_timeout_add_seconds(
       kReconnectDelaySeconds, reconnectControl, runtime);
-}
-
-static void onStatusReply(const ControlClientReply &reply,
-                          void *userData) {
-  auto *runtime = static_cast<GtkRuntime *>(userData);
-  if (!reply.transportError.empty()) {
-    markControlDisconnected(runtime->state, reply.transportError);
-    scheduleReconnect(runtime);
-  } else {
-    applyControlResponse(runtime->state, reply.response,
-                         currentMonotonicMilliseconds());
-  }
-  render(runtime);
-}
-
-static void requestFreshStatus(GtkRuntime *runtime) {
-  if (runtime->controlClient != nullptr &&
-      !runtime->state.operationPending) {
-    requestControlStatusAsync(runtime->controlClient, onStatusReply,
-                              runtime);
-  }
-}
-
-static void onRefreshClicked(GtkButton *, gpointer userData) {
-  requestFreshStatus(static_cast<GtkRuntime *>(userData));
 }
 
 static void onOutputReply(const ControlClientReply &reply,
@@ -619,8 +585,6 @@ static void connectMainWindowSignals(GtkRuntime *runtime) {
                    G_CALLBACK(onWindowDelete), runtime);
   g_signal_connect(runtime->ui.window, "destroy",
                    G_CALLBACK(onWindowDestroy), runtime);
-  g_signal_connect(runtime->ui.refreshButton, "clicked",
-                   G_CALLBACK(onRefreshClicked), runtime);
   g_signal_connect(runtime->ui.outputCombo, "changed",
                    G_CALLBACK(onOutputChanged), runtime);
   g_signal_connect(runtime->ui.applyButton, "clicked",
@@ -639,7 +603,6 @@ static void presentWindow(GtkRuntime *runtime) {
   const auto notice = noticeText(runtime->state);
   gtk_widget_set_visible(runtime->ui.noticeBox, !notice.empty());
   gtk_window_present(GTK_WINDOW(runtime->ui.window));
-  requestFreshStatus(runtime);
 }
 
 static void releaseApplicationHold(GtkRuntime *runtime) {

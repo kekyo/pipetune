@@ -57,6 +57,22 @@ struct InputRateState {
 };
 
 /**
+ * Stores the latest interval average for native EffeTune processing.
+ */
+struct DspTimingState {
+  /** True after cumulative DSP counters established a baseline. */
+  bool hasBaseline;
+  /** Cumulative processed frames at the current baseline. */
+  std::uint64_t baselineFrames;
+  /** Cumulative processing nanoseconds at the current baseline. */
+  std::uint64_t baselineNanoseconds;
+  /** True after an interval containing DSP frames was measured. */
+  bool hasAverage;
+  /** Average native DSP processing nanoseconds per frame. */
+  double nanosecondsPerFrame;
+};
+
+/**
  * Stores display-independent GUI state.
  */
 struct ApplicationState {
@@ -74,6 +90,8 @@ struct ApplicationState {
   bool operationPending;
   /** Input frame-rate baseline and most recent derived value. */
   InputRateState inputRate;
+  /** Native DSP timing baseline and most recent interval average. */
+  DspTimingState dspTiming;
 };
 
 /**

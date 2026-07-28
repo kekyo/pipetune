@@ -1,6 +1,7 @@
 #include "dsp_pipeline_slot.h"
 
 #include <algorithm>
+#include <chrono>
 #include <stdexcept>
 #include <utility>
 
@@ -9,7 +10,8 @@ namespace pipetune {
 DspPipelineSlot::DspPipelineSlot(
     std::unique_ptr<DspPipeline> initialPipeline)
     : current_(std::move(initialPipeline)), superseded_(),
-      active_(current_.get()), hazard_(nullptr) {
+      active_(current_.get()), hazard_(nullptr), processedFrames_(0),
+      processingNanoseconds_(0) {
   if (current_ == nullptr) {
     throw std::invalid_argument("initial DSP pipeline must not be null");
   }
@@ -27,8 +29,20 @@ ProcessStatus DspPipelineSlot::process(std::span<float> planarSamples,
     selected = active_.load(std::memory_order_seq_cst);
   } while (hazard_.load(std::memory_order_seq_cst) != selected);
 
+  const auto usesNativeDsp = selected->usesNativeDsp();
+  const auto startedAt =
+      usesNativeDsp ? std::chrono::steady_clock::now()
+                    : std::chrono::steady_clock::time_point{};
   const auto status =
       selected->process(planarSamples, channelCount, frameCount, timeSeconds);
+  if (usesNativeDsp) {
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - startedAt);
+    processedFrames_.fetch_add(frameCount, std::memory_order_relaxed);
+    processingNanoseconds_.fetch_add(
+        static_cast<std::uint64_t>(elapsed.count()),
+        std::memory_order_relaxed);
+  }
   hazard_.store(nullptr, std::memory_order_seq_cst);
   return status;
 }
@@ -47,6 +61,16 @@ void DspPipelineSlot::replace(std::unique_ptr<DspPipeline> replacement) {
 
 std::size_t DspPipelineSlot::activePluginCount() const noexcept {
   return active_.load(std::memory_order_acquire)->activePluginCount();
+}
+
+DspPerformanceCounters
+DspPipelineSlot::performanceCounters() const noexcept {
+  return {
+      .processedFrames =
+          processedFrames_.load(std::memory_order_relaxed),
+      .processingNanoseconds =
+          processingNanoseconds_.load(std::memory_order_relaxed),
+  };
 }
 
 void DspPipelineSlot::reclaimSuperseded() {

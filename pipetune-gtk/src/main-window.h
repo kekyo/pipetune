@@ -45,6 +45,8 @@ struct MainWindowUi {
   GtkWidget *pcmDataRateLabel = nullptr;
   /** PipeWire stream format text. */
   GtkWidget *streamFormatLabel = nullptr;
+  /** Average native EffeTune processing time text. */
+  GtkWidget *dspProcessingTimeLabel = nullptr;
   /** Runtime error counter text. */
   GtkWidget *counterLabel = nullptr;
   /** Warning and diagnostic container. */
@@ -57,8 +59,6 @@ struct MainWindowUi {
   GtkWidget *applyButton = nullptr;
   /** Bypass-and-save action button. */
   GtkWidget *bypassButton = nullptr;
-  /** Explicit status refresh button. */
-  GtkWidget *refreshButton = nullptr;
   /** Notice dismissal button. */
   GtkWidget *dismissButton = nullptr;
 };

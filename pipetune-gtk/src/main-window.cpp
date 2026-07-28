@@ -61,6 +61,9 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
           requiredWidget(builder, "pcmDataRateLabel", GTK_TYPE_LABEL),
       .streamFormatLabel =
           requiredWidget(builder, "streamFormatLabel", GTK_TYPE_LABEL),
+      .dspProcessingTimeLabel =
+          requiredWidget(builder, "dspProcessingTimeLabel",
+                         GTK_TYPE_LABEL),
       .counterLabel =
           requiredWidget(builder, "counterLabel", GTK_TYPE_LABEL),
       .noticeBox = requiredWidget(builder, "noticeBox", GTK_TYPE_BOX),
@@ -73,8 +76,6 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
           requiredWidget(builder, "applyButton", GTK_TYPE_BUTTON),
       .bypassButton =
           requiredWidget(builder, "bypassButton", GTK_TYPE_BUTTON),
-      .refreshButton =
-          requiredWidget(builder, "refreshButton", GTK_TYPE_BUTTON),
       .dismissButton =
           requiredWidget(builder, "dismissButton", GTK_TYPE_BUTTON),
   };

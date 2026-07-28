@@ -328,6 +328,10 @@ std::size_t DspPipeline::activePluginCount() const noexcept {
   return implementation_ == nullptr ? 0 : implementation_->activePluginCount;
 }
 
+bool DspPipeline::usesNativeDsp() const noexcept {
+  return implementation_ != nullptr && !implementation_->bypass;
+}
+
 PipelineCreateResult
 createBypassDspPipeline(const PipelineBuildOptions &options) {
   const auto validation = validateBuildOptions(options);

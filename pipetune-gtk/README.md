@@ -59,9 +59,10 @@ preserve the other.
 
 The GUI uses the daemon's same-user Unix control socket. It receives an initial
 status event and later daemon publications over a persistent asynchronous GIO
-connection. It does not poll for status. The Refresh button is an explicit
-one-shot request, while a short retry timer is used only to reconnect after the
-socket becomes unavailable.
+connection. The daemon publishes runtime counters and cumulative native
+EffeTune processing time once per second. The GUI derives the displayed
+per-frame average between publications. It does not poll for status; a short
+retry timer is used only to reconnect after the socket becomes unavailable.
 
 ## System tray compatibility
 

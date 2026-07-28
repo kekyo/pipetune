@@ -70,6 +70,9 @@ public:
   /** Returns the active pipeline's enabled native DSP count. */
   std::size_t activePluginCount() const noexcept;
 
+  /** Returns cumulative native EffeTune processing counters. */
+  DspPerformanceCounters performanceCounters() const noexcept;
+
 private:
   void reclaimSuperseded();
 
@@ -77,6 +80,8 @@ private:
   std::vector<std::unique_ptr<DspPipeline>> superseded_;
   std::atomic<DspPipeline *> active_;
   std::atomic<DspPipeline *> hazard_;
+  std::atomic<std::uint64_t> processedFrames_;
+  std::atomic<std::uint64_t> processingNanoseconds_;
 };
 
 } // namespace pipetune
