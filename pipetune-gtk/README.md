@@ -23,13 +23,32 @@ The window displays:
 The main window title is **PipeTune**. The status area shows the PipeTune and
 EffeTune DSP versions below the output-selection reason.
 
-Select an `.effetune_preset` file and use **Apply and Save** to change the
-startup selection, or use **Bypass and Save** to pass audio through without
-DSP. When the daemon is connected, the GUI first applies the selected mode
-live and writes the startup configuration only after that succeeds. A daemon
-rejection therefore leaves the previous startup selection unchanged. If the
-live apply succeeds but persistence fails, the new processing mode remains
-active and the window reports that partial success.
+The **EffeTune presets** drop-down contains the standard presets bundled with
+the pinned EffeTune release and named presets saved by the EffeTune desktop
+application. The standard files are installed below
+`$prefix/share/pipetune/effetune-presets`. EffeTune's Linux AppImage stores its
+named presets together in:
+
+```text
+$XDG_CONFIG_HOME/effetune/effetune_presets.json
+```
+
+When `XDG_CONFIG_HOME` is unset, that path resolves to
+`~/.config/effetune/effetune_presets.json`. The list is reloaded whenever the
+window is presented. Selecting a named EffeTune preset atomically writes a
+mode-`0600` standalone snapshot below
+`$XDG_CONFIG_HOME/pipetune/effetune-presets`, with the same HOME fallback as
+the startup configuration. The snapshot lets the daemon load one entry from
+EffeTune's multi-preset JSON file and remains valid after the AppImage exits.
+
+The **Preset file** chooser remains available for any standalone
+`.effetune_preset` file. Use **Apply and Save** to change the startup
+selection, or use **Bypass and Save** to pass audio through without DSP. When
+the daemon is connected, the GUI first applies the selected mode live and
+writes the startup configuration only after that succeeds. A daemon rejection
+therefore leaves the previous startup selection unchanged. If the live apply
+succeeds but persistence fails, the new processing mode remains active and
+the window reports that partial success.
 
 The **Output preference** drop-down starts with **System default**, followed by
 the physical outputs enumerated by the daemon. If a persisted preference is
@@ -144,6 +163,7 @@ With that prefix, the GUI integration is installed as:
 /usr/bin/pipetune-gtk
 /usr/share/applications/net.kekyo.pipetune-gtk.desktop
 /usr/share/icons/hicolor/scalable/apps/pipetune.svg
+/usr/share/pipetune/effetune-presets/
 /etc/xdg/autostart/net.kekyo.pipetune-gtk.desktop
 ```
 

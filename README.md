@@ -154,10 +154,20 @@ audio playback is unavailable until a device appears.
 
 ## Selecting an EffeTune preset
 
-Users can select an EffeTune preset file in the GTK window:
+The GTK window keeps direct `.effetune_preset` file selection and also offers
+two EffeTune-compatible lists:
 
-![Preset application](./images/preset-application.png)
-
+- **Standard** entries are the presets distributed with the pinned EffeTune
+  release. PipeTune installs its own copies because an AppImage exposes its
+  bundled presets only through a temporary `app.asar` mount while it is
+  running.
+- **Saved in EffeTune** entries come from
+  `$XDG_CONFIG_HOME/effetune/effetune_presets.json`, or
+  `~/.config/effetune/effetune_presets.json` when `XDG_CONFIG_HOME` is unset.
+  EffeTune stores all named presets in that one JSON file rather than as
+  separate `.effetune_preset` files. PipeTune atomically creates a private
+  standalone snapshot when one is selected.
+- **Preset file** remains available for any other `.effetune_preset` file.
 - EffeTune preset files use the `.effetune_preset` extension.
 - `Bypass and Save` ignores the preset file and passes the audio stream
   through without DSP processing.
