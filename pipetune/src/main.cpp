@@ -232,7 +232,7 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
       std::move(prepared.pipeline),
       {.sinkName = "pipetune_sink",
        .sinkDescription = "PipeTune Processed Audio",
-       .targetObject = {},
+       .targetObject = prepared.preferredOutput,
        .initialPresetPath = prepared.activePresetPath,
        .initialConfigurationError = prepared.configurationError,
        .controlSocketPath = socket.path,

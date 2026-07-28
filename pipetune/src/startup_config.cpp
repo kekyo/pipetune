@@ -15,17 +15,18 @@
 namespace pipetune {
 
 constexpr auto kPresetAssignment = std::string_view{"PIPETUNE_PRESET="};
+constexpr auto kTargetAssignment = std::string_view{"PIPETUNE_TARGET="};
 constexpr auto kMaximumConfigBytes = std::size_t{64 * 1024};
 
 static std::string systemError(std::string_view operation) {
   return std::string(operation) + ": " + std::strerror(errno);
 }
 
-static std::string encodePresetPath(std::string_view path) {
+static std::string encodeConfigValue(std::string_view value) {
   auto encoded = std::string{};
-  encoded.reserve(path.size() + 2);
+  encoded.reserve(value.size() + 2);
   encoded.push_back('"');
-  for (const auto character : path) {
+  for (const auto character : value) {
     if (character == '\\' || character == '"') {
       encoded.push_back('\\');
     }
@@ -35,8 +36,8 @@ static std::string encodePresetPath(std::string_view path) {
   return encoded;
 }
 
-static bool decodeQuotedPresetPath(std::string_view value,
-                                   std::string &decoded) {
+static bool decodeQuotedConfigValue(std::string_view value,
+                                    std::string &decoded) {
   if (value.size() < 2 || value.front() != '"' || value.back() != '"') {
     return false;
   }
@@ -62,12 +63,12 @@ static bool decodeQuotedPresetPath(std::string_view value,
   return !escaped;
 }
 
-static bool decodePresetPath(std::string_view value, std::string &decoded) {
+static bool decodeConfigValue(std::string_view value, std::string &decoded) {
   if (value.empty()) {
     return false;
   }
   if (value.front() == '"') {
-    return decodeQuotedPresetPath(value, decoded);
+    return decodeQuotedConfigValue(value, decoded);
   }
   if (value.find('"') != std::string_view::npos) {
     return false;
@@ -84,6 +85,15 @@ static std::string validatePresetPath(
       nativePreset.find('\n') != std::string::npos ||
       nativePreset.find('\r') != std::string::npos) {
     return "startup preset path must be an absolute single line";
+  }
+  return {};
+}
+
+static std::string validatePreferredOutput(std::string_view nodeName) {
+  if (nodeName.empty() || nodeName.find('\0') != std::string_view::npos ||
+      nodeName.find('\n') != std::string_view::npos ||
+      nodeName.find('\r') != std::string_view::npos) {
+    return "preferred output must be a non-empty single line";
   }
   return {};
 }
@@ -140,15 +150,24 @@ static std::string writeAll(int descriptor, std::string_view contents) {
 
 static std::string writeStartupConfig(
     const std::filesystem::path &configPath,
-    const std::filesystem::path *presetPath) {
+    const StartupConfigLoadResult &configured) {
   auto contents = std::string("# Managed by PipeTune.\n");
-  if (presetPath != nullptr) {
-    const auto validation = validatePresetPath(*presetPath);
+  if (configured.presetFound) {
+    const auto validation = validatePresetPath(configured.presetPath);
     if (!validation.empty()) {
       return validation;
     }
     contents += std::string(kPresetAssignment) +
-                encodePresetPath(presetPath->string()) + "\n";
+                encodeConfigValue(configured.presetPath.string()) + "\n";
+  }
+  if (configured.preferredOutputFound) {
+    const auto validation =
+        validatePreferredOutput(configured.preferredOutput);
+    if (!validation.empty()) {
+      return validation;
+    }
+    contents += std::string(kTargetAssignment) +
+                encodeConfigValue(configured.preferredOutput) + "\n";
   }
 
   auto filesystemError = std::error_code{};
@@ -215,18 +234,36 @@ resolveStartupConfigPath(std::string_view xdgConfigHome,
 
 StartupPresetLoadResult
 loadStartupPreset(const std::filesystem::path &configPath) {
+  const auto configured = loadStartupConfig(configPath);
+  return {.found = configured.presetFound,
+          .presetPath = configured.presetPath,
+          .error = configured.error};
+}
+
+StartupConfigLoadResult
+loadStartupConfig(const std::filesystem::path &configPath) {
   auto contents = std::string{};
   auto configFound = false;
   const auto readError = readConfig(configPath, contents, configFound);
   if (!readError.empty()) {
-    return {.found = false, .presetPath = {}, .error = readError};
+    return {.presetFound = false,
+            .presetPath = {},
+            .preferredOutputFound = false,
+            .preferredOutput = {},
+            .error = readError};
   }
   if (!configFound) {
-    return {.found = false, .presetPath = {}, .error = {}};
+    return {.presetFound = false,
+            .presetPath = {},
+            .preferredOutputFound = false,
+            .preferredOutput = {},
+            .error = {}};
   }
 
-  auto assignmentFound = false;
+  auto presetFound = false;
   auto presetPath = std::filesystem::path{};
+  auto preferredOutputFound = false;
+  auto preferredOutput = std::string{};
   auto offset = std::size_t{0};
   while (offset <= contents.size()) {
     const auto end = contents.find('\n', offset);
@@ -237,49 +274,121 @@ loadStartupPreset(const std::filesystem::path &configPath) {
       line.remove_suffix(1);
     }
     if (!line.empty() && !line.starts_with('#')) {
-      if (!line.starts_with(kPresetAssignment)) {
-        return {.found = false,
+      if (line.starts_with(kPresetAssignment)) {
+        if (presetFound) {
+          return {.presetFound = false,
+                  .presetPath = {},
+                  .preferredOutputFound = false,
+                  .preferredOutput = {},
+                  .error = "startup configuration contains duplicate "
+                           "PIPETUNE_PRESET assignments"};
+        }
+        auto decoded = std::string{};
+        if (!decodeConfigValue(line.substr(kPresetAssignment.size()),
+                               decoded)) {
+          return {.presetFound = false,
+                  .presetPath = {},
+                  .preferredOutputFound = false,
+                  .preferredOutput = {},
+                  .error = "startup preset assignment is invalid"};
+        }
+        presetPath = std::filesystem::path(decoded);
+        const auto validation = validatePresetPath(presetPath);
+        if (!validation.empty()) {
+          return {.presetFound = false,
+                  .presetPath = {},
+                  .preferredOutputFound = false,
+                  .preferredOutput = {},
+                  .error = validation};
+        }
+        presetFound = true;
+      } else if (line.starts_with(kTargetAssignment)) {
+        if (preferredOutputFound) {
+          return {.presetFound = false,
+                  .presetPath = {},
+                  .preferredOutputFound = false,
+                  .preferredOutput = {},
+                  .error = "startup configuration contains duplicate "
+                           "PIPETUNE_TARGET assignments"};
+        }
+        if (!decodeConfigValue(line.substr(kTargetAssignment.size()),
+                               preferredOutput)) {
+          return {.presetFound = false,
+                  .presetPath = {},
+                  .preferredOutputFound = false,
+                  .preferredOutput = {},
+                  .error = "preferred output assignment is invalid"};
+        }
+        const auto validation =
+            validatePreferredOutput(preferredOutput);
+        if (!validation.empty()) {
+          return {.presetFound = false,
+                  .presetPath = {},
+                  .preferredOutputFound = false,
+                  .preferredOutput = {},
+                  .error = validation};
+        }
+        preferredOutputFound = true;
+      } else {
+        return {.presetFound = false,
                 .presetPath = {},
+                .preferredOutputFound = false,
+                .preferredOutput = {},
                 .error = "startup configuration contains an unsupported line"};
       }
-      if (assignmentFound) {
-        return {.found = false,
-                .presetPath = {},
-                .error = "startup configuration contains duplicate "
-                         "PIPETUNE_PRESET assignments"};
-      }
-      auto decoded = std::string{};
-      if (!decodePresetPath(line.substr(kPresetAssignment.size()), decoded)) {
-        return {.found = false,
-                .presetPath = {},
-                .error = "startup preset assignment is invalid"};
-      }
-      presetPath = std::filesystem::path(decoded);
-      const auto validation = validatePresetPath(presetPath);
-      if (!validation.empty()) {
-        return {.found = false,
-                .presetPath = {},
-                .error = validation};
-      }
-      assignmentFound = true;
     }
     if (end == std::string::npos) {
       break;
     }
     offset = end + 1;
   }
-  return {.found = assignmentFound,
+  return {.presetFound = presetFound,
           .presetPath = std::move(presetPath),
+          .preferredOutputFound = preferredOutputFound,
+          .preferredOutput = std::move(preferredOutput),
           .error = {}};
 }
 
 std::string saveStartupPreset(const std::filesystem::path &configPath,
                               const std::filesystem::path &presetPath) {
-  return writeStartupConfig(configPath, &presetPath);
+  auto configured = loadStartupConfig(configPath);
+  if (!configured.error.empty()) {
+    return configured.error;
+  }
+  configured.presetFound = true;
+  configured.presetPath = presetPath;
+  return writeStartupConfig(configPath, configured);
 }
 
 std::string clearStartupPreset(const std::filesystem::path &configPath) {
-  return writeStartupConfig(configPath, nullptr);
+  auto configured = loadStartupConfig(configPath);
+  if (!configured.error.empty()) {
+    return configured.error;
+  }
+  configured.presetFound = false;
+  configured.presetPath.clear();
+  return writeStartupConfig(configPath, configured);
+}
+
+std::string savePreferredOutput(const std::filesystem::path &configPath,
+                                std::string_view nodeName) {
+  auto configured = loadStartupConfig(configPath);
+  if (!configured.error.empty()) {
+    return configured.error;
+  }
+  configured.preferredOutputFound = true;
+  configured.preferredOutput = nodeName;
+  return writeStartupConfig(configPath, configured);
+}
+
+std::string clearPreferredOutput(const std::filesystem::path &configPath) {
+  auto configured = loadStartupConfig(configPath);
+  if (!configured.error.empty()) {
+    return configured.error;
+  }
+  configured.preferredOutputFound = false;
+  configured.preferredOutput.clear();
+  return writeStartupConfig(configPath, configured);
 }
 
 } // namespace pipetune

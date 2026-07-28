@@ -18,6 +18,8 @@ struct StartupPipelineResult {
   std::unique_ptr<DspPipeline> pipeline;
   /** Active absolute preset path, or empty in bypass mode. */
   std::filesystem::path activePresetPath;
+  /** Persisted preferred PipeWire node.name, or empty for system default. */
+  std::string preferredOutput;
   /** Recoverable configuration diagnostic reported while bypassing. */
   std::string configurationError;
   /** Non-fatal preset node diagnostics. */
