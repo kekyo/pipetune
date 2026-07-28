@@ -17,6 +17,8 @@ struct MainWindowUi {
   GtkWidget *window = nullptr;
   /** Connection status image. */
   GtkWidget *statusImage = nullptr;
+  /** Semantic status badge overlaid on the artwork. */
+  GtkWidget *statusBadge = nullptr;
   /** Connection status text. */
   GtkWidget *statusLabel = nullptr;
   /** Current DSP processing mode text. */

@@ -36,9 +36,21 @@
             <property name="orientation">horizontal</property>
             <property name="spacing">12</property>
             <child>
-              <object class="GtkImage" id="statusImage">
-                <property name="icon-name">network-offline-symbolic</property>
-                <property name="icon-size">6</property>
+              <object class="GtkOverlay">
+                <property name="width-request">48</property>
+                <property name="height-request">48</property>
+                <child>
+                  <object class="GtkImage" id="statusImage"/>
+                </child>
+                <child type="overlay">
+                  <object class="GtkImage" id="statusBadge">
+                    <property name="icon-name">network-offline-symbolic</property>
+                    <property name="pixel-size">18</property>
+                    <property name="halign">end</property>
+                    <property name="valign">end</property>
+                    <property name="no-show-all">True</property>
+                  </object>
+                </child>
               </object>
               <packing>
                 <property name="expand">False</property>

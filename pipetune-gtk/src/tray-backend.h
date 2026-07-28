@@ -1,6 +1,7 @@
 #ifndef PIPETUNE_GTK_TRAY_BACKEND_H
 #define PIPETUNE_GTK_TRAY_BACKEND_H
 
+#include <gdk-pixbuf/gdk-pixbuf.h>
 #include <gio/gio.h>
 
 #include <cstdint>
@@ -161,6 +162,16 @@ convertTrayIconPixelsToArgb(const std::uint8_t *pixels, int width,
  */
 GVariant *
 buildTrayIconPixmapVariant(const std::vector<TrayIconPixmap> &pixmaps);
+
+/**
+ * Loads the embedded PipeTune artwork at one requested size.
+ *
+ * @param size Requested width and height in pixels.
+ * @param colorMode Requested artwork color mode.
+ * @return Newly referenced pixbuf, or null when it cannot be loaded.
+ */
+GdkPixbuf *loadPipeTuneIconPixbuf(int size,
+                                  TrayIconColorMode colorMode);
 
 /**
  * Loads the embedded PipeTune artwork at the SNI icon sizes.

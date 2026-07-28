@@ -31,6 +31,8 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
                          GTK_TYPE_APPLICATION_WINDOW),
       .statusImage =
           requiredWidget(builder, "statusImage", GTK_TYPE_IMAGE),
+      .statusBadge =
+          requiredWidget(builder, "statusBadge", GTK_TYPE_IMAGE),
       .statusLabel =
           requiredWidget(builder, "statusLabel", GTK_TYPE_LABEL),
       .processingModeLabel =

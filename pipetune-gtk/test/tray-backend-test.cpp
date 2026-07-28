@@ -17,6 +17,19 @@ static bool check(bool condition, std::string_view message) {
 }
 
 int main() {
+  auto *dialogIcon = pipetune_gtk::loadPipeTuneIconPixbuf(
+      48, pipetune_gtk::TrayIconColorMode::color);
+  if (!check(dialogIcon != nullptr &&
+                 gdk_pixbuf_get_width(dialogIcon) == 48 &&
+                 gdk_pixbuf_get_height(dialogIcon) == 48,
+             "dialog PipeTune icon differs")) {
+    if (dialogIcon != nullptr) {
+      g_object_unref(dialogIcon);
+    }
+    return 1;
+  }
+  g_object_unref(dialogIcon);
+
   const auto iconSizes = std::array<int, 8>{
       16, 22, 24, 32, 48, 64, 128, 256};
   const auto iconPixmaps = pipetune_gtk::loadTrayIconPixmaps(

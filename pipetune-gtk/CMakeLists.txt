@@ -85,6 +85,7 @@ add_library(
   src/gtk-resources.cpp
   src/launch-options.cpp
   src/main-window.cpp
+  src/status-icon.cpp
   src/tray-backend.cpp)
 target_include_directories(
   pipetune_gtk_ui_core
@@ -92,7 +93,7 @@ target_include_directories(
   PRIVATE "${PIPETUNE_GTK_RESOURCE_DIRECTORY}")
 target_link_libraries(
   pipetune_gtk_ui_core
-  PUBLIC PkgConfig::GTK3)
+  PUBLIC pipetune_gtk_core PkgConfig::GTK3)
 if(MSVC)
   target_compile_options(pipetune_gtk_ui_core PRIVATE /W4 /WX)
 else()
@@ -239,6 +240,22 @@ if(BUILD_TESTING)
     COMMAND
       ${PIPETUNE_GTK_XVFB_RUN} -a
       $<TARGET_FILE:pipetune_gtk_main_window_tests>)
+
+  add_executable(
+    pipetune_gtk_status_icon_tests
+    test/status-icon-test.cpp)
+  target_link_libraries(
+    pipetune_gtk_status_icon_tests PRIVATE pipetune_gtk_ui_core)
+  if(MSVC)
+    target_compile_options(pipetune_gtk_status_icon_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_status_icon_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_gtk_status_icon_tests
+    COMMAND pipetune_gtk_status_icon_tests)
 
   add_executable(
     pipetune_gtk_launch_options_tests

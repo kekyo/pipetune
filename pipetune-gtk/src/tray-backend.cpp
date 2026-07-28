@@ -298,8 +298,8 @@ static void applyTrayIconColorMode(GdkPixbuf *pixbuf,
   }
 }
 
-static GdkPixbuf *loadTrayIconPixbuf(int size,
-                                     TrayIconColorMode colorMode) {
+GdkPixbuf *loadPipeTuneIconPixbuf(int size,
+                                  TrayIconColorMode colorMode) {
   if (size <= 0) {
     return nullptr;
   }
@@ -308,7 +308,7 @@ static GdkPixbuf *loadTrayIconPixbuf(int size,
   auto *pixbuf = gdk_pixbuf_new_from_resource_at_scale(
       kTrayIconResourcePath, size, size, TRUE, &error);
   if (error != nullptr) {
-    std::cerr << "pipetune-gtk: cannot load tray icon: "
+    std::cerr << "pipetune-gtk: cannot load PipeTune icon: "
               << error->message << '\n';
     g_error_free(error);
   }
@@ -321,7 +321,7 @@ loadTrayIconPixmaps(TrayIconColorMode colorMode) {
   auto pixmaps = std::vector<TrayIconPixmap>{};
   pixmaps.reserve(kTrayIconSizes.size());
   for (const auto size : kTrayIconSizes) {
-    auto *pixbuf = loadTrayIconPixbuf(size, colorMode);
+    auto *pixbuf = loadPipeTuneIconPixbuf(size, colorMode);
     if (pixbuf == nullptr) {
       continue;
     }
@@ -754,7 +754,7 @@ static void updateStatusIcon(
     return;
   }
   auto *pixbuf =
-      loadTrayIconPixbuf(24, implementation->colorMode);
+      loadPipeTuneIconPixbuf(24, implementation->colorMode);
   if (pixbuf != nullptr) {
     gtk_status_icon_set_from_pixbuf(implementation->statusIcon, pixbuf);
     g_object_unref(pixbuf);
@@ -797,7 +797,7 @@ static void createXEmbedBackend(
     TrayBackendImplementation *implementation) {
   implementation->kind = TrayBackendKind::xembed;
   auto *pixbuf =
-      loadTrayIconPixbuf(24, implementation->colorMode);
+      loadPipeTuneIconPixbuf(24, implementation->colorMode);
   implementation->statusIcon =
       pixbuf == nullptr ? gtk_status_icon_new()
                         : gtk_status_icon_new_from_pixbuf(pixbuf);

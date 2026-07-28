@@ -2,6 +2,7 @@
 #include "control-client.h"
 #include "launch-options.h"
 #include "main-window.h"
+#include "status-icon.h"
 #include "status-text.h"
 #include "tray-backend.h"
 
@@ -25,6 +26,7 @@
 namespace pipetune_gtk {
 
 constexpr auto kReconnectDelaySeconds = guint{2};
+constexpr auto kStatusArtworkSize = int{48};
 
 struct GtkRuntime {
   GtkApplication *application;
@@ -43,6 +45,8 @@ struct GtkRuntime {
   bool shuttingDown;
   bool quitting;
   MainWindowUi ui;
+  GdkPixbuf *statusColorIcon;
+  GdkPixbuf *statusGrayscaleIcon;
 };
 
 static std::string pathText(const std::filesystem::path &path) {
@@ -72,12 +76,6 @@ static TrayIconState iconStateForApplication(
     return TrayIconState::disconnected;
   }
   return TrayIconState::active;
-}
-
-static TrayIconColorMode iconColorModeForApplication(
-    const ApplicationState &state) {
-  return isPresetApplied(state) ? TrayIconColorMode::color
-                                : TrayIconColorMode::grayscale;
 }
 
 static std::string connectionText(const ApplicationState &state) {
@@ -130,20 +128,60 @@ static std::string noticeText(const ApplicationState &state) {
   return notice;
 }
 
+static const char *badgeIconName(StatusBadge badge) {
+  if (badge == StatusBadge::attention) {
+    return "dialog-warning-symbolic";
+  }
+  if (badge == StatusBadge::disconnected) {
+    return "network-offline-symbolic";
+  }
+  return nullptr;
+}
+
+static void initializeStatusArtwork(GtkRuntime *runtime) {
+  runtime->statusColorIcon = loadPipeTuneIconPixbuf(
+      kStatusArtworkSize, TrayIconColorMode::color);
+  runtime->statusGrayscaleIcon = loadPipeTuneIconPixbuf(
+      kStatusArtworkSize, TrayIconColorMode::grayscale);
+  if (runtime->statusColorIcon == nullptr ||
+      runtime->statusGrayscaleIcon == nullptr) {
+    g_error("PipeTune GTK status artwork could not be loaded");
+  }
+}
+
+static void releaseStatusArtwork(GtkRuntime *runtime) noexcept {
+  if (runtime->statusColorIcon != nullptr) {
+    g_object_unref(runtime->statusColorIcon);
+    runtime->statusColorIcon = nullptr;
+  }
+  if (runtime->statusGrayscaleIcon != nullptr) {
+    g_object_unref(runtime->statusGrayscaleIcon);
+    runtime->statusGrayscaleIcon = nullptr;
+  }
+}
+
 static void render(GtkRuntime *runtime) {
   if (runtime == nullptr || runtime->ui.window == nullptr) {
     return;
   }
   const auto status = connectionText(runtime->state);
   gtk_label_set_text(GTK_LABEL(runtime->ui.statusLabel), status.c_str());
-  const auto statusIcon =
-      runtime->state.connection == ControlConnectionState::connected
-          ? (trayVisualState(runtime->state) == TrayVisualState::active
-                 ? "emblem-ok-symbolic"
-                 : "dialog-warning-symbolic")
-          : "network-offline-symbolic";
-  gtk_image_set_from_icon_name(GTK_IMAGE(runtime->ui.statusImage),
-                               statusIcon, GTK_ICON_SIZE_DIALOG);
+  const auto iconPresentation =
+      statusIconPresentation(runtime->state);
+  auto *statusIcon =
+      iconPresentation.colorMode == TrayIconColorMode::color
+          ? runtime->statusColorIcon
+          : runtime->statusGrayscaleIcon;
+  gtk_image_set_from_pixbuf(GTK_IMAGE(runtime->ui.statusImage),
+                            statusIcon);
+  const auto *badge = badgeIconName(iconPresentation.badge);
+  if (badge == nullptr) {
+    gtk_widget_hide(runtime->ui.statusBadge);
+  } else {
+    gtk_image_set_from_icon_name(GTK_IMAGE(runtime->ui.statusBadge), badge,
+                                 GTK_ICON_SIZE_MENU);
+    gtk_widget_show(runtime->ui.statusBadge);
+  }
 
   const auto processingMode =
       runtime->state.hasRuntimeStatus
@@ -233,7 +271,7 @@ static void render(GtkRuntime *runtime) {
           !runtime->state.operationPending);
   updateTrayBackend(runtime->trayBackend,
                     iconStateForApplication(runtime->state),
-                    iconColorModeForApplication(runtime->state),
+                    iconPresentation.colorMode,
                     trayTooltip(runtime->state));
 }
 
@@ -590,6 +628,7 @@ static void onApplicationStartup(GApplication *, gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
   runtime->ui =
       createMainWindowUi(runtime->application, versionText());
+  initializeStatusArtwork(runtime);
   connectMainWindowSignals(runtime);
   initializeStartupConfig(runtime);
   g_application_hold(G_APPLICATION(runtime->application));
@@ -669,6 +708,7 @@ static void onApplicationShutdown(GApplication *, gpointer userData) {
   destroyTrayBackend(runtime->trayBackend);
   runtime->trayBackend = nullptr;
   destroyMainWindowUi(runtime->ui);
+  releaseStatusArtwork(runtime);
   releaseApplicationHold(runtime);
 }
 
@@ -692,6 +732,8 @@ static int runApplication(int argc, char **argv) {
       .shuttingDown = false,
       .quitting = false,
       .ui = {},
+      .statusColorIcon = nullptr,
+      .statusGrayscaleIcon = nullptr,
   };
   g_signal_connect(application, "startup",
                    G_CALLBACK(onApplicationStartup), &runtime);

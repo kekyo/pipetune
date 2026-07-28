@@ -17,6 +17,8 @@ static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
                "main window type differs") &&
          check(GTK_IS_IMAGE(ui.statusImage),
                "status image type differs") &&
+         check(GTK_IS_IMAGE(ui.statusBadge),
+               "status badge type differs") &&
          check(GTK_IS_LABEL(ui.statusLabel),
                "status label type differs") &&
          check(GTK_IS_LABEL(ui.processingModeLabel),
