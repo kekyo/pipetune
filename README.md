@@ -18,31 +18,6 @@ to all audio in one Linux desktop session.
 It inserts a virtual PipeWire sink in front of the selected physical output and includes a GTK 3 control
 application that remains available through the desktop system tray.
 
-### How the audio stream is connected
-
-The solid arrows below show the order in which audio travels. PipeTune becomes
-the session's virtual default output, so the OS audio routing sends application
-streams through the DSP before they reach the real device.
-
-```mermaid
-flowchart LR
-    app["1. Application<br/>Browser / player / game"]
-    os["2. OS audio settings<br/>(PipeWire default output)"]
-    tune["3. PipeTune<br/>Virtual sink → EffeTune DSP"]
-    device["4. Audio device<br/>Built-in audio / USB DAC"]
-    physical["5. Physical device<br/>Speakers / headphones"]
-
-    app -->|"① sends audio"| os
-    os -->|"② routes the default stream"| tune
-    tune -->|"③ sends processed audio"| device
-    device -->|"④ produces sound"| physical
-```
-
-PipeTune sends step ③ to the user's preferred audio device when it is
-available. Otherwise it uses the current system default. If a preferred USB
-device is unplugged, playback falls back automatically and returns to that
-device when it is reconnected.
-
 ### Features
 
 - Loads canonical and legacy EffeTune preset files with the
@@ -88,56 +63,70 @@ dpkg --print-architecture
 Download the `.deb` matching your distribution, release, and architecture
 from the [PipeTune GitHub Releases page](https://github.com/kekyo/pipetune/releases/).
 
-Open a terminal in the directory containing the downloaded package. If that
-directory contains only the intended PipeTune package, install it with:
+Open a terminal in the directory containing the downloaded package. Make sure
+that directory contains only the intended PipeTune package, then install it
+with:
 
 ```sh
 sudo apt install ./pipetune-*.deb
 ```
 
-`apt` installs the package and its required runtime dependencies. The package
-contains the PipeTune daemon, GTK application, systemd user service, desktop
-entry, system-tray autostart entry, icon, and configuration example.
+`apt` installs the package and its required runtime dependencies.
 
-Verify the installation:
+To verify that the installation succeeded, run:
 
 ```sh
 pipetune --version
-pipetune-gtk --version
 ```
-
----
 
 ## Initial setup
 
-Run setup as the desktop user, without `sudo`:
+Since PipeTune runs as a user-level daemon, additional setup is required for each user after the package is installed.
+
+Run setup as the regular desktop user, without `sudo`:
 
 ```sh
 pipetune setup
 ```
 
-No preset is required. On a fresh installation, PipeTune starts in bypass mode:
-audio still passes through its virtual sink to the physical output, but no DSP
-is applied. If setup is run again without `--preset`, the existing startup
-selection is preserved.
+`setup` reloads, enables, and restarts the systemd user service, verifies that
+it is active, and then launches the PipeTune GTK application in the system tray.
 
-To select a preset during setup, provide its path:
+![System tray](./images/system-tray.png)
 
-```sh
-pipetune setup --preset /absolute/path/to/example.effetune_preset
+From then on, the application appears there automatically.
+
+## Audio streams and PipeTune
+
+PipeTune acts as a virtual output device for the user session. It performs DSP
+processing as defined by the EffeTune preset, then sends the processed audio to
+the output device. The following diagram shows a simplified view of this flow:
+
+```mermaid
+flowchart LR
+    app["1. Application<br/>Browser / player / game"]
+    os["2. OS audio settings<br/>(PipeWire default output)"]
+    tune["3. PipeTune<br/>(EffeTune DSP)"]
+    device["4. Audio device<br/>DAC / speakers / headphones"]
+
+    app -->|"① sends audio"| os
+    os -->|"② sends audio to PipeTune"| tune
+    tune -->|"③ sends processed audio"| device
 ```
 
-An explicitly supplied preset is validated before setup changes the service.
-Setup then reloads, enables, and restarts the systemd user service, verifies
-that it is active, and launches PipeTune GTK hidden. If no compatible system
-tray is available, the GTK window is shown so that it remains reachable.
+- At step ②, the audio stream must be directed to PipeTune. Select PipeTune in
+  the OS audio output device settings or an equivalent dialog.
+- At step ③, PipeTune sends audio to the user's selected device when that
+  device is available. While the selected device cannot be found—for example,
+  while a USB device is unplugged—PipeTune automatically falls back to the
+  system default and returns to the selected device when it is reconnected.
 
-Selecting a preset in the GTK application applies it immediately when the
-daemon is connected and saves it for later service starts. Closing the window
-hides it while a compatible system tray is available. The installed XDG
-autostart entry starts it hidden at later desktop logins.
+## Choosing PipeTune's output device
 
-## Choose an audio output
+The user can explicitly choose the device used for step ③ in the previous
+section.
+
+![Output preference](./images/output-preference.png)
 
 The GTK window provides an **Output preference** drop-down. Its first item,
 **System default**, clears an explicit preference. It also shows the effective
@@ -163,28 +152,30 @@ With no preference, PipeTune follows the physical system default. If no audio
 output exists at all, the daemon remains running and watches for hotplug, but
 audio playback is unavailable until a device appears.
 
-## Logs and recovery
+## Selecting an EffeTune preset
 
-View daemon logs with:
+Users can select an EffeTune preset file in the GTK window:
+
+![Preset application](./images/preset-application.png)
+
+- EffeTune preset files use the `.effetune_preset` extension.
+- `Bypass and Save` ignores the preset file and passes the audio stream
+  through without DSP processing.
+- `Apply and Save` loads the selected preset file and starts processing audio
+  with the EffeTune DSP engine.
+
+The same operations are available from the CLI:
 
 ```sh
-journalctl --user -u pipetune.service
+pipetune setup --preset /absolute/path/to/example.effetune_preset
+pipetune bypass
 ```
 
-If a manually launched PipeTune process was terminated without restoring the
-physical default output, recover it with:
-
-```sh
-pipetune --restore-default
-```
-
-## Update or remove
+## Update or remove PipeTune
 
 To update PipeTune, download a newer matching package from
 [GitHub Releases](https://github.com/kekyo/pipetune/releases) and install it
-with the same `sudo apt install ./pipetune-*.deb` command. Then run
-`pipetune setup` as the desktop user; omitting `--preset` preserves the current
-selection while reloading and restarting the updated service.
+with the same `sudo apt install ./pipetune-*.deb` command.
 
 Before removing the package, undo its per-user integration as the desktop user:
 
@@ -204,6 +195,23 @@ PipeTune-managed backup. A later `pipetune setup` restores that backup instead
 of overwriting it. Package removal alone does not delete per-user
 configuration or autostart overrides.
 
+## Logs and recovery
+
+View daemon logs with:
+
+```sh
+journalctl --user -u pipetune.service
+```
+
+If a manually launched PipeTune process was terminated without restoring the
+physical default output, recover it with:
+
+```sh
+pipetune --restore-default
+```
+
+---
+
 ## More information
 
 - [Daemon operation and developer documentation](pipetune/README.md)
@@ -211,4 +219,4 @@ configuration or autostart overrides.
 
 ## License
 
-MIT
+Under MIT.
