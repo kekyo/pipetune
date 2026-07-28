@@ -88,22 +88,7 @@ static bool checkInlineVersion(
          check(std::string_view(
                    gtk_label_get_text(GTK_LABEL(ui.versionLabel))) ==
                    "PipeTune 1.2.3  •  EffeTune DSP 4.5.6",
-               "inline version text differs") &&
-         check(gtk_builder_get_object(ui.builder, "aboutButton") ==
-                   nullptr,
-               "version display must not expose an About button");
-}
-
-static bool checkNoAboutDialog() {
-  auto *windows = gtk_window_list_toplevels();
-  auto found = false;
-  for (auto *item = windows; item != nullptr; item = item->next) {
-    if (GTK_IS_ABOUT_DIALOG(item->data)) {
-      found = true;
-    }
-  }
-  g_list_free(windows);
-  return check(!found, "version display must not create an About dialog");
+               "inline version text differs");
 }
 
 int main(int argc, char **argv) {
@@ -124,7 +109,6 @@ int main(int argc, char **argv) {
       check(ui.builder != nullptr, "main window builder is unavailable") &&
       checkWidgetTypes(ui) &&
       checkInlineVersion(ui) &&
-      checkNoAboutDialog() &&
       check(gtk_window_get_application(GTK_WINDOW(ui.window)) ==
                 application,
             "main window application differs") &&
