@@ -45,7 +45,7 @@ struct MainWindowUi {
   GtkWidget *lastInputLabel = nullptr;
   /** PCM data-rate text. */
   GtkWidget *pcmDataRateLabel = nullptr;
-  /** PipeWire stream format text. */
+  /** Readable PipeWire input stream format text. */
   GtkWidget *streamFormatLabel = nullptr;
   /** Average native EffeTune processing time text. */
   GtkWidget *dspProcessingTimeLabel = nullptr;

@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <sstream>
 #include <string>
+#include <string_view>
 
 namespace pipetune_gtk {
 
@@ -91,8 +92,15 @@ static std::string streamFormatText(
   const auto sampleRate =
       trimmedDecimal(static_cast<double>(status.inputSampleRate) / 1000.0,
                      3);
-  return status.inputSampleFormat + " · " + sampleRate + " kHz · " +
-         std::to_string(status.inputChannelCount) + " ch";
+  const auto sampleFormat =
+      status.inputSampleFormat == "F32P"
+          ? std::string_view("32-bit floating-point PCM (planar)")
+          : std::string_view("Unknown sample format");
+  const auto channelCount =
+      std::to_string(status.inputChannelCount) +
+      (status.inputChannelCount == 1 ? " channel" : " channels");
+  return std::string(sampleFormat) + " · " + sampleRate + " kHz · " +
+         channelCount;
 }
 
 static std::string relativeAgeText(std::uint64_t ageMilliseconds) {

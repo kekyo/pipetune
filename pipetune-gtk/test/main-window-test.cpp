@@ -91,6 +91,23 @@ static bool checkInlineVersion(
                "inline version text differs");
 }
 
+static bool checkInputStreamFormatTitle(
+    const pipetune_gtk::MainWindowUi &ui) {
+  auto *statusGrid =
+      gtk_builder_get_object(ui.builder, "runtimeStatusGrid");
+  if (!check(GTK_IS_GRID(statusGrid),
+             "runtime status grid type differs")) {
+    return false;
+  }
+  auto *title = gtk_grid_get_child_at(GTK_GRID(statusGrid), 0, 9);
+  return check(GTK_IS_LABEL(title),
+               "input stream format title type differs") &&
+         check(std::string_view(
+                   gtk_label_get_text(GTK_LABEL(title))) ==
+                   "Input stream format",
+               "input stream format title differs");
+}
+
 int main(int argc, char **argv) {
   if (!gtk_init_check(&argc, &argv)) {
     std::cerr << "GTK display is unavailable\n";
@@ -109,6 +126,7 @@ int main(int argc, char **argv) {
       check(ui.builder != nullptr, "main window builder is unavailable") &&
       checkWidgetTypes(ui) &&
       checkInlineVersion(ui) &&
+      checkInputStreamFormatTitle(ui) &&
       check(gtk_window_get_application(GTK_WINDOW(ui.window)) ==
                 application,
             "main window application differs") &&

@@ -15,6 +15,7 @@ The window displays:
 - selectable and preferred physical outputs;
 - effective physical output and the engine's selection reason;
 - effective-default-sink state;
+- measured input rate, data rate, and readable stream format;
 - average native EffeTune DSP processing time per frame;
 - overrun, underrun, and DSP processing error counters; and
 - warnings for preset nodes omitted by the daemon.

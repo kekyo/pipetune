@@ -54,7 +54,9 @@ static bool testActiveText() {
                "last-input text differs") &&
          check(text.pcmDataRate == "3.07 Mbit/s",
                "PCM data-rate text differs") &&
-         check(text.streamFormat == "F32P · 48 kHz · 2 ch",
+         check(text.streamFormat ==
+                   "32-bit floating-point PCM (planar) · "
+                   "48 kHz · 2 channels",
                "stream-format text differs");
 }
 
@@ -75,14 +77,24 @@ static bool testUnavailableAndIdleText() {
   idle.runtime.inputSampleRate = 44100;
   const auto idleText =
       pipetune_gtk::inputStatusText(idle, 1704164645000ULL);
+  auto mono = idle;
+  mono.runtime.inputChannelCount = 1;
+  const auto monoText =
+      pipetune_gtk::inputStatusText(mono, 1704164645000ULL);
   return check(idleText.frameRate == "0 frames/s",
                "idle frame-rate text differs") &&
          check(idleText.lastReceived == "Never",
                "never-received text differs") &&
          check(idleText.pcmDataRate == "0 bit/s",
                "idle PCM data-rate text differs") &&
-         check(idleText.streamFormat == "F32P · 44.1 kHz · 2 ch",
-               "44.1 kHz stream-format text differs");
+         check(idleText.streamFormat ==
+                   "32-bit floating-point PCM (planar) · "
+                   "44.1 kHz · 2 channels",
+               "44.1 kHz stream-format text differs") &&
+         check(monoText.streamFormat ==
+                   "32-bit floating-point PCM (planar) · "
+                   "44.1 kHz · 1 channel",
+               "mono stream-format text differs");
 }
 
 static bool testRuntimeText() {
