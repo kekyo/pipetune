@@ -99,7 +99,7 @@ if (
         const version = spawnSync(executable, ["--version"], {
           encoding: "utf8",
         });
-        if (version.status !== 0 || !version.stdout.startsWith("pipetune ")) {
+        if (version.status !== 0 || !version.stdout.startsWith("PipeTune ")) {
           fail("installed PipeTune executable is not runnable", version);
         }
 

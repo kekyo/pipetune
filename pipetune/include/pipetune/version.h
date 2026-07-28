@@ -12,6 +12,13 @@ namespace pipetune {
  */
 std::string_view version() noexcept;
 
+/**
+ * Returns the semantic version of the embedded EffeTune DSP sources.
+ *
+ * @return A process-lifetime string containing the EffeTune version.
+ */
+std::string_view effetuneVersion() noexcept;
+
 } // namespace pipetune
 
 #endif

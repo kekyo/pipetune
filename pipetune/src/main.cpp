@@ -307,7 +307,8 @@ int main(int argc, char **argv) {
     return 0;
   }
   if (parsed.options.action == pipetune::CommandLineAction::version) {
-    std::cout << "pipetune " << pipetune::version() << '\n';
+    std::cout << "PipeTune " << pipetune::version() << ", EffeTune DSP "
+              << pipetune::effetuneVersion() << '\n';
     return 0;
   }
   if (parsed.options.action == pipetune::CommandLineAction::daemon) {

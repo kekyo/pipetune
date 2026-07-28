@@ -51,6 +51,38 @@ if(NOT EXISTS "${PIPETUNE_EFFETUNE_DIR}/dsp/CMakeLists.txt")
     "EffeTune is unavailable under ${PIPETUNE_EFFETUNE_DIR}; "
     "initialize the workspace submodules")
 endif()
+set(
+  PIPETUNE_EFFETUNE_PACKAGE_JSON
+  "${PIPETUNE_EFFETUNE_DIR}/package.json")
+if(NOT EXISTS "${PIPETUNE_EFFETUNE_PACKAGE_JSON}")
+  message(
+    FATAL_ERROR
+    "EffeTune package metadata is unavailable: "
+    "${PIPETUNE_EFFETUNE_PACKAGE_JSON}")
+endif()
+file(
+  READ "${PIPETUNE_EFFETUNE_PACKAGE_JSON}"
+  PIPETUNE_EFFETUNE_PACKAGE_CONTENT)
+string(
+  JSON PIPETUNE_EFFETUNE_VERSION
+  ERROR_VARIABLE PIPETUNE_EFFETUNE_VERSION_ERROR
+  GET "${PIPETUNE_EFFETUNE_PACKAGE_CONTENT}" version)
+if(NOT PIPETUNE_EFFETUNE_VERSION_ERROR STREQUAL "NOTFOUND")
+  message(
+    FATAL_ERROR
+    "EffeTune package version could not be resolved: "
+    "${PIPETUNE_EFFETUNE_VERSION_ERROR}")
+endif()
+if(NOT PIPETUNE_EFFETUNE_VERSION MATCHES
+   "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?([+][0-9A-Za-z.-]+)?$")
+  message(
+    FATAL_ERROR
+    "EffeTune package version is not a semantic version: "
+    "${PIPETUNE_EFFETUNE_VERSION}")
+endif()
+set_property(
+  DIRECTORY APPEND PROPERTY
+  CMAKE_CONFIGURE_DEPENDS "${PIPETUNE_EFFETUNE_PACKAGE_JSON}")
 if(NOT EXISTS "${PIPETUNE_YYJSON_DIR}/src/yyjson.c")
   message(
     FATAL_ERROR

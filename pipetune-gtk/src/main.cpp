@@ -61,6 +61,11 @@ static std::string pathText(const std::filesystem::path &path) {
   return path.empty() ? std::string("—") : path.string();
 }
 
+static std::string versionText() {
+  return "PipeTune GTK " + std::string(pipetune::version()) +
+         ", EffeTune DSP " + std::string(pipetune::effetuneVersion());
+}
+
 static TrayIconState iconStateForApplication(
     const ApplicationState &state) {
   const auto visual = trayVisualState(state);
@@ -492,12 +497,13 @@ static void onBypassClicked(GtkButton *, gpointer userData) {
 
 static GtkWidget *createMainWindow(GtkRuntime *runtime) {
   auto *window = gtk_application_window_new(runtime->application);
-  gtk_window_set_title(GTK_WINDOW(window), "PipeTune");
+  const auto title = versionText();
+  gtk_window_set_title(GTK_WINDOW(window), title.c_str());
   gtk_window_set_default_size(GTK_WINDOW(window), 680, 470);
   gtk_window_set_position(GTK_WINDOW(window), GTK_WIN_POS_CENTER);
 
   auto *header = gtk_header_bar_new();
-  gtk_header_bar_set_title(GTK_HEADER_BAR(header), "PipeTune");
+  gtk_header_bar_set_title(GTK_HEADER_BAR(header), title.c_str());
   gtk_header_bar_set_subtitle(GTK_HEADER_BAR(header),
                               "PipeWire DSP control");
   gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(header), TRUE);
@@ -830,7 +836,7 @@ int main(int argc, char **argv) {
     return 0;
   }
   if (parsed.options.action == pipetune_gtk::LaunchAction::version) {
-    std::cout << "pipetune-gtk " << pipetune::version() << '\n';
+    std::cout << pipetune_gtk::versionText() << '\n';
     return 0;
   }
   return pipetune_gtk::runApplication(argc, argv);

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -26,6 +26,16 @@ const [cmake, sourceDirectory, workspaceExecutable] = process.argv.slice(2);
 if (!cmake || !sourceDirectory || !workspaceExecutable) {
   fail("component build test arguments are incomplete");
 } else {
+  const effetunePackage = JSON.parse(
+    readFileSync(
+      join(dirname(sourceDirectory), "deps", "effetune", "package.json"),
+      "utf8",
+    ),
+  );
+  if (typeof effetunePackage.version !== "string") {
+    fail("EffeTune package version is unavailable");
+  }
+  const effetuneVersion = effetunePackage.version;
   const resolvedVersion = run(
     "npx",
     ["screw-up", "format", "-e", "{version}", "-f"],
@@ -38,10 +48,10 @@ if (!cmake || !sourceDirectory || !workspaceExecutable) {
     if (
       workspaceVersion.status !== 0 ||
       workspaceVersion.stdout !==
-        `pipetune ${resolvedVersion.stdout.trim()}\n`
+        `PipeTune ${resolvedVersion.stdout.trim()}, EffeTune DSP ${effetuneVersion}\n`
     ) {
       fail(
-        "workspace PipeTune executable did not use the screw-up version",
+        "workspace PipeTune executable did not report the build versions",
         workspaceVersion,
       );
     }
@@ -89,10 +99,11 @@ if (!cmake || !sourceDirectory || !workspaceExecutable) {
         );
         if (
           version.status !== 0 ||
-          version.stdout !== `pipetune ${overriddenVersion}\n`
+          version.stdout !==
+            `PipeTune ${overriddenVersion}, EffeTune DSP ${effetuneVersion}\n`
         ) {
           fail(
-            "standalone PipeTune component did not use the overridden version",
+            "standalone PipeTune component did not report the build versions",
             version,
           );
         }

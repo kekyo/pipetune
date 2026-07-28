@@ -144,7 +144,7 @@ if(BUILD_TESTING)
   add_test(NAME pipetune_gtk_version COMMAND pipetune-gtk --version)
   set_tests_properties(
     pipetune_gtk_version PROPERTIES
-    PASS_REGULAR_EXPRESSION "pipetune-gtk")
+    PASS_REGULAR_EXPRESSION "PipeTune GTK .* EffeTune DSP")
 
   add_executable(
     pipetune_gtk_state_config_tests
@@ -228,7 +228,8 @@ if(BUILD_TESTING)
       ${PIPETUNE_GTK_XVFB_RUN} -a
       ${PIPETUNE_GTK_NODE_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/test/application-lifecycle.mjs
-      $<TARGET_FILE:pipetune-gtk>)
+      $<TARGET_FILE:pipetune-gtk>
+      $<TARGET_FILE:pipetune>)
   set_tests_properties(
     pipetune_gtk_application_lifecycle PROPERTIES TIMEOUT 20)
 

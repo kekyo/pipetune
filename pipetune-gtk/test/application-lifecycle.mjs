@@ -3,9 +3,34 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 const executable = process.argv[2];
+const pipeTuneExecutable = process.argv[3];
 
-if (executable === undefined) {
-  throw new Error('pipetune-gtk executable path is required');
+if (executable === undefined || pipeTuneExecutable === undefined) {
+  throw new Error('PipeTune GTK and CLI executable paths are required');
+}
+
+const pipeTuneVersion = await execFileAsync(
+  pipeTuneExecutable,
+  ['--version'],
+  { encoding: 'utf8' }
+);
+const versionMatch = pipeTuneVersion.stdout.match(
+  /^PipeTune ([^,\n]+), EffeTune DSP ([^\n]+)\n$/u
+);
+if (pipeTuneVersion.stderr !== '' || versionMatch === null) {
+  throw new Error(
+    `PipeTune CLI version differs: stdout=${pipeTuneVersion.stdout}; stderr=${pipeTuneVersion.stderr}`
+  );
+}
+const expectedVersionText =
+  `PipeTune GTK ${versionMatch[1]}, EffeTune DSP ${versionMatch[2]}`;
+const version = await execFileAsync(executable, ['--version'], {
+  encoding: 'utf8',
+});
+if (version.stderr !== '' || version.stdout !== `${expectedVersionText}\n`) {
+  throw new Error(
+    `PipeTune GTK version differs: stdout=${version.stdout}; stderr=${version.stderr}`
+  );
 }
 
 const application = spawn(executable, ['--hidden'], {
@@ -21,8 +46,16 @@ application.on('exit', (code, signal) => {
   applicationExit = `${code ?? 'null'}/${signal ?? 'none'}`;
 });
 
+const escapedVersionText = expectedVersionText.replace(
+  /[.*+?^${}()|[\]\\]/gu,
+  '\\$&'
+);
+const mainWindowPattern = new RegExp(
+  `^\\s+(0x[0-9a-f]+) "${escapedVersionText}":.*?\\s(\\d+)x(\\d+)[+-]`,
+  'gmu'
+);
 const mainWindowIds = (tree) =>
-  [...tree.matchAll(/^\s+(0x[0-9a-f]+) "PipeTune":.*?\s(\d+)x(\d+)[+-]/gmu)]
+  [...tree.matchAll(mainWindowPattern)]
     .filter((match) => Number(match[2]) >= 100 && Number(match[3]) >= 100)
     .map((match) => match[1]);
 

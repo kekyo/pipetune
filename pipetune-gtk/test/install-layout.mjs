@@ -87,7 +87,7 @@ if (
         });
         if (
           version.status !== 0 ||
-          !version.stdout.startsWith('pipetune-gtk ')
+          !version.stdout.startsWith('PipeTune GTK ')
         ) {
           fail('installed PipeTune GTK executable is not runnable', version);
         }

@@ -104,6 +104,7 @@ validate_installed_package() {
 	require_env PIPETUNE_PACKAGE_NAME
 	require_command dpkg
 	require_command dpkg-query
+	require_command node
 	assert_file "$package_path"
 
 	dpkg -i "$package_path"
@@ -122,11 +123,15 @@ validate_installed_package() {
 		assert_file "$installed_file"
 	done
 
+	effetune_version=$(
+		node --input-type=module -e \
+			"import { readFileSync } from 'node:fs'; process.stdout.write(JSON.parse(readFileSync('deps/effetune/package.json', 'utf8')).version)"
+	)
 	pipetune_version=$(/usr/bin/pipetune --version)
-	[ "$pipetune_version" = "pipetune $PIPETUNE_PACKAGE_VERSION" ] ||
+	[ "$pipetune_version" = "PipeTune $PIPETUNE_PACKAGE_VERSION, EffeTune DSP $effetune_version" ] ||
 		fail "Unexpected pipetune version: $pipetune_version"
 	gtk_version=$(/usr/bin/pipetune-gtk --version)
-	[ "$gtk_version" = "pipetune-gtk $PIPETUNE_PACKAGE_VERSION" ] ||
+	[ "$gtk_version" = "PipeTune GTK $PIPETUNE_PACKAGE_VERSION, EffeTune DSP $effetune_version" ] ||
 		fail "Unexpected pipetune-gtk version: $gtk_version"
 
 	printf '%s\n' "Installed package validated: $package_path"
