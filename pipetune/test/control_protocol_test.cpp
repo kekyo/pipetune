@@ -60,16 +60,37 @@ static bool testRequests() {
   const auto loadJson = pipetune::makeLoadPresetControlRequest(
       "/tmp/music \"wide\".effetune_preset");
   const auto load = pipetune::parseControlRequest(loadJson);
-  return check(load.error.empty(), load.error) &&
-         check(load.request.command == pipetune::ControlCommand::loadPreset,
-               "load request command differs") &&
-         check(load.request.presetPath ==
-                   "/tmp/music \"wide\".effetune_preset",
-               "load request preset differs");
+  if (!check(load.error.empty(), load.error) ||
+      !check(load.request.command == pipetune::ControlCommand::loadPreset,
+             "load request command differs") ||
+      !check(load.request.presetPath ==
+                 "/tmp/music \"wide\".effetune_preset",
+             "load request preset differs")) {
+    return false;
+  }
+
+  const auto setOutputJson =
+      pipetune::makeSetOutputControlRequest("alsa_output.usb_\"DAC\"");
+  const auto setOutput = pipetune::parseControlRequest(setOutputJson);
+  const auto clearOutput = pipetune::parseControlRequest(
+      pipetune::makeClearOutputControlRequest());
+  return check(setOutput.error.empty(), setOutput.error) &&
+         check(setOutput.request.command ==
+                   pipetune::ControlCommand::setOutput,
+               "set-output request command differs") &&
+         check(setOutput.request.outputTarget ==
+                   "alsa_output.usb_\"DAC\"",
+               "set-output request target differs") &&
+         check(clearOutput.error.empty(), clearOutput.error) &&
+         check(clearOutput.request.command ==
+                   pipetune::ControlCommand::clearOutput,
+               "clear-output request command differs") &&
+         check(clearOutput.request.outputTarget.empty(),
+               "clear-output request must not contain a target");
 }
 
 static bool testRejectedRequests() {
-  constexpr auto inputs = std::array<std::string_view, 8>{
+  constexpr auto inputs = std::array<std::string_view, 13>{
       "",
       "[]",
       R"json({"command":"unknown"})json",
@@ -77,7 +98,12 @@ static bool testRejectedRequests() {
       R"json({"command":"bypass","preset":"unexpected"})json",
       R"json({"command":"load"})json",
       R"json({"command":"load","preset":42})json",
-      R"json({"command":"load","preset":""})json"};
+      R"json({"command":"load","preset":""})json",
+      R"json({"command":"set-output"})json",
+      R"json({"command":"set-output","target":""})json",
+      R"json({"command":"set-output","target":42})json",
+      R"json({"command":"set-output","target":"line\nbreak"})json",
+      R"json({"command":"clear-output","target":"unexpected"})json"};
   for (const auto input : inputs) {
     if (!check(!pipetune::parseControlRequest(input).error.empty(),
                "invalid control request must be rejected")) {
@@ -97,7 +123,21 @@ static bool testSuccessResponse() {
        .activePreset = "/tmp/live.effetune_preset",
        .configurationError = {},
        .activePluginCount = 7,
-       .selectedTarget = "alsa_output.speaker",
+       .preferredTarget = "alsa_output.usb_dac",
+       .selectedTarget = "alsa_output.usb_dac",
+       .outputSelectionReason =
+           pipetune::ControlOutputSelectionReason::preferred,
+       .availableOutputs =
+           {{.name = "alsa_output.speaker",
+             .description = "Built-in Speakers",
+             .systemDefault = true,
+             .preferred = false,
+             .selected = false},
+            {.name = "alsa_output.usb_dac",
+             .description = "USB DAC",
+             .systemDefault = false,
+             .preferred = true,
+             .selected = true}},
        .defaultSinkActive = true,
        .overrunFrames = 11,
        .underrunFrames = 12,
@@ -124,8 +164,17 @@ static bool testSuccessResponse() {
              "parsed response preset differs") ||
       !check(parsed.status.activePluginCount == 7,
              "parsed response plugin count differs") ||
-      !check(parsed.status.selectedTarget == "alsa_output.speaker",
+      !check(parsed.status.preferredTarget == "alsa_output.usb_dac" &&
+                 parsed.status.selectedTarget == "alsa_output.usb_dac",
              "parsed response target differs") ||
+      !check(parsed.status.outputSelectionReason ==
+                 pipetune::ControlOutputSelectionReason::preferred,
+             "parsed output selection reason differs") ||
+      !check(parsed.status.availableOutputs.size() == 2 &&
+                 parsed.status.availableOutputs[0].systemDefault &&
+                 parsed.status.availableOutputs[1].preferred &&
+                 parsed.status.availableOutputs[1].selected,
+             "parsed output list differs") ||
       !check(parsed.status.defaultSinkActive,
              "parsed response default state differs") ||
       !check(parsed.status.overrunFrames == 11 &&
@@ -164,8 +213,17 @@ static bool testSuccessResponse() {
       yyjson_is_null(yyjson_obj_get(root, "configurationError")) &&
       yyjson_get_uint(yyjson_obj_get(root, "activePluginCount")) == 7 &&
       std::string_view(
+          yyjson_get_str(yyjson_obj_get(root, "preferredTarget"))) ==
+          "alsa_output.usb_dac" &&
+      std::string_view(
           yyjson_get_str(yyjson_obj_get(root, "selectedTarget"))) ==
-          "alsa_output.speaker" &&
+          "alsa_output.usb_dac" &&
+      std::string_view(
+          yyjson_get_str(
+              yyjson_obj_get(root, "outputSelectionReason"))) ==
+          "preferred" &&
+      yyjson_is_arr(yyjson_obj_get(root, "availableOutputs")) &&
+      yyjson_arr_size(yyjson_obj_get(root, "availableOutputs")) == 2 &&
       yyjson_get_bool(yyjson_obj_get(root, "defaultSinkActive")) &&
       yyjson_get_uint(yyjson_obj_get(root, "overrunFrames")) == 11 &&
       yyjson_get_uint(yyjson_obj_get(root, "underrunFrames")) == 12 &&
@@ -192,7 +250,16 @@ static bool testStatusEvent() {
        .activePreset = "/tmp/event.effetune_preset",
        .configurationError = {},
        .activePluginCount = 2,
+       .preferredTarget = {},
        .selectedTarget = "alsa_output.headphones",
+       .outputSelectionReason =
+           pipetune::ControlOutputSelectionReason::systemDefault,
+       .availableOutputs =
+           {{.name = "alsa_output.headphones",
+             .description = "Headphones",
+             .systemDefault = true,
+             .preferred = false,
+             .selected = true}},
        .defaultSinkActive = false,
        .overrunFrames = 21,
        .underrunFrames = 22,
@@ -241,7 +308,16 @@ static bool testBypassStatus() {
        .activePreset = {},
        .configurationError = "configured preset is unavailable",
        .activePluginCount = 0,
+       .preferredTarget = {},
        .selectedTarget = "alsa_output.speaker",
+       .outputSelectionReason =
+           pipetune::ControlOutputSelectionReason::systemDefault,
+       .availableOutputs =
+           {{.name = "alsa_output.speaker",
+             .description = "Speakers",
+             .systemDefault = true,
+             .preferred = false,
+             .selected = true}},
        .defaultSinkActive = true,
        .overrunFrames = 0,
        .underrunFrames = 0,
@@ -291,13 +367,116 @@ static bool testBypassStatus() {
   return check(correct, "bypass response fields differ");
 }
 
+static bool testUnavailableOutputStatus() {
+  const auto response = pipetune::makeControlSuccessResponse(
+      {.processingMode = pipetune::ProcessingMode::bypass,
+       .activePreset = {},
+       .configurationError = {},
+       .activePluginCount = 0,
+       .preferredTarget = "alsa_output.usb_dac",
+       .selectedTarget = {},
+       .outputSelectionReason =
+           pipetune::ControlOutputSelectionReason::unavailable,
+       .availableOutputs = {},
+       .defaultSinkActive = false,
+       .overrunFrames = 0,
+       .underrunFrames = 0,
+       .processingErrors = 0,
+       .inputSampleFormat = {},
+       .inputSampleRate = 0,
+       .inputChannelCount = 0,
+       .inputFramesReceived = 0,
+       .inputLastReceivedUnixMilliseconds = 0},
+      {});
+  const auto parsed = pipetune::parseControlResponse(response);
+  auto *document = yyjson_read(response.data(), response.size(), 0);
+  if (!check(parsed.valid, parsed.error) ||
+      !check(parsed.success, "unavailable output status must be successful") ||
+      !check(parsed.status.preferredTarget == "alsa_output.usb_dac",
+             "unavailable output must retain its preference") ||
+      !check(parsed.status.selectedTarget.empty() &&
+                 parsed.status.availableOutputs.empty(),
+             "unavailable output must not invent a selected device") ||
+      !check(parsed.status.outputSelectionReason ==
+                 pipetune::ControlOutputSelectionReason::unavailable,
+             "unavailable output reason differs") ||
+      !check(document != nullptr,
+             "unavailable output response must be valid JSON")) {
+    if (document != nullptr) {
+      yyjson_doc_free(document);
+    }
+    return false;
+  }
+  auto *root = yyjson_doc_get_root(document);
+  const auto correct =
+      yyjson_is_null(yyjson_obj_get(root, "selectedTarget")) &&
+      yyjson_is_arr(yyjson_obj_get(root, "availableOutputs")) &&
+      yyjson_arr_size(yyjson_obj_get(root, "availableOutputs")) == 0;
+  yyjson_doc_free(document);
+  return check(correct,
+               "unavailable output must encode a null selected target");
+}
+
+static bool testRejectedOutputStatus() {
+  const auto response = pipetune::makeControlSuccessResponse(
+      {.processingMode = pipetune::ProcessingMode::bypass,
+       .activePreset = {},
+       .configurationError = {},
+       .activePluginCount = 0,
+       .preferredTarget = "alsa_output.usb_dac",
+       .selectedTarget = "alsa_output.speaker",
+       .outputSelectionReason =
+           pipetune::ControlOutputSelectionReason::fallback,
+       .availableOutputs =
+           {{.name = "alsa_output.speaker",
+             .description = "Speakers",
+             .systemDefault = true,
+             .preferred = false,
+             .selected = true}},
+       .defaultSinkActive = true,
+       .overrunFrames = 0,
+       .underrunFrames = 0,
+       .processingErrors = 0,
+       .inputSampleFormat = {},
+       .inputSampleRate = 0,
+       .inputChannelCount = 0,
+       .inputFramesReceived = 0,
+       .inputLastReceivedUnixMilliseconds = 0},
+      {});
+  auto unknownReason = response;
+  auto wrongSelectedMarker = response;
+  if (!check(replaceOnce(unknownReason, "fallback", "unknown"),
+             "cannot prepare unknown output reason") ||
+      !check(replaceOnce(wrongSelectedMarker,
+                         R"json("selected":true)json",
+                         R"json("selected":false)json"),
+             "cannot prepare inconsistent selected marker")) {
+    return false;
+  }
+  return check(pipetune::parseControlResponse(response).valid,
+               "valid fallback output status must be accepted") &&
+         check(!pipetune::parseControlResponse(unknownReason).valid,
+               "unknown output reasons must be rejected") &&
+         check(!pipetune::parseControlResponse(wrongSelectedMarker).valid,
+               "inconsistent output markers must be rejected");
+}
+
 static bool testRejectedInputTelemetry() {
   const auto response = pipetune::makeControlSuccessResponse(
       {.processingMode = pipetune::ProcessingMode::bypass,
        .activePreset = {},
        .configurationError = {},
        .activePluginCount = 0,
+       .preferredTarget = {},
        .selectedTarget = "alsa_output.speaker",
+       .outputSelectionReason =
+           pipetune::ControlOutputSelectionReason::systemDefault,
+       .availableOutputs =
+           {{.name = "alsa_output.speaker",
+             .description = "Speakers",
+             .systemDefault = true,
+             .preferred = false,
+             .selected = true}},
        .defaultSinkActive = true,
        .overrunFrames = 0,
        .underrunFrames = 0,
@@ -349,6 +528,8 @@ static bool testErrorResponse() {
 int main() {
   return testRequests() && testRejectedRequests() && testSuccessResponse() &&
                  testStatusEvent() && testBypassStatus() &&
+                 testUnavailableOutputStatus() &&
+                 testRejectedOutputStatus() &&
                  testRejectedInputTelemetry() && testErrorResponse()
              ? 0
              : 1;

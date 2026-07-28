@@ -76,7 +76,11 @@ static pipetune::ControlResponseParseResult emptyResponse() {
                      .activePreset = {},
                      .configurationError = {},
                      .activePluginCount = 0,
+                     .preferredTarget = {},
                      .selectedTarget = {},
+                     .outputSelectionReason =
+                         pipetune::ControlOutputSelectionReason::unavailable,
+                     .availableOutputs = {},
                      .defaultSinkActive = false,
                      .overrunFrames = 0,
                      .underrunFrames = 0,

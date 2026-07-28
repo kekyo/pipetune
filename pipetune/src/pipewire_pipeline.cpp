@@ -80,6 +80,7 @@ struct PipeWireRuntime {
   ProcessingMode processingMode;
   std::string activePreset;
   std::string configurationError;
+  std::mutex outputStateMutex;
   std::mutex playbackTargetMutex;
   std::unique_ptr<ControlServer> controlServer;
   pw_main_loop *mainLoop;
@@ -88,6 +89,7 @@ struct PipeWireRuntime {
   pw_core *trackingCore;
   pw_registry *registry;
   pw_metadata *defaultMetadata;
+  spa_source *outputChangeSource;
   spa_source *timeoutSource;
   spa_source *interruptSource;
   spa_source *terminateSource;
@@ -136,10 +138,12 @@ struct PipeWireRuntime {
                            : ProcessingMode::preset),
         activePreset(runtimeOptions.initialPresetPath.string()),
         configurationError(runtimeOptions.initialConfigurationError),
-        playbackTargetMutex(), controlServer(), mainLoop(nullptr),
+        outputStateMutex(), playbackTargetMutex(), controlServer(),
+        mainLoop(nullptr),
         captureStream(nullptr), playbackStream(nullptr), trackingCore(nullptr),
-        registry(nullptr), defaultMetadata(nullptr), timeoutSource(nullptr),
-        interruptSource(nullptr), terminateSource(nullptr), captureEvents{},
+        registry(nullptr), defaultMetadata(nullptr), outputChangeSource(nullptr),
+        timeoutSource(nullptr), interruptSource(nullptr),
+        terminateSource(nullptr), captureEvents{},
         playbackEvents{}, coreEvents{}, registryEvents{}, metadataEvents{},
         coreListener{}, registryListener{}, metadataListener{},
         captureContext{this, true}, playbackContext{this, false},
@@ -174,6 +178,9 @@ struct PipeWireRuntime {
       auto *loop = pw_main_loop_get_loop(mainLoop);
       if (timeoutSource != nullptr) {
         pw_loop_destroy_source(loop, timeoutSource);
+      }
+      if (outputChangeSource != nullptr) {
+        pw_loop_destroy_source(loop, outputChangeSource);
       }
       if (interruptSource != nullptr) {
         pw_loop_destroy_source(loop, interruptSource);
@@ -346,7 +353,10 @@ static void trackingCoreDone(void *data, std::uint32_t id, int sequence) {
   }
 
   runtime.trackingReady = true;
-  runtime.deviceTracker.commitSelection();
+  {
+    auto lock = std::scoped_lock(runtime.outputStateMutex);
+    runtime.deviceTracker.commitSelection();
+  }
   applyTrackedTarget(runtime);
   if (runtime.options.manageDefaultSink &&
       runtime.defaultMetadata == nullptr) {
@@ -384,9 +394,17 @@ static int defaultMetadataProperty(void *data, std::uint32_t subject,
     return 0;
   }
   runtime.observedDefaultSink = defaultSinkNameFromMetadata(value);
-  if (runtime.deviceTracker.setDefaultTarget(runtime.observedDefaultSink) &&
-      runtime.trackingReady) {
+  auto changed = false;
+  {
+    auto lock = std::scoped_lock(runtime.outputStateMutex);
+    changed =
+        runtime.deviceTracker.setDefaultTarget(runtime.observedDefaultSink);
+  }
+  if (changed && runtime.trackingReady) {
     applyTrackedTarget(runtime);
+  }
+  if (runtime.trackingReady) {
+    requestControlStatusUpdate(runtime);
   }
   if (runtime.options.manageDefaultSink && !runtime.shutdownRequested &&
       runtime.defaultSinkTransition == DefaultSinkTransition::active &&
@@ -421,14 +439,21 @@ static void registryGlobal(void *data, std::uint32_t id, std::uint32_t,
     }
     const auto *priority = spa_dict_lookup(properties, PW_KEY_PRIORITY_SESSION);
     const auto *virtualNode = spa_dict_lookup(properties, PW_KEY_NODE_VIRTUAL);
-    const auto changed = runtime.deviceTracker.updateDevice(
-        {.id = id,
-         .name = name,
-         .description = description,
-         .priority = parsePriority(priority),
-         .virtualNode = parseBooleanProperty(virtualNode)});
+    auto changed = false;
+    {
+      auto lock = std::scoped_lock(runtime.outputStateMutex);
+      changed = runtime.deviceTracker.updateDevice(
+          {.id = id,
+           .name = name,
+           .description = description,
+           .priority = parsePriority(priority),
+           .virtualNode = parseBooleanProperty(virtualNode)});
+    }
     if (changed && runtime.trackingReady) {
       applyTrackedTarget(runtime);
+    }
+    if (runtime.trackingReady) {
+      requestControlStatusUpdate(runtime);
     }
     return;
   }
@@ -467,7 +492,11 @@ static void registryGlobal(void *data, std::uint32_t id, std::uint32_t,
 
 static void registryGlobalRemoved(void *data, std::uint32_t id) {
   auto &runtime = *static_cast<PipeWireRuntime *>(data);
-  auto changed = runtime.deviceTracker.removeDevice(id);
+  auto changed = false;
+  {
+    auto lock = std::scoped_lock(runtime.outputStateMutex);
+    changed = runtime.deviceTracker.removeDevice(id);
+  }
   if (id == runtime.defaultMetadataId && runtime.defaultMetadata != nullptr) {
     spa_hook_remove(&runtime.metadataListener);
     pw_proxy_destroy(reinterpret_cast<pw_proxy *>(runtime.defaultMetadata));
@@ -484,6 +513,9 @@ static void registryGlobalRemoved(void *data, std::uint32_t id) {
   }
   if (changed && runtime.trackingReady) {
     applyTrackedTarget(runtime);
+  }
+  if (runtime.trackingReady) {
+    requestControlStatusUpdate(runtime);
   }
 }
 
@@ -957,7 +989,11 @@ static void applyTrackedTarget(PipeWireRuntime &runtime) {
   if (!runtime.trackingReady) {
     return;
   }
-  const auto target = std::string(runtime.deviceTracker.selectedTarget());
+  auto target = std::string{};
+  {
+    auto lock = std::scoped_lock(runtime.outputStateMutex);
+    target = runtime.deviceTracker.selectedTarget();
+  }
   const auto targetUnchanged = target == currentPlaybackTarget(runtime);
   if (targetUnchanged &&
       ((target.empty() && runtime.playbackStream == nullptr) ||
@@ -1019,17 +1055,62 @@ static void maybeActivateDefaultSink(PipeWireRuntime &runtime) {
       "cannot make PipeTune the PipeWire default sink"));
 }
 
+static ControlOutputSelectionReason
+controlOutputSelectionReason(OutputSelectionReason reason) noexcept {
+  switch (reason) {
+  case OutputSelectionReason::unavailable:
+    return ControlOutputSelectionReason::unavailable;
+  case OutputSelectionReason::systemDefault:
+    return ControlOutputSelectionReason::systemDefault;
+  case OutputSelectionReason::preferred:
+    return ControlOutputSelectionReason::preferred;
+  case OutputSelectionReason::fallback:
+    return ControlOutputSelectionReason::fallback;
+  }
+  return ControlOutputSelectionReason::unavailable;
+}
+
 static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
   const auto input = snapshotInputTelemetry(
       runtime.inputTelemetry, currentMonotonicNanoseconds(),
       currentUnixMilliseconds());
   const auto inputFormatNegotiated =
       runtime.inputFormatNegotiated.load(std::memory_order_acquire);
+  auto preferredTarget = std::string{};
+  auto selectedTarget = std::string{};
+  auto systemDefaultTarget = std::string{};
+  auto selectionReason = OutputSelectionReason::unavailable;
+  auto devices = std::vector<OutputDevice>{};
+  {
+    auto lock = std::scoped_lock(runtime.outputStateMutex);
+    preferredTarget = runtime.deviceTracker.preferredTarget();
+    selectedTarget = runtime.deviceTracker.selectedTarget();
+    systemDefaultTarget = runtime.deviceTracker.systemDefaultTarget();
+    selectionReason = runtime.deviceTracker.selectionReason();
+    devices = runtime.deviceTracker.availableDevices();
+  }
+  auto availableOutputs = std::vector<ControlOutputDevice>{};
+  availableOutputs.reserve(devices.size());
+  for (auto &device : devices) {
+    const auto systemDefault = device.name == systemDefaultTarget;
+    const auto preferred = device.name == preferredTarget;
+    const auto selected = device.name == selectedTarget;
+    availableOutputs.push_back(
+        {.name = std::move(device.name),
+         .description = std::move(device.description),
+         .systemDefault = systemDefault,
+         .preferred = preferred,
+         .selected = selected});
+  }
   return {.processingMode = runtime.processingMode,
           .activePreset = runtime.activePreset,
           .configurationError = runtime.configurationError,
           .activePluginCount = runtime.pipeline.activePluginCount(),
-          .selectedTarget = currentPlaybackTarget(runtime),
+          .preferredTarget = std::move(preferredTarget),
+          .selectedTarget = std::move(selectedTarget),
+          .outputSelectionReason =
+              controlOutputSelectionReason(selectionReason),
+          .availableOutputs = std::move(availableOutputs),
           .defaultSinkActive =
               runtime.defaultSinkActive.load(std::memory_order_acquire),
           .overrunFrames = runtime.ring.overrunFrames(),
@@ -1059,6 +1140,38 @@ static std::string provideControlStatus(void *userData) {
   return makeControlStatusEvent(controlStatus(runtime));
 }
 
+static std::string changePreferredOutput(PipeWireRuntime &runtime,
+                                         std::string_view target,
+                                         bool &changed) {
+  if (target == runtime.options.sinkName) {
+    return "PipeTune cannot use its own virtual sink as an output";
+  }
+  auto previous = std::string{};
+  {
+    auto lock = std::scoped_lock(runtime.outputStateMutex);
+    previous = runtime.deviceTracker.preferredTarget();
+    changed =
+        runtime.deviceTracker.setPreferredTarget(std::string(target));
+  }
+  if (!changed) {
+    return {};
+  }
+
+  auto *loop = pw_main_loop_get_loop(runtime.mainLoop);
+  const auto result =
+      pw_loop_signal_event(loop, runtime.outputChangeSource);
+  if (result >= 0) {
+    return {};
+  }
+  {
+    auto lock = std::scoped_lock(runtime.outputStateMutex);
+    static_cast<void>(
+        runtime.deviceTracker.setPreferredTarget(std::move(previous)));
+  }
+  changed = false;
+  return systemError("cannot schedule PipeWire output change", result);
+}
+
 static ControlMessageResult handleControlRequest(std::string_view message,
                                                  void *userData) {
   auto &runtime = *static_cast<PipeWireRuntime *>(userData);
@@ -1074,6 +1187,20 @@ static ControlMessageResult handleControlRequest(std::string_view message,
   }
 
   auto warnings = std::vector<ControlWarning>{};
+  if (request.request.command == ControlCommand::setOutput ||
+      request.request.command == ControlCommand::clearOutput) {
+    auto changed = false;
+    const auto target =
+        request.request.command == ControlCommand::setOutput
+            ? std::string_view(request.request.outputTarget)
+            : std::string_view{};
+    const auto error = changePreferredOutput(runtime, target, changed);
+    if (!error.empty()) {
+      return closeControlResponse(makeControlErrorResponse(error), false);
+    }
+    return closeControlResponse(
+        makeControlSuccessResponse(controlStatus(runtime), warnings), changed);
+  }
   if (request.request.command == ControlCommand::bypass) {
     auto created = createBypassDspPipeline(
         {.sampleRate = static_cast<float>(runtime.options.sampleRate),
@@ -1117,6 +1244,11 @@ static ControlMessageResult handleControlRequest(std::string_view message,
       makeControlSuccessResponse(controlStatus(runtime), warnings), false);
 }
 
+static void outputChangeRequested(void *data, std::uint64_t) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  applyTrackedTarget(runtime);
+}
+
 static bool createControlServer(PipeWireRuntime &runtime) {
   if (runtime.options.controlSocketPath.empty()) {
     return true;
@@ -1141,6 +1273,15 @@ static bool createMainLoop(PipeWireRuntime &runtime) {
   runtime.mainLoop = pw_main_loop_new(nullptr);
   if (runtime.mainLoop == nullptr) {
     failRuntime(runtime, systemError("cannot create PipeWire main loop", -errno));
+    return false;
+  }
+  runtime.outputChangeSource =
+      pw_loop_add_event(pw_main_loop_get_loop(runtime.mainLoop),
+                        outputChangeRequested, &runtime);
+  if (runtime.outputChangeSource == nullptr) {
+    failRuntime(runtime,
+                systemError("cannot create PipeWire output-change event",
+                            -errno));
     return false;
   }
   return true;

@@ -29,7 +29,16 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
                                          : state.activePreset,
           .configurationError = {},
           .activePluginCount = state.bypassed ? 0u : 3u,
+          .preferredTarget = {},
           .selectedTarget = "alsa_output.test",
+          .outputSelectionReason =
+              pipetune::ControlOutputSelectionReason::systemDefault,
+          .availableOutputs =
+              {{.name = "alsa_output.test",
+                .description = "Test Output",
+                .systemDefault = true,
+                .preferred = false,
+                .selected = true}},
           .defaultSinkActive = true,
           .overrunFrames = 0,
           .underrunFrames = 0,
