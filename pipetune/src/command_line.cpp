@@ -12,12 +12,14 @@ static CommandLineOptions defaultOptions() {
           .presetPath = {},
           .configPath = {},
           .controlSocketPath = {},
+          .outputTarget = {},
           .targetObject = {},
           .sinkName = "pipetune_sink",
           .sampleRate = 48000,
           .channelCount = 2,
           .checkOnly = false,
-          .purge = false};
+          .purge = false,
+          .json = false};
 }
 
 static CommandLineParseResult parseError(CommandLineOptions options,
@@ -93,6 +95,92 @@ static CommandLineParseResult parseBypassCommandLine(
   return {.options = std::move(options), .error = {}};
 }
 
+static CommandLineParseResult parseOutputCommandLine(
+    std::span<const std::string_view> arguments) {
+  auto options = defaultOptions();
+  if (arguments.empty()) {
+    return parseError(std::move(options),
+                      "output requires list, get, set, clear, or select");
+  }
+  const auto operation = arguments.front();
+  if (operation == "list") {
+    options.action = CommandLineAction::outputList;
+  } else if (operation == "get") {
+    options.action = CommandLineAction::outputGet;
+  } else if (operation == "set") {
+    options.action = CommandLineAction::outputSet;
+  } else if (operation == "clear") {
+    options.action = CommandLineAction::outputClear;
+  } else if (operation == "select") {
+    options.action = CommandLineAction::outputSelect;
+  } else {
+    return parseError(std::move(options),
+                      "unknown output operation: " +
+                          std::string(operation));
+  }
+
+  auto sawSocket = false;
+  auto sawTarget = false;
+  for (auto index = std::size_t{1}; index < arguments.size(); ++index) {
+    const auto argument = arguments[index];
+    if (argument == "--json") {
+      if (options.action != CommandLineAction::outputList &&
+          options.action != CommandLineAction::outputGet) {
+        return parseError(
+            std::move(options),
+            "--json is supported only by output list and output get");
+      }
+      if (options.json) {
+        return parseError(std::move(options), "duplicate option: --json");
+      }
+      options.json = true;
+      continue;
+    }
+    if (argument == "--socket") {
+      if (sawSocket) {
+        return parseError(std::move(options),
+                          "duplicate option: --socket");
+      }
+      if (index + 1 >= arguments.size()) {
+        return parseError(std::move(options),
+                          "missing value for --socket");
+      }
+      const auto value = arguments[++index];
+      if (value.empty()) {
+        return parseError(std::move(options),
+                          "--socket must not be empty");
+      }
+      sawSocket = true;
+      options.controlSocketPath = value;
+      continue;
+    }
+    if (options.action != CommandLineAction::outputSet) {
+      return parseError(std::move(options),
+                        "unknown output option: " +
+                            std::string(argument));
+    }
+    if (sawTarget) {
+      return parseError(std::move(options),
+                        "output set accepts exactly one target");
+    }
+    if (argument.empty() ||
+        argument.find('\n') != std::string_view::npos ||
+        argument.find('\r') != std::string_view::npos ||
+        argument.find('\0') != std::string_view::npos) {
+      return parseError(
+          std::move(options),
+          "output target must be a non-empty single line without NUL");
+    }
+    sawTarget = true;
+    options.outputTarget = argument;
+  }
+  if (options.action == CommandLineAction::outputSet && !sawTarget) {
+    return parseError(std::move(options),
+                      "output set requires a target");
+  }
+  return {.options = std::move(options), .error = {}};
+}
+
 static CommandLineParseResult parseSetupCommandLine(
     std::span<const std::string_view> arguments) {
   auto options = defaultOptions();
@@ -154,6 +242,9 @@ CommandLineParseResult parseCommandLine(
   }
   if (!arguments.empty() && arguments.front() == "bypass") {
     return parseBypassCommandLine(arguments.subspan(1));
+  }
+  if (!arguments.empty() && arguments.front() == "output") {
+    return parseOutputCommandLine(arguments.subspan(1));
   }
   if (!arguments.empty() && arguments.front() == "setup") {
     return parseSetupCommandLine(arguments.subspan(1));
@@ -335,6 +426,11 @@ std::string_view commandLineUsage() noexcept {
   return "Usage:\n"
          "  pipetune daemon [--config PATH]\n"
          "  pipetune bypass [--socket PATH]\n"
+         "  pipetune output list [--json] [--socket PATH]\n"
+         "  pipetune output get [--json] [--socket PATH]\n"
+         "  pipetune output set TARGET [--socket PATH]\n"
+         "  pipetune output clear [--socket PATH]\n"
+         "  pipetune output select [--socket PATH]\n"
          "  pipetune setup [--preset FILE]\n"
          "  pipetune unsetup [--purge]\n"
          "  pipetune --preset FILE [--target OBJECT] [--sink-name NAME]\n"
@@ -348,6 +444,12 @@ std::string_view commandLineUsage() noexcept {
          "Options:\n"
          "  --config PATH    Read daemon startup configuration from PATH.\n"
          "  bypass           Disable DSP live and for future daemon starts.\n"
+         "  output list      List physical outputs reported by the daemon.\n"
+         "  output get       Show the preferred and effective output.\n"
+         "  output set       Prefer a PipeWire output by its node.name.\n"
+         "  output clear     Follow the system-default physical output.\n"
+         "  output select    Choose an output from an interactive terminal.\n"
+         "  --json           Print the complete machine-readable status.\n"
          "  setup            Enable PipeTune for the current user.\n"
          "  unsetup          Disable PipeTune for the current user.\n"
          "  --purge          Remove PipeTune app configuration during unsetup.\n"

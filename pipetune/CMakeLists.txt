@@ -176,6 +176,7 @@ add_library(
   src/default_sink_restore.cpp
   src/dsp_pipeline_slot.cpp
   src/input_telemetry.cpp
+  src/output_command.cpp
   src/output_device_tracker.cpp
   src/pipewire_pipeline.cpp
   src/process_runner.cpp
@@ -380,6 +381,24 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_bypass_command_tests
     COMMAND pipetune_bypass_command_tests)
+
+  add_executable(
+    pipetune_output_command_tests
+    test/output_command_test.cpp)
+  target_include_directories(pipetune_output_command_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_output_command_tests
+    PRIVATE pipetune_pipewire Threads::Threads)
+  if(MSVC)
+    target_compile_options(pipetune_output_command_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_output_command_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_output_command_tests
+    COMMAND pipetune_output_command_tests)
 
   add_executable(
     pipetune_process_runner_tests

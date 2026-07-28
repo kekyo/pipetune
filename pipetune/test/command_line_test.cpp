@@ -112,6 +112,63 @@ static bool testBypassAction() {
                "explicit bypass socket differs");
 }
 
+static bool testOutputActions() {
+  constexpr auto list =
+      std::array<std::string_view, 2>{"output", "list"};
+  constexpr auto jsonList = std::array<std::string_view, 5>{
+      "output", "list", "--json", "--socket", "/tmp/pipetune.sock"};
+  constexpr auto get =
+      std::array<std::string_view, 3>{"output", "get", "--json"};
+  constexpr auto set = std::array<std::string_view, 5>{
+      "output", "set", "alsa_output.usb", "--socket", "/tmp/pipetune.sock"};
+  constexpr auto clear = std::array<std::string_view, 4>{
+      "output", "clear", "--socket", "/tmp/pipetune.sock"};
+  constexpr auto select = std::array<std::string_view, 4>{
+      "output", "select", "--socket", "/tmp/pipetune.sock"};
+  const auto listResult = pipetune::parseCommandLine(list);
+  const auto jsonListResult = pipetune::parseCommandLine(jsonList);
+  const auto getResult = pipetune::parseCommandLine(get);
+  const auto setResult = pipetune::parseCommandLine(set);
+  const auto clearResult = pipetune::parseCommandLine(clear);
+  const auto selectResult = pipetune::parseCommandLine(select);
+  return check(listResult.error.empty(), listResult.error) &&
+         check(listResult.options.action ==
+                   pipetune::CommandLineAction::outputList,
+               "output list action differs") &&
+         check(!listResult.options.json,
+               "output list must default to human-readable output") &&
+         check(jsonListResult.error.empty(), jsonListResult.error) &&
+         check(jsonListResult.options.action ==
+                   pipetune::CommandLineAction::outputList &&
+                   jsonListResult.options.json,
+               "output list --json action differs") &&
+         check(jsonListResult.options.controlSocketPath ==
+                   "/tmp/pipetune.sock",
+               "output list socket differs") &&
+         check(getResult.error.empty(), getResult.error) &&
+         check(getResult.options.action ==
+                   pipetune::CommandLineAction::outputGet &&
+                   getResult.options.json,
+               "output get action differs") &&
+         check(setResult.error.empty(), setResult.error) &&
+         check(setResult.options.action ==
+                   pipetune::CommandLineAction::outputSet,
+               "output set action differs") &&
+         check(setResult.options.outputTarget == "alsa_output.usb",
+               "output set target differs") &&
+         check(setResult.options.controlSocketPath ==
+                   "/tmp/pipetune.sock",
+               "output set socket differs") &&
+         check(clearResult.error.empty(), clearResult.error) &&
+         check(clearResult.options.action ==
+                   pipetune::CommandLineAction::outputClear,
+               "output clear action differs") &&
+         check(selectResult.error.empty(), selectResult.error) &&
+         check(selectResult.options.action ==
+                   pipetune::CommandLineAction::outputSelect,
+               "output select action differs");
+}
+
 static bool testUserSetupActions() {
   constexpr auto setup = std::array<std::string_view, 1>{"setup"};
   constexpr auto setupPreset = std::array<std::string_view, 3>{
@@ -187,6 +244,14 @@ static bool testInformationalActions() {
                    std::string_view::npos,
                "usage must explain persistent bypass") &&
          check(pipetune::commandLineUsage().find(
+                   "pipetune output list [--json] [--socket PATH]") !=
+                   std::string_view::npos,
+               "usage must explain output listing") &&
+         check(pipetune::commandLineUsage().find(
+                   "pipetune output set TARGET [--socket PATH]") !=
+                   std::string_view::npos,
+               "usage must explain preferred-output selection") &&
+         check(pipetune::commandLineUsage().find(
                    "pipetune setup [--preset FILE]") !=
                    std::string_view::npos,
                "usage must explain per-user setup") &&
@@ -241,6 +306,24 @@ static bool testRejectedArguments() {
       "unsetup", "--preset", "/tmp/a.effetune_preset"};
   constexpr auto duplicatePurge =
       std::array<std::string_view, 3>{"unsetup", "--purge", "--purge"};
+  constexpr auto outputWithoutAction =
+      std::array<std::string_view, 1>{"output"};
+  constexpr auto unknownOutputAction =
+      std::array<std::string_view, 2>{"output", "future"};
+  constexpr auto setWithoutTarget =
+      std::array<std::string_view, 2>{"output", "set"};
+  constexpr auto setWithTwoTargets = std::array<std::string_view, 4>{
+      "output", "set", "alsa_output.one", "alsa_output.two"};
+  constexpr auto clearWithTarget = std::array<std::string_view, 3>{
+      "output", "clear", "alsa_output.one"};
+  constexpr auto setWithJson = std::array<std::string_view, 4>{
+      "output", "set", "alsa_output.one", "--json"};
+  constexpr auto selectWithJson =
+      std::array<std::string_view, 3>{"output", "select", "--json"};
+  constexpr auto duplicateOutputJson =
+      std::array<std::string_view, 4>{"output", "get", "--json", "--json"};
+  constexpr auto duplicateOutputSocket = std::array<std::string_view, 6>{
+      "output", "list", "--socket", "/tmp/a", "--socket", "/tmp/b"};
 
   return check(!pipetune::parseCommandLine(missingPreset).error.empty(),
                "missing preset must fail") &&
@@ -285,13 +368,31 @@ static bool testRejectedArguments() {
          check(!pipetune::parseCommandLine(unsetupWithPreset).error.empty(),
                "unsetup must reject preset selection") &&
          check(!pipetune::parseCommandLine(duplicatePurge).error.empty(),
-               "unsetup must reject duplicate --purge");
+               "unsetup must reject duplicate --purge") &&
+         check(!pipetune::parseCommandLine(outputWithoutAction).error.empty(),
+               "output must require a subcommand") &&
+         check(!pipetune::parseCommandLine(unknownOutputAction).error.empty(),
+               "output must reject unknown subcommands") &&
+         check(!pipetune::parseCommandLine(setWithoutTarget).error.empty(),
+               "output set must require a target") &&
+         check(!pipetune::parseCommandLine(setWithTwoTargets).error.empty(),
+               "output set must reject duplicate targets") &&
+         check(!pipetune::parseCommandLine(clearWithTarget).error.empty(),
+               "output clear must reject a target") &&
+         check(!pipetune::parseCommandLine(setWithJson).error.empty(),
+               "output set must reject --json") &&
+         check(!pipetune::parseCommandLine(selectWithJson).error.empty(),
+               "output select must reject --json") &&
+         check(!pipetune::parseCommandLine(duplicateOutputJson).error.empty(),
+               "output get must reject duplicate --json") &&
+         check(!pipetune::parseCommandLine(duplicateOutputSocket).error.empty(),
+               "output list must reject duplicate sockets");
 }
 
 int main() {
   const auto passed = testRunDefaults() && testExplicitOptions() &&
                       testControlActions() && testDaemonAction() &&
-                      testBypassAction() &&
+                      testBypassAction() && testOutputActions() &&
                       testUserSetupActions() &&
                       testDefaultRestorationAction() &&
                       testInformationalActions() && testRejectedArguments();
