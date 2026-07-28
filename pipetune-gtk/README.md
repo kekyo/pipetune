@@ -93,10 +93,11 @@ the remaining command-line information.
 
 ## Install and autostart
 
-The root installation installs the daemon, GUI, service, desktop entry,
-autostart entry, and icon together:
+Build as the desktop user, then install the daemon, GUI, service, desktop
+entry, autostart entry, and icon together:
 
 ```sh
+make PREFIX=/usr
 sudo make install PREFIX=/usr
 ```
 

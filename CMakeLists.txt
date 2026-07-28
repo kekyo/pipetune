@@ -13,6 +13,7 @@ endif()
 if(BUILD_TESTING)
   find_program(PIPETUNE_PACKAGE_NODE_EXECUTABLE node REQUIRED)
   find_program(PIPETUNE_PACKAGE_DPKG_DEB_EXECUTABLE dpkg-deb REQUIRED)
+  find_program(PIPETUNE_PACKAGE_MAKE_EXECUTABLE make REQUIRED)
   add_test(
     NAME pipetune_package_build_scripts
     COMMAND
@@ -22,4 +23,12 @@ if(BUILD_TESTING)
       "${PIPETUNE_PACKAGE_DPKG_DEB_EXECUTABLE}")
   set_tests_properties(
     pipetune_package_build_scripts PROPERTIES TIMEOUT 30)
+  add_test(
+    NAME pipetune_makefile_install
+    COMMAND
+      "${PIPETUNE_PACKAGE_NODE_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/test/makefile-install.mjs"
+      "${CMAKE_CURRENT_SOURCE_DIR}"
+      "${PIPETUNE_PACKAGE_MAKE_EXECUTABLE}")
+  set_tests_properties(pipetune_makefile_install PROPERTIES TIMEOUT 10)
 endif()

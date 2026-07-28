@@ -235,11 +235,16 @@ container for its target distribution and architecture, where both
 
 ## Install as a user service
 
-Install under `/usr`:
+Build as the desktop user, then install under `/usr`:
 
 ```sh
+make PREFIX=/usr
 sudo make install PREFIX=/usr
 ```
+
+For a user-writable prefix, `make build-install PREFIX=...` retains the
+combined configure, build, and install workflow. Do not run `build-install`
+with `sudo`.
 
 For end-user installation from a prebuilt Debian package, see the
 [workspace installation guide](../README.md#download-and-install).

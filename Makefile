@@ -4,7 +4,7 @@ BUILD_TYPE ?= Release
 PREFIX ?= /usr/local
 DESTDIR ?=
 
-.PHONY: all test install
+.PHONY: all test install build-install
 
 all:
 	cmake -S . -B "$(BUILD_DIR)" -DCMAKE_BUILD_TYPE="$(BUILD_TYPE)" -DCMAKE_INSTALL_PREFIX="$(PREFIX)" -DBUILD_TESTING=OFF
@@ -15,5 +15,8 @@ test:
 	cmake --build "$(TEST_BUILD_DIR)" --parallel
 	ctest --test-dir "$(TEST_BUILD_DIR)" --output-on-failure
 
-install: all
+install:
+	cmake --install "$(BUILD_DIR)" --prefix "$(PREFIX)" --strip
+
+build-install: all
 	cmake --install "$(BUILD_DIR)" --prefix "$(PREFIX)" --strip
