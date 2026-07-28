@@ -29,8 +29,12 @@ static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
                "startup preset label type differs") &&
          check(GTK_IS_LABEL(ui.pluginCountLabel),
                "plugin count label type differs") &&
+         check(GTK_IS_COMBO_BOX_TEXT(ui.outputCombo),
+               "output combo-box type differs") &&
          check(GTK_IS_LABEL(ui.targetLabel),
                "target label type differs") &&
+         check(GTK_IS_LABEL(ui.outputReasonLabel),
+               "output reason label type differs") &&
          check(GTK_IS_LABEL(ui.defaultSinkLabel),
                "default sink label type differs") &&
          check(GTK_IS_LABEL(ui.inputFrameRateLabel),
@@ -86,8 +90,16 @@ int main(int argc, char **argv) {
             "main window default size differs") &&
       check(gtk_widget_get_hexpand(ui.statusLabel) != FALSE,
             "status label must expand");
+  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ui.outputCombo),
+                                 "System default");
+  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ui.outputCombo),
+                                 "USB Headphones");
+  gtk_combo_box_set_active(GTK_COMBO_BOX(ui.outputCombo), 1);
+  const auto selectionWorks =
+      check(gtk_combo_box_get_active(GTK_COMBO_BOX(ui.outputCombo)) == 1,
+            "output combo-box selection differs");
 
   pipetune_gtk::destroyMainWindowUi(ui);
   g_object_unref(application);
-  return valid ? 0 : 1;
+  return valid && selectionWorks ? 0 : 1;
 }

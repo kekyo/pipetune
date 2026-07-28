@@ -44,8 +44,13 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
           requiredWidget(builder, "startupPresetLabel", GTK_TYPE_LABEL),
       .pluginCountLabel =
           requiredWidget(builder, "pluginCountLabel", GTK_TYPE_LABEL),
+      .outputCombo =
+          requiredWidget(builder, "outputCombo",
+                         GTK_TYPE_COMBO_BOX_TEXT),
       .targetLabel =
           requiredWidget(builder, "targetLabel", GTK_TYPE_LABEL),
+      .outputReasonLabel =
+          requiredWidget(builder, "outputReasonLabel", GTK_TYPE_LABEL),
       .defaultSinkLabel =
           requiredWidget(builder, "defaultSinkLabel", GTK_TYPE_LABEL),
       .inputFrameRateLabel =

@@ -504,4 +504,18 @@ void bypassControlAsync(ControlClient *client,
                userData);
 }
 
+void setControlOutputAsync(ControlClient *client, std::string_view target,
+                           ControlClientReplyCallback callback,
+                           void *userData) {
+  startRequest(client, pipetune::makeSetOutputControlRequest(target),
+               callback, userData);
+}
+
+void clearControlOutputAsync(ControlClient *client,
+                             ControlClientReplyCallback callback,
+                             void *userData) {
+  startRequest(client, pipetune::makeClearOutputControlRequest(), callback,
+               userData);
+}
+
 } // namespace pipetune_gtk

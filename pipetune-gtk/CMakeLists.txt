@@ -66,6 +66,8 @@ add_library(
   pipetune_gtk_core STATIC
   src/application-state.cpp
   src/control-client.cpp
+  src/output-operation.cpp
+  src/output-selection-model.cpp
   src/status-text.cpp)
 target_include_directories(pipetune_gtk_core PUBLIC src)
 target_link_libraries(
@@ -171,6 +173,40 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_gtk_state_config_tests
     COMMAND pipetune_gtk_state_config_tests)
+
+  add_executable(
+    pipetune_gtk_output_selection_model_tests
+    test/output-selection-model-test.cpp)
+  target_link_libraries(
+    pipetune_gtk_output_selection_model_tests PRIVATE pipetune_gtk_core)
+  if(MSVC)
+    target_compile_options(
+      pipetune_gtk_output_selection_model_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_output_selection_model_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_gtk_output_selection_model_tests
+    COMMAND pipetune_gtk_output_selection_model_tests)
+
+  add_executable(
+    pipetune_gtk_output_operation_tests
+    test/output-operation-test.cpp)
+  target_link_libraries(
+    pipetune_gtk_output_operation_tests PRIVATE pipetune_gtk_core)
+  if(MSVC)
+    target_compile_options(
+      pipetune_gtk_output_operation_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_output_operation_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_gtk_output_operation_tests
+    COMMAND pipetune_gtk_output_operation_tests)
 
   add_executable(
     pipetune_gtk_status_text_tests

@@ -29,8 +29,12 @@ struct MainWindowUi {
   GtkWidget *startupPresetLabel = nullptr;
   /** Active DSP node count text. */
   GtkWidget *pluginCountLabel = nullptr;
+  /** User-preferred physical output drop-down. */
+  GtkWidget *outputCombo = nullptr;
   /** Selected output target text. */
   GtkWidget *targetLabel = nullptr;
+  /** Engine-owned output-selection reason text. */
+  GtkWidget *outputReasonLabel = nullptr;
   /** Default sink activity text. */
   GtkWidget *defaultSinkLabel = nullptr;
   /** Measured input frame-rate text. */

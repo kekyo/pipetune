@@ -18,6 +18,7 @@ struct ServerState {
   std::mutex mutex;
   std::string activePreset;
   bool bypassed;
+  std::string preferredTarget;
 };
 
 static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
@@ -29,16 +30,27 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
                                          : state.activePreset,
           .configurationError = {},
           .activePluginCount = state.bypassed ? 0u : 3u,
-          .preferredTarget = {},
-          .selectedTarget = "alsa_output.test",
+          .preferredTarget = state.preferredTarget,
+          .selectedTarget = state.preferredTarget.empty()
+                                ? std::string("alsa_output.test")
+                                : state.preferredTarget,
           .outputSelectionReason =
-              pipetune::ControlOutputSelectionReason::systemDefault,
+              state.preferredTarget.empty()
+                  ? pipetune::ControlOutputSelectionReason::systemDefault
+                  : pipetune::ControlOutputSelectionReason::preferred,
           .availableOutputs =
               {{.name = "alsa_output.test",
                 .description = "Test Output",
                 .systemDefault = true,
                 .preferred = false,
-                .selected = true}},
+                .selected = state.preferredTarget.empty()},
+               {.name = "alsa_output.headphones",
+                .description = "Test Headphones",
+                .systemDefault = false,
+                .preferred =
+                    state.preferredTarget == "alsa_output.headphones",
+                .selected =
+                    state.preferredTarget == "alsa_output.headphones"}},
           .defaultSinkActive = true,
           .overrunFrames = 0,
           .underrunFrames = 0,
@@ -91,6 +103,26 @@ static pipetune::ControlMessageResult handleRequest(
             .connectionMode = pipetune::ControlConnectionMode::close,
             .publishStatus = true};
   }
+  if (request.request.command == pipetune::ControlCommand::setOutput) {
+    {
+      auto lock = std::scoped_lock(state.mutex);
+      state.preferredTarget = request.request.outputTarget;
+    }
+    return {.response = pipetune::makeControlSuccessResponse(
+                serverStatus(state), {}),
+            .connectionMode = pipetune::ControlConnectionMode::close,
+            .publishStatus = true};
+  }
+  if (request.request.command == pipetune::ControlCommand::clearOutput) {
+    {
+      auto lock = std::scoped_lock(state.mutex);
+      state.preferredTarget.clear();
+    }
+    return {.response = pipetune::makeControlSuccessResponse(
+                serverStatus(state), {}),
+            .connectionMode = pipetune::ControlConnectionMode::close,
+            .publishStatus = true};
+  }
   return {.response =
               pipetune::makeControlSuccessResponse(serverStatus(state), {}),
           .connectionMode = pipetune::ControlConnectionMode::close,
@@ -107,6 +139,12 @@ struct ClientTestState {
   bool publishedStatus;
   bool bypassReply;
   bool publishedBypass;
+  bool setOutputRequested;
+  bool setOutputReply;
+  bool publishedSetOutput;
+  bool clearOutputRequested;
+  bool clearOutputReply;
+  bool publishedClearOutput;
   bool disconnected;
   bool timedOut;
   bool failed;
@@ -120,9 +158,64 @@ static gboolean stopServer(gpointer userData) {
 
 static void maybeStopServer(ClientTestState &state) {
   if (state.loadReply && state.publishedStatus && state.bypassReply &&
-      state.publishedBypass && *state.server != nullptr) {
+      state.publishedBypass && state.setOutputReply &&
+      state.publishedSetOutput && state.clearOutputReply &&
+      state.publishedClearOutput && *state.server != nullptr) {
     g_idle_add(stopServer, &state);
   }
+}
+
+static void maybeStartClearOutput(ClientTestState &state);
+
+static void onSetOutputReply(
+    const pipetune_gtk::ControlClientReply &reply, void *userData) {
+  auto &state = *static_cast<ClientTestState *>(userData);
+  if (!reply.transportError.empty() || !reply.response.valid ||
+      !reply.response.success ||
+      reply.response.status.preferredTarget !=
+          "alsa_output.headphones" ||
+      reply.response.status.selectedTarget !=
+          "alsa_output.headphones") {
+    state.failed = true;
+  } else {
+    state.setOutputReply = true;
+  }
+  maybeStartClearOutput(state);
+}
+
+static void onClearOutputReply(
+    const pipetune_gtk::ControlClientReply &reply, void *userData) {
+  auto &state = *static_cast<ClientTestState *>(userData);
+  if (!reply.transportError.empty() || !reply.response.valid ||
+      !reply.response.success ||
+      !reply.response.status.preferredTarget.empty() ||
+      reply.response.status.outputSelectionReason !=
+          pipetune::ControlOutputSelectionReason::systemDefault) {
+    state.failed = true;
+  } else {
+    state.clearOutputReply = true;
+  }
+  maybeStopServer(state);
+}
+
+static void maybeStartClearOutput(ClientTestState &state) {
+  if (state.setOutputReply && state.publishedSetOutput &&
+      !state.clearOutputRequested) {
+    state.clearOutputRequested = true;
+    pipetune_gtk::clearControlOutputAsync(
+        state.client, onClearOutputReply, &state);
+  }
+  maybeStopServer(state);
+}
+
+static void maybeStartSetOutput(ClientTestState &state) {
+  if (state.bypassReply && state.publishedBypass &&
+      !state.setOutputRequested) {
+    state.setOutputRequested = true;
+    pipetune_gtk::setControlOutputAsync(
+        state.client, "alsa_output.headphones", onSetOutputReply, &state);
+  }
+  maybeStopServer(state);
 }
 
 static void onBypassReply(
@@ -137,7 +230,7 @@ static void onBypassReply(
   } else {
     state.bypassReply = true;
   }
-  maybeStopServer(state);
+  maybeStartSetOutput(state);
 }
 
 static void onLoadReply(
@@ -178,8 +271,24 @@ static void onMessage(
     }
   } else if (message.status.processingMode ==
                  pipetune::ProcessingMode::bypass &&
-             message.status.activePreset.empty()) {
-    state.publishedBypass = true;
+             message.status.activePreset.empty() &&
+             message.status.preferredTarget ==
+                 "alsa_output.headphones") {
+    state.publishedSetOutput = true;
+    maybeStartClearOutput(state);
+    return;
+  } else if (message.status.processingMode ==
+                 pipetune::ProcessingMode::bypass &&
+             message.status.activePreset.empty() &&
+             message.status.preferredTarget.empty()) {
+    if (!state.setOutputRequested) {
+      state.publishedBypass = true;
+      maybeStartSetOutput(state);
+      return;
+    }
+    if (state.clearOutputRequested) {
+      state.publishedClearOutput = true;
+    }
   } else {
     state.failed = true;
   }
@@ -215,7 +324,8 @@ int main() {
   auto serverState =
       ServerState{.mutex = {},
                   .activePreset = "/tmp/initial.effetune_preset",
-                  .bypassed = false};
+                  .bypassed = false,
+                  .preferredTarget = {}};
   auto started = pipetune::startControlServer(
       socketPath,
       {.handler = handleRequest,
@@ -238,6 +348,12 @@ int main() {
       .publishedStatus = false,
       .bypassReply = false,
       .publishedBypass = false,
+      .setOutputRequested = false,
+      .setOutputReply = false,
+      .publishedSetOutput = false,
+      .clearOutputRequested = false,
+      .clearOutputReply = false,
+      .publishedClearOutput = false,
       .disconnected = false,
       .timedOut = false,
       .failed = false,
@@ -261,7 +377,9 @@ int main() {
   if (state.failed || state.timedOut || !state.connected ||
       !state.initialStatus || !state.loadReply ||
       !state.publishedStatus || !state.bypassReply ||
-      !state.publishedBypass || !state.disconnected) {
+      !state.publishedBypass || !state.setOutputReply ||
+      !state.publishedSetOutput || !state.clearOutputReply ||
+      !state.publishedClearOutput || !state.disconnected) {
     std::cerr << "asynchronous control client lifecycle differs\n";
     return 1;
   }

@@ -54,7 +54,7 @@ struct ControlClientReply {
 };
 
 /**
- * Receives one asynchronous status or load reply.
+ * Receives one asynchronous one-shot control reply.
  *
  * @param reply Completed request result.
  * @param userData Opaque request argument.
@@ -132,6 +132,29 @@ void loadControlPresetAsync(ControlClient *client,
 void bypassControlAsync(ControlClient *client,
                         ControlClientReplyCallback callback,
                         void *userData);
+
+/**
+ * Requests an explicit preferred physical output.
+ *
+ * @param client Client used for the request.
+ * @param target Non-empty PipeWire node.name interpreted by the daemon.
+ * @param callback Non-null completion callback.
+ * @param userData Opaque callback argument.
+ */
+void setControlOutputAsync(ControlClient *client, std::string_view target,
+                           ControlClientReplyCallback callback,
+                           void *userData);
+
+/**
+ * Requests system-default output mode.
+ *
+ * @param client Client used for the request.
+ * @param callback Non-null completion callback.
+ * @param userData Opaque callback argument.
+ */
+void clearControlOutputAsync(ControlClient *client,
+                             ControlClientReplyCallback callback,
+                             void *userData);
 
 } // namespace pipetune_gtk
 

@@ -2,6 +2,8 @@
 #include "control-client.h"
 #include "launch-options.h"
 #include "main-window.h"
+#include "output-operation.h"
+#include "output-selection-model.h"
 #include "status-icon.h"
 #include "status-text.h"
 #include "tray-backend.h"
@@ -38,6 +40,11 @@ struct GtkRuntime {
   std::filesystem::path startupPreset;
   bool hasStartupPreset;
   std::filesystem::path pendingPreset;
+  std::vector<OutputDeviceChoice> outputChoices;
+  bool updatingOutputCombo;
+  bool outputChangePending;
+  bool pendingOutputClear;
+  std::string pendingOutputTarget;
   guint reconnectSource;
   bool applicationHeld;
   bool activationHandled;
@@ -160,6 +167,34 @@ static void releaseStatusArtwork(GtkRuntime *runtime) noexcept {
   }
 }
 
+static void renderOutputSelection(GtkRuntime *runtime) {
+  const auto presentation =
+      makeOutputSelectionPresentation(runtime->state);
+  gtk_label_set_text(GTK_LABEL(runtime->ui.targetLabel),
+                     presentation.effectiveOutput.c_str());
+  gtk_label_set_text(GTK_LABEL(runtime->ui.outputReasonLabel),
+                     presentation.reason.c_str());
+
+  if (!runtime->outputChangePending) {
+    runtime->updatingOutputCombo = true;
+    gtk_combo_box_text_remove_all(
+        GTK_COMBO_BOX_TEXT(runtime->ui.outputCombo));
+    runtime->outputChoices = presentation.choices;
+    for (const auto &choice : runtime->outputChoices) {
+      gtk_combo_box_text_append_text(
+          GTK_COMBO_BOX_TEXT(runtime->ui.outputCombo),
+          choice.label.c_str());
+    }
+    gtk_combo_box_set_active(
+        GTK_COMBO_BOX(runtime->ui.outputCombo),
+        static_cast<gint>(presentation.activeIndex));
+    runtime->updatingOutputCombo = false;
+  }
+  gtk_widget_set_sensitive(runtime->ui.outputCombo,
+                           presentation.sensitive &&
+                               !runtime->outputChangePending);
+}
+
 static void render(GtkRuntime *runtime) {
   if (runtime == nullptr || runtime->ui.window == nullptr) {
     return;
@@ -212,13 +247,7 @@ static void render(GtkRuntime *runtime) {
           : std::string("—");
   gtk_label_set_text(GTK_LABEL(runtime->ui.pluginCountLabel),
                      pluginCount.c_str());
-  const auto target =
-      runtime->state.hasRuntimeStatus
-          ? (runtime->state.runtime.selectedTarget.empty()
-                 ? std::string("Unavailable")
-                 : runtime->state.runtime.selectedTarget)
-          : std::string("—");
-  gtk_label_set_text(GTK_LABEL(runtime->ui.targetLabel), target.c_str());
+  renderOutputSelection(runtime);
   const auto defaultSink =
       runtime->state.hasRuntimeStatus
           ? (runtime->state.runtime.defaultSinkActive ? "Active"
@@ -369,6 +398,63 @@ static void requestFreshStatus(GtkRuntime *runtime) {
 
 static void onRefreshClicked(GtkButton *, gpointer userData) {
   requestFreshStatus(static_cast<GtkRuntime *>(userData));
+}
+
+static void onOutputReply(const ControlClientReply &reply,
+                          void *userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  const auto completion = completeOutputOperation(
+      runtime->state, reply,
+      {.configPath = runtime->startupConfigPath,
+       .clearPreference = runtime->pendingOutputClear,
+       .target = runtime->pendingOutputTarget},
+      currentMonotonicMilliseconds());
+  runtime->outputChangePending = false;
+  runtime->pendingOutputClear = false;
+  runtime->pendingOutputTarget.clear();
+  if (completion.reconnectRequired) {
+    scheduleReconnect(runtime);
+  }
+  render(runtime);
+}
+
+static void onOutputChanged(GtkComboBox *combo, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (runtime->updatingOutputCombo || runtime->outputChangePending ||
+      runtime->state.operationPending ||
+      runtime->state.connection != ControlConnectionState::connected ||
+      !runtime->state.hasRuntimeStatus ||
+      runtime->controlClient == nullptr) {
+    return;
+  }
+  const auto selected = gtk_combo_box_get_active(combo);
+  if (selected < 0 ||
+      static_cast<std::size_t>(selected) >=
+          runtime->outputChoices.size()) {
+    return;
+  }
+  const auto &choice =
+      runtime->outputChoices[static_cast<std::size_t>(selected)];
+  if ((choice.clearPreference &&
+       runtime->state.runtime.preferredTarget.empty()) ||
+      (!choice.clearPreference &&
+       choice.target == runtime->state.runtime.preferredTarget)) {
+    return;
+  }
+
+  clearControlNotice(runtime->state);
+  runtime->outputChangePending = true;
+  runtime->pendingOutputClear = choice.clearPreference;
+  runtime->pendingOutputTarget = choice.target;
+  setControlOperationPending(runtime->state, true);
+  render(runtime);
+  if (choice.clearPreference) {
+    clearControlOutputAsync(runtime->controlClient, onOutputReply,
+                            runtime);
+  } else {
+    setControlOutputAsync(runtime->controlClient, choice.target,
+                          onOutputReply, runtime);
+  }
 }
 
 static std::string savePendingPreset(GtkRuntime *runtime) {
@@ -535,6 +621,8 @@ static void connectMainWindowSignals(GtkRuntime *runtime) {
                    G_CALLBACK(onWindowDestroy), runtime);
   g_signal_connect(runtime->ui.refreshButton, "clicked",
                    G_CALLBACK(onRefreshClicked), runtime);
+  g_signal_connect(runtime->ui.outputCombo, "changed",
+                   G_CALLBACK(onOutputChanged), runtime);
   g_signal_connect(runtime->ui.applyButton, "clicked",
                    G_CALLBACK(onApplyClicked), runtime);
   g_signal_connect(runtime->ui.bypassButton, "clicked",
@@ -725,6 +813,11 @@ static int runApplication(int argc, char **argv) {
       .startupPreset = {},
       .hasStartupPreset = false,
       .pendingPreset = {},
+      .outputChoices = {},
+      .updatingOutputCombo = false,
+      .outputChangePending = false,
+      .pendingOutputClear = false,
+      .pendingOutputTarget = {},
       .reconnectSource = 0,
       .applicationHeld = false,
       .activationHandled = false,

@@ -184,7 +184,7 @@
             </child>
             <child>
               <object class="GtkLabel">
-                <property name="label">Output target</property>
+                <property name="label">Effective output</property>
                 <property name="xalign">0</property>
                 <style>
                   <class name="dim-label"/>
@@ -368,6 +368,64 @@
           <packing>
             <property name="expand">False</property>
             <property name="fill">False</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkGrid">
+            <property name="column-spacing">18</property>
+            <property name="row-spacing">10</property>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Output preference</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+              <packing>
+                <property name="left-attach">0</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkComboBoxText" id="outputCombo">
+                <property name="hexpand">True</property>
+                <property name="tooltip-text">Choose a physical output or follow the system default</property>
+              </object>
+              <packing>
+                <property name="left-attach">1</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Selection reason</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+              <packing>
+                <property name="left-attach">0</property>
+                <property name="top-attach">1</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel" id="outputReasonLabel">
+                <property name="label">—</property>
+                <property name="xalign">0</property>
+                <property name="wrap">True</property>
+                <property name="hexpand">True</property>
+              </object>
+              <packing>
+                <property name="left-attach">1</property>
+                <property name="top-attach">1</property>
+              </packing>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">True</property>
           </packing>
         </child>
         <child>
