@@ -3,6 +3,7 @@
 
 #include "pipetune/control_protocol.h"
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -34,6 +35,28 @@ enum class TrayVisualState {
 };
 
 /**
+ * Stores the GUI's input frame-rate measurement state.
+ */
+struct InputRateState {
+  /** True after a compatible cumulative-frame baseline was received. */
+  bool hasBaseline;
+  /** Cumulative frame count at the current measurement baseline. */
+  std::uint64_t baselineFrames;
+  /** Monotonic time of the current measurement baseline in milliseconds. */
+  std::int64_t baselineMonotonicMilliseconds;
+  /** Sample format associated with the current measurement baseline. */
+  std::string baselineSampleFormat;
+  /** Sample rate associated with the current measurement baseline. */
+  std::uint32_t baselineSampleRate;
+  /** Channel count associated with the current measurement baseline. */
+  std::uint32_t baselineChannelCount;
+  /** True after at least one sufficiently long interval was measured. */
+  bool hasRate;
+  /** Most recently measured input frames per second. */
+  double framesPerSecond;
+};
+
+/**
  * Stores display-independent GUI state.
  */
 struct ApplicationState {
@@ -49,6 +72,8 @@ struct ApplicationState {
   std::string diagnostic;
   /** True while an explicit preset operation is running. */
   bool operationPending;
+  /** Input frame-rate baseline and most recent derived value. */
+  InputRateState inputRate;
 };
 
 /**
@@ -76,10 +101,12 @@ void markControlConnecting(ApplicationState &state);
  *
  * @param state State to update.
  * @param response Parsed control message.
+ * @param receivedAtMonotonicMilliseconds Monotonic receipt time in milliseconds.
  */
 void applyControlResponse(
     ApplicationState &state,
-    const pipetune::ControlResponseParseResult &response);
+    const pipetune::ControlResponseParseResult &response,
+    std::int64_t receivedAtMonotonicMilliseconds);
 
 /**
  * Marks the daemon connection unavailable.

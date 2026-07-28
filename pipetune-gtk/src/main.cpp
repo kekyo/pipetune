@@ -1,6 +1,7 @@
 #include "application-state.h"
 #include "control-client.h"
 #include "launch-options.h"
+#include "status-text.h"
 #include "tray-backend.h"
 
 #include "pipetune/control_socket.h"
@@ -10,6 +11,7 @@
 #include <gtk/gtk.h>
 
 #include <cstdlib>
+#include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <span>
@@ -48,6 +50,10 @@ struct GtkRuntime {
   GtkWidget *pluginCountLabel;
   GtkWidget *targetLabel;
   GtkWidget *defaultSinkLabel;
+  GtkWidget *inputFrameRateLabel;
+  GtkWidget *lastInputLabel;
+  GtkWidget *pcmDataRateLabel;
+  GtkWidget *streamFormatLabel;
   GtkWidget *counterLabel;
   GtkWidget *noticeBox;
   GtkWidget *noticeLabel;
@@ -64,6 +70,14 @@ static std::string pathText(const std::filesystem::path &path) {
 static std::string versionText() {
   return "PipeTune GTK " + std::string(pipetune::version()) +
          ", EffeTune DSP " + std::string(pipetune::effetuneVersion());
+}
+
+static std::int64_t currentMonotonicMilliseconds() noexcept {
+  return static_cast<std::int64_t>(g_get_monotonic_time() / 1000);
+}
+
+static std::uint64_t currentUnixMilliseconds() noexcept {
+  return static_cast<std::uint64_t>(g_get_real_time() / 1000);
 }
 
 static TrayIconState iconStateForApplication(
@@ -191,6 +205,16 @@ static void render(GtkRuntime *runtime) {
                                                       : "Inactive")
           : "—";
   gtk_label_set_text(GTK_LABEL(runtime->defaultSinkLabel), defaultSink);
+  const auto inputText =
+      inputStatusText(runtime->state, currentUnixMilliseconds());
+  gtk_label_set_text(GTK_LABEL(runtime->inputFrameRateLabel),
+                     inputText.frameRate.c_str());
+  gtk_label_set_text(GTK_LABEL(runtime->lastInputLabel),
+                     inputText.lastReceived.c_str());
+  gtk_label_set_text(GTK_LABEL(runtime->pcmDataRateLabel),
+                     inputText.pcmDataRate.c_str());
+  gtk_label_set_text(GTK_LABEL(runtime->streamFormatLabel),
+                     inputText.streamFormat.c_str());
   const auto counters =
       runtime->state.hasRuntimeStatus
           ? "Overrun " +
@@ -277,7 +301,8 @@ static void scheduleReconnect(GtkRuntime *runtime);
 static void onSubscriptionMessage(
     const pipetune::ControlResponseParseResult &message, void *userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
-  applyControlResponse(runtime->state, message);
+  applyControlResponse(runtime->state, message,
+                       currentMonotonicMilliseconds());
   render(runtime);
 }
 
@@ -323,7 +348,8 @@ static void onStatusReply(const ControlClientReply &reply,
     markControlDisconnected(runtime->state, reply.transportError);
     scheduleReconnect(runtime);
   } else {
-    applyControlResponse(runtime->state, reply.response);
+    applyControlResponse(runtime->state, reply.response,
+                         currentMonotonicMilliseconds());
   }
   render(runtime);
 }
@@ -376,7 +402,8 @@ static void onLoadReply(const ControlClientReply &reply, void *userData) {
     render(runtime);
     return;
   }
-  applyControlResponse(runtime->state, reply.response);
+  applyControlResponse(runtime->state, reply.response,
+                       currentMonotonicMilliseconds());
   if (!reply.response.valid || !reply.response.success) {
     render(runtime);
     return;
@@ -454,7 +481,8 @@ static void onBypassReply(const ControlClientReply &reply,
     return;
   }
 
-  applyControlResponse(runtime->state, reply.response);
+  applyControlResponse(runtime->state, reply.response,
+                       currentMonotonicMilliseconds());
   if (!reply.response.valid || !reply.response.success) {
     render(runtime);
     return;
@@ -499,7 +527,7 @@ static GtkWidget *createMainWindow(GtkRuntime *runtime) {
   auto *window = gtk_application_window_new(runtime->application);
   const auto title = versionText();
   gtk_window_set_title(GTK_WINDOW(window), title.c_str());
-  gtk_window_set_default_size(GTK_WINDOW(window), 680, 470);
+  gtk_window_set_default_size(GTK_WINDOW(window), 680, 580);
   gtk_window_set_position(GTK_WINDOW(window), GTK_WIN_POS_CENTER);
 
   auto *header = gtk_header_bar_new();
@@ -545,8 +573,16 @@ static GtkWidget *createMainWindow(GtkRuntime *runtime) {
       addDetailRow(GTK_GRID(grid), 4, "Output target");
   runtime->defaultSinkLabel =
       addDetailRow(GTK_GRID(grid), 5, "Default sink");
+  runtime->inputFrameRateLabel =
+      addDetailRow(GTK_GRID(grid), 6, "Input frame rate");
+  runtime->lastInputLabel =
+      addDetailRow(GTK_GRID(grid), 7, "Last input");
+  runtime->pcmDataRateLabel =
+      addDetailRow(GTK_GRID(grid), 8, "PCM data rate");
+  runtime->streamFormatLabel =
+      addDetailRow(GTK_GRID(grid), 9, "Stream format");
   runtime->counterLabel =
-      addDetailRow(GTK_GRID(grid), 6, "Runtime counters");
+      addDetailRow(GTK_GRID(grid), 10, "Runtime counters");
   gtk_box_pack_start(GTK_BOX(root), grid, FALSE, FALSE, 0);
 
   runtime->noticeBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -797,6 +833,10 @@ static int runApplication(int argc, char **argv) {
       .pluginCountLabel = nullptr,
       .targetLabel = nullptr,
       .defaultSinkLabel = nullptr,
+      .inputFrameRateLabel = nullptr,
+      .lastInputLabel = nullptr,
+      .pcmDataRateLabel = nullptr,
+      .streamFormatLabel = nullptr,
       .counterLabel = nullptr,
       .noticeBox = nullptr,
       .noticeLabel = nullptr,
