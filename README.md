@@ -166,7 +166,11 @@ two EffeTune-compatible lists:
   `~/.config/effetune/effetune_presets.json` when `XDG_CONFIG_HOME` is unset.
   EffeTune stores all named presets in that one JSON file rather than as
   separate `.effetune_preset` files. PipeTune atomically creates a private
-  standalone snapshot when one is selected.
+  standalone snapshot when one is selected. PipeTune monitors the JSON while
+  running. A successfully parsed update completely replaces only the
+  **Saved in EffeTune** entries; standard entries and the currently selected
+  or loaded preset remain unchanged. A malformed update or file deletion
+  keeps the previous entries.
 - **Preset file** remains available for any other `.effetune_preset` file.
 - EffeTune preset files use the `.effetune_preset` extension.
 - `Bypass and Save` ignores the preset file and passes the audio stream

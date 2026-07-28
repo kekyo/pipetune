@@ -34,9 +34,16 @@ $XDG_CONFIG_HOME/effetune/effetune_presets.json
 ```
 
 When `XDG_CONFIG_HOME` is unset, that path resolves to
-`~/.config/effetune/effetune_presets.json`. The list is reloaded whenever the
-window is presented. Selecting a named EffeTune preset atomically writes a
-mode-`0600` standalone snapshot below
+`~/.config/effetune/effetune_presets.json`. The file is monitored while the
+application runs and is also checked whenever the window is presented. Once
+an updated file parses as a complete preset object, only the previous
+**Saved in EffeTune** entries are replaced. **Standard** entries are retained.
+Malformed updates and file deletion retain the last valid entries. Monitoring
+does not change the file chooser, its standalone snapshot, or the preset
+already loaded by the daemon.
+
+Selecting a named EffeTune preset atomically writes a mode-`0600` standalone
+snapshot below
 `$XDG_CONFIG_HOME/pipetune/effetune-presets`, with the same HOME fallback as
 the startup configuration. The snapshot lets the daemon load one entry from
 EffeTune's multi-preset JSON file and remains valid after the AppImage exits.

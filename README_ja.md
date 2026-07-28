@@ -158,7 +158,10 @@ GTKウインドウでは、従来の`.effetune_preset`ファイル選択を残�
   `~/.config/effetune/effetune_presets.json`です。EffeTuneは名前付きプリセットを
   個別ファイルではなく、この単一JSONファイルへまとめて保存します。PipeTuneは
   選択された項目を、デーモンが読み込める非公開の単独ファイルへ原子的に
-  スナップショットします。
+  スナップショットします。PipeTuneは実行中もJSONの更新を監視し、更新後の
+  JSONを正常に解析できた場合に限り、**Saved in EffeTune**項目だけを完全に
+  置き換えます。標準項目と現在選択・ロード済みのプリセットは変更しません。
+  不正なJSONへの更新またはファイル削除では、以前の項目を維持します。
 - **Preset file**では、上記以外の`.effetune_preset`ファイルを従来どおり選択できます。
 - EffeTuneプリセットファイルは、`*.effetune_preset` のような拡張子で保存されます。
 - `Bypass and Save` ボタンは、プリセットファイルを無視してDSP処理を行わずに、音声ストリームをバイパスします。
