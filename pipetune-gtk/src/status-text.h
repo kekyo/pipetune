@@ -26,7 +26,9 @@ struct InputStatusText {
  * Contains text for periodically published runtime measurements.
  */
 struct RuntimeStatusText {
-  /** Average native EffeTune processing time per frame. */
+  /**
+   * Average native EffeTune processing time and input-frame budget load.
+   */
   std::string dspProcessingTime;
   /** Audio bridge and DSP error counters. */
   std::string counters;

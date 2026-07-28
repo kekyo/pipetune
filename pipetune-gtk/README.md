@@ -16,7 +16,7 @@ The window displays:
 - effective physical output and the engine's selection reason;
 - effective-default-sink state;
 - measured input rate, data rate, and readable stream format;
-- average native EffeTune DSP processing time per frame;
+- average native EffeTune DSP processing time and input-frame budget load;
 - overrun, underrun, and DSP processing error counters; and
 - warnings for preset nodes omitted by the daemon.
 
@@ -66,8 +66,11 @@ The GUI uses the daemon's same-user Unix control socket. It receives an initial
 status event and later daemon publications over a persistent asynchronous GIO
 connection. The daemon publishes runtime counters and cumulative native
 EffeTune processing time once per second. The GUI derives the displayed
-per-frame average between publications. It does not poll for status; a short
-retry timer is used only to reconnect after the socket becomes unavailable.
+per-frame average between publications. It compares that average with the
+frame duration derived from the negotiated input sample rate and displays the
+ratio as **Load**; 100% is the theoretical real-time deadline, and values above
+100% remain visible. It does not poll for status; a short retry timer is used
+only to reconnect after the socket becomes unavailable.
 
 ## System tray compatibility
 

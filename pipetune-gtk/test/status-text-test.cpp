@@ -109,13 +109,22 @@ static bool testRuntimeText() {
 
   auto state = activeState();
   state.dspTiming.hasAverage = true;
-  state.dspTiming.nanosecondsPerFrame = 2500.0;
+  state.dspTiming.nanosecondsPerFrame = 1000.0;
+  state.runtime.inputSampleRate = 200000;
   state.runtime.overrunFrames = 4;
   state.runtime.underrunFrames = 5;
   state.runtime.processingErrors = 6;
   const auto runtime = pipetune_gtk::runtimeStatusText(state);
-  return check(runtime.dspProcessingTime == "2.50 µs/frame",
+  auto overloaded = state;
+  overloaded.dspTiming.nanosecondsPerFrame = 6000.0;
+  const auto overloadedRuntime =
+      pipetune_gtk::runtimeStatusText(overloaded);
+  return check(runtime.dspProcessingTime ==
+                   "1.00 µs/frame  •  Load 20.0%",
                "DSP processing-time text differs") &&
+         check(overloadedRuntime.dspProcessingTime ==
+                   "6.00 µs/frame  •  Load 120.0%",
+               "overloaded DSP processing-time text differs") &&
          check(runtime.counters ==
                    "Overrun 4  •  Underrun 5  •  Processing 6",
                "runtime counter text differs");

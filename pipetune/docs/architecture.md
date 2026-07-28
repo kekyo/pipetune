@@ -197,8 +197,10 @@ shutdown operations succeed. Both commands reject effective user ID zero.
 asynchronous subscription connection and uses separate asynchronous requests
 for preset changes and output preference changes. Runtime counters and
 cumulative native EffeTune processing time are published once per second; the
-GUI derives a per-frame interval average. A retry timer reconnects a lost
-subscription; status itself is not polled.
+GUI derives a per-frame interval average. It divides that average by the
+input-frame duration implied by the negotiated sample rate to show DSP load,
+where 100% is the theoretical processing deadline. A retry timer reconnects
+a lost subscription; status itself is not polled.
 
 The tray backend discovers a StatusNotifierItem host first. If none is
 available on X11, it creates the same `GtkStatusIcon`/XEmbed compatibility

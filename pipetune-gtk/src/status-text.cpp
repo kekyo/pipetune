@@ -11,6 +11,7 @@
 namespace pipetune_gtk {
 
 constexpr auto kBitsPerFloatSample = std::uint32_t{32};
+constexpr auto kNanosecondsPerSecond = 1'000'000'000.0;
 constexpr auto kMillisecondsPerSecond = std::uint64_t{1000};
 constexpr auto kMillisecondsPerMinute =
     std::uint64_t{60} * kMillisecondsPerSecond;
@@ -47,6 +48,28 @@ static std::string fixedDecimal(double value, int precision) {
   auto stream = std::ostringstream{};
   stream << std::fixed << std::setprecision(precision) << value;
   return stream.str();
+}
+
+static std::string dspProcessingTimeText(
+    const ApplicationState &state) {
+  if (!state.dspTiming.hasAverage ||
+      !std::isfinite(state.dspTiming.nanosecondsPerFrame) ||
+      state.dspTiming.nanosecondsPerFrame < 0.0) {
+    return "—";
+  }
+  const auto processingTime =
+      fixedDecimal(state.dspTiming.nanosecondsPerFrame / 1000.0, 2) +
+      " µs/frame";
+  if (state.runtime.inputSampleRate == 0) {
+    return processingTime + "  •  Load —";
+  }
+  const auto frameBudgetNanoseconds =
+      kNanosecondsPerSecond /
+      static_cast<double>(state.runtime.inputSampleRate);
+  const auto loadPercentage =
+      state.dspTiming.nanosecondsPerFrame / frameBudgetNanoseconds * 100.0;
+  return processingTime + "  •  Load " +
+         fixedDecimal(loadPercentage, 1) + "%";
 }
 
 static std::string frameRateText(const InputRateState &inputRate) {
@@ -164,16 +187,8 @@ RuntimeStatusText runtimeStatusText(const ApplicationState &state) {
       !state.hasRuntimeStatus) {
     return {.dspProcessingTime = "—", .counters = "—"};
   }
-  const auto dspProcessingTime =
-      state.dspTiming.hasAverage &&
-              std::isfinite(state.dspTiming.nanosecondsPerFrame) &&
-              state.dspTiming.nanosecondsPerFrame >= 0.0
-          ? fixedDecimal(
-                state.dspTiming.nanosecondsPerFrame / 1000.0, 2) +
-                " µs/frame"
-          : std::string("—");
   return {
-      .dspProcessingTime = dspProcessingTime,
+      .dspProcessingTime = dspProcessingTimeText(state),
       .counters =
           "Overrun " + std::to_string(state.runtime.overrunFrames) +
           "  •  Underrun " +
