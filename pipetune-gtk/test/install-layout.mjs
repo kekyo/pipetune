@@ -30,6 +30,7 @@ const [
   applicationDirectory,
   autostartDirectory,
   iconDirectory,
+  presetDirectory,
 ] = process.argv.slice(2);
 
 if (
@@ -41,7 +42,8 @@ if (
   !binaryDirectory ||
   !applicationDirectory ||
   !autostartDirectory ||
-  !iconDirectory
+  !iconDirectory ||
+  !presetDirectory
 ) {
   fail('GTK install layout test arguments are incomplete');
 } else {
@@ -72,11 +74,18 @@ if (
         'net.kekyo.pipetune-gtk.desktop'
       );
       const icon = installPath(iconDirectory, 'pipetune.svg');
+      const presetManifest = installPath(presetDirectory, 'presets.txt');
+      const standardPreset = installPath(
+        presetDirectory,
+        'processor/bbe.effetune_preset'
+      );
       try {
         accessSync(executable, constants.X_OK);
         accessSync(application, constants.R_OK);
         accessSync(autostart, constants.R_OK);
         accessSync(icon, constants.R_OK);
+        accessSync(presetManifest, constants.R_OK);
+        accessSync(standardPreset, constants.R_OK);
       } catch (error) {
         fail(`installed PipeTune GTK layout is incomplete: ${error.message}`);
       }

@@ -57,6 +57,8 @@ struct MainWindowUi {
   GtkWidget *noticeLabel = nullptr;
   /** EffeTune preset file chooser. */
   GtkWidget *presetChooser = nullptr;
+  /** EffeTune standard and saved preset drop-down. */
+  GtkWidget *presetCombo = nullptr;
   /** Apply-and-save action button. */
   GtkWidget *applyButton = nullptr;
   /** Bypass-and-save action button. */

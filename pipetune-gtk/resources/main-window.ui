@@ -3,7 +3,7 @@
   <requires lib="gtk+" version="3.20"/>
   <object class="GtkApplicationWindow" id="mainWindow">
     <property name="default-width">680</property>
-    <property name="default-height">580</property>
+    <property name="default-height">620</property>
     <property name="window-position">center</property>
     <child type="titlebar">
       <object class="GtkHeaderBar" id="headerBar">
@@ -527,9 +527,46 @@
           </packing>
         </child>
         <child>
-          <object class="GtkBox">
-            <property name="orientation">horizontal</property>
-            <property name="spacing">8</property>
+          <object class="GtkGrid">
+            <property name="column-spacing">8</property>
+            <property name="row-spacing">8</property>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">EffeTune presets</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+              <packing>
+                <property name="left-attach">0</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkComboBoxText" id="presetCombo">
+                <property name="hexpand">True</property>
+                <property name="tooltip-text">Choose a standard preset or one saved in EffeTune</property>
+              </object>
+              <packing>
+                <property name="left-attach">1</property>
+                <property name="top-attach">0</property>
+                <property name="width">3</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Preset file</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+              <packing>
+                <property name="left-attach">0</property>
+                <property name="top-attach">1</property>
+              </packing>
+            </child>
             <child>
               <object class="GtkFileChooserButton" id="presetChooser">
                 <property name="title">Select an EffeTune preset</property>
@@ -537,8 +574,8 @@
                 <property name="hexpand">True</property>
               </object>
               <packing>
-                <property name="expand">True</property>
-                <property name="fill">True</property>
+                <property name="left-attach">1</property>
+                <property name="top-attach">1</property>
               </packing>
             </child>
             <child>
@@ -546,9 +583,8 @@
                 <property name="label">Save for Next Start</property>
               </object>
               <packing>
-                <property name="pack-type">end</property>
-                <property name="expand">False</property>
-                <property name="fill">False</property>
+                <property name="left-attach">2</property>
+                <property name="top-attach">1</property>
               </packing>
             </child>
             <child>
@@ -556,9 +592,8 @@
                 <property name="label">Save Bypass</property>
               </object>
               <packing>
-                <property name="pack-type">end</property>
-                <property name="expand">False</property>
-                <property name="fill">False</property>
+                <property name="left-attach">3</property>
+                <property name="top-attach">1</property>
               </packing>
             </child>
           </object>

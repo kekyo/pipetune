@@ -68,6 +68,7 @@ add_library(
   src/control-client.cpp
   src/output-operation.cpp
   src/output-selection-model.cpp
+  src/preset-catalog.cpp
   src/status-text.cpp)
 target_include_directories(pipetune_gtk_core PUBLIC src)
 target_link_libraries(
@@ -132,6 +133,40 @@ set(
   "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps"
   CACHE PATH
   "Installation directory for scalable application icons")
+set(
+  PIPETUNE_GTK_EFFETUNE_PRESET_DIR
+  "${CMAKE_INSTALL_DATADIR}/pipetune/effetune-presets"
+  CACHE PATH
+  "Installation directory for bundled EffeTune presets")
+set(
+  PIPETUNE_GTK_EFFETUNE_PRESET_SOURCE_DIR
+  "${CMAKE_CURRENT_SOURCE_DIR}/../deps/effetune/presets")
+if(NOT EXISTS
+   "${PIPETUNE_GTK_EFFETUNE_PRESET_SOURCE_DIR}/presets.txt")
+  message(
+    FATAL_ERROR
+    "EffeTune standard presets are unavailable: "
+    "${PIPETUNE_GTK_EFFETUNE_PRESET_SOURCE_DIR}")
+endif()
+if(BUILD_TESTING)
+  set(
+    PIPETUNE_GTK_RUNTIME_EFFETUNE_PRESET_DIR
+    "${PIPETUNE_GTK_EFFETUNE_PRESET_SOURCE_DIR}")
+elseif(IS_ABSOLUTE "${PIPETUNE_GTK_EFFETUNE_PRESET_DIR}")
+  set(
+    PIPETUNE_GTK_RUNTIME_EFFETUNE_PRESET_DIR
+    "${PIPETUNE_GTK_EFFETUNE_PRESET_DIR}")
+else()
+  set(
+    PIPETUNE_GTK_RUNTIME_EFFETUNE_PRESET_DIR
+    "${CMAKE_INSTALL_PREFIX}/${PIPETUNE_GTK_EFFETUNE_PRESET_DIR}")
+endif()
+configure_file(
+  src/installed-presets.h.in
+  "${PIPETUNE_GTK_RESOURCE_DIRECTORY}/installed-presets.h"
+  @ONLY)
+target_include_directories(
+  pipetune-gtk PRIVATE "${PIPETUNE_GTK_RESOURCE_DIRECTORY}")
 
 install(
   TARGETS pipetune-gtk
@@ -145,6 +180,12 @@ install(
 install(
   FILES packaging/icons/hicolor/scalable/apps/pipetune.svg
   DESTINATION "${PIPETUNE_GTK_ICON_DIR}")
+install(
+  DIRECTORY "${PIPETUNE_GTK_EFFETUNE_PRESET_SOURCE_DIR}/"
+  DESTINATION "${PIPETUNE_GTK_EFFETUNE_PRESET_DIR}"
+  FILES_MATCHING
+  PATTERN "presets.txt"
+  PATTERN "*.effetune_preset")
 
 if(BUILD_TESTING)
   find_program(PIPETUNE_GTK_XVFB_RUN xvfb-run REQUIRED)
@@ -207,6 +248,24 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_gtk_output_operation_tests
     COMMAND pipetune_gtk_output_operation_tests)
+
+  add_executable(
+    pipetune_gtk_preset_catalog_tests
+    test/preset-catalog-test.cpp)
+  target_link_libraries(
+    pipetune_gtk_preset_catalog_tests PRIVATE pipetune_gtk_core)
+  if(MSVC)
+    target_compile_options(pipetune_gtk_preset_catalog_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_preset_catalog_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_gtk_preset_catalog_tests
+    COMMAND
+      pipetune_gtk_preset_catalog_tests
+      "${PIPETUNE_GTK_EFFETUNE_PRESET_SOURCE_DIR}")
 
   add_executable(
     pipetune_gtk_status_text_tests
@@ -341,5 +400,6 @@ if(BUILD_TESTING)
       ${CMAKE_INSTALL_BINDIR}
       ${PIPETUNE_GTK_APPLICATION_DIR}
       ${PIPETUNE_GTK_AUTOSTART_DIR}
-      ${PIPETUNE_GTK_ICON_DIR})
+      ${PIPETUNE_GTK_ICON_DIR}
+      ${PIPETUNE_GTK_EFFETUNE_PRESET_DIR})
 endif()

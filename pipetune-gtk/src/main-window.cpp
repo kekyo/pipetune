@@ -75,6 +75,9 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
       .presetChooser =
           requiredWidget(builder, "presetChooser",
                          GTK_TYPE_FILE_CHOOSER_BUTTON),
+      .presetCombo =
+          requiredWidget(builder, "presetCombo",
+                         GTK_TYPE_COMBO_BOX_TEXT),
       .applyButton =
           requiredWidget(builder, "applyButton", GTK_TYPE_BUTTON),
       .bypassButton =

@@ -1,0 +1,113 @@
+#ifndef PIPETUNE_GTK_PRESET_CATALOG_H
+#define PIPETUNE_GTK_PRESET_CATALOG_H
+
+#include <filesystem>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace pipetune_gtk {
+
+/**
+ * Identifies where an EffeTune preset choice originated.
+ */
+enum class PresetSource {
+  /** Preset distributed with EffeTune. */
+  standard,
+  /** Named preset saved by the EffeTune desktop application. */
+  saved,
+};
+
+/**
+ * Describes one preset available through EffeTune.
+ */
+struct PresetChoice {
+  /** Origin used to distinguish standard and saved choices. */
+  PresetSource source;
+  /** User-facing preset name. */
+  std::string name;
+  /** EffeTune category for a standard preset, otherwise empty. */
+  std::string category;
+  /** Direct path for a standard preset, otherwise empty. */
+  std::filesystem::path path;
+  /** Standalone JSON object for a saved preset, otherwise empty. */
+  std::string serializedPreset;
+};
+
+/**
+ * Reports EffeTune's desktop user-preset storage path.
+ */
+struct EffeTuneUserPresetPathResult {
+  /** Resolved `effetune_presets.json` path. */
+  std::filesystem::path path;
+  /** Resolution diagnostic, or empty on success. */
+  std::string error;
+};
+
+/**
+ * Holds all usable EffeTune preset choices and non-fatal source diagnostics.
+ */
+struct EffeTunePresetCatalogResult {
+  /** Standard choices followed by saved choices. */
+  std::vector<PresetChoice> choices;
+  /** Missing, malformed, or incomplete source diagnostics. */
+  std::vector<std::string> diagnostics;
+};
+
+/**
+ * Reports the standalone preset path resolved for a catalog choice.
+ */
+struct PresetChoicePathResult {
+  /** Standard path or materialized saved-preset path. */
+  std::filesystem::path path;
+  /** Materialization diagnostic, or empty on success. */
+  std::string error;
+};
+
+/**
+ * Resolves the EffeTune desktop application's user-preset JSON file.
+ *
+ * Electron stores EffeTune data below `effetune` in the XDG configuration
+ * directory on Linux.
+ *
+ * @param xdgConfigHome Value of XDG_CONFIG_HOME, or empty for HOME fallback.
+ * @param homeDirectory Value of HOME.
+ * @return Resolved file path or a missing-directory diagnostic.
+ */
+EffeTuneUserPresetPathResult resolveEffeTuneUserPresetPath(
+    std::string_view xdgConfigHome,
+    const std::filesystem::path &homeDirectory);
+
+/**
+ * Loads EffeTune standard presets and named desktop presets.
+ *
+ * Missing user storage is treated as an empty saved-preset list. Invalid
+ * entries are omitted and reported without hiding valid choices.
+ *
+ * @param standardPresetDirectory Directory containing `presets.txt` and
+ * EffeTune's standard `.effetune_preset` files.
+ * @param userPresetFile EffeTune desktop `effetune_presets.json` path.
+ * @return Available choices and non-fatal diagnostics.
+ */
+EffeTunePresetCatalogResult loadEffeTunePresetCatalog(
+    const std::filesystem::path &standardPresetDirectory,
+    const std::filesystem::path &userPresetFile);
+
+/**
+ * Resolves a catalog choice to a standalone `.effetune_preset` file.
+ *
+ * Standard presets retain their installed path. A saved preset is atomically
+ * copied into a private snapshot below `savedPresetDirectory` so the PipeTune
+ * daemon can load it independently of EffeTune's multi-preset JSON file.
+ *
+ * @param choice Choice to resolve.
+ * @param savedPresetDirectory Private directory for saved-preset snapshots.
+ * @return Loadable path or a materialization diagnostic.
+ */
+PresetChoicePathResult resolvePresetChoicePath(
+    const PresetChoice &choice,
+    const std::filesystem::path &savedPresetDirectory);
+
+} // namespace pipetune_gtk
+
+#endif

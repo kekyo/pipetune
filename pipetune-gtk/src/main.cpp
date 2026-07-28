@@ -1,9 +1,11 @@
 #include "application-state.h"
 #include "control-client.h"
+#include "installed-presets.h"
 #include "launch-options.h"
 #include "main-window.h"
 #include "output-operation.h"
 #include "output-selection-model.h"
+#include "preset-catalog.h"
 #include "status-icon.h"
 #include "status-text.h"
 #include "tray-backend.h"
@@ -40,6 +42,9 @@ struct GtkRuntime {
   std::filesystem::path startupPreset;
   bool hasStartupPreset;
   std::filesystem::path pendingPreset;
+  std::vector<PresetChoice> presetChoices;
+  bool updatingPresetCombo;
+  std::string presetCatalogDiagnostic;
   std::vector<OutputDeviceChoice> outputChoices;
   bool updatingOutputCombo;
   bool outputChangePending;
@@ -113,23 +118,32 @@ static std::string trayTooltip(const ApplicationState &state) {
                           : "PipeTune: " + filename;
 }
 
-static std::string noticeText(const ApplicationState &state) {
+static void appendNotice(std::string &notice, std::string_view addition) {
+  if (addition.empty()) {
+    return;
+  }
+  if (!notice.empty()) {
+    notice.push_back('\n');
+  }
+  notice.append(addition);
+}
+
+static std::string noticeText(
+    const ApplicationState &state,
+    std::string_view presetCatalogDiagnostic) {
   auto notice = state.diagnostic;
+  appendNotice(notice, presetCatalogDiagnostic);
   if (state.hasRuntimeStatus &&
       !state.runtime.configurationError.empty()) {
-    if (!notice.empty()) {
-      notice.push_back('\n');
-    }
-    notice += "Startup configuration: " +
-              state.runtime.configurationError;
+    appendNotice(notice, "Startup configuration: " +
+                             state.runtime.configurationError);
   }
   for (const auto &warning : state.warnings) {
-    if (!notice.empty()) {
-      notice.push_back('\n');
-    }
-    notice += "Preset node " + std::to_string(warning.nodeIndex + 1) +
-              " (\"" + warning.pluginName + "\") was skipped: " +
-              warning.reason;
+    appendNotice(
+        notice,
+        "Preset node " + std::to_string(warning.nodeIndex + 1) +
+            " (\"" + warning.pluginName + "\") was skipped: " +
+            warning.reason);
   }
   return notice;
 }
@@ -271,7 +285,8 @@ static void render(GtkRuntime *runtime) {
   gtk_label_set_text(GTK_LABEL(runtime->ui.counterLabel),
                      runtimeText.counters.c_str());
 
-  const auto notice = noticeText(runtime->state);
+  const auto notice =
+      noticeText(runtime->state, runtime->presetCatalogDiagnostic);
   gtk_label_set_text(GTK_LABEL(runtime->ui.noticeLabel), notice.c_str());
   gtk_widget_set_visible(runtime->ui.noticeBox, !notice.empty());
   gtk_button_set_label(
@@ -318,6 +333,7 @@ static void onWindowDestroy(GtkWidget *, gpointer userData) {
 static void onNoticeDismiss(GtkButton *, gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
   clearControlNotice(runtime->state);
+  runtime->presetCatalogDiagnostic.clear();
   render(runtime);
 }
 
@@ -580,6 +596,143 @@ static void onBypassClicked(GtkButton *, gpointer userData) {
   bypassControlAsync(runtime->controlClient, onBypassReply, runtime);
 }
 
+static std::string presetChoiceLabel(const PresetChoice &choice) {
+  if (choice.source == PresetSource::saved) {
+    return "Saved in EffeTune · " + choice.name;
+  }
+  return "Standard · " + choice.category + " · " + choice.name;
+}
+
+static std::string catalogDiagnosticText(
+    const std::vector<std::string> &diagnostics,
+    std::string_view pathResolutionError) {
+  auto text = std::string{};
+  appendNotice(text, pathResolutionError);
+  for (const auto &diagnostic : diagnostics) {
+    appendNotice(text, diagnostic);
+  }
+  return text;
+}
+
+static void reloadPresetCatalog(GtkRuntime *runtime) {
+  auto preserveChoice = false;
+  auto preservedSource = PresetSource::standard;
+  auto preservedName = std::string{};
+  auto preservedPreset = std::string{};
+  const auto active =
+      gtk_combo_box_get_active(GTK_COMBO_BOX(runtime->ui.presetCombo));
+  if (active > 0 &&
+      static_cast<std::size_t>(active - 1) <
+          runtime->presetChoices.size()) {
+    const auto &choice =
+        runtime->presetChoices[static_cast<std::size_t>(active - 1)];
+    preserveChoice = true;
+    preservedSource = choice.source;
+    preservedName = choice.name;
+    preservedPreset = choice.serializedPreset;
+  }
+
+  const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
+  const auto *home = std::getenv("HOME");
+  const auto userPath = resolveEffeTuneUserPresetPath(
+      xdgConfigHome == nullptr ? std::string_view{}
+                               : std::string_view(xdgConfigHome),
+      home == nullptr ? std::filesystem::path{}
+                      : std::filesystem::path(home));
+  const auto catalog = loadEffeTunePresetCatalog(
+      kEffeTuneStandardPresetDirectory,
+      userPath.error.empty() ? userPath.path : std::filesystem::path{});
+  runtime->presetChoices = catalog.choices;
+  runtime->presetCatalogDiagnostic =
+      catalogDiagnosticText(catalog.diagnostics, userPath.error);
+
+  runtime->updatingPresetCombo = true;
+  gtk_combo_box_text_remove_all(
+      GTK_COMBO_BOX_TEXT(runtime->ui.presetCombo));
+  gtk_combo_box_text_append_text(
+      GTK_COMBO_BOX_TEXT(runtime->ui.presetCombo),
+      "Choose a standard or saved EffeTune preset…");
+  auto activeIndex = gint{0};
+  for (auto index = std::size_t{0};
+       index < runtime->presetChoices.size(); ++index) {
+    const auto &choice = runtime->presetChoices[index];
+    const auto label = presetChoiceLabel(choice);
+    gtk_combo_box_text_append_text(
+        GTK_COMBO_BOX_TEXT(runtime->ui.presetCombo), label.c_str());
+    if ((preserveChoice && choice.source == preservedSource &&
+         choice.name == preservedName &&
+         (choice.source == PresetSource::standard ||
+          choice.serializedPreset == preservedPreset)) ||
+        (!preserveChoice && runtime->hasStartupPreset &&
+         choice.source == PresetSource::standard &&
+         choice.path == runtime->startupPreset)) {
+      activeIndex = static_cast<gint>(index + 1);
+    }
+  }
+  gtk_combo_box_set_active(GTK_COMBO_BOX(runtime->ui.presetCombo),
+                           activeIndex);
+  runtime->updatingPresetCombo = false;
+  gtk_widget_set_sensitive(runtime->ui.presetCombo,
+                           !runtime->presetChoices.empty());
+}
+
+static void onPresetComboChanged(GtkComboBox *combo,
+                                 gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (runtime->updatingPresetCombo) {
+    return;
+  }
+  const auto active = gtk_combo_box_get_active(combo);
+  if (active <= 0 ||
+      static_cast<std::size_t>(active - 1) >=
+          runtime->presetChoices.size()) {
+    return;
+  }
+  if (runtime->startupConfigPath.empty()) {
+    setControlDiagnostic(
+        runtime->state,
+        "startup configuration path is unavailable");
+    render(runtime);
+    return;
+  }
+
+  const auto &choice =
+      runtime->presetChoices[static_cast<std::size_t>(active - 1)];
+  const auto resolved = resolvePresetChoicePath(
+      choice,
+      runtime->startupConfigPath.parent_path() / "effetune-presets");
+  if (!resolved.error.empty()) {
+    setControlDiagnostic(runtime->state, resolved.error);
+    render(runtime);
+    return;
+  }
+
+  runtime->updatingPresetCombo = true;
+  const auto selected = gtk_file_chooser_set_filename(
+      GTK_FILE_CHOOSER(runtime->ui.presetChooser),
+      resolved.path.c_str());
+  runtime->updatingPresetCombo = false;
+  if (!selected) {
+    setControlDiagnostic(
+        runtime->state,
+        "Cannot select EffeTune preset: " + resolved.path.string());
+    render(runtime);
+    return;
+  }
+  clearControlNotice(runtime->state);
+  render(runtime);
+}
+
+static void onPresetFileSet(GtkFileChooserButton *, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (runtime->updatingPresetCombo) {
+    return;
+  }
+  runtime->updatingPresetCombo = true;
+  gtk_combo_box_set_active(GTK_COMBO_BOX(runtime->ui.presetCombo), 0);
+  runtime->updatingPresetCombo = false;
+}
+
 static void connectMainWindowSignals(GtkRuntime *runtime) {
   g_signal_connect(runtime->ui.window, "delete-event",
                    G_CALLBACK(onWindowDelete), runtime);
@@ -587,6 +740,10 @@ static void connectMainWindowSignals(GtkRuntime *runtime) {
                    G_CALLBACK(onWindowDestroy), runtime);
   g_signal_connect(runtime->ui.outputCombo, "changed",
                    G_CALLBACK(onOutputChanged), runtime);
+  g_signal_connect(runtime->ui.presetCombo, "changed",
+                   G_CALLBACK(onPresetComboChanged), runtime);
+  g_signal_connect(runtime->ui.presetChooser, "file-set",
+                   G_CALLBACK(onPresetFileSet), runtime);
   g_signal_connect(runtime->ui.applyButton, "clicked",
                    G_CALLBACK(onApplyClicked), runtime);
   g_signal_connect(runtime->ui.bypassButton, "clicked",
@@ -600,8 +757,10 @@ static void presentWindow(GtkRuntime *runtime,
   if (runtime == nullptr || runtime->ui.window == nullptr) {
     return;
   }
+  reloadPresetCatalog(runtime);
   presentMainWindow(runtime->ui, userInteractionTime);
-  const auto notice = noticeText(runtime->state);
+  const auto notice =
+      noticeText(runtime->state, runtime->presetCatalogDiagnostic);
   gtk_widget_set_visible(runtime->ui.noticeBox, !notice.empty());
 }
 
@@ -679,6 +838,7 @@ static void onApplicationStartup(GApplication *, gpointer userData) {
   initializeStatusArtwork(runtime);
   connectMainWindowSignals(runtime);
   initializeStartupConfig(runtime);
+  reloadPresetCatalog(runtime);
   g_application_hold(G_APPLICATION(runtime->application));
   runtime->applicationHeld = true;
   runtime->trayBackend = createTrayBackend({
@@ -773,6 +933,9 @@ static int runApplication(int argc, char **argv) {
       .startupPreset = {},
       .hasStartupPreset = false,
       .pendingPreset = {},
+      .presetChoices = {},
+      .updatingPresetCombo = false,
+      .presetCatalogDiagnostic = {},
       .outputChoices = {},
       .updatingOutputCombo = false,
       .outputChangePending = false,

@@ -57,6 +57,8 @@ static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
                "notice label type differs") &&
          check(GTK_IS_FILE_CHOOSER_BUTTON(ui.presetChooser),
                "preset chooser type differs") &&
+         check(GTK_IS_COMBO_BOX_TEXT(ui.presetCombo),
+               "EffeTune preset combo-box type differs") &&
          check(GTK_IS_BUTTON(ui.applyButton),
                "apply button type differs") &&
          check(GTK_IS_BUTTON(ui.bypassButton),
@@ -139,7 +141,7 @@ int main(int argc, char **argv) {
       check(std::string_view(gtk_header_bar_get_title(
                 GTK_HEADER_BAR(headerBar))) == "PipeTune",
             "header bar title differs") &&
-      check(width == 680 && height == 580,
+      check(width == 680 && height == 620,
             "main window default size differs") &&
       check(gtk_builder_get_object(ui.builder, "refreshButton") == nullptr,
             "periodically updated status must not expose a refresh button") &&
