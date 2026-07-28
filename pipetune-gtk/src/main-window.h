@@ -35,6 +35,8 @@ struct MainWindowUi {
   GtkWidget *targetLabel = nullptr;
   /** Engine-owned output-selection reason text. */
   GtkWidget *outputReasonLabel = nullptr;
+  /** PipeTune and EffeTune DSP version text. */
+  GtkWidget *versionLabel = nullptr;
   /** Default sink activity text. */
   GtkWidget *defaultSinkLabel = nullptr;
   /** Measured input frame-rate text. */
@@ -61,10 +63,6 @@ struct MainWindowUi {
   GtkWidget *bypassButton = nullptr;
   /** Notice dismissal button. */
   GtkWidget *dismissButton = nullptr;
-  /** Opens the application version dialog. */
-  GtkWidget *aboutButton = nullptr;
-  /** Dialog displaying PipeTune and EffeTune DSP versions. */
-  GtkWidget *aboutDialog = nullptr;
 };
 
 /**
@@ -74,8 +72,8 @@ struct MainWindowUi {
  * defects.
  *
  * @param application Application that owns the returned window.
- * @param pipeTuneVersion PipeTune package version shown in the About dialog.
- * @param effetuneDspVersion EffeTune DSP version shown in the About dialog.
+ * @param pipeTuneVersion PipeTune package version shown in the status area.
+ * @param effetuneDspVersion EffeTune DSP version shown in the status area.
  * @return Builder and borrowed widget pointers for the window controller.
  */
 MainWindowUi createMainWindowUi(GtkApplication *application,

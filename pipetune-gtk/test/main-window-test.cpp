@@ -49,6 +49,8 @@ static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
                "DSP processing-time label type differs") &&
          check(GTK_IS_LABEL(ui.counterLabel),
                "counter label type differs") &&
+         check(GTK_IS_LABEL(ui.versionLabel),
+               "version label type differs") &&
          check(GTK_IS_BOX(ui.noticeBox),
                "notice box type differs") &&
          check(GTK_IS_LABEL(ui.noticeLabel),
@@ -60,32 +62,48 @@ static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
          check(GTK_IS_BUTTON(ui.bypassButton),
                "bypass button type differs") &&
          check(GTK_IS_BUTTON(ui.dismissButton),
-               "dismiss button type differs") &&
-         check(GTK_IS_BUTTON(ui.aboutButton),
-               "about button type differs") &&
-         check(GTK_IS_ABOUT_DIALOG(ui.aboutDialog),
-               "about dialog type differs");
+               "dismiss button type differs");
 }
 
-static bool checkAboutDialog(
+static bool checkInlineVersion(
     const pipetune_gtk::MainWindowUi &ui) {
-  if (!GTK_IS_ABOUT_DIALOG(ui.aboutDialog)) {
+  auto *outputGrid =
+      gtk_builder_get_object(ui.builder, "outputStatusGrid");
+  if (!check(GTK_IS_GRID(outputGrid),
+             "output status grid type differs")) {
     return false;
   }
-  auto *dialog = GTK_ABOUT_DIALOG(ui.aboutDialog);
-  return check(std::string_view(
-                   gtk_about_dialog_get_program_name(dialog)) ==
-                   "PipeTune",
-               "about dialog program name differs") &&
-         check(std::string_view(gtk_about_dialog_get_version(dialog)) ==
-                   "1.2.3",
-               "PipeTune version differs") &&
-         check(std::string_view(gtk_about_dialog_get_comments(dialog)) ==
-                   "EffeTune DSP 4.5.6",
-               "EffeTune DSP version differs") &&
-         check(gtk_window_get_transient_for(GTK_WINDOW(ui.aboutDialog)) ==
-                   GTK_WINDOW(ui.window),
-               "about dialog parent differs");
+  auto *versionTitle =
+      gtk_grid_get_child_at(GTK_GRID(outputGrid), 0, 2);
+  auto *versionValue =
+      gtk_grid_get_child_at(GTK_GRID(outputGrid), 1, 2);
+  return check(GTK_IS_LABEL(versionTitle),
+               "version title type differs") &&
+         check(std::string_view(
+                   gtk_label_get_text(GTK_LABEL(versionTitle))) ==
+                   "Versions",
+               "version title differs") &&
+         check(versionValue == ui.versionLabel,
+               "versions must follow Selection reason") &&
+         check(std::string_view(
+                   gtk_label_get_text(GTK_LABEL(ui.versionLabel))) ==
+                   "PipeTune 1.2.3  •  EffeTune DSP 4.5.6",
+               "inline version text differs") &&
+         check(gtk_builder_get_object(ui.builder, "aboutButton") ==
+                   nullptr,
+               "version display must not expose an About button");
+}
+
+static bool checkNoAboutDialog() {
+  auto *windows = gtk_window_list_toplevels();
+  auto found = false;
+  for (auto *item = windows; item != nullptr; item = item->next) {
+    if (GTK_IS_ABOUT_DIALOG(item->data)) {
+      found = true;
+    }
+  }
+  g_list_free(windows);
+  return check(!found, "version display must not create an About dialog");
 }
 
 int main(int argc, char **argv) {
@@ -105,7 +123,8 @@ int main(int argc, char **argv) {
   const auto valid =
       check(ui.builder != nullptr, "main window builder is unavailable") &&
       checkWidgetTypes(ui) &&
-      checkAboutDialog(ui) &&
+      checkInlineVersion(ui) &&
+      checkNoAboutDialog() &&
       check(gtk_window_get_application(GTK_WINDOW(ui.window)) ==
                 application,
             "main window application differs") &&
@@ -139,19 +158,7 @@ int main(int argc, char **argv) {
       check(gtk_widget_get_visible(ui.window) != FALSE,
             "presenting the main window must make it visible");
 
-  gtk_button_clicked(GTK_BUTTON(ui.aboutButton));
-  const auto aboutOpens =
-      check(gtk_widget_get_visible(ui.aboutDialog) != FALSE,
-            "about button must display the version dialog");
-  gtk_dialog_response(GTK_DIALOG(ui.aboutDialog), GTK_RESPONSE_CANCEL);
-  const auto aboutCloses =
-      check(gtk_widget_get_visible(ui.aboutDialog) == FALSE,
-            "about dialog response must hide the dialog");
-
   pipetune_gtk::destroyMainWindowUi(ui);
   g_object_unref(application);
-  return valid && selectionWorks && presentationWorks && aboutOpens &&
-                 aboutCloses
-             ? 0
-             : 1;
+  return valid && selectionWorks && presentationWorks ? 0 : 1;
 }
