@@ -118,6 +118,20 @@ one of the five fixed rates, and `PIPETUNE_RATE_ENFORCEMENT` stores `suggest`
 or `force`. Missing rate assignments use Max-and-suggest. Updates to any
 selection preserve the others.
 
+The constant **Configuration** section provides **Reset Configuration…**.
+Its modal confirmation defaults to **Cancel**. Confirming invokes the
+installed CLI asynchronously as `pipetune config reset --yes`, so the GTK main
+loop remains responsive while the configuration is replaced and an active
+service is restarted. The GUI then reloads the shared configuration, clears
+the preset selection when the reset succeeded, restores the Max-and-suggest
+controls, and reconnects its daemon subscription.
+
+The reset selects startup bypass, removes the preferred output so the system
+default is followed, and selects Max with Suggest. It replaces unsupported
+legacy configuration without backing it up. An inactive service remains
+inactive. If restarting an active service fails, the window reports the
+partial failure while retaining and displaying the reset startup choices.
+
 ## Status subscription
 
 The GUI uses the daemon's same-user Unix control socket. It receives an initial

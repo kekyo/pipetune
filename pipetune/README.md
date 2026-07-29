@@ -214,6 +214,34 @@ mode, the requested rate is always used for capture, playback media format,
 and DSP. An unsupported output uses the greatest advertised rate not above the
 fixed rate, or the device minimum, and PipeWire resamples between them.
 
+Reset every saved PipeTune selection with:
+
+```sh
+./build/release/pipetune config reset
+./build/release/pipetune config reset --yes
+```
+
+Without `-y` or `--yes`, the command always reads one confirmation line,
+including when standard input is not a terminal. Leading and trailing
+whitespace is ignored, and only case-insensitive `y` or `yes` confirms the
+operation. Any other response or end-of-file cancels it successfully.
+
+The reset does not parse, migrate, or back up the previous `environment`
+file. It atomically replaces it with:
+
+```text
+# Managed by PipeTune.
+PIPETUNE_RATE=max
+PIPETUNE_RATE_ENFORCEMENT=suggest
+```
+
+The absent preset and target assignments select DSP bypass and the physical
+system default. After persistence, the command waits for
+`systemctl --user try-restart pipetune.service`. A running service therefore
+restarts immediately with the defaults, while an inactive service remains
+inactive. If `systemctl` fails, the command exits nonzero and explains that
+the configuration was reset; the reset file remains in place.
+
 Run the graphical control application with:
 
 ```sh
@@ -384,6 +412,10 @@ An absent `PIPETUNE_RATE` or `PIPETUNE_RATE_ENFORCEMENT` uses the
 Max-and-suggest default. `PIPETUNE_RATE` accepts `max`, `44100`, `48000`,
 `96000`, `192000`, or `384000`; the enforcement value accepts `suggest` or
 `force`.
+
+`pipetune config reset` is also the recovery path for an `environment` file
+containing unsupported or obsolete assignments because it replaces the file
+without first loading it.
 
 This service affects every application's final output in that user's PipeWire
 session. It is not a machine-wide service shared by multiple logged-in users.

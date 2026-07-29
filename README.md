@@ -197,6 +197,29 @@ confirmation. If the daemon is unavailable, the policy is saved for its next
 start. A live change may cause a short silent interval while PipeTune rebuilds
 the DSP and renegotiates its PipeWire streams.
 
+## Resetting PipeTune configuration
+
+The GTK window's **Configuration** section provides **Reset Configuration…**.
+After confirmation, it resets every saved PipeTune choice to:
+
+- DSP **Bypass**;
+- the physical **System default** output; and
+- PCM rate **Max** with **Suggest**.
+
+The same reset is available from the CLI:
+
+```sh
+pipetune config reset
+pipetune config reset --yes
+```
+
+Without `--yes` (or `-y`), the CLI asks for confirmation and accepts `y` or
+`yes` case-insensitively. The command atomically replaces the shared
+`environment` file, so it can recover from unsupported legacy lines. It does
+not create a backup. A running `pipetune.service` is restarted immediately;
+an inactive service remains inactive. If that restart fails, the command
+reports a partial failure but keeps the reset configuration.
+
 ## Selecting an EffeTune DSP preset
 
 When loading an EffeTune DSP preset into PipeTune, you can select from:
