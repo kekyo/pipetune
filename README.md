@@ -26,14 +26,21 @@ application that remains available through the desktop system tray.
 - Lets the user choose a physical output from the CLI or GTK application.
 - Falls back to the physical system default when the preferred output is
   unavailable, and returns automatically after hotplug.
+- Runs the DSP at the selected output's maximum supported rate or at an
+  explicit 44.1, 48, 96, 192, or 384 kHz rate.
+- Shows output-device rate support and the final DSP, graph, and active
+  physical rates in the CLI and GTK application.
 - Changes presets without restarting the daemon.
 - Starts safely in pass-through mode when no preset has been selected.
 - Sets up or removes all per-user integration with one CLI command.
 - Displays runtime state and audio error counters in the GTK application.
 - Restores a physical default output when PipeTune stops.
 
-The default stream format is 48 kHz stereo. PipeWire converts streams from
-applications that use another format.
+The default PCM policy is **Max** with a PipeWire **suggest** request. PipeTune
+therefore uses the highest user-selectable rate reported by the selected
+output instead of imposing a fixed 48 kHz stream. PipeWire converts application
+streams and, when necessary, resamples between PipeTune's DSP rate and a
+device-compatible output rate.
 
 ### Supported systems
 
@@ -151,6 +158,44 @@ disconnected. `output clear` removes that preference.
 With no preference, PipeTune follows the physical system default. If no audio
 output exists at all, the daemon remains running and watches for hotplug, but
 audio playback is unavailable until a device appears.
+
+## Choosing the PCM rate
+
+The GTK window provides **DSP rate** and **PipeWire request** drop-downs.
+**Max** follows the highest of 44.1, 48, 96, 192, and 384 kHz supported by the
+selected output. Each fixed-rate row says whether that output supports the
+rate. The **Effective rates** row shows:
+
+- the input and EffeTune DSP rate;
+- the selected PipeWire output-graph rate;
+- the active physical-device rate, or `idle`; and
+- whether PipeWire resampling is required.
+
+A fixed rate always remains the DSP rate. If the output does not support it,
+PipeTune selects the greatest supported output rate not above it, or the
+device's minimum rate when none is below it. PipeWire performs the conversion
+between those rates.
+
+**Suggest** sets `node.rate` as a preference; PipeWire may choose another graph
+rate. **Force** additionally asks PipeWire to hold that rate while PipeTune's
+playback node is active. Neither mode changes PipeWire's global clock
+configuration.
+
+The same information and controls are available from the CLI:
+
+```sh
+pipetune rate list
+pipetune rate get
+pipetune rate set max suggest
+pipetune rate set 192000 force
+```
+
+`rate list` reports support for all five selectable rates on every available
+output. `rate get` reports the configured policy and final rates. A connected
+`rate set` applies the change immediately and saves it only after daemon
+confirmation. If the daemon is unavailable, the policy is saved for its next
+start. A live change may cause a short silent interval while PipeTune rebuilds
+the DSP and renegotiates its PipeWire streams.
 
 ## Selecting an EffeTune DSP preset
 

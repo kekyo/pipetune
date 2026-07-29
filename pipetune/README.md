@@ -37,6 +37,10 @@ not supported by this MVP.
   each omitted node.
 - Follows the physical system default when no preference exists, or persists a
   preferred `node.name` with automatic fallback and hotplug restoration.
+- Selects the highest supported DSP rate or a fixed 44.1, 48, 96, 192, or
+  384 kHz rate, with a suggested or forced PipeWire graph-rate request.
+- Enumerates each physical output's sample-rate capabilities and immediately
+  reevaluates the rates after capability, target, or policy changes.
 - Replaces the preset in a running process through a same-user Unix socket.
 - Switches live and future startup processing to explicit DSP bypass.
 - Publishes initial and changed runtime state to same-user local subscribers.
@@ -48,9 +52,11 @@ not supported by this MVP.
   also invokes an independent restoration command after a crash and restarts
   PipeTune.
 
-The default stream format is 48 kHz stereo. The CLI accepts 32–192 kHz and one
-through eight channels. PipeWire performs conversion for clients that use
-another format.
+The default policy is Max-and-suggest: PipeTune uses the highest selectable
+rate supported by the selected output. Stereo remains the default channel
+layout, and direct runs accept one through eight channels. PipeWire converts
+application streams and resamples between PipeTune's DSP and physical-output
+rates when those differ.
 
 ## Requirements
 
@@ -147,9 +153,11 @@ Inspect or replace the running pipeline:
 
 The status response includes the processing mode, active preset when
 applicable, native DSP count, preferred and effective physical outputs, output
-selection reason, selectable output list, whether PipeTune owns the effective
-default, configuration diagnostics, and audio bridge error counters. A live
-replacement made directly with `--load-preset` is not persisted.
+selection reason, selectable output list and rate capabilities, configured and
+resolved PCM rates, active physical rate, transition and fallback state,
+whether PipeTune owns the effective default, configuration diagnostics, and
+audio bridge error counters. A live replacement made directly with
+`--load-preset` is not persisted.
 
 Switch live processing to bypass and save that selection for future daemon
 starts with:
@@ -174,6 +182,37 @@ daemon. A set or clear request changes the daemon first and updates the shared
 startup configuration only after the daemon confirms it. If persistence then
 fails, the command exits nonzero and reports that the live change remains
 active.
+
+Inspect output support and manage the daemon's PCM rate policy with:
+
+```sh
+./build/release/pipetune rate list
+./build/release/pipetune rate get
+./build/release/pipetune rate set max suggest
+./build/release/pipetune rate set 44100 suggest
+./build/release/pipetune rate set 192000 force
+```
+
+Fixed `RATE` values are `44100`, `48000`, `96000`, `192000`, and `384000`
+hertz. `rate list` marks each value supported, unsupported, or unknown for
+every available output. `rate get` displays the configured policy, input/DSP
+rate, selected output rate, active physical rate, fallback state, and
+transition state. Both queries accept `--json` and require a reachable daemon.
+
+`rate set` sends a connected daemon the new policy first and persists it only
+after the daemon completes the transition. A rejection preserves the previous
+startup policy. If the daemon is unavailable, the command instead saves the
+policy for the next start. **Suggest** supplies `node.rate` as a PipeWire
+preference. **Force** also supplies `node.force-rate=0`, which asks PipeWire to
+use the denominator of `node.rate` while PipeTune's playback node is active.
+Neither operation rewrites PipeWire's global clock configuration.
+
+In Max mode, PipeTune selects the highest of its five user-selectable rates
+accepted by the selected output. While device capabilities are unknown, it
+retains the current rates, using 48 kHz only as the initial fallback. In fixed
+mode, the requested rate is always used for capture, playback media format,
+and DSP. An unsupported output uses the greatest advertised rate not above the
+fixed rate, or the device minimum, and PipeWire resamples between them.
 
 Run the graphical control application with:
 
@@ -318,18 +357,20 @@ $XDG_CONFIG_HOME/pipetune/environment
 ```
 
 When `XDG_CONFIG_HOME` is unset, it resolves to
-`~/.config/pipetune/environment`. It can store an absolute preset path and a
-stable PipeWire output `node.name`:
+`~/.config/pipetune/environment`. It can store an absolute preset path, a
+stable PipeWire output `node.name`, and the PCM rate policy:
 
 ```text
 PIPETUNE_PRESET="/home/user/My Presets/foo.effetune_preset"
 PIPETUNE_TARGET="alsa_output.usb-example"
+PIPETUNE_RATE=192000
+PIPETUNE_RATE_ENFORCEMENT=force
 ```
 
 An absent file or absent `PIPETUNE_PRESET` means bypass. An invalid
 configuration or unusable startup preset is reported in daemon status, but the
 daemon still starts in bypass so the audio path remains available. The GUI and
-CLI atomically preserve and update the two independent assignments in this
+CLI atomically preserve and update the three independent selections in this
 same file.
 
 An absent `PIPETUNE_TARGET` means to follow the physical system default. When
@@ -338,6 +379,11 @@ uses the current physical system default as a fallback. It returns to the
 preferred target automatically after hotplug. With no physical output at all,
 the daemon remains alive, releases PipeTune's effective-default claim, and
 waits for a device before resuming playback.
+
+An absent `PIPETUNE_RATE` or `PIPETUNE_RATE_ENFORCEMENT` uses the
+Max-and-suggest default. `PIPETUNE_RATE` accepts `max`, `44100`, `48000`,
+`96000`, `192000`, or `384000`; the enforcement value accepts `suggest` or
+`force`.
 
 This service affects every application's final output in that user's PipeWire
 session. It is not a machine-wide service shared by multiple logged-in users.

@@ -14,6 +14,10 @@ The window displays:
 - active native DSP node count;
 - selectable and preferred physical outputs;
 - effective physical output and the engine's selection reason;
+- Max or fixed PCM rate and suggest or force behavior;
+- selected-device support for 44.1, 48, 96, 192, and 384 kHz;
+- final input/DSP, selected output, and active physical rates, including
+  PipeWire resampling and transition state;
 - effective-default-sink state;
 - measured input rate, data rate, and readable stream format;
 - average native EffeTune DSP processing time and input-frame budget load;
@@ -70,6 +74,32 @@ rejection restores the engine-reported selection; a later persistence failure
 leaves the confirmed live change active and reports partial success. The GUI
 does not calculate fallback or hotplug behavior.
 
+The **DSP rate** drop-down contains **Max** followed by 44.1, 48, 96, 192, and
+384 kHz. Each fixed row is marked **supported**, **unsupported; PipeWire will
+resample**, or **support unknown** using the selected output's capabilities
+reported by the daemon. The GUI does not probe the device or resolve rates.
+
+**Max** asks the daemon to use the highest selectable rate supported by the
+selected output. A fixed selection remains the input and EffeTune DSP rate
+even when unsupported; the daemon chooses a compatible output rate and
+PipeWire resamples between them. The **PipeWire request** drop-down selects
+**Suggest** or **Force**. `node.rate` remains a PipeWire request rather than a
+guaranteed graph rate. Force applies only while PipeTune's playback node is
+active and does not rewrite the global PipeWire clock configuration.
+
+The **Effective rates** field passively displays the daemon's final input/DSP
+rate, selected output rate, and active physical rate. An idle device reports
+`idle`; an R/H difference is labeled **PipeWire resampling**. During a live
+transition the field and connection status say that switching is in progress,
+and the PCM rate controls are disabled.
+
+When connected, **Apply and Save** sends the rate policy to the daemon and
+persists it only after the complete live transition succeeds. A daemon
+rejection preserves the previous startup policy. A persistence failure leaves
+the confirmed live policy active and reports partial success. When
+disconnected, **Save for Next Start** writes the selection without attempting
+a live transition.
+
 Preset and bypass controls retain their existing disconnected behavior: when
 the daemon is disconnected, that DSP selection is saved without a live apply
 and takes effect on the next successful service start. The GUI writes:
@@ -83,8 +113,10 @@ When `XDG_CONFIG_HOME` is unset, this resolves to
 mode `0600`, and replacement is atomic. A `PIPETUNE_PRESET` assignment selects
 a preset; its absence starts the daemon in pass-through mode. A
 `PIPETUNE_TARGET` assignment stores a preferred PipeWire `node.name`; its
-absence follows the physical system default. Updates to either setting
-preserve the other.
+absence follows the physical system default. `PIPETUNE_RATE` stores `max` or
+one of the five fixed rates, and `PIPETUNE_RATE_ENFORCEMENT` stores `suggest`
+or `force`. Missing rate assignments use Max-and-suggest. Updates to any
+selection preserve the others.
 
 ## Status subscription
 

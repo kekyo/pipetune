@@ -5,3 +5,8 @@
 # Leave PIPETUNE_TARGET unset to follow the physical system default.
 # Use a stable PipeWire node.name; PipeTune falls back while it is unavailable.
 # PIPETUNE_TARGET=alsa_output.usb-example
+
+# Leave both rate assignments unset for the Max-and-suggest default.
+# PIPETUNE_RATE accepts max, 44100, 48000, 96000, 192000, or 384000.
+# PIPETUNE_RATE=max
+# PIPETUNE_RATE_ENFORCEMENT=suggest

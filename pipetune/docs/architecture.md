@@ -35,7 +35,10 @@ application streams ──> PipeTune Audio/Sink
                        physical Audio/Sink
 ```
 
-Both streams use a fixed configured sample rate and channel layout. The
+The capture media format, EffeTune DSP, and playback media format share the
+resolved rate R. The playback node requests a potentially different PipeWire
+graph/output rate H, allowing PipeWire to resample R to a rate accepted by the
+physical output. The channel layout remains fixed for one process run. The
 capture callback copies one bounded block into preallocated planar storage,
 processes it in place, and writes it to the single-producer/single-consumer
 ring. The output callback reads available frames and supplies silence on
@@ -93,10 +96,11 @@ An unavailable preference remains configured. Registry hotplug therefore
 restores it automatically when the matching `node.name` returns. Clearing the
 preference switches back to system-default tracking.
 
-Changing the target destroys and recreates only the non-real-time output
-stream. The virtual sink and prepared DSP pipeline remain present. Queued
-frames for the previous device are discarded so stale audio is not replayed
-after a switch.
+Changing the target first destroys and recreates the non-real-time output
+stream. Queued frames for the previous device are discarded so stale audio is
+not replayed after a switch. If the new target's capabilities resolve to
+different R or H values, the sample-rate transaction described below also
+rebuilds the DSP and reconnects both audio streams.
 
 When every physical output disappears, PipeTune destroys the playback stream,
 reports a null effective target with reason `unavailable`, and releases its
@@ -104,6 +108,56 @@ effective-default claim. The daemon and registry monitoring remain alive. A
 new device creates and negotiates a playback stream first; only then does
 PipeTune reclaim the effective default and resume audio. A retained preference
 is not cleared during this state.
+
+## Sample-rate selection and transitions
+
+PipeTune supports two user policies and no separate oversampling multiplier:
+
+- **Max** selects the highest of 44.1, 48, 96, 192, and 384 kHz accepted by
+  the selected physical output.
+- **Fixed** uses one of those five values as R regardless of device support.
+
+Each physical output is bound for PipeWire `EnumFormat` enumeration. Discrete,
+inclusive range, and stepped-rate choices are normalized and retained in the
+registry tracker. Incomplete enumeration remains explicitly unknown rather
+than being interpreted as unsupported. The active physical-device rate is
+observed independently and is reported as zero while the device is idle.
+
+The daemon owns all resolution:
+
+1. Max with known capabilities chooses the highest supported selectable value
+   and sets H equal to R.
+2. Max with unknown capabilities retains the current R and H; the initial
+   fallback is 48 kHz.
+3. If known capabilities contain none of the five selectable values, Max uses
+   R = 48 kHz and selects a device-compatible H using the fixed fallback rule.
+4. Fixed always sets R to the requested value. If supported, H equals R.
+   Otherwise H is the greatest supported rate not above R, or the device
+   minimum when no supported rate is below R.
+
+The playback media format remains R when R and H differ, so PipeWire performs
+the resampling. The capture virtual sink advertises `node.rate=1/R`; the
+playback stream advertises `node.rate=1/H`. This property is a graph-rate
+request, not a guaranteed global-clock change. **Suggest** leaves it as a
+preference. **Force** adds `node.force-rate=0` to the playback node, asking
+PipeWire to use the denominator of `node.rate` while that node is active.
+PipeTune never writes a global PipeWire clock setting.
+
+A policy, selected target, or capability change schedules an immediate
+non-real-time transition. Automatic changes are coalesced and explicit control
+requests are serialized. A transition:
+
+1. rebuilds the active preset or bypass pipeline for the new R and stages it;
+2. disconnects capture and playback, clears queued frames, and applies the new
+   R, H, and enforcement properties;
+3. reconnects both streams and waits for the required formats to become ready;
+4. commits the staged pipeline and publishes the final state; or
+5. reconnects the previous pipeline, rates, and enforcement after any failure.
+
+A short silent interval is intentional. Failure to apply a new policy is
+nonfatal after successful rollback and is retained in status. Only failure to
+restore the previous working state terminates the daemon. Preset load and
+bypass requests are rejected while a rate transaction is active.
 
 ## Default-sink ownership and fail-open behavior
 
@@ -144,12 +198,16 @@ Supported commands are:
 - load and atomically activate another `.effetune_preset`;
 - bypass DSP and atomically activate pass-through processing;
 - set a preferred physical output by `node.name`;
-- clear the preferred output and follow the physical system default; and
+- clear the preferred output and follow the physical system default;
+- set a Max/fixed and suggest/force sample-rate policy; and
 - subscribe to an initial status event and later status publications.
 
 Successful status and mutation replies include the preference, effective
-target, selection reason, and sorted eligible output list. Registry, default
-device, and preference changes publish fresh state to subscribers.
+target, selection reason, sorted eligible output list, per-output rate
+capabilities, configured policy, R, H, active physical rate, fallback,
+transition state, and the latest transition diagnostic. Registry, default
+device, capability, preference, and final rate changes publish fresh state to
+subscribers.
 
 The subscriber server uses an `eventfd` wakeup and bounded, coalescing output
 per client. Preset activation and relevant PipeWire state transitions request
@@ -167,8 +225,12 @@ selection creates no EffeTune engine and copies captured samples into the
 output ring unchanged.
 
 An optional `PIPETUNE_TARGET` assignment stores the preferred physical
-`node.name`. Its absence selects system-default mode. Preset and output updates
-use one atomic writer and preserve the other independent assignment.
+`node.name`. Its absence selects system-default mode.
+
+`PIPETUNE_RATE` stores `max` or one of `44100`, `48000`, `96000`, `192000`,
+and `384000`. `PIPETUNE_RATE_ENFORCEMENT` stores `suggest` or `force`.
+Missing rate assignments select Max-and-suggest. Preset, output, and rate
+updates use one atomic writer and preserve the other selections.
 
 Malformed configuration, an unavailable preset, or a preset that fails
 validation also degrades to bypass instead of terminating the audio service.
@@ -195,12 +257,12 @@ shutdown operations succeed. Both commands reject effective user ID zero.
 
 `pipetune-gtk` is a single-instance `GtkApplication`. Its GIO client keeps one
 asynchronous subscription connection and uses separate asynchronous requests
-for preset changes and output preference changes. Runtime counters and
-cumulative native EffeTune processing time are published once per second; the
-GUI derives a per-frame interval average. It divides that average by the
-input-frame duration implied by the negotiated sample rate to show DSP load,
-where 100% is the theoretical processing deadline. A retry timer reconnects
-a lost subscription; status itself is not polled.
+for preset changes, output preference changes, and rate-policy changes.
+Runtime counters and cumulative native EffeTune processing time are published
+once per second; the GUI derives a per-frame interval average. It divides that
+average by the input-frame duration implied by the negotiated sample rate to
+show DSP load, where 100% is the theoretical processing deadline. A retry
+timer reconnects a lost subscription; status itself is not polled.
 
 The tray backend discovers a StatusNotifierItem host first. If none is
 available on X11, it creates the same `GtkStatusIcon`/XEmbed compatibility
@@ -219,6 +281,13 @@ persisted only after daemon confirmation, and persistence failure leaves the
 live engine choice active. The GUI presents the engine's candidates and reason
 without implementing fallback or hotplug policy.
 
+The rate controls remain editable while disconnected so a policy can be saved
+for the next start. While connected, the GUI waits for the daemon to finish and
+confirm the live transaction before persistence. It marks each fixed row using
+daemon-reported device capabilities and passively shows R, H, the active
+physical rate, fallback/resampling, transition state, and errors. It does not
+resolve rates or implement oversampling.
+
 ## Known MVP limits
 
 - Linux PipeWire 0.3 and systemd user sessions only.
@@ -226,7 +295,7 @@ without implementing fallback or hotplug policy.
   runtime DSP object is distributed.
 - Standalone PulseAudio without `pipewire-pulse` is unsupported.
 - DSPs requiring external assets are skipped.
-- The configured stream rate and channel count are fixed for one process run.
+- The channel count is fixed for one process run.
 - Effective DSP latency is not yet published to the wider PipeWire graph for
   audio/video latency compensation.
 - Fail-open recovery permits a short dropout.
