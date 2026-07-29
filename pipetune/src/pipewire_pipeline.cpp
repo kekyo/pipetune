@@ -6,6 +6,7 @@
 #include "input_telemetry.h"
 #include "output_device_tracker.h"
 #include "pipewire_rate_parser.h"
+#include "pipewire_volume_smoother.h"
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
 
@@ -47,6 +48,7 @@ namespace pipetune {
 constexpr auto kSampleBytes = std::uint32_t{sizeof(float)};
 constexpr auto kReadinessTimeoutSeconds = std::time_t{5};
 constexpr auto kRateTransitionTimeoutSeconds = std::time_t{5};
+constexpr auto kVolumeRampMilliseconds = std::uint32_t{5};
 
 struct PipeWireRuntime;
 
@@ -69,7 +71,8 @@ enum class CoreSyncPurpose {
   enumeration,
   defaultActivation,
   defaultRelease,
-  defaultRestoration
+  defaultRestoration,
+  capturePassive
 };
 
 enum class DefaultSinkTransition {
@@ -102,6 +105,7 @@ struct PipeWireRuntime {
   PipeWireRunMode mode;
   OutputDeviceTracker deviceTracker;
   PlanarAudioRing ring;
+  PipeWireVolumeSmoother volumeSmoother;
   std::vector<float> captureScratch;
   std::vector<float> playbackScratch;
   std::atomic<std::uint64_t> processingErrors;
@@ -173,6 +177,8 @@ struct PipeWireRuntime {
   bool playbackReady;
   bool captureFormatReady;
   bool playbackFormatReady;
+  bool captureAlwaysProcess;
+  bool captureSchedulingSyncPending;
   bool captureListenerInstalled;
   bool playbackListenerInstalled;
   bool readyNotified;
@@ -186,6 +192,7 @@ struct PipeWireRuntime {
         mode(runtimeMode),
         deviceTracker(runtimeOptions.sinkName, runtimeOptions.targetObject),
         ring(runtimeOptions.channelCount, runtimeOptions.ringCapacityFrames),
+        volumeSmoother(runtimeOptions.channelCount),
         captureScratch(static_cast<std::size_t>(runtimeOptions.channelCount) *
                            runtimeOptions.maxFrames,
                        0.0F),
@@ -231,7 +238,8 @@ struct PipeWireRuntime {
         trackingReady(false), shutdownRequested(false),
         observedDefaultSink(), defaultMetadataValue(), playbackTarget(),
         captureReady(false), playbackReady(false), captureFormatReady(false),
-        playbackFormatReady(false), captureListenerInstalled(false),
+        playbackFormatReady(false), captureAlwaysProcess(true),
+        captureSchedulingSyncPending(false), captureListenerInstalled(false),
         playbackListenerInstalled(false), readyNotified(false),
         completed(false), error() {}
 
@@ -340,6 +348,8 @@ static void maybeFinishRateTransition(PipeWireRuntime &runtime);
 static void requestAutomaticRateUpdate(PipeWireRuntime &runtime);
 static void reportStreamFailure(PipeWireRuntime &runtime,
                                 std::string message);
+static void signalRateChange(PipeWireRuntime &runtime);
+static bool settleCaptureScheduling(PipeWireRuntime &runtime);
 static void stopTrackingOutputNode(PipeWireRuntime &runtime,
                                    std::uint32_t id);
 
@@ -429,6 +439,13 @@ static void trackingCoreDone(void *data, std::uint32_t id, int sequence) {
   if (id != PW_ID_CORE || sequence != runtime.trackingSyncSequence) {
     return;
   }
+  if (runtime.trackingSyncPurpose == CoreSyncPurpose::capturePassive) {
+    runtime.captureSchedulingSyncPending = false;
+    maybeFinishRateTransition(runtime);
+    finishReadinessCheck(runtime);
+    signalRateChange(runtime);
+    return;
+  }
   if (runtime.trackingSyncPurpose == CoreSyncPurpose::defaultActivation) {
     if (runtime.observedDefaultSink != runtime.options.sinkName) {
       runtime.defaultSinkTransition = DefaultSinkTransition::inactive;
@@ -442,6 +459,7 @@ static void trackingCoreDone(void *data, std::uint32_t id, int sequence) {
     }
     runtime.defaultSinkActive.store(true, std::memory_order_release);
     requestControlStatusUpdate(runtime);
+    maybeFinishRateTransition(runtime);
     finishReadinessCheck(runtime);
     return;
   }
@@ -844,6 +862,52 @@ static bool isReadyState(pw_stream_state state) noexcept {
   return state == PW_STREAM_STATE_PAUSED || state == PW_STREAM_STATE_STREAMING;
 }
 
+static bool setCaptureAlwaysProcess(PipeWireRuntime &runtime, bool enabled) {
+  if (runtime.captureAlwaysProcess == enabled) {
+    return true;
+  }
+  auto *properties = pw_properties_new(
+      PW_KEY_NODE_ALWAYS_PROCESS, enabled ? "true" : "false", nullptr);
+  if (properties == nullptr) {
+    failRuntime(runtime,
+                "cannot allocate PipeWire scheduling properties");
+    return false;
+  }
+  const auto result = pw_stream_update_properties(
+      runtime.captureStream, &properties->dict);
+  pw_properties_free(properties);
+  if (result < 0) {
+    failRuntime(runtime,
+                systemError("cannot update PipeWire scheduling", result));
+    return false;
+  }
+  runtime.captureAlwaysProcess = enabled;
+  return true;
+}
+
+static bool settleCaptureScheduling(PipeWireRuntime &runtime) {
+  // The property update is asynchronous. Readiness and rate-change responses
+  // must wait for the core sync or a following reconnect can race the pending
+  // request that returns the capture node to passive scheduling.
+  if (runtime.captureSchedulingSyncPending) {
+    return false;
+  }
+  if (!runtime.captureAlwaysProcess) {
+    return true;
+  }
+  if (runtime.defaultSinkTransition == DefaultSinkTransition::activating ||
+      runtime.defaultSinkTransition == DefaultSinkTransition::releasing ||
+      runtime.defaultSinkTransition == DefaultSinkTransition::restoring) {
+    return false;
+  }
+  if (!setCaptureAlwaysProcess(runtime, false)) {
+    return false;
+  }
+  runtime.captureSchedulingSyncPending = true;
+  requestTrackingSync(runtime, CoreSyncPurpose::capturePassive);
+  return false;
+}
+
 static void finishReadinessCheck(PipeWireRuntime &runtime) {
   if (!runtime.captureReady || !runtime.playbackReady ||
       !runtime.captureFormatReady || !runtime.playbackFormatReady ||
@@ -855,6 +919,9 @@ static void finishReadinessCheck(PipeWireRuntime &runtime) {
   maybeActivateDefaultSink(runtime);
   if (runtime.options.manageDefaultSink &&
       !runtime.defaultSinkActive.load(std::memory_order_acquire)) {
+    return;
+  }
+  if (!settleCaptureScheduling(runtime)) {
     return;
   }
   if (!runtime.readyNotified) {
@@ -993,12 +1060,26 @@ static spa_pod *buildBufferParameter(spa_pod_builder &builder,
 
 static void streamParameterChanged(void *data, std::uint32_t id,
                                    const spa_pod *parameter) {
-  if (id != SPA_PARAM_Format || parameter == nullptr) {
+  if (parameter == nullptr) {
     return;
   }
 
   auto &context = *static_cast<StreamCallbackContext *>(data);
   auto &runtime = *context.runtime;
+  if (id == SPA_PARAM_Props && context.capture) {
+    const auto sampleRate =
+        runtime.dspSampleRate.load(std::memory_order_acquire);
+    const auto rampSamples = std::max(
+        std::uint32_t{1},
+        sampleRate * kVolumeRampMilliseconds / std::uint32_t{1000});
+    static_cast<void>(
+        runtime.volumeSmoother.update(parameter, rampSamples));
+    return;
+  }
+  if (id != SPA_PARAM_Format) {
+    return;
+  }
+
   auto negotiated = spa_audio_info_raw{};
   const auto parseResult = spa_format_audio_raw_parse(parameter, &negotiated);
   const auto expectedSampleRate =
@@ -1109,6 +1190,7 @@ static void captureProcess(void *data) {
       copyCapturePlane(buffer.datas[channel], sourceFrame, channelScratch);
     }
 
+    runtime.volumeSmoother.process(scratch, blockFrames);
     const auto sampleRate =
         runtime.dspSampleRate.load(std::memory_order_relaxed);
     const auto timeSeconds =
@@ -1274,6 +1356,13 @@ static pw_properties *makeCaptureProperties(const PipeWireRuntime &runtime) {
   pw_properties_set(properties, PW_KEY_NODE_DESCRIPTION,
                     runtime.options.sinkDescription.c_str());
   pw_properties_set(properties, PW_KEY_NODE_VIRTUAL, "true");
+  // Negotiate formats immediately, then return to passive processing after
+  // the initial setup or a sample-rate transition completes.
+  pw_properties_set(properties, PW_KEY_NODE_ALWAYS_PROCESS, "true");
+  // Preserve desktop-visible sink volume while the daemon applies a short,
+  // click-free gain ramp to the PCM stream.
+  pw_properties_set(properties, "channelmix.min-volume", "1.0");
+  pw_properties_set(properties, "channelmix.max-volume", "1.0");
   return properties;
 }
 
@@ -1472,6 +1561,7 @@ static std::string reconnectAudioStreams(PipeWireRuntime &runtime) {
     return systemError("cannot update PipeWire virtual sink properties",
                        propertyResult);
   }
+  runtime.captureAlwaysProcess = true;
   const auto captureError =
       connectStream(runtime, runtime.captureStream, PW_DIRECTION_INPUT, false,
                     false);
@@ -1625,6 +1715,9 @@ static void maybeFinishRateTransition(PipeWireRuntime &runtime) {
       !rateTransitionAudioIsReady(runtime)) {
     return;
   }
+  if (!settleCaptureScheduling(runtime)) {
+    return;
+  }
   finishRateTransition(runtime);
 }
 
@@ -1764,6 +1857,9 @@ static void rateTransitionTimedOut(void *data, std::uint64_t) {
 
 static void rateChangeRequested(void *data, std::uint64_t) {
   auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  if (runtime.captureSchedulingSyncPending) {
+    return;
+  }
   if (runtime.rateTransition.phase != RateTransitionPhase::idle) {
     if (!runtime.rateTransition.failure.empty() &&
         runtime.rateTransition.phase == RateTransitionPhase::applying) {
