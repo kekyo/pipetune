@@ -71,6 +71,8 @@ struct MainWindowUi {
   GtkWidget *applyButton = nullptr;
   /** Bypass-and-save action button. */
   GtkWidget *bypassButton = nullptr;
+  /** Restores all PipeTune startup choices to their defaults. */
+  GtkWidget *resetButton = nullptr;
   /** Notice dismissal button. */
   GtkWidget *dismissButton = nullptr;
 };

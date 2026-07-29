@@ -1,6 +1,8 @@
 #include "application-state.h"
+#include "configuration-reset-client.h"
 #include "control-client.h"
 #include "installed-presets.h"
+#include "installed-tools.h"
 #include "launch-options.h"
 #include "main-window.h"
 #include "output-operation.h"
@@ -39,6 +41,8 @@ struct GtkRuntime {
   GtkApplication *application;
   ApplicationState state;
   ControlClient *controlClient;
+  ConfigurationResetClient *configurationResetClient;
+  bool configurationResetPending;
   TrayBackendState *trayBackend;
   TrayBackendAvailabilityState trayAvailability;
   std::filesystem::path startupConfigPath;
@@ -384,6 +388,11 @@ static void render(GtkRuntime *runtime) {
           : "Save Bypass");
   gtk_widget_set_sensitive(runtime->ui.bypassButton,
                            !runtime->state.operationPending);
+  gtk_widget_set_sensitive(
+      runtime->ui.resetButton,
+      runtime->configurationResetClient != nullptr &&
+          !runtime->configurationResetPending &&
+          !runtime->state.operationPending);
   updateTrayBackend(runtime->trayBackend,
                     iconStateForApplication(runtime->state),
                     iconPresentation.colorMode,
@@ -393,6 +402,8 @@ static void render(GtkRuntime *runtime) {
 static void presentWindow(GtkRuntime *runtime,
                           guint32 userInteractionTime);
 static void requestQuit(GtkRuntime *runtime);
+static std::string reloadStartupConfig(GtkRuntime *runtime,
+                                       bool resetSelections);
 
 static gboolean onWindowDelete(GtkWidget *, GdkEvent *, gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
@@ -440,6 +451,9 @@ static void onConnectionChanged(bool connected, std::string_view error,
     return;
   }
   markControlDisconnected(runtime->state, error);
+  if (runtime->configurationResetPending) {
+    setControlOperationPending(runtime->state, true);
+  }
   render(runtime);
   scheduleReconnect(runtime);
 }
@@ -463,6 +477,106 @@ static void scheduleReconnect(GtkRuntime *runtime) {
   }
   runtime->reconnectSource = g_timeout_add_seconds(
       kReconnectDelaySeconds, reconnectControl, runtime);
+}
+
+static void reconnectControlImmediately(GtkRuntime *runtime) {
+  if (runtime->controlClient == nullptr || runtime->shuttingDown) {
+    return;
+  }
+  if (runtime->reconnectSource != 0) {
+    g_source_remove(runtime->reconnectSource);
+    runtime->reconnectSource = 0;
+  }
+  stopControlSubscription(runtime->controlClient);
+  markControlConnecting(runtime->state);
+  startControlSubscription(runtime->controlClient);
+}
+
+static void onConfigurationResetCompleted(
+    const ConfigurationResetClientResult &result, void *userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (runtime->shuttingDown) {
+    return;
+  }
+  runtime->configurationResetPending = false;
+  setControlOperationPending(runtime->state, false);
+
+  const auto reloadError = reloadStartupConfig(runtime, true);
+  reconnectControlImmediately(runtime);
+
+  auto diagnostic =
+      result.success ? result.standardOutput : result.error;
+  if (diagnostic.empty()) {
+    diagnostic =
+        result.success
+            ? std::string{"PipeTune configuration was reset"}
+            : std::string{"PipeTune configuration reset failed"};
+  }
+  if (!reloadError.empty()) {
+    appendNotice(diagnostic,
+                 "Configuration reload failed: " + reloadError);
+  }
+  setControlDiagnostic(runtime->state, diagnostic);
+  render(runtime);
+}
+
+static void startConfigurationReset(GtkRuntime *runtime) {
+  if (runtime->configurationResetClient == nullptr ||
+      runtime->configurationResetPending ||
+      runtime->state.operationPending || runtime->shuttingDown) {
+    return;
+  }
+  clearControlNotice(runtime->state);
+  runtime->configurationResetPending = true;
+  setControlOperationPending(runtime->state, true);
+  render(runtime);
+  if (!resetConfigurationAsync(runtime->configurationResetClient,
+                               onConfigurationResetCompleted, runtime)) {
+    runtime->configurationResetPending = false;
+    setControlOperationPending(runtime->state, false);
+    setControlDiagnostic(
+        runtime->state,
+        "PipeTune configuration reset could not be started");
+    render(runtime);
+  }
+}
+
+static void onConfigurationResetResponse(GtkDialog *dialog,
+                                         gint responseId,
+                                         gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  gtk_widget_destroy(GTK_WIDGET(dialog));
+  if (responseId == GTK_RESPONSE_ACCEPT) {
+    startConfigurationReset(runtime);
+  }
+}
+
+static void onConfigurationResetClicked(GtkButton *,
+                                        gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (runtime->configurationResetPending ||
+      runtime->state.operationPending || runtime->shuttingDown) {
+    return;
+  }
+  auto *dialog = gtk_message_dialog_new(
+      GTK_WINDOW(runtime->ui.window),
+      static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL |
+                                  GTK_DIALOG_DESTROY_WITH_PARENT),
+      GTK_MESSAGE_WARNING, GTK_BUTTONS_NONE, "%s",
+      "Reset all PipeTune configuration?");
+  gtk_message_dialog_format_secondary_text(
+      GTK_MESSAGE_DIALOG(dialog), "%s",
+      "This selects Bypass, follows the system-default output, and uses "
+      "Max + Suggest. The PipeTune service will restart if it is running.");
+  gtk_dialog_add_button(GTK_DIALOG(dialog), "Cancel",
+                        GTK_RESPONSE_CANCEL);
+  gtk_dialog_add_button(GTK_DIALOG(dialog), "Reset",
+                        GTK_RESPONSE_ACCEPT);
+  gtk_dialog_set_default_response(GTK_DIALOG(dialog),
+                                  GTK_RESPONSE_CANCEL);
+  g_signal_connect(dialog, "response",
+                   G_CALLBACK(onConfigurationResetResponse), runtime);
+  gtk_widget_show_all(dialog);
 }
 
 static void onOutputReply(const ControlClientReply &reply,
@@ -985,6 +1099,8 @@ static void connectMainWindowSignals(GtkRuntime *runtime) {
                    G_CALLBACK(onApplyClicked), runtime);
   g_signal_connect(runtime->ui.bypassButton, "clicked",
                    G_CALLBACK(onBypassClicked), runtime);
+  g_signal_connect(runtime->ui.resetButton, "clicked",
+                   G_CALLBACK(onConfigurationResetClicked), runtime);
   g_signal_connect(runtime->ui.dismissButton, "clicked",
                    G_CALLBACK(onNoticeDismiss), runtime);
 }
@@ -1025,6 +1141,42 @@ static void onTrayAvailabilityChanged(
   runtime->trayAvailability = availability;
 }
 
+static std::string reloadStartupConfig(GtkRuntime *runtime,
+                                       bool resetSelections) {
+  if (runtime->startupConfigPath.empty()) {
+    return "startup configuration path is unavailable";
+  }
+  const auto loaded =
+      pipetune::loadStartupConfig(runtime->startupConfigPath);
+  if (!loaded.error.empty()) {
+    return loaded.error;
+  }
+
+  runtime->hasStartupPreset = loaded.presetFound;
+  runtime->startupPreset = loaded.presetPath;
+  runtime->startupRatePolicy = loaded.ratePolicy;
+  runtime->editedRatePolicy = loaded.ratePolicy;
+  runtime->pendingRatePolicy = loaded.ratePolicy;
+  runtime->rateEditDirty = false;
+  runtime->pendingPreset.clear();
+
+  if (resetSelections) {
+    gtk_file_chooser_unselect_all(
+        GTK_FILE_CHOOSER(runtime->ui.presetChooser));
+    runtime->updatingPresetCombo = true;
+    gtk_combo_box_set_active(
+        GTK_COMBO_BOX(runtime->ui.presetCombo), 0);
+    runtime->updatingPresetCombo = false;
+  }
+  if (loaded.presetFound &&
+      std::filesystem::exists(loaded.presetPath)) {
+    gtk_file_chooser_set_filename(
+        GTK_FILE_CHOOSER(runtime->ui.presetChooser),
+        loaded.presetPath.c_str());
+  }
+  return {};
+}
+
 static void initializeStartupConfig(GtkRuntime *runtime) {
   const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
   const auto *home = std::getenv("HOME");
@@ -1038,19 +1190,21 @@ static void initializeStartupConfig(GtkRuntime *runtime) {
     return;
   }
   runtime->startupConfigPath = resolved.path;
-  const auto loaded = pipetune::loadStartupConfig(runtime->startupConfigPath);
-  if (!loaded.error.empty()) {
-    setControlDiagnostic(runtime->state, loaded.error);
-    return;
+  const auto error = reloadStartupConfig(runtime, false);
+  if (!error.empty()) {
+    setControlDiagnostic(runtime->state, error);
   }
-  runtime->hasStartupPreset = loaded.presetFound;
-  runtime->startupPreset = loaded.presetPath;
-  runtime->startupRatePolicy = loaded.ratePolicy;
-  runtime->editedRatePolicy = loaded.ratePolicy;
-  if (loaded.presetFound && std::filesystem::exists(loaded.presetPath)) {
-    gtk_file_chooser_set_filename(
-        GTK_FILE_CHOOSER(runtime->ui.presetChooser),
-        loaded.presetPath.c_str());
+}
+
+static void initializeConfigurationResetClient(GtkRuntime *runtime) {
+  runtime->configurationResetClient =
+      createConfigurationResetClient(kPipeTuneExecutable);
+  if (runtime->configurationResetClient == nullptr) {
+    auto diagnostic = runtime->state.diagnostic;
+    appendNotice(
+        diagnostic,
+        "installed PipeTune executable path is unavailable");
+    setControlDiagnostic(runtime->state, diagnostic);
   }
 }
 
@@ -1077,6 +1231,7 @@ static void onApplicationStartup(GApplication *, gpointer userData) {
   initializeStatusArtwork(runtime);
   connectMainWindowSignals(runtime);
   initializeStartupConfig(runtime);
+  initializeConfigurationResetClient(runtime);
   initializePresetCatalog(runtime);
   g_application_hold(G_APPLICATION(runtime->application));
   runtime->applicationHeld = true;
@@ -1154,6 +1309,9 @@ static void onApplicationShutdown(GApplication *, gpointer userData) {
   runtime->presetFileMonitor = nullptr;
   destroyControlClient(runtime->controlClient);
   runtime->controlClient = nullptr;
+  destroyConfigurationResetClient(runtime->configurationResetClient);
+  runtime->configurationResetClient = nullptr;
+  runtime->configurationResetPending = false;
   destroyTrayBackend(runtime->trayBackend);
   runtime->trayBackend = nullptr;
   destroyMainWindowUi(runtime->ui);
@@ -1168,6 +1326,8 @@ static int runApplication(int argc, char **argv) {
       .application = application,
       .state = initialApplicationState(),
       .controlClient = nullptr,
+      .configurationResetClient = nullptr,
+      .configurationResetPending = false,
       .trayBackend = nullptr,
       .trayAvailability = TrayBackendAvailabilityState::pending,
       .startupConfigPath = {},

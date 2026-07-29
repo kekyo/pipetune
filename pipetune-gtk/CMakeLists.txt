@@ -65,6 +65,7 @@ add_custom_command(
 add_library(
   pipetune_gtk_core STATIC
   src/application-state.cpp
+  src/configuration-reset-client.cpp
   src/control-client.cpp
   src/output-operation.cpp
   src/output-selection-model.cpp
@@ -167,6 +168,19 @@ endif()
 configure_file(
   src/installed-presets.h.in
   "${PIPETUNE_GTK_RESOURCE_DIRECTORY}/installed-presets.h"
+  @ONLY)
+if(BUILD_TESTING)
+  set(
+    PIPETUNE_GTK_RUNTIME_PIPETUNE_EXECUTABLE
+    "${CMAKE_BINARY_DIR}/pipetune")
+else()
+  set(
+    PIPETUNE_GTK_RUNTIME_PIPETUNE_EXECUTABLE
+    "${CMAKE_INSTALL_FULL_BINDIR}/pipetune")
+endif()
+configure_file(
+  src/installed-tools.h.in
+  "${PIPETUNE_GTK_RESOURCE_DIRECTORY}/installed-tools.h"
   @ONLY)
 target_include_directories(
   pipetune-gtk PRIVATE "${PIPETUNE_GTK_RESOURCE_DIRECTORY}")
@@ -339,6 +353,40 @@ if(BUILD_TESTING)
     COMMAND pipetune_gtk_control_client_tests)
   set_tests_properties(
     pipetune_gtk_control_client_tests PROPERTIES TIMEOUT 10)
+
+  add_executable(
+    pipetune_gtk_configuration_reset_helper
+    test/configuration-reset-helper.cpp)
+  if(MSVC)
+    target_compile_options(
+      pipetune_gtk_configuration_reset_helper PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_configuration_reset_helper PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+
+  add_executable(
+    pipetune_gtk_configuration_reset_client_tests
+    test/configuration-reset-client-test.cpp)
+  target_link_libraries(
+    pipetune_gtk_configuration_reset_client_tests
+    PRIVATE pipetune_gtk_core PkgConfig::GIO)
+  if(MSVC)
+    target_compile_options(
+      pipetune_gtk_configuration_reset_client_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_configuration_reset_client_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_gtk_configuration_reset_client_tests
+    COMMAND
+      pipetune_gtk_configuration_reset_client_tests
+      $<TARGET_FILE:pipetune_gtk_configuration_reset_helper>)
+  set_tests_properties(
+    pipetune_gtk_configuration_reset_client_tests PROPERTIES TIMEOUT 10)
 
   add_executable(
     pipetune_gtk_tray_backend_tests

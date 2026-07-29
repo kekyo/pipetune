@@ -92,6 +92,8 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
           requiredWidget(builder, "applyButton", GTK_TYPE_BUTTON),
       .bypassButton =
           requiredWidget(builder, "bypassButton", GTK_TYPE_BUTTON),
+      .resetButton =
+          requiredWidget(builder, "resetButton", GTK_TYPE_BUTTON),
       .dismissButton =
           requiredWidget(builder, "dismissButton", GTK_TYPE_BUTTON),
   };

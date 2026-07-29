@@ -71,6 +71,8 @@ static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
                "apply button type differs") &&
          check(GTK_IS_BUTTON(ui.bypassButton),
                "bypass button type differs") &&
+         check(GTK_IS_BUTTON(ui.resetButton),
+               "configuration reset button type differs") &&
          check(GTK_IS_BUTTON(ui.dismissButton),
                "dismiss button type differs");
 }
@@ -153,6 +155,10 @@ int main(int argc, char **argv) {
             "main window default size differs") &&
       check(gtk_builder_get_object(ui.builder, "refreshButton") == nullptr,
             "periodically updated status must not expose a refresh button") &&
+      check(std::string_view(
+                gtk_button_get_label(GTK_BUTTON(ui.resetButton))) ==
+                "Reset Configuration…",
+            "configuration reset button label differs") &&
       check(gtk_widget_get_hexpand(ui.statusLabel) != FALSE,
             "status label must expand");
   gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ui.outputCombo),
