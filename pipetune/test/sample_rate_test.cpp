@@ -181,11 +181,112 @@ static bool testCapabilityValidation() {
                "step constraints must require a positive step");
 }
 
+static bool testMaximumRateResolution() {
+  const auto known = pipetune::SampleRateCapabilities{
+      .known = true,
+      .constraints =
+          {{.kind = pipetune::SampleRateConstraintKind::range,
+            .minimum = 32000,
+            .maximum = 192000,
+            .step = 0}}};
+  const auto maximum = pipetune::resolveSampleRates(
+      pipetune::defaultSampleRatePolicy(), known, 48000, 48000);
+  const auto unknown = pipetune::resolveSampleRates(
+      pipetune::defaultSampleRatePolicy(),
+      {.known = false, .constraints = {}}, 96000, 88200);
+  const auto noSelectable = pipetune::resolveSampleRates(
+      pipetune::defaultSampleRatePolicy(),
+      {.known = true,
+       .constraints =
+           {{.kind = pipetune::SampleRateConstraintKind::discrete,
+             .minimum = 32000,
+             .maximum = 32000,
+             .step = 0}}},
+      192000, 192000);
+
+  return check(maximum.has_value() &&
+                   *maximum == pipetune::ResolvedSampleRates{
+                                   .dspSampleRate = 192000,
+                                   .outputSampleRate = 192000,
+                                   .fallback = false},
+               "Max must choose the highest supported selectable rate") &&
+         check(unknown.has_value() &&
+                   *unknown == pipetune::ResolvedSampleRates{
+                                   .dspSampleRate = 96000,
+                                   .outputSampleRate = 88200,
+                                   .fallback = false},
+               "unknown Max capabilities must retain current rates") &&
+         check(noSelectable.has_value() &&
+                   *noSelectable ==
+                       pipetune::ResolvedSampleRates{
+                           .dspSampleRate = 48000,
+                           .outputSampleRate = 32000,
+                           .fallback = true},
+               "Max without a selectable device rate must use 48 kHz DSP "
+               "and a device fallback");
+}
+
+static bool testFixedRateResolution() {
+  const auto fixed192 = pipetune::SampleRatePolicy{
+      .mode = pipetune::SampleRateMode::fixed,
+      .fixedRate = 192000,
+      .enforcement = pipetune::SampleRateEnforcement::force};
+  const auto fixed441 = pipetune::SampleRatePolicy{
+      .mode = pipetune::SampleRateMode::fixed,
+      .fixedRate = 44100,
+      .enforcement = pipetune::SampleRateEnforcement::suggest};
+  const auto stepped = pipetune::SampleRateCapabilities{
+      .known = true,
+      .constraints =
+          {{.kind = pipetune::SampleRateConstraintKind::step,
+            .minimum = 48000,
+            .maximum = 144000,
+            .step = 48000}}};
+  const auto belowMaximum =
+      pipetune::resolveSampleRates(fixed192, stepped, 48000, 48000);
+  const auto belowMinimum =
+      pipetune::resolveSampleRates(fixed441, stepped, 48000, 48000);
+  const auto unknown = pipetune::resolveSampleRates(
+      fixed192, {.known = false, .constraints = {}}, 48000, 48000);
+
+  return check(belowMaximum.has_value() &&
+                   *belowMaximum ==
+                       pipetune::ResolvedSampleRates{
+                           .dspSampleRate = 192000,
+                           .outputSampleRate = 144000,
+                           .fallback = true},
+               "unsupported fixed R must choose the greatest H below R") &&
+         check(belowMinimum.has_value() &&
+                   *belowMinimum ==
+                       pipetune::ResolvedSampleRates{
+                           .dspSampleRate = 44100,
+                           .outputSampleRate = 48000,
+                           .fallback = true},
+               "fixed R below device minimum must choose that minimum") &&
+         check(unknown.has_value() &&
+                   *unknown ==
+                       pipetune::ResolvedSampleRates{
+                           .dspSampleRate = 192000,
+                           .outputSampleRate = 192000,
+                           .fallback = false},
+               "unknown fixed capabilities must still apply the requested R") &&
+         check(!pipetune::resolveSampleRates(
+                    {.mode = pipetune::SampleRateMode::fixed,
+                     .fixedRate = 88200,
+                     .enforcement =
+                         pipetune::SampleRateEnforcement::suggest},
+                    stepped, 48000, 48000)
+                    .has_value(),
+               "invalid policies must not resolve");
+}
+
 int main() {
   return testSelectableRates() && testPolicyNamesAndParsing() &&
                  testPolicyValidation() &&
                  testCapabilityNormalizationAndSupport() &&
-                 testCapabilityValidation()
+                 testCapabilityValidation() &&
+                 testMaximumRateResolution() &&
+                 testFixedRateResolution()
              ? 0
              : 1;
 }

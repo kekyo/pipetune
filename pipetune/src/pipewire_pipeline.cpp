@@ -28,22 +28,25 @@
 #include <cstdint>
 #include <cstring>
 #include <ctime>
+#include <condition_variable>
 #include <exception>
 #include <filesystem>
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace pipetune {
 
 constexpr auto kSampleBytes = std::uint32_t{sizeof(float)};
 constexpr auto kReadinessTimeoutSeconds = std::time_t{5};
+constexpr auto kRateTransitionTimeoutSeconds = std::time_t{5};
 
 struct PipeWireRuntime;
 
@@ -77,6 +80,22 @@ enum class DefaultSinkTransition {
   restoring
 };
 
+enum class RateTransitionPhase {
+  idle,
+  applying,
+  rollingBack
+};
+
+struct RateTransition {
+  RateTransitionPhase phase = RateTransitionPhase::idle;
+  SampleRatePolicy previousPolicy = defaultSampleRatePolicy();
+  ResolvedSampleRates previousRates = {};
+  SampleRatePolicy requestedPolicy = defaultSampleRatePolicy();
+  ResolvedSampleRates requestedRates = {};
+  bool controlRequest = false;
+  std::string failure = {};
+};
+
 struct PipeWireRuntime {
   DspPipelineSlot pipeline;
   PipeWirePipelineOptions options;
@@ -89,14 +108,33 @@ struct PipeWireRuntime {
   std::atomic<bool> defaultSinkActive;
   InputTelemetry inputTelemetry;
   std::atomic<bool> inputFormatNegotiated;
+  std::atomic<std::uint32_t> dspSampleRate;
+  std::atomic<std::uint32_t> outputSampleRate;
+  std::atomic<SampleRateEnforcement> rateEnforcement;
   std::uint64_t processedInputFrames;
   ProcessingMode processingMode;
   std::string activePreset;
   std::string configurationError;
   std::mutex outputStateMutex;
   std::mutex playbackTargetMutex;
+  std::mutex rateStateMutex;
+  std::mutex pipelineMutationMutex;
+  std::mutex rateRequestMutex;
+  std::condition_variable rateRequestCondition;
+  SampleRatePolicy configuredRatePolicy;
+  ResolvedSampleRates resolvedSampleRates;
+  bool rateTransitioning;
+  std::string rateError;
+  bool rateRequestPending;
+  bool rateRequestDispatched;
+  bool rateRequestCompleted;
+  SampleRatePolicy pendingRatePolicy;
+  std::string rateRequestError;
+  bool automaticRateUpdatePending;
+  RateTransition rateTransition;
   std::unique_ptr<ControlServer> controlServer;
   pw_main_loop *mainLoop;
+  pw_context *context;
   pw_stream *captureStream;
   pw_stream *playbackStream;
   pw_core *trackingCore;
@@ -105,6 +143,8 @@ struct PipeWireRuntime {
       trackedOutputNodes;
   pw_metadata *defaultMetadata;
   spa_source *outputChangeSource;
+  spa_source *rateChangeSource;
+  spa_source *rateTimeoutSource;
   spa_source *timeoutSource;
   spa_source *interruptSource;
   spa_source *terminateSource;
@@ -116,6 +156,8 @@ struct PipeWireRuntime {
   spa_hook coreListener;
   spa_hook registryListener;
   spa_hook metadataListener;
+  spa_hook captureListener;
+  spa_hook playbackListener;
   StreamCallbackContext captureContext;
   StreamCallbackContext playbackContext;
   std::uint32_t defaultMetadataId;
@@ -129,6 +171,10 @@ struct PipeWireRuntime {
   std::string playbackTarget;
   bool captureReady;
   bool playbackReady;
+  bool captureFormatReady;
+  bool playbackFormatReady;
+  bool captureListenerInstalled;
+  bool playbackListenerInstalled;
   bool readyNotified;
   bool completed;
   std::string error;
@@ -147,34 +193,61 @@ struct PipeWireRuntime {
                             runtimeOptions.maxFrames,
                         0.0F),
         processingErrors(0), defaultSinkActive(false), inputTelemetry(),
-        inputFormatNegotiated(false), processedInputFrames(0),
+        inputFormatNegotiated(false),
+        dspSampleRate(runtimeOptions.dspSampleRate),
+        outputSampleRate(runtimeOptions.outputSampleRate),
+        rateEnforcement(runtimeOptions.ratePolicy.enforcement),
+        processedInputFrames(0),
         processingMode(runtimeOptions.initialPresetPath.empty()
                            ? ProcessingMode::bypass
                            : ProcessingMode::preset),
         activePreset(runtimeOptions.initialPresetPath.string()),
         configurationError(runtimeOptions.initialConfigurationError),
-        outputStateMutex(), playbackTargetMutex(), controlServer(),
-        mainLoop(nullptr),
+        outputStateMutex(), playbackTargetMutex(), rateStateMutex(),
+        pipelineMutationMutex(), rateRequestMutex(), rateRequestCondition(),
+        configuredRatePolicy(runtimeOptions.ratePolicy),
+        resolvedSampleRates{.dspSampleRate = runtimeOptions.dspSampleRate,
+                            .outputSampleRate =
+                                runtimeOptions.outputSampleRate,
+                            .fallback = false},
+        rateTransitioning(false), rateError(), rateRequestPending(false),
+        rateRequestDispatched(false), rateRequestCompleted(false),
+        pendingRatePolicy(defaultSampleRatePolicy()), rateRequestError(),
+        automaticRateUpdatePending(false), rateTransition(), controlServer(),
+        mainLoop(nullptr), context(nullptr),
         captureStream(nullptr), playbackStream(nullptr), trackingCore(nullptr),
         registry(nullptr), trackedOutputNodes(), defaultMetadata(nullptr),
-        outputChangeSource(nullptr),
+        outputChangeSource(nullptr), rateChangeSource(nullptr),
+        rateTimeoutSource(nullptr),
         timeoutSource(nullptr), interruptSource(nullptr),
         terminateSource(nullptr), captureEvents{},
         playbackEvents{}, coreEvents{}, registryEvents{}, metadataEvents{},
         coreListener{}, registryListener{}, metadataListener{},
+        captureListener{}, playbackListener{},
         captureContext{this, true}, playbackContext{this, false},
         defaultMetadataId(PW_ID_ANY), trackingSyncSequence(0),
         trackingSyncPurpose(CoreSyncPurpose::enumeration),
         defaultSinkTransition(DefaultSinkTransition::inactive),
         trackingReady(false), shutdownRequested(false),
         observedDefaultSink(), defaultMetadataValue(), playbackTarget(),
-        captureReady(false), playbackReady(false), readyNotified(false),
+        captureReady(false), playbackReady(false), captureFormatReady(false),
+        playbackFormatReady(false), captureListenerInstalled(false),
+        playbackListenerInstalled(false), readyNotified(false),
         completed(false), error() {}
 
   ~PipeWireRuntime() {
     controlServer.reset();
     if (playbackStream != nullptr) {
+      if (playbackListenerInstalled) {
+        spa_hook_remove(&playbackListener);
+      }
       pw_stream_destroy(playbackStream);
+    }
+    if (captureStream != nullptr) {
+      if (captureListenerInstalled) {
+        spa_hook_remove(&captureListener);
+      }
+      pw_stream_destroy(captureStream);
     }
     if (defaultMetadata != nullptr) {
       spa_hook_remove(&metadataListener);
@@ -192,9 +265,10 @@ struct PipeWireRuntime {
     }
     if (trackingCore != nullptr) {
       spa_hook_remove(&coreListener);
+      pw_core_disconnect(trackingCore);
     }
-    if (captureStream != nullptr) {
-      pw_stream_destroy(captureStream);
+    if (context != nullptr) {
+      pw_context_destroy(context);
     }
     if (mainLoop != nullptr) {
       auto *loop = pw_main_loop_get_loop(mainLoop);
@@ -203,6 +277,12 @@ struct PipeWireRuntime {
       }
       if (outputChangeSource != nullptr) {
         pw_loop_destroy_source(loop, outputChangeSource);
+      }
+      if (rateChangeSource != nullptr) {
+        pw_loop_destroy_source(loop, rateChangeSource);
+      }
+      if (rateTimeoutSource != nullptr) {
+        pw_loop_destroy_source(loop, rateTimeoutSource);
       }
       if (interruptSource != nullptr) {
         pw_loop_destroy_source(loop, interruptSource);
@@ -256,6 +336,10 @@ static void applyTrackedTarget(PipeWireRuntime &runtime);
 static void finishReadinessCheck(PipeWireRuntime &runtime);
 static void maybeActivateDefaultSink(PipeWireRuntime &runtime);
 static void maybeReleaseDefaultSink(PipeWireRuntime &runtime);
+static void maybeFinishRateTransition(PipeWireRuntime &runtime);
+static void requestAutomaticRateUpdate(PipeWireRuntime &runtime);
+static void reportStreamFailure(PipeWireRuntime &runtime,
+                                std::string message);
 static void stopTrackingOutputNode(PipeWireRuntime &runtime,
                                    std::uint32_t id);
 
@@ -382,6 +466,7 @@ static void trackingCoreDone(void *data, std::uint32_t id, int sequence) {
     runtime.deviceTracker.commitSelection();
   }
   applyTrackedTarget(runtime);
+  requestAutomaticRateUpdate(runtime);
   if (runtime.options.manageDefaultSink &&
       runtime.defaultMetadata == nullptr) {
     failRuntime(runtime, "PipeWire default metadata is unavailable");
@@ -403,6 +488,7 @@ static bool resetTrackedOutputRateState(TrackedOutputNode &tracked) {
   }
   if (changed && runtime.trackingReady) {
     requestControlStatusUpdate(runtime);
+    requestAutomaticRateUpdate(runtime);
   }
   return changed;
 }
@@ -424,6 +510,11 @@ static void trackingCoreError(void *data, std::uint32_t id, int, int result,
   }
   const auto detail = message == nullptr ? systemError("PipeWire core error", result)
                                          : std::string(message);
+  if (runtime.rateTransition.phase != RateTransitionPhase::idle) {
+    reportStreamFailure(runtime,
+                        "PipeWire rate negotiation failed: " + detail);
+    return;
+  }
   failRuntime(runtime, "PipeWire device tracking failed: " + detail);
 }
 
@@ -479,6 +570,7 @@ static void publishOutputRateCapabilities(
   }
   if (changed && runtime.trackingReady) {
     requestControlStatusUpdate(runtime);
+    requestAutomaticRateUpdate(runtime);
   }
 }
 
@@ -754,7 +846,10 @@ static bool isReadyState(pw_stream_state state) noexcept {
 
 static void finishReadinessCheck(PipeWireRuntime &runtime) {
   if (!runtime.captureReady || !runtime.playbackReady ||
-      !runtime.inputFormatNegotiated.load(std::memory_order_acquire)) {
+      !runtime.captureFormatReady || !runtime.playbackFormatReady ||
+      !runtime.inputFormatNegotiated.load(std::memory_order_acquire) ||
+      runtime.rateTransition.phase != RateTransitionPhase::idle ||
+      runtime.automaticRateUpdatePending) {
     return;
   }
   maybeActivateDefaultSink(runtime);
@@ -779,30 +874,42 @@ static void streamStateChanged(void *data, pw_stream_state,
   auto &context = *static_cast<StreamCallbackContext *>(data);
   auto &runtime = *context.runtime;
   if (state == PW_STREAM_STATE_ERROR) {
-    if (!context.capture) {
-      runtime.playbackReady = false;
-      return;
-    }
     const auto detail = error == nullptr ? std::string("unknown PipeWire stream error")
                                          : std::string(error);
-    failRuntime(runtime, (context.capture ? "virtual sink: " : "playback stream: ") +
-                             detail);
+    if (context.capture) {
+      runtime.captureReady = false;
+      runtime.captureFormatReady = false;
+      runtime.inputFormatNegotiated.store(false, std::memory_order_release);
+    } else {
+      runtime.playbackReady = false;
+      runtime.playbackFormatReady = false;
+    }
+    if (!context.capture &&
+        runtime.rateTransition.phase == RateTransitionPhase::idle) {
+      return;
+    }
+    reportStreamFailure(
+        runtime,
+        (context.capture ? "virtual sink: " : "playback stream: ") + detail);
     return;
   }
   if (context.capture) {
     runtime.captureReady = isReadyState(state);
-    runtime.inputFormatNegotiated.store(runtime.captureReady,
-                                        std::memory_order_release);
+    runtime.inputFormatNegotiated.store(
+        runtime.captureReady && runtime.captureFormatReady,
+        std::memory_order_release);
   } else {
     runtime.playbackReady = isReadyState(state);
   }
+  maybeFinishRateTransition(runtime);
   finishReadinessCheck(runtime);
 }
 
-static spa_audio_info_raw makeRawFormat(const PipeWirePipelineOptions &options) {
+static spa_audio_info_raw makeRawFormat(const PipeWirePipelineOptions &options,
+                                        std::uint32_t sampleRate) {
   auto info = spa_audio_info_raw{};
   info.format = SPA_AUDIO_FORMAT_F32P;
-  info.rate = options.sampleRate;
+  info.rate = sampleRate;
   info.channels = options.channelCount;
 
   switch (options.channelCount) {
@@ -894,10 +1001,13 @@ static void streamParameterChanged(void *data, std::uint32_t id,
   auto &runtime = *context.runtime;
   auto negotiated = spa_audio_info_raw{};
   const auto parseResult = spa_format_audio_raw_parse(parameter, &negotiated);
+  const auto expectedSampleRate =
+      runtime.dspSampleRate.load(std::memory_order_acquire);
   if (parseResult < 0 || negotiated.format != SPA_AUDIO_FORMAT_F32P ||
-      negotiated.rate != runtime.options.sampleRate ||
+      negotiated.rate != expectedSampleRate ||
       negotiated.channels != runtime.options.channelCount) {
-    failRuntime(runtime, "PipeWire negotiated an unsupported audio format");
+    reportStreamFailure(runtime,
+                        "PipeWire negotiated an unsupported audio format");
     return;
   }
 
@@ -906,13 +1016,25 @@ static void streamParameterChanged(void *data, std::uint32_t id,
   spa_pod_builder_init(&builder, storage.data(), storage.size());
   const spa_pod *parameters[] = {buildBufferParameter(builder, runtime.options)};
   auto *stream = context.capture ? runtime.captureStream : runtime.playbackStream;
+  if (stream == nullptr) {
+    return;
+  }
   const auto updateResult = pw_stream_update_params(stream, parameters, 1);
   if (updateResult < 0) {
-    failRuntime(runtime, systemError("cannot configure PipeWire buffers", updateResult));
-  } else if (context.capture) {
-    runtime.inputFormatNegotiated.store(true, std::memory_order_release);
-    finishReadinessCheck(runtime);
+    reportStreamFailure(
+        runtime,
+        systemError("cannot configure PipeWire buffers", updateResult));
+    return;
   }
+  if (context.capture) {
+    runtime.captureFormatReady = true;
+    runtime.inputFormatNegotiated.store(
+        runtime.captureReady, std::memory_order_release);
+  } else {
+    runtime.playbackFormatReady = true;
+  }
+  maybeFinishRateTransition(runtime);
+  finishReadinessCheck(runtime);
 }
 
 static bool inspectCaptureBuffer(const spa_buffer &buffer, std::uint32_t channelCount,
@@ -987,8 +1109,10 @@ static void captureProcess(void *data) {
       copyCapturePlane(buffer.datas[channel], sourceFrame, channelScratch);
     }
 
+    const auto sampleRate =
+        runtime.dspSampleRate.load(std::memory_order_relaxed);
     const auto timeSeconds =
-        static_cast<double>(runtime.processedInputFrames) / runtime.options.sampleRate;
+        static_cast<double>(runtime.processedInputFrames) / sampleRate;
     if (runtime.pipeline.process(scratch, runtime.options.channelCount, blockFrames,
                                  timeSeconds) != ProcessStatus::ok) {
       runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
@@ -1111,14 +1235,16 @@ static void interrupted(void *data, int) {
 }
 
 static pw_properties *makeCommonProperties(const PipeWireRuntime &runtime,
-                                           std::string_view nodeName) {
+                                           std::string_view nodeName,
+                                           std::uint32_t mediaSampleRate,
+                                           std::uint32_t nodeSampleRate) {
   auto *properties = pw_properties_new(nullptr, nullptr);
   if (properties == nullptr) {
     return nullptr;
   }
-  const auto rate = std::to_string(runtime.options.sampleRate);
+  const auto mediaRate = std::to_string(mediaSampleRate);
   const auto channels = std::to_string(runtime.options.channelCount);
-  const auto nodeRate = "1/" + rate;
+  const auto nodeRate = "1/" + std::to_string(nodeSampleRate);
   pw_properties_set(properties, PW_KEY_APP_NAME, "PipeTune");
   pw_properties_set(properties, PW_KEY_MEDIA_TYPE, "Audio");
   pw_properties_set(properties, PW_KEY_MEDIA_ROLE, "DSP");
@@ -1130,13 +1256,16 @@ static pw_properties *makeCommonProperties(const PipeWireRuntime &runtime,
                     (runtime.options.sinkName + ".link-group").c_str());
   pw_properties_set(properties, PW_KEY_NODE_RATE, nodeRate.c_str());
   pw_properties_set(properties, SPA_KEY_AUDIO_FORMAT, "F32P");
-  pw_properties_set(properties, SPA_KEY_AUDIO_RATE, rate.c_str());
+  pw_properties_set(properties, SPA_KEY_AUDIO_RATE, mediaRate.c_str());
   pw_properties_set(properties, SPA_KEY_AUDIO_CHANNELS, channels.c_str());
   return properties;
 }
 
 static pw_properties *makeCaptureProperties(const PipeWireRuntime &runtime) {
-  auto *properties = makeCommonProperties(runtime, runtime.options.sinkName);
+  const auto sampleRate =
+      runtime.dspSampleRate.load(std::memory_order_acquire);
+  auto *properties = makeCommonProperties(
+      runtime, runtime.options.sinkName, sampleRate, sampleRate);
   if (properties == nullptr) {
     return nullptr;
   }
@@ -1150,8 +1279,10 @@ static pw_properties *makeCaptureProperties(const PipeWireRuntime &runtime) {
 
 static pw_properties *makePlaybackProperties(const PipeWireRuntime &runtime,
                                              std::string_view target) {
-  auto *properties =
-      makeCommonProperties(runtime, runtime.options.sinkName + ".output");
+  auto *properties = makeCommonProperties(
+      runtime, runtime.options.sinkName + ".output",
+      runtime.dspSampleRate.load(std::memory_order_acquire),
+      runtime.outputSampleRate.load(std::memory_order_acquire));
   if (properties == nullptr) {
     return nullptr;
   }
@@ -1160,16 +1291,22 @@ static pw_properties *makePlaybackProperties(const PipeWireRuntime &runtime,
   pw_properties_set(properties, PW_KEY_NODE_PASSIVE, "true");
   pw_properties_set(properties, PW_KEY_TARGET_OBJECT,
                     std::string(target).c_str());
+  if (runtime.rateEnforcement.load(std::memory_order_acquire) ==
+      SampleRateEnforcement::force) {
+    pw_properties_set(properties, PW_KEY_NODE_FORCE_RATE, "0");
+  }
   return properties;
 }
 
-static bool connectStream(PipeWireRuntime &runtime, pw_stream *stream,
-                          pw_direction direction, bool autoconnect,
-                          bool dontReconnect) {
+static std::string connectStream(PipeWireRuntime &runtime, pw_stream *stream,
+                                 pw_direction direction, bool autoconnect,
+                                 bool dontReconnect) {
   auto storage = std::array<std::uint8_t, 1024>{};
   auto builder = spa_pod_builder{};
   spa_pod_builder_init(&builder, storage.data(), storage.size());
-  auto info = makeRawFormat(runtime.options);
+  auto info = makeRawFormat(
+      runtime.options,
+      runtime.dspSampleRate.load(std::memory_order_acquire));
   const spa_pod *parameters[] = {
       spa_format_audio_raw_build(&builder, SPA_PARAM_EnumFormat, &info)};
   auto flags = PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS;
@@ -1183,35 +1320,481 @@ static bool connectStream(PipeWireRuntime &runtime, pw_stream *stream,
       pw_stream_connect(stream, direction, PW_ID_ANY,
                         static_cast<pw_stream_flags>(flags), parameters, 1);
   if (result < 0) {
-    failRuntime(runtime, systemError("cannot connect PipeWire stream", result));
-    return false;
+    return systemError("cannot connect PipeWire stream", result);
   }
-  return true;
+  return {};
 }
 
-static bool createPlaybackStream(PipeWireRuntime &runtime,
-                                 std::string_view target) {
+static std::string createPlaybackStream(PipeWireRuntime &runtime,
+                                        std::string_view target) {
   auto *properties = makePlaybackProperties(runtime, target);
   if (properties == nullptr) {
-    failRuntime(runtime, "cannot allocate PipeWire playback properties");
-    return false;
+    return "cannot allocate PipeWire playback properties";
   }
   runtime.playbackStream =
-      pw_stream_new_simple(pw_main_loop_get_loop(runtime.mainLoop),
-                           "PipeTune playback", properties,
-                           &runtime.playbackEvents, &runtime.playbackContext);
+      pw_stream_new(runtime.trackingCore, "PipeTune playback", properties);
   if (runtime.playbackStream == nullptr) {
-    failRuntime(runtime, systemError("cannot create PipeWire playback stream",
-                                     -errno));
-    return false;
+    return systemError("cannot create PipeWire playback stream", -errno);
   }
-  if (!connectStream(runtime, runtime.playbackStream, PW_DIRECTION_OUTPUT, true,
-                     true)) {
+  runtime.playbackListener = {};
+  pw_stream_add_listener(runtime.playbackStream,
+                         &runtime.playbackListener,
+                         &runtime.playbackEvents,
+                         &runtime.playbackContext);
+  runtime.playbackListenerInstalled = true;
+  const auto connectionError =
+      connectStream(runtime, runtime.playbackStream, PW_DIRECTION_OUTPUT, true,
+                    true);
+  if (!connectionError.empty()) {
+    spa_hook_remove(&runtime.playbackListener);
+    runtime.playbackListenerInstalled = false;
     pw_stream_destroy(runtime.playbackStream);
     runtime.playbackStream = nullptr;
+    return connectionError;
+  }
+  return {};
+}
+
+static void destroyPlaybackStream(PipeWireRuntime &runtime) {
+  if (runtime.playbackStream == nullptr) {
+    return;
+  }
+  if (runtime.playbackListenerInstalled) {
+    spa_hook_remove(&runtime.playbackListener);
+    runtime.playbackListenerInstalled = false;
+  }
+  pw_stream_destroy(runtime.playbackStream);
+  runtime.playbackStream = nullptr;
+}
+
+static void signalRateChange(PipeWireRuntime &runtime) {
+  if (runtime.mainLoop == nullptr || runtime.rateChangeSource == nullptr) {
+    return;
+  }
+  const auto result = pw_loop_signal_event(
+      pw_main_loop_get_loop(runtime.mainLoop), runtime.rateChangeSource);
+  if (result < 0) {
+    failRuntime(runtime,
+                systemError("cannot schedule PipeWire rate change", result));
+  }
+}
+
+static void completeControlRateRequest(PipeWireRuntime &runtime,
+                                       std::string error) {
+  {
+    auto lock = std::scoped_lock(runtime.rateRequestMutex);
+    if (!runtime.rateRequestPending ||
+        !runtime.rateRequestDispatched) {
+      return;
+    }
+    runtime.rateRequestError = std::move(error);
+    runtime.rateRequestCompleted = true;
+  }
+  runtime.rateRequestCondition.notify_all();
+}
+
+static SampleRateCapabilities
+selectedRateCapabilities(PipeWireRuntime &runtime) {
+  auto lock = std::scoped_lock(runtime.outputStateMutex);
+  return runtime.deviceTracker.selectedSampleRateCapabilities();
+}
+
+static void setPublicRateState(PipeWireRuntime &runtime,
+                               const SampleRatePolicy *policy,
+                               const ResolvedSampleRates &rates,
+                               bool transitioning,
+                               std::string error) {
+  auto lock = std::scoped_lock(runtime.rateStateMutex);
+  if (policy != nullptr) {
+    runtime.configuredRatePolicy = *policy;
+  }
+  runtime.resolvedSampleRates = rates;
+  runtime.rateTransitioning = transitioning;
+  runtime.rateError = std::move(error);
+}
+
+static std::string armRateTransitionTimer(PipeWireRuntime &runtime,
+                                          bool armed) {
+  if (runtime.rateTimeoutSource == nullptr) {
+    return "rate-transition timer is unavailable";
+  }
+  auto *loop = pw_main_loop_get_loop(runtime.mainLoop);
+  if (!armed) {
+    const auto result = pw_loop_update_timer(
+        loop, runtime.rateTimeoutSource, nullptr, nullptr, false);
+    if (result < 0) {
+      return systemError("cannot disarm rate-transition timer", result);
+    }
+    return {};
+  }
+  auto delay =
+      timespec{.tv_sec = kRateTransitionTimeoutSeconds, .tv_nsec = 0};
+  auto interval = timespec{.tv_sec = 0, .tv_nsec = 0};
+  const auto result = pw_loop_update_timer(
+      loop, runtime.rateTimeoutSource, &delay, &interval, false);
+  if (result < 0) {
+    return systemError("cannot arm rate-transition timer", result);
+  }
+  return {};
+}
+
+static std::string disconnectAudioStreams(PipeWireRuntime &runtime) {
+  if (runtime.captureStream != nullptr &&
+      pw_stream_get_state(runtime.captureStream, nullptr) !=
+          PW_STREAM_STATE_UNCONNECTED) {
+    const auto result = pw_stream_disconnect(runtime.captureStream);
+    if (result < 0) {
+      return systemError("cannot disconnect PipeWire virtual sink", result);
+    }
+  }
+  if (runtime.playbackStream != nullptr) {
+    destroyPlaybackStream(runtime);
+  }
+  runtime.captureReady = false;
+  runtime.playbackReady = false;
+  runtime.captureFormatReady = false;
+  runtime.playbackFormatReady = false;
+  runtime.inputFormatNegotiated.store(false, std::memory_order_release);
+  static_cast<void>(runtime.ring.discardQueuedFrames());
+  runtime.processedInputFrames = 0;
+  return {};
+}
+
+static std::string reconnectAudioStreams(PipeWireRuntime &runtime) {
+  auto *captureProperties = makeCaptureProperties(runtime);
+  if (captureProperties == nullptr) {
+    return "cannot allocate PipeWire virtual sink properties";
+  }
+  const auto propertyResult = pw_stream_update_properties(
+      runtime.captureStream, &captureProperties->dict);
+  pw_properties_free(captureProperties);
+  if (propertyResult < 0) {
+    return systemError("cannot update PipeWire virtual sink properties",
+                       propertyResult);
+  }
+  const auto captureError =
+      connectStream(runtime, runtime.captureStream, PW_DIRECTION_INPUT, false,
+                    false);
+  if (!captureError.empty()) {
+    return captureError;
+  }
+
+  const auto target = currentPlaybackTarget(runtime);
+  if (target.empty()) {
+    return {};
+  }
+  return createPlaybackStream(runtime, target);
+}
+
+static bool rateTransitionAudioIsReady(PipeWireRuntime &runtime) {
+  if (!runtime.captureReady || !runtime.captureFormatReady) {
     return false;
   }
-  return true;
+  return currentPlaybackTarget(runtime).empty() ||
+         (runtime.playbackReady && runtime.playbackFormatReady);
+}
+
+static void failRateAttempt(PipeWireRuntime &runtime, bool controlRequest,
+                            std::string error) {
+  auto rates = ResolvedSampleRates{};
+  {
+    auto lock = std::scoped_lock(runtime.rateStateMutex);
+    rates = runtime.resolvedSampleRates;
+  }
+  setPublicRateState(runtime, nullptr, rates, false, error);
+  if (controlRequest) {
+    completeControlRateRequest(runtime, error);
+  }
+  requestControlStatusUpdate(runtime);
+  finishReadinessCheck(runtime);
+}
+
+static void fatalRateRollback(PipeWireRuntime &runtime,
+                              std::string error) {
+  const auto detail = "cannot roll back sample-rate transition: " + error;
+  if (runtime.rateTransition.controlRequest) {
+    completeControlRateRequest(runtime, detail);
+  }
+  failRuntime(runtime, detail);
+}
+
+static void beginRateRollback(PipeWireRuntime &runtime) {
+  if (runtime.rateTransition.phase == RateTransitionPhase::rollingBack) {
+    fatalRateRollback(runtime, runtime.rateTransition.failure);
+    return;
+  }
+  const auto failure = runtime.rateTransition.failure.empty()
+                           ? std::string("sample-rate transition failed")
+                           : runtime.rateTransition.failure;
+  const auto timerError = armRateTransitionTimer(runtime, false);
+  if (!timerError.empty()) {
+    fatalRateRollback(runtime, timerError);
+    return;
+  }
+  const auto disconnectError = disconnectAudioStreams(runtime);
+  if (!disconnectError.empty()) {
+    fatalRateRollback(runtime, disconnectError);
+    return;
+  }
+  {
+    auto lock = std::scoped_lock(runtime.pipelineMutationMutex);
+    try {
+      runtime.pipeline.rollbackStaged();
+    } catch (const std::exception &error) {
+      fatalRateRollback(runtime, error.what());
+      return;
+    }
+  }
+
+  runtime.rateTransition.phase = RateTransitionPhase::rollingBack;
+  runtime.rateTransition.failure = failure;
+  runtime.dspSampleRate.store(
+      runtime.rateTransition.previousRates.dspSampleRate,
+      std::memory_order_release);
+  runtime.outputSampleRate.store(
+      runtime.rateTransition.previousRates.outputSampleRate,
+      std::memory_order_release);
+  runtime.rateEnforcement.store(
+      runtime.rateTransition.previousPolicy.enforcement,
+      std::memory_order_release);
+  setPublicRateState(runtime, nullptr,
+                     runtime.rateTransition.previousRates, true, failure);
+  const auto reconnectError = reconnectAudioStreams(runtime);
+  if (!reconnectError.empty()) {
+    fatalRateRollback(runtime, reconnectError);
+    return;
+  }
+  const auto armError = armRateTransitionTimer(runtime, true);
+  if (!armError.empty()) {
+    fatalRateRollback(runtime, armError);
+    return;
+  }
+  requestControlStatusUpdate(runtime);
+}
+
+static void finishRateTransition(PipeWireRuntime &runtime) {
+  const auto transition = runtime.rateTransition;
+  const auto timerError = armRateTransitionTimer(runtime, false);
+  if (!timerError.empty()) {
+    if (transition.phase == RateTransitionPhase::applying) {
+      runtime.rateTransition.failure = timerError;
+      beginRateRollback(runtime);
+    } else {
+      fatalRateRollback(runtime, timerError);
+    }
+    return;
+  }
+
+  if (transition.phase == RateTransitionPhase::applying) {
+    auto commitError = std::string{};
+    {
+      auto lock = std::scoped_lock(runtime.pipelineMutationMutex);
+      try {
+        runtime.pipeline.commitStaged();
+      } catch (const std::exception &error) {
+        commitError = error.what();
+      }
+    }
+    if (!commitError.empty()) {
+      runtime.rateTransition.failure = std::move(commitError);
+      beginRateRollback(runtime);
+      return;
+    }
+    runtime.rateTransition = {};
+    setPublicRateState(runtime, &transition.requestedPolicy,
+                       transition.requestedRates, false, {});
+    if (transition.controlRequest) {
+      completeControlRateRequest(runtime, {});
+    }
+  } else {
+    runtime.rateTransition = {};
+    setPublicRateState(runtime, &transition.previousPolicy,
+                       transition.previousRates, false,
+                       transition.failure);
+    if (transition.controlRequest) {
+      completeControlRateRequest(runtime, transition.failure);
+    }
+  }
+  requestControlStatusUpdate(runtime);
+  signalRateChange(runtime);
+  finishReadinessCheck(runtime);
+}
+
+static void maybeFinishRateTransition(PipeWireRuntime &runtime) {
+  if (runtime.rateTransition.phase == RateTransitionPhase::idle ||
+      !rateTransitionAudioIsReady(runtime)) {
+    return;
+  }
+  finishRateTransition(runtime);
+}
+
+static void startRateTransition(PipeWireRuntime &runtime,
+                                const SampleRatePolicy &requestedPolicy,
+                                bool controlRequest) {
+  auto previousPolicy = SampleRatePolicy{};
+  auto previousRates = ResolvedSampleRates{};
+  {
+    auto lock = std::scoped_lock(runtime.rateStateMutex);
+    previousPolicy = runtime.configuredRatePolicy;
+    previousRates = runtime.resolvedSampleRates;
+  }
+  const auto resolved =
+      resolveSampleRates(requestedPolicy,
+                         selectedRateCapabilities(runtime),
+                         previousRates.dspSampleRate,
+                         previousRates.outputSampleRate);
+  if (!resolved.has_value()) {
+    failRateAttempt(runtime, controlRequest,
+                    "cannot resolve the requested sample-rate policy");
+    return;
+  }
+
+  const auto needsReconnect =
+      resolved->dspSampleRate != previousRates.dspSampleRate ||
+      resolved->outputSampleRate != previousRates.outputSampleRate ||
+      requestedPolicy.enforcement != previousPolicy.enforcement;
+  if (!needsReconnect) {
+    runtime.dspSampleRate.store(resolved->dspSampleRate,
+                                std::memory_order_release);
+    runtime.outputSampleRate.store(resolved->outputSampleRate,
+                                   std::memory_order_release);
+    runtime.rateEnforcement.store(requestedPolicy.enforcement,
+                                  std::memory_order_release);
+    setPublicRateState(runtime, &requestedPolicy, *resolved, false, {});
+    if (controlRequest) {
+      completeControlRateRequest(runtime, {});
+    }
+    requestControlStatusUpdate(runtime);
+    signalRateChange(runtime);
+    finishReadinessCheck(runtime);
+    return;
+  }
+
+  auto pipelineLock =
+      std::unique_lock<std::mutex>(runtime.pipelineMutationMutex);
+  auto rebuilt = runtime.pipeline.rebuildActive(
+      {.sampleRate = static_cast<float>(resolved->dspSampleRate),
+       .maxChannels = runtime.options.channelCount,
+       .maxFrames = runtime.options.maxFrames});
+  if (rebuilt.pipeline == nullptr) {
+    pipelineLock.unlock();
+    failRateAttempt(runtime, controlRequest, rebuilt.error);
+    return;
+  }
+  const auto disconnectError = disconnectAudioStreams(runtime);
+  if (!disconnectError.empty()) {
+    pipelineLock.unlock();
+    failRateAttempt(runtime, controlRequest, disconnectError);
+    return;
+  }
+
+  runtime.pipeline.stageReplacement(std::move(rebuilt.pipeline));
+  runtime.rateTransition = {
+      .phase = RateTransitionPhase::applying,
+      .previousPolicy = previousPolicy,
+      .previousRates = previousRates,
+      .requestedPolicy = requestedPolicy,
+      .requestedRates = *resolved,
+      .controlRequest = controlRequest,
+      .failure = {}};
+  runtime.dspSampleRate.store(resolved->dspSampleRate,
+                              std::memory_order_release);
+  runtime.outputSampleRate.store(resolved->outputSampleRate,
+                                 std::memory_order_release);
+  runtime.rateEnforcement.store(requestedPolicy.enforcement,
+                                std::memory_order_release);
+  setPublicRateState(runtime, nullptr, *resolved, true, {});
+  pipelineLock.unlock();
+
+  const auto reconnectError = reconnectAudioStreams(runtime);
+  if (!reconnectError.empty()) {
+    runtime.rateTransition.failure = reconnectError;
+    beginRateRollback(runtime);
+    return;
+  }
+  const auto armError = armRateTransitionTimer(runtime, true);
+  if (!armError.empty()) {
+    runtime.rateTransition.failure = armError;
+    beginRateRollback(runtime);
+    return;
+  }
+  requestControlStatusUpdate(runtime);
+}
+
+static void reportStreamFailure(PipeWireRuntime &runtime,
+                                std::string message) {
+  if (runtime.rateTransition.phase == RateTransitionPhase::idle) {
+    failRuntime(runtime, std::move(message));
+    return;
+  }
+  if (runtime.rateTransition.phase ==
+      RateTransitionPhase::rollingBack) {
+    fatalRateRollback(runtime, std::move(message));
+    return;
+  }
+  if (runtime.rateTransition.failure.empty()) {
+    runtime.rateTransition.failure = std::move(message);
+  }
+  signalRateChange(runtime);
+}
+
+static void requestAutomaticRateUpdate(PipeWireRuntime &runtime) {
+  if (!runtime.trackingReady || runtime.shutdownRequested) {
+    return;
+  }
+  runtime.automaticRateUpdatePending = true;
+  signalRateChange(runtime);
+}
+
+static void rateTransitionTimedOut(void *data, std::uint64_t) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  if (runtime.rateTransition.phase == RateTransitionPhase::idle) {
+    return;
+  }
+  if (runtime.rateTransition.phase == RateTransitionPhase::rollingBack) {
+    fatalRateRollback(
+        runtime,
+        "timed out while restoring the previous PipeWire format");
+    return;
+  }
+  runtime.rateTransition.failure =
+      "timed out while negotiating the requested PipeWire format";
+  beginRateRollback(runtime);
+}
+
+static void rateChangeRequested(void *data, std::uint64_t) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  if (runtime.rateTransition.phase != RateTransitionPhase::idle) {
+    if (!runtime.rateTransition.failure.empty() &&
+        runtime.rateTransition.phase == RateTransitionPhase::applying) {
+      beginRateRollback(runtime);
+    }
+    return;
+  }
+
+  auto controlRequest = false;
+  auto requestedPolicy = SampleRatePolicy{};
+  {
+    auto lock = std::scoped_lock(runtime.rateRequestMutex);
+    if (runtime.rateRequestPending &&
+        !runtime.rateRequestDispatched) {
+      runtime.rateRequestDispatched = true;
+      controlRequest = true;
+      requestedPolicy = runtime.pendingRatePolicy;
+    }
+  }
+  if (!controlRequest) {
+    if (!runtime.automaticRateUpdatePending) {
+      finishReadinessCheck(runtime);
+      return;
+    }
+    runtime.automaticRateUpdatePending = false;
+    {
+      auto lock = std::scoped_lock(runtime.rateStateMutex);
+      requestedPolicy = runtime.configuredRatePolicy;
+    }
+  }
+  startRateTransition(runtime, requestedPolicy, controlRequest);
 }
 
 static void applyTrackedTarget(PipeWireRuntime &runtime) {
@@ -1230,13 +1813,14 @@ static void applyTrackedTarget(PipeWireRuntime &runtime) {
     if (target.empty()) {
       maybeReleaseDefaultSink(runtime);
     }
+    requestAutomaticRateUpdate(runtime);
     return;
   }
   if (runtime.playbackStream != nullptr) {
-    pw_stream_destroy(runtime.playbackStream);
-    runtime.playbackStream = nullptr;
+    destroyPlaybackStream(runtime);
   }
   runtime.playbackReady = false;
+  runtime.playbackFormatReady = false;
   static_cast<void>(runtime.ring.discardQueuedFrames());
   {
     auto lock = std::scoped_lock(runtime.playbackTargetMutex);
@@ -1244,8 +1828,14 @@ static void applyTrackedTarget(PipeWireRuntime &runtime) {
   }
   requestControlStatusUpdate(runtime);
   if (!target.empty()) {
-    createPlaybackStream(runtime, target);
+    const auto playbackError = createPlaybackStream(runtime, target);
+    if (!playbackError.empty()) {
+      reportStreamFailure(runtime, playbackError);
+      return;
+    }
   }
+  requestAutomaticRateUpdate(runtime);
+  maybeFinishRateTransition(runtime);
   maybeReleaseDefaultSink(runtime);
   maybeActivateDefaultSink(runtime);
 }
@@ -1312,6 +1902,10 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
   auto selectionReason = OutputSelectionReason::unavailable;
   auto activeOutputSampleRate = std::uint32_t{0};
   auto devices = std::vector<OutputDevice>{};
+  auto configuredRatePolicy = SampleRatePolicy{};
+  auto resolvedSampleRates = ResolvedSampleRates{};
+  auto rateTransitioning = false;
+  auto rateError = std::string{};
   {
     auto lock = std::scoped_lock(runtime.outputStateMutex);
     preferredTarget = runtime.deviceTracker.preferredTarget();
@@ -1321,6 +1915,13 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
     activeOutputSampleRate =
         runtime.deviceTracker.selectedActiveSampleRate();
     devices = runtime.deviceTracker.availableDevices();
+  }
+  {
+    auto lock = std::scoped_lock(runtime.rateStateMutex);
+    configuredRatePolicy = runtime.configuredRatePolicy;
+    resolvedSampleRates = runtime.resolvedSampleRates;
+    rateTransitioning = runtime.rateTransitioning;
+    rateError = runtime.rateError;
   }
   auto availableOutputs = std::vector<ControlOutputDevice>{};
   availableOutputs.reserve(devices.size());
@@ -1358,16 +1959,22 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .inputSampleFormat =
               inputFormatNegotiated ? std::string("F32P") : std::string{},
           .inputSampleRate =
-              inputFormatNegotiated ? runtime.options.sampleRate : 0,
+              inputFormatNegotiated
+                  ? runtime.dspSampleRate.load(std::memory_order_acquire)
+                  : 0,
           .inputChannelCount =
               inputFormatNegotiated ? runtime.options.channelCount : 0,
           .inputFramesReceived = input.framesReceived,
           .inputLastReceivedUnixMilliseconds =
               input.lastReceivedUnixMilliseconds,
-          .configuredRatePolicy = defaultSampleRatePolicy(),
-          .dspSampleRate = runtime.options.sampleRate,
-          .selectedOutputSampleRate = runtime.options.sampleRate,
-          .activeOutputSampleRate = activeOutputSampleRate};
+          .configuredRatePolicy = configuredRatePolicy,
+          .dspSampleRate = resolvedSampleRates.dspSampleRate,
+          .selectedOutputSampleRate =
+              resolvedSampleRates.outputSampleRate,
+          .activeOutputSampleRate = activeOutputSampleRate,
+          .rateTransitioning = rateTransitioning,
+          .rateFallback = resolvedSampleRates.fallback,
+          .rateError = std::move(rateError)};
 }
 
 static ControlMessageResult closeControlResponse(std::string response,
@@ -1414,6 +2021,49 @@ static std::string changePreferredOutput(PipeWireRuntime &runtime,
   return systemError("cannot schedule PipeWire output change", result);
 }
 
+static std::string requestLiveRateChange(
+    PipeWireRuntime &runtime, const SampleRatePolicy &policy) {
+  auto lock = std::unique_lock<std::mutex>(runtime.rateRequestMutex);
+  if (runtime.rateRequestPending) {
+    return "another sample-rate request is already pending";
+  }
+  runtime.rateRequestPending = true;
+  runtime.rateRequestDispatched = false;
+  runtime.rateRequestCompleted = false;
+  runtime.pendingRatePolicy = policy;
+  runtime.rateRequestError.clear();
+
+  const auto signalResult = pw_loop_signal_event(
+      pw_main_loop_get_loop(runtime.mainLoop), runtime.rateChangeSource);
+  if (signalResult < 0) {
+    runtime.rateRequestPending = false;
+    return systemError("cannot schedule PipeWire rate change",
+                       signalResult);
+  }
+  runtime.rateRequestCondition.wait(
+      lock, [&runtime] { return runtime.rateRequestCompleted; });
+  auto error = std::move(runtime.rateRequestError);
+  runtime.rateRequestPending = false;
+  runtime.rateRequestDispatched = false;
+  runtime.rateRequestCompleted = false;
+  lock.unlock();
+  signalRateChange(runtime);
+  return error;
+}
+
+static void cancelPendingRateRequest(PipeWireRuntime &runtime,
+                                     std::string_view error) {
+  {
+    auto lock = std::scoped_lock(runtime.rateRequestMutex);
+    if (!runtime.rateRequestPending || runtime.rateRequestCompleted) {
+      return;
+    }
+    runtime.rateRequestError = std::string(error);
+    runtime.rateRequestCompleted = true;
+  }
+  runtime.rateRequestCondition.notify_all();
+}
+
 static ControlMessageResult handleControlRequest(std::string_view message,
                                                  void *userData) {
   auto &runtime = *static_cast<PipeWireRuntime *>(userData);
@@ -1443,9 +2093,30 @@ static ControlMessageResult handleControlRequest(std::string_view message,
     return closeControlResponse(
         makeControlSuccessResponse(controlStatus(runtime), warnings), changed);
   }
+  if (request.request.command == ControlCommand::setRate) {
+    const auto error =
+        requestLiveRateChange(runtime, request.request.ratePolicy);
+    if (!error.empty()) {
+      return closeControlResponse(makeControlErrorResponse(error), false);
+    }
+    return closeControlResponse(
+        makeControlSuccessResponse(controlStatus(runtime), warnings), true);
+  }
   if (request.request.command == ControlCommand::bypass) {
+    auto pipelineLock =
+        std::unique_lock<std::mutex>(runtime.pipelineMutationMutex);
+    {
+      auto rateLock = std::scoped_lock(runtime.rateStateMutex);
+      if (runtime.rateTransitioning) {
+        return closeControlResponse(
+            makeControlErrorResponse(
+                "cannot change DSP mode during sample-rate transition"),
+            false);
+      }
+    }
     auto created = createBypassDspPipeline(
-        {.sampleRate = static_cast<float>(runtime.options.sampleRate),
+        {.sampleRate = static_cast<float>(
+             runtime.dspSampleRate.load(std::memory_order_acquire)),
          .maxChannels = runtime.options.channelCount,
          .maxFrames = runtime.options.maxFrames});
     if (created.pipeline == nullptr) {
@@ -1460,9 +2131,21 @@ static ControlMessageResult handleControlRequest(std::string_view message,
         makeControlSuccessResponse(controlStatus(runtime), warnings), true);
   }
   if (request.request.command == ControlCommand::loadPreset) {
+    auto pipelineLock =
+        std::unique_lock<std::mutex>(runtime.pipelineMutationMutex);
+    {
+      auto rateLock = std::scoped_lock(runtime.rateStateMutex);
+      if (runtime.rateTransitioning) {
+        return closeControlResponse(
+            makeControlErrorResponse(
+                "cannot load a preset during sample-rate transition"),
+            false);
+      }
+    }
     auto loaded = loadDspPipeline(
         request.request.presetPath,
-        {.sampleRate = static_cast<float>(runtime.options.sampleRate),
+        {.sampleRate = static_cast<float>(
+             runtime.dspSampleRate.load(std::memory_order_acquire)),
          .maxChannels = runtime.options.channelCount,
          .maxFrames = runtime.options.maxFrames});
     if (loaded.pipeline == nullptr) {
@@ -1526,6 +2209,24 @@ static bool createMainLoop(PipeWireRuntime &runtime) {
                             -errno));
     return false;
   }
+  runtime.rateChangeSource =
+      pw_loop_add_event(pw_main_loop_get_loop(runtime.mainLoop),
+                        rateChangeRequested, &runtime);
+  if (runtime.rateChangeSource == nullptr) {
+    failRuntime(runtime,
+                systemError("cannot create PipeWire rate-change event",
+                            -errno));
+    return false;
+  }
+  runtime.rateTimeoutSource =
+      pw_loop_add_timer(pw_main_loop_get_loop(runtime.mainLoop),
+                        rateTransitionTimedOut, &runtime);
+  if (runtime.rateTimeoutSource == nullptr) {
+    failRuntime(runtime,
+                systemError("cannot create PipeWire rate-transition timer",
+                            -errno));
+    return false;
+  }
   return true;
 }
 
@@ -1539,27 +2240,15 @@ static bool createStreams(PipeWireRuntime &runtime) {
   runtime.playbackEvents.param_changed = streamParameterChanged;
   runtime.playbackEvents.process = playbackProcess;
 
-  auto *captureProperties = makeCaptureProperties(runtime);
-  if (captureProperties == nullptr) {
-    failRuntime(runtime, "cannot allocate PipeWire virtual sink properties");
+  runtime.context = pw_context_new(
+      pw_main_loop_get_loop(runtime.mainLoop), nullptr, 0);
+  if (runtime.context == nullptr) {
+    failRuntime(runtime, systemError("cannot create PipeWire context", -errno));
     return false;
   }
-  runtime.captureStream = pw_stream_new_simple(
-      pw_main_loop_get_loop(runtime.mainLoop), "PipeTune virtual sink",
-      captureProperties, &runtime.captureEvents, &runtime.captureContext);
-  if (runtime.captureStream == nullptr) {
-    failRuntime(runtime, systemError("cannot create PipeWire virtual sink", -errno));
-    return false;
-  }
-
-  if (!connectStream(runtime, runtime.captureStream, PW_DIRECTION_INPUT, false,
-                     false)) {
-    return false;
-  }
-
-  runtime.trackingCore = pw_stream_get_core(runtime.captureStream);
+  runtime.trackingCore = pw_context_connect(runtime.context, nullptr, 0);
   if (runtime.trackingCore == nullptr) {
-    failRuntime(runtime, "cannot access PipeWire core for device tracking");
+    failRuntime(runtime, systemError("cannot connect to PipeWire core", -errno));
     return false;
   }
   runtime.coreEvents.version = PW_VERSION_CORE_EVENTS;
@@ -1591,6 +2280,33 @@ static bool createStreams(PipeWireRuntime &runtime) {
                                      registryListenerResult));
     return false;
   }
+
+  auto *captureProperties = makeCaptureProperties(runtime);
+  if (captureProperties == nullptr) {
+    failRuntime(runtime, "cannot allocate PipeWire virtual sink properties");
+    return false;
+  }
+  runtime.captureStream = pw_stream_new(
+      runtime.trackingCore, "PipeTune virtual sink", captureProperties);
+  if (runtime.captureStream == nullptr) {
+    failRuntime(runtime,
+                systemError("cannot create PipeWire virtual sink", -errno));
+    return false;
+  }
+  runtime.captureListener = {};
+  pw_stream_add_listener(runtime.captureStream,
+                         &runtime.captureListener,
+                         &runtime.captureEvents,
+                         &runtime.captureContext);
+  runtime.captureListenerInstalled = true;
+  const auto captureConnectionError =
+      connectStream(runtime, runtime.captureStream, PW_DIRECTION_INPUT, false,
+                    false);
+  if (!captureConnectionError.empty()) {
+    failRuntime(runtime, captureConnectionError);
+    return false;
+  }
+
   requestTrackingSync(runtime, CoreSyncPurpose::enumeration);
   return runtime.error.empty();
 }
@@ -1642,8 +2358,14 @@ static std::string validateOptions(const DspPipeline &pipeline,
       options.controlSocketPath.string().find('\0') != std::string::npos) {
     return "preset and control socket paths must not contain NUL";
   }
-  if (options.sampleRate < 32000 || options.sampleRate > 192000) {
-    return "PipeWire sample rate must be between 32000 and 192000 Hz";
+  if (!isSelectableSampleRate(options.dspSampleRate)) {
+    return "DSP sample rate must be 44100, 48000, 96000, 192000, or 384000 Hz";
+  }
+  if (options.outputSampleRate == 0) {
+    return "PipeWire output sample rate must be positive";
+  }
+  if (!sampleRatePolicyIsValid(options.ratePolicy)) {
+    return "sample-rate policy is invalid";
   }
   if (options.channelCount == 0 || options.channelCount > 8) {
     return "PipeWire channel count must be between one and eight";
@@ -1655,7 +2377,8 @@ static std::string validateOptions(const DspPipeline &pipeline,
   if (options.ringCapacityFrames < options.maxFrames) {
     return "PipeWire ring capacity must be at least the maximum frame count";
   }
-  if (pipeline.sampleRate() != static_cast<float>(options.sampleRate) ||
+  if (pipeline.sampleRate() !=
+          static_cast<float>(options.dspSampleRate) ||
       pipeline.maxChannels() < options.channelCount ||
       pipeline.maxFrames() < options.maxFrames) {
     return "DSP pipeline format does not cover the requested PipeWire format";
@@ -1686,6 +2409,10 @@ PipeWireRunResult runPipeWirePipeline(std::unique_ptr<DspPipeline> pipeline,
         failRuntime(runtime, "PipeWire main loop stopped before completion");
       }
     }
+    cancelPendingRateRequest(
+        runtime,
+        runtime.error.empty() ? std::string_view("PipeTune daemon stopped")
+                              : std::string_view(runtime.error));
     const auto selectedTarget = currentPlaybackTarget(runtime);
     return {.success = runtime.completed && runtime.error.empty(),
             .error = runtime.error,

@@ -67,6 +67,44 @@ public:
    */
   void replace(std::unique_ptr<DspPipeline> replacement);
 
+  /**
+   * Builds a replacement from the active pipeline's retained recipe.
+   *
+   * @param options New maximum processing format.
+   * @return Prepared replacement and warnings, or a diagnostic.
+   */
+  PipelineLoadResult
+  rebuildActive(const PipelineBuildOptions &options) const;
+
+  /**
+   * Activates a replacement while retaining the previous pipeline.
+   *
+   * Exactly one staged replacement may exist until commitStaged() or
+   * rollbackStaged() is called.
+   *
+   * @param replacement New non-null pipeline.
+   * @throws std::invalid_argument when replacement is null.
+   * @throws std::logic_error when a replacement is already staged.
+   */
+  void stageReplacement(std::unique_ptr<DspPipeline> replacement);
+
+  /**
+   * Makes the staged replacement permanent.
+   *
+   * @throws std::logic_error when no replacement is staged.
+   */
+  void commitStaged();
+
+  /**
+   * Atomically restores the pipeline retained by stageReplacement().
+   *
+   * @throws std::logic_error when no replacement is staged.
+   */
+  void rollbackStaged();
+
+  /** Returns whether a rollback-capable replacement is staged. */
+  bool hasStagedReplacement() const noexcept;
+
   /** Returns the active pipeline's enabled native DSP count. */
   std::size_t activePluginCount() const noexcept;
 
@@ -77,6 +115,7 @@ private:
   void reclaimSuperseded();
 
   std::unique_ptr<DspPipeline> current_;
+  std::unique_ptr<DspPipeline> stagedPrevious_;
   std::vector<std::unique_ptr<DspPipeline>> superseded_;
   std::atomic<DspPipeline *> active_;
   std::atomic<DspPipeline *> hazard_;

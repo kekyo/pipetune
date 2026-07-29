@@ -2,6 +2,7 @@
 #define PIPETUNE_STARTUP_PIPELINE_H
 
 #include "pipetune/dsp_pipeline.h"
+#include "pipetune/sample_rate.h"
 
 #include <filesystem>
 #include <memory>
@@ -20,6 +21,8 @@ struct StartupPipelineResult {
   std::filesystem::path activePresetPath;
   /** Persisted preferred PipeWire node.name, or empty for system default. */
   std::string preferredOutput;
+  /** Persisted Max/fixed and suggest/force sample-rate choice. */
+  SampleRatePolicy ratePolicy = {};
   /** Recoverable configuration diagnostic reported while bypassing. */
   std::string configurationError;
   /** Non-fatal preset node diagnostics. */

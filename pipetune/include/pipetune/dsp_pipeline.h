@@ -15,7 +15,7 @@ namespace pipetune {
  * Describes the maximum audio format for a native DSP pipeline.
  */
 struct PipelineBuildOptions {
-  /** Processing sample rate in hertz, from 32000 through 192000. */
+  /** Processing sample rate in hertz, from 32000 through 384000. */
   float sampleRate;
   /** Maximum planar channel count, from one through eight. */
   std::uint32_t maxChannels;
@@ -108,6 +108,9 @@ public:
 
 private:
   explicit DspPipeline(std::unique_ptr<Impl> implementation);
+  static PipelineLoadResult
+  buildFromRecipe(std::shared_ptr<const std::string> presetRecipe,
+                  const PipelineBuildOptions &options);
   bool usesNativeDsp() const noexcept;
   std::unique_ptr<Impl> implementation_;
 
@@ -118,6 +121,9 @@ private:
   createBypassDspPipeline(const PipelineBuildOptions &options);
   friend PipelineLoadResult loadDspPipeline(const std::filesystem::path &presetPath,
                                             const PipelineBuildOptions &options);
+  friend PipelineLoadResult
+  rebuildDspPipeline(const DspPipeline &source,
+                     const PipelineBuildOptions &options);
 };
 
 /**
@@ -167,6 +173,20 @@ struct PipelineLoadResult {
  */
 PipelineLoadResult loadDspPipeline(const std::filesystem::path &presetPath,
                                    const PipelineBuildOptions &options);
+
+/**
+ * Rebuilds a pipeline at another rate from its retained preset recipe.
+ *
+ * No preset file is reopened. A bypass source produces another bypass
+ * pipeline, while a preset source reparses the immutable in-memory recipe.
+ *
+ * @param source Existing prepared preset or bypass pipeline.
+ * @param options New maximum processing format.
+ * @return Rebuilt pipeline and warnings, or a fatal diagnostic.
+ */
+PipelineLoadResult
+rebuildDspPipeline(const DspPipeline &source,
+                   const PipelineBuildOptions &options);
 
 } // namespace pipetune
 

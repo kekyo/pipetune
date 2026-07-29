@@ -154,6 +154,52 @@ static bool testConcurrentReplacementProducesOnlyCompletePipelines(
                "processor did not observe the replacement pipeline");
 }
 
+static bool testStagedReplacementCanCommitAndRollback(
+    const std::filesystem::path &positivePath,
+    const std::filesystem::path &negativePath) {
+  auto initial = loadPipeline(positivePath);
+  auto replacement = loadPipeline(negativePath);
+  if (initial == nullptr || replacement == nullptr) {
+    return false;
+  }
+  auto slot = pipetune::DspPipelineSlot(std::move(initial));
+  slot.stageReplacement(std::move(replacement));
+  auto samples = std::vector<float>{0.25F};
+  if (!check(slot.hasStagedReplacement(),
+             "staged replacement must retain rollback state") ||
+      !check(slot.process(samples, 1, 1, 0.0) ==
+                 pipetune::ProcessStatus::ok &&
+                 approximately(samples[0],
+                               0.25F * std::pow(10.0F, -6.0F / 20.0F)),
+             "staged replacement must become active")) {
+    return false;
+  }
+
+  slot.rollbackStaged();
+  samples[0] = 0.25F;
+  if (!check(!slot.hasStagedReplacement(),
+             "rollback must close the transaction") ||
+      !check(slot.process(samples, 1, 1, 0.1) ==
+                 pipetune::ProcessStatus::ok &&
+                 approximately(samples[0],
+                               0.25F * std::pow(10.0F, 6.0F / 20.0F)),
+             "rollback must restore the exact previous pipeline")) {
+    return false;
+  }
+
+  auto rebuilt = slot.rebuildActive(
+      {.sampleRate = 96000.0F, .maxChannels = 1, .maxFrames = 32});
+  if (!check(rebuilt.pipeline != nullptr, rebuilt.error) ||
+      !check(rebuilt.pipeline->sampleRate() == 96000.0F,
+             "slot rebuild must use its retained recipe")) {
+    return false;
+  }
+  slot.stageReplacement(std::move(rebuilt.pipeline));
+  slot.commitStaged();
+  return check(!slot.hasStagedReplacement(),
+               "commit must release rollback state");
+}
+
 int main() {
   const auto directory =
       std::filesystem::temp_directory_path() /
@@ -167,6 +213,8 @@ int main() {
   const auto passed = testReplacementChangesPcm(positive, negative) &&
                       testBypassDoesNotReportDspWork() &&
                       testConcurrentReplacementProducesOnlyCompletePipelines(
+                          positive, negative) &&
+                      testStagedReplacementCanCommitAndRollback(
                           positive, negative);
   std::filesystem::remove_all(directory);
   return passed ? 0 : 1;

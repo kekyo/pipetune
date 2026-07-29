@@ -153,4 +153,104 @@ bool sampleRateCapabilitiesSupport(
   return false;
 }
 
+static std::optional<std::uint32_t> greatestSupportedNotAbove(
+    const SampleRateCapabilities &capabilities,
+    std::uint32_t limit) noexcept {
+  auto selected = std::optional<std::uint32_t>{};
+  for (const auto &constraint : capabilities.constraints) {
+    if (!constraintIsValid(constraint) || limit < constraint.minimum) {
+      continue;
+    }
+    const auto upper = std::min(limit, constraint.maximum);
+    auto candidate = upper;
+    if (constraint.kind == SampleRateConstraintKind::step) {
+      candidate =
+          constraint.minimum +
+          ((upper - constraint.minimum) / constraint.step) * constraint.step;
+    }
+    if (!selected.has_value() || candidate > *selected) {
+      selected = candidate;
+    }
+  }
+  return selected;
+}
+
+static std::optional<std::uint32_t> minimumSupported(
+    const SampleRateCapabilities &capabilities) noexcept {
+  auto selected = std::optional<std::uint32_t>{};
+  for (const auto &constraint : capabilities.constraints) {
+    if (!constraintIsValid(constraint)) {
+      continue;
+    }
+    if (!selected.has_value() || constraint.minimum < *selected) {
+      selected = constraint.minimum;
+    }
+  }
+  return selected;
+}
+
+static std::uint32_t fallbackOutputRate(
+    const SampleRateCapabilities &capabilities,
+    std::uint32_t dspSampleRate) noexcept {
+  const auto below =
+      greatestSupportedNotAbove(capabilities, dspSampleRate);
+  if (below.has_value()) {
+    return *below;
+  }
+  const auto minimum = minimumSupported(capabilities);
+  return minimum.value_or(dspSampleRate);
+}
+
+std::optional<ResolvedSampleRates> resolveSampleRates(
+    const SampleRatePolicy &policy,
+    const SampleRateCapabilities &capabilities,
+    std::uint32_t currentDspSampleRate,
+    std::uint32_t currentOutputSampleRate) {
+  if (!sampleRatePolicyIsValid(policy)) {
+    return std::nullopt;
+  }
+  auto normalized = capabilities;
+  if (!normalizeSampleRateCapabilities(normalized)) {
+    return std::nullopt;
+  }
+
+  if (policy.mode == SampleRateMode::fixed) {
+    if (!normalized.known ||
+        sampleRateCapabilitiesSupport(normalized, policy.fixedRate)) {
+      return ResolvedSampleRates{
+          .dspSampleRate = policy.fixedRate,
+          .outputSampleRate = policy.fixedRate,
+          .fallback = false};
+    }
+    return ResolvedSampleRates{
+        .dspSampleRate = policy.fixedRate,
+        .outputSampleRate =
+            fallbackOutputRate(normalized, policy.fixedRate),
+        .fallback = true};
+  }
+
+  if (!normalized.known) {
+    return ResolvedSampleRates{
+        .dspSampleRate =
+            currentDspSampleRate == 0 ? 48000 : currentDspSampleRate,
+        .outputSampleRate =
+            currentOutputSampleRate == 0 ? 48000 : currentOutputSampleRate,
+        .fallback = false};
+  }
+  const auto selectable = selectableSampleRates();
+  for (auto iterator = selectable.rbegin(); iterator != selectable.rend();
+       ++iterator) {
+    if (sampleRateCapabilitiesSupport(normalized, *iterator)) {
+      return ResolvedSampleRates{
+          .dspSampleRate = *iterator,
+          .outputSampleRate = *iterator,
+          .fallback = false};
+    }
+  }
+  return ResolvedSampleRates{
+      .dspSampleRate = 48000,
+      .outputSampleRate = fallbackOutputRate(normalized, 48000),
+      .fallback = true};
+}
+
 } // namespace pipetune

@@ -2,6 +2,7 @@
 #define PIPETUNE_PIPEWIRE_PIPELINE_H
 
 #include "pipetune/dsp_pipeline.h"
+#include "pipetune/sample_rate.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -41,8 +42,12 @@ struct PipeWirePipelineOptions {
   std::string initialConfigurationError;
   /** User-only control socket path, or empty to disable live control. */
   std::filesystem::path controlSocketPath;
-  /** Fixed stream sample rate in hertz, from 32000 through 192000. */
-  std::uint32_t sampleRate;
+  /** Initial capture, playback media-format, and DSP rate in hertz. */
+  std::uint32_t dspSampleRate;
+  /** Initial PipeWire playback graph-rate hint in hertz. */
+  std::uint32_t outputSampleRate;
+  /** Initial Max/fixed and suggest/force policy. */
+  SampleRatePolicy ratePolicy;
   /** Fixed planar channel count, from one through eight. */
   std::uint32_t channelCount;
   /** Largest DSP block processed in one call; must be at least 32. */

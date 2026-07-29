@@ -21,7 +21,13 @@ static bool check(bool condition, std::string_view message) {
 static bool testIntentionalBypass(const std::filesystem::path &configPath) {
   const auto savedOutput = pipetune::savePreferredOutput(
       configPath, "alsa_output.usb_dac");
-  if (!check(savedOutput.empty(), savedOutput)) {
+  const auto savedRate = pipetune::saveSampleRatePolicy(
+      configPath,
+      {.mode = pipetune::SampleRateMode::fixed,
+       .fixedRate = 384000,
+       .enforcement = pipetune::SampleRateEnforcement::force});
+  if (!check(savedOutput.empty(), savedOutput) ||
+      !check(savedRate.empty(), savedRate)) {
     return false;
   }
   const auto prepared = pipetune::prepareStartupPipeline(
@@ -34,6 +40,13 @@ static bool testIntentionalBypass(const std::filesystem::path &configPath) {
              "missing startup configuration must be intentional bypass") ||
       !check(prepared.preferredOutput == "alsa_output.usb_dac",
              "startup output must be returned in bypass mode") ||
+      !check(prepared.ratePolicy ==
+                 pipetune::SampleRatePolicy{
+                     .mode = pipetune::SampleRateMode::fixed,
+                     .fixedRate = 384000,
+                     .enforcement =
+                         pipetune::SampleRateEnforcement::force},
+             "startup rate policy must be returned in bypass mode") ||
       !check(prepared.pipeline->activePluginCount() == 0,
              "startup bypass must not contain DSP nodes")) {
     return false;
@@ -67,6 +80,13 @@ static bool testConfiguredPreset(const std::filesystem::path &configPath,
              "valid configured preset must not report an error") ||
       !check(prepared.preferredOutput == "alsa_output.usb_dac",
              "loading a preset must preserve the startup output") ||
+      !check(prepared.ratePolicy ==
+                 pipetune::SampleRatePolicy{
+                     .mode = pipetune::SampleRateMode::fixed,
+                     .fixedRate = 384000,
+                     .enforcement =
+                         pipetune::SampleRateEnforcement::force},
+             "loading a preset must preserve the startup rate policy") ||
       !check(prepared.pipeline->activePluginCount() == 1,
              "configured preset must prepare its DSP node")) {
     return false;

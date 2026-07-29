@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <memory>
 #include <span>
@@ -37,6 +38,7 @@ struct DspPipeline::Impl {
   std::uint32_t maxFrames = 0;
   std::uint32_t latencyFrames = 0;
   std::size_t activePluginCount = 0;
+  std::shared_ptr<const std::string> presetRecipe;
 
   ~Impl() {
     if (engine != 0) {
@@ -77,8 +79,8 @@ static PipelineLoadResult loadError(std::string message,
 
 static std::string validateBuildOptions(const PipelineBuildOptions &options) {
   if (!std::isfinite(options.sampleRate) || options.sampleRate < 32000.0F ||
-      options.sampleRate > 192000.0F) {
-    return "sample rate must be between 32000 and 192000 Hz";
+      options.sampleRate > 384000.0F) {
+    return "sample rate must be between 32000 and 384000 Hz";
   }
   if (options.maxChannels == 0 || options.maxChannels > 8) {
     return "maximum channel count must be between one and eight";
@@ -349,32 +351,21 @@ createBypassDspPipeline(const PipelineBuildOptions &options) {
   return {.pipeline = std::move(pipeline), .error = {}};
 }
 
-PipelineLoadResult loadDspPipeline(const std::filesystem::path &presetPath,
-                                   const PipelineBuildOptions &options) {
-  if (presetPath.extension() != ".effetune_preset") {
-    return loadError("preset path must use the exact .effetune_preset extension");
-  }
+PipelineLoadResult DspPipeline::buildFromRecipe(
+    std::shared_ptr<const std::string> presetRecipe,
+    const PipelineBuildOptions &options) {
   const auto validation = validateBuildOptions(options);
   if (!validation.empty()) {
     return loadError(validation);
   }
-
-  auto fileError = std::error_code{};
-  const auto fileBytes = std::filesystem::file_size(presetPath, fileError);
-  if (fileError) {
-    return loadError("cannot inspect preset file: " + fileError.message());
+  if (presetRecipe == nullptr || presetRecipe->empty() ||
+      presetRecipe->size() > kMaximumPresetBytes) {
+    return loadError("retained preset recipe is unavailable");
   }
-  if (fileBytes == 0 || fileBytes > kMaximumPresetBytes) {
-    return loadError("preset file must contain between 1 byte and 8 MiB");
-  }
-
-  auto readError = yyjson_read_err{};
-  auto document =
-      JsonDocument(yyjson_read_file(presetPath.c_str(), 0, nullptr, &readError));
+  auto document = JsonDocument(
+      yyjson_read(presetRecipe->data(), presetRecipe->size(), 0));
   if (document == nullptr) {
-    const auto detail = readError.msg == nullptr ? std::string("unknown parse error")
-                                                 : std::string(readError.msg);
-    return loadError("cannot parse preset JSON: " + detail);
+    return loadError("cannot parse preset JSON");
   }
   auto *pipelineValue = findPipelineRoot(yyjson_doc_get_root(document.get()));
   if (pipelineValue == nullptr) {
@@ -385,6 +376,7 @@ PipelineLoadResult loadDspPipeline(const std::filesystem::path &presetPath,
   implementation->sampleRate = options.sampleRate;
   implementation->maxChannels = options.maxChannels;
   implementation->maxFrames = options.maxFrames;
+  implementation->presetRecipe = std::move(presetRecipe);
   implementation->engine = et_engine_create();
   if (implementation->engine == 0) {
     return loadError("cannot create EffeTune DSP engine");
@@ -498,6 +490,57 @@ PipelineLoadResult loadDspPipeline(const std::filesystem::path &presetPath,
 
   auto pipeline = std::unique_ptr<DspPipeline>(new DspPipeline(std::move(implementation)));
   return {.pipeline = std::move(pipeline), .warnings = std::move(warnings), .error = {}};
+}
+
+PipelineLoadResult loadDspPipeline(const std::filesystem::path &presetPath,
+                                   const PipelineBuildOptions &options) {
+  if (presetPath.extension() != ".effetune_preset") {
+    return loadError("preset path must use the exact .effetune_preset extension");
+  }
+  const auto validation = validateBuildOptions(options);
+  if (!validation.empty()) {
+    return loadError(validation);
+  }
+
+  auto fileError = std::error_code{};
+  const auto fileBytes = std::filesystem::file_size(presetPath, fileError);
+  if (fileError) {
+    return loadError("cannot inspect preset file: " + fileError.message());
+  }
+  if (fileBytes == 0 || fileBytes > kMaximumPresetBytes) {
+    return loadError("preset file must contain between 1 byte and 8 MiB");
+  }
+  auto stream = std::ifstream(presetPath, std::ios::binary);
+  if (!stream) {
+    return loadError("cannot read preset file");
+  }
+  auto contents =
+      std::string(static_cast<std::size_t>(fileBytes), '\0');
+  stream.read(contents.data(),
+              static_cast<std::streamsize>(contents.size()));
+  if (stream.gcount() !=
+          static_cast<std::streamsize>(contents.size()) ||
+      stream.bad()) {
+    return loadError("cannot read preset file");
+  }
+  return DspPipeline::buildFromRecipe(
+      std::make_shared<const std::string>(std::move(contents)), options);
+}
+
+PipelineLoadResult
+rebuildDspPipeline(const DspPipeline &source,
+                   const PipelineBuildOptions &options) {
+  if (source.implementation_ == nullptr) {
+    return loadError("source DSP pipeline is unavailable");
+  }
+  if (source.implementation_->bypass) {
+    auto created = createBypassDspPipeline(options);
+    return {.pipeline = std::move(created.pipeline),
+            .warnings = {},
+            .error = std::move(created.error)};
+  }
+  return DspPipeline::buildFromRecipe(
+      source.implementation_->presetRecipe, options);
 }
 
 } // namespace pipetune

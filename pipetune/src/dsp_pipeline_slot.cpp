@@ -9,7 +9,8 @@ namespace pipetune {
 
 DspPipelineSlot::DspPipelineSlot(
     std::unique_ptr<DspPipeline> initialPipeline)
-    : current_(std::move(initialPipeline)), superseded_(),
+    : current_(std::move(initialPipeline)), stagedPrevious_(nullptr),
+      superseded_(),
       active_(current_.get()), hazard_(nullptr), processedFrames_(0),
       processingNanoseconds_(0) {
   if (current_ == nullptr) {
@@ -48,15 +49,50 @@ ProcessStatus DspPipelineSlot::process(std::span<float> planarSamples,
 }
 
 void DspPipelineSlot::replace(std::unique_ptr<DspPipeline> replacement) {
+  stageReplacement(std::move(replacement));
+  commitStaged();
+}
+
+PipelineLoadResult DspPipelineSlot::rebuildActive(
+    const PipelineBuildOptions &options) const {
+  return rebuildDspPipeline(*current_, options);
+}
+
+void DspPipelineSlot::stageReplacement(
+    std::unique_ptr<DspPipeline> replacement) {
   if (replacement == nullptr) {
     throw std::invalid_argument("replacement DSP pipeline must not be null");
   }
+  if (stagedPrevious_ != nullptr) {
+    throw std::logic_error("a DSP pipeline replacement is already staged");
+  }
 
-  auto previous = std::move(current_);
+  stagedPrevious_ = std::move(current_);
   current_ = std::move(replacement);
   active_.store(current_.get(), std::memory_order_seq_cst);
-  superseded_.push_back(std::move(previous));
+}
+
+void DspPipelineSlot::commitStaged() {
+  if (stagedPrevious_ == nullptr) {
+    throw std::logic_error("no DSP pipeline replacement is staged");
+  }
+  superseded_.push_back(std::move(stagedPrevious_));
   reclaimSuperseded();
+}
+
+void DspPipelineSlot::rollbackStaged() {
+  if (stagedPrevious_ == nullptr) {
+    throw std::logic_error("no DSP pipeline replacement is staged");
+  }
+  auto rejected = std::move(current_);
+  current_ = std::move(stagedPrevious_);
+  active_.store(current_.get(), std::memory_order_seq_cst);
+  superseded_.push_back(std::move(rejected));
+  reclaimSuperseded();
+}
+
+bool DspPipelineSlot::hasStagedReplacement() const noexcept {
+  return stagedPrevious_ != nullptr;
 }
 
 std::size_t DspPipelineSlot::activePluginCount() const noexcept {

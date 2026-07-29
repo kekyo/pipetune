@@ -34,7 +34,7 @@ constexpr auto kMaximumControlRequestBytes = std::size_t{64 * 1024};
 constexpr auto kMaximumControlResponseBytes = std::size_t{256 * 1024};
 constexpr auto kControlBacklog = 8;
 constexpr auto kMaximumControlSubscribers = std::size_t{8};
-constexpr auto kClientTimeoutSeconds = 5;
+constexpr auto kClientTimeoutSeconds = 15;
 constexpr auto kStatusPublicationInterval = std::chrono::seconds{1};
 
 struct ControlServer::Impl {

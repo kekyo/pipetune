@@ -2,6 +2,7 @@
 #define PIPETUNE_SAMPLE_RATE_H
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -80,6 +81,24 @@ struct SampleRatePolicy {
   std::uint32_t fixedRate = 0;
   /** PipeWire graph-rate request behavior. */
   SampleRateEnforcement enforcement = SampleRateEnforcement::suggest;
+
+  /** Compares complete user policy values. */
+  bool operator==(const SampleRatePolicy &) const = default;
+};
+
+/**
+ * Describes the daemon-selected DSP and output graph rates.
+ */
+struct ResolvedSampleRates {
+  /** Capture, playback media-format, and DSP rate in hertz. */
+  std::uint32_t dspSampleRate = 48000;
+  /** PipeWire output graph-rate hint in hertz. */
+  std::uint32_t outputSampleRate = 48000;
+  /** True when the output rate differs from the requested DSP policy. */
+  bool fallback = false;
+
+  /** Compares complete resolved-rate values. */
+  bool operator==(const ResolvedSampleRates &) const = default;
 };
 
 /**
@@ -170,6 +189,28 @@ bool normalizeSampleRateCapabilities(
 bool sampleRateCapabilitiesSupport(
     const SampleRateCapabilities &capabilities,
     std::uint32_t sampleRate) noexcept;
+
+/**
+ * Resolves a user policy against one selected output's capabilities.
+ *
+ * Max mode retains the current rates while capabilities are unknown. Fixed
+ * mode always selects its requested DSP rate and uses the same output hint
+ * until capabilities become known. For a known unsupported fixed rate, the
+ * output uses the greatest supported rate not above it, or the device minimum.
+ *
+ * @param policy Valid Max/fixed user choice.
+ * @param capabilities Selected output capabilities.
+ * @param currentDspSampleRate Current DSP rate, or zero for the 48 kHz initial
+ * fallback.
+ * @param currentOutputSampleRate Current graph hint, or zero for the 48 kHz
+ * initial fallback.
+ * @return Resolved rates, or nullopt for invalid inputs.
+ */
+std::optional<ResolvedSampleRates> resolveSampleRates(
+    const SampleRatePolicy &policy,
+    const SampleRateCapabilities &capabilities,
+    std::uint32_t currentDspSampleRate,
+    std::uint32_t currentOutputSampleRate);
 
 } // namespace pipetune
 

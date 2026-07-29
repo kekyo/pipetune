@@ -11,6 +11,7 @@
 #include "pipetune/startup_config.h"
 #include "pipetune/version.h"
 #include "process_runner.h"
+#include "rate_command.h"
 #include "startup_pipeline.h"
 #include "user_setup.h"
 
@@ -238,7 +239,9 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
        .initialPresetPath = prepared.activePresetPath,
        .initialConfigurationError = prepared.configurationError,
        .controlSocketPath = socket.path,
-       .sampleRate = kInitialSampleRate,
+       .dspSampleRate = kInitialSampleRate,
+       .outputSampleRate = kInitialSampleRate,
+       .ratePolicy = prepared.ratePolicy,
        .channelCount = 2,
        .maxFrames = kMaximumProcessFrames,
        .ringCapacityFrames = kRingCapacityFrames,
@@ -373,6 +376,65 @@ static int runOutputCommand(
   return 0;
 }
 
+static bool isRateCommand(pipetune::CommandLineAction action) {
+  return action == pipetune::CommandLineAction::rateGet ||
+         action == pipetune::CommandLineAction::rateList ||
+         action == pipetune::CommandLineAction::rateSet;
+}
+
+static int runRateCommand(
+    const pipetune::CommandLineOptions &options) {
+  const auto socket =
+      pipetune::resolveControlSocketPath(options.controlSocketPath);
+  if (!socket.error.empty()) {
+    std::cerr << "pipetune: " << socket.error << '\n';
+    return 1;
+  }
+
+  if (options.action == pipetune::CommandLineAction::rateGet ||
+      options.action == pipetune::CommandLineAction::rateList) {
+    const auto queried = pipetune::queryRateStatus(socket.path);
+    if (!queried.success) {
+      std::cerr << "pipetune: " << queried.error << '\n';
+      return 1;
+    }
+    if (options.json) {
+      std::cout << queried.json << '\n';
+    } else if (options.action ==
+               pipetune::CommandLineAction::rateList) {
+      std::cout <<
+          pipetune::formatSampleRateCapabilities(queried.status);
+    } else {
+      std::cout << pipetune::formatSampleRateStatus(queried.status);
+    }
+    return 0;
+  }
+
+  const auto config = resolveUserStartupConfigPath();
+  if (!config.error.empty()) {
+    std::cerr << "pipetune: " << config.error << '\n';
+    return 1;
+  }
+  const auto change = pipetune::executeSetSampleRatePolicy(
+      {.configPath = config.path, .socketPath = socket.path},
+      options.ratePolicy);
+  if (!change.success) {
+    std::cerr << "pipetune: " << change.error << '\n';
+    return 1;
+  }
+  if (change.liveApplied) {
+    std::cout << "Sample-rate policy is active and saved for future starts.\n"
+              << pipetune::formatSampleRateStatus(change.status);
+  } else {
+    std::cout << "Sample-rate policy is saved for the next daemon start";
+    if (!change.notice.empty()) {
+      std::cout << " (" << change.notice << ')';
+    }
+    std::cout << ".\n";
+  }
+  return 0;
+}
+
 int main(int argc, char **argv) {
   auto arguments = std::vector<std::string_view>{};
   arguments.reserve(argc > 1 ? static_cast<std::size_t>(argc - 1) : 0);
@@ -402,6 +464,9 @@ int main(int argc, char **argv) {
   }
   if (isOutputCommand(parsed.options.action)) {
     return runOutputCommand(parsed.options);
+  }
+  if (isRateCommand(parsed.options.action)) {
+    return runRateCommand(parsed.options);
   }
   if (parsed.options.action == pipetune::CommandLineAction::setup) {
     return runSetupCommand(parsed.options);
@@ -470,7 +535,9 @@ int main(int argc, char **argv) {
        .initialPresetPath = presetPath,
        .initialConfigurationError = {},
        .controlSocketPath = controlSocket,
-       .sampleRate = kInitialSampleRate,
+       .dspSampleRate = kInitialSampleRate,
+       .outputSampleRate = kInitialSampleRate,
+       .ratePolicy = parsed.options.ratePolicy,
        .channelCount = parsed.options.channelCount,
        .maxFrames = kMaximumProcessFrames,
        .ringCapacityFrames = kRingCapacityFrames,

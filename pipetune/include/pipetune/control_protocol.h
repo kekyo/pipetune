@@ -149,6 +149,12 @@ struct ControlRuntimeStatus {
   std::uint32_t selectedOutputSampleRate = 0;
   /** Active physical output rate, or zero while idle or unavailable. */
   std::uint32_t activeOutputSampleRate = 0;
+  /** True while the daemon is renegotiating R and H. */
+  bool rateTransitioning = false;
+  /** True when H is a device-compatible fallback for the requested R. */
+  bool rateFallback = false;
+  /** Most recent automatic or live rate-transition diagnostic. */
+  std::string rateError = {};
 };
 
 /**

@@ -183,6 +183,7 @@ add_library(
   src/pipewire_rate_parser.cpp
   src/pipewire_pipeline.cpp
   src/process_runner.cpp
+  src/rate_command.cpp
   src/user_setup.cpp)
 target_include_directories(pipetune_pipewire PUBLIC include PRIVATE src)
 target_link_libraries(
@@ -483,6 +484,23 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_output_device_tracker_tests
     COMMAND pipetune_output_device_tracker_tests)
+
+  add_executable(
+    pipetune_rate_command_tests
+    test/rate_command_test.cpp)
+  target_include_directories(pipetune_rate_command_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_rate_command_tests PRIVATE pipetune_pipewire)
+  if(MSVC)
+    target_compile_options(pipetune_rate_command_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_rate_command_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_rate_command_tests
+    COMMAND pipetune_rate_command_tests)
 
   add_executable(
     pipetune_pipewire_rate_parser_tests

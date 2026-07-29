@@ -207,7 +207,10 @@ static bool testSuccessResponse() {
             .enforcement = pipetune::SampleRateEnforcement::force},
        .dspSampleRate = 96000,
        .selectedOutputSampleRate = 48000,
-       .activeOutputSampleRate = 48000},
+       .activeOutputSampleRate = 48000,
+       .rateTransitioning = false,
+       .rateFallback = true,
+       .rateError = {}},
       warnings);
   const auto inspection = pipetune::inspectControlResponse(response);
   const auto parsed = pipetune::parseControlResponse(response);
@@ -270,7 +273,10 @@ static bool testSuccessResponse() {
                      pipetune::SampleRateEnforcement::force &&
                  parsed.status.dspSampleRate == 96000 &&
                  parsed.status.selectedOutputSampleRate == 48000 &&
-                 parsed.status.activeOutputSampleRate == 48000,
+                 parsed.status.activeOutputSampleRate == 48000 &&
+                 !parsed.status.rateTransitioning &&
+                 parsed.status.rateFallback &&
+                 parsed.status.rateError.empty(),
              "parsed response rate status differs") ||
       !check(parsed.warnings.size() == 1 &&
                  parsed.warnings.front().nodeIndex == 3 &&
@@ -344,6 +350,9 @@ static bool testSuccessResponse() {
           yyjson_obj_get(root, "selectedOutputSampleRate")) == 48000 &&
       yyjson_get_uint(yyjson_obj_get(root, "activeOutputSampleRate")) ==
           48000 &&
+      !yyjson_get_bool(yyjson_obj_get(root, "rateTransitioning")) &&
+      yyjson_get_bool(yyjson_obj_get(root, "rateFallback")) &&
+      yyjson_is_null(yyjson_obj_get(root, "rateError")) &&
       yyjson_is_arr(warningArray) && yyjson_arr_size(warningArray) == 1 &&
       yyjson_get_uint(
           yyjson_obj_get(yyjson_arr_get(warningArray, 0), "nodeIndex")) == 3;
@@ -384,8 +393,22 @@ static bool testStatusEvent() {
             .enforcement = pipetune::SampleRateEnforcement::suggest},
        .dspSampleRate = 192000,
        .selectedOutputSampleRate = 192000,
-       .activeOutputSampleRate = 0});
+       .activeOutputSampleRate = 0,
+       .rateTransitioning = true,
+       .rateFallback = false,
+       .rateError = "previous transition failed"});
   const auto parsed = pipetune::parseControlResponse(event);
+  auto invalidTransition = event;
+  auto missingRateError = event;
+  if (!check(replaceOnce(invalidTransition,
+                         R"json("rateTransitioning":true)json",
+                         R"json("rateTransitioning":"true")json"),
+             "cannot prepare invalid transition state") ||
+      !check(replaceOnce(missingRateError, "rateError",
+                         "missingRateError"),
+             "cannot prepare missing rate error")) {
+    return false;
+  }
   return check(parsed.valid, parsed.error) &&
          check(parsed.success, "status event must report success") &&
          check(parsed.kind == pipetune::ControlResponseKind::statusEvent,
@@ -424,10 +447,18 @@ static bool testStatusEvent() {
                        pipetune::SampleRateEnforcement::suggest &&
                    parsed.status.dspSampleRate == 192000 &&
                    parsed.status.selectedOutputSampleRate == 192000 &&
-                   parsed.status.activeOutputSampleRate == 0,
+                   parsed.status.activeOutputSampleRate == 0 &&
+                   parsed.status.rateTransitioning &&
+                   !parsed.status.rateFallback &&
+                   parsed.status.rateError ==
+                       "previous transition failed",
                "status event rate state differs") &&
          check(parsed.warnings.empty(),
-               "status event must not contain warnings");
+               "status event must not contain warnings") &&
+         check(!pipetune::parseControlResponse(invalidTransition).valid,
+               "non-boolean rate transition state must be rejected") &&
+         check(!pipetune::parseControlResponse(missingRateError).valid,
+               "missing rate error field must be rejected");
 }
 
 static bool testBypassStatus() {

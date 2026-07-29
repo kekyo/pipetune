@@ -113,7 +113,13 @@ static bool testOrderlySignalShutdown(
          .initialPresetPath = initialPresetPath,
          .initialConfigurationError = {},
          .controlSocketPath = socketPath,
-         .sampleRate = 48000,
+         .dspSampleRate = 48000,
+         .outputSampleRate = 48000,
+         .ratePolicy =
+             {.mode = pipetune::SampleRateMode::fixed,
+              .fixedRate = 48000,
+              .enforcement =
+                  pipetune::SampleRateEnforcement::suggest},
          .channelCount = 2,
          .maxFrames = 8192,
          .ringCapacityFrames = 16384,
@@ -153,6 +159,35 @@ static bool testOrderlySignalShutdown(
                  parsedStatus.status.inputSampleRate == 48000 &&
                  parsedStatus.status.inputChannelCount == 2,
              "initial status does not report the negotiated input format")) {
+    kill(child, SIGTERM);
+    auto childStatus = 0;
+    waitpid(child, &childStatus, 0);
+    return false;
+  }
+
+  const auto rateChange = pipetune::exchangeControlMessage(
+      socketPath,
+      pipetune::makeSetRateControlRequest(
+          {.mode = pipetune::SampleRateMode::fixed,
+           .fixedRate = 96000,
+           .enforcement = pipetune::SampleRateEnforcement::force}));
+  const auto parsedRate =
+      pipetune::parseControlResponse(rateChange.response);
+  if (!check(rateChange.error.empty(), rateChange.error) ||
+      !check(parsedRate.valid, parsedRate.error) ||
+      !check(parsedRate.success,
+             "live rate request failed") ||
+      !check(parsedRate.status.configuredRatePolicy ==
+                     pipetune::SampleRatePolicy{
+                         .mode = pipetune::SampleRateMode::fixed,
+                         .fixedRate = 96000,
+                         .enforcement =
+                             pipetune::SampleRateEnforcement::force} &&
+                 parsedRate.status.dspSampleRate == 96000 &&
+                 parsedRate.status.inputSampleRate == 96000 &&
+                 parsedRate.status.selectedOutputSampleRate != 0 &&
+                 !parsedRate.status.rateTransitioning,
+             "live rate response does not report completed renegotiation")) {
     kill(child, SIGTERM);
     auto childStatus = 0;
     waitpid(child, &childStatus, 0);
@@ -245,7 +280,13 @@ static bool testCrashRecovery(
          .initialPresetPath = initialPresetPath,
          .initialConfigurationError = {},
          .controlSocketPath = {},
-         .sampleRate = 48000,
+         .dspSampleRate = 48000,
+         .outputSampleRate = 48000,
+         .ratePolicy =
+             {.mode = pipetune::SampleRateMode::fixed,
+              .fixedRate = 48000,
+              .enforcement =
+                  pipetune::SampleRateEnforcement::suggest},
          .channelCount = 2,
          .maxFrames = 8192,
          .ringCapacityFrames = 16384,
@@ -362,7 +403,13 @@ int main() {
        .initialPresetPath = presetPath,
        .initialConfigurationError = {},
        .controlSocketPath = {},
-       .sampleRate = 48000,
+       .dspSampleRate = 48000,
+       .outputSampleRate = 48000,
+       .ratePolicy =
+           {.mode = pipetune::SampleRateMode::fixed,
+            .fixedRate = 48000,
+            .enforcement =
+                pipetune::SampleRateEnforcement::suggest},
        .channelCount = 2,
        .maxFrames = 8192,
        .ringCapacityFrames = 16384,

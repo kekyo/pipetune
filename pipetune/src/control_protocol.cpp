@@ -405,7 +405,8 @@ static std::string makeControlStatusMessage(
       (status.dspSampleRate != 0 &&
        !isSelectableSampleRate(status.dspSampleRate)) ||
       (status.activeOutputSampleRate != 0 &&
-       status.selectedOutputSampleRate == 0)) {
+       status.selectedOutputSampleRate == 0) ||
+      status.rateError.find('\0') != std::string::npos) {
     return makeControlErrorResponse("cannot encode inconsistent control status");
   }
 
@@ -475,7 +476,13 @@ static std::string makeControlStatusMessage(
           status.selectedOutputSampleRate) ||
       !yyjson_mut_obj_add_uint(
           document.get(), root, "activeOutputSampleRate",
-          status.activeOutputSampleRate)) {
+          status.activeOutputSampleRate) ||
+      !yyjson_mut_obj_add_bool(document.get(), root, "rateTransitioning",
+                               status.rateTransitioning) ||
+      !yyjson_mut_obj_add_bool(document.get(), root, "rateFallback",
+                               status.rateFallback) ||
+      !addNullableString(document.get(), root, "rateError",
+                         status.rateError)) {
     return makeControlErrorResponse("cannot encode control response");
   }
 
@@ -958,7 +965,12 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       !readUint32Field(root, "selectedOutputSampleRate",
                        status.selectedOutputSampleRate) ||
       !readUint32Field(root, "activeOutputSampleRate",
-                       status.activeOutputSampleRate)) {
+                       status.activeOutputSampleRate) ||
+      !readBooleanField(root, "rateTransitioning",
+                        status.rateTransitioning) ||
+      !readBooleanField(root, "rateFallback", status.rateFallback) ||
+      !readNullableStringField(root, "rateError",
+                               status.rateError)) {
     return responseError("successful control response has invalid status");
   }
   if ((status.processingMode == ProcessingMode::preset &&
@@ -969,7 +981,8 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       (status.dspSampleRate != 0 &&
        !isSelectableSampleRate(status.dspSampleRate)) ||
       (status.activeOutputSampleRate != 0 &&
-       status.selectedOutputSampleRate == 0)) {
+       status.selectedOutputSampleRate == 0) ||
+      status.rateError.find('\0') != std::string::npos) {
     return responseError(
         "successful control response has inconsistent status");
   }

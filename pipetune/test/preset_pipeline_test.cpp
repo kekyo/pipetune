@@ -188,12 +188,12 @@ static bool testRuntimeBounds(const std::filesystem::path &directory) {
   const auto path =
       writePreset(directory, "bounds.effetune_preset", R"json({"pipeline":[]})json");
   const auto result =
-      pipetune::loadDspPipeline(path, {.sampleRate = 192000.0F, .maxChannels = 8, .maxFrames = 32});
+      pipetune::loadDspPipeline(path, {.sampleRate = 384000.0F, .maxChannels = 8, .maxFrames = 32});
   if (!check(result.pipeline != nullptr, result.error)) {
     return false;
   }
   auto samples = std::vector<float>(32, 0.25F);
-  if (!check(result.pipeline->sampleRate() == 192000.0F,
+  if (!check(result.pipeline->sampleRate() == 384000.0F,
              "pipeline must report its prepared sample rate") ||
       !check(result.pipeline->process(samples, 8, 4, 0.0) == pipetune::ProcessStatus::ok,
              "maximum supported channel/rate configuration must process") ||
@@ -207,6 +207,28 @@ static bool testRuntimeBounds(const std::filesystem::path &directory) {
                "processing beyond the prepared frame count must fail safely");
 }
 
+static bool testRetainedRecipeRebuild(
+    const std::filesystem::path &directory) {
+  const auto path = writePreset(
+      directory, "retained.effetune_preset",
+      R"json({"pipeline":[{"name":"Volume","enabled":true,"parameters":{"vl":-6},"channel":"A"}]})json");
+  auto loaded = pipetune::loadDspPipeline(
+      path,
+      {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+  if (!check(loaded.pipeline != nullptr, loaded.error)) {
+    return false;
+  }
+  std::filesystem::remove(path);
+  auto rebuilt = pipetune::rebuildDspPipeline(
+      *loaded.pipeline,
+      {.sampleRate = 96000.0F, .maxChannels = 2, .maxFrames = 64});
+  return check(rebuilt.pipeline != nullptr, rebuilt.error) &&
+         check(rebuilt.pipeline->sampleRate() == 96000.0F,
+               "rebuild must use the requested rate") &&
+         check(rebuilt.pipeline->activePluginCount() == 1,
+               "rebuild must retain the preset recipe after file removal");
+}
+
 int main() {
   const auto directory =
       std::filesystem::temp_directory_path() /
@@ -216,7 +238,8 @@ int main() {
   const auto passed =
       testBypassPipeline() && testCanonicalPreset(directory) &&
       testLegacyPreset(directory) && testRawLegacyPipeline(directory) &&
-      testRejectedInputs(directory) && testRuntimeBounds(directory);
+      testRejectedInputs(directory) && testRuntimeBounds(directory) &&
+      testRetainedRecipeRebuild(directory);
   std::filesystem::remove_all(directory);
   return passed ? 0 : 1;
 }
