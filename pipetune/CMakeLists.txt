@@ -143,6 +143,7 @@ add_library(
   src/audio_bridge.cpp
   src/dsp_catalog.cpp
   src/dsp_pipeline.cpp
+  src/sample_rate.cpp
   src/startup_config.cpp
   src/startup_pipeline.cpp
   "${PIPETUNE_GENERATED_DSP_CATALOG}")
@@ -160,7 +161,8 @@ add_library(
   src/control_protocol.cpp
   src/control_socket.cpp)
 target_include_directories(pipetune_control PUBLIC include)
-target_link_libraries(pipetune_control PUBLIC yyjson PRIVATE Threads::Threads)
+target_link_libraries(
+  pipetune_control PUBLIC pipetune_core yyjson PRIVATE Threads::Threads)
 if(MSVC)
   target_compile_options(pipetune_control PRIVATE /W4 /WX)
 else()
@@ -267,6 +269,20 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_startup_config_tests
     COMMAND pipetune_startup_config_tests)
+
+  add_executable(
+    pipetune_sample_rate_tests
+    test/sample_rate_test.cpp)
+  target_link_libraries(pipetune_sample_rate_tests PRIVATE pipetune_core)
+  if(MSVC)
+    target_compile_options(pipetune_sample_rate_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_sample_rate_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_sample_rate_tests
+    COMMAND pipetune_sample_rate_tests)
 
   add_executable(
     pipetune_startup_pipeline_tests

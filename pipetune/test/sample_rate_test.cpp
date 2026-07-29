@@ -1,0 +1,108 @@
+#include "pipetune/sample_rate.h"
+
+#include <array>
+#include <cstdint>
+#include <iostream>
+#include <string_view>
+
+static bool check(bool condition, std::string_view message) {
+  if (!condition) {
+    std::cerr << message << '\n';
+  }
+  return condition;
+}
+
+static bool testSelectableRates() {
+  constexpr auto expected =
+      std::array<std::uint32_t, 5>{44100, 48000, 96000, 192000, 384000};
+  const auto actual = pipetune::selectableSampleRates();
+  if (!check(actual.size() == expected.size(),
+             "selectable sample-rate count differs")) {
+    return false;
+  }
+  for (auto index = std::size_t{0}; index < expected.size(); ++index) {
+    if (!check(actual[index] == expected[index],
+               "selectable sample-rate ordering differs") ||
+        !check(pipetune::isSelectableSampleRate(expected[index]),
+               "listed sample rate must be selectable")) {
+      return false;
+    }
+  }
+  return check(!pipetune::isSelectableSampleRate(32000),
+               "unlisted sample rates must not be selectable") &&
+         check(!pipetune::isSelectableSampleRate(88200),
+               "88.2 kHz must not be selectable");
+}
+
+static bool testPolicyNamesAndParsing() {
+  auto mode = pipetune::SampleRateMode::fixed;
+  auto enforcement = pipetune::SampleRateEnforcement::force;
+  return check(pipetune::sampleRateModeName(
+                   pipetune::SampleRateMode::maximum) == "max",
+               "maximum mode name differs") &&
+         check(pipetune::sampleRateModeName(
+                   pipetune::SampleRateMode::fixed) == "fixed",
+               "fixed mode name differs") &&
+         check(pipetune::sampleRateEnforcementName(
+                   pipetune::SampleRateEnforcement::suggest) == "suggest",
+               "suggest enforcement name differs") &&
+         check(pipetune::sampleRateEnforcementName(
+                   pipetune::SampleRateEnforcement::force) == "force",
+               "force enforcement name differs") &&
+         check(pipetune::parseSampleRateMode("max", mode) &&
+                   mode == pipetune::SampleRateMode::maximum,
+               "max mode parsing differs") &&
+         check(pipetune::parseSampleRateMode("fixed", mode) &&
+                   mode == pipetune::SampleRateMode::fixed,
+               "fixed mode parsing differs") &&
+         check(!pipetune::parseSampleRateMode("automatic", mode),
+               "unknown rate modes must fail") &&
+         check(pipetune::parseSampleRateEnforcement("suggest",
+                                                    enforcement) &&
+                   enforcement ==
+                       pipetune::SampleRateEnforcement::suggest,
+               "suggest parsing differs") &&
+         check(pipetune::parseSampleRateEnforcement("force",
+                                                    enforcement) &&
+                   enforcement == pipetune::SampleRateEnforcement::force,
+               "force parsing differs") &&
+         check(!pipetune::parseSampleRateEnforcement("strict",
+                                                     enforcement),
+               "unknown enforcement must fail");
+}
+
+static bool testPolicyValidation() {
+  const auto defaults = pipetune::defaultSampleRatePolicy();
+  return check(defaults.mode == pipetune::SampleRateMode::maximum &&
+                   defaults.fixedRate == 0 &&
+                   defaults.enforcement ==
+                       pipetune::SampleRateEnforcement::suggest,
+               "default policy must be Max and suggest") &&
+         check(pipetune::sampleRatePolicyIsValid(defaults),
+               "default policy must be valid") &&
+         check(pipetune::sampleRatePolicyIsValid(
+                   {.mode = pipetune::SampleRateMode::fixed,
+                    .fixedRate = 384000,
+                    .enforcement =
+                        pipetune::SampleRateEnforcement::force}),
+               "384 kHz force policy must be valid") &&
+         check(!pipetune::sampleRatePolicyIsValid(
+                   {.mode = pipetune::SampleRateMode::maximum,
+                    .fixedRate = 48000,
+                    .enforcement =
+                        pipetune::SampleRateEnforcement::suggest}),
+               "maximum policy must not carry a fixed rate") &&
+         check(!pipetune::sampleRatePolicyIsValid(
+                   {.mode = pipetune::SampleRateMode::fixed,
+                    .fixedRate = 88200,
+                    .enforcement =
+                        pipetune::SampleRateEnforcement::suggest}),
+               "fixed policy must use a selectable rate");
+}
+
+int main() {
+  return testSelectableRates() && testPolicyNamesAndParsing() &&
+                 testPolicyValidation()
+             ? 0
+             : 1;
+}

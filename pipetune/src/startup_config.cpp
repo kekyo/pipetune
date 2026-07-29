@@ -1,7 +1,9 @@
 #include "pipetune/startup_config.h"
 
 #include <array>
+#include <charconv>
 #include <cerrno>
+#include <cstdint>
 #include <cstring>
 #include <fcntl.h>
 #include <fstream>
@@ -16,6 +18,9 @@ namespace pipetune {
 
 constexpr auto kPresetAssignment = std::string_view{"PIPETUNE_PRESET="};
 constexpr auto kTargetAssignment = std::string_view{"PIPETUNE_TARGET="};
+constexpr auto kRateAssignment = std::string_view{"PIPETUNE_RATE="};
+constexpr auto kRateEnforcementAssignment =
+    std::string_view{"PIPETUNE_RATE_ENFORCEMENT="};
 constexpr auto kMaximumConfigBytes = std::size_t{64 * 1024};
 
 static std::string systemError(std::string_view operation) {
@@ -98,6 +103,26 @@ static std::string validatePreferredOutput(std::string_view nodeName) {
   return {};
 }
 
+static bool parseConfiguredRate(std::string_view value,
+                                SampleRatePolicy &policy) {
+  if (value == "max") {
+    policy.mode = SampleRateMode::maximum;
+    policy.fixedRate = 0;
+    return true;
+  }
+  auto rate = std::uint32_t{0};
+  const auto parsed =
+      std::from_chars(value.data(), value.data() + value.size(), rate);
+  if (parsed.ec != std::errc{} ||
+      parsed.ptr != value.data() + value.size() ||
+      !isSelectableSampleRate(rate)) {
+    return false;
+  }
+  policy.mode = SampleRateMode::fixed;
+  policy.fixedRate = rate;
+  return true;
+}
+
 static std::string readConfig(const std::filesystem::path &configPath,
                               std::string &contents, bool &found) {
   auto stream = std::ifstream(configPath, std::ios::binary);
@@ -169,6 +194,19 @@ static std::string writeStartupConfig(
     contents += std::string(kTargetAssignment) +
                 encodeConfigValue(configured.preferredOutput) + "\n";
   }
+  if (!sampleRatePolicyIsValid(configured.ratePolicy)) {
+    return "sample-rate policy is invalid";
+  }
+  contents += std::string(kRateAssignment);
+  if (configured.ratePolicy.mode == SampleRateMode::maximum) {
+    contents += "max\n";
+  } else {
+    contents += std::to_string(configured.ratePolicy.fixedRate) + "\n";
+  }
+  contents += std::string(kRateEnforcementAssignment) +
+              std::string(sampleRateEnforcementName(
+                  configured.ratePolicy.enforcement)) +
+              "\n";
 
   auto filesystemError = std::error_code{};
   const auto directory = configPath.parent_path();
@@ -250,6 +288,7 @@ loadStartupConfig(const std::filesystem::path &configPath) {
             .presetPath = {},
             .preferredOutputFound = false,
             .preferredOutput = {},
+            .ratePolicy = defaultSampleRatePolicy(),
             .error = readError};
   }
   if (!configFound) {
@@ -257,6 +296,7 @@ loadStartupConfig(const std::filesystem::path &configPath) {
             .presetPath = {},
             .preferredOutputFound = false,
             .preferredOutput = {},
+            .ratePolicy = defaultSampleRatePolicy(),
             .error = {}};
   }
 
@@ -264,6 +304,9 @@ loadStartupConfig(const std::filesystem::path &configPath) {
   auto presetPath = std::filesystem::path{};
   auto preferredOutputFound = false;
   auto preferredOutput = std::string{};
+  auto rateFound = false;
+  auto enforcementFound = false;
+  auto ratePolicy = defaultSampleRatePolicy();
   auto offset = std::size_t{0};
   while (offset <= contents.size()) {
     const auto end = contents.find('\n', offset);
@@ -280,6 +323,7 @@ loadStartupConfig(const std::filesystem::path &configPath) {
                   .presetPath = {},
                   .preferredOutputFound = false,
                   .preferredOutput = {},
+                  .ratePolicy = defaultSampleRatePolicy(),
                   .error = "startup configuration contains duplicate "
                            "PIPETUNE_PRESET assignments"};
         }
@@ -290,6 +334,7 @@ loadStartupConfig(const std::filesystem::path &configPath) {
                   .presetPath = {},
                   .preferredOutputFound = false,
                   .preferredOutput = {},
+                  .ratePolicy = defaultSampleRatePolicy(),
                   .error = "startup preset assignment is invalid"};
         }
         presetPath = std::filesystem::path(decoded);
@@ -299,6 +344,7 @@ loadStartupConfig(const std::filesystem::path &configPath) {
                   .presetPath = {},
                   .preferredOutputFound = false,
                   .preferredOutput = {},
+                  .ratePolicy = defaultSampleRatePolicy(),
                   .error = validation};
         }
         presetFound = true;
@@ -308,6 +354,7 @@ loadStartupConfig(const std::filesystem::path &configPath) {
                   .presetPath = {},
                   .preferredOutputFound = false,
                   .preferredOutput = {},
+                  .ratePolicy = defaultSampleRatePolicy(),
                   .error = "startup configuration contains duplicate "
                            "PIPETUNE_TARGET assignments"};
         }
@@ -317,6 +364,7 @@ loadStartupConfig(const std::filesystem::path &configPath) {
                   .presetPath = {},
                   .preferredOutputFound = false,
                   .preferredOutput = {},
+                  .ratePolicy = defaultSampleRatePolicy(),
                   .error = "preferred output assignment is invalid"};
         }
         const auto validation =
@@ -326,14 +374,57 @@ loadStartupConfig(const std::filesystem::path &configPath) {
                   .presetPath = {},
                   .preferredOutputFound = false,
                   .preferredOutput = {},
+                  .ratePolicy = defaultSampleRatePolicy(),
                   .error = validation};
         }
         preferredOutputFound = true;
+      } else if (line.starts_with(kRateAssignment)) {
+        if (rateFound) {
+          return {.presetFound = false,
+                  .presetPath = {},
+                  .preferredOutputFound = false,
+                  .preferredOutput = {},
+                  .ratePolicy = defaultSampleRatePolicy(),
+                  .error = "startup configuration contains duplicate "
+                           "PIPETUNE_RATE assignments"};
+        }
+        if (!parseConfiguredRate(line.substr(kRateAssignment.size()),
+                                 ratePolicy)) {
+          return {.presetFound = false,
+                  .presetPath = {},
+                  .preferredOutputFound = false,
+                  .preferredOutput = {},
+                  .ratePolicy = defaultSampleRatePolicy(),
+                  .error = "sample-rate assignment is invalid"};
+        }
+        rateFound = true;
+      } else if (line.starts_with(kRateEnforcementAssignment)) {
+        if (enforcementFound) {
+          return {.presetFound = false,
+                  .presetPath = {},
+                  .preferredOutputFound = false,
+                  .preferredOutput = {},
+                  .ratePolicy = defaultSampleRatePolicy(),
+                  .error = "startup configuration contains duplicate "
+                           "PIPETUNE_RATE_ENFORCEMENT assignments"};
+        }
+        if (!parseSampleRateEnforcement(
+                line.substr(kRateEnforcementAssignment.size()),
+                ratePolicy.enforcement)) {
+          return {.presetFound = false,
+                  .presetPath = {},
+                  .preferredOutputFound = false,
+                  .preferredOutput = {},
+                  .ratePolicy = defaultSampleRatePolicy(),
+                  .error = "sample-rate enforcement assignment is invalid"};
+        }
+        enforcementFound = true;
       } else {
         return {.presetFound = false,
                 .presetPath = {},
                 .preferredOutputFound = false,
                 .preferredOutput = {},
+                .ratePolicy = defaultSampleRatePolicy(),
                 .error = "startup configuration contains an unsupported line"};
       }
     }
@@ -346,6 +437,7 @@ loadStartupConfig(const std::filesystem::path &configPath) {
           .presetPath = std::move(presetPath),
           .preferredOutputFound = preferredOutputFound,
           .preferredOutput = std::move(preferredOutput),
+          .ratePolicy = ratePolicy,
           .error = {}};
 }
 
@@ -388,6 +480,19 @@ std::string clearPreferredOutput(const std::filesystem::path &configPath) {
   }
   configured.preferredOutputFound = false;
   configured.preferredOutput.clear();
+  return writeStartupConfig(configPath, configured);
+}
+
+std::string saveSampleRatePolicy(const std::filesystem::path &configPath,
+                                 const SampleRatePolicy &policy) {
+  if (!sampleRatePolicyIsValid(policy)) {
+    return "sample-rate policy is invalid";
+  }
+  auto configured = loadStartupConfig(configPath);
+  if (!configured.error.empty()) {
+    return configured.error;
+  }
+  configured.ratePolicy = policy;
   return writeStartupConfig(configPath, configured);
 }
 

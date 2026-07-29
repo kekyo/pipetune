@@ -25,22 +25,26 @@ static bool testRunDefaults() {
                "default control socket path must be automatic") &&
          check(result.options.targetObject.empty(), "default target must be automatic") &&
          check(result.options.sinkName == "pipetune_sink", "default sink name differs") &&
-         check(result.options.sampleRate == 48000, "default rate differs") &&
+         check(result.options.ratePolicy.mode ==
+                   pipetune::SampleRateMode::maximum &&
+                   result.options.ratePolicy.fixedRate == 0 &&
+                   result.options.ratePolicy.enforcement ==
+                       pipetune::SampleRateEnforcement::suggest,
+               "direct-run rate policy must default to Max and suggest") &&
          check(result.options.channelCount == 2, "default channels differ") &&
          check(!result.options.checkOnly, "normal run must not stop after readiness");
 }
 
 static bool testExplicitOptions() {
-  constexpr auto arguments = std::array<std::string_view, 13>{
+  constexpr auto arguments = std::array<std::string_view, 11>{
       "--check",   "--channels", "8",          "--target",
-      "alsa_out", "--rate",     "192000",     "--sink-name",
-      "studio",   "--socket",   "/tmp/pipetune.sock", "--preset",
+      "alsa_out", "--sink-name", "studio",     "--socket",
+      "/tmp/pipetune.sock", "--preset",
       "studio.effetune_preset"};
   const auto result = pipetune::parseCommandLine(arguments);
   return check(result.error.empty(), result.error) &&
          check(result.options.checkOnly, "--check must select readiness mode") &&
          check(result.options.channelCount == 8, "explicit channels differ") &&
-         check(result.options.sampleRate == 192000, "explicit rate differs") &&
          check(result.options.targetObject == "alsa_out", "explicit target differs") &&
          check(result.options.sinkName == "studio", "explicit sink name differs") &&
          check(result.options.controlSocketPath == "/tmp/pipetune.sock",
@@ -169,6 +173,63 @@ static bool testOutputActions() {
                "output select action differs");
 }
 
+static bool testRateActions() {
+  constexpr auto list =
+      std::array<std::string_view, 2>{"rate", "list"};
+  constexpr auto jsonList = std::array<std::string_view, 5>{
+      "rate", "list", "--json", "--socket", "/tmp/pipetune.sock"};
+  constexpr auto get =
+      std::array<std::string_view, 3>{"rate", "get", "--json"};
+  constexpr auto setMaximum = std::array<std::string_view, 6>{
+      "rate", "set", "max", "suggest", "--socket", "/tmp/pipetune.sock"};
+  constexpr auto setFixed =
+      std::array<std::string_view, 4>{"rate", "set", "384000", "force"};
+
+  const auto listResult = pipetune::parseCommandLine(list);
+  const auto jsonListResult = pipetune::parseCommandLine(jsonList);
+  const auto getResult = pipetune::parseCommandLine(get);
+  const auto maximumResult = pipetune::parseCommandLine(setMaximum);
+  const auto fixedResult = pipetune::parseCommandLine(setFixed);
+  return check(listResult.error.empty(), listResult.error) &&
+         check(listResult.options.action ==
+                   pipetune::CommandLineAction::rateList &&
+                   !listResult.options.json,
+               "rate list action differs") &&
+         check(jsonListResult.error.empty(), jsonListResult.error) &&
+         check(jsonListResult.options.action ==
+                   pipetune::CommandLineAction::rateList &&
+                   jsonListResult.options.json &&
+                   jsonListResult.options.controlSocketPath ==
+                       "/tmp/pipetune.sock",
+               "rate list --json action differs") &&
+         check(getResult.error.empty(), getResult.error) &&
+         check(getResult.options.action ==
+                   pipetune::CommandLineAction::rateGet &&
+                   getResult.options.json,
+               "rate get action differs") &&
+         check(maximumResult.error.empty(), maximumResult.error) &&
+         check(maximumResult.options.action ==
+                   pipetune::CommandLineAction::rateSet &&
+                   maximumResult.options.ratePolicy.mode ==
+                       pipetune::SampleRateMode::maximum &&
+                   maximumResult.options.ratePolicy.fixedRate == 0 &&
+                   maximumResult.options.ratePolicy.enforcement ==
+                       pipetune::SampleRateEnforcement::suggest,
+               "rate set max suggest differs") &&
+         check(maximumResult.options.controlSocketPath ==
+                   "/tmp/pipetune.sock",
+               "rate set socket differs") &&
+         check(fixedResult.error.empty(), fixedResult.error) &&
+         check(fixedResult.options.action ==
+                   pipetune::CommandLineAction::rateSet &&
+                   fixedResult.options.ratePolicy.mode ==
+                       pipetune::SampleRateMode::fixed &&
+                   fixedResult.options.ratePolicy.fixedRate == 384000 &&
+                   fixedResult.options.ratePolicy.enforcement ==
+                       pipetune::SampleRateEnforcement::force,
+               "rate set fixed force differs");
+}
+
 static bool testUserSetupActions() {
   constexpr auto setup = std::array<std::string_view, 1>{"setup"};
   constexpr auto setupPreset = std::array<std::string_view, 3>{
@@ -252,6 +313,21 @@ static bool testInformationalActions() {
                    std::string_view::npos,
                "usage must explain preferred-output selection") &&
          check(pipetune::commandLineUsage().find(
+                   "pipetune rate get [--json] [--socket PATH]") !=
+                   std::string_view::npos,
+               "usage must explain rate status") &&
+         check(pipetune::commandLineUsage().find(
+                   "pipetune rate list [--json] [--socket PATH]") !=
+                   std::string_view::npos,
+               "usage must explain rate capability listing") &&
+         check(pipetune::commandLineUsage().find(
+                   "pipetune rate set RATE ENFORCEMENT [--socket PATH]") !=
+                   std::string_view::npos,
+               "usage must explain rate selection") &&
+         check(pipetune::commandLineUsage().find("--rate HZ") ==
+                   std::string_view::npos,
+               "usage must not advertise legacy direct --rate") &&
+         check(pipetune::commandLineUsage().find(
                    "pipetune setup [--preset FILE]") !=
                    std::string_view::npos,
                "usage must explain per-user setup") &&
@@ -264,7 +340,7 @@ static bool testInformationalActions() {
 static bool testRejectedArguments() {
   constexpr auto missingPreset = std::array<std::string_view, 0>{};
   constexpr auto missingValue = std::array<std::string_view, 1>{"--preset"};
-  constexpr auto badRate =
+  constexpr auto legacyRate =
       std::array<std::string_view, 4>{"--preset", "x.effetune_preset", "--rate", "31999"};
   constexpr auto badChannels =
       std::array<std::string_view, 4>{"--preset", "x.effetune_preset", "--channels", "9"};
@@ -324,13 +400,25 @@ static bool testRejectedArguments() {
       std::array<std::string_view, 4>{"output", "get", "--json", "--json"};
   constexpr auto duplicateOutputSocket = std::array<std::string_view, 6>{
       "output", "list", "--socket", "/tmp/a", "--socket", "/tmp/b"};
+  constexpr auto rateWithoutAction =
+      std::array<std::string_view, 1>{"rate"};
+  constexpr auto invalidRate =
+      std::array<std::string_view, 4>{"rate", "set", "88200", "suggest"};
+  constexpr auto invalidEnforcement =
+      std::array<std::string_view, 4>{"rate", "set", "96000", "strict"};
+  constexpr auto missingRateArgument =
+      std::array<std::string_view, 3>{"rate", "set", "max"};
+  constexpr auto rateSetWithJson = std::array<std::string_view, 5>{
+      "rate", "set", "48000", "force", "--json"};
+  constexpr auto duplicateRateSocket = std::array<std::string_view, 6>{
+      "rate", "get", "--socket", "/tmp/a", "--socket", "/tmp/b"};
 
   return check(!pipetune::parseCommandLine(missingPreset).error.empty(),
                "missing preset must fail") &&
          check(!pipetune::parseCommandLine(missingValue).error.empty(),
                "missing option value must fail") &&
-         check(!pipetune::parseCommandLine(badRate).error.empty(),
-               "out-of-range rate must fail") &&
+         check(!pipetune::parseCommandLine(legacyRate).error.empty(),
+               "legacy direct --rate must be rejected") &&
          check(!pipetune::parseCommandLine(badChannels).error.empty(),
                "out-of-range channels must fail") &&
          check(!pipetune::parseCommandLine(duplicate).error.empty(),
@@ -386,13 +474,26 @@ static bool testRejectedArguments() {
          check(!pipetune::parseCommandLine(duplicateOutputJson).error.empty(),
                "output get must reject duplicate --json") &&
          check(!pipetune::parseCommandLine(duplicateOutputSocket).error.empty(),
-               "output list must reject duplicate sockets");
+               "output list must reject duplicate sockets") &&
+         check(!pipetune::parseCommandLine(rateWithoutAction).error.empty(),
+               "rate must require a subcommand") &&
+         check(!pipetune::parseCommandLine(invalidRate).error.empty(),
+               "rate set must reject unsupported DSP rates") &&
+         check(!pipetune::parseCommandLine(invalidEnforcement).error.empty(),
+               "rate set must reject unknown enforcement") &&
+         check(!pipetune::parseCommandLine(missingRateArgument).error.empty(),
+               "rate set must require rate and enforcement") &&
+         check(!pipetune::parseCommandLine(rateSetWithJson).error.empty(),
+               "rate set must reject --json") &&
+         check(!pipetune::parseCommandLine(duplicateRateSocket).error.empty(),
+               "rate get must reject duplicate sockets");
 }
 
 int main() {
   const auto passed = testRunDefaults() && testExplicitOptions() &&
                       testControlActions() && testDaemonAction() &&
                       testBypassAction() && testOutputActions() &&
+                      testRateActions() &&
                       testUserSetupActions() &&
                       testDefaultRestorationAction() &&
                       testInformationalActions() && testRejectedArguments();

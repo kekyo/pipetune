@@ -1,6 +1,8 @@
 #ifndef PIPETUNE_CONTROL_PROTOCOL_H
 #define PIPETUNE_CONTROL_PROTOCOL_H
 
+#include "pipetune/sample_rate.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -25,6 +27,8 @@ enum class ControlCommand {
   setOutput,
   /** Clear the user-preferred output and follow the system default. */
   clearOutput,
+  /** Replace the configured DSP and graph-rate policy. */
+  setRate,
   /** Keep the connection open and publish status changes. */
   subscribe
 };
@@ -39,6 +43,8 @@ struct ControlRequest {
   std::filesystem::path presetPath;
   /** Preferred PipeWire node.name for setOutput, or empty otherwise. */
   std::string outputTarget;
+  /** Requested policy for setRate, or the default policy otherwise. */
+  SampleRatePolicy ratePolicy = {};
 };
 
 /**
@@ -133,6 +139,14 @@ struct ControlRuntimeStatus {
   std::uint64_t inputFramesReceived;
   /** Unix time of the latest received frame in milliseconds, or zero before input. */
   std::uint64_t inputLastReceivedUnixMilliseconds;
+  /** Persisted Max/fixed and suggest/force selection. */
+  SampleRatePolicy configuredRatePolicy = {};
+  /** Resolved capture, playback-media-format, and DSP rate in hertz. */
+  std::uint32_t dspSampleRate = 0;
+  /** Selected physical/graph output rate in hertz. */
+  std::uint32_t selectedOutputSampleRate = 0;
+  /** Active physical output rate, or zero while idle or unavailable. */
+  std::uint32_t activeOutputSampleRate = 0;
 };
 
 /**
@@ -214,6 +228,14 @@ std::string makeSetOutputControlRequest(std::string_view nodeName);
 
 /** Returns a JSON system-default output request without framing newline. */
 std::string makeClearOutputControlRequest();
+
+/**
+ * Returns a JSON sample-rate-policy request without framing newline.
+ *
+ * @param policy Valid Max/fixed and suggest/force policy.
+ * @return Encoded request, or an empty string for invalid input or failure.
+ */
+std::string makeSetRateControlRequest(const SampleRatePolicy &policy);
 
 /**
  * Returns a JSON live-preset request without framing newline.

@@ -1,6 +1,8 @@
 #ifndef PIPETUNE_STARTUP_CONFIG_H
 #define PIPETUNE_STARTUP_CONFIG_H
 
+#include "pipetune/sample_rate.h"
+
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -41,6 +43,8 @@ struct StartupConfigLoadResult {
   bool preferredOutputFound;
   /** Preferred PipeWire node.name when preferredOutputFound is true. */
   std::string preferredOutput;
+  /** User-selected DSP and PipeWire graph-rate policy. */
+  SampleRatePolicy ratePolicy = {};
   /** Read or validation diagnostic, or empty on success. */
   std::string error;
 };
@@ -116,6 +120,17 @@ std::string savePreferredOutput(const std::filesystem::path &configPath,
  * @return Empty on success, otherwise a human-readable diagnostic.
  */
 std::string clearPreferredOutput(const std::filesystem::path &configPath);
+
+/**
+ * Atomically stores a sample-rate policy while preserving preset and output
+ * choices.
+ *
+ * @param configPath Configuration file path.
+ * @param policy Valid Max/fixed and suggest/force policy.
+ * @return Empty on success, otherwise a human-readable diagnostic.
+ */
+std::string saveSampleRatePolicy(const std::filesystem::path &configPath,
+                                 const SampleRatePolicy &policy);
 
 } // namespace pipetune
 

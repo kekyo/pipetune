@@ -15,7 +15,7 @@ static CommandLineOptions defaultOptions() {
           .outputTarget = {},
           .targetObject = {},
           .sinkName = "pipetune_sink",
-          .sampleRate = 48000,
+          .ratePolicy = defaultSampleRatePolicy(),
           .channelCount = 2,
           .checkOnly = false,
           .purge = false,
@@ -181,6 +181,111 @@ static CommandLineParseResult parseOutputCommandLine(
   return {.options = std::move(options), .error = {}};
 }
 
+static CommandLineParseResult parseRateQueryOptions(
+    CommandLineOptions options,
+    std::span<const std::string_view> arguments) {
+  auto sawSocket = false;
+  for (auto index = std::size_t{0}; index < arguments.size(); ++index) {
+    const auto argument = arguments[index];
+    if (argument == "--json") {
+      if (options.json) {
+        return parseError(std::move(options), "duplicate option: --json");
+      }
+      options.json = true;
+      continue;
+    }
+    if (argument != "--socket") {
+      return parseError(std::move(options),
+                        "unknown rate option: " +
+                            std::string(argument));
+    }
+    if (sawSocket) {
+      return parseError(std::move(options), "duplicate option: --socket");
+    }
+    if (index + 1 >= arguments.size()) {
+      return parseError(std::move(options), "missing value for --socket");
+    }
+    const auto value = arguments[++index];
+    if (value.empty()) {
+      return parseError(std::move(options), "--socket must not be empty");
+    }
+    sawSocket = true;
+    options.controlSocketPath = value;
+  }
+  return {.options = std::move(options), .error = {}};
+}
+
+static CommandLineParseResult parseRateCommandLine(
+    std::span<const std::string_view> arguments) {
+  auto options = defaultOptions();
+  if (arguments.empty()) {
+    return parseError(std::move(options), "rate requires get, list, or set");
+  }
+  const auto operation = arguments.front();
+  if (operation == "get") {
+    options.action = CommandLineAction::rateGet;
+    return parseRateQueryOptions(std::move(options), arguments.subspan(1));
+  }
+  if (operation == "list") {
+    options.action = CommandLineAction::rateList;
+    return parseRateQueryOptions(std::move(options), arguments.subspan(1));
+  }
+  if (operation != "set") {
+    return parseError(std::move(options),
+                      "unknown rate operation: " + std::string(operation));
+  }
+  options.action = CommandLineAction::rateSet;
+  if (arguments.size() < 3) {
+    return parseError(
+        std::move(options),
+        "rate set requires RATE and ENFORCEMENT");
+  }
+
+  const auto rate = arguments[1];
+  if (rate == "max") {
+    options.ratePolicy.mode = SampleRateMode::maximum;
+    options.ratePolicy.fixedRate = 0;
+  } else {
+    auto fixedRate = std::uint32_t{0};
+    if (!parseUnsigned(rate, fixedRate) ||
+        !isSelectableSampleRate(fixedRate)) {
+      return parseError(
+          std::move(options),
+          "RATE must be max, 44100, 48000, 96000, 192000, or 384000");
+    }
+    options.ratePolicy.mode = SampleRateMode::fixed;
+    options.ratePolicy.fixedRate = fixedRate;
+  }
+  if (!parseSampleRateEnforcement(arguments[2],
+                                  options.ratePolicy.enforcement)) {
+    return parseError(std::move(options),
+                      "ENFORCEMENT must be suggest or force");
+  }
+
+  auto sawSocket = false;
+  for (auto index = std::size_t{3}; index < arguments.size(); ++index) {
+    const auto argument = arguments[index];
+    if (argument != "--socket") {
+      return parseError(std::move(options),
+                        "unknown rate set option: " +
+                            std::string(argument));
+    }
+    if (sawSocket) {
+      return parseError(std::move(options), "duplicate option: --socket");
+    }
+    if (index + 1 >= arguments.size()) {
+      return parseError(std::move(options), "missing value for --socket");
+    }
+    const auto value = arguments[++index];
+    if (value.empty()) {
+      return parseError(std::move(options), "--socket must not be empty");
+    }
+    sawSocket = true;
+    options.controlSocketPath = value;
+  }
+  return {.options = std::move(options), .error = {}};
+}
+
 static CommandLineParseResult parseSetupCommandLine(
     std::span<const std::string_view> arguments) {
   auto options = defaultOptions();
@@ -246,6 +351,9 @@ CommandLineParseResult parseCommandLine(
   if (!arguments.empty() && arguments.front() == "output") {
     return parseOutputCommandLine(arguments.subspan(1));
   }
+  if (!arguments.empty() && arguments.front() == "rate") {
+    return parseRateCommandLine(arguments.subspan(1));
+  }
   if (!arguments.empty() && arguments.front() == "setup") {
     return parseSetupCommandLine(arguments.subspan(1));
   }
@@ -266,7 +374,6 @@ CommandLineParseResult parseCommandLine(
   auto sawSocket = false;
   auto sawTarget = false;
   auto sawSinkName = false;
-  auto sawRate = false;
   auto sawChannels = false;
   auto sawCheck = false;
   for (auto index = std::size_t{0}; index < arguments.size(); ++index) {
@@ -297,8 +404,7 @@ CommandLineParseResult parseCommandLine(
 
     if (argument != "--preset" && argument != "--load-preset" &&
         argument != "--socket" && argument != "--target" &&
-        argument != "--sink-name" && argument != "--rate" &&
-        argument != "--channels") {
+        argument != "--sink-name" && argument != "--channels") {
       return parseError(std::move(options),
                         "unknown option: " + std::string(argument));
     }
@@ -362,20 +468,6 @@ CommandLineParseResult parseCommandLine(
       options.sinkName = value;
       continue;
     }
-    if (argument == "--rate") {
-      if (sawRate) {
-        return parseError(std::move(options), "duplicate option: --rate");
-      }
-      auto rate = std::uint32_t{0};
-      if (!parseUnsigned(value, rate) || rate < 32000 || rate > 192000) {
-        return parseError(std::move(options),
-                          "--rate must be an integer from 32000 through 192000");
-      }
-      sawRate = true;
-      options.sampleRate = rate;
-      continue;
-    }
-
     if (sawChannels) {
       return parseError(std::move(options), "duplicate option: --channels");
     }
@@ -398,7 +490,7 @@ CommandLineParseResult parseCommandLine(
         "top-level action options are mutually exclusive");
   }
   if (sawRestoreDefault) {
-    if (sawTarget || sawRate || sawChannels || sawCheck || sawSocket) {
+    if (sawTarget || sawChannels || sawCheck || sawSocket) {
       return parseError(
           std::move(options),
           "only --sink-name may modify --restore-default");
@@ -407,7 +499,7 @@ CommandLineParseResult parseCommandLine(
     return {.options = std::move(options), .error = {}};
   }
   if (sawLoadPreset || sawStatus) {
-    if (sawTarget || sawSinkName || sawRate || sawChannels || sawCheck) {
+    if (sawTarget || sawSinkName || sawChannels || sawCheck) {
       return parseError(
           std::move(options),
           "PipeWire run options cannot be used with control actions");
@@ -431,10 +523,13 @@ std::string_view commandLineUsage() noexcept {
          "  pipetune output set TARGET [--socket PATH]\n"
          "  pipetune output clear [--socket PATH]\n"
          "  pipetune output select [--socket PATH]\n"
+         "  pipetune rate get [--json] [--socket PATH]\n"
+         "  pipetune rate list [--json] [--socket PATH]\n"
+         "  pipetune rate set RATE ENFORCEMENT [--socket PATH]\n"
          "  pipetune setup [--preset FILE]\n"
          "  pipetune unsetup [--purge]\n"
          "  pipetune --preset FILE [--target OBJECT] [--sink-name NAME]\n"
-         "           [--rate HZ] [--channels COUNT] [--socket PATH] [--check]\n"
+         "           [--channels COUNT] [--socket PATH] [--check]\n"
          "  pipetune --load-preset FILE [--socket PATH]\n"
          "  pipetune --status [--socket PATH]\n"
          "  pipetune --restore-default [--sink-name NAME]\n"
@@ -449,6 +544,9 @@ std::string_view commandLineUsage() noexcept {
          "  output set       Prefer a PipeWire output by its node.name.\n"
          "  output clear     Follow the system-default physical output.\n"
          "  output select    Choose an output from an interactive terminal.\n"
+         "  rate get        Show configured and effective PCM rates.\n"
+         "  rate list       List output-supported PCM rates.\n"
+         "  rate set        Select max or a fixed rate and suggest or force.\n"
          "  --json           Print the complete machine-readable status.\n"
          "  setup            Enable PipeTune for the current user.\n"
          "  unsetup          Disable PipeTune for the current user.\n"
@@ -464,7 +562,6 @@ std::string_view commandLineUsage() noexcept {
          "                    The current default sink is used when omitted.\n"
          "  --sink-name NAME  Publish this virtual sink name (default: "
          "pipetune_sink).\n"
-         "  --rate HZ         Use 32000 through 192000 Hz (default: 48000).\n"
          "  --channels COUNT  Use 1 through 8 planar channels (default: 2).\n"
          "  --check           Verify stream negotiation, then exit.\n";
 }

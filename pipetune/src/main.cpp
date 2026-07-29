@@ -27,6 +27,7 @@
 
 constexpr auto kMaximumProcessFrames = std::uint32_t{8192};
 constexpr auto kRingCapacityFrames = std::uint32_t{16384};
+constexpr auto kInitialSampleRate = std::uint32_t{48000};
 
 static std::filesystem::path absolutePresetPath(
     const std::filesystem::path &path, std::string &error) {
@@ -207,7 +208,7 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
 
   auto prepared = pipetune::prepareStartupPipeline(
       configPath,
-      {.sampleRate = 48000.0F,
+      {.sampleRate = static_cast<float>(kInitialSampleRate),
        .maxChannels = 2,
        .maxFrames = kMaximumProcessFrames});
   if (prepared.pipeline == nullptr) {
@@ -237,7 +238,7 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
        .initialPresetPath = prepared.activePresetPath,
        .initialConfigurationError = prepared.configurationError,
        .controlSocketPath = socket.path,
-       .sampleRate = 48000,
+       .sampleRate = kInitialSampleRate,
        .channelCount = 2,
        .maxFrames = kMaximumProcessFrames,
        .ringCapacityFrames = kRingCapacityFrames,
@@ -435,7 +436,7 @@ int main(int argc, char **argv) {
 
   auto loaded = pipetune::loadDspPipeline(
       presetPath,
-      {.sampleRate = static_cast<float>(parsed.options.sampleRate),
+      {.sampleRate = static_cast<float>(kInitialSampleRate),
        .maxChannels = parsed.options.channelCount,
        .maxFrames = kMaximumProcessFrames});
   if (loaded.pipeline == nullptr) {
@@ -469,7 +470,7 @@ int main(int argc, char **argv) {
        .initialPresetPath = presetPath,
        .initialConfigurationError = {},
        .controlSocketPath = controlSocket,
-       .sampleRate = parsed.options.sampleRate,
+       .sampleRate = kInitialSampleRate,
        .channelCount = parsed.options.channelCount,
        .maxFrames = kMaximumProcessFrames,
        .ringCapacityFrames = kRingCapacityFrames,

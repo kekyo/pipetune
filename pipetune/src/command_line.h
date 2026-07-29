@@ -1,6 +1,8 @@
 #ifndef PIPETUNE_COMMAND_LINE_H
 #define PIPETUNE_COMMAND_LINE_H
 
+#include "pipetune/sample_rate.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <span>
@@ -29,6 +31,12 @@ enum class CommandLineAction {
   outputClear,
   /** Interactively choose and persist an output preference. */
   outputSelect,
+  /** Show the configured and effective sample-rate state. */
+  rateGet,
+  /** List output sample-rate capabilities. */
+  rateList,
+  /** Set and persist the sample-rate policy. */
+  rateSet,
   /** Configure and start PipeTune for the current user. */
   setup,
   /** Stop and disable PipeTune for the current user. */
@@ -63,8 +71,8 @@ struct CommandLineOptions {
   std::string targetObject;
   /** Stable virtual sink node name. */
   std::string sinkName;
-  /** Stream sample rate. */
-  std::uint32_t sampleRate;
+  /** DSP and PipeWire graph-rate policy. */
+  SampleRatePolicy ratePolicy;
   /** Stream channel count. */
   std::uint32_t channelCount;
   /** True to stop once both PipeWire streams are ready. */

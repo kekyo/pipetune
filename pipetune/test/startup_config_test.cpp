@@ -131,18 +131,76 @@ static bool testPreferredOutputRoundTripPreservesPreset(
                "clearing an output must remove its assignment");
 }
 
+static bool testRatePolicyRoundTripPreservesOtherChoices(
+    const std::filesystem::path &configPath) {
+  const auto presetPath =
+      std::filesystem::path("/tmp/rate-preserved.effetune_preset");
+  const auto target = std::string("alsa_output.rate_dac");
+  const auto savedPreset =
+      pipetune::saveStartupPreset(configPath, presetPath);
+  const auto savedTarget =
+      pipetune::savePreferredOutput(configPath, target);
+  const auto savedRate = pipetune::saveSampleRatePolicy(
+      configPath,
+      {.mode = pipetune::SampleRateMode::fixed,
+       .fixedRate = 384000,
+       .enforcement = pipetune::SampleRateEnforcement::force});
+  const auto configured = pipetune::loadStartupConfig(configPath);
+  if (!check(savedPreset.empty(), savedPreset) ||
+      !check(savedTarget.empty(), savedTarget) ||
+      !check(savedRate.empty(), savedRate) ||
+      !check(configured.error.empty(), configured.error) ||
+      !check(configured.presetFound && configured.presetPath == presetPath,
+             "saving a rate must preserve the startup preset") ||
+      !check(configured.preferredOutputFound &&
+                 configured.preferredOutput == target,
+             "saving a rate must preserve the preferred output") ||
+      !check(configured.ratePolicy.mode ==
+                     pipetune::SampleRateMode::fixed &&
+                 configured.ratePolicy.fixedRate == 384000 &&
+                 configured.ratePolicy.enforcement ==
+                     pipetune::SampleRateEnforcement::force,
+             "sample-rate policy did not round-trip")) {
+    return false;
+  }
+
+  const auto rejected = pipetune::saveSampleRatePolicy(
+      configPath,
+      {.mode = pipetune::SampleRateMode::fixed,
+       .fixedRate = 88200,
+       .enforcement = pipetune::SampleRateEnforcement::suggest});
+  const auto preserved = pipetune::loadStartupConfig(configPath);
+  return check(!rejected.empty(),
+               "an unsupported fixed sample rate must be rejected") &&
+         check(preserved.error.empty(), preserved.error) &&
+         check(preserved.ratePolicy.mode ==
+                       pipetune::SampleRateMode::fixed &&
+                   preserved.ratePolicy.fixedRate == 384000 &&
+                   preserved.ratePolicy.enforcement ==
+                       pipetune::SampleRateEnforcement::force,
+               "a rejected rate save must preserve the previous policy");
+}
+
 static bool testAcceptedInputForms(const std::filesystem::path &configPath) {
   writeConfig(configPath,
               "# Existing package configuration\n"
               "PIPETUNE_PRESET=/tmp/plain.effetune_preset\n"
-              "PIPETUNE_TARGET=alsa_output.plain\n");
+              "PIPETUNE_TARGET=alsa_output.plain\n"
+              "PIPETUNE_RATE=96000\n"
+              "PIPETUNE_RATE_ENFORCEMENT=force\n");
   const auto unquoted = pipetune::loadStartupConfig(configPath);
   if (!check(unquoted.error.empty() && unquoted.presetFound &&
                  unquoted.presetPath == "/tmp/plain.effetune_preset",
              "existing unquoted preset assignments must remain readable") ||
       !check(unquoted.preferredOutputFound &&
                  unquoted.preferredOutput == "alsa_output.plain",
-             "unquoted output assignments must be readable")) {
+             "unquoted output assignments must be readable") ||
+      !check(unquoted.ratePolicy.mode ==
+                     pipetune::SampleRateMode::fixed &&
+                 unquoted.ratePolicy.fixedRate == 96000 &&
+                 unquoted.ratePolicy.enforcement ==
+                     pipetune::SampleRateEnforcement::force,
+             "unquoted rate assignments must be readable")) {
     return false;
   }
 
@@ -158,13 +216,29 @@ static bool testAcceptedInputForms(const std::filesystem::path &configPath) {
   }
 
   writeConfig(configPath, "# Managed by PipeTune.\n");
+  const auto absentConfig = pipetune::loadStartupConfig(configPath);
   const auto absent = pipetune::loadStartupPreset(configPath);
   std::filesystem::remove(configPath);
+  const auto missingConfig = pipetune::loadStartupConfig(configPath);
   const auto missing = pipetune::loadStartupPreset(configPath);
   return check(absent.error.empty() && !absent.found,
                "a configuration without PIPETUNE_PRESET must select bypass") &&
          check(missing.error.empty() && !missing.found,
-               "a missing configuration must select bypass");
+               "a missing configuration must select bypass") &&
+         check(absentConfig.error.empty() &&
+                   absentConfig.ratePolicy.mode ==
+                       pipetune::SampleRateMode::maximum &&
+                   absentConfig.ratePolicy.fixedRate == 0 &&
+                   absentConfig.ratePolicy.enforcement ==
+                       pipetune::SampleRateEnforcement::suggest,
+               "missing assignments must default to Max and suggest") &&
+         check(missingConfig.error.empty() &&
+                   missingConfig.ratePolicy.mode ==
+                       pipetune::SampleRateMode::maximum &&
+                   missingConfig.ratePolicy.fixedRate == 0 &&
+                   missingConfig.ratePolicy.enforcement ==
+                       pipetune::SampleRateEnforcement::suggest,
+               "a missing file must default to Max and suggest");
 }
 
 static bool testRejectedInputForms(const std::filesystem::path &configPath) {
@@ -187,6 +261,23 @@ static bool testRejectedInputForms(const std::filesystem::path &configPath) {
   const auto duplicateTarget = pipetune::loadStartupConfig(configPath);
 
   writeConfig(configPath,
+              "PIPETUNE_RATE=48000\n"
+              "PIPETUNE_RATE=96000\n"
+              "PIPETUNE_RATE_ENFORCEMENT=suggest\n");
+  const auto duplicateRate = pipetune::loadStartupConfig(configPath);
+
+  writeConfig(configPath,
+              "PIPETUNE_RATE=88200\n"
+              "PIPETUNE_RATE_ENFORCEMENT=suggest\n");
+  const auto unsupportedRate = pipetune::loadStartupConfig(configPath);
+
+  writeConfig(configPath,
+              "PIPETUNE_RATE=max\n"
+              "PIPETUNE_RATE_ENFORCEMENT=strict\n");
+  const auto unsupportedEnforcement =
+      pipetune::loadStartupConfig(configPath);
+
+  writeConfig(configPath,
               std::string(64 * 1024 + 1, '#'));
   const auto oversized = pipetune::loadStartupPreset(configPath);
 
@@ -202,6 +293,12 @@ static bool testRejectedInputForms(const std::filesystem::path &configPath) {
                "malformed quoted assignments must be rejected") &&
          check(!duplicateTarget.error.empty(),
                "duplicate output assignments must be rejected") &&
+         check(!duplicateRate.error.empty(),
+               "duplicate rate assignments must be rejected") &&
+         check(!unsupportedRate.error.empty(),
+               "unsupported configured rates must be rejected") &&
+         check(!unsupportedEnforcement.error.empty(),
+               "unsupported enforcement must be rejected") &&
          check(!oversized.error.empty(),
                "startup configurations larger than 64 KiB must be rejected") &&
          check(!rejectedEmptyTarget.empty(),
@@ -217,6 +314,7 @@ int main() {
   const auto passed =
       testPathResolution() && testPrivateRoundTrip(configPath) &&
       testPreferredOutputRoundTripPreservesPreset(configPath) &&
+      testRatePolicyRoundTripPreservesOtherChoices(configPath) &&
       testAcceptedInputForms(configPath) && testRejectedInputForms(configPath);
   std::filesystem::remove_all(directory);
   return passed ? 0 : 1;
