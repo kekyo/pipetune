@@ -37,6 +37,8 @@ enum class CommandLineAction {
   rateList,
   /** Set and persist the sample-rate policy. */
   rateSet,
+  /** Reset all startup configuration to PipeTune defaults. */
+  configReset,
   /** Configure and start PipeTune for the current user. */
   setup,
   /** Stop and disable PipeTune for the current user. */
@@ -79,6 +81,8 @@ struct CommandLineOptions {
   bool checkOnly;
   /** True to remove app configuration during unsetup. */
   bool purge;
+  /** True to perform a destructive configuration action without prompting. */
+  bool assumeYes;
   /** True to print a machine-readable control response. */
   bool json;
 };

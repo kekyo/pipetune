@@ -175,6 +175,7 @@ add_library(
   src/autostart_override.cpp
   src/bypass_command.cpp
   src/command_line.cpp
+  src/config_reset_command.cpp
   src/default_sink_restore.cpp
   src/dsp_pipeline_slot.cpp
   src/input_telemetry.cpp
@@ -382,6 +383,25 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_command_line_tests
     COMMAND pipetune_command_line_tests)
+
+  add_executable(
+    pipetune_config_reset_command_tests
+    test/config_reset_command_test.cpp)
+  target_include_directories(
+    pipetune_config_reset_command_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_config_reset_command_tests PRIVATE pipetune_pipewire)
+  if(MSVC)
+    target_compile_options(
+      pipetune_config_reset_command_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_config_reset_command_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_config_reset_command_tests
+    COMMAND pipetune_config_reset_command_tests)
 
   add_executable(
     pipetune_bypass_command_tests

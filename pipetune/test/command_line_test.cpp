@@ -264,6 +264,33 @@ static bool testUserSetupActions() {
                "unsetup --purge selection differs");
 }
 
+static bool testConfigResetAction() {
+  constexpr auto interactive =
+      std::array<std::string_view, 2>{"config", "reset"};
+  constexpr auto shortYes =
+      std::array<std::string_view, 3>{"config", "reset", "-y"};
+  constexpr auto longYes =
+      std::array<std::string_view, 3>{"config", "reset", "--yes"};
+  const auto interactiveResult = pipetune::parseCommandLine(interactive);
+  const auto shortYesResult = pipetune::parseCommandLine(shortYes);
+  const auto longYesResult = pipetune::parseCommandLine(longYes);
+  return check(interactiveResult.error.empty(), interactiveResult.error) &&
+         check(interactiveResult.options.action ==
+                   pipetune::CommandLineAction::configReset &&
+                   !interactiveResult.options.assumeYes,
+               "config reset must require confirmation by default") &&
+         check(shortYesResult.error.empty(), shortYesResult.error) &&
+         check(shortYesResult.options.action ==
+                   pipetune::CommandLineAction::configReset &&
+                   shortYesResult.options.assumeYes,
+               "config reset -y must skip confirmation") &&
+         check(longYesResult.error.empty(), longYesResult.error) &&
+         check(longYesResult.options.action ==
+                   pipetune::CommandLineAction::configReset &&
+                   longYesResult.options.assumeYes,
+               "config reset --yes must skip confirmation");
+}
+
 static bool testDefaultRestorationAction() {
   constexpr auto defaultArguments =
       std::array<std::string_view, 1>{"--restore-default"};
@@ -334,7 +361,11 @@ static bool testInformationalActions() {
          check(pipetune::commandLineUsage().find(
                    "pipetune unsetup [--purge]") !=
                    std::string_view::npos,
-               "usage must explain per-user unsetup");
+               "usage must explain per-user unsetup") &&
+         check(pipetune::commandLineUsage().find(
+                   "pipetune config reset [-y|--yes]") !=
+                   std::string_view::npos,
+               "usage must explain configuration reset");
 }
 
 static bool testRejectedArguments() {
@@ -412,6 +443,14 @@ static bool testRejectedArguments() {
       "rate", "set", "48000", "force", "--json"};
   constexpr auto duplicateRateSocket = std::array<std::string_view, 6>{
       "rate", "get", "--socket", "/tmp/a", "--socket", "/tmp/b"};
+  constexpr auto configWithoutAction =
+      std::array<std::string_view, 1>{"config"};
+  constexpr auto unknownConfigAction =
+      std::array<std::string_view, 2>{"config", "future"};
+  constexpr auto duplicateConfigYes =
+      std::array<std::string_view, 4>{"config", "reset", "-y", "--yes"};
+  constexpr auto unknownConfigOption =
+      std::array<std::string_view, 3>{"config", "reset", "--future"};
 
   return check(!pipetune::parseCommandLine(missingPreset).error.empty(),
                "missing preset must fail") &&
@@ -486,7 +525,15 @@ static bool testRejectedArguments() {
          check(!pipetune::parseCommandLine(rateSetWithJson).error.empty(),
                "rate set must reject --json") &&
          check(!pipetune::parseCommandLine(duplicateRateSocket).error.empty(),
-               "rate get must reject duplicate sockets");
+               "rate get must reject duplicate sockets") &&
+         check(!pipetune::parseCommandLine(configWithoutAction).error.empty(),
+               "config must require a subcommand") &&
+         check(!pipetune::parseCommandLine(unknownConfigAction).error.empty(),
+               "config must reject unknown subcommands") &&
+         check(!pipetune::parseCommandLine(duplicateConfigYes).error.empty(),
+               "config reset must reject duplicate confirmation options") &&
+         check(!pipetune::parseCommandLine(unknownConfigOption).error.empty(),
+               "config reset must reject unknown options");
 }
 
 int main() {
@@ -495,6 +542,7 @@ int main() {
                       testBypassAction() && testOutputActions() &&
                       testRateActions() &&
                       testUserSetupActions() &&
+                      testConfigResetAction() &&
                       testDefaultRestorationAction() &&
                       testInformationalActions() && testRejectedArguments();
   return passed ? 0 : 1;

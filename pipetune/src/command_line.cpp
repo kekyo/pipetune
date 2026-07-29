@@ -19,6 +19,7 @@ static CommandLineOptions defaultOptions() {
           .channelCount = 2,
           .checkOnly = false,
           .purge = false,
+          .assumeYes = false,
           .json = false};
 }
 
@@ -313,6 +314,33 @@ static CommandLineParseResult parseSetupCommandLine(
   return {.options = std::move(options), .error = {}};
 }
 
+static CommandLineParseResult parseConfigCommandLine(
+    std::span<const std::string_view> arguments) {
+  auto options = defaultOptions();
+  if (arguments.empty()) {
+    return parseError(std::move(options), "config requires reset");
+  }
+  if (arguments.front() != "reset") {
+    return parseError(
+        std::move(options),
+        "unknown config operation: " + std::string(arguments.front()));
+  }
+  options.action = CommandLineAction::configReset;
+  for (const auto argument : arguments.subspan(1)) {
+    if (argument != "-y" && argument != "--yes") {
+      return parseError(std::move(options),
+                        "unknown config reset option: " +
+                            std::string(argument));
+    }
+    if (options.assumeYes) {
+      return parseError(std::move(options),
+                        "duplicate config reset confirmation option");
+    }
+    options.assumeYes = true;
+  }
+  return {.options = std::move(options), .error = {}};
+}
+
 static CommandLineParseResult parseUnsetupCommandLine(
     std::span<const std::string_view> arguments) {
   auto options = defaultOptions();
@@ -353,6 +381,9 @@ CommandLineParseResult parseCommandLine(
   }
   if (!arguments.empty() && arguments.front() == "rate") {
     return parseRateCommandLine(arguments.subspan(1));
+  }
+  if (!arguments.empty() && arguments.front() == "config") {
+    return parseConfigCommandLine(arguments.subspan(1));
   }
   if (!arguments.empty() && arguments.front() == "setup") {
     return parseSetupCommandLine(arguments.subspan(1));
@@ -526,6 +557,7 @@ std::string_view commandLineUsage() noexcept {
          "  pipetune rate get [--json] [--socket PATH]\n"
          "  pipetune rate list [--json] [--socket PATH]\n"
          "  pipetune rate set RATE ENFORCEMENT [--socket PATH]\n"
+         "  pipetune config reset [-y|--yes]\n"
          "  pipetune setup [--preset FILE]\n"
          "  pipetune unsetup [--purge]\n"
          "  pipetune --preset FILE [--target OBJECT] [--sink-name NAME]\n"
@@ -547,6 +579,8 @@ std::string_view commandLineUsage() noexcept {
          "  rate get        Show configured and effective PCM rates.\n"
          "  rate list       List output-supported PCM rates.\n"
          "  rate set        Select max or a fixed rate and suggest or force.\n"
+         "  config reset    Reset Bypass, output, and PCM rate configuration.\n"
+         "  -y, --yes       Skip the configuration reset confirmation.\n"
          "  --json           Print the complete machine-readable status.\n"
          "  setup            Enable PipeTune for the current user.\n"
          "  unsetup          Disable PipeTune for the current user.\n"

@@ -132,6 +132,17 @@ std::string clearPreferredOutput(const std::filesystem::path &configPath);
 std::string saveSampleRatePolicy(const std::filesystem::path &configPath,
                                  const SampleRatePolicy &policy);
 
+/**
+ * Atomically replaces the startup configuration with PipeTune defaults.
+ *
+ * The stored defaults select DSP bypass, the system-default output, and the
+ * Max + Suggest sample-rate policy. Existing contents are not parsed.
+ *
+ * @param configPath Configuration file path.
+ * @return Empty on success, otherwise a human-readable diagnostic.
+ */
+std::string resetStartupConfig(const std::filesystem::path &configPath);
+
 } // namespace pipetune
 
 #endif

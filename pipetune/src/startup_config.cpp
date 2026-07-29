@@ -496,4 +496,15 @@ std::string saveSampleRatePolicy(const std::filesystem::path &configPath,
   return writeStartupConfig(configPath, configured);
 }
 
+std::string resetStartupConfig(const std::filesystem::path &configPath) {
+  return writeStartupConfig(
+      configPath,
+      {.presetFound = false,
+       .presetPath = {},
+       .preferredOutputFound = false,
+       .preferredOutput = {},
+       .ratePolicy = defaultSampleRatePolicy(),
+       .error = {}});
+}
+
 } // namespace pipetune

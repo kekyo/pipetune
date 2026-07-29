@@ -1,6 +1,7 @@
 #include "command_line.h"
 
 #include "bypass_command.h"
+#include "config_reset_command.h"
 #include "default_sink_restore.h"
 #include "installed_tools.h"
 #include "output_command.h"
@@ -56,6 +57,41 @@ static pipetune::ProcessResult runUserManagementProcess(
     std::span<const std::string> arguments,
     pipetune::ProcessWaitMode mode, void *) {
   return pipetune::runProcess(executable, arguments, mode);
+}
+
+static int runConfigResetCommand(
+    const pipetune::CommandLineOptions &options) {
+  if (!options.assumeYes) {
+    std::cout
+        << "Reset PipeTune configuration to Bypass, system-default output, "
+           "and Max + Suggest? [y/N] "
+        << std::flush;
+    auto response = std::string{};
+    if (!std::getline(std::cin, response) ||
+        !pipetune::configurationResetIsConfirmed(response)) {
+      std::cout << "Configuration reset cancelled.\n";
+      return 0;
+    }
+  }
+
+  const auto config = resolveUserStartupConfigPath();
+  if (!config.error.empty()) {
+    std::cerr << "pipetune: " << config.error << '\n';
+    return 1;
+  }
+  const auto result = pipetune::executeConfigurationReset(
+      {.configPath = config.path,
+       .systemctlExecutable = std::filesystem::path{
+           std::string(pipetune::installedSystemctlPath)},
+       .processRunner = runUserManagementProcess,
+       .processUserData = nullptr});
+  if (!result.success) {
+    std::cerr << "pipetune: " << result.error << '\n';
+    return 1;
+  }
+  std::cout << "PipeTune configuration was reset to Bypass, system-default "
+               "output, and Max + Suggest.\n";
+  return 0;
 }
 
 static pipetune::DefaultSinkRestoreResult restoreUserDefaultSink(
@@ -467,6 +503,10 @@ int main(int argc, char **argv) {
   }
   if (isRateCommand(parsed.options.action)) {
     return runRateCommand(parsed.options);
+  }
+  if (parsed.options.action ==
+      pipetune::CommandLineAction::configReset) {
+    return runConfigResetCommand(parsed.options);
   }
   if (parsed.options.action == pipetune::CommandLineAction::setup) {
     return runSetupCommand(parsed.options);
