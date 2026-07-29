@@ -156,6 +156,19 @@ void clearControlOutputAsync(ControlClient *client,
                              ControlClientReplyCallback callback,
                              void *userData);
 
+/**
+ * Requests a live PCM sample-rate policy change.
+ *
+ * @param client Client used for the request.
+ * @param policy Valid Max/fixed and suggest/force policy.
+ * @param callback Non-null completion callback.
+ * @param userData Opaque callback argument.
+ */
+void setControlRateAsync(ControlClient *client,
+                         const pipetune::SampleRatePolicy &policy,
+                         ControlClientReplyCallback callback,
+                         void *userData);
+
 } // namespace pipetune_gtk
 
 #endif

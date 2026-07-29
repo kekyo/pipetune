@@ -229,6 +229,22 @@ static bool testApplicationState() {
     return false;
   }
 
+  auto rateErrorState = state;
+  rateErrorState.runtime.configurationError.clear();
+  rateErrorState.runtime.rateError = "rate rollback failed";
+  if (!check(pipetune_gtk::trayVisualState(rateErrorState) ==
+                 pipetune_gtk::TrayVisualState::attention,
+             "a rate transition error must request attention")) {
+    return false;
+  }
+  rateErrorState.runtime.rateError.clear();
+  rateErrorState.runtime.rateTransitioning = true;
+  if (!check(pipetune_gtk::trayVisualState(rateErrorState) ==
+                 pipetune_gtk::TrayVisualState::attention,
+             "an active rate transition must request attention")) {
+    return false;
+  }
+
   pipetune_gtk::markControlDisconnected(state, "daemon stopped");
   return check(state.connection ==
                    pipetune_gtk::ControlConnectionState::disconnected,

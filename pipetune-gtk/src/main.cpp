@@ -7,6 +7,8 @@
 #include "output-selection-model.h"
 #include "preset-catalog.h"
 #include "preset-file-monitor.h"
+#include "rate-operation.h"
+#include "rate-selection-model.h"
 #include "status-icon.h"
 #include "status-text.h"
 #include "tray-backend.h"
@@ -55,6 +57,13 @@ struct GtkRuntime {
   bool outputChangePending;
   bool pendingOutputClear;
   std::string pendingOutputTarget;
+  pipetune::SampleRatePolicy startupRatePolicy;
+  pipetune::SampleRatePolicy editedRatePolicy;
+  pipetune::SampleRatePolicy pendingRatePolicy;
+  std::vector<SampleRateChoice> rateChoices;
+  bool updatingRateControls;
+  bool rateEditDirty;
+  bool rateChangePending;
   guint reconnectSource;
   bool applicationHeld;
   bool activationHandled;
@@ -101,6 +110,9 @@ static std::string connectionText(const ApplicationState &state) {
   if (state.connection == ControlConnectionState::disconnected) {
     return "PipeTune is disconnected";
   }
+  if (state.hasRuntimeStatus && state.runtime.rateTransitioning) {
+    return "Connected — switching PCM rate…";
+  }
   if (!state.runtime.defaultSinkActive) {
     return "Connected — default sink is inactive";
   }
@@ -142,6 +154,9 @@ static std::string noticeText(
       !state.runtime.configurationError.empty()) {
     appendNotice(notice, "Startup configuration: " +
                              state.runtime.configurationError);
+  }
+  if (state.hasRuntimeStatus && !state.runtime.rateError.empty()) {
+    appendNotice(notice, "PCM rate: " + state.runtime.rateError);
   }
   for (const auto &warning : state.warnings) {
     appendNotice(
@@ -213,6 +228,66 @@ static void renderOutputSelection(GtkRuntime *runtime) {
                                !runtime->outputChangePending);
 }
 
+static pipetune::SampleRatePolicy displayedRatePolicy(
+    const GtkRuntime &runtime) {
+  if (runtime.state.connection == ControlConnectionState::connected &&
+      runtime.state.hasRuntimeStatus) {
+    return runtime.state.runtime.configuredRatePolicy;
+  }
+  return runtime.startupRatePolicy;
+}
+
+static void renderRateSelection(GtkRuntime *runtime) {
+  if (!runtime->rateEditDirty && !runtime->rateChangePending) {
+    runtime->editedRatePolicy = displayedRatePolicy(*runtime);
+  }
+  const auto presentation = makeRateSelectionPresentation(
+      runtime->state, runtime->editedRatePolicy);
+
+  runtime->updatingRateControls = true;
+  runtime->rateChoices = presentation.choices;
+  gtk_combo_box_text_remove_all(
+      GTK_COMBO_BOX_TEXT(runtime->ui.rateCombo));
+  for (const auto &choice : runtime->rateChoices) {
+    gtk_combo_box_text_append_text(
+        GTK_COMBO_BOX_TEXT(runtime->ui.rateCombo),
+        choice.label.c_str());
+  }
+  gtk_combo_box_set_active(
+      GTK_COMBO_BOX(runtime->ui.rateCombo),
+      static_cast<gint>(presentation.activeRateIndex));
+
+  gtk_combo_box_text_remove_all(
+      GTK_COMBO_BOX_TEXT(runtime->ui.rateEnforcementCombo));
+  gtk_combo_box_text_append_text(
+      GTK_COMBO_BOX_TEXT(runtime->ui.rateEnforcementCombo),
+      "Suggest — let PipeWire choose");
+  gtk_combo_box_text_append_text(
+      GTK_COMBO_BOX_TEXT(runtime->ui.rateEnforcementCombo),
+      "Force — request the selected output rate");
+  gtk_combo_box_set_active(
+      GTK_COMBO_BOX(runtime->ui.rateEnforcementCombo),
+      static_cast<gint>(presentation.activeEnforcementIndex));
+  runtime->updatingRateControls = false;
+
+  gtk_label_set_text(GTK_LABEL(runtime->ui.rateStatusLabel),
+                     presentation.effectiveRates.c_str());
+  const auto connected =
+      runtime->state.connection == ControlConnectionState::connected;
+  const auto canEdit =
+      !runtime->startupConfigPath.empty() &&
+      !runtime->state.operationPending &&
+      !runtime->rateChangePending &&
+      (!connected || presentation.sensitive);
+  gtk_widget_set_sensitive(runtime->ui.rateCombo, canEdit);
+  gtk_widget_set_sensitive(runtime->ui.rateEnforcementCombo, canEdit);
+  gtk_button_set_label(
+      GTK_BUTTON(runtime->ui.rateApplyButton),
+      connected ? "Apply and Save" : "Save for Next Start");
+  gtk_widget_set_sensitive(runtime->ui.rateApplyButton,
+                           canEdit && runtime->rateEditDirty);
+}
+
 static void render(GtkRuntime *runtime) {
   if (runtime == nullptr || runtime->ui.window == nullptr) {
     return;
@@ -266,6 +341,7 @@ static void render(GtkRuntime *runtime) {
   gtk_label_set_text(GTK_LABEL(runtime->ui.pluginCountLabel),
                      pluginCount.c_str());
   renderOutputSelection(runtime);
+  renderRateSelection(runtime);
   const auto defaultSink =
       runtime->state.hasRuntimeStatus
           ? (runtime->state.runtime.defaultSinkActive ? "Active"
@@ -444,6 +520,104 @@ static void onOutputChanged(GtkComboBox *combo, gpointer userData) {
     setControlOutputAsync(runtime->controlClient, choice.target,
                           onOutputReply, runtime);
   }
+}
+
+static void updateRateEditDirty(GtkRuntime *runtime) {
+  runtime->rateEditDirty =
+      runtime->editedRatePolicy != displayedRatePolicy(*runtime);
+}
+
+static void onRateChanged(GtkComboBox *combo, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (runtime->updatingRateControls || runtime->rateChangePending ||
+      runtime->state.operationPending) {
+    return;
+  }
+  const auto selected = gtk_combo_box_get_active(combo);
+  if (selected < 0 ||
+      static_cast<std::size_t>(selected) >=
+          runtime->rateChoices.size()) {
+    return;
+  }
+  const auto &choice =
+      runtime->rateChoices[static_cast<std::size_t>(selected)];
+  runtime->editedRatePolicy.mode = choice.mode;
+  runtime->editedRatePolicy.fixedRate = choice.fixedRate;
+  updateRateEditDirty(runtime);
+  render(runtime);
+}
+
+static void onRateEnforcementChanged(GtkComboBox *combo,
+                                     gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (runtime->updatingRateControls || runtime->rateChangePending ||
+      runtime->state.operationPending) {
+    return;
+  }
+  const auto selected = gtk_combo_box_get_active(combo);
+  if (selected != 0 && selected != 1) {
+    return;
+  }
+  runtime->editedRatePolicy.enforcement =
+      selected == 1 ? pipetune::SampleRateEnforcement::force
+                    : pipetune::SampleRateEnforcement::suggest;
+  updateRateEditDirty(runtime);
+  render(runtime);
+}
+
+static void onRateReply(const ControlClientReply &reply,
+                        void *userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  const auto completion = completeRateOperation(
+      runtime->state, reply,
+      {.configPath = runtime->startupConfigPath,
+       .policy = runtime->pendingRatePolicy},
+      currentMonotonicMilliseconds());
+  runtime->rateChangePending = false;
+  if (completion.persistenceApplied) {
+    runtime->startupRatePolicy = runtime->pendingRatePolicy;
+  }
+  runtime->rateEditDirty = !completion.persistenceApplied;
+  if (completion.liveApplied) {
+    runtime->editedRatePolicy =
+        reply.response.status.configuredRatePolicy;
+  }
+  if (completion.reconnectRequired) {
+    scheduleReconnect(runtime);
+  }
+  render(runtime);
+}
+
+static void onRateApplyClicked(GtkButton *, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (!runtime->rateEditDirty || runtime->rateChangePending ||
+      runtime->state.operationPending ||
+      !pipetune::sampleRatePolicyIsValid(runtime->editedRatePolicy)) {
+    return;
+  }
+  clearControlNotice(runtime->state);
+  runtime->pendingRatePolicy = runtime->editedRatePolicy;
+  runtime->rateChangePending = true;
+
+  if (runtime->state.connection !=
+      ControlConnectionState::connected) {
+    const auto completion = persistRateOperationForNextStart(
+        runtime->state,
+        {.configPath = runtime->startupConfigPath,
+         .policy = runtime->pendingRatePolicy});
+    runtime->rateChangePending = false;
+    if (completion.persistenceApplied) {
+      runtime->startupRatePolicy = runtime->pendingRatePolicy;
+      runtime->rateEditDirty = false;
+    }
+    render(runtime);
+    return;
+  }
+
+  setControlOperationPending(runtime->state, true);
+  render(runtime);
+  setControlRateAsync(runtime->controlClient,
+                      runtime->pendingRatePolicy, onRateReply, runtime);
 }
 
 static std::string savePendingPreset(GtkRuntime *runtime) {
@@ -797,6 +971,12 @@ static void connectMainWindowSignals(GtkRuntime *runtime) {
                    G_CALLBACK(onWindowDestroy), runtime);
   g_signal_connect(runtime->ui.outputCombo, "changed",
                    G_CALLBACK(onOutputChanged), runtime);
+  g_signal_connect(runtime->ui.rateCombo, "changed",
+                   G_CALLBACK(onRateChanged), runtime);
+  g_signal_connect(runtime->ui.rateEnforcementCombo, "changed",
+                   G_CALLBACK(onRateEnforcementChanged), runtime);
+  g_signal_connect(runtime->ui.rateApplyButton, "clicked",
+                   G_CALLBACK(onRateApplyClicked), runtime);
   g_signal_connect(runtime->ui.presetCombo, "changed",
                    G_CALLBACK(onPresetComboChanged), runtime);
   g_signal_connect(runtime->ui.presetChooser, "file-set",
@@ -858,14 +1038,16 @@ static void initializeStartupConfig(GtkRuntime *runtime) {
     return;
   }
   runtime->startupConfigPath = resolved.path;
-  const auto loaded = pipetune::loadStartupPreset(runtime->startupConfigPath);
+  const auto loaded = pipetune::loadStartupConfig(runtime->startupConfigPath);
   if (!loaded.error.empty()) {
     setControlDiagnostic(runtime->state, loaded.error);
     return;
   }
-  runtime->hasStartupPreset = loaded.found;
+  runtime->hasStartupPreset = loaded.presetFound;
   runtime->startupPreset = loaded.presetPath;
-  if (loaded.found && std::filesystem::exists(loaded.presetPath)) {
+  runtime->startupRatePolicy = loaded.ratePolicy;
+  runtime->editedRatePolicy = loaded.ratePolicy;
+  if (loaded.presetFound && std::filesystem::exists(loaded.presetPath)) {
     gtk_file_chooser_set_filename(
         GTK_FILE_CHOOSER(runtime->ui.presetChooser),
         loaded.presetPath.c_str());
@@ -1004,6 +1186,13 @@ static int runApplication(int argc, char **argv) {
       .outputChangePending = false,
       .pendingOutputClear = false,
       .pendingOutputTarget = {},
+      .startupRatePolicy = pipetune::defaultSampleRatePolicy(),
+      .editedRatePolicy = pipetune::defaultSampleRatePolicy(),
+      .pendingRatePolicy = pipetune::defaultSampleRatePolicy(),
+      .rateChoices = {},
+      .updatingRateControls = false,
+      .rateEditDirty = false,
+      .rateChangePending = false,
       .reconnectSource = 0,
       .applicationHeld = false,
       .activationHandled = false,

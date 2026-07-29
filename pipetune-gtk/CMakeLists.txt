@@ -68,6 +68,8 @@ add_library(
   src/control-client.cpp
   src/output-operation.cpp
   src/output-selection-model.cpp
+  src/rate-operation.cpp
+  src/rate-selection-model.cpp
   src/preset-catalog.cpp
   src/preset-file-monitor.cpp
   src/status-text.cpp)
@@ -249,6 +251,40 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_gtk_output_operation_tests
     COMMAND pipetune_gtk_output_operation_tests)
+
+  add_executable(
+    pipetune_gtk_rate_selection_model_tests
+    test/rate-selection-model-test.cpp)
+  target_link_libraries(
+    pipetune_gtk_rate_selection_model_tests PRIVATE pipetune_gtk_core)
+  if(MSVC)
+    target_compile_options(
+      pipetune_gtk_rate_selection_model_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_rate_selection_model_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_gtk_rate_selection_model_tests
+    COMMAND pipetune_gtk_rate_selection_model_tests)
+
+  add_executable(
+    pipetune_gtk_rate_operation_tests
+    test/rate-operation-test.cpp)
+  target_link_libraries(
+    pipetune_gtk_rate_operation_tests PRIVATE pipetune_gtk_core)
+  if(MSVC)
+    target_compile_options(
+      pipetune_gtk_rate_operation_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_rate_operation_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_gtk_rate_operation_tests
+    COMMAND pipetune_gtk_rate_operation_tests)
 
   add_executable(
     pipetune_gtk_preset_catalog_tests

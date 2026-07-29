@@ -3,7 +3,7 @@
   <requires lib="gtk+" version="3.20"/>
   <object class="GtkApplicationWindow" id="mainWindow">
     <property name="default-width">680</property>
-    <property name="default-height">620</property>
+    <property name="default-height">720</property>
     <property name="window-position">center</property>
     <child type="titlebar">
       <object class="GtkHeaderBar" id="headerBar">
@@ -457,6 +457,110 @@
               <packing>
                 <property name="left-attach">1</property>
                 <property name="top-attach">2</property>
+              </packing>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">True</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="label">&lt;b&gt;PCM rate&lt;/b&gt;</property>
+            <property name="use-markup">True</property>
+            <property name="xalign">0</property>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">False</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkGrid" id="rateGrid">
+            <property name="column-spacing">8</property>
+            <property name="row-spacing">8</property>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">DSP rate</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+              <packing>
+                <property name="left-attach">0</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkComboBoxText" id="rateCombo">
+                <property name="hexpand">True</property>
+                <property name="tooltip-text">Choose Max or a fixed DSP sample rate; device support is shown for each fixed rate</property>
+              </object>
+              <packing>
+                <property name="left-attach">1</property>
+                <property name="top-attach">0</property>
+                <property name="width">2</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">PipeWire request</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+              <packing>
+                <property name="left-attach">0</property>
+                <property name="top-attach">1</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkComboBoxText" id="rateEnforcementCombo">
+                <property name="hexpand">True</property>
+                <property name="tooltip-text">Suggest lets PipeWire decide; Force requests the selected output graph rate while playback is active</property>
+              </object>
+              <packing>
+                <property name="left-attach">1</property>
+                <property name="top-attach">1</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkButton" id="rateApplyButton">
+                <property name="label">Save for Next Start</property>
+              </object>
+              <packing>
+                <property name="left-attach">2</property>
+                <property name="top-attach">1</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Effective rates</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+              <packing>
+                <property name="left-attach">0</property>
+                <property name="top-attach">2</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel" id="rateStatusLabel">
+                <property name="label">Rates unavailable</property>
+                <property name="xalign">0</property>
+                <property name="selectable">True</property>
+                <property name="wrap">True</property>
+                <property name="hexpand">True</property>
+              </object>
+              <packing>
+                <property name="left-attach">1</property>
+                <property name="top-attach">2</property>
+                <property name="width">2</property>
               </packing>
             </child>
           </object>

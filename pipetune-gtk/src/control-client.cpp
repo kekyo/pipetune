@@ -520,4 +520,12 @@ void clearControlOutputAsync(ControlClient *client,
                userData);
 }
 
+void setControlRateAsync(ControlClient *client,
+                         const pipetune::SampleRatePolicy &policy,
+                         ControlClientReplyCallback callback,
+                         void *userData) {
+  startRequest(client, pipetune::makeSetRateControlRequest(policy), callback,
+               userData);
+}
+
 } // namespace pipetune_gtk

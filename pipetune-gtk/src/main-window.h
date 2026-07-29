@@ -31,6 +31,14 @@ struct MainWindowUi {
   GtkWidget *pluginCountLabel = nullptr;
   /** User-preferred physical output drop-down. */
   GtkWidget *outputCombo = nullptr;
+  /** Max or fixed DSP sample-rate drop-down. */
+  GtkWidget *rateCombo = nullptr;
+  /** PipeWire graph-rate suggestion or force drop-down. */
+  GtkWidget *rateEnforcementCombo = nullptr;
+  /** Applies and persists the edited PCM rate policy. */
+  GtkWidget *rateApplyButton = nullptr;
+  /** Final input/DSP, output, and active physical rates. */
+  GtkWidget *rateStatusLabel = nullptr;
   /** Selected output target text. */
   GtkWidget *targetLabel = nullptr;
   /** Engine-owned output-selection reason text. */

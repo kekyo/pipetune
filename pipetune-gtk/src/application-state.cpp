@@ -149,6 +149,13 @@ ApplicationState initialApplicationState() {
               .inputChannelCount = 0,
               .inputFramesReceived = 0,
               .inputLastReceivedUnixMilliseconds = 0,
+              .configuredRatePolicy = pipetune::defaultSampleRatePolicy(),
+              .dspSampleRate = 0,
+              .selectedOutputSampleRate = 0,
+              .activeOutputSampleRate = 0,
+              .rateTransitioning = false,
+              .rateFallback = false,
+              .rateError = {},
           },
       .warnings = {},
       .diagnostic = {},
@@ -228,6 +235,8 @@ TrayVisualState trayVisualState(const ApplicationState &state) {
   if (!state.hasRuntimeStatus || !state.diagnostic.empty() ||
       !state.warnings.empty() ||
       !state.runtime.configurationError.empty() ||
+      !state.runtime.rateError.empty() ||
+      state.runtime.rateTransitioning ||
       !state.runtime.defaultSinkActive ||
       state.runtime.selectedTarget.empty() ||
       state.runtime.overrunFrames != 0 ||

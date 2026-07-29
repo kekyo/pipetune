@@ -48,6 +48,16 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
       .outputCombo =
           requiredWidget(builder, "outputCombo",
                          GTK_TYPE_COMBO_BOX_TEXT),
+      .rateCombo =
+          requiredWidget(builder, "rateCombo",
+                         GTK_TYPE_COMBO_BOX_TEXT),
+      .rateEnforcementCombo =
+          requiredWidget(builder, "rateEnforcementCombo",
+                         GTK_TYPE_COMBO_BOX_TEXT),
+      .rateApplyButton =
+          requiredWidget(builder, "rateApplyButton", GTK_TYPE_BUTTON),
+      .rateStatusLabel =
+          requiredWidget(builder, "rateStatusLabel", GTK_TYPE_LABEL),
       .targetLabel =
           requiredWidget(builder, "targetLabel", GTK_TYPE_LABEL),
       .outputReasonLabel =

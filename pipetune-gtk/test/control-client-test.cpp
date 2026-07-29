@@ -19,6 +19,7 @@ struct ServerState {
   std::string activePreset;
   bool bypassed;
   std::string preferredTarget;
+  pipetune::SampleRatePolicy ratePolicy;
 };
 
 static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
@@ -61,7 +62,19 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
           .inputSampleRate = 0,
           .inputChannelCount = 0,
           .inputFramesReceived = 0,
-          .inputLastReceivedUnixMilliseconds = 0};
+          .inputLastReceivedUnixMilliseconds = 0,
+          .configuredRatePolicy = state.ratePolicy,
+          .dspSampleRate =
+              state.ratePolicy.mode == pipetune::SampleRateMode::maximum
+                  ? 96000u
+                  : state.ratePolicy.fixedRate,
+          .selectedOutputSampleRate = 96000,
+          .activeOutputSampleRate = 0,
+          .rateTransitioning = false,
+          .rateFallback =
+              state.ratePolicy.mode == pipetune::SampleRateMode::fixed &&
+              state.ratePolicy.fixedRate != 96000,
+          .rateError = {}};
 }
 
 static std::string provideStatus(void *userData) {
@@ -125,6 +138,16 @@ static pipetune::ControlMessageResult handleRequest(
             .connectionMode = pipetune::ControlConnectionMode::close,
             .publishStatus = true};
   }
+  if (request.request.command == pipetune::ControlCommand::setRate) {
+    {
+      auto lock = std::scoped_lock(state.mutex);
+      state.ratePolicy = request.request.ratePolicy;
+    }
+    return {.response = pipetune::makeControlSuccessResponse(
+                serverStatus(state), {}),
+            .connectionMode = pipetune::ControlConnectionMode::close,
+            .publishStatus = true};
+  }
   return {.response =
               pipetune::makeControlSuccessResponse(serverStatus(state), {}),
           .connectionMode = pipetune::ControlConnectionMode::close,
@@ -147,6 +170,9 @@ struct ClientTestState {
   bool clearOutputRequested;
   bool clearOutputReply;
   bool publishedClearOutput;
+  bool setRateRequested;
+  bool setRateReply;
+  bool publishedSetRate;
   bool disconnected;
   bool timedOut;
   bool failed;
@@ -162,12 +188,14 @@ static void maybeStopServer(ClientTestState &state) {
   if (state.loadReply && state.publishedStatus && state.bypassReply &&
       state.publishedBypass && state.setOutputReply &&
       state.publishedSetOutput && state.clearOutputReply &&
-      state.publishedClearOutput && *state.server != nullptr) {
+      state.publishedClearOutput && state.setRateReply &&
+      state.publishedSetRate && *state.server != nullptr) {
     g_idle_add(stopServer, &state);
   }
 }
 
 static void maybeStartClearOutput(ClientTestState &state);
+static void maybeStartSetRate(ClientTestState &state);
 
 static void onSetOutputReply(
     const pipetune_gtk::ControlClientReply &reply, void *userData) {
@@ -196,6 +224,40 @@ static void onClearOutputReply(
     state.failed = true;
   } else {
     state.clearOutputReply = true;
+  }
+  maybeStartSetRate(state);
+}
+
+static void onSetRateReply(
+    const pipetune_gtk::ControlClientReply &reply, void *userData) {
+  auto &state = *static_cast<ClientTestState *>(userData);
+  const auto expected = pipetune::SampleRatePolicy{
+      .mode = pipetune::SampleRateMode::fixed,
+      .fixedRate = 192000,
+      .enforcement = pipetune::SampleRateEnforcement::force};
+  if (!reply.transportError.empty() || !reply.response.valid ||
+      !reply.response.success ||
+      reply.response.status.configuredRatePolicy != expected ||
+      reply.response.status.dspSampleRate != 192000 ||
+      reply.response.status.selectedOutputSampleRate != 96000 ||
+      !reply.response.status.rateFallback) {
+    state.failed = true;
+  } else {
+    state.setRateReply = true;
+  }
+  maybeStopServer(state);
+}
+
+static void maybeStartSetRate(ClientTestState &state) {
+  if (state.clearOutputReply && state.publishedClearOutput &&
+      !state.setRateRequested) {
+    state.setRateRequested = true;
+    pipetune_gtk::setControlRateAsync(
+        state.client,
+        {.mode = pipetune::SampleRateMode::fixed,
+         .fixedRate = 192000,
+         .enforcement = pipetune::SampleRateEnforcement::force},
+        onSetRateReply, &state);
   }
   maybeStopServer(state);
 }
@@ -283,6 +345,15 @@ static void onMessage(
                  pipetune::ProcessingMode::bypass &&
              message.status.activePreset.empty() &&
              message.status.preferredTarget.empty()) {
+    if (message.status.configuredRatePolicy.mode ==
+            pipetune::SampleRateMode::fixed &&
+        message.status.configuredRatePolicy.fixedRate == 192000 &&
+        message.status.configuredRatePolicy.enforcement ==
+            pipetune::SampleRateEnforcement::force) {
+      state.publishedSetRate = true;
+      maybeStopServer(state);
+      return;
+    }
     if (!state.setOutputRequested) {
       state.publishedBypass = true;
       maybeStartSetOutput(state);
@@ -290,6 +361,7 @@ static void onMessage(
     }
     if (state.clearOutputRequested) {
       state.publishedClearOutput = true;
+      maybeStartSetRate(state);
     }
   } else {
     state.failed = true;
@@ -327,7 +399,8 @@ int main() {
       ServerState{.mutex = {},
                   .activePreset = "/tmp/initial.effetune_preset",
                   .bypassed = false,
-                  .preferredTarget = {}};
+                  .preferredTarget = {},
+                  .ratePolicy = pipetune::defaultSampleRatePolicy()};
   auto started = pipetune::startControlServer(
       socketPath,
       {.handler = handleRequest,
@@ -356,6 +429,9 @@ int main() {
       .clearOutputRequested = false,
       .clearOutputReply = false,
       .publishedClearOutput = false,
+      .setRateRequested = false,
+      .setRateReply = false,
+      .publishedSetRate = false,
       .disconnected = false,
       .timedOut = false,
       .failed = false,
@@ -381,7 +457,8 @@ int main() {
       !state.publishedStatus || !state.bypassReply ||
       !state.publishedBypass || !state.setOutputReply ||
       !state.publishedSetOutput || !state.clearOutputReply ||
-      !state.publishedClearOutput || !state.disconnected) {
+      !state.publishedClearOutput || !state.setRateReply ||
+      !state.publishedSetRate || !state.disconnected) {
     std::cerr << "asynchronous control client lifecycle differs\n";
     return 1;
   }

@@ -31,6 +31,14 @@ static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
                "plugin count label type differs") &&
          check(GTK_IS_COMBO_BOX_TEXT(ui.outputCombo),
                "output combo-box type differs") &&
+         check(GTK_IS_COMBO_BOX_TEXT(ui.rateCombo),
+               "rate combo-box type differs") &&
+         check(GTK_IS_COMBO_BOX_TEXT(ui.rateEnforcementCombo),
+               "rate enforcement combo-box type differs") &&
+         check(GTK_IS_BUTTON(ui.rateApplyButton),
+               "rate apply button type differs") &&
+         check(GTK_IS_LABEL(ui.rateStatusLabel),
+               "rate status label type differs") &&
          check(GTK_IS_LABEL(ui.targetLabel),
                "target label type differs") &&
          check(GTK_IS_LABEL(ui.outputReasonLabel),
@@ -141,7 +149,7 @@ int main(int argc, char **argv) {
       check(std::string_view(gtk_header_bar_get_title(
                 GTK_HEADER_BAR(headerBar))) == "PipeTune",
             "header bar title differs") &&
-      check(width == 680 && height == 620,
+      check(width == 680 && height == 720,
             "main window default size differs") &&
       check(gtk_builder_get_object(ui.builder, "refreshButton") == nullptr,
             "periodically updated status must not expose a refresh button") &&
