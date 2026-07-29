@@ -173,7 +173,23 @@ static bool testSuccessResponse() {
              .description = "USB DAC",
              .systemDefault = false,
              .preferred = true,
-             .selected = true}},
+             .selected = true,
+             .sampleRateCapabilities =
+                 {.known = true,
+                  .constraints =
+                      {{.kind = pipetune::SampleRateConstraintKind::step,
+                        .minimum = 32000,
+                        .maximum = 96000,
+                        .step = 16000},
+                       {.kind =
+                            pipetune::SampleRateConstraintKind::discrete,
+                        .minimum = 44100,
+                        .maximum = 44100,
+                        .step = 0},
+                       {.kind = pipetune::SampleRateConstraintKind::range,
+                        .minimum = 48000,
+                        .maximum = 192000,
+                        .step = 0}}}}},
        .defaultSinkActive = true,
        .overrunFrames = 11,
        .underrunFrames = 12,
@@ -218,7 +234,17 @@ static bool testSuccessResponse() {
       !check(parsed.status.availableOutputs.size() == 2 &&
                  parsed.status.availableOutputs[0].systemDefault &&
                  parsed.status.availableOutputs[1].preferred &&
-                 parsed.status.availableOutputs[1].selected,
+                 parsed.status.availableOutputs[1].selected &&
+                 !parsed.status.availableOutputs[0]
+                      .sampleRateCapabilities.known &&
+                 parsed.status.availableOutputs[1]
+                     .sampleRateCapabilities.known &&
+                 parsed.status.availableOutputs[1]
+                         .sampleRateCapabilities.constraints.size() == 3 &&
+                 pipetune::sampleRateCapabilitiesSupport(
+                     parsed.status.availableOutputs[1]
+                         .sampleRateCapabilities,
+                     192000),
              "parsed output list differs") ||
       !check(parsed.status.defaultSinkActive,
              "parsed response default state differs") ||
@@ -281,6 +307,15 @@ static bool testSuccessResponse() {
           "preferred" &&
       yyjson_is_arr(yyjson_obj_get(root, "availableOutputs")) &&
       yyjson_arr_size(yyjson_obj_get(root, "availableOutputs")) == 2 &&
+      !yyjson_get_bool(yyjson_obj_get(
+          yyjson_arr_get(yyjson_obj_get(root, "availableOutputs"), 0),
+          "sampleRateCapabilitiesKnown")) &&
+      yyjson_get_bool(yyjson_obj_get(
+          yyjson_arr_get(yyjson_obj_get(root, "availableOutputs"), 1),
+          "sampleRateCapabilitiesKnown")) &&
+      yyjson_arr_size(yyjson_obj_get(
+          yyjson_arr_get(yyjson_obj_get(root, "availableOutputs"), 1),
+          "sampleRateConstraints")) == 3 &&
       yyjson_get_bool(yyjson_obj_get(root, "defaultSinkActive")) &&
       yyjson_get_uint(yyjson_obj_get(root, "overrunFrames")) == 11 &&
       yyjson_get_uint(yyjson_obj_get(root, "underrunFrames")) == 12 &&
@@ -410,7 +445,15 @@ static bool testBypassStatus() {
              .description = "Speakers",
              .systemDefault = true,
              .preferred = false,
-             .selected = true}},
+             .selected = true,
+             .sampleRateCapabilities =
+                 {.known = true,
+                  .constraints =
+                      {{.kind =
+                            pipetune::SampleRateConstraintKind::discrete,
+                        .minimum = 48000,
+                        .maximum = 48000,
+                        .step = 0}}}}},
        .defaultSinkActive = true,
        .overrunFrames = 0,
        .underrunFrames = 0,
@@ -529,7 +572,15 @@ static bool testRejectedOutputStatus() {
              .description = "Speakers",
              .systemDefault = true,
              .preferred = false,
-             .selected = true}},
+             .selected = true,
+             .sampleRateCapabilities =
+                 {.known = true,
+                  .constraints =
+                      {{.kind =
+                            pipetune::SampleRateConstraintKind::discrete,
+                        .minimum = 48000,
+                        .maximum = 48000,
+                        .step = 0}}}}},
        .defaultSinkActive = true,
        .overrunFrames = 0,
        .underrunFrames = 0,
@@ -544,12 +595,21 @@ static bool testRejectedOutputStatus() {
       {});
   auto unknownReason = response;
   auto wrongSelectedMarker = response;
+  auto unknownConstraint = response;
+  auto unknownWithConstraints = response;
   if (!check(replaceOnce(unknownReason, "fallback", "unknown"),
              "cannot prepare unknown output reason") ||
       !check(replaceOnce(wrongSelectedMarker,
                          R"json("selected":true)json",
                          R"json("selected":false)json"),
-             "cannot prepare inconsistent selected marker")) {
+             "cannot prepare inconsistent selected marker") ||
+      !check(replaceOnce(unknownConstraint, "discrete", "future"),
+             "cannot prepare unknown sample-rate constraint") ||
+      !check(replaceOnce(
+                 unknownWithConstraints,
+                 R"json("sampleRateCapabilitiesKnown":true)json",
+                 R"json("sampleRateCapabilitiesKnown":false)json"),
+             "cannot prepare inconsistent unknown capabilities")) {
     return false;
   }
   return check(pipetune::parseControlResponse(response).valid,
@@ -557,7 +617,11 @@ static bool testRejectedOutputStatus() {
          check(!pipetune::parseControlResponse(unknownReason).valid,
                "unknown output reasons must be rejected") &&
          check(!pipetune::parseControlResponse(wrongSelectedMarker).valid,
-               "inconsistent output markers must be rejected");
+               "inconsistent output markers must be rejected") &&
+         check(!pipetune::parseControlResponse(unknownConstraint).valid,
+               "unknown sample-rate constraint kinds must be rejected") &&
+         check(!pipetune::parseControlResponse(unknownWithConstraints).valid,
+               "unknown capabilities must reject constraints");
 }
 
 static bool testRejectedInputTelemetry() {

@@ -208,6 +208,79 @@ static bool testAvailableDevicesAreSortedForPresentation() {
                "devices must be sorted by description and node name");
 }
 
+static bool testSampleRateStateFollowsSelectedDevice() {
+  auto tracker = pipetune::OutputDeviceTracker("pipetune_sink", "");
+  tracker.updateDevice(device(10, "speaker", "Speakers", 100));
+  tracker.updateDevice(device(20, "headphones", "Headphones", 200));
+  tracker.setDefaultTarget("speaker");
+  tracker.commitSelection();
+
+  auto speakerCapabilities = pipetune::SampleRateCapabilities{
+      .known = true,
+      .constraints =
+          {{.kind = pipetune::SampleRateConstraintKind::range,
+            .minimum = 44100,
+            .maximum = 192000,
+            .step = 0}}};
+  auto headphoneCapabilities = pipetune::SampleRateCapabilities{
+      .known = true,
+      .constraints =
+          {{.kind = pipetune::SampleRateConstraintKind::discrete,
+            .minimum = 48000,
+            .maximum = 48000,
+            .step = 0},
+           {.kind = pipetune::SampleRateConstraintKind::discrete,
+            .minimum = 96000,
+            .maximum = 96000,
+            .step = 0}}};
+  if (!check(pipetune::normalizeSampleRateCapabilities(
+                 speakerCapabilities),
+             "speaker capabilities must normalize") ||
+      !check(pipetune::normalizeSampleRateCapabilities(
+                 headphoneCapabilities),
+             "headphone capabilities must normalize") ||
+      !check(tracker.updateSampleRateCapabilities(
+                 10, speakerCapabilities),
+             "first capability update must be observable") ||
+      !check(tracker.updateSampleRateCapabilities(
+                 20, headphoneCapabilities),
+             "second capability update must be observable") ||
+      !check(!tracker.updateSampleRateCapabilities(
+                 20, headphoneCapabilities),
+             "identical capabilities must not report a change") ||
+      !check(tracker.updateActiveSampleRate(10, 192000),
+             "active device rate must be observable") ||
+      !check(tracker.selectedActiveSampleRate() == 192000,
+             "selected active device rate differs") ||
+      !check(pipetune::sampleRateCapabilitiesSupport(
+                 tracker.selectedSampleRateCapabilities(), 192000),
+             "selected capabilities must belong to the selected device")) {
+    return false;
+  }
+
+  if (!check(tracker.setDefaultTarget("headphones"),
+             "selected device must change") ||
+      !check(tracker.selectedActiveSampleRate() == 0,
+             "idle selected device must report no active rate") ||
+      !check(!pipetune::sampleRateCapabilitiesSupport(
+                 tracker.selectedSampleRateCapabilities(), 192000),
+             "selected capabilities must change with the device") ||
+      !check(tracker.updateActiveSampleRate(20, 96000),
+             "selected active rate update must be observable") ||
+      !check(tracker.selectedActiveSampleRate() == 96000,
+             "updated active rate differs")) {
+    return false;
+  }
+
+  const auto available = tracker.availableDevices();
+  return check(available.size() == 2,
+               "rate state must preserve both devices") &&
+         check(available[0].name == "headphones" &&
+                   available[0].sampleRateCapabilities.known &&
+                   available[0].activeSampleRate == 96000,
+               "presentation copy must include device rate state");
+}
+
 int main() {
   const auto passed = testAutomaticDefaultAndFallback() &&
                       testInitialEnumerationChoosesHighestPriority() &&
@@ -215,6 +288,7 @@ int main() {
                       testPreferredTargetFallsBackAndReturns() &&
                       testDefaultChangesWhilePreferredTargetIsActive() &&
                       testInitialPriorityTieBreak() &&
-                      testAvailableDevicesAreSortedForPresentation();
+                      testAvailableDevicesAreSortedForPresentation() &&
+                      testSampleRateStateFollowsSelectedDevice();
   return passed ? 0 : 1;
 }

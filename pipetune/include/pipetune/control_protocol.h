@@ -95,6 +95,8 @@ struct ControlOutputDevice {
   bool preferred;
   /** True when this node is the effective playback target. */
   bool selected;
+  /** Enumerated output sample-rate support, or unknown before enumeration. */
+  SampleRateCapabilities sampleRateCapabilities = {};
 };
 
 /**

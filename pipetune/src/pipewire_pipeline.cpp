@@ -5,11 +5,13 @@
 #include "dsp_pipeline_slot.h"
 #include "input_telemetry.h"
 #include "output_device_tracker.h"
+#include "pipewire_rate_parser.h"
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
 
 #include <pipewire/pipewire.h>
 #include <pipewire/extensions/metadata.h>
+#include <pipewire/node.h>
 #include <spa/buffer/buffer.h>
 #include <spa/param/audio/raw-utils.h>
 #include <spa/param/buffers.h>
@@ -35,6 +37,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <unordered_map>
 #include <vector>
 
 namespace pipetune {
@@ -43,6 +46,16 @@ constexpr auto kSampleBytes = std::uint32_t{sizeof(float)};
 constexpr auto kReadinessTimeoutSeconds = std::time_t{5};
 
 struct PipeWireRuntime;
+
+struct TrackedOutputNode {
+  PipeWireRuntime *runtime;
+  std::uint32_t id;
+  pw_node *node;
+  pw_node_events events;
+  spa_hook listener;
+  std::vector<SampleRateConstraint> pendingConstraints;
+  PipeWireRateParameterAvailability parameterAvailability;
+};
 
 struct StreamCallbackContext {
   PipeWireRuntime *runtime;
@@ -88,6 +101,8 @@ struct PipeWireRuntime {
   pw_stream *playbackStream;
   pw_core *trackingCore;
   pw_registry *registry;
+  std::unordered_map<std::uint32_t, std::unique_ptr<TrackedOutputNode>>
+      trackedOutputNodes;
   pw_metadata *defaultMetadata;
   spa_source *outputChangeSource;
   spa_source *timeoutSource;
@@ -141,7 +156,8 @@ struct PipeWireRuntime {
         outputStateMutex(), playbackTargetMutex(), controlServer(),
         mainLoop(nullptr),
         captureStream(nullptr), playbackStream(nullptr), trackingCore(nullptr),
-        registry(nullptr), defaultMetadata(nullptr), outputChangeSource(nullptr),
+        registry(nullptr), trackedOutputNodes(), defaultMetadata(nullptr),
+        outputChangeSource(nullptr),
         timeoutSource(nullptr), interruptSource(nullptr),
         terminateSource(nullptr), captureEvents{},
         playbackEvents{}, coreEvents{}, registryEvents{}, metadataEvents{},
@@ -164,6 +180,12 @@ struct PipeWireRuntime {
       spa_hook_remove(&metadataListener);
       pw_proxy_destroy(reinterpret_cast<pw_proxy *>(defaultMetadata));
     }
+    for (auto &[id, tracked] : trackedOutputNodes) {
+      static_cast<void>(id);
+      spa_hook_remove(&tracked->listener);
+      pw_proxy_destroy(reinterpret_cast<pw_proxy *>(tracked->node));
+    }
+    trackedOutputNodes.clear();
     if (registry != nullptr) {
       spa_hook_remove(&registryListener);
       pw_proxy_destroy(reinterpret_cast<pw_proxy *>(registry));
@@ -234,6 +256,8 @@ static void applyTrackedTarget(PipeWireRuntime &runtime);
 static void finishReadinessCheck(PipeWireRuntime &runtime);
 static void maybeActivateDefaultSink(PipeWireRuntime &runtime);
 static void maybeReleaseDefaultSink(PipeWireRuntime &runtime);
+static void stopTrackingOutputNode(PipeWireRuntime &runtime,
+                                   std::uint32_t id);
 
 static std::string currentPlaybackTarget(PipeWireRuntime &runtime) {
   auto lock = std::scoped_lock(runtime.playbackTargetMutex);
@@ -366,9 +390,38 @@ static void trackingCoreDone(void *data, std::uint32_t id, int sequence) {
   maybeActivateDefaultSink(runtime);
 }
 
-static void trackingCoreError(void *data, std::uint32_t, int, int result,
+static bool resetTrackedOutputRateState(TrackedOutputNode &tracked) {
+  auto &runtime = *tracked.runtime;
+  auto changed = false;
+  {
+    auto lock = std::scoped_lock(runtime.outputStateMutex);
+    changed = runtime.deviceTracker.updateSampleRateCapabilities(
+                  tracked.id, {.known = false, .constraints = {}}) ||
+              changed;
+    changed =
+        runtime.deviceTracker.updateActiveSampleRate(tracked.id, 0) || changed;
+  }
+  if (changed && runtime.trackingReady) {
+    requestControlStatusUpdate(runtime);
+  }
+  return changed;
+}
+
+static void trackingCoreError(void *data, std::uint32_t id, int, int result,
                               const char *message) {
   auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  for (auto iterator = runtime.trackedOutputNodes.begin();
+       iterator != runtime.trackedOutputNodes.end(); ++iterator) {
+    auto *proxy =
+        reinterpret_cast<pw_proxy *>(iterator->second->node);
+    if (pw_proxy_get_id(proxy) != id) {
+      continue;
+    }
+    const auto globalId = iterator->first;
+    static_cast<void>(resetTrackedOutputRateState(*iterator->second));
+    stopTrackingOutputNode(runtime, globalId);
+    return;
+  }
   const auto detail = message == nullptr ? systemError("PipeWire core error", result)
                                          : std::string(message);
   failRuntime(runtime, "PipeWire device tracking failed: " + detail);
@@ -415,6 +468,177 @@ static int defaultMetadataProperty(void *data, std::uint32_t subject,
   return 0;
 }
 
+static void publishOutputRateCapabilities(
+    TrackedOutputNode &tracked, SampleRateCapabilities capabilities) {
+  auto &runtime = *tracked.runtime;
+  auto changed = false;
+  {
+    auto lock = std::scoped_lock(runtime.outputStateMutex);
+    changed = runtime.deviceTracker.updateSampleRateCapabilities(
+        tracked.id, std::move(capabilities));
+  }
+  if (changed && runtime.trackingReady) {
+    requestControlStatusUpdate(runtime);
+  }
+}
+
+static void outputNodeParameter(void *data, int, std::uint32_t id,
+                                std::uint32_t index, std::uint32_t next,
+                                const spa_pod *parameter) {
+  auto &tracked = *static_cast<TrackedOutputNode *>(data);
+  auto &runtime = *tracked.runtime;
+  if (id == SPA_PARAM_EnumFormat) {
+    static_cast<void>(next);
+    publishOutputRateCapabilities(
+        tracked, accumulatePipeWireSampleRateCapabilities(
+                     parameter, index, tracked.pendingConstraints));
+    return;
+  }
+  if (id != SPA_PARAM_Format) {
+    return;
+  }
+
+  auto activeRate = std::uint32_t{0};
+  if (parameter != nullptr) {
+    auto format = spa_audio_info_raw{};
+    if (spa_format_audio_raw_parse(parameter, &format) >= 0) {
+      activeRate = format.rate;
+    }
+  }
+  auto changed = false;
+  {
+    auto lock = std::scoped_lock(runtime.outputStateMutex);
+    changed = runtime.deviceTracker.updateActiveSampleRate(
+        tracked.id, activeRate);
+  }
+  if (changed && runtime.trackingReady) {
+    requestControlStatusUpdate(runtime);
+  }
+}
+
+static void outputNodeInfo(void *data, const pw_node_info *info) {
+  auto &tracked = *static_cast<TrackedOutputNode *>(data);
+  if (info == nullptr ||
+      (info->change_mask & PW_NODE_CHANGE_MASK_PARAMS) == 0) {
+    return;
+  }
+  const auto availability =
+      pipeWireRateParameterAvailability(info->params, info->n_params);
+  if (availability == tracked.parameterAvailability) {
+    return;
+  }
+
+  auto parameterIds = std::array<std::uint32_t, 2>{};
+  auto parameterCount = std::size_t{0};
+  if (availability.enumFormatReadable) {
+    parameterIds[parameterCount++] = SPA_PARAM_EnumFormat;
+  }
+  if (availability.formatReadable) {
+    parameterIds[parameterCount++] = SPA_PARAM_Format;
+  }
+  if (pw_node_subscribe_params(tracked.node, parameterIds.data(),
+                               parameterCount) < 0) {
+    static_cast<void>(resetTrackedOutputRateState(tracked));
+    return;
+  }
+
+  if (availability.enumFormatReadable &&
+      !tracked.parameterAvailability.enumFormatReadable) {
+    if (pw_node_enum_params(
+            tracked.node, 1, SPA_PARAM_EnumFormat, 0,
+            std::numeric_limits<std::uint32_t>::max(), nullptr) < 0) {
+      auto &runtime = *tracked.runtime;
+      auto changed = false;
+      {
+        auto lock = std::scoped_lock(runtime.outputStateMutex);
+        changed = runtime.deviceTracker.updateSampleRateCapabilities(
+            tracked.id, {.known = false, .constraints = {}});
+      }
+      if (changed && runtime.trackingReady) {
+        requestControlStatusUpdate(runtime);
+      }
+    }
+  }
+  if (availability.formatReadable &&
+      !tracked.parameterAvailability.formatReadable) {
+    if (pw_node_enum_params(
+            tracked.node, 2, SPA_PARAM_Format, 0,
+            std::numeric_limits<std::uint32_t>::max(), nullptr) < 0) {
+      auto &runtime = *tracked.runtime;
+      auto changed = false;
+      {
+        auto lock = std::scoped_lock(runtime.outputStateMutex);
+        changed =
+            runtime.deviceTracker.updateActiveSampleRate(tracked.id, 0);
+      }
+      if (changed && runtime.trackingReady) {
+        requestControlStatusUpdate(runtime);
+      }
+    }
+  } else if (!availability.formatReadable) {
+    auto &runtime = *tracked.runtime;
+    auto changed = false;
+    {
+      auto lock = std::scoped_lock(runtime.outputStateMutex);
+      changed = runtime.deviceTracker.updateActiveSampleRate(tracked.id, 0);
+    }
+    if (changed && runtime.trackingReady) {
+      requestControlStatusUpdate(runtime);
+    }
+  }
+  tracked.parameterAvailability = availability;
+}
+
+static void stopTrackingOutputNode(PipeWireRuntime &runtime,
+                                   std::uint32_t id) {
+  const auto found = runtime.trackedOutputNodes.find(id);
+  if (found == runtime.trackedOutputNodes.end()) {
+    return;
+  }
+  spa_hook_remove(&found->second->listener);
+  pw_proxy_destroy(
+      reinterpret_cast<pw_proxy *>(found->second->node));
+  runtime.trackedOutputNodes.erase(found);
+}
+
+static void startTrackingOutputNode(PipeWireRuntime &runtime,
+                                    std::uint32_t id,
+                                    std::uint32_t version) {
+  if (runtime.trackedOutputNodes.contains(id)) {
+    return;
+  }
+  auto tracked = std::make_unique<TrackedOutputNode>();
+  tracked->runtime = &runtime;
+  tracked->id = id;
+  tracked->node = static_cast<pw_node *>(pw_registry_bind(
+      runtime.registry, id, PW_TYPE_INTERFACE_Node,
+      std::min(version, static_cast<std::uint32_t>(PW_VERSION_NODE)), 0));
+  if (tracked->node == nullptr) {
+    return;
+  }
+  tracked->events = {};
+  tracked->events.version = PW_VERSION_NODE_EVENTS;
+  tracked->events.info = outputNodeInfo;
+  tracked->events.param = outputNodeParameter;
+  tracked->listener = {};
+  tracked->pendingConstraints = {};
+  tracked->parameterAvailability = {
+      .enumFormatReadable = false, .formatReadable = false};
+  const auto listenerResult =
+      pw_node_add_listener(tracked->node, &tracked->listener,
+                           &tracked->events, tracked.get());
+  if (listenerResult < 0) {
+    pw_proxy_destroy(reinterpret_cast<pw_proxy *>(tracked->node));
+    return;
+  }
+
+  const auto insertion =
+      runtime.trackedOutputNodes.emplace(id, std::move(tracked));
+  if (!insertion.second) {
+    return;
+  }
+}
+
 static void registryGlobal(void *data, std::uint32_t id, std::uint32_t,
                            const char *type, std::uint32_t version,
                            const spa_dict *properties) {
@@ -439,6 +663,7 @@ static void registryGlobal(void *data, std::uint32_t id, std::uint32_t,
     }
     const auto *priority = spa_dict_lookup(properties, PW_KEY_PRIORITY_SESSION);
     const auto *virtualNode = spa_dict_lookup(properties, PW_KEY_NODE_VIRTUAL);
+    const auto isVirtual = parseBooleanProperty(virtualNode);
     auto changed = false;
     {
       auto lock = std::scoped_lock(runtime.outputStateMutex);
@@ -447,7 +672,10 @@ static void registryGlobal(void *data, std::uint32_t id, std::uint32_t,
            .name = name,
            .description = description,
            .priority = parsePriority(priority),
-           .virtualNode = parseBooleanProperty(virtualNode)});
+           .virtualNode = isVirtual});
+    }
+    if (!isVirtual && std::string_view(name) != runtime.options.sinkName) {
+      startTrackingOutputNode(runtime, id, version);
     }
     if (changed && runtime.trackingReady) {
       applyTrackedTarget(runtime);
@@ -492,6 +720,7 @@ static void registryGlobal(void *data, std::uint32_t id, std::uint32_t,
 
 static void registryGlobalRemoved(void *data, std::uint32_t id) {
   auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  stopTrackingOutputNode(runtime, id);
   auto changed = false;
   {
     auto lock = std::scoped_lock(runtime.outputStateMutex);
@@ -1081,6 +1310,7 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
   auto selectedTarget = std::string{};
   auto systemDefaultTarget = std::string{};
   auto selectionReason = OutputSelectionReason::unavailable;
+  auto activeOutputSampleRate = std::uint32_t{0};
   auto devices = std::vector<OutputDevice>{};
   {
     auto lock = std::scoped_lock(runtime.outputStateMutex);
@@ -1088,6 +1318,8 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
     selectedTarget = runtime.deviceTracker.selectedTarget();
     systemDefaultTarget = runtime.deviceTracker.systemDefaultTarget();
     selectionReason = runtime.deviceTracker.selectionReason();
+    activeOutputSampleRate =
+        runtime.deviceTracker.selectedActiveSampleRate();
     devices = runtime.deviceTracker.availableDevices();
   }
   auto availableOutputs = std::vector<ControlOutputDevice>{};
@@ -1101,7 +1333,9 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
          .description = std::move(device.description),
          .systemDefault = systemDefault,
          .preferred = preferred,
-         .selected = selected});
+         .selected = selected,
+         .sampleRateCapabilities =
+             std::move(device.sampleRateCapabilities)});
   }
   return {.processingMode = runtime.processingMode,
           .activePreset = runtime.activePreset,
@@ -1129,7 +1363,11 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
               inputFormatNegotiated ? runtime.options.channelCount : 0,
           .inputFramesReceived = input.framesReceived,
           .inputLastReceivedUnixMilliseconds =
-              input.lastReceivedUnixMilliseconds};
+              input.lastReceivedUnixMilliseconds,
+          .configuredRatePolicy = defaultSampleRatePolicy(),
+          .dspSampleRate = runtime.options.sampleRate,
+          .selectedOutputSampleRate = runtime.options.sampleRate,
+          .activeOutputSampleRate = activeOutputSampleRate};
 }
 
 static ControlMessageResult closeControlResponse(std::string response,

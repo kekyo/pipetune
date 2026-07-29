@@ -1,6 +1,8 @@
 #ifndef PIPETUNE_OUTPUT_DEVICE_TRACKER_H
 #define PIPETUNE_OUTPUT_DEVICE_TRACKER_H
 
+#include "pipetune/sample_rate.h"
+
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -37,6 +39,10 @@ struct OutputDevice {
   std::int32_t priority;
   /** True for software or other virtual sinks. */
   bool virtualNode;
+  /** PipeWire EnumFormat sample-rate capabilities. */
+  SampleRateCapabilities sampleRateCapabilities = {};
+  /** Current physical Format rate, or zero while inactive. */
+  std::uint32_t activeSampleRate = 0;
 };
 
 /**
@@ -74,6 +80,26 @@ public:
    * @return True when selectedTarget() changed.
    */
   bool removeDevice(std::uint32_t id);
+
+  /**
+   * Replaces one device's normalized EnumFormat rate capabilities.
+   *
+   * @param id PipeWire global identifier.
+   * @param capabilities Known or unknown capability state.
+   * @return True when the tracked capability state changed.
+   */
+  bool updateSampleRateCapabilities(
+      std::uint32_t id, SampleRateCapabilities capabilities);
+
+  /**
+   * Replaces one device's active physical Format rate.
+   *
+   * @param id PipeWire global identifier.
+   * @param sampleRate Active rate in hertz, or zero while idle.
+   * @return True when the tracked active rate changed.
+   */
+  bool updateActiveSampleRate(std::uint32_t id,
+                              std::uint32_t sampleRate);
 
   /**
    * Updates default.audio.sink from PipeWire metadata.
@@ -122,6 +148,10 @@ public:
   bool hasPreferredTarget() const noexcept;
   /** Returns why the current output was selected. */
   OutputSelectionReason selectionReason() const noexcept;
+  /** Returns a copy of the selected output's rate capabilities. */
+  SampleRateCapabilities selectedSampleRateCapabilities() const;
+  /** Returns the selected output's active physical rate, or zero. */
+  std::uint32_t selectedActiveSampleRate() const noexcept;
 
   /**
    * Returns eligible devices sorted by description and node.name.

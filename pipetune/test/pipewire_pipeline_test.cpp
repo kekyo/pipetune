@@ -121,6 +121,9 @@ static bool testOrderlySignalShutdown(
          .readyCallback = reportReadyToParent,
          .readyUserData = &descriptors[1]},
         pipetune::PipeWireRunMode::untilInterrupted);
+    if (!result.success) {
+      std::cerr << result.error << '\n';
+    }
     close(descriptors[1]);
     _exit(result.success ? 0 : 1);
   }
@@ -250,6 +253,9 @@ static bool testCrashRecovery(
          .readyCallback = reportReadyToParent,
          .readyUserData = &descriptors[1]},
         pipetune::PipeWireRunMode::untilInterrupted);
+    if (!result.success) {
+      std::cerr << result.error << '\n';
+    }
     close(descriptors[1]);
     _exit(result.success ? 0 : 1);
   }

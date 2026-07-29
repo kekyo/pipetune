@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <iostream>
 #include <string_view>
+#include <vector>
 
 static bool check(bool condition, std::string_view message) {
   if (!condition) {
@@ -100,9 +101,91 @@ static bool testPolicyValidation() {
                "fixed policy must use a selectable rate");
 }
 
+static bool testCapabilityNormalizationAndSupport() {
+  auto capabilities = pipetune::SampleRateCapabilities{
+      .known = true,
+      .constraints =
+          {{.kind = pipetune::SampleRateConstraintKind::step,
+            .minimum = 32000,
+            .maximum = 96000,
+            .step = 16000},
+           {.kind = pipetune::SampleRateConstraintKind::discrete,
+            .minimum = 192000,
+            .maximum = 192000,
+            .step = 0},
+           {.kind = pipetune::SampleRateConstraintKind::range,
+            .minimum = 44100,
+            .maximum = 48000,
+            .step = 0},
+           {.kind = pipetune::SampleRateConstraintKind::discrete,
+            .minimum = 192000,
+            .maximum = 192000,
+            .step = 0}}};
+  if (!check(pipetune::normalizeSampleRateCapabilities(capabilities),
+             "valid capabilities must normalize") ||
+      !check(capabilities.constraints.size() == 3,
+             "normalization must remove duplicate constraints") ||
+      !check(capabilities.constraints[0].minimum == 32000 &&
+                 capabilities.constraints[1].minimum == 44100 &&
+                 capabilities.constraints[2].minimum == 192000,
+             "constraints must be ordered by minimum rate")) {
+    return false;
+  }
+
+  return check(pipetune::sampleRateCapabilitiesSupport(capabilities,
+                                                       32000),
+               "step minimum must be supported") &&
+         check(pipetune::sampleRateCapabilitiesSupport(capabilities,
+                                                       48000),
+               "step/range endpoint must be supported") &&
+         check(!pipetune::sampleRateCapabilitiesSupport(capabilities,
+                                                        50000),
+               "a value outside every constraint must be unsupported") &&
+         check(pipetune::sampleRateCapabilitiesSupport(capabilities,
+                                                       192000),
+               "discrete rate must be supported") &&
+         check(!pipetune::sampleRateCapabilitiesSupport(
+                   {.known = false, .constraints = {}}, 48000),
+               "unknown capabilities must not claim support");
+}
+
+static bool testCapabilityValidation() {
+  auto unknownWithConstraint = pipetune::SampleRateCapabilities{
+      .known = false,
+      .constraints =
+          {{.kind = pipetune::SampleRateConstraintKind::discrete,
+            .minimum = 48000,
+            .maximum = 48000,
+            .step = 0}}};
+  auto invalidRange = pipetune::SampleRateCapabilities{
+      .known = true,
+      .constraints =
+          {{.kind = pipetune::SampleRateConstraintKind::range,
+            .minimum = 96000,
+            .maximum = 48000,
+            .step = 0}}};
+  auto invalidStep = pipetune::SampleRateCapabilities{
+      .known = true,
+      .constraints =
+          {{.kind = pipetune::SampleRateConstraintKind::step,
+            .minimum = 44100,
+            .maximum = 192000,
+            .step = 0}}};
+  return check(
+             pipetune::normalizeSampleRateCapabilities(unknownWithConstraint) &&
+                 unknownWithConstraint.constraints.empty(),
+             "unknown capabilities must normalize to no constraints") &&
+         check(!pipetune::normalizeSampleRateCapabilities(invalidRange),
+               "descending ranges must be rejected") &&
+         check(!pipetune::normalizeSampleRateCapabilities(invalidStep),
+               "step constraints must require a positive step");
+}
+
 int main() {
   return testSelectableRates() && testPolicyNamesAndParsing() &&
-                 testPolicyValidation()
+                 testPolicyValidation() &&
+                 testCapabilityNormalizationAndSupport() &&
+                 testCapabilityValidation()
              ? 0
              : 1;
 }

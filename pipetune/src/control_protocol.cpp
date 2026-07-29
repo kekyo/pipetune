@@ -312,6 +312,26 @@ static const char *outputSelectionReasonName(
   return nullptr;
 }
 
+static const char *sampleRateConstraintKindName(
+    SampleRateConstraintKind kind) noexcept {
+  switch (kind) {
+  case SampleRateConstraintKind::discrete:
+    return "discrete";
+  case SampleRateConstraintKind::range:
+    return "range";
+  case SampleRateConstraintKind::step:
+    return "step";
+  }
+  return nullptr;
+}
+
+static bool sampleRateCapabilitiesAreNormalized(
+    const SampleRateCapabilities &capabilities) {
+  auto normalized = capabilities;
+  return normalizeSampleRateCapabilities(normalized) &&
+         normalized == capabilities;
+}
+
 static bool outputStatusIsConsistent(
     const ControlRuntimeStatus &status) noexcept {
   const auto reason =
@@ -356,7 +376,9 @@ static bool outputStatusIsConsistent(
         output.selected != (output.name == status.selectedTarget) ||
         output.preferred !=
             (!status.preferredTarget.empty() &&
-             output.name == status.preferredTarget)) {
+             output.name == status.preferredTarget) ||
+        !sampleRateCapabilitiesAreNormalized(
+            output.sampleRateCapabilities)) {
       return false;
     }
     selectedCount += output.selected ? 1U : 0U;
@@ -473,8 +495,33 @@ static std::string makeControlStatusMessage(
         !yyjson_mut_obj_add_bool(document.get(), item, "preferred",
                                  output.preferred) ||
         !yyjson_mut_obj_add_bool(document.get(), item, "selected",
-                                 output.selected)) {
+                                 output.selected) ||
+        !yyjson_mut_obj_add_bool(
+            document.get(), item, "sampleRateCapabilitiesKnown",
+            output.sampleRateCapabilities.known)) {
       return makeControlErrorResponse("cannot encode control response");
+    }
+    auto *constraintArray = yyjson_mut_obj_add_arr(
+        document.get(), item, "sampleRateConstraints");
+    if (constraintArray == nullptr) {
+      return makeControlErrorResponse("cannot encode control response");
+    }
+    for (const auto &constraint :
+         output.sampleRateCapabilities.constraints) {
+      const auto *kind = sampleRateConstraintKindName(constraint.kind);
+      auto *constraintObject = yyjson_mut_obj(document.get());
+      if (kind == nullptr || constraintObject == nullptr ||
+          !yyjson_mut_arr_append(constraintArray, constraintObject) ||
+          !yyjson_mut_obj_add_str(document.get(), constraintObject, "kind",
+                                  kind) ||
+          !yyjson_mut_obj_add_uint(document.get(), constraintObject,
+                                   "minimum", constraint.minimum) ||
+          !yyjson_mut_obj_add_uint(document.get(), constraintObject,
+                                   "maximum", constraint.maximum) ||
+          !yyjson_mut_obj_add_uint(document.get(), constraintObject, "step",
+                                   constraint.step)) {
+        return makeControlErrorResponse("cannot encode control response");
+      }
     }
   }
 
@@ -666,6 +713,60 @@ static bool readBooleanField(yyjson_val *object, const char *key,
   return true;
 }
 
+static bool readUint32Field(yyjson_val *object, const char *key,
+                            std::uint32_t &value);
+
+static bool readSampleRateConstraintKind(
+    yyjson_val *object, SampleRateConstraintKind &kind) {
+  auto *field = yyjson_obj_get(object, "kind");
+  if (!yyjson_is_str(field)) {
+    return false;
+  }
+  const auto value =
+      std::string_view(yyjson_get_str(field), yyjson_get_len(field));
+  if (value == "discrete") {
+    kind = SampleRateConstraintKind::discrete;
+    return true;
+  }
+  if (value == "range") {
+    kind = SampleRateConstraintKind::range;
+    return true;
+  }
+  if (value == "step") {
+    kind = SampleRateConstraintKind::step;
+    return true;
+  }
+  return false;
+}
+
+static bool readSampleRateCapabilities(
+    yyjson_val *object, SampleRateCapabilities &capabilities) {
+  if (!readBooleanField(object, "sampleRateCapabilitiesKnown",
+                        capabilities.known)) {
+    return false;
+  }
+  auto *array = yyjson_obj_get(object, "sampleRateConstraints");
+  if (!yyjson_is_arr(array)) {
+    return false;
+  }
+  capabilities.constraints.clear();
+  capabilities.constraints.reserve(yyjson_arr_size(array));
+  for (auto index = std::size_t{0}; index < yyjson_arr_size(array);
+       ++index) {
+    auto *item = yyjson_arr_get(array, index);
+    auto constraint = SampleRateConstraint{};
+    if (!yyjson_is_obj(item) || yyjson_obj_size(item) != 4 ||
+        !readSampleRateConstraintKind(item, constraint.kind) ||
+        !readUint32Field(item, "minimum", constraint.minimum) ||
+        !readUint32Field(item, "maximum", constraint.maximum) ||
+        !readUint32Field(item, "step", constraint.step)) {
+      return false;
+    }
+    capabilities.constraints.push_back(constraint);
+  }
+  return sampleRateCapabilitiesAreNormalized(capabilities);
+}
+
 static bool readAvailableOutputs(
     yyjson_val *object, std::vector<ControlOutputDevice> &outputs) {
   auto *array = yyjson_obj_get(object, "availableOutputs");
@@ -691,6 +792,8 @@ static bool readAvailableOutputs(
                           output.systemDefault) ||
         !readBooleanField(item, "preferred", output.preferred) ||
         !readBooleanField(item, "selected", output.selected) ||
+        !readSampleRateCapabilities(item,
+                                    output.sampleRateCapabilities) ||
         output.name.find('\0') != std::string::npos ||
         output.description.find('\0') != std::string::npos) {
       return false;

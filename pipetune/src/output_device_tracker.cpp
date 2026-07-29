@@ -29,6 +29,29 @@ bool OutputDeviceTracker::removeDevice(std::uint32_t id) {
   return recomputeSelection();
 }
 
+bool OutputDeviceTracker::updateSampleRateCapabilities(
+    std::uint32_t id, SampleRateCapabilities capabilities) {
+  const auto found = devices_.find(id);
+  if (found == devices_.end() ||
+      !normalizeSampleRateCapabilities(capabilities) ||
+      found->second.sampleRateCapabilities == capabilities) {
+    return false;
+  }
+  found->second.sampleRateCapabilities = std::move(capabilities);
+  return true;
+}
+
+bool OutputDeviceTracker::updateActiveSampleRate(
+    std::uint32_t id, std::uint32_t sampleRate) {
+  const auto found = devices_.find(id);
+  if (found == devices_.end() ||
+      found->second.activeSampleRate == sampleRate) {
+    return false;
+  }
+  found->second.activeSampleRate = sampleRate;
+  return true;
+}
+
 bool OutputDeviceTracker::setDefaultTarget(std::string nodeName) {
   if (nodeName.empty() || nodeName == excludedNodeName_) {
     return false;
@@ -81,6 +104,19 @@ bool OutputDeviceTracker::hasPreferredTarget() const noexcept {
 OutputSelectionReason
 OutputDeviceTracker::selectionReason() const noexcept {
   return selectionReason_;
+}
+
+SampleRateCapabilities
+OutputDeviceTracker::selectedSampleRateCapabilities() const {
+  const auto *selected = findEligibleByName(selectedTarget_);
+  return selected == nullptr ? SampleRateCapabilities{}
+                             : selected->sampleRateCapabilities;
+}
+
+std::uint32_t
+OutputDeviceTracker::selectedActiveSampleRate() const noexcept {
+  const auto *selected = findEligibleByName(selectedTarget_);
+  return selected == nullptr ? 0 : selected->activeSampleRate;
 }
 
 bool OutputDeviceTracker::isEligible(const OutputDevice &device) const noexcept {
