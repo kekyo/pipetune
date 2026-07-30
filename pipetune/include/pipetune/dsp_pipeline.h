@@ -98,6 +98,17 @@ public:
   ProcessStatus process(std::span<float> planarSamples, std::uint32_t channelCount,
                         std::uint32_t frameCount, double timeSeconds) noexcept;
 
+  /**
+   * Clears accumulated DSP state while preserving the prepared pipeline.
+   *
+   * This function performs no allocation, locking, or object destruction and
+   * is safe to call from the real-time processing thread. Bypass pipelines
+   * have no state and succeed without invoking a backend.
+   *
+   * @return True when the pipeline state was reset.
+   */
+  bool reset() noexcept;
+
   /** Returns the sample rate supplied at construction. */
   float sampleRate() const noexcept;
   /** Returns the maximum channel count supplied at construction. */

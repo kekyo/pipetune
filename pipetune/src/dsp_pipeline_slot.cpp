@@ -24,11 +24,7 @@ ProcessStatus DspPipelineSlot::process(std::span<float> planarSamples,
                                        std::uint32_t channelCount,
                                        std::uint32_t frameCount,
                                        double timeSeconds) noexcept {
-  auto *selected = active_.load(std::memory_order_seq_cst);
-  do {
-    hazard_.store(selected, std::memory_order_seq_cst);
-    selected = active_.load(std::memory_order_seq_cst);
-  } while (hazard_.load(std::memory_order_seq_cst) != selected);
+  auto *selected = acquireActive();
 
   const auto usesNativeDsp = selected->usesNativeDsp();
   const auto startedAt =
@@ -44,8 +40,15 @@ ProcessStatus DspPipelineSlot::process(std::span<float> planarSamples,
         static_cast<std::uint64_t>(elapsed.count()),
         std::memory_order_relaxed);
   }
-  hazard_.store(nullptr, std::memory_order_seq_cst);
+  releaseActive();
   return status;
+}
+
+bool DspPipelineSlot::resetActive() noexcept {
+  auto *selected = acquireActive();
+  const auto reset = selected->reset();
+  releaseActive();
+  return reset;
 }
 
 void DspPipelineSlot::replace(std::unique_ptr<DspPipeline> replacement) {
@@ -123,6 +126,19 @@ DspPipelineSlot::performanceCounters() const noexcept {
       .processingNanoseconds =
           processingNanoseconds_.load(std::memory_order_relaxed),
   };
+}
+
+DspPipeline *DspPipelineSlot::acquireActive() noexcept {
+  auto *selected = active_.load(std::memory_order_seq_cst);
+  do {
+    hazard_.store(selected, std::memory_order_seq_cst);
+    selected = active_.load(std::memory_order_seq_cst);
+  } while (hazard_.load(std::memory_order_seq_cst) != selected);
+  return selected;
+}
+
+void DspPipelineSlot::releaseActive() noexcept {
+  hazard_.store(nullptr, std::memory_order_seq_cst);
 }
 
 void DspPipelineSlot::reclaimSuperseded() {
