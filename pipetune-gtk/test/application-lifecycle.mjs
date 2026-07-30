@@ -4,16 +4,26 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 const executable = process.argv[2];
 const pipeTuneExecutable = process.argv[3];
+const gdbus = process.argv[4];
 
-if (executable === undefined || pipeTuneExecutable === undefined) {
-  throw new Error('PipeTune GTK and CLI executable paths are required');
+if (
+  executable === undefined ||
+  pipeTuneExecutable === undefined ||
+  gdbus === undefined
+) {
+  throw new Error(
+    'PipeTune GTK, CLI, and gdbus executable paths are required'
+  );
 }
 
-const pipeTuneVersion = await execFileAsync(
-  pipeTuneExecutable,
-  ['--version'],
-  { encoding: 'utf8' }
-);
+const execute = async (program, commandArguments) =>
+  await execFileAsync(program, commandArguments, {
+    encoding: 'utf8',
+    timeout: 15000,
+    killSignal: 'SIGKILL',
+  });
+
+const pipeTuneVersion = await execute(pipeTuneExecutable, ['--version']);
 const versionMatch = pipeTuneVersion.stdout.match(
   /^PipeTune ([^,\n]+), EffeTune DSP ([^\n]+)\n$/u
 );
@@ -24,9 +34,7 @@ if (pipeTuneVersion.stderr !== '' || versionMatch === null) {
 }
 const expectedVersionText =
   `PipeTune GTK ${versionMatch[1]}, EffeTune DSP ${versionMatch[2]}`;
-const version = await execFileAsync(executable, ['--version'], {
-  encoding: 'utf8',
-});
+const version = await execute(executable, ['--version']);
 if (version.stderr !== '' || version.stdout !== `${expectedVersionText}\n`) {
   throw new Error(
     `PipeTune GTK version differs: stdout=${version.stdout}; stderr=${version.stderr}`
@@ -34,7 +42,7 @@ if (version.stderr !== '' || version.stdout !== `${expectedVersionText}\n`) {
 }
 
 const application = spawn(executable, ['--hidden'], {
-  stdio: ['ignore', 'pipe', 'pipe'],
+  stdio: ['ignore', 'ignore', 'pipe'],
 });
 let stderr = '';
 let applicationExit = undefined;
@@ -56,9 +64,7 @@ const mainWindowIds = (tree) =>
     .map((match) => match[1]);
 
 const windowTree = async () => {
-  const { stdout } = await execFileAsync('xwininfo', ['-root', '-tree'], {
-    encoding: 'utf8',
-  });
+  const { stdout } = await execute('xwininfo', ['-root', '-tree']);
   return stdout;
 };
 
@@ -102,9 +108,15 @@ const waitForExit = async () => {
 };
 
 try {
-  const hiddenActivation = await execFileAsync(executable, ['--hidden'], {
-    encoding: 'utf8',
-  });
+  await execute(gdbus, [
+    'wait',
+    '--session',
+    '--timeout',
+    '10',
+    'net.kekyo.pipetune-gtk',
+  ]);
+
+  const hiddenActivation = await execute(executable, ['--hidden']);
   if (hiddenActivation.stderr !== '') {
     throw new Error(
       `secondary hidden activation failed: ${hiddenActivation.stderr}`
@@ -112,16 +124,12 @@ try {
   }
   await verifyWindowStaysHidden();
 
-  const activation = await execFileAsync(executable, [], {
-    encoding: 'utf8',
-  });
+  const activation = await execute(executable, []);
   if (activation.stderr !== '') {
     throw new Error(`secondary activation failed: ${activation.stderr}`);
   }
   const activatedTree = await waitForWindow();
-  const repeatedActivation = await execFileAsync(executable, [], {
-    encoding: 'utf8',
-  });
+  const repeatedActivation = await execute(executable, []);
   if (repeatedActivation.stderr !== '') {
     throw new Error(
       `repeated secondary activation failed: ${repeatedActivation.stderr}`
@@ -139,22 +147,24 @@ try {
       `single-instance window identity differs: ${activatedWindows.join(',')}/${repeatedWindows.join(',')}`
     );
   }
-  const quit = await execFileAsync(executable, ['--quit'], {
-    encoding: 'utf8',
-  });
+  const quit = await execute(executable, ['--quit']);
   if (quit.stderr !== '') {
     throw new Error(`remote quit failed: ${quit.stderr}`);
   }
   await waitForExit();
-  await execFileAsync(executable, ['--quit'], {
-    encoding: 'utf8',
-  });
+  await execute(executable, ['--quit']);
 } finally {
   if (applicationExit === undefined) {
     application.kill('SIGTERM');
     await new Promise((resolve) => {
-      application.once('exit', resolve);
-      setTimeout(resolve, 2000);
+      const timeout = setTimeout(resolve, 2000);
+      application.once('exit', () => {
+        clearTimeout(timeout);
+        resolve();
+      });
     });
+    if (applicationExit === undefined) {
+      application.kill('SIGKILL');
+    }
   }
 }

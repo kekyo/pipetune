@@ -497,6 +497,7 @@ if(BUILD_TESTING)
 
   find_program(PIPETUNE_GTK_NODE_EXECUTABLE node REQUIRED)
   find_program(PIPETUNE_GTK_DBUS_RUN_SESSION dbus-run-session REQUIRED)
+  find_program(PIPETUNE_GTK_GDBUS gdbus REQUIRED)
   find_program(
     PIPETUNE_GTK_DESKTOP_FILE_VALIDATE desktop-file-validate REQUIRED)
   find_program(
@@ -510,7 +511,8 @@ if(BUILD_TESTING)
       ${PIPETUNE_GTK_NODE_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/test/application-lifecycle.mjs
       $<TARGET_FILE:pipetune-gtk>
-      $<TARGET_FILE:pipetune>)
+      $<TARGET_FILE:pipetune>
+      ${PIPETUNE_GTK_GDBUS})
   set_tests_properties(
     pipetune_gtk_application_lifecycle PROPERTIES TIMEOUT 60)
 
