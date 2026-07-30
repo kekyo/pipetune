@@ -14,6 +14,7 @@
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
 
+#include <pipewire/device.h>
 #include <pipewire/pipewire.h>
 #include <pipewire/extensions/metadata.h>
 #include <pipewire/node.h>
@@ -23,6 +24,7 @@
 #include <spa/param/buffers.h>
 #include <spa/param/format.h>
 #include <spa/param/props.h>
+#include <spa/param/route.h>
 #include <spa/pod/builder.h>
 #include <algorithm>
 #include <array>
@@ -59,6 +61,18 @@ constexpr auto kRateTransitionTimeoutSeconds = std::time_t{5};
 
 struct PipeWireRuntime;
 
+struct TrackedOutputDevice {
+  PipeWireRuntime *runtime;
+  std::uint32_t id;
+  pw_device *device;
+  pw_device_events events;
+  spa_hook listener;
+  std::unordered_map<std::int32_t, PipeWireOutputVolumeRoute> outputRoutes;
+  std::uint32_t permissions;
+  bool routeReadable;
+  bool routeWritable;
+};
+
 struct TrackedOutputNode {
   PipeWireRuntime *runtime;
   std::uint32_t id;
@@ -69,7 +83,11 @@ struct TrackedOutputNode {
   std::vector<SampleRateConstraint> pendingConstraints;
   PipeWireRateParameterAvailability parameterAvailability;
   PipeWireVolumeState volumeState;
+  std::uint32_t routeDeviceId;
+  std::int32_t routeProfileDevice;
+  std::int32_t routeIndex;
   std::uint32_t permissions;
+  bool usesDeviceRoute;
   bool propsReadable;
   bool propsWritable;
   bool volumeWriteFailed;
@@ -185,6 +203,8 @@ struct PipeWireRuntime {
   pw_stream *playbackStream;
   pw_core *trackingCore;
   pw_registry *registry;
+  std::unordered_map<std::uint32_t, std::unique_ptr<TrackedOutputDevice>>
+      trackedOutputDevices;
   std::unordered_map<std::uint32_t, std::unique_ptr<TrackedOutputNode>>
       trackedOutputNodes;
   pw_metadata *defaultMetadata;
@@ -288,7 +308,8 @@ struct PipeWireRuntime {
         automaticRateUpdatePending(false), rateTransition(), controlServer(),
         mainLoop(nullptr), context(nullptr),
         captureStream(nullptr), playbackStream(nullptr), trackingCore(nullptr),
-        registry(nullptr), trackedOutputNodes(), defaultMetadata(nullptr),
+        registry(nullptr), trackedOutputDevices(), trackedOutputNodes(),
+        defaultMetadata(nullptr),
         outputChangeSource(nullptr), volumeChangeSource(nullptr),
         rateChangeSource(nullptr),
         rateTimeoutSource(nullptr),
@@ -347,6 +368,13 @@ struct PipeWireRuntime {
       pw_proxy_destroy(reinterpret_cast<pw_proxy *>(tracked->node));
     }
     trackedOutputNodes.clear();
+    for (auto &[id, tracked] : trackedOutputDevices) {
+      static_cast<void>(id);
+      spa_hook_remove(&tracked->listener);
+      pw_proxy_destroy(
+          reinterpret_cast<pw_proxy *>(tracked->device));
+    }
+    trackedOutputDevices.clear();
     if (registry != nullptr) {
       spa_hook_remove(&registryListener);
       pw_proxy_destroy(reinterpret_cast<pw_proxy *>(registry));
@@ -438,6 +466,8 @@ static void completeVirtualVolumePublication(
 static bool settleCaptureScheduling(PipeWireRuntime &runtime);
 static void stopTrackingOutputNode(PipeWireRuntime &runtime,
                                    std::uint32_t id);
+static void stopTrackingOutputDevice(PipeWireRuntime &runtime,
+                                     std::uint32_t id);
 
 static std::string currentPlaybackTarget(PipeWireRuntime &runtime) {
   auto lock = std::scoped_lock(runtime.playbackTargetMutex);
@@ -471,6 +501,27 @@ static std::int32_t parsePriority(const char *value) noexcept {
 static bool parseBooleanProperty(const char *value) noexcept {
   return value != nullptr &&
          (std::string_view(value) == "true" || std::string_view(value) == "1");
+}
+
+static bool parseUnsignedProperty(
+    const char *value, std::uint32_t &parsed) noexcept {
+  if (value == nullptr) {
+    return false;
+  }
+  const auto end = value + std::strlen(value);
+  const auto result = std::from_chars(value, end, parsed);
+  return result.ec == std::errc{} && result.ptr == end;
+}
+
+static bool parseSignedProperty(
+    const char *value, std::int32_t &parsed) noexcept {
+  if (value == nullptr) {
+    return false;
+  }
+  const auto end = value + std::strlen(value);
+  const auto result = std::from_chars(value, end, parsed);
+  return result.ec == std::errc{} && result.ptr == end &&
+         parsed >= 0;
 }
 
 static void requestTrackingSync(PipeWireRuntime &runtime,
@@ -610,6 +661,19 @@ static bool resetTrackedOutputRateState(TrackedOutputNode &tracked) {
 
 static bool trackedOutputVolumeIsUsable(
     const TrackedOutputNode &tracked) noexcept {
+  if (tracked.usesDeviceRoute) {
+    const auto found = tracked.runtime->trackedOutputDevices.find(
+        tracked.routeDeviceId);
+    return found !=
+               tracked.runtime->trackedOutputDevices.end() &&
+           found->second->routeReadable &&
+           found->second->routeWritable &&
+           PW_PERM_IS_W(found->second->permissions) &&
+           PW_PERM_IS_X(found->second->permissions) &&
+           tracked.routeIndex >= 0 &&
+           !tracked.volumeWriteFailed &&
+           tracked.volumeState.channelCount != 0;
+  }
   return tracked.propsReadable && tracked.propsWritable &&
          PW_PERM_IS_R(tracked.permissions) &&
          PW_PERM_IS_W(tracked.permissions) &&
@@ -645,6 +709,7 @@ static bool resetTrackedOutputVolumeState(TrackedOutputNode &tracked) {
   auto &runtime = *tracked.runtime;
   const auto hadState = tracked.volumeState.channelCount != 0;
   tracked.volumeState = {};
+  tracked.routeIndex = -1;
   tracked.volumeRevision = ++runtime.volumeRevision;
   const auto availabilityChanged =
       publishTrackedOutputVolumeAvailability(tracked);
@@ -654,6 +719,56 @@ static bool resetTrackedOutputVolumeState(TrackedOutputNode &tracked) {
     signalVolumeChange(runtime);
   }
   return hadState || availabilityChanged;
+}
+
+static void refreshTrackedOutputRoute(
+    TrackedOutputNode &tracked) {
+  if (!tracked.usesDeviceRoute) {
+    return;
+  }
+  auto &runtime = *tracked.runtime;
+  const auto device =
+      runtime.trackedOutputDevices.find(tracked.routeDeviceId);
+  if (device == runtime.trackedOutputDevices.end()) {
+    static_cast<void>(resetTrackedOutputVolumeState(tracked));
+    return;
+  }
+  const auto route = device->second->outputRoutes.find(
+      tracked.routeProfileDevice);
+  if (route == device->second->outputRoutes.end()) {
+    static_cast<void>(resetTrackedOutputVolumeState(tracked));
+    return;
+  }
+
+  const auto stateChanged = !pipeWireVolumeStatesEquivalent(
+      tracked.volumeState, route->second.volume);
+  const auto identityChanged =
+      tracked.routeIndex != route->second.index;
+  tracked.routeIndex = route->second.index;
+  if (stateChanged) {
+    tracked.volumeState = route->second.volume;
+  }
+  if (stateChanged || identityChanged) {
+    tracked.volumeRevision = ++runtime.volumeRevision;
+  }
+  const auto availabilityChanged =
+      publishTrackedOutputVolumeAvailability(tracked);
+  if (runtime.trackingReady &&
+      trackedOutputIsSelected(runtime, tracked) &&
+      (stateChanged || identityChanged || availabilityChanged)) {
+    signalVolumeChange(runtime);
+  }
+}
+
+static void refreshTrackedOutputRoutesForDevice(
+    PipeWireRuntime &runtime, std::uint32_t deviceId) {
+  for (auto &[id, tracked] : runtime.trackedOutputNodes) {
+    static_cast<void>(id);
+    if (tracked->usesDeviceRoute &&
+        tracked->routeDeviceId == deviceId) {
+      refreshTrackedOutputRoute(*tracked);
+    }
+  }
 }
 
 static void trackingCoreError(void *data, std::uint32_t id, int, int result,
@@ -670,6 +785,16 @@ static void trackingCoreError(void *data, std::uint32_t id, int, int result,
     static_cast<void>(resetTrackedOutputRateState(*iterator->second));
     static_cast<void>(resetTrackedOutputVolumeState(*iterator->second));
     stopTrackingOutputNode(runtime, globalId);
+    return;
+  }
+  for (auto iterator = runtime.trackedOutputDevices.begin();
+       iterator != runtime.trackedOutputDevices.end(); ++iterator) {
+    auto *proxy =
+        reinterpret_cast<pw_proxy *>(iterator->second->device);
+    if (pw_proxy_get_id(proxy) != id) {
+      continue;
+    }
+    stopTrackingOutputDevice(runtime, iterator->first);
     return;
   }
   const auto detail = message == nullptr ? systemError("PipeWire core error", result)
@@ -744,6 +869,9 @@ static void outputNodeParameter(void *data, int, std::uint32_t id,
   auto &tracked = *static_cast<TrackedOutputNode *>(data);
   auto &runtime = *tracked.runtime;
   if (id == SPA_PARAM_Props) {
+    if (tracked.usesDeviceRoute) {
+      return;
+    }
     const auto merged =
         mergePipeWireVolumeState(parameter, tracked.volumeState);
     if (!merged.valid) {
@@ -826,13 +954,15 @@ static void outputNodeInfo(void *data, const pw_node_info *info) {
   if (availability.formatReadable) {
     parameterIds[parameterCount++] = SPA_PARAM_Format;
   }
-  if (propsReadable) {
+  if (propsReadable && !tracked.usesDeviceRoute) {
     parameterIds[parameterCount++] = SPA_PARAM_Props;
   }
   if (pw_node_subscribe_params(tracked.node, parameterIds.data(),
                                parameterCount) < 0) {
     static_cast<void>(resetTrackedOutputRateState(tracked));
-    static_cast<void>(resetTrackedOutputVolumeState(tracked));
+    if (!tracked.usesDeviceRoute) {
+      static_cast<void>(resetTrackedOutputVolumeState(tracked));
+    }
     return;
   }
 
@@ -882,12 +1012,17 @@ static void outputNodeInfo(void *data, const pw_node_info *info) {
   }
 
   const auto shouldEnumerateProps =
-      propsReadable &&
+      !tracked.usesDeviceRoute && propsReadable &&
       (!tracked.propsReadable ||
        tracked.volumeState.channelCount == 0);
   tracked.parameterAvailability = availability;
   tracked.propsReadable = propsReadable;
   tracked.propsWritable = propsWritable;
+  if (tracked.usesDeviceRoute) {
+    static_cast<void>(
+        publishTrackedOutputVolumeAvailability(tracked));
+    return;
+  }
   if (!propsReadable || !propsWritable) {
     static_cast<void>(resetTrackedOutputVolumeState(tracked));
   } else if (shouldEnumerateProps &&
@@ -900,6 +1035,145 @@ static void outputNodeInfo(void *data, const pw_node_info *info) {
     static_cast<void>(
         publishTrackedOutputVolumeAvailability(tracked));
   }
+}
+
+static std::uint32_t deviceParameterFlags(
+    const pw_device_info &info, std::uint32_t id) noexcept {
+  for (auto index = std::uint32_t{0}; index < info.n_params; ++index) {
+    if (info.params[index].id == id) {
+      return info.params[index].flags;
+    }
+  }
+  return 0;
+}
+
+static void outputDeviceParameter(
+    void *data, int, std::uint32_t id, std::uint32_t,
+    std::uint32_t, const spa_pod *parameter) {
+  auto &tracked = *static_cast<TrackedOutputDevice *>(data);
+  if (id != SPA_PARAM_Route) {
+    return;
+  }
+  if (parameter == nullptr) {
+    if (!tracked.outputRoutes.empty()) {
+      tracked.outputRoutes.clear();
+      refreshTrackedOutputRoutesForDevice(
+          *tracked.runtime, tracked.id);
+    }
+    return;
+  }
+
+  auto route = PipeWireOutputVolumeRoute{};
+  if (!parsePipeWireOutputVolumeRoute(parameter, route)) {
+    return;
+  }
+  const auto existing = tracked.outputRoutes.find(route.device);
+  const auto changed =
+      existing == tracked.outputRoutes.end() ||
+      existing->second.index != route.index ||
+      existing->second.save != route.save ||
+      !pipeWireVolumeStatesEquivalent(
+          existing->second.volume, route.volume);
+  tracked.outputRoutes.insert_or_assign(
+      route.device, std::move(route));
+  if (changed) {
+    refreshTrackedOutputRoutesForDevice(
+        *tracked.runtime, tracked.id);
+  }
+}
+
+static void outputDeviceInfo(
+    void *data, const pw_device_info *info) {
+  auto &tracked = *static_cast<TrackedOutputDevice *>(data);
+  if (info == nullptr ||
+      (info->change_mask & PW_DEVICE_CHANGE_MASK_PARAMS) == 0) {
+    return;
+  }
+  const auto routeFlags =
+      deviceParameterFlags(*info, SPA_PARAM_Route);
+  const auto routeReadable =
+      (routeFlags & SPA_PARAM_INFO_READ) != 0;
+  const auto routeWritable =
+      (routeFlags & SPA_PARAM_INFO_WRITE) != 0;
+  if (routeReadable == tracked.routeReadable &&
+      routeWritable == tracked.routeWritable) {
+    return;
+  }
+
+  tracked.routeReadable = routeReadable;
+  tracked.routeWritable = routeWritable;
+  tracked.outputRoutes.clear();
+  if (!routeReadable) {
+    refreshTrackedOutputRoutesForDevice(
+        *tracked.runtime, tracked.id);
+    return;
+  }
+
+  auto parameterId = std::uint32_t{SPA_PARAM_Route};
+  if (pw_device_subscribe_params(
+          tracked.device, &parameterId, 1) < 0 ||
+      pw_device_enum_params(
+          tracked.device, 5, SPA_PARAM_Route, 0,
+          std::numeric_limits<std::uint32_t>::max(),
+          nullptr) < 0) {
+    tracked.routeReadable = false;
+    tracked.outputRoutes.clear();
+  }
+  refreshTrackedOutputRoutesForDevice(
+      *tracked.runtime, tracked.id);
+}
+
+static void stopTrackingOutputDevice(
+    PipeWireRuntime &runtime, std::uint32_t id) {
+  const auto found = runtime.trackedOutputDevices.find(id);
+  if (found == runtime.trackedOutputDevices.end()) {
+    return;
+  }
+  auto tracked = std::move(found->second);
+  runtime.trackedOutputDevices.erase(found);
+  refreshTrackedOutputRoutesForDevice(runtime, id);
+  spa_hook_remove(&tracked->listener);
+  pw_proxy_destroy(
+      reinterpret_cast<pw_proxy *>(tracked->device));
+}
+
+static void startTrackingOutputDevice(
+    PipeWireRuntime &runtime, std::uint32_t id,
+    std::uint32_t version, std::uint32_t permissions) {
+  if (runtime.trackedOutputDevices.contains(id)) {
+    return;
+  }
+  auto tracked = std::make_unique<TrackedOutputDevice>();
+  tracked->runtime = &runtime;
+  tracked->id = id;
+  tracked->device = static_cast<pw_device *>(
+      pw_registry_bind(
+          runtime.registry, id, PW_TYPE_INTERFACE_Device,
+          std::min(
+              version,
+              static_cast<std::uint32_t>(PW_VERSION_DEVICE)),
+          0));
+  if (tracked->device == nullptr) {
+    return;
+  }
+  tracked->events = {};
+  tracked->events.version = PW_VERSION_DEVICE_EVENTS;
+  tracked->events.info = outputDeviceInfo;
+  tracked->events.param = outputDeviceParameter;
+  tracked->listener = {};
+  tracked->outputRoutes = {};
+  tracked->permissions = permissions;
+  tracked->routeReadable = false;
+  tracked->routeWritable = false;
+  const auto listenerResult = pw_device_add_listener(
+      tracked->device, &tracked->listener,
+      &tracked->events, tracked.get());
+  if (listenerResult < 0) {
+    pw_proxy_destroy(
+        reinterpret_cast<pw_proxy *>(tracked->device));
+    return;
+  }
+  runtime.trackedOutputDevices.emplace(id, std::move(tracked));
 }
 
 static void stopTrackingOutputNode(PipeWireRuntime &runtime,
@@ -918,7 +1192,10 @@ static void startTrackingOutputNode(PipeWireRuntime &runtime,
                                     std::uint32_t id,
                                     std::uint32_t version,
                                     std::string name,
-                                    std::uint32_t permissions) {
+                                    std::uint32_t permissions,
+                                    bool usesDeviceRoute,
+                                    std::uint32_t routeDeviceId,
+                                    std::int32_t routeProfileDevice) {
   if (runtime.trackedOutputNodes.contains(id)) {
     return;
   }
@@ -941,7 +1218,11 @@ static void startTrackingOutputNode(PipeWireRuntime &runtime,
   tracked->parameterAvailability = {
       .enumFormatReadable = false, .formatReadable = false};
   tracked->volumeState = {};
+  tracked->routeDeviceId = routeDeviceId;
+  tracked->routeProfileDevice = routeProfileDevice;
+  tracked->routeIndex = -1;
   tracked->permissions = permissions;
+  tracked->usesDeviceRoute = usesDeviceRoute;
   tracked->propsReadable = false;
   tracked->propsWritable = false;
   tracked->volumeWriteFailed = false;
@@ -959,6 +1240,7 @@ static void startTrackingOutputNode(PipeWireRuntime &runtime,
   if (!insertion.second) {
     return;
   }
+  refreshTrackedOutputRoute(*insertion.first->second);
 }
 
 static void registryGlobal(void *data, std::uint32_t id,
@@ -966,7 +1248,15 @@ static void registryGlobal(void *data, std::uint32_t id,
                            const char *type, std::uint32_t version,
                            const spa_dict *properties) {
   auto &runtime = *static_cast<PipeWireRuntime *>(data);
-  if (type == nullptr || properties == nullptr) {
+  if (type == nullptr) {
+    return;
+  }
+  if (std::string_view(type) == PW_TYPE_INTERFACE_Device) {
+    startTrackingOutputDevice(
+        runtime, id, version, permissions);
+    return;
+  }
+  if (properties == nullptr) {
     return;
   }
   if (std::string_view(type) == PW_TYPE_INTERFACE_Node) {
@@ -987,6 +1277,22 @@ static void registryGlobal(void *data, std::uint32_t id,
     const auto *priority = spa_dict_lookup(properties, PW_KEY_PRIORITY_SESSION);
     const auto *virtualNode = spa_dict_lookup(properties, PW_KEY_NODE_VIRTUAL);
     const auto isVirtual = parseBooleanProperty(virtualNode);
+    auto routeCount = std::uint32_t{0};
+    const auto usesDeviceRoute =
+        parseUnsignedProperty(
+            spa_dict_lookup(properties, "device.routes"),
+            routeCount) &&
+        routeCount != 0;
+    auto routeDeviceId = std::uint32_t{PW_ID_ANY};
+    auto routeProfileDevice = std::int32_t{-1};
+    if (usesDeviceRoute) {
+      static_cast<void>(parseUnsignedProperty(
+          spa_dict_lookup(properties, PW_KEY_DEVICE_ID),
+          routeDeviceId));
+      static_cast<void>(parseSignedProperty(
+          spa_dict_lookup(properties, "card.profile.device"),
+          routeProfileDevice));
+    }
     auto changed = false;
     {
       auto lock = std::scoped_lock(runtime.outputStateMutex);
@@ -999,7 +1305,9 @@ static void registryGlobal(void *data, std::uint32_t id,
            .volumeControlAvailable = false});
     }
     if (!isVirtual && std::string_view(name) != runtime.options.sinkName) {
-      startTrackingOutputNode(runtime, id, version, name, permissions);
+      startTrackingOutputNode(
+          runtime, id, version, name, permissions,
+          usesDeviceRoute, routeDeviceId, routeProfileDevice);
     }
     if (changed && runtime.trackingReady) {
       applyTrackedTarget(runtime);
@@ -1045,6 +1353,7 @@ static void registryGlobal(void *data, std::uint32_t id,
 static void registryGlobalRemoved(void *data, std::uint32_t id) {
   auto &runtime = *static_cast<PipeWireRuntime *>(data);
   stopTrackingOutputNode(runtime, id);
+  stopTrackingOutputDevice(runtime, id);
   auto changed = false;
   {
     auto lock = std::scoped_lock(runtime.outputStateMutex);
@@ -1969,20 +2278,42 @@ static bool writePhysicalVolume(
   auto storage = std::array<std::uint8_t, 4096>{};
   auto builder = spa_pod_builder{};
   spa_pod_builder_init(&builder, storage.data(), storage.size());
+  if (tracked.usesDeviceRoute) {
+    const auto device = runtime.trackedOutputDevices.find(
+        tracked.routeDeviceId);
+    if (device == runtime.trackedOutputDevices.end()) {
+      return rejectTrackedOutputVolume(runtime, tracked);
+    }
+    const auto route = PipeWireOutputVolumeRoute{
+        .index = tracked.routeIndex,
+        .device = tracked.routeProfileDevice,
+        .volume = state,
+        .save = true,
+    };
+    const auto *parameter =
+        buildPipeWireOutputVolumeRouteParameter(builder, route);
+    if (parameter == nullptr ||
+        pw_device_set_param(
+            device->second->device, SPA_PARAM_Route, 0,
+            parameter) < 0 ||
+        pw_device_enum_params(
+            device->second->device, 6, SPA_PARAM_Route, 0,
+            std::numeric_limits<std::uint32_t>::max(),
+            nullptr) < 0) {
+      return rejectTrackedOutputVolume(runtime, tracked);
+    }
+    return true;
+  }
+
   const auto *parameter =
       buildPipeWireVolumeParameter(builder, state);
-  if (parameter == nullptr) {
-    return rejectTrackedOutputVolume(runtime, tracked);
-  }
-  const auto setResult =
-      pw_node_set_param(tracked.node, SPA_PARAM_Props, 0, parameter);
-  if (setResult < 0) {
-    return rejectTrackedOutputVolume(runtime, tracked);
-  }
-  const auto enumResult = pw_node_enum_params(
-      tracked.node, 4, SPA_PARAM_Props, 0,
-      std::numeric_limits<std::uint32_t>::max(), nullptr);
-  if (enumResult < 0) {
+  if (parameter == nullptr ||
+      pw_node_set_param(
+          tracked.node, SPA_PARAM_Props, 0, parameter) < 0 ||
+      pw_node_enum_params(
+          tracked.node, 4, SPA_PARAM_Props, 0,
+          std::numeric_limits<std::uint32_t>::max(),
+          nullptr) < 0) {
     return rejectTrackedOutputVolume(runtime, tracked);
   }
   return true;
@@ -2020,6 +2351,11 @@ static bool synchronizeSelectedOutputVolume(
       tracked->volumeRevision >=
           runtime.pendingVirtualVolumeRevision;
   if (physicalIsNewest) {
+    if (targetChanged && tracked->usesDeviceRoute &&
+        !writePhysicalVolume(
+            runtime, *tracked, tracked->volumeState)) {
+      return false;
+    }
     const auto virtualLayout =
         makeInitialVirtualVolumeState(runtime.options);
     const auto mapped = mapPhysicalVolumeToVirtual(

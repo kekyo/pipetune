@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <csignal>
 #include <cstdint>
@@ -18,6 +19,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <sys/inotify.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <utility>
@@ -26,6 +28,11 @@
 struct CommandResult {
   int exitCode;
   std::string output;
+};
+
+struct StreamingAudioSource {
+  pid_t child;
+  int input;
 };
 
 static bool check(bool condition, std::string_view message) {
@@ -377,6 +384,157 @@ static bool runAudioSource(
   return child > 0 && waitForProcess(child) == 0;
 }
 
+static StreamingAudioSource startStreamingAudioSource(
+    const std::filesystem::path &pwCat,
+    std::string_view target, std::string_view sourceName) {
+  auto descriptors = std::array<int, 2>{-1, -1};
+  if (pipe(descriptors.data()) != 0) {
+    return {.child = -1, .input = -1};
+  }
+  const auto child = fork();
+  if (child < 0) {
+    close(descriptors[0]);
+    close(descriptors[1]);
+    return {.child = -1, .input = -1};
+  }
+  if (child == 0) {
+    close(descriptors[1]);
+    dup2(descriptors[0], STDIN_FILENO);
+    close(descriptors[0]);
+    const auto properties =
+        "{ node.name = \"" + std::string(sourceName) +
+        "\" media.role = \"Test\" state.restore-props = false }";
+    auto executableString = std::string{};
+    auto arguments = std::vector<std::string>{
+        "--playback", "--target=" + std::string(target),
+        "--properties=" + properties, "--volume=1.0",
+        "--format=f32", "--rate=48000", "--channels=2", "-"};
+    auto pointers =
+        argumentPointers(pwCat, arguments, executableString);
+    execv(executableString.c_str(), pointers.data());
+    _exit(127);
+  }
+  close(descriptors[0]);
+  return {.child = child, .input = descriptors[1]};
+}
+
+static bool writeStreamingFrames(
+    int descriptor, std::uint32_t frameCount, float amplitude) {
+  auto samples = std::array<float, 4096>{};
+  samples.fill(amplitude);
+  auto remaining =
+      static_cast<std::size_t>(frameCount) * 2;
+  while (remaining != 0) {
+    const auto count = std::min(remaining, samples.size());
+    const auto *data = reinterpret_cast<const char *>(samples.data());
+    auto bytesRemaining = count * sizeof(float);
+    while (bytesRemaining != 0) {
+      auto written = ssize_t{-1};
+      do {
+        written = write(descriptor, data, bytesRemaining);
+      } while (written < 0 && errno == EINTR);
+      if (written <= 0) {
+        return false;
+      }
+      data += written;
+      bytesRemaining -= static_cast<std::size_t>(written);
+    }
+    remaining -= count;
+  }
+  return true;
+}
+
+static std::uintmax_t fileSize(
+    const std::filesystem::path &path) {
+  auto error = std::error_code{};
+  const auto size = std::filesystem::file_size(path, error);
+  return error ? 0 : size;
+}
+
+static bool waitForFileSize(
+    const std::filesystem::path &path,
+    std::uintmax_t minimumSize) {
+  const auto descriptor = inotify_init1(IN_CLOEXEC);
+  if (descriptor < 0) {
+    return false;
+  }
+  const auto watch = inotify_add_watch(
+      descriptor, path.c_str(), IN_MODIFY | IN_CLOSE_WRITE);
+  if (watch < 0) {
+    close(descriptor);
+    return false;
+  }
+
+  const auto deadline =
+      std::chrono::steady_clock::now() +
+      std::chrono::seconds(10);
+  auto reached = fileSize(path) >= minimumSize;
+  auto events = std::array<char, 4096>{};
+  while (!reached) {
+    const auto remaining = std::chrono::duration_cast<
+        std::chrono::milliseconds>(
+        deadline - std::chrono::steady_clock::now());
+    if (remaining.count() <= 0) {
+      break;
+    }
+    auto event = pollfd{
+        .fd = descriptor, .events = POLLIN, .revents = 0};
+    auto result = int{-1};
+    do {
+      result = poll(
+          &event, 1, static_cast<int>(remaining.count()));
+    } while (result < 0 && errno == EINTR);
+    if (result != 1 || (event.revents & POLLIN) == 0) {
+      break;
+    }
+    auto count = ssize_t{-1};
+    do {
+      count = read(descriptor, events.data(), events.size());
+    } while (count < 0 && errno == EINTR);
+    if (count <= 0) {
+      break;
+    }
+    reached = fileSize(path) >= minimumSize;
+  }
+  inotify_rm_watch(descriptor, watch);
+  close(descriptor);
+  return reached;
+}
+
+static bool streamingSourceIsRunning(
+    StreamingAudioSource &source) {
+  auto status = int{0};
+  const auto result = waitpid(source.child, &status, WNOHANG);
+  if (result == 0) {
+    return true;
+  }
+  source.child = -1;
+  return false;
+}
+
+static bool finishStreamingAudioSource(
+    StreamingAudioSource &source) {
+  if (source.input >= 0) {
+    close(source.input);
+    source.input = -1;
+  }
+  if (source.child <= 0) {
+    return false;
+  }
+  const auto result = waitForProcess(source.child) == 0;
+  source.child = -1;
+  return result;
+}
+
+static void terminateStreamingAudioSource(
+    StreamingAudioSource &source) {
+  if (source.input >= 0) {
+    close(source.input);
+    source.input = -1;
+  }
+  terminateProcess(source.child, SIGTERM);
+}
+
 static pid_t startTestSink(
     const std::filesystem::path &pwCat, std::string_view name,
     std::string_view description, std::string_view volume,
@@ -436,6 +594,7 @@ static pid_t startPipeline(
 }
 
 int main() {
+  std::signal(SIGPIPE, SIG_IGN);
   const auto pwCat = findExecutable("pw-cat");
   const auto pwCli = findExecutable("pw-cli");
   const auto wpctl = findExecutable("wpctl");
@@ -610,6 +769,8 @@ int main() {
   }
 
   auto physicalVolumeB = std::optional<float>{};
+  auto displayedVolumeB = std::optional<float>{};
+  auto requestedDisplayedVolumeB = float{0.0F};
   if (passed) {
     const auto selection = pipetune::exchangeControlMessage(
         socketPath,
@@ -617,45 +778,141 @@ int main() {
     passed =
         check(selection.error.empty() &&
                   pipetune::inspectControlResponse(selection.response).success,
-              "cannot switch to PipeWire test output B") &&
-        check(runAudioSource(
-                  *pwCat, virtualName, longWave,
-                  "pipetune_test_source_b_" + processId),
-              "cannot play bypass test audio through output B");
+              "cannot switch to PipeWire test output B");
+  }
 
-    const auto virtualAfterSwitch = runCommand(
-        *wpctl, {"get-volume", std::to_string(*virtualId)});
-    const auto physicalAfterSwitch = runCommand(
-        *wpctl, {"get-volume", std::to_string(*sinkBId)});
-    const auto virtualVolume =
-        parseDisplayedVolume(virtualAfterSwitch.output);
-    const auto physicalDisplayed =
-        parseDisplayedVolume(physicalAfterSwitch.output);
-    const auto propsB =
-        runCommand(*pwCli, {"enum-params", sinkBName, "Props"});
-    physicalVolumeB = parseFirstChannelVolume(propsB.output);
-    passed =
-        passed &&
-        check(virtualAfterSwitch.exitCode == 0 &&
-                  physicalAfterSwitch.exitCode == 0 &&
-                  virtualVolume.has_value() &&
-                  physicalDisplayed.has_value() &&
-                  near(*virtualVolume, *physicalDisplayed, 0.01F),
-              "output switch must adopt output B's saved volume") &&
-        check(propsB.exitCode == 0 && physicalVolumeB.has_value() &&
-                  initialPhysicalVolumeB.has_value() &&
-                  near(*physicalVolumeB, *initialPhysicalVolumeB,
-                       0.01F),
-              "output switch must preserve output B's saved volume; before=" +
-                  std::to_string(initialPhysicalVolumeB.value_or(-1.0F)) +
-                  ", after=" +
-                  std::to_string(physicalVolumeB.value_or(-1.0F)));
-    passed =
-        passed &&
-        check(runAudioSource(
-                  *pwCat, sinkBName, longWave,
-                  "pipetune_test_direct_source_b_" + processId),
-              "cannot play direct reference audio through output B");
+  if (passed) {
+    const auto captureStart = fileSize(captureB);
+    auto source = startStreamingAudioSource(
+        *pwCat, virtualName,
+        "pipetune_test_live_source_b_" + processId);
+    passed = check(source.child > 0 && source.input >= 0,
+                   "cannot start continuous bypass source on output B");
+    constexpr auto toneFrames = std::uint32_t{60000};
+    constexpr auto silenceFrames = std::uint32_t{4800};
+    if (passed) {
+      passed =
+          check(writeStreamingFrames(
+                    source.input, toneFrames, 0.5F) &&
+                    writeStreamingFrames(
+                        source.input, silenceFrames, 0.0F),
+                "cannot write the pre-change bypass segment") &&
+          check(waitForFileSize(
+                    captureB,
+                    captureStart +
+                        static_cast<std::uintmax_t>(
+                            toneFrames + silenceFrames) *
+                            2 * sizeof(float)),
+                "output B did not capture the pre-change segment") &&
+          check(streamingSourceIsRunning(source),
+                "continuous bypass source ended before the live volume change");
+    }
+
+    if (passed) {
+      const auto virtualAfterSwitch = runCommand(
+          *wpctl, {"get-volume", std::to_string(*virtualId)});
+      const auto physicalAfterSwitch = runCommand(
+          *wpctl, {"get-volume", std::to_string(*sinkBId)});
+      const auto virtualVolume =
+          parseDisplayedVolume(virtualAfterSwitch.output);
+      const auto physicalDisplayed =
+          parseDisplayedVolume(physicalAfterSwitch.output);
+      displayedVolumeB = physicalDisplayed;
+      const auto propsB =
+          runCommand(*pwCli, {"enum-params", sinkBName, "Props"});
+      physicalVolumeB = parseFirstChannelVolume(propsB.output);
+      passed =
+          check(virtualAfterSwitch.exitCode == 0 &&
+                    physicalAfterSwitch.exitCode == 0 &&
+                    virtualVolume.has_value() &&
+                    physicalDisplayed.has_value() &&
+                    near(*virtualVolume, *physicalDisplayed, 0.01F),
+                "output switch must adopt output B's saved volume") &&
+          check(propsB.exitCode == 0 &&
+                    physicalVolumeB.has_value() &&
+                    initialPhysicalVolumeB.has_value() &&
+                    near(*physicalVolumeB,
+                         *initialPhysicalVolumeB, 0.01F),
+                "output switch must preserve output B's saved volume; before=" +
+                    std::to_string(
+                        initialPhysicalVolumeB.value_or(-1.0F)) +
+                    ", after=" +
+                    std::to_string(
+                        physicalVolumeB.value_or(-1.0F)));
+    }
+
+    if (passed) {
+      const auto postChangeCaptureStart = fileSize(captureB);
+      requestedDisplayedVolumeB =
+          *displayedVolumeB < 0.7F ? 0.8F : 0.4F;
+      const auto setVolume = runCommand(
+          *wpctl,
+          {"set-volume", std::to_string(*virtualId),
+           std::to_string(requestedDisplayedVolumeB)});
+      passed =
+          check(setVolume.exitCode == 0,
+                "cannot change virtual volume during playback") &&
+          check(writeStreamingFrames(
+                    source.input, toneFrames, 0.5F) &&
+                    writeStreamingFrames(
+                        source.input, silenceFrames, 0.0F),
+                "cannot write the post-change bypass segment") &&
+          check(finishStreamingAudioSource(source),
+                "continuous bypass source failed after the live volume change") &&
+          check(waitForFileSize(
+                    captureB,
+                    postChangeCaptureStart +
+                        static_cast<std::uintmax_t>(
+                            toneFrames + silenceFrames) *
+                            2 * sizeof(float)),
+                "output B did not capture the post-change segment");
+    }
+    if (source.child > 0 || source.input >= 0) {
+      terminateStreamingAudioSource(source);
+    }
+
+    if (passed) {
+      const auto virtualAfterChange = runCommand(
+          *wpctl, {"get-volume", std::to_string(*virtualId)});
+      const auto physicalAfterChange = runCommand(
+          *wpctl, {"get-volume", std::to_string(*sinkBId)});
+      const auto propsB =
+          runCommand(*pwCli, {"enum-params", sinkBName, "Props"});
+      const auto virtualVolume =
+          parseDisplayedVolume(virtualAfterChange.output);
+      const auto physicalDisplayed =
+          parseDisplayedVolume(physicalAfterChange.output);
+      const auto changedPhysicalVolume =
+          parseFirstChannelVolume(propsB.output);
+      passed =
+          check(virtualAfterChange.exitCode == 0 &&
+                    physicalAfterChange.exitCode == 0 &&
+                    virtualVolume.has_value() &&
+                    physicalDisplayed.has_value() &&
+                    near(*virtualVolume, *physicalDisplayed, 0.01F) &&
+                    near(*virtualVolume,
+                         requestedDisplayedVolumeB, 0.01F),
+                "live virtual volume must converge with output B") &&
+          check(propsB.exitCode == 0 &&
+                    changedPhysicalVolume.has_value() &&
+                    physicalVolumeB.has_value() &&
+                    !near(*changedPhysicalVolume,
+                          *physicalVolumeB, 0.01F),
+                "live virtual volume must update output B; before=" +
+                    std::to_string(
+                        physicalVolumeB.value_or(-1.0F)) +
+                    ", after=" +
+                    std::to_string(
+                        changedPhysicalVolume.value_or(-1.0F)));
+    }
+
+    if (passed) {
+      passed =
+          check(runAudioSource(
+                    *pwCat, sinkBName, longWave,
+                    "pipetune_test_direct_source_b_" + processId),
+                "cannot play direct reference audio through output B");
+    }
   }
 
   terminateProcess(pipeline, SIGTERM);
@@ -677,15 +934,17 @@ int main() {
                   std::to_string(
                       amplitudesA.size() < 2 ? -1.0F
                                              : amplitudesA[1])) &&
-        check(amplitudesB.size() >= 2 &&
-                  near(amplitudesB[0], amplitudesB[1], 0.005F),
-              "Bypass output B must match direct physical playback; bypass=" +
-                  std::to_string(
-                      amplitudesB.empty() ? -1.0F : amplitudesB[0]) +
-                  ", direct=" +
+        check(amplitudesB.size() >= 3 &&
+                  near(amplitudesB[1], amplitudesB[2], 0.005F),
+              "live-changed Bypass output B must match direct physical "
+              "playback; bypass=" +
                   std::to_string(
                       amplitudesB.size() < 2 ? -1.0F
-                                             : amplitudesB[1]));
+                                             : amplitudesB[1]) +
+                  ", direct=" +
+                  std::to_string(
+                      amplitudesB.size() < 3 ? -1.0F
+                                             : amplitudesB[2]));
   }
 
   std::filesystem::remove_all(directory);

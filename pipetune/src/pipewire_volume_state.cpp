@@ -1,6 +1,7 @@
 #include "pipewire_volume_state.h"
 
 #include <spa/param/props.h>
+#include <spa/param/route.h>
 #include <spa/pod/iter.h>
 
 #include <algorithm>
@@ -159,6 +160,110 @@ spa_pod *buildPipeWireVolumeParameter(
   }
   return static_cast<spa_pod *>(
       spa_pod_builder_pop(&builder, &frame));
+}
+
+bool parsePipeWireOutputVolumeRoute(
+    const spa_pod *parameter,
+    PipeWireOutputVolumeRoute &route) noexcept {
+  if (parameter == nullptr ||
+      !spa_pod_is_object_type(
+          parameter, SPA_TYPE_OBJECT_ParamRoute)) {
+    return false;
+  }
+
+  auto next = PipeWireOutputVolumeRoute{};
+  const auto *indexProperty =
+      spa_pod_find_prop(parameter, nullptr, SPA_PARAM_ROUTE_index);
+  const auto *directionProperty =
+      spa_pod_find_prop(parameter, nullptr, SPA_PARAM_ROUTE_direction);
+  const auto *deviceProperty =
+      spa_pod_find_prop(parameter, nullptr, SPA_PARAM_ROUTE_device);
+  const auto *propsProperty =
+      spa_pod_find_prop(parameter, nullptr, SPA_PARAM_ROUTE_props);
+  if (indexProperty == nullptr ||
+      spa_pod_get_int(&indexProperty->value, &next.index) < 0 ||
+      next.index < 0 || deviceProperty == nullptr ||
+      spa_pod_get_int(&deviceProperty->value, &next.device) < 0 ||
+      next.device < 0 || propsProperty == nullptr) {
+    return false;
+  }
+
+  if (directionProperty != nullptr) {
+    auto direction = std::uint32_t{SPA_DIRECTION_OUTPUT};
+    if (spa_pod_get_id(&directionProperty->value, &direction) < 0 ||
+        direction != SPA_DIRECTION_OUTPUT) {
+      return false;
+    }
+  }
+
+  const auto merged =
+      mergePipeWireVolumeState(&propsProperty->value, next.volume);
+  if (!merged.valid || !merged.volumePresent ||
+      next.volume.channelCount == 0) {
+    return false;
+  }
+
+  const auto *saveProperty =
+      spa_pod_find_prop(parameter, nullptr, SPA_PARAM_ROUTE_save);
+  if (saveProperty != nullptr &&
+      spa_pod_get_bool(&saveProperty->value, &next.save) < 0) {
+    return false;
+  }
+  route = next;
+  return true;
+}
+
+spa_pod *buildPipeWireOutputVolumeRouteParameter(
+    spa_pod_builder &builder,
+    const PipeWireOutputVolumeRoute &route) noexcept {
+  if (route.index < 0 || route.device < 0 ||
+      route.volume.channelCount == 0 ||
+      route.volume.channelCount > SPA_AUDIO_MAX_CHANNELS ||
+      route.volume.channelMapCount > route.volume.channelCount) {
+    return nullptr;
+  }
+
+  auto frames = std::array<spa_pod_frame, 2>{};
+  spa_pod_builder_push_object(
+      &builder, &frames[0], SPA_TYPE_OBJECT_ParamRoute,
+      SPA_PARAM_Route);
+  spa_pod_builder_add(
+      &builder,
+      SPA_PARAM_ROUTE_index, SPA_POD_Int(route.index),
+      SPA_PARAM_ROUTE_direction, SPA_POD_Id(SPA_DIRECTION_OUTPUT),
+      SPA_PARAM_ROUTE_device, SPA_POD_Int(route.device), 0);
+  spa_pod_builder_prop(&builder, SPA_PARAM_ROUTE_props, 0);
+  spa_pod_builder_push_object(
+      &builder, &frames[1], SPA_TYPE_OBJECT_Props,
+      SPA_PARAM_Props);
+  spa_pod_builder_add(
+      &builder, SPA_PROP_channelVolumes,
+      SPA_POD_Array(
+          sizeof(float), SPA_TYPE_Float,
+          static_cast<int>(route.volume.channelCount),
+          const_cast<float *>(route.volume.channelVolumes.data())),
+      0);
+  if (route.volume.channelMapCount != 0) {
+    spa_pod_builder_add(
+        &builder, SPA_PROP_channelMap,
+        SPA_POD_Array(
+            sizeof(std::uint32_t), SPA_TYPE_Id,
+            static_cast<int>(route.volume.channelMapCount),
+            const_cast<std::uint32_t *>(
+                route.volume.channelMap.data())),
+        0);
+  }
+  if (route.volume.muteKnown) {
+    spa_pod_builder_add(
+        &builder, SPA_PROP_mute,
+        SPA_POD_Bool(route.volume.muted), 0);
+  }
+  spa_pod_builder_pop(&builder, &frames[1]);
+  spa_pod_builder_add(
+      &builder, SPA_PARAM_ROUTE_save,
+      SPA_POD_Bool(route.save), 0);
+  return static_cast<spa_pod *>(
+      spa_pod_builder_pop(&builder, &frames[0]));
 }
 
 static bool hasUsableMap(const PipeWireVolumeState &state) noexcept {

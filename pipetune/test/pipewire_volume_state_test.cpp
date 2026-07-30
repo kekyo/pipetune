@@ -199,13 +199,44 @@ static bool testBuiltParameterRoundTripsEffectiveState() {
                "built effective channel volumes differ");
 }
 
+static bool testOutputRouteRoundTripsEffectiveStateAndPersistence() {
+  auto original = pipetune::PipeWireOutputVolumeRoute{
+      .index = 7,
+      .device = 3,
+      .volume = makeSurroundState(),
+      .save = true,
+  };
+  original.volume.muted = true;
+  auto storage = std::array<std::uint8_t, 4096>{};
+  auto builder = spa_pod_builder{};
+  spa_pod_builder_init(&builder, storage.data(), storage.size());
+  const auto *parameter =
+      pipetune::buildPipeWireOutputVolumeRouteParameter(
+          builder, original);
+  auto parsed = pipetune::PipeWireOutputVolumeRoute{};
+
+  return check(
+             parameter != nullptr &&
+                 pipetune::parsePipeWireOutputVolumeRoute(
+                     parameter, parsed),
+             "built physical output route must parse") &&
+         check(parsed.index == original.index &&
+                   parsed.device == original.device && parsed.save,
+               "physical output route identity or persistence differs") &&
+         check(
+             pipetune::pipeWireVolumeStatesEquivalent(
+                 parsed.volume, original.volume),
+             "physical output route volume controls differ");
+}
+
 int main() {
   return testEffectiveVolumesAreNotMultipliedByMasterOrSoftVolume() &&
                  testPartialMutePreservesVolume() &&
                  testInvalidVolumeDoesNotModifyState() &&
                  testStereoRequestPreservesSurroundBalance() &&
                  testZeroMasterInitializesUnmatchedChannels() &&
-                 testBuiltParameterRoundTripsEffectiveState()
+                 testBuiltParameterRoundTripsEffectiveState() &&
+                 testOutputRouteRoundTripsEffectiveStateAndPersistence()
              ? 0
              : 1;
 }

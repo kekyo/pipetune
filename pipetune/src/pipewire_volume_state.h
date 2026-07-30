@@ -2,6 +2,7 @@
 #define PIPETUNE_PIPEWIRE_VOLUME_STATE_H
 
 #include <spa/param/audio/raw.h>
+#include <spa/param/route.h>
 #include <spa/pod/builder.h>
 #include <spa/pod/pod.h>
 
@@ -45,6 +46,20 @@ struct PipeWireVolumeMergeResult {
 };
 
 /**
+ * Stores one active output-device route and its effective volume controls.
+ */
+struct PipeWireOutputVolumeRoute {
+  /** Route index within the PipeWire device. */
+  std::int32_t index = -1;
+  /** Profile-device identifier associated with the route. */
+  std::int32_t device = -1;
+  /** Effective volume controls stored in the route. */
+  PipeWireVolumeState volume = {};
+  /** True when the route requests persistent session-manager storage. */
+  bool save = false;
+};
+
+/**
  * Merges effective PipeWire volume properties into an existing state.
  *
  * Missing properties preserve their previous values. Malformed relevant
@@ -67,6 +82,31 @@ PipeWireVolumeMergeResult mergePipeWireVolumeState(
 spa_pod *buildPipeWireVolumeParameter(
     spa_pod_builder &builder,
     const PipeWireVolumeState &state) noexcept;
+
+/**
+ * Parses an output SPA_PARAM_Route containing effective volume controls.
+ *
+ * @param parameter SPA_TYPE_OBJECT_ParamRoute parameter to parse.
+ * @param route Parsed route replaced only after complete validation.
+ * @return True when the parameter is a valid output-volume route.
+ */
+bool parsePipeWireOutputVolumeRoute(
+    const spa_pod *parameter,
+    PipeWireOutputVolumeRoute &route) noexcept;
+
+/**
+ * Builds a writable output SPA_PARAM_Route value.
+ *
+ * The route contains effective channel volumes and mute state and requests
+ * session-manager persistence.
+ *
+ * @param builder Builder owning the returned POD storage.
+ * @param route Complete route and effective volume state.
+ * @return Built parameter, or nullptr when the route is incomplete.
+ */
+spa_pod *buildPipeWireOutputVolumeRouteParameter(
+    spa_pod_builder &builder,
+    const PipeWireOutputVolumeRoute &route) noexcept;
 
 /**
  * Maps a physical output's volume state to PipeTune's virtual sink layout.
