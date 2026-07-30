@@ -227,6 +227,7 @@ add_library(
   src/default_sink_restore.cpp
   src/dsp_backend_command.cpp
   src/dsp_backend_runtime.cpp
+  src/dsp_idle_controller.cpp
   src/dsp_pipeline_slot.cpp
   src/input_telemetry.cpp
   src/output_command.cpp
@@ -775,6 +776,24 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_pipewire_volume_smoother_tests
     COMMAND pipetune_pipewire_volume_smoother_tests)
+
+  add_executable(
+    pipetune_dsp_idle_controller_tests
+    test/dsp_idle_controller_test.cpp)
+  target_include_directories(pipetune_dsp_idle_controller_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_dsp_idle_controller_tests PRIVATE pipetune_pipewire)
+  if(MSVC)
+    target_compile_options(
+      pipetune_dsp_idle_controller_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_dsp_idle_controller_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_dsp_idle_controller_tests
+    COMMAND pipetune_dsp_idle_controller_tests)
 
   add_executable(
     pipetune_dsp_pipeline_slot_tests

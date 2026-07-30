@@ -47,7 +47,16 @@ public:
   void process(std::span<float> planarSamples,
                std::uint32_t frameCount) noexcept;
 
+  /**
+   * Advances gain transitions without reading or writing PCM.
+   *
+   * @param frameCount Number of logical stream frames elapsed.
+   */
+  void advance(std::uint32_t frameCount) noexcept;
+
 private:
+  void consumePublishedUpdate() noexcept;
+
   static constexpr auto kMaximumChannels = std::uint32_t{8};
 
   std::uint32_t channelCount_;

@@ -11,7 +11,8 @@ DspPipelineSlot::DspPipelineSlot(
     std::unique_ptr<DspPipeline> initialPipeline)
     : current_(std::move(initialPipeline)), stagedPrevious_(nullptr),
       superseded_(),
-      active_(current_.get()), hazard_(nullptr), processedFrames_(0),
+      active_(current_.get()), hazard_(nullptr), revision_(1),
+      processedFrames_(0),
       processingNanoseconds_(0) {
   if (current_ == nullptr) {
     throw std::invalid_argument("initial DSP pipeline must not be null");
@@ -79,6 +80,7 @@ void DspPipelineSlot::stageReplacement(
   stagedPrevious_ = std::move(current_);
   current_ = std::move(replacement);
   active_.store(current_.get(), std::memory_order_seq_cst);
+  revision_.fetch_add(1, std::memory_order_release);
 }
 
 void DspPipelineSlot::commitStaged() {
@@ -96,6 +98,7 @@ void DspPipelineSlot::rollbackStaged() {
   auto rejected = std::move(current_);
   current_ = std::move(stagedPrevious_);
   active_.store(current_.get(), std::memory_order_seq_cst);
+  revision_.fetch_add(1, std::memory_order_release);
   superseded_.push_back(std::move(rejected));
   reclaimSuperseded();
 }
@@ -126,6 +129,10 @@ DspPipelineSlot::performanceCounters() const noexcept {
       .processingNanoseconds =
           processingNanoseconds_.load(std::memory_order_relaxed),
   };
+}
+
+std::uint64_t DspPipelineSlot::revision() const noexcept {
+  return revision_.load(std::memory_order_acquire);
 }
 
 DspPipeline *DspPipelineSlot::acquireActive() noexcept {

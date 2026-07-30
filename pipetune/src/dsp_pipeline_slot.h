@@ -139,6 +139,9 @@ public:
   /** Returns cumulative native EffeTune processing counters. */
   DspPerformanceCounters performanceCounters() const noexcept;
 
+  /** Returns a counter changed whenever another pipeline becomes active. */
+  std::uint64_t revision() const noexcept;
+
 private:
   DspPipeline *acquireActive() noexcept;
   void releaseActive() noexcept;
@@ -149,6 +152,7 @@ private:
   std::vector<std::unique_ptr<DspPipeline>> superseded_;
   std::atomic<DspPipeline *> active_;
   std::atomic<DspPipeline *> hazard_;
+  std::atomic<std::uint64_t> revision_;
   std::atomic<std::uint64_t> processedFrames_;
   std::atomic<std::uint64_t> processingNanoseconds_;
 };

@@ -228,10 +228,13 @@ static bool testStagedReplacementCanCommitAndRollback(
     return false;
   }
   auto slot = pipetune::DspPipelineSlot(std::move(initial));
+  const auto initialRevision = slot.revision();
   slot.stageReplacement(std::move(replacement));
   auto samples = std::vector<float>{0.25F};
   if (!check(slot.hasStagedReplacement(),
              "staged replacement must retain rollback state") ||
+      !check(slot.revision() > initialRevision,
+             "staging a replacement must advance the pipeline revision") ||
       !check(slot.process(samples, 1, 1, 0.0) ==
                  pipetune::ProcessStatus::ok &&
                  approximately(samples[0],
@@ -241,9 +244,12 @@ static bool testStagedReplacementCanCommitAndRollback(
   }
 
   slot.rollbackStaged();
+  const auto rollbackRevision = slot.revision();
   samples[0] = 0.25F;
   if (!check(!slot.hasStagedReplacement(),
              "rollback must close the transaction") ||
+      !check(rollbackRevision > initialRevision,
+             "rollback must publish another pipeline revision") ||
       !check(slot.process(samples, 1, 1, 0.1) ==
                  pipetune::ProcessStatus::ok &&
                  approximately(samples[0],
@@ -262,7 +268,9 @@ static bool testStagedReplacementCanCommitAndRollback(
   slot.stageReplacement(std::move(rebuilt.pipeline));
   slot.commitStaged();
   return check(!slot.hasStagedReplacement(),
-               "commit must release rollback state");
+               "commit must release rollback state") &&
+         check(slot.revision() > rollbackRevision,
+               "new staged pipeline must advance the revision");
 }
 
 static bool testBackendReplacementPreservesCounters(

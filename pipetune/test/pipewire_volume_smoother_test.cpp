@@ -173,11 +173,33 @@ static bool testUnrelatedPropertiesDoNotChangeGain() {
                "unrelated properties must leave PCM unchanged");
 }
 
+static bool testAdvanceKeepsARampCurrentWithoutPcm() {
+  auto smoother = pipetune::PipeWireVolumeSmoother(1);
+  auto volume = std::array{0.0F};
+  auto storage = std::array<std::uint8_t, 256>{};
+  auto builder = spa_pod_builder{};
+  spa_pod_builder_init(&builder, storage.data(), storage.size());
+  const auto *parameter = buildChannelVolumes(builder, volume);
+  if (!check(smoother.update(parameter, 4),
+             "sleeping volume update must start a ramp")) {
+    return false;
+  }
+
+  smoother.advance(2);
+  auto samples = std::array{1.0F, 1.0F, 1.0F};
+  smoother.process(samples, samples.size());
+  return check(near(samples[0], 0.25F) &&
+                   near(samples[1], 0.0F) &&
+                   near(samples[2], 0.0F),
+               "advanced ramp must resume at the current logical frame");
+}
+
 int main() {
   return testStereoVolumeRampsWithoutAStep() &&
                  testNewTargetContinuesFromCurrentGain() &&
                  testMasterVolumeAndMuteRemainFunctional() &&
-                 testUnrelatedPropertiesDoNotChangeGain()
+                 testUnrelatedPropertiesDoNotChangeGain() &&
+                 testAdvanceKeepsARampCurrentWithoutPcm()
              ? 0
              : 1;
 }

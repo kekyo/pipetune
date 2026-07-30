@@ -3,6 +3,7 @@
 #include "audio_bridge.h"
 #include "default_sink_restore.h"
 #include "dsp_backend_runtime.h"
+#include "dsp_idle_controller.h"
 #include "dsp_pipeline_slot.h"
 #include "input_telemetry.h"
 #include "output_device_tracker.h"
@@ -123,6 +124,7 @@ struct PipeWireRuntime {
   OutputDeviceTracker deviceTracker;
   PlanarAudioRing ring;
   PipeWireVolumeSmoother volumeSmoother;
+  DspIdleController dspIdleController;
   std::vector<float> captureScratch;
   std::vector<float> playbackScratch;
   std::atomic<std::uint64_t> processingErrors;
@@ -133,6 +135,7 @@ struct PipeWireRuntime {
   std::atomic<std::uint32_t> outputSampleRate;
   std::atomic<SampleRateEnforcement> rateEnforcement;
   std::uint64_t processedInputFrames;
+  std::uint64_t observedPipelineRevision;
   ProcessingMode processingMode;
   std::string activePreset;
   std::string configurationError;
@@ -212,6 +215,8 @@ struct PipeWireRuntime {
         deviceTracker(runtimeOptions.sinkName, runtimeOptions.targetObject),
         ring(runtimeOptions.channelCount, runtimeOptions.ringCapacityFrames),
         volumeSmoother(runtimeOptions.channelCount),
+        dspIdleController(runtimeOptions.dspSampleRate,
+                          runtimeOptions.dspIdlePolicy),
         captureScratch(static_cast<std::size_t>(runtimeOptions.channelCount) *
                            runtimeOptions.maxFrames,
                        0.0F),
@@ -223,7 +228,7 @@ struct PipeWireRuntime {
         dspSampleRate(runtimeOptions.dspSampleRate),
         outputSampleRate(runtimeOptions.outputSampleRate),
         rateEnforcement(runtimeOptions.ratePolicy.enforcement),
-        processedInputFrames(0),
+        processedInputFrames(0), observedPipelineRevision(pipeline.revision()),
         processingMode(runtimeOptions.initialPresetPath.empty()
                            ? ProcessingMode::bypass
                            : ProcessingMode::preset),
@@ -1222,16 +1227,44 @@ static void captureProcess(void *data) {
       copyCapturePlane(buffer.datas[channel], sourceFrame, channelScratch);
     }
 
+    const auto pipelineRevision = runtime.pipeline.revision();
+    if (pipelineRevision != runtime.observedPipelineRevision) {
+      runtime.observedPipelineRevision = pipelineRevision;
+      runtime.dspIdleController.restart(
+          runtime.dspSampleRate.load(std::memory_order_acquire),
+          runtime.options.dspIdlePolicy);
+    }
+    if (!runtime.dspIdleController.observeInput(
+            scratch, runtime.options.channelCount, blockFrames)) {
+      runtime.volumeSmoother.advance(blockFrames);
+      runtime.processedInputFrames += blockFrames;
+      sourceFrame += blockFrames;
+      continue;
+    }
+
     runtime.volumeSmoother.process(scratch, blockFrames);
     const auto sampleRate =
         runtime.dspSampleRate.load(std::memory_order_relaxed);
     const auto timeSeconds =
         static_cast<double>(runtime.processedInputFrames) / sampleRate;
-    if (runtime.pipeline.process(scratch, runtime.options.channelCount, blockFrames,
-                                 timeSeconds) != ProcessStatus::ok) {
+    const auto processStatus =
+        runtime.pipeline.process(scratch, runtime.options.channelCount,
+                                 blockFrames, timeSeconds);
+    if (processStatus != ProcessStatus::ok) {
       runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
     }
+    const auto sleepRequested = runtime.dspIdleController.observeOutput(
+        scratch, runtime.options.channelCount, blockFrames,
+        processStatus == ProcessStatus::ok);
     runtime.ring.write(scratch, blockFrames);
+    if (sleepRequested) {
+      if (runtime.pipeline.resetActive()) {
+        runtime.dspIdleController.enterSleep();
+      } else {
+        runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
+        runtime.dspIdleController.rejectSleep();
+      }
+    }
     runtime.processedInputFrames += blockFrames;
     sourceFrame += blockFrames;
   }

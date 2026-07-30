@@ -132,30 +132,7 @@ void PipeWireVolumeSmoother::process(
     return;
   }
 
-  const auto sequence =
-      publicationSequence_.load(std::memory_order_acquire);
-  if ((sequence & 1U) == 0 && sequence != appliedSequence_) {
-    auto published = std::array<float, kMaximumChannels>{};
-    for (auto channel = std::uint32_t{0}; channel < channelCount_;
-         ++channel) {
-      published[channel] =
-          publishedGains_[channel].load(std::memory_order_relaxed);
-    }
-    const auto rampSamples =
-        publishedRampSamples_.load(std::memory_order_relaxed);
-    if (publicationSequence_.load(std::memory_order_acquire) ==
-        sequence) {
-      appliedSequence_ = sequence;
-      remainingRampSamples_ = std::max(std::uint32_t{1}, rampSamples);
-      for (auto channel = std::uint32_t{0};
-           channel < channelCount_; ++channel) {
-        targetGains_[channel] = published[channel];
-        gainSteps_[channel] =
-            (targetGains_[channel] - currentGains_[channel]) /
-            static_cast<float>(remainingRampSamples_);
-      }
-    }
-  }
+  consumePublishedUpdate();
 
   const auto transitionFrames =
       std::min(frameCount, remainingRampSamples_);
@@ -190,6 +167,56 @@ void PipeWireVolumeSmoother::process(
     for (auto channel = std::uint32_t{0}; channel < channelCount_;
          ++channel) {
       currentGains_[channel] = targetGains_[channel];
+    }
+  }
+}
+
+void PipeWireVolumeSmoother::advance(
+    std::uint32_t frameCount) noexcept {
+  if (frameCount == 0 || channelCount_ == 0) {
+    return;
+  }
+  consumePublishedUpdate();
+  const auto transitionFrames =
+      std::min(frameCount, remainingRampSamples_);
+  for (auto channel = std::uint32_t{0}; channel < channelCount_;
+       ++channel) {
+    auto gain = currentGains_[channel];
+    for (auto frame = std::uint32_t{0}; frame < transitionFrames;
+         ++frame) {
+      gain += gainSteps_[channel];
+    }
+    currentGains_[channel] =
+        transitionFrames == remainingRampSamples_
+            ? targetGains_[channel]
+            : gain;
+  }
+  remainingRampSamples_ -= transitionFrames;
+}
+
+void PipeWireVolumeSmoother::consumePublishedUpdate() noexcept {
+  const auto sequence =
+      publicationSequence_.load(std::memory_order_acquire);
+  if ((sequence & 1U) == 0 && sequence != appliedSequence_) {
+    auto published = std::array<float, kMaximumChannels>{};
+    for (auto channel = std::uint32_t{0}; channel < channelCount_;
+         ++channel) {
+      published[channel] =
+          publishedGains_[channel].load(std::memory_order_relaxed);
+    }
+    const auto rampSamples =
+        publishedRampSamples_.load(std::memory_order_relaxed);
+    if (publicationSequence_.load(std::memory_order_acquire) ==
+        sequence) {
+      appliedSequence_ = sequence;
+      remainingRampSamples_ = std::max(std::uint32_t{1}, rampSamples);
+      for (auto channel = std::uint32_t{0};
+           channel < channelCount_; ++channel) {
+        targetGains_[channel] = published[channel];
+        gainSteps_[channel] =
+            (targetGains_[channel] - currentGains_[channel]) /
+            static_cast<float>(remainingRampSamples_);
+      }
     }
   }
 }
