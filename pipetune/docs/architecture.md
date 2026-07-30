@@ -165,13 +165,31 @@ session-state property restoration. Per-application stream volume still
 belongs to PipeWire, while gain deliberately introduced by a DSP preset remains
 part of DSP processing.
 
-PipeTune binds each eligible physical node and subscribes to
-`SPA_PARAM_Props`. `SPA_PROP_channelVolumes` is treated as the effective linear
-gain and is never multiplied by `SPA_PROP_volume` or
-`SPA_PROP_softVolumes`. Physical writes normalize `SPA_PROP_volume` to unity
-and write the effective channel volumes and mute state. The virtual sink uses
-the public `pw_stream_get_control` and `pw_stream_set_control` API as a desktop
-control surface; its controls are not an additional PCM gain stage.
+PipeTune chooses one physical control surface from the sink's registry
+properties:
+
+- A card-backed sink declaring `device.routes` is associated with its
+  `device.id` and `card.profile.device`. PipeTune binds that `pw_device`,
+  subscribes to its active `SPA_PARAM_Route`, and treats the route's
+  `SPA_PROP_channelVolumes` and mute as the effective state. Writes use
+  `pw_device_set_param` with the active route index, profile-device identifier,
+  and `SPA_PARAM_ROUTE_save`.
+- A route-less software sink is controlled through the node's
+  `SPA_PARAM_Props`. Writes normalize `SPA_PROP_volume` to unity and set the
+  effective channel volumes and mute state.
+
+PipeTune never writes node volume properties for a route-backed sink. Such a
+node can expose the software portion of a hardware/software volume split, so
+writing it while retaining the device route's hardware volume would multiply
+the two gains. On startup and output switches, PipeTune reapplies the current
+active route before playback begins; this also clears a stale software gain
+left by an earlier process.
+
+In both control surfaces, `SPA_PROP_channelVolumes` is treated as the effective
+linear gain and is never multiplied by `SPA_PROP_volume` or
+`SPA_PROP_softVolumes`. The virtual sink uses the public
+`pw_stream_get_control` and `pw_stream_set_control` API as a desktop control
+surface; its controls are not an additional PCM gain stage.
 
 Startup and output switches use the selected physical node as the source of
 truth. Its effective channel volumes and mute state are published to the
@@ -183,11 +201,14 @@ stale callback from being mistaken for new input. On layouts with different
 channel maps, matching positions are copied directly and unmatched physical
 channels retain their relative balance as the virtual master changes.
 
-Nodes without read, write, and execute permissions for effective volume
-properties are ineligible. A malformed property, subscription loss, or
-physical write failure removes that node from selection and invokes the normal
-fallback rules. This failover preserves the single-stage-volume invariant
-instead of silently reintroducing attenuation in PipeTune's PCM path.
+Route-backed nodes require a readable and writable active route plus device
+write and execute permissions. Route-less nodes require readable and writable
+effective properties plus node read, write, and execute permissions. PipeTune
+does not fall back to node writes when a declared device route is unavailable.
+A malformed parameter, subscription loss, or physical write failure removes
+that node from selection and invokes the normal fallback rules. This failover
+preserves the single-stage-volume invariant instead of silently reintroducing
+attenuation in PipeTune's PCM path.
 
 ## Sample-rate selection and transitions
 

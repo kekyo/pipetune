@@ -24,29 +24,10 @@ application that remains available through the desktop system tray.
   `.effetune_preset` extension.
 - Applies the enabled native EffeTune DSP pipeline to desktop audio.
 - Lets the user choose a physical output from the CLI or GTK application.
-- Falls back to the physical system default when the preferred output is
-  unavailable, and returns automatically after hotplug.
-- Uses the selected physical output as the only system-volume gain stage and
-  mirrors its controls to PipeTune, avoiding double attenuation in bypass.
-- Runs the DSP at the selected output's maximum supported rate or at an
-  explicit 44.1, 48, 96, 192, or 384 kHz rate.
-- Shows output-device rate support and the final DSP, graph, and active
-  physical rates in the CLI and GTK application.
-- Selects the scalar compatibility DSP backend, automatic SIMD dispatch, or a
-  CPU-validated ISA tier from the CLI or GTK application.
-- Pauses with the PipeWire graph when possible and skips native DSP work after
-  sustained exact-zero input and a settled effect tail.
-- Changes presets without restarting the daemon.
-- Starts safely in pass-through mode when no preset has been selected.
+- Runs the DSP at the selected output's maximum supported rate or at an explicit 44.1, 48, 96, 192, or 384 kHz rate.
+- Selects the scalar compatibility DSP backend, automatic SIMD dispatch, or a CPU-validated ISA tier from the CLI or GTK application.
 - Sets up or removes all per-user integration with one CLI command.
-- Displays runtime state and audio error counters in the GTK application.
-- Restores a physical default output when PipeTune stops.
-
-The default PCM policy is **Max** with a PipeWire **suggest** request. PipeTune
-therefore uses the highest user-selectable rate reported by the selected
-output instead of imposing a fixed 48 kHz stream. PipeWire converts application
-streams and, when necessary, resamples between PipeTune's DSP rate and a
-device-compatible output rate.
+- Displays runtime state in the GTK application.
 
 ### Supported systems
 
@@ -128,7 +109,8 @@ flowchart LR
 ```
 
 - At step ②, the audio stream must be directed to PipeTune. Select PipeTune in
-  the OS audio output device settings or an equivalent dialog.
+  the OS audio output device settings or an equivalent dialog:
+  ![Sound control panel](./images/control-panel.png)
 - At step ③, PipeTune sends audio to the user's selected device when that
   device is available. While the selected device cannot be found—for example,
   while a USB device is unplugged—PipeTune automatically falls back to the
@@ -141,6 +123,11 @@ stage. The PipeTune volume and mute controls shown by the desktop are a proxy:
 changing them updates the physical output, and an external change to the
 physical output is reflected back to PipeTune.
 
+For card-backed outputs, PipeTune reads and writes the active PipeWire device
+route, which is the same control used for the device's hardware volume. For
+route-less software sinks, it uses the node's effective volume properties.
+PipeTune never writes both controls for one output.
+
 At startup and after an output switch, the selected physical device's current
 volume and mute state take precedence. A newly selected device therefore keeps
 its own saved level instead of inheriting the previous device's level. In
@@ -148,9 +135,10 @@ bypass mode, PipeTune does not apply that volume again to PCM, so playback is
 attenuated exactly once. Gain changes intentionally made by a DSP preset remain
 independent of this system-volume behavior.
 
-A physical sink must expose readable and writable effective volume controls to
-be selectable. PipeTune falls back to another eligible sink if those controls
-are unavailable or a write fails.
+A physical sink must expose a readable and writable active device route or
+route-less effective node-volume controls to be selectable. PipeTune falls
+back to another eligible sink if those controls are unavailable or a write
+fails.
 
 ## Choosing PipeTune's output device
 
