@@ -30,10 +30,10 @@ static bool contains(std::string_view value, std::string_view expected) {
   return value.find(expected) != std::string_view::npos;
 }
 
-static pipetune::DspBackendLoadContext loadContext(bool simdCpuSupported) {
+static pipetune::DspBackendLoadContext loadContext(bool cpuSupported) {
   return {
-      .simdCpuSupported = simdCpuSupported,
-      .simdCpuRequirement = "test SIMD ISA",
+      .cpuSupported = cpuSupported,
+      .cpuRequirement = "test SIMD ISA",
       .expectedCatalog = pipetune::generatedDspCatalog(),
   };
 }
@@ -52,15 +52,27 @@ static bool testNames() {
                    pipetune::DspBackendKind::simd,
                "SIMD backend name must parse") &&
          check(!pipetune::parseDspBackendName("SIMD").has_value(),
-               "backend names must be case-sensitive");
+               "backend names must be case-sensitive") &&
+         check(pipetune::dspBackendVariantName(
+                   pipetune::DspBackendVariant::simdBaseline) == "baseline",
+               "baseline variant name must be stable") &&
+         check(pipetune::dspBackendVariantName(
+                   pipetune::DspBackendVariant::x86_64_v3) == "x86-64-v3",
+               "x86-64-v3 variant name must be stable") &&
+         check(pipetune::dspBackendVariantName(
+                   pipetune::DspBackendVariant::x86_64_v4) == "x86-64-v4",
+               "x86-64-v4 variant name must be stable") &&
+         check(pipetune::dspBackendVariantName(
+                   pipetune::DspBackendVariant::arm64Sve) == "sve",
+               "SVE variant name must be stable");
 }
 
 static bool testValidBackends(const std::filesystem::path &scalarPath,
                               const std::filesystem::path &simdPath) {
   auto scalar = pipetune::loadDspBackendFromPath(
-      pipetune::DspBackendKind::scalar, scalarPath, loadContext(true));
+      pipetune::DspBackendVariant::scalar, scalarPath, loadContext(true));
   auto simd = pipetune::loadDspBackendFromPath(
-      pipetune::DspBackendKind::simd, simdPath, loadContext(true));
+      pipetune::DspBackendVariant::simdBaseline, simdPath, loadContext(true));
   const auto packagedScalar =
       pipetune::loadDspBackend(pipetune::DspBackendKind::scalar);
   const auto packagedSimd =
@@ -73,6 +85,12 @@ static bool testValidBackends(const std::filesystem::path &scalarPath,
                "scalar backend must retain its kind") &&
          check(simd.backend->kind() == pipetune::DspBackendKind::simd,
                "SIMD backend must retain its kind") &&
+         check(scalar.backend->variant() ==
+                   pipetune::DspBackendVariant::scalar,
+               "scalar backend must retain its concrete variant") &&
+         check(simd.backend->variant() ==
+                   pipetune::DspBackendVariant::simdBaseline,
+               "SIMD backend must retain its concrete variant") &&
          check(scalar.backend->libraryPath() == scalarPath,
                "scalar backend must retain its exact library path") &&
          check(simd.backend->libraryPath() == simdPath,
@@ -84,6 +102,18 @@ static bool testBackendDiscoveryAndSelection() {
   if (!check(discovered.scalar.backend != nullptr,
              discovered.scalar.error) ||
       !check(discovered.simd.backend != nullptr, discovered.simd.error)) {
+    return false;
+  }
+  const pipetune::DspBackendLoadResult *highestAvailable = nullptr;
+  for (const auto &variant : discovered.simdVariants) {
+    if (variant.backend != nullptr) {
+      highestAvailable = &variant;
+    }
+  }
+  if (!check(highestAvailable != nullptr,
+             "at least one SIMD variant must be available") ||
+      !check(discovered.simd.backend == highestAvailable->backend,
+             "automatic SIMD selection must use the highest available variant")) {
     return false;
   }
 
@@ -143,7 +173,8 @@ static bool testRejectedBackends(
     const std::filesystem::path &wrongAbiPath,
     const std::filesystem::path &missingSymbolPath) {
   const auto unsupported = pipetune::loadDspBackendFromPath(
-      pipetune::DspBackendKind::simd, "/path/that/must/not/be/opened.so",
+      pipetune::DspBackendVariant::x86_64_v3,
+      "/path/that/must/not/be/opened.so",
       loadContext(false));
   if (!check(unsupported.backend == nullptr,
              "unsupported SIMD ISA must reject the backend") ||
@@ -153,7 +184,7 @@ static bool testRejectedBackends(
   }
 
   const auto wrongAbi = pipetune::loadDspBackendFromPath(
-      pipetune::DspBackendKind::scalar, wrongAbiPath, loadContext(true));
+      pipetune::DspBackendVariant::scalar, wrongAbiPath, loadContext(true));
   if (!check(wrongAbi.backend == nullptr,
              "an incompatible ABI must reject the backend") ||
       !check(contains(wrongAbi.error, "ABI"),
@@ -162,7 +193,8 @@ static bool testRejectedBackends(
   }
 
   const auto missingSymbol = pipetune::loadDspBackendFromPath(
-      pipetune::DspBackendKind::scalar, missingSymbolPath, loadContext(true));
+      pipetune::DspBackendVariant::scalar, missingSymbolPath,
+      loadContext(true));
   if (!check(missingSymbol.backend == nullptr,
              "a missing ABI symbol must reject the backend") ||
       !check(contains(missingSymbol.error, "et_kernel_count"),
@@ -171,9 +203,10 @@ static bool testRejectedBackends(
   }
 
   const auto wrongScalarFlag = pipetune::loadDspBackendFromPath(
-      pipetune::DspBackendKind::scalar, simdPath, loadContext(true));
+      pipetune::DspBackendVariant::scalar, simdPath, loadContext(true));
   const auto wrongSimdFlag = pipetune::loadDspBackendFromPath(
-      pipetune::DspBackendKind::simd, scalarPath, loadContext(true));
+      pipetune::DspBackendVariant::simdBaseline, scalarPath,
+      loadContext(true));
   if (!check(wrongScalarFlag.backend == nullptr,
              "the SIMD artifact must not load as scalar") ||
       !check(wrongSimdFlag.backend == nullptr,
@@ -184,15 +217,24 @@ static bool testRejectedBackends(
     return false;
   }
 
+  const auto wrongConcreteVariant = pipetune::loadDspBackendFromPath(
+      pipetune::DspBackendVariant::x86_64_v3, simdPath, loadContext(true));
+  if (!check(wrongConcreteVariant.backend == nullptr,
+             "a concrete SIMD variant mismatch must reject the backend") ||
+      !check(contains(wrongConcreteVariant.error, "variant"),
+             "a concrete SIMD mismatch must identify the variant")) {
+    return false;
+  }
+
   auto mismatchedCatalog = std::vector<pipetune::DspDefinition>(
       pipetune::generatedDspCatalog().begin(),
       pipetune::generatedDspCatalog().end());
   mismatchedCatalog.front().hash ^= 1u;
   const auto catalogMismatch = pipetune::loadDspBackendFromPath(
-      pipetune::DspBackendKind::scalar, scalarPath,
+      pipetune::DspBackendVariant::scalar, scalarPath,
       {
-          .simdCpuSupported = true,
-          .simdCpuRequirement = "test SIMD ISA",
+          .cpuSupported = true,
+          .cpuRequirement = "test SIMD ISA",
           .expectedCatalog = mismatchedCatalog,
       });
   return check(catalogMismatch.backend == nullptr,
@@ -216,9 +258,9 @@ static bool approximately(float left, float right) {
 static bool testPipelineOwnership(const std::filesystem::path &scalarPath,
                                   const std::filesystem::path &simdPath) {
   auto scalar = pipetune::loadDspBackendFromPath(
-      pipetune::DspBackendKind::scalar, scalarPath, loadContext(true));
+      pipetune::DspBackendVariant::scalar, scalarPath, loadContext(true));
   auto simd = pipetune::loadDspBackendFromPath(
-      pipetune::DspBackendKind::simd, simdPath, loadContext(true));
+      pipetune::DspBackendVariant::simdBaseline, simdPath, loadContext(true));
   if (!check(scalar.backend != nullptr, scalar.error) ||
       !check(simd.backend != nullptr, simd.error)) {
     return false;

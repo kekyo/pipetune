@@ -153,6 +153,23 @@ set(
 add_subdirectory(
   "${PIPETUNE_EFFETUNE_DIR}/dsp"
   "${CMAKE_CURRENT_BINARY_DIR}/effetune-dsp")
+set(
+  PIPETUNE_DSP_BACKEND_TARGETS
+  effetune_dsp_scalar_shared
+  effetune_dsp_simd_shared)
+foreach(
+  PIPETUNE_OPTIONAL_DSP_BACKEND_TARGET
+  IN ITEMS
+    effetune_dsp_x86_64_v3_shared
+    effetune_dsp_x86_64_v4_shared
+    effetune_dsp_arm64_sve_shared)
+  if(TARGET "${PIPETUNE_OPTIONAL_DSP_BACKEND_TARGET}")
+    list(
+      APPEND
+      PIPETUNE_DSP_BACKEND_TARGETS
+      "${PIPETUNE_OPTIONAL_DSP_BACKEND_TARGET}")
+  endif()
+endforeach()
 
 add_library(yyjson STATIC "${PIPETUNE_YYJSON_DIR}/src/yyjson.c")
 target_include_directories(yyjson PUBLIC "${PIPETUNE_YYJSON_DIR}/src")
@@ -252,8 +269,7 @@ set_target_properties(
 target_link_libraries(pipetune-dsp-benchmark PRIVATE pipetune_core)
 add_dependencies(
   pipetune-dsp-benchmark
-  effetune_dsp_scalar_shared
-  effetune_dsp_simd_shared)
+  ${PIPETUNE_DSP_BACKEND_TARGETS})
 if(MSVC)
   target_compile_options(pipetune-dsp-benchmark PRIVATE /W4 /WX)
 else()
@@ -289,7 +305,7 @@ set(
 
 install(TARGETS pipetune RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(
-  TARGETS effetune_dsp_scalar_shared effetune_dsp_simd_shared
+  TARGETS ${PIPETUNE_DSP_BACKEND_TARGETS}
   LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/pipetune")
 install(
   FILES "${CMAKE_CURRENT_BINARY_DIR}/pipetune.service"
@@ -303,31 +319,29 @@ install(
   DESTINATION "${PIPETUNE_DOCUMENTATION_DIR}")
 
 if(BUILD_TESTING)
+  set(PIPETUNE_DSP_BACKEND_COPY_COMMANDS)
+  foreach(PIPETUNE_DSP_BACKEND_TARGET IN LISTS PIPETUNE_DSP_BACKEND_TARGETS)
+    list(
+      APPEND
+      PIPETUNE_DSP_BACKEND_COPY_COMMANDS
+      COMMAND
+        "${CMAKE_COMMAND}" -E copy_if_different
+        "$<TARGET_FILE:${PIPETUNE_DSP_BACKEND_TARGET}>"
+        "${CMAKE_CURRENT_BINARY_DIR}/$<TARGET_FILE_NAME:${PIPETUNE_DSP_BACKEND_TARGET}>"
+      COMMAND
+        "${CMAKE_COMMAND}" -E copy_if_different
+        "$<TARGET_FILE:${PIPETUNE_DSP_BACKEND_TARGET}>"
+        "${CMAKE_BINARY_DIR}/pipetune-gtk-build/$<TARGET_FILE_NAME:${PIPETUNE_DSP_BACKEND_TARGET}>")
+  endforeach()
   add_custom_target(
     pipetune_test_dsp_backend_copies ALL
     COMMAND
       "${CMAKE_COMMAND}" -E make_directory
       "${CMAKE_CURRENT_BINARY_DIR}"
       "${CMAKE_BINARY_DIR}/pipetune-gtk-build"
-    COMMAND
-      "${CMAKE_COMMAND}" -E copy_if_different
-      "$<TARGET_FILE:effetune_dsp_scalar_shared>"
-      "${CMAKE_CURRENT_BINARY_DIR}/$<TARGET_FILE_NAME:effetune_dsp_scalar_shared>"
-    COMMAND
-      "${CMAKE_COMMAND}" -E copy_if_different
-      "$<TARGET_FILE:effetune_dsp_simd_shared>"
-      "${CMAKE_CURRENT_BINARY_DIR}/$<TARGET_FILE_NAME:effetune_dsp_simd_shared>"
-    COMMAND
-      "${CMAKE_COMMAND}" -E copy_if_different
-      "$<TARGET_FILE:effetune_dsp_scalar_shared>"
-      "${CMAKE_BINARY_DIR}/pipetune-gtk-build/$<TARGET_FILE_NAME:effetune_dsp_scalar_shared>"
-    COMMAND
-      "${CMAKE_COMMAND}" -E copy_if_different
-      "$<TARGET_FILE:effetune_dsp_simd_shared>"
-      "${CMAKE_BINARY_DIR}/pipetune-gtk-build/$<TARGET_FILE_NAME:effetune_dsp_simd_shared>"
+    ${PIPETUNE_DSP_BACKEND_COPY_COMMANDS}
     DEPENDS
-      effetune_dsp_scalar_shared
-      effetune_dsp_simd_shared
+      ${PIPETUNE_DSP_BACKEND_TARGETS}
     VERBATIM)
   add_dependencies(
     pipetune-dsp-benchmark
@@ -362,8 +376,7 @@ if(BUILD_TESTING)
     pipetune_dsp_backend_tests PRIVATE pipetune_core)
   add_dependencies(
     pipetune_dsp_backend_tests
-    effetune_dsp_scalar_shared
-    effetune_dsp_simd_shared)
+    ${PIPETUNE_DSP_BACKEND_TARGETS})
   if(MSVC)
     target_compile_options(pipetune_dsp_backend_tests PRIVATE /W4 /WX)
   else()
@@ -401,8 +414,7 @@ if(BUILD_TESTING)
     pipetune_effetune_backend_artifact_tests PRIVATE "${CMAKE_DL_LIBS}")
   add_dependencies(
     pipetune_effetune_backend_artifact_tests
-    effetune_dsp_scalar_shared
-    effetune_dsp_simd_shared)
+    ${PIPETUNE_DSP_BACKEND_TARGETS})
   if(MSVC)
     target_compile_options(
       pipetune_effetune_backend_artifact_tests PRIVATE /W4 /WX)
@@ -411,12 +423,18 @@ if(BUILD_TESTING)
       pipetune_effetune_backend_artifact_tests
       PRIVATE -Wall -Wextra -Wpedantic -Werror)
   endif()
+  set(PIPETUNE_DSP_BACKEND_ARTIFACT_TEST_ARGS)
+  foreach(PIPETUNE_DSP_BACKEND_TARGET IN LISTS PIPETUNE_DSP_BACKEND_TARGETS)
+    list(
+      APPEND
+      PIPETUNE_DSP_BACKEND_ARTIFACT_TEST_ARGS
+      "$<TARGET_FILE:${PIPETUNE_DSP_BACKEND_TARGET}>")
+  endforeach()
   add_test(
     NAME pipetune_effetune_backend_artifact_tests
     COMMAND
       pipetune_effetune_backend_artifact_tests
-      "$<TARGET_FILE:effetune_dsp_scalar_shared>"
-      "$<TARGET_FILE:effetune_dsp_simd_shared>")
+      ${PIPETUNE_DSP_BACKEND_ARTIFACT_TEST_ARGS})
 
   add_test(NAME pipetune_cli_help COMMAND pipetune --help)
   set_tests_properties(

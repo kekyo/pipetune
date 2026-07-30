@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace pipetune {
 
@@ -17,6 +18,22 @@ enum class DspBackendKind {
   scalar,
   /** Architecture SIMD PFFFT with safe compiler auto-vectorization. */
   simd
+};
+
+/**
+ * Identifies one concrete native DSP shared-library implementation.
+ */
+enum class DspBackendVariant {
+  /** Scalar PFFFT and the normal compiler optimization policy. */
+  scalar,
+  /** Architecture SIMD PFFFT and baseline auto-vectorization. */
+  simdBaseline,
+  /** x86-64-v3 auto-vectorization and the x86 PFFFT SIMD implementation. */
+  x86_64_v3,
+  /** x86-64-v4 auto-vectorization and the x86 PFFFT SIMD implementation. */
+  x86_64_v4,
+  /** Arm SVE auto-vectorization and the AArch64 PFFFT NEON implementation. */
+  arm64Sve
 };
 
 /**
@@ -35,6 +52,33 @@ std::string_view dspBackendName(DspBackendKind kind) noexcept;
  */
 std::optional<DspBackendKind>
 parseDspBackendName(std::string_view name) noexcept;
+
+/**
+ * Returns the stable configuration name for a concrete DSP backend variant.
+ *
+ * @param variant Concrete backend variant.
+ * @return `scalar`, `baseline`, `x86-64-v3`, `x86-64-v4`, or `sve`.
+ */
+std::string_view
+dspBackendVariantName(DspBackendVariant variant) noexcept;
+
+/**
+ * Parses an exact, case-sensitive concrete DSP backend variant name.
+ *
+ * @param name Candidate configuration value.
+ * @return Parsed variant, or no value when the name is unsupported.
+ */
+std::optional<DspBackendVariant>
+parseDspBackendVariantName(std::string_view name) noexcept;
+
+/**
+ * Returns the logical scalar or SIMD kind for a concrete backend variant.
+ *
+ * @param variant Concrete backend variant.
+ * @return Scalar for the scalar variant, otherwise SIMD.
+ */
+DspBackendKind
+dspBackendKind(DspBackendVariant variant) noexcept;
 
 struct DspBackendAccess;
 
@@ -57,6 +101,8 @@ public:
 
   /** Returns the validated backend variant. */
   DspBackendKind kind() const noexcept;
+  /** Returns the validated concrete instruction-set variant. */
+  DspBackendVariant variant() const noexcept;
   /** Returns the exact shared-library path used to load the backend. */
   const std::filesystem::path &libraryPath() const noexcept;
 
@@ -79,6 +125,8 @@ struct DspBackendLoadResult {
   std::string cpuRequirement;
   /** Fatal availability or compatibility diagnostic. */
   std::string error;
+  /** Concrete backend variant represented by this result. */
+  DspBackendVariant variant = DspBackendVariant::scalar;
 };
 
 /**
@@ -89,6 +137,8 @@ struct DspBackends {
   DspBackendLoadResult scalar;
   /** Optional accelerated backend. */
   DspBackendLoadResult simd;
+  /** Architecture-applicable SIMD variants in ascending capability order. */
+  std::vector<DspBackendLoadResult> simdVariants;
 
   /**
    * Returns the load result for one backend kind.
@@ -97,6 +147,16 @@ struct DspBackends {
    * @return Corresponding scalar or SIMD result.
    */
   const DspBackendLoadResult &get(DspBackendKind kind) const noexcept;
+
+  /**
+   * Finds the load result for one concrete backend variant.
+   *
+   * @param variant Concrete backend variant.
+   * @return Matching result, or null when the variant does not apply to the
+   * current architecture.
+   */
+  const DspBackendLoadResult *
+  find(DspBackendVariant variant) const noexcept;
 };
 
 /**
@@ -123,6 +183,18 @@ struct DspBackendSelection {
  * @return Loaded backend and diagnostics.
  */
 DspBackendLoadResult loadDspBackend(DspBackendKind kind);
+
+/**
+ * Resolves and validates one concrete packaged DSP backend.
+ *
+ * Only executable-relative build and private installation locations are
+ * inspected. A backend requiring unsupported CPU instructions is rejected
+ * before it is opened.
+ *
+ * @param variant Concrete backend variant to load.
+ * @return Loaded backend and diagnostics.
+ */
+DspBackendLoadResult loadDspBackend(DspBackendVariant variant);
 
 /**
  * Resolves and validates both packaged DSP backend variants.

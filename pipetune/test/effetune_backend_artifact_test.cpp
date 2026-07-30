@@ -2,6 +2,11 @@
 
 #include <dlfcn.h>
 
+#if defined(__aarch64__)
+#include <asm/hwcap.h>
+#include <sys/auxv.h>
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -43,6 +48,7 @@ struct BackendApi {
   void *handle = nullptr;
   std::uint32_t (*abiVersion)() = nullptr;
   std::uint32_t (*buildFlags)() = nullptr;
+  std::uint32_t (*backendVariant)() = nullptr;
   std::uint32_t (*kernelCount)() = nullptr;
   std::int32_t (*kernelName)(std::uint32_t, char *, std::uint32_t) = nullptr;
   std::uint32_t (*kernelParamsHash)(std::uint32_t) = nullptr;
@@ -70,6 +76,8 @@ static BackendApi loadBackend(const std::filesystem::path &path) {
       loadFunction<decltype(api.abiVersion)>(api.handle, "et_abi_version");
   api.buildFlags =
       loadFunction<decltype(api.buildFlags)>(api.handle, "et_build_flags");
+  api.backendVariant = loadFunction<decltype(api.backendVariant)>(
+      api.handle, "et_backend_variant");
   api.kernelCount =
       loadFunction<decltype(api.kernelCount)>(api.handle, "et_kernel_count");
   api.kernelName =
@@ -179,6 +187,7 @@ static void checkAllAbiSymbols(void *handle) {
   static constexpr std::array names = {
       "et_abi_version",
       "et_build_flags",
+      "et_backend_variant",
       "et_kernel_count",
       "et_kernel_name",
       "et_kernel_params_hash",
@@ -222,64 +231,141 @@ static void checkAllAbiSymbols(void *handle) {
     dlerror();
     void *address = dlsym(handle, name);
     check(dlerror() == nullptr && address != nullptr,
-          "every EffeTune ABI v1 symbol must be exported");
+          "every EffeTune ABI v2 symbol must be exported");
   }
 }
 
+static std::uint32_t expectedVariant(const std::filesystem::path &path) {
+  const auto filename = path.filename().string();
+  if (filename == "libeffetune-dsp-scalar.so") {
+    return ET_BACKEND_VARIANT_SCALAR;
+  }
+  if (filename == "libeffetune-dsp-simd.so") {
+    return ET_BACKEND_VARIANT_SIMD_BASELINE;
+  }
+  if (filename == "libeffetune-dsp-simd-x86-64-v3.so") {
+    return ET_BACKEND_VARIANT_X86_64_V3;
+  }
+  if (filename == "libeffetune-dsp-simd-x86-64-v4.so") {
+    return ET_BACKEND_VARIANT_X86_64_V4;
+  }
+  if (filename == "libeffetune-dsp-simd-arm64-sve.so") {
+    return ET_BACKEND_VARIANT_ARM64_SVE;
+  }
+  check(false, "backend filename must identify a supported variant");
+  return ET_BACKEND_VARIANT_SCALAR;
+}
+
+static bool cpuSupports(std::uint32_t variant) {
+  if (variant == ET_BACKEND_VARIANT_SCALAR ||
+      variant == ET_BACKEND_VARIANT_SIMD_BASELINE) {
+    return true;
+  }
+  if (variant == ET_BACKEND_VARIANT_X86_64_V3) {
+#if defined(__x86_64__) || defined(__i386__)
+    __builtin_cpu_init();
+    return __builtin_cpu_supports("x86-64-v3") != 0;
+#else
+    return false;
+#endif
+  }
+  if (variant == ET_BACKEND_VARIANT_X86_64_V4) {
+#if defined(__x86_64__)
+    __builtin_cpu_init();
+    return __builtin_cpu_supports("x86-64-v4") != 0;
+#else
+    return false;
+#endif
+  }
+  if (variant == ET_BACKEND_VARIANT_ARM64_SVE) {
+#if defined(__aarch64__)
+    return (getauxval(AT_HWCAP) & HWCAP_SVE) != 0u;
+#else
+    return false;
+#endif
+  }
+  return false;
+}
+
 int main(int argc, char **argv) {
-  if (argc != 3) {
+  if (argc < 3) {
     std::fprintf(stderr,
-                 "usage: effetune_backend_artifact_test SCALAR_SO SIMD_SO\n");
+                 "usage: effetune_backend_artifact_test SCALAR_SO SIMD_SO "
+                 "[ISA_SIMD_SO...]\n");
     return 2;
   }
-  const auto scalarPath = std::filesystem::path(argv[1]);
-  const auto simdPath = std::filesystem::path(argv[2]);
-  check(scalarPath.filename() == "libeffetune-dsp-scalar.so",
-        "scalar backend filename must be stable");
-  check(simdPath.filename() == "libeffetune-dsp-simd.so",
-        "SIMD backend filename must be stable");
 
-  auto scalar = loadBackend(scalarPath);
-  auto simd = loadBackend(simdPath);
-  if (scalar.handle != nullptr && simd.handle != nullptr &&
-      scalar.abiVersion != nullptr && simd.abiVersion != nullptr &&
-      scalar.buildFlags != nullptr && simd.buildFlags != nullptr) {
-    check(scalar.abiVersion() == EFFETUNE_DSP_ABI_VERSION,
-          "scalar backend ABI version must match");
-    check(simd.abiVersion() == EFFETUNE_DSP_ABI_VERSION,
-          "SIMD backend ABI version must match");
-    check((scalar.buildFlags() & ET_BUILD_SIMD) == 0u,
-          "scalar backend must clear ET_BUILD_SIMD");
-    check((simd.buildFlags() & ET_BUILD_SIMD) != 0u,
-          "SIMD backend must set ET_BUILD_SIMD");
-    checkAllAbiSymbols(scalar.handle);
-    checkAllAbiSymbols(simd.handle);
-    checkCatalogsMatch(scalar, simd);
-
-    const auto scalarSpectrum = renderImpulseSpectrum(scalar);
-    const auto simdSpectrum = renderImpulseSpectrum(simd);
-    check(scalarSpectrum.size() == simdSpectrum.size(),
-          "scalar and SIMD FFT sizes must match");
-    if (scalarSpectrum.size() == simdSpectrum.size()) {
-      for (auto index = std::size_t{0}; index < scalarSpectrum.size();
-           ++index) {
-        check(std::abs(scalarSpectrum[index] - simdSpectrum[index]) <= 1.0e-5F,
-              "scalar and SIMD FFT results must remain within tolerance");
-      }
+  auto loaded = std::vector<std::pair<std::uint32_t, BackendApi>>{};
+  for (auto index = 1; index < argc; ++index) {
+    const auto path = std::filesystem::path(argv[index]);
+    const auto variant = expectedVariant(path);
+    if (!cpuSupports(variant)) {
+      continue;
     }
+    loaded.emplace_back(variant, loadBackend(path));
+  }
+  check(!loaded.empty() && loaded.front().first == ET_BACKEND_VARIANT_SCALAR,
+        "the scalar backend must be loaded first");
+  if (!loaded.empty()) {
+    auto &scalar = loaded.front().second;
+    check(scalar.handle != nullptr, "scalar backend must load");
+    if (scalar.handle != nullptr && scalar.abiVersion != nullptr &&
+        scalar.buildFlags != nullptr && scalar.backendVariant != nullptr) {
+      check(scalar.abiVersion() == EFFETUNE_DSP_ABI_VERSION,
+            "scalar backend ABI version must match");
+      check((scalar.buildFlags() & ET_BUILD_SIMD) == 0u,
+            "scalar backend must clear ET_BUILD_SIMD");
+      check(scalar.backendVariant() == ET_BACKEND_VARIANT_SCALAR,
+            "scalar backend must report its concrete variant");
+      checkAllAbiSymbols(scalar.handle);
+      const auto scalarSpectrum = renderImpulseSpectrum(scalar);
 
-    dlerror();
-    check(dlsym(scalar.handle, "et_kernel_descriptor_VolumePlugin") == nullptr,
-          "kernel descriptor symbols must remain private");
-    static_cast<void>(dlerror());
-    dlerror();
-    check(dlsym(simd.handle, "pffft_transform") == nullptr,
-          "PFFFT symbols must remain private");
-    static_cast<void>(dlerror());
+      for (auto index = std::size_t{1}; index < loaded.size(); ++index) {
+        const auto expected = loaded[index].first;
+        auto &simd = loaded[index].second;
+        if (simd.handle == nullptr || simd.abiVersion == nullptr ||
+            simd.buildFlags == nullptr || simd.backendVariant == nullptr) {
+          continue;
+        }
+        check(simd.abiVersion() == EFFETUNE_DSP_ABI_VERSION,
+              "SIMD backend ABI version must match");
+        check((simd.buildFlags() & ET_BUILD_SIMD) != 0u,
+              "SIMD backend must set ET_BUILD_SIMD");
+        check(simd.backendVariant() == expected,
+              "SIMD backend must report its concrete variant");
+        checkAllAbiSymbols(simd.handle);
+        checkCatalogsMatch(scalar, simd);
+
+        const auto simdSpectrum = renderImpulseSpectrum(simd);
+        check(scalarSpectrum.size() == simdSpectrum.size(),
+              "scalar and SIMD FFT sizes must match");
+        if (scalarSpectrum.size() == simdSpectrum.size()) {
+          for (auto sample = std::size_t{0};
+               sample < scalarSpectrum.size(); ++sample) {
+            check(std::abs(scalarSpectrum[sample] - simdSpectrum[sample]) <=
+                      1.0e-5F,
+                  "scalar and SIMD FFT results must remain within tolerance");
+          }
+        }
+
+        dlerror();
+        check(dlsym(simd.handle, "pffft_transform") == nullptr,
+              "PFFFT symbols must remain private");
+        static_cast<void>(dlerror());
+      }
+
+      dlerror();
+      check(dlsym(scalar.handle, "et_kernel_descriptor_VolumePlugin") ==
+                nullptr,
+            "kernel descriptor symbols must remain private");
+      static_cast<void>(dlerror());
+    }
   }
 
-  closeBackend(simd);
-  closeBackend(scalar);
+  for (auto iterator = loaded.rbegin(); iterator != loaded.rend();
+       ++iterator) {
+    closeBackend(iterator->second);
+  }
   if (failures != 0) {
     std::fprintf(stderr, "%d EffeTune backend artifact check(s) failed\n",
                  failures);

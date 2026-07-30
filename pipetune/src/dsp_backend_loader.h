@@ -15,6 +15,7 @@ namespace pipetune {
 struct DspBackendApi {
   decltype(&et_abi_version) abiVersion = nullptr;
   decltype(&et_build_flags) buildFlags = nullptr;
+  decltype(&et_backend_variant) backendVariant = nullptr;
   decltype(&et_kernel_count) kernelCount = nullptr;
   decltype(&et_kernel_name) kernelName = nullptr;
   decltype(&et_kernel_params_hash) kernelParamsHash = nullptr;
@@ -57,13 +58,13 @@ struct DspBackendApi {
 };
 
 struct DspBackendLoadContext {
-  bool simdCpuSupported;
-  std::string simdCpuRequirement;
+  bool cpuSupported;
+  std::string cpuRequirement;
   std::span<const DspDefinition> expectedCatalog;
 };
 
 DspBackendLoadResult
-loadDspBackendFromPath(DspBackendKind kind,
+loadDspBackendFromPath(DspBackendVariant variant,
                        const std::filesystem::path &libraryPath,
                        const DspBackendLoadContext &context);
 

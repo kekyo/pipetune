@@ -12,4 +12,8 @@ ET_EXPORT uint32_t et_abi_version(void) {
 ET_EXPORT uint32_t et_build_flags(void) {
   return 0u;
 }
+
+ET_EXPORT uint32_t et_backend_variant(void) {
+  return ET_BACKEND_VARIANT_SCALAR;
+}
 #endif
