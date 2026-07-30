@@ -394,21 +394,22 @@ static void removeClosedSubscribers(
 
 static void runControlServer(ControlServer::Impl *implementation) {
   auto subscribers = std::vector<ControlSubscriber>{};
-  auto nextPublication =
-      std::optional<std::chrono::steady_clock::time_point>{};
+  auto nextPublication = std::chrono::steady_clock::time_point{};
+  auto publicationScheduled = false;
   while (true) {
     const auto beforePoll = std::chrono::steady_clock::now();
     if (subscribers.empty()) {
-      nextPublication.reset();
-    } else if (!nextPublication.has_value()) {
+      publicationScheduled = false;
+    } else if (!publicationScheduled) {
       nextPublication = beforePoll + kStatusPublicationInterval;
+      publicationScheduled = true;
     }
     const auto timeout =
-        nextPublication.has_value()
+        publicationScheduled
             ? static_cast<int>(
                   std::chrono::ceil<std::chrono::milliseconds>(
                       std::max(std::chrono::steady_clock::duration::zero(),
-                               *nextPublication - beforePoll))
+                               nextPublication - beforePoll))
                       .count())
             : -1;
     auto descriptors = std::vector<pollfd>{};
@@ -441,11 +442,11 @@ static void runControlServer(ControlServer::Impl *implementation) {
       return;
     }
     const auto afterPoll = std::chrono::steady_clock::now();
-    if (nextPublication.has_value() && afterPoll >= *nextPublication) {
+    if (publicationScheduled && afterPoll >= nextPublication) {
       publishToSubscribers(*implementation, subscribers);
       do {
-        *nextPublication += kStatusPublicationInterval;
-      } while (afterPoll >= *nextPublication);
+        nextPublication += kStatusPublicationInterval;
+      } while (afterPoll >= nextPublication);
     }
     if ((descriptors[2].revents & POLLIN) != 0) {
       drainEvent(implementation->publishEvent);
