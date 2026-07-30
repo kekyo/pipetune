@@ -9,6 +9,18 @@
 namespace pipetune {
 
 /**
+ * Describes the outcome of one gap-aware ring read.
+ */
+struct PlanarAudioReadResult {
+  /** Frames removed from the queue. */
+  std::uint32_t queuedFrames;
+  /** Neutral frames, including intentional missing frames when requested. */
+  std::uint32_t gapFrames;
+  /** Requested frames that were not queued. */
+  std::uint32_t missingFrames;
+};
+
+/**
  * Transfers planar PCM between one producer and one consumer without blocking.
  *
  * Storage is allocated at construction. write() and read() perform no
@@ -45,6 +57,14 @@ public:
                       std::uint32_t frameCount) noexcept;
 
   /**
+   * Appends intentional neutral frames without copying PCM.
+   *
+   * @param frameCount Number of neutral frames to append.
+   * @return Number of frames appended.
+   */
+  std::uint32_t writeGap(std::uint32_t frameCount) noexcept;
+
+  /**
    * Removes frames and fills any unavailable tail with silence.
    *
    * Missing frames are included in underrunFrames(). An incorrectly shaped
@@ -56,6 +76,22 @@ public:
    */
   std::uint32_t read(std::span<float> planarSamples,
                      std::uint32_t frameCount) noexcept;
+
+  /**
+   * Removes frames while preserving intentional neutral-frame information.
+   *
+   * Exact-zero frames written through write() are reported as gaps. Missing
+   * frames are always filled with zero, and can be treated as intentional gaps
+   * when the producer is known to be sleeping.
+   *
+   * @param planarSamples Contiguous channel-major output PCM.
+   * @param frameCount Number of requested frames in each channel.
+   * @param missingFramesAreGap Whether unavailable frames are intentional.
+   * @return Queue, gap, and missing-frame counts for this read.
+   */
+  PlanarAudioReadResult readWithGaps(
+      std::span<float> planarSamples, std::uint32_t frameCount,
+      bool missingFramesAreGap) noexcept;
 
   /**
    * Discards all frames that were fully queued before this call.
@@ -81,6 +117,7 @@ private:
   std::uint32_t channelCount_;
   std::uint32_t capacityFrames_;
   std::vector<float> samples_;
+  std::vector<std::uint8_t> gapFrames_;
   alignas(64) std::atomic<std::uint64_t> readFrame_;
   alignas(64) std::atomic<std::uint64_t> writeFrame_;
   std::atomic<std::uint64_t> overrunFrames_;

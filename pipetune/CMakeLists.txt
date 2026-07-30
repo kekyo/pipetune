@@ -232,6 +232,7 @@ add_library(
   src/input_telemetry.cpp
   src/output_command.cpp
   src/output_device_tracker.cpp
+  src/pipewire_buffer_io.cpp
   src/pipewire_rate_parser.cpp
   src/pipewire_volume_smoother.cpp
   src/pipewire_pipeline.cpp
@@ -776,6 +777,26 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_pipewire_volume_smoother_tests
     COMMAND pipetune_pipewire_volume_smoother_tests)
+
+  add_executable(
+    pipetune_pipewire_buffer_io_tests
+    test/pipewire_buffer_io_test.cpp)
+  target_include_directories(
+    pipetune_pipewire_buffer_io_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_pipewire_buffer_io_tests
+    PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE)
+  if(MSVC)
+    target_compile_options(
+      pipetune_pipewire_buffer_io_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_pipewire_buffer_io_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_pipewire_buffer_io_tests
+    COMMAND pipetune_pipewire_buffer_io_tests)
 
   add_executable(
     pipetune_dsp_idle_controller_tests

@@ -7,6 +7,7 @@
 #include "dsp_pipeline_slot.h"
 #include "input_telemetry.h"
 #include "output_device_tracker.h"
+#include "pipewire_buffer_io.h"
 #include "pipewire_rate_parser.h"
 #include "pipewire_volume_smoother.h"
 #include "pipetune/control_protocol.h"
@@ -16,6 +17,7 @@
 #include <pipewire/extensions/metadata.h>
 #include <pipewire/node.h>
 #include <spa/buffer/buffer.h>
+#include <spa/buffer/meta.h>
 #include <spa/param/audio/raw-utils.h>
 #include <spa/param/buffers.h>
 #include <spa/param/format.h>
@@ -125,6 +127,7 @@ struct PipeWireRuntime {
   PlanarAudioRing ring;
   PipeWireVolumeSmoother volumeSmoother;
   DspIdleController dspIdleController;
+  std::atomic<DspIdleState> publishedDspIdleState;
   std::vector<float> captureScratch;
   std::vector<float> playbackScratch;
   std::atomic<std::uint64_t> processingErrors;
@@ -217,6 +220,7 @@ struct PipeWireRuntime {
         volumeSmoother(runtimeOptions.channelCount),
         dspIdleController(runtimeOptions.dspSampleRate,
                           runtimeOptions.dspIdlePolicy),
+        publishedDspIdleState(DspIdleState::active),
         captureScratch(static_cast<std::size_t>(runtimeOptions.channelCount) *
                            runtimeOptions.maxFrames,
                        0.0F),
@@ -1095,6 +1099,19 @@ static spa_pod *buildBufferParameter(spa_pod_builder &builder,
   return static_cast<spa_pod *>(spa_pod_builder_pop(&builder, &frame));
 }
 
+static spa_pod *buildHeaderMetaParameter(
+    spa_pod_builder &builder) noexcept {
+  auto frame = spa_pod_frame{};
+  spa_pod_builder_push_object(&builder, &frame, SPA_TYPE_OBJECT_ParamMeta,
+                              SPA_PARAM_Meta);
+  spa_pod_builder_add(
+      &builder, SPA_PARAM_META_type, SPA_POD_Id(SPA_META_Header),
+      SPA_PARAM_META_size,
+      SPA_POD_Int(static_cast<int>(sizeof(spa_meta_header))), 0);
+  return static_cast<spa_pod *>(
+      spa_pod_builder_pop(&builder, &frame));
+}
+
 static void streamParameterChanged(void *data, std::uint32_t id,
                                    const spa_pod *parameter) {
   if (parameter == nullptr) {
@@ -1129,15 +1146,17 @@ static void streamParameterChanged(void *data, std::uint32_t id,
     return;
   }
 
-  auto storage = std::array<std::uint8_t, 512>{};
+  auto storage = std::array<std::uint8_t, 1024>{};
   auto builder = spa_pod_builder{};
   spa_pod_builder_init(&builder, storage.data(), storage.size());
-  const spa_pod *parameters[] = {buildBufferParameter(builder, runtime.options)};
+  const spa_pod *parameters[] = {
+      buildBufferParameter(builder, runtime.options),
+      buildHeaderMetaParameter(builder)};
   auto *stream = context.capture ? runtime.captureStream : runtime.playbackStream;
   if (stream == nullptr) {
     return;
   }
-  const auto updateResult = pw_stream_update_params(stream, parameters, 1);
+  const auto updateResult = pw_stream_update_params(stream, parameters, 2);
   if (updateResult < 0) {
     reportStreamFailure(
         runtime,
@@ -1201,6 +1220,7 @@ static void captureProcess(void *data) {
   }
 
   auto &buffer = *pipeWireBuffer->buffer;
+  const auto captureGap = pipeWireBufferHasGap(buffer);
   auto frameCount = std::uint32_t{0};
   if (!inspectCaptureBuffer(buffer, runtime.options.channelCount, frameCount)) {
     runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
@@ -1224,7 +1244,11 @@ static void captureProcess(void *data) {
          ++channel) {
       auto channelScratch = scratch.subspan(
           static_cast<std::size_t>(channel) * blockFrames, blockFrames);
-      copyCapturePlane(buffer.datas[channel], sourceFrame, channelScratch);
+      if (captureGap) {
+        std::fill(channelScratch.begin(), channelScratch.end(), 0.0F);
+      } else {
+        copyCapturePlane(buffer.datas[channel], sourceFrame, channelScratch);
+      }
     }
 
     const auto pipelineRevision = runtime.pipeline.revision();
@@ -1233,14 +1257,21 @@ static void captureProcess(void *data) {
       runtime.dspIdleController.restart(
           runtime.dspSampleRate.load(std::memory_order_acquire),
           runtime.options.dspIdlePolicy);
+      runtime.publishedDspIdleState.store(
+          runtime.dspIdleController.state(), std::memory_order_release);
     }
     if (!runtime.dspIdleController.observeInput(
             scratch, runtime.options.channelCount, blockFrames)) {
+      runtime.publishedDspIdleState.store(
+          runtime.dspIdleController.state(), std::memory_order_release);
       runtime.volumeSmoother.advance(blockFrames);
+      static_cast<void>(runtime.ring.writeGap(blockFrames));
       runtime.processedInputFrames += blockFrames;
       sourceFrame += blockFrames;
       continue;
     }
+    runtime.publishedDspIdleState.store(
+        runtime.dspIdleController.state(), std::memory_order_release);
 
     runtime.volumeSmoother.process(scratch, blockFrames);
     const auto sampleRate =
@@ -1264,6 +1295,8 @@ static void captureProcess(void *data) {
         runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
         runtime.dspIdleController.rejectSleep();
       }
+      runtime.publishedDspIdleState.store(
+          runtime.dspIdleController.state(), std::memory_order_release);
     }
     runtime.processedInputFrames += blockFrames;
     sourceFrame += blockFrames;
@@ -1290,20 +1323,6 @@ static bool inspectPlaybackBuffer(const spa_buffer &buffer, std::uint32_t channe
   return capacityFrames != UINT32_MAX;
 }
 
-static void clearPlaybackChunks(spa_buffer &buffer,
-                                std::uint32_t channelCount) noexcept {
-  const auto availableChannels = std::min(buffer.n_datas, channelCount);
-  for (auto channel = std::uint32_t{0}; channel < availableChannels; ++channel) {
-    auto &plane = buffer.datas[channel];
-    if (plane.chunk != nullptr) {
-      plane.chunk->offset = 0;
-      plane.chunk->size = 0;
-      plane.chunk->stride = static_cast<std::int32_t>(kSampleBytes);
-      plane.chunk->flags = SPA_CHUNK_FLAG_EMPTY;
-    }
-  }
-}
-
 static void playbackProcess(void *data) {
   auto &context = *static_cast<StreamCallbackContext *>(data);
   auto &runtime = *context.runtime;
@@ -1316,7 +1335,8 @@ static void playbackProcess(void *data) {
   auto capacityFrames = std::uint32_t{0};
   if (!inspectPlaybackBuffer(buffer, runtime.options.channelCount, capacityFrames)) {
     runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
-    clearPlaybackChunks(buffer, runtime.options.channelCount);
+    setPipeWirePlaybackContent(
+        buffer, runtime.options.channelCount, 0, true);
     pipeWireBuffer->size = 0;
     pw_stream_queue_buffer(runtime.playbackStream, pipeWireBuffer);
     return;
@@ -1327,6 +1347,10 @@ static void playbackProcess(void *data) {
           ? capacityFrames
           : static_cast<std::uint32_t>(
                 std::min<std::uint64_t>(pipeWireBuffer->requested, capacityFrames));
+  const auto producerSleeping =
+      runtime.publishedDspIdleState.load(std::memory_order_acquire) ==
+      DspIdleState::sleeping;
+  auto gapFrames = std::uint32_t{0};
   auto outputFrame = std::uint32_t{0};
   while (outputFrame < suggestedFrames) {
     const auto blockFrames =
@@ -1334,7 +1358,9 @@ static void playbackProcess(void *data) {
     auto scratch = std::span<float>(runtime.playbackScratch)
                        .first(static_cast<std::size_t>(runtime.options.channelCount) *
                               blockFrames);
-    runtime.ring.read(scratch, blockFrames);
+    const auto readResult = runtime.ring.readWithGaps(
+        scratch, blockFrames, producerSleeping);
+    gapFrames += readResult.gapFrames;
     for (auto channel = std::uint32_t{0}; channel < runtime.options.channelCount;
          ++channel) {
       const auto source = scratch.subspan(
@@ -1345,14 +1371,9 @@ static void playbackProcess(void *data) {
     outputFrame += blockFrames;
   }
 
-  for (auto channel = std::uint32_t{0}; channel < runtime.options.channelCount;
-       ++channel) {
-    auto &chunk = *buffer.datas[channel].chunk;
-    chunk.offset = 0;
-    chunk.size = suggestedFrames * kSampleBytes;
-    chunk.stride = static_cast<std::int32_t>(kSampleBytes);
-    chunk.flags = suggestedFrames == 0 ? SPA_CHUNK_FLAG_EMPTY : SPA_CHUNK_FLAG_NONE;
-  }
+  setPipeWirePlaybackContent(
+      buffer, runtime.options.channelCount, suggestedFrames,
+      suggestedFrames == 0 || gapFrames == suggestedFrames);
   pipeWireBuffer->size = suggestedFrames;
   pw_stream_queue_buffer(runtime.playbackStream, pipeWireBuffer);
 }
@@ -1405,6 +1426,7 @@ static pw_properties *makeCommonProperties(const PipeWireRuntime &runtime,
   pw_properties_set(properties, SPA_KEY_AUDIO_FORMAT, "F32P");
   pw_properties_set(properties, SPA_KEY_AUDIO_RATE, mediaRate.c_str());
   pw_properties_set(properties, SPA_KEY_AUDIO_CHANNELS, channels.c_str());
+  setPipeWireIdleProperties(*properties);
   return properties;
 }
 
@@ -1611,6 +1633,11 @@ static std::string disconnectAudioStreams(PipeWireRuntime &runtime) {
   runtime.inputFormatNegotiated.store(false, std::memory_order_release);
   static_cast<void>(runtime.ring.discardQueuedFrames());
   runtime.processedInputFrames = 0;
+  runtime.dspIdleController.restart(
+      runtime.dspSampleRate.load(std::memory_order_acquire),
+      runtime.options.dspIdlePolicy);
+  runtime.publishedDspIdleState.store(
+      DspIdleState::active, std::memory_order_release);
   return {};
 }
 
