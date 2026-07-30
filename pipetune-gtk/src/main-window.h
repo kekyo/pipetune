@@ -45,6 +45,12 @@ struct MainWindowUi {
   GtkWidget *dspBackendApplyButton = nullptr;
   /** Configured, effective, and fallback backend state. */
   GtkWidget *dspBackendStatusLabel = nullptr;
+  /** Conservative or exact-zero DSP idle policy drop-down. */
+  GtkWidget *dspIdlePolicyCombo = nullptr;
+  /** Applies and persists the edited DSP idle policy. */
+  GtkWidget *dspIdlePolicyApplyButton = nullptr;
+  /** DSP idle state, counters, and PipeWire graph idle state. */
+  GtkWidget *dspIdleStatusLabel = nullptr;
   /** Selected output target text. */
   GtkWidget *targetLabel = nullptr;
   /** Engine-owned output-selection reason text. */

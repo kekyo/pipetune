@@ -22,6 +22,7 @@ struct ServerState {
   pipetune::SampleRatePolicy ratePolicy;
   pipetune::DspBackendKind dspBackend;
   pipetune::DspSimdVariant dspSimdVariant;
+  pipetune::DspIdlePolicy dspIdlePolicy;
 };
 
 static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
@@ -108,7 +109,12 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
                 .available = true,
                 .cpuSupported = true,
                 .cpuRequirement = "test SIMD ISA",
-                .error = {}}}};
+                .error = {}}},
+          .dspIdlePolicy = state.dspIdlePolicy,
+          .dspIdleState = pipetune::DspIdleState::active,
+          .dspIdleSkippedFrames = 0,
+          .dspIdleSleepTransitions = 0,
+          .pipeWireIdle = false};
 }
 
 static std::string provideStatus(void *userData) {
@@ -194,6 +200,17 @@ static pipetune::ControlMessageResult handleRequest(
             .connectionMode = pipetune::ControlConnectionMode::close,
             .publishStatus = true};
   }
+  if (request.request.command ==
+      pipetune::ControlCommand::setDspIdlePolicy) {
+    {
+      auto lock = std::scoped_lock(state.mutex);
+      state.dspIdlePolicy = request.request.dspIdlePolicy;
+    }
+    return {.response = pipetune::makeControlSuccessResponse(
+                serverStatus(state), {}),
+            .connectionMode = pipetune::ControlConnectionMode::close,
+            .publishStatus = true};
+  }
   return {.response =
               pipetune::makeControlSuccessResponse(serverStatus(state), {}),
           .connectionMode = pipetune::ControlConnectionMode::close,
@@ -222,6 +239,9 @@ struct ClientTestState {
   bool setDspBackendRequested;
   bool setDspBackendReply;
   bool publishedSetDspBackend;
+  bool setDspIdlePolicyRequested;
+  bool setDspIdlePolicyReply;
+  bool publishedSetDspIdlePolicy;
   bool disconnected;
   bool timedOut;
   bool failed;
@@ -239,7 +259,8 @@ static void maybeStopServer(ClientTestState &state) {
       state.publishedSetOutput && state.clearOutputReply &&
       state.publishedClearOutput && state.setRateReply &&
       state.publishedSetRate && state.setDspBackendReply &&
-      state.publishedSetDspBackend && *state.server != nullptr) {
+      state.publishedSetDspBackend && state.setDspIdlePolicyReply &&
+      state.publishedSetDspIdlePolicy && *state.server != nullptr) {
     g_idle_add(stopServer, &state);
   }
 }
@@ -247,6 +268,7 @@ static void maybeStopServer(ClientTestState &state) {
 static void maybeStartClearOutput(ClientTestState &state);
 static void maybeStartSetRate(ClientTestState &state);
 static void maybeStartSetDspBackend(ClientTestState &state);
+static void maybeStartSetDspIdlePolicy(ClientTestState &state);
 
 static void onSetOutputReply(
     const pipetune_gtk::ControlClientReply &reply, void *userData) {
@@ -317,6 +339,31 @@ static void onSetDspBackendReply(
     state.failed = true;
   } else {
     state.setDspBackendReply = true;
+  }
+  maybeStartSetDspIdlePolicy(state);
+}
+
+static void onSetDspIdlePolicyReply(
+    const pipetune_gtk::ControlClientReply &reply, void *userData) {
+  auto &state = *static_cast<ClientTestState *>(userData);
+  if (!reply.transportError.empty() || !reply.response.valid ||
+      !reply.response.success ||
+      reply.response.status.dspIdlePolicy !=
+          pipetune::DspIdlePolicy::exact) {
+    state.failed = true;
+  } else {
+    state.setDspIdlePolicyReply = true;
+  }
+  maybeStopServer(state);
+}
+
+static void maybeStartSetDspIdlePolicy(ClientTestState &state) {
+  if (state.setDspBackendReply && state.publishedSetDspBackend &&
+      !state.setDspIdlePolicyRequested) {
+    state.setDspIdlePolicyRequested = true;
+    pipetune_gtk::setControlDspIdlePolicyAsync(
+        state.client, pipetune::DspIdlePolicy::exact,
+        onSetDspIdlePolicyReply, &state);
   }
   maybeStopServer(state);
 }
@@ -437,8 +484,14 @@ static void onMessage(
             pipetune::SampleRateEnforcement::force) {
       if (message.status.configuredDspBackend ==
           pipetune::DspBackendKind::simd) {
-        state.publishedSetDspBackend = true;
-        maybeStopServer(state);
+        if (message.status.dspIdlePolicy ==
+            pipetune::DspIdlePolicy::exact) {
+          state.publishedSetDspIdlePolicy = true;
+          maybeStopServer(state);
+        } else {
+          state.publishedSetDspBackend = true;
+          maybeStartSetDspIdlePolicy(state);
+        }
       } else {
         state.publishedSetRate = true;
         maybeStartSetDspBackend(state);
@@ -494,7 +547,9 @@ int main() {
                   .ratePolicy = pipetune::defaultSampleRatePolicy(),
                   .dspBackend = pipetune::DspBackendKind::scalar,
                   .dspSimdVariant =
-                      pipetune::DspSimdVariant::automatic};
+                      pipetune::DspSimdVariant::automatic,
+                  .dspIdlePolicy =
+                      pipetune::DspIdlePolicy::conservative};
   auto started = pipetune::startControlServer(
       socketPath,
       {.handler = handleRequest,
@@ -529,6 +584,9 @@ int main() {
       .setDspBackendRequested = false,
       .setDspBackendReply = false,
       .publishedSetDspBackend = false,
+      .setDspIdlePolicyRequested = false,
+      .setDspIdlePolicyReply = false,
+      .publishedSetDspIdlePolicy = false,
       .disconnected = false,
       .timedOut = false,
       .failed = false,
@@ -556,7 +614,9 @@ int main() {
       !state.publishedSetOutput || !state.clearOutputReply ||
       !state.publishedClearOutput || !state.setRateReply ||
       !state.publishedSetRate || !state.setDspBackendReply ||
-      !state.publishedSetDspBackend || !state.disconnected) {
+      !state.publishedSetDspBackend ||
+      !state.setDspIdlePolicyReply ||
+      !state.publishedSetDspIdlePolicy || !state.disconnected) {
     std::cerr << "asynchronous control client lifecycle differs\n";
     return 1;
   }

@@ -547,6 +547,86 @@
         </child>
         <child>
           <object class="GtkLabel">
+            <property name="label">&lt;b&gt;DSP idle&lt;/b&gt;</property>
+            <property name="use-markup">True</property>
+            <property name="xalign">0</property>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">False</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkGrid" id="dspIdleGrid">
+            <property name="column-spacing">8</property>
+            <property name="row-spacing">8</property>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Sleep policy</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+              <packing>
+                <property name="left-attach">0</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkComboBoxText" id="dspIdlePolicyCombo">
+                <property name="hexpand">True</property>
+                <property name="tooltip-text">Conservative preserves inaudible tails; Exact requires mathematically zero DSP output before sleeping</property>
+              </object>
+              <packing>
+                <property name="left-attach">1</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkButton" id="dspIdlePolicyApplyButton">
+                <property name="label">Save for Next Start</property>
+              </object>
+              <packing>
+                <property name="left-attach">2</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Runtime state</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+              <packing>
+                <property name="left-attach">0</property>
+                <property name="top-attach">1</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel" id="dspIdleStatusLabel">
+                <property name="label">DSP idle state unavailable</property>
+                <property name="xalign">0</property>
+                <property name="selectable">True</property>
+                <property name="wrap">True</property>
+                <property name="hexpand">True</property>
+              </object>
+              <packing>
+                <property name="left-attach">1</property>
+                <property name="top-attach">1</property>
+                <property name="width">2</property>
+              </packing>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">True</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkLabel">
             <property name="label">&lt;b&gt;PCM rate&lt;/b&gt;</property>
             <property name="use-markup">True</property>
             <property name="xalign">0</property>

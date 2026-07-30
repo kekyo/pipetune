@@ -67,6 +67,15 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
       .dspBackendStatusLabel =
           requiredWidget(builder, "dspBackendStatusLabel",
                          GTK_TYPE_LABEL),
+      .dspIdlePolicyCombo =
+          requiredWidget(builder, "dspIdlePolicyCombo",
+                         GTK_TYPE_COMBO_BOX_TEXT),
+      .dspIdlePolicyApplyButton =
+          requiredWidget(builder, "dspIdlePolicyApplyButton",
+                         GTK_TYPE_BUTTON),
+      .dspIdleStatusLabel =
+          requiredWidget(builder, "dspIdleStatusLabel",
+                         GTK_TYPE_LABEL),
       .targetLabel =
           requiredWidget(builder, "targetLabel", GTK_TYPE_LABEL),
       .outputReasonLabel =

@@ -3,6 +3,8 @@
 #include "control-client.h"
 #include "dsp-backend-operation.h"
 #include "dsp-backend-selection-model.h"
+#include "dsp-idle-operation.h"
+#include "dsp-idle-selection-model.h"
 #include "installed-presets.h"
 #include "installed-tools.h"
 #include "launch-options.h"
@@ -80,6 +82,13 @@ struct GtkRuntime {
   bool updatingDspBackendControls;
   bool dspBackendEditDirty;
   bool dspBackendChangePending;
+  pipetune::DspIdlePolicy startupDspIdlePolicy;
+  pipetune::DspIdlePolicy editedDspIdlePolicy;
+  pipetune::DspIdlePolicy pendingDspIdlePolicy;
+  std::vector<DspIdleChoice> dspIdleChoices;
+  bool updatingDspIdleControls;
+  bool dspIdleEditDirty;
+  bool dspIdleChangePending;
   guint reconnectSource;
   bool applicationHeld;
   bool activationHandled;
@@ -373,6 +382,58 @@ static void renderDspBackendSelection(GtkRuntime *runtime) {
           (!connected || presentation.selectedBackendAvailable));
 }
 
+static pipetune::DspIdlePolicy displayedDspIdlePolicy(
+    const GtkRuntime &runtime) {
+  if (runtime.state.connection == ControlConnectionState::connected &&
+      runtime.state.hasRuntimeStatus) {
+    return runtime.state.runtime.dspIdlePolicy;
+  }
+  return runtime.startupDspIdlePolicy;
+}
+
+static void renderDspIdleSelection(GtkRuntime *runtime) {
+  if (!runtime->dspIdleEditDirty &&
+      !runtime->dspIdleChangePending) {
+    runtime->editedDspIdlePolicy =
+        displayedDspIdlePolicy(*runtime);
+  }
+  const auto presentation =
+      makeDspIdleSelectionPresentation(
+          runtime->state, runtime->editedDspIdlePolicy);
+
+  runtime->updatingDspIdleControls = true;
+  runtime->dspIdleChoices = presentation.choices;
+  gtk_combo_box_text_remove_all(
+      GTK_COMBO_BOX_TEXT(runtime->ui.dspIdlePolicyCombo));
+  for (const auto &choice : runtime->dspIdleChoices) {
+    gtk_combo_box_text_append_text(
+        GTK_COMBO_BOX_TEXT(runtime->ui.dspIdlePolicyCombo),
+        choice.label.c_str());
+  }
+  gtk_combo_box_set_active(
+      GTK_COMBO_BOX(runtime->ui.dspIdlePolicyCombo),
+      static_cast<gint>(presentation.activeIndex));
+  runtime->updatingDspIdleControls = false;
+
+  gtk_label_set_text(
+      GTK_LABEL(runtime->ui.dspIdleStatusLabel),
+      presentation.runtimeStatus.c_str());
+  const auto connected =
+      runtime->state.connection == ControlConnectionState::connected;
+  const auto canEdit =
+      !runtime->startupConfigPath.empty() &&
+      !runtime->state.operationPending &&
+      !runtime->dspIdleChangePending &&
+      (!connected || presentation.sensitive);
+  gtk_widget_set_sensitive(runtime->ui.dspIdlePolicyCombo, canEdit);
+  gtk_button_set_label(
+      GTK_BUTTON(runtime->ui.dspIdlePolicyApplyButton),
+      connected ? "Apply and Save" : "Save for Next Start");
+  gtk_widget_set_sensitive(
+      runtime->ui.dspIdlePolicyApplyButton,
+      canEdit && runtime->dspIdleEditDirty);
+}
+
 static void render(GtkRuntime *runtime) {
   if (runtime == nullptr || runtime->ui.window == nullptr) {
     return;
@@ -427,6 +488,7 @@ static void render(GtkRuntime *runtime) {
                      pluginCount.c_str());
   renderOutputSelection(runtime);
   renderDspBackendSelection(runtime);
+  renderDspIdleSelection(runtime);
   renderRateSelection(runtime);
   const auto defaultSink =
       runtime->state.hasRuntimeStatus
@@ -649,8 +711,8 @@ static void onConfigurationResetClicked(GtkButton *,
   gtk_message_dialog_format_secondary_text(
       GTK_MESSAGE_DIALOG(dialog), "%s",
       "This selects Bypass, follows the system-default output, and uses "
-      "Max + Suggest with the Scalar DSP backend. The PipeTune service will "
-      "restart if it is running.");
+      "Max + Suggest with the Scalar DSP backend and Conservative DSP "
+      "idling. The PipeTune service will restart if it is running.");
   gtk_dialog_add_button(GTK_DIALOG(dialog), "Cancel",
                         GTK_RESPONSE_CANCEL);
   gtk_dialog_add_button(GTK_DIALOG(dialog), "Reset",
@@ -929,6 +991,98 @@ static void onDspBackendApplyClicked(GtkButton *,
       runtime->controlClient, runtime->pendingDspBackend,
       runtime->pendingDspSimdVariant,
       onDspBackendReply, runtime);
+}
+
+static void updateDspIdleEditDirty(GtkRuntime *runtime) {
+  runtime->dspIdleEditDirty =
+      runtime->editedDspIdlePolicy !=
+      displayedDspIdlePolicy(*runtime);
+}
+
+static void onDspIdlePolicyChanged(GtkComboBox *combo,
+                                   gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (runtime->updatingDspIdleControls ||
+      runtime->dspIdleChangePending ||
+      runtime->state.operationPending) {
+    return;
+  }
+  const auto selected = gtk_combo_box_get_active(combo);
+  if (selected < 0 ||
+      static_cast<std::size_t>(selected) >=
+          runtime->dspIdleChoices.size()) {
+    return;
+  }
+  runtime->editedDspIdlePolicy =
+      runtime->dspIdleChoices[static_cast<std::size_t>(selected)]
+          .policy;
+  updateDspIdleEditDirty(runtime);
+  render(runtime);
+}
+
+static void onDspIdlePolicyReply(
+    const ControlClientReply &reply, void *userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  const auto completion = completeDspIdleOperation(
+      runtime->state, reply,
+      {.configPath = runtime->startupConfigPath,
+       .policy = runtime->pendingDspIdlePolicy},
+      currentMonotonicMilliseconds());
+  runtime->dspIdleChangePending = false;
+  if (completion.persistenceApplied) {
+    runtime->startupDspIdlePolicy =
+        runtime->pendingDspIdlePolicy;
+  }
+  runtime->dspIdleEditDirty = !completion.persistenceApplied;
+  if (completion.liveApplied) {
+    runtime->editedDspIdlePolicy =
+        reply.response.status.dspIdlePolicy;
+  }
+  if (completion.reconnectRequired) {
+    scheduleReconnect(runtime);
+  }
+  render(runtime);
+}
+
+static void onDspIdlePolicyApplyClicked(
+    GtkButton *, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (!runtime->dspIdleEditDirty ||
+      runtime->dspIdleChangePending ||
+      runtime->state.operationPending ||
+      pipetune::dspIdlePolicyName(
+          runtime->editedDspIdlePolicy)
+          .empty()) {
+    return;
+  }
+
+  clearControlNotice(runtime->state);
+  runtime->pendingDspIdlePolicy =
+      runtime->editedDspIdlePolicy;
+  runtime->dspIdleChangePending = true;
+  const auto connected =
+      runtime->state.connection == ControlConnectionState::connected;
+  if (!connected) {
+    const auto completion =
+        persistDspIdleOperationForNextStart(
+            runtime->state,
+            {.configPath = runtime->startupConfigPath,
+             .policy = runtime->pendingDspIdlePolicy});
+    runtime->dspIdleChangePending = false;
+    if (completion.persistenceApplied) {
+      runtime->startupDspIdlePolicy =
+          runtime->pendingDspIdlePolicy;
+      runtime->dspIdleEditDirty = false;
+    }
+    render(runtime);
+    return;
+  }
+
+  setControlOperationPending(runtime->state, true);
+  render(runtime);
+  setControlDspIdlePolicyAsync(
+      runtime->controlClient, runtime->pendingDspIdlePolicy,
+      onDspIdlePolicyReply, runtime);
 }
 
 static std::string savePendingPreset(GtkRuntime *runtime) {
@@ -1292,6 +1446,10 @@ static void connectMainWindowSignals(GtkRuntime *runtime) {
                    G_CALLBACK(onDspBackendChanged), runtime);
   g_signal_connect(runtime->ui.dspBackendApplyButton, "clicked",
                    G_CALLBACK(onDspBackendApplyClicked), runtime);
+  g_signal_connect(runtime->ui.dspIdlePolicyCombo, "changed",
+                   G_CALLBACK(onDspIdlePolicyChanged), runtime);
+  g_signal_connect(runtime->ui.dspIdlePolicyApplyButton, "clicked",
+                   G_CALLBACK(onDspIdlePolicyApplyClicked), runtime);
   g_signal_connect(runtime->ui.presetCombo, "changed",
                    G_CALLBACK(onPresetComboChanged), runtime);
   g_signal_connect(runtime->ui.presetChooser, "file-set",
@@ -1366,6 +1524,10 @@ static std::string reloadStartupConfig(GtkRuntime *runtime,
   runtime->editedDspSimdVariant = loaded.dspSimdVariant;
   runtime->pendingDspSimdVariant = loaded.dspSimdVariant;
   runtime->dspBackendEditDirty = false;
+  runtime->startupDspIdlePolicy = loaded.dspIdlePolicy;
+  runtime->editedDspIdlePolicy = loaded.dspIdlePolicy;
+  runtime->pendingDspIdlePolicy = loaded.dspIdlePolicy;
+  runtime->dspIdleEditDirty = false;
   runtime->pendingPreset.clear();
 
   if (resetSelections) {
@@ -1574,6 +1736,13 @@ static int runApplication(int argc, char **argv) {
       .updatingDspBackendControls = false,
       .dspBackendEditDirty = false,
       .dspBackendChangePending = false,
+      .startupDspIdlePolicy = pipetune::defaultDspIdlePolicy(),
+      .editedDspIdlePolicy = pipetune::defaultDspIdlePolicy(),
+      .pendingDspIdlePolicy = pipetune::defaultDspIdlePolicy(),
+      .dspIdleChoices = {},
+      .updatingDspIdleControls = false,
+      .dspIdleEditDirty = false,
+      .dspIdleChangePending = false,
       .reconnectSource = 0,
       .applicationHeld = false,
       .activationHandled = false,

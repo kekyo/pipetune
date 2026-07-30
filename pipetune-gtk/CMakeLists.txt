@@ -69,6 +69,8 @@ add_library(
   src/control-client.cpp
   src/dsp-backend-operation.cpp
   src/dsp-backend-selection-model.cpp
+  src/dsp-idle-operation.cpp
+  src/dsp-idle-selection-model.cpp
   src/output-operation.cpp
   src/output-selection-model.cpp
   src/rate-operation.cpp
@@ -301,6 +303,42 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_gtk_rate_operation_tests
     COMMAND pipetune_gtk_rate_operation_tests)
+
+  add_executable(
+    pipetune_gtk_dsp_idle_selection_model_tests
+    test/dsp-idle-selection-model-test.cpp)
+  target_link_libraries(
+    pipetune_gtk_dsp_idle_selection_model_tests
+    PRIVATE pipetune_gtk_core)
+  if(MSVC)
+    target_compile_options(
+      pipetune_gtk_dsp_idle_selection_model_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_dsp_idle_selection_model_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_gtk_dsp_idle_selection_model_tests
+    COMMAND pipetune_gtk_dsp_idle_selection_model_tests)
+
+  add_executable(
+    pipetune_gtk_dsp_idle_operation_tests
+    test/dsp-idle-operation-test.cpp)
+  target_link_libraries(
+    pipetune_gtk_dsp_idle_operation_tests
+    PRIVATE pipetune_gtk_core)
+  if(MSVC)
+    target_compile_options(
+      pipetune_gtk_dsp_idle_operation_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_dsp_idle_operation_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_gtk_dsp_idle_operation_tests
+    COMMAND pipetune_gtk_dsp_idle_operation_tests)
 
   add_executable(
     pipetune_gtk_dsp_backend_selection_model_tests
