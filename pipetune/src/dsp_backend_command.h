@@ -67,11 +67,14 @@ queryDspBackendStatus(const std::filesystem::path &socketPath);
  *
  * @param options Resolved configuration and control paths.
  * @param kind Scalar compatibility or SIMD acceleration backend.
+ * @param simdVariant Automatic or pinned SIMD dispatch preference.
  * @return Live and persistence outcomes.
  */
 PersistentDspBackendResult
 executeSetDspBackend(const PersistentDspBackendOptions &options,
-                     DspBackendKind kind);
+                     DspBackendKind kind,
+                     DspSimdVariant simdVariant =
+                         DspSimdVariant::automatic);
 
 /**
  * Formats configured and effective backend state.

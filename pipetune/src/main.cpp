@@ -259,11 +259,10 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
   }
   if (!prepared.dspBackendError.empty()) {
     std::cerr << "pipetune: warning: " << prepared.dspBackendError;
-    if (prepared.effectiveDspBackend.has_value()) {
-      std::cerr << "; using "
-                << pipetune::dspBackendName(
-                       *prepared.effectiveDspBackend)
-                << " DSP backend";
+    if (prepared.effectiveDspVariant.has_value()) {
+      std::cerr << "; using DSP variant "
+                << pipetune::dspBackendVariantName(
+                       *prepared.effectiveDspVariant);
     } else {
       std::cerr << "; DSP presets are unavailable";
     }
@@ -298,7 +297,9 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
        .readyCallback = nullptr,
        .readyUserData = nullptr,
        .dspBackends = std::move(prepared.dspBackends),
-       .configuredDspBackend = prepared.configuredDspBackend},
+       .configuredDspBackend = prepared.configuredDspBackend,
+       .configuredDspSimdVariant =
+           prepared.configuredDspSimdVariant},
       pipetune::PipeWireRunMode::untilInterrupted);
   if (!result.success) {
     std::cerr << "pipetune: " << result.error << '\n';
@@ -472,7 +473,7 @@ static int runDspCommand(const pipetune::CommandLineOptions &options) {
   }
   const auto changed = pipetune::executeSetDspBackend(
       {.configPath = config.path, .socketPath = socket.path},
-      options.dspBackend);
+      options.dspBackend, options.dspSimdVariant);
   if (!changed.success) {
     std::cerr << "pipetune: " << changed.error << '\n';
     return 1;
@@ -616,7 +617,8 @@ int main(int argc, char **argv) {
 
   auto backends = pipetune::discoverDspBackends();
   const auto selected = pipetune::selectDspBackend(
-      parsed.options.dspBackend, backends);
+      parsed.options.dspBackend, parsed.options.dspSimdVariant,
+      backends);
   if (selected.effectiveBackend == nullptr) {
     std::cerr << "pipetune: " << selected.error << '\n';
     return 1;
@@ -672,7 +674,9 @@ int main(int argc, char **argv) {
        .readyCallback = nullptr,
        .readyUserData = nullptr,
        .dspBackends = std::move(backends),
-       .configuredDspBackend = parsed.options.dspBackend},
+       .configuredDspBackend = parsed.options.dspBackend,
+       .configuredDspSimdVariant =
+           parsed.options.dspSimdVariant},
       mode);
   if (!result.success) {
     std::cerr << "pipetune: " << result.error << '\n';

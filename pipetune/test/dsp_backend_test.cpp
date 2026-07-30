@@ -139,6 +139,10 @@ static bool testBackendDiscoveryAndSelection() {
   auto withoutSimd = discovered;
   withoutSimd.simd.backend.reset();
   withoutSimd.simd.error = "test SIMD backend is unavailable";
+  for (auto &variant : withoutSimd.simdVariants) {
+    variant.backend.reset();
+    variant.error = "test SIMD backend is unavailable";
+  }
   const auto fallback =
       pipetune::selectDspBackend(pipetune::DspBackendKind::simd,
                                  withoutSimd);
@@ -165,6 +169,58 @@ static bool testBackendDiscoveryAndSelection() {
                "missing scalar backend must not report a usable fallback") &&
          check(contains(unusable.error, "test scalar backend is unavailable"),
                "missing scalar diagnostic must be retained");
+}
+
+static bool testAutomaticTierFallback() {
+  const auto discovered = pipetune::discoverDspBackends();
+  const auto lower = std::ranges::find_if(
+      discovered.simdVariants,
+      [](const pipetune::DspBackendLoadResult &variant) {
+        return variant.backend != nullptr;
+      });
+  if (!check(discovered.scalar.backend != nullptr,
+             discovered.scalar.error) ||
+      !check(lower != discovered.simdVariants.end(),
+             "automatic tier fallback requires one usable SIMD backend")) {
+    return false;
+  }
+
+  auto unsupportedUpper = pipetune::DspBackendLoadResult{
+      .backend = nullptr,
+      .attemptedPath = "/test/unsupported-upper.so",
+      .cpuRequirement = "test upper ISA",
+      .error = "test upper ISA is unsupported",
+      .variant = pipetune::DspBackendVariant::x86_64_v4,
+      .cpuSupported = false,
+  };
+  auto backends = pipetune::DspBackends{
+      .scalar = discovered.scalar,
+      .simd = *lower,
+      .simdVariants = {*lower, unsupportedUpper},
+  };
+  const auto ignored = pipetune::selectDspBackend(
+      pipetune::DspBackendKind::simd,
+      pipetune::DspSimdVariant::automatic, backends);
+  if (!check(ignored.effectiveBackend == lower->backend &&
+                 ignored.effectiveVariant == lower->variant &&
+                 !ignored.fallback && ignored.error.empty(),
+             "CPU-unsupported upper SIMD tier must be ignored")) {
+    return false;
+  }
+
+  backends.simdVariants.back().cpuSupported = true;
+  backends.simdVariants.back().error =
+      "test supported upper SIMD tier is broken";
+  const auto degraded = pipetune::selectDspBackend(
+      pipetune::DspBackendKind::simd,
+      pipetune::DspSimdVariant::automatic, backends);
+  return check(degraded.effectiveBackend == lower->backend &&
+                   degraded.effectiveVariant == lower->variant &&
+                   degraded.fallback &&
+                   degraded.error ==
+                       "test supported upper SIMD tier is broken",
+               "broken CPU-supported upper tier must use lower SIMD with a "
+               "fallback diagnostic");
 }
 
 static bool testRejectedBackends(
@@ -324,6 +380,7 @@ int main(int argc, char **argv) {
   const auto passed =
       testNames() && testValidBackends(scalarPath, simdPath) &&
       testBackendDiscoveryAndSelection() &&
+      testAutomaticTierFallback() &&
       testRejectedBackends(scalarPath, simdPath, wrongAbiPath,
                            missingSymbolPath) &&
       testPipelineOwnership(scalarPath, simdPath);

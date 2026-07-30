@@ -7,23 +7,26 @@
 namespace pipetune_gtk {
 
 static std::string validateBackend(
-    pipetune::DspBackendKind kind) {
+    pipetune::DspBackendKind kind,
+    pipetune::DspSimdVariant simdVariant) {
   if (kind != pipetune::DspBackendKind::scalar &&
       kind != pipetune::DspBackendKind::simd) {
     return "DSP backend is invalid";
   }
-  const auto backends = pipetune::discoverDspBackends();
-  if (backends.scalar.backend == nullptr) {
-    return backends.scalar.error.empty()
-               ? std::string("scalar DSP backend is unavailable")
-               : backends.scalar.error;
+  if (pipetune::dspSimdVariantName(simdVariant).empty() ||
+      (kind == pipetune::DspBackendKind::scalar &&
+       simdVariant != pipetune::DspSimdVariant::automatic)) {
+    return "DSP SIMD variant is invalid";
   }
-  const auto &requested = backends.get(kind);
-  if (requested.backend == nullptr) {
-    return requested.error.empty()
+  const auto backends = pipetune::discoverDspBackends();
+  const auto selected =
+      pipetune::selectDspBackend(kind, simdVariant, backends);
+  if (selected.effectiveBackend == nullptr ||
+      selected.effectiveBackend->kind() != kind) {
+    return selected.error.empty()
                ? std::string(pipetune::dspBackendName(kind)) +
                      " DSP backend is unavailable"
-               : requested.error;
+               : selected.error;
   }
   return {};
 }
@@ -33,24 +36,35 @@ static std::string persistBackend(
   if (request.configPath.empty()) {
     return "startup configuration path is unavailable";
   }
-  return pipetune::saveDspBackendKind(request.configPath,
-                                      request.kind);
+  return pipetune::saveDspBackendSelection(
+      request.configPath, request.kind, request.simdVariant);
 }
 
 static bool confirmsBackend(
     const pipetune::ControlRuntimeStatus &status,
-    pipetune::DspBackendKind kind) {
+    pipetune::DspBackendKind kind,
+    pipetune::DspSimdVariant simdVariant) {
+  const auto expectedPinned =
+      pipetune::concreteDspBackendVariant(simdVariant);
   return status.configuredDspBackend == kind &&
+         status.configuredDspSimdVariant == simdVariant &&
          status.effectiveDspBackend == kind &&
-         !status.dspBackendFallback &&
-         status.dspBackendError.empty();
+         (kind == pipetune::DspBackendKind::scalar
+              ? status.effectiveDspVariant ==
+                    pipetune::DspBackendVariant::scalar
+              : (!expectedPinned.has_value() ||
+                 status.effectiveDspVariant == expectedPinned)) &&
+         (simdVariant == pipetune::DspSimdVariant::automatic ||
+          (!status.dspBackendFallback &&
+           status.dspBackendError.empty()));
 }
 
 DspBackendOperationCompletion
 persistDspBackendOperationForNextStart(
     ApplicationState &state,
     const DspBackendOperationRequest &request) {
-  const auto validationError = validateBackend(request.kind);
+  const auto validationError =
+      validateBackend(request.kind, request.simdVariant);
   if (!validationError.empty()) {
     setControlDiagnostic(
         state, "DSP backend could not be selected: " +
@@ -82,7 +96,8 @@ DspBackendOperationCompletion completeDspBackendOperation(
   setControlOperationPending(state, false);
   if (!reply.transportError.empty()) {
     markControlDisconnected(state, reply.transportError);
-    const auto validationError = validateBackend(request.kind);
+    const auto validationError =
+        validateBackend(request.kind, request.simdVariant);
     if (!validationError.empty()) {
       setControlDiagnostic(
           state,
@@ -117,7 +132,8 @@ DspBackendOperationCompletion completeDspBackendOperation(
             .liveApplied = false,
             .persistenceApplied = false};
   }
-  if (!confirmsBackend(reply.response.status, request.kind)) {
+  if (!confirmsBackend(reply.response.status, request.kind,
+                       request.simdVariant)) {
     setControlDiagnostic(
         state, "Daemon did not confirm the requested DSP backend");
     return {.reconnectRequired = false,

@@ -174,11 +174,13 @@ void setControlRateAsync(ControlClient *client,
  *
  * @param client Client used for the request.
  * @param kind Scalar compatibility or SIMD acceleration backend.
+ * @param simdVariant Automatic or pinned SIMD dispatch preference.
  * @param callback Non-null completion callback.
  * @param userData Opaque callback argument.
  */
 void setControlDspBackendAsync(ControlClient *client,
                                pipetune::DspBackendKind kind,
+                               pipetune::DspSimdVariant simdVariant,
                                ControlClientReplyCallback callback,
                                void *userData);
 

@@ -52,6 +52,8 @@ struct ControlRequest {
   SampleRatePolicy ratePolicy = {};
   /** Requested backend for setDspBackend, or scalar otherwise. */
   DspBackendKind dspBackend = DspBackendKind::scalar;
+  /** Requested SIMD dispatch preference for setDspBackend. */
+  DspSimdVariant dspSimdVariant = DspSimdVariant::automatic;
 };
 
 /**
@@ -121,6 +123,22 @@ struct ControlDspBackendAvailability {
 };
 
 /**
+ * Describes one concrete packaged DSP backend variant.
+ */
+struct ControlDspVariantAvailability {
+  /** Concrete instruction-set variant. */
+  DspBackendVariant variant;
+  /** True when loading and ABI validation succeeded. */
+  bool available;
+  /** True when the running CPU satisfies the variant requirement. */
+  bool cpuSupported;
+  /** CPU feature level required on the running architecture. */
+  std::string cpuRequirement;
+  /** Availability diagnostic, or empty when available is true. */
+  std::string error;
+};
+
+/**
  * Describes the current daemon state returned over the control socket.
  */
 struct ControlRuntimeStatus {
@@ -178,10 +196,15 @@ struct ControlRuntimeStatus {
   std::string rateError = {};
   /** Persisted or successfully applied DSP backend choice. */
   DspBackendKind configuredDspBackend = DspBackendKind::scalar;
+  /** Persisted or successfully applied SIMD dispatch preference. */
+  DspSimdVariant configuredDspSimdVariant = DspSimdVariant::automatic;
   /** Backend used by active presets, or no value without a usable scalar SO. */
   std::optional<DspBackendKind> effectiveDspBackend =
       DspBackendKind::scalar;
-  /** True when configured SIMD is unavailable and scalar is effective. */
+  /** Concrete backend used by active presets, or no value when unavailable. */
+  std::optional<DspBackendVariant> effectiveDspVariant =
+      DspBackendVariant::scalar;
+  /** True when a lower tier or scalar replaced the preferred SIMD tier. */
   bool dspBackendFallback = false;
   /** DSP backend selection diagnostic, or empty without fallback. */
   std::string dspBackendError = {};
@@ -196,6 +219,18 @@ struct ControlRuntimeStatus {
        .cpuRequirement = "unknown",
        .error = "SIMD DSP backend availability was not reported"},
   }};
+  /** Concrete scalar and architecture-applicable SIMD variant availability. */
+  std::vector<ControlDspVariantAvailability> availableDspVariants = {
+      {.variant = DspBackendVariant::scalar,
+       .available = true,
+       .cpuSupported = true,
+       .cpuRequirement = "none",
+       .error = {}},
+      {.variant = DspBackendVariant::simdBaseline,
+       .available = false,
+       .cpuSupported = false,
+       .cpuRequirement = "unknown",
+       .error = "SIMD DSP variant availability was not reported"}};
 };
 
 /**
@@ -293,6 +328,17 @@ std::string makeSetRateControlRequest(const SampleRatePolicy &policy);
  * @return Encoded request, or an empty string for an invalid kind or failure.
  */
 std::string makeSetDspBackendControlRequest(DspBackendKind kind);
+
+/**
+ * Returns a JSON DSP-backend and SIMD-variant request.
+ *
+ * @param kind Scalar compatibility or SIMD acceleration backend.
+ * @param simdVariant Automatic or pinned SIMD dispatch preference.
+ * @return Encoded request, or an empty string for invalid input or failure.
+ */
+std::string
+makeSetDspBackendControlRequest(DspBackendKind kind,
+                                DspSimdVariant simdVariant);
 
 /**
  * Returns a JSON live-preset request without framing newline.

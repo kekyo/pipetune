@@ -122,6 +122,9 @@ public:
   /** Returns the active native backend, or no value for bypass. */
   std::optional<DspBackendKind> backendKind() const noexcept;
 
+  /** Returns the active concrete native variant, or no value for bypass. */
+  std::optional<DspBackendVariant> backendVariant() const noexcept;
+
   /** Returns cumulative native EffeTune processing counters. */
   DspPerformanceCounters performanceCounters() const noexcept;
 

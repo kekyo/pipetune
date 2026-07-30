@@ -340,6 +340,13 @@ std::optional<DspBackendKind> DspPipeline::backendKind() const noexcept {
   return implementation_->backend->kind();
 }
 
+std::optional<DspBackendVariant> DspPipeline::backendVariant() const noexcept {
+  if (implementation_ == nullptr || implementation_->backend == nullptr) {
+    return std::nullopt;
+  }
+  return implementation_->backend->variant();
+}
+
 bool DspPipeline::usesNativeDsp() const noexcept {
   return implementation_ != nullptr && !implementation_->bypass;
 }

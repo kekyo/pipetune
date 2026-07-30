@@ -37,6 +37,22 @@ enum class DspBackendVariant {
 };
 
 /**
+ * Selects automatic or pinned SIMD instruction-set dispatch.
+ */
+enum class DspSimdVariant {
+  /** Select the highest usable SIMD variant at runtime. */
+  automatic,
+  /** Pin architecture-baseline SIMD. */
+  baseline,
+  /** Pin the x86-64-v3 backend. */
+  x86_64_v3,
+  /** Pin the x86-64-v4 backend. */
+  x86_64_v4,
+  /** Pin the Arm64 SVE backend. */
+  arm64Sve
+};
+
+/**
  * Returns the stable configuration name for a DSP backend kind.
  *
  * @param kind Backend kind.
@@ -79,6 +95,32 @@ parseDspBackendVariantName(std::string_view name) noexcept;
  */
 DspBackendKind
 dspBackendKind(DspBackendVariant variant) noexcept;
+
+/**
+ * Returns the stable configuration name for a SIMD dispatch preference.
+ *
+ * @param variant SIMD dispatch preference.
+ * @return `auto`, `baseline`, `x86-64-v3`, `x86-64-v4`, or `sve`.
+ */
+std::string_view dspSimdVariantName(DspSimdVariant variant) noexcept;
+
+/**
+ * Parses an exact, case-sensitive SIMD dispatch preference.
+ *
+ * @param name Candidate configuration value.
+ * @return Parsed preference, or no value when the name is unsupported.
+ */
+std::optional<DspSimdVariant>
+parseDspSimdVariantName(std::string_view name) noexcept;
+
+/**
+ * Resolves a pinned SIMD preference to its concrete backend variant.
+ *
+ * @param variant SIMD dispatch preference.
+ * @return Concrete variant, or no value for automatic dispatch.
+ */
+std::optional<DspBackendVariant>
+concreteDspBackendVariant(DspSimdVariant variant) noexcept;
 
 struct DspBackendAccess;
 
@@ -127,6 +169,8 @@ struct DspBackendLoadResult {
   std::string error;
   /** Concrete backend variant represented by this result. */
   DspBackendVariant variant = DspBackendVariant::scalar;
+  /** True when the current CPU satisfies this variant's requirements. */
+  bool cpuSupported = true;
 };
 
 /**
@@ -165,11 +209,16 @@ struct DspBackends {
 struct DspBackendSelection {
   /** User-configured backend kind. */
   DspBackendKind configuredBackend;
+  /** User-configured SIMD dispatch preference. */
+  DspSimdVariant configuredSimdVariant = DspSimdVariant::automatic;
   /** Backend to use, or null when the mandatory scalar backend is unavailable. */
   std::shared_ptr<const DspBackend> effectiveBackend;
-  /** True when configured SIMD could not be used and scalar was selected. */
+  /** Concrete effective backend, or no value when no backend is usable. */
+  std::optional<DspBackendVariant> effectiveVariant =
+      DspBackendVariant::scalar;
+  /** True when a lower tier or scalar replaced the preferred SIMD tier. */
   bool fallback;
-  /** Availability diagnostic, or empty when the configured backend is active. */
+  /** Degradation diagnostic, or empty when the preferred tier is active. */
   std::string error;
 };
 
@@ -218,6 +267,23 @@ DspBackends discoverDspBackends();
  */
 DspBackendSelection
 selectDspBackend(DspBackendKind configuredBackend,
+                 const DspBackends &backends);
+
+/**
+ * Selects an effective backend using logical kind and SIMD pinning rules.
+ *
+ * Automatic SIMD ignores CPU-inapplicable upper tiers, but reports fallback
+ * when a supported upper tier is broken. A missing pinned variant falls back
+ * to scalar for startup use.
+ *
+ * @param configuredBackend User-configured backend kind.
+ * @param configuredSimdVariant Automatic or pinned SIMD preference.
+ * @param backends Previously discovered backend results.
+ * @return Effective backend, concrete variant, fallback state, and diagnostic.
+ */
+DspBackendSelection
+selectDspBackend(DspBackendKind configuredBackend,
+                 DspSimdVariant configuredSimdVariant,
                  const DspBackends &backends);
 
 } // namespace pipetune

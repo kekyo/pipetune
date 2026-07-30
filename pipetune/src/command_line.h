@@ -84,6 +84,8 @@ struct CommandLineOptions {
   SampleRatePolicy ratePolicy;
   /** Direct-run or dspSet native backend choice. */
   DspBackendKind dspBackend;
+  /** Direct-run or dspSet automatic/pinned SIMD dispatch preference. */
+  DspSimdVariant dspSimdVariant;
   /** Stream channel count. */
   std::uint32_t channelCount;
   /** True to stop once both PipeWire streams are ready. */

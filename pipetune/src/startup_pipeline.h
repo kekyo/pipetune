@@ -35,10 +35,16 @@ struct StartupPipelineResult {
   DspBackends dspBackends = {};
   /** Persisted backend choice. */
   DspBackendKind configuredDspBackend = DspBackendKind::scalar;
+  /** Persisted SIMD dispatch preference. */
+  DspSimdVariant configuredDspSimdVariant =
+      DspSimdVariant::automatic;
   /** Active backend, or no value when the mandatory scalar backend failed. */
   std::optional<DspBackendKind> effectiveDspBackend =
       DspBackendKind::scalar;
-  /** True when configured SIMD could not be used and scalar is active. */
+  /** Active concrete variant, or no value when no backend is usable. */
+  std::optional<DspBackendVariant> effectiveDspVariant =
+      DspBackendVariant::scalar;
+  /** True when a lower tier or scalar replaced the preferred SIMD tier. */
   bool dspBackendFallback = false;
   /** Backend availability or compatibility diagnostic. */
   std::string dspBackendError = {};

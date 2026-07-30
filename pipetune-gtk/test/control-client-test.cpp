@@ -21,6 +21,7 @@ struct ServerState {
   std::string preferredTarget;
   pipetune::SampleRatePolicy ratePolicy;
   pipetune::DspBackendKind dspBackend;
+  pipetune::DspSimdVariant dspSimdVariant;
 };
 
 static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
@@ -77,7 +78,12 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
               state.ratePolicy.fixedRate != 96000,
           .rateError = {},
           .configuredDspBackend = state.dspBackend,
+          .configuredDspSimdVariant = state.dspSimdVariant,
           .effectiveDspBackend = state.dspBackend,
+          .effectiveDspVariant =
+              state.dspBackend == pipetune::DspBackendKind::scalar
+                  ? pipetune::DspBackendVariant::scalar
+                  : pipetune::DspBackendVariant::simdBaseline,
           .dspBackendFallback = false,
           .dspBackendError = {},
           .availableDspBackends =
@@ -90,7 +96,19 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
                    .available = true,
                    .cpuRequirement = "test SIMD ISA",
                    .error = {}},
-              }}};
+              }},
+          .availableDspVariants =
+              {{.variant = pipetune::DspBackendVariant::scalar,
+                .available = true,
+                .cpuSupported = true,
+                .cpuRequirement = "none",
+                .error = {}},
+               {.variant =
+                    pipetune::DspBackendVariant::simdBaseline,
+                .available = true,
+                .cpuSupported = true,
+                .cpuRequirement = "test SIMD ISA",
+                .error = {}}}};
 }
 
 static std::string provideStatus(void *userData) {
@@ -169,6 +187,7 @@ static pipetune::ControlMessageResult handleRequest(
     {
       auto lock = std::scoped_lock(state.mutex);
       state.dspBackend = request.request.dspBackend;
+      state.dspSimdVariant = request.request.dspSimdVariant;
     }
     return {.response = pipetune::makeControlSuccessResponse(
                 serverStatus(state), {}),
@@ -287,8 +306,12 @@ static void onSetDspBackendReply(
       !reply.response.success ||
       reply.response.status.configuredDspBackend !=
           pipetune::DspBackendKind::simd ||
+      reply.response.status.configuredDspSimdVariant !=
+          pipetune::DspSimdVariant::automatic ||
       reply.response.status.effectiveDspBackend !=
           pipetune::DspBackendKind::simd ||
+      reply.response.status.effectiveDspVariant !=
+          pipetune::DspBackendVariant::simdBaseline ||
       reply.response.status.dspBackendFallback ||
       !reply.response.status.dspBackendError.empty()) {
     state.failed = true;
@@ -304,6 +327,7 @@ static void maybeStartSetDspBackend(ClientTestState &state) {
     state.setDspBackendRequested = true;
     pipetune_gtk::setControlDspBackendAsync(
         state.client, pipetune::DspBackendKind::simd,
+        pipetune::DspSimdVariant::automatic,
         onSetDspBackendReply, &state);
   }
   maybeStopServer(state);
@@ -468,7 +492,9 @@ int main() {
                   .bypassed = false,
                   .preferredTarget = {},
                   .ratePolicy = pipetune::defaultSampleRatePolicy(),
-                  .dspBackend = pipetune::DspBackendKind::scalar};
+                  .dspBackend = pipetune::DspBackendKind::scalar,
+                  .dspSimdVariant =
+                      pipetune::DspSimdVariant::automatic};
   auto started = pipetune::startControlServer(
       socketPath,
       {.handler = handleRequest,

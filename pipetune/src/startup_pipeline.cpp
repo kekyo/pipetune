@@ -23,10 +23,13 @@ prepareBypass(const PipelineBuildOptions &options,
             .error = std::move(created.error),
             .dspBackends = std::move(backends),
             .configuredDspBackend = selection.configuredBackend,
+            .configuredDspSimdVariant =
+                selection.configuredSimdVariant,
             .effectiveDspBackend =
                 selection.effectiveBackend == nullptr
                     ? std::optional<DspBackendKind>{}
                     : selection.effectiveBackend->kind(),
+            .effectiveDspVariant = selection.effectiveVariant,
             .dspBackendFallback = selection.fallback,
             .dspBackendError = selection.error};
   }
@@ -39,10 +42,13 @@ prepareBypass(const PipelineBuildOptions &options,
           .error = {},
           .dspBackends = std::move(backends),
           .configuredDspBackend = selection.configuredBackend,
+          .configuredDspSimdVariant =
+              selection.configuredSimdVariant,
           .effectiveDspBackend =
               selection.effectiveBackend == nullptr
                   ? std::optional<DspBackendKind>{}
                   : selection.effectiveBackend->kind(),
+          .effectiveDspVariant = selection.effectiveVariant,
           .dspBackendFallback = selection.fallback,
           .dspBackendError = selection.error};
 }
@@ -60,12 +66,14 @@ prepareStartupPipeline(const std::filesystem::path &configPath,
   const auto configured = loadStartupConfig(configPath);
   if (!configured.error.empty()) {
     const auto selection =
-        selectDspBackend(DspBackendKind::scalar, backends);
+        selectDspBackend(DspBackendKind::scalar,
+                         DspSimdVariant::automatic, backends);
     return prepareBypass(options, {}, defaultSampleRatePolicy(),
                          configured.error, std::move(backends), selection);
   }
   const auto selection =
-      selectDspBackend(configured.dspBackend, backends);
+      selectDspBackend(configured.dspBackend,
+                       configured.dspSimdVariant, backends);
   if (!configured.presetFound) {
     return prepareBypass(options, configured.preferredOutput,
                          configured.ratePolicy, {}, std::move(backends),
@@ -95,7 +103,10 @@ prepareStartupPipeline(const std::filesystem::path &configPath,
           .error = {},
           .dspBackends = std::move(backends),
           .configuredDspBackend = selection.configuredBackend,
+          .configuredDspSimdVariant =
+              selection.configuredSimdVariant,
           .effectiveDspBackend = selection.effectiveBackend->kind(),
+          .effectiveDspVariant = selection.effectiveVariant,
           .dspBackendFallback = selection.fallback,
           .dspBackendError = selection.error};
 }

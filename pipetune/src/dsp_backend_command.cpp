@@ -48,30 +48,35 @@ dspBackendChangeError(std::string error) {
           .error = std::move(error)};
 }
 
-static std::string offlineBackendValidationError(DspBackendKind kind) {
+static std::string offlineBackendValidationError(
+    DspBackendKind kind, DspSimdVariant simdVariant) {
   const auto backends = discoverDspBackends();
-  if (backends.scalar.backend == nullptr) {
-    return backends.scalar.error.empty()
-               ? "scalar DSP backend is unavailable"
-               : backends.scalar.error;
-  }
-  const auto &requested = backends.get(kind);
-  if (requested.backend == nullptr) {
-    return requested.error.empty()
+  const auto selected =
+      selectDspBackend(kind, simdVariant, backends);
+  if (selected.effectiveBackend == nullptr ||
+      selected.effectiveBackend->kind() != kind) {
+    return selected.error.empty()
                ? std::string(dspBackendName(kind)) +
                      " DSP backend is unavailable"
-               : requested.error;
+               : selected.error;
   }
   return {};
 }
 
 PersistentDspBackendResult
 executeSetDspBackend(const PersistentDspBackendOptions &options,
-                     DspBackendKind kind) {
+                     DspBackendKind kind,
+                     DspSimdVariant simdVariant) {
   if (kind != DspBackendKind::scalar && kind != DspBackendKind::simd) {
     return dspBackendChangeError("DSP backend is invalid");
   }
-  const auto request = makeSetDspBackendControlRequest(kind);
+  if (dspSimdVariantName(simdVariant).empty() ||
+      (kind == DspBackendKind::scalar &&
+       simdVariant != DspSimdVariant::automatic)) {
+    return dspBackendChangeError("DSP SIMD variant is invalid");
+  }
+  const auto request =
+      makeSetDspBackendControlRequest(kind, simdVariant);
   if (request.empty()) {
     return dspBackendChangeError("cannot encode DSP backend request");
   }
@@ -82,7 +87,8 @@ executeSetDspBackend(const PersistentDspBackendOptions &options,
   const auto exchange =
       exchangeControlMessage(options.socketPath, request);
   if (!exchange.error.empty()) {
-    const auto validation = offlineBackendValidationError(kind);
+    const auto validation =
+        offlineBackendValidationError(kind, simdVariant);
     if (!validation.empty()) {
       return dspBackendChangeError(
           "cannot select DSP backend while daemon is unavailable: " +
@@ -101,10 +107,22 @@ executeSetDspBackend(const PersistentDspBackendOptions &options,
       return dspBackendChangeError(
           "daemon returned an unexpected DSP backend status event");
     }
-    if (response.status.configuredDspBackend != kind ||
-        response.status.effectiveDspBackend != kind ||
-        response.status.dspBackendFallback ||
-        !response.status.dspBackendError.empty()) {
+    const auto expectedPinned =
+        concreteDspBackendVariant(simdVariant);
+    const auto confirmed =
+        response.status.configuredDspBackend == kind &&
+        response.status.configuredDspSimdVariant == simdVariant &&
+        response.status.effectiveDspBackend == kind &&
+        (kind == DspBackendKind::scalar
+             ? response.status.effectiveDspVariant ==
+                   DspBackendVariant::scalar
+             : (!expectedPinned.has_value() ||
+                response.status.effectiveDspVariant ==
+                    expectedPinned)) &&
+        (simdVariant == DspSimdVariant::automatic ||
+         (!response.status.dspBackendFallback &&
+          response.status.dspBackendError.empty()));
+    if (!confirmed) {
       return dspBackendChangeError(
           "daemon did not confirm the requested DSP backend");
     }
@@ -113,7 +131,7 @@ executeSetDspBackend(const PersistentDspBackendOptions &options,
   }
 
   const auto persistenceError =
-      saveDspBackendKind(options.configPath, kind);
+      saveDspBackendSelection(options.configPath, kind, simdVariant);
   if (!persistenceError.empty()) {
     const auto prefix =
         liveApplied
@@ -140,9 +158,18 @@ std::string formatDspBackendStatus(
   auto formatted = std::ostringstream{};
   formatted << "Configured backend: "
             << dspBackendName(status.configuredDspBackend) << '\n'
+            << "Configured SIMD variant: "
+            << dspSimdVariantName(status.configuredDspSimdVariant)
+            << '\n'
             << "Effective backend: ";
   if (status.effectiveDspBackend.has_value()) {
     formatted << dspBackendName(*status.effectiveDspBackend);
+  } else {
+    formatted << "unavailable";
+  }
+  formatted << '\n' << "Effective variant: ";
+  if (status.effectiveDspVariant.has_value()) {
+    formatted << dspBackendVariantName(*status.effectiveDspVariant);
   } else {
     formatted << "unavailable";
   }
@@ -158,12 +185,14 @@ std::string formatDspBackendStatus(
 std::string formatDspBackendList(
     const ControlRuntimeStatus &status) {
   auto formatted = std::ostringstream{};
-  for (const auto &backend : status.availableDspBackends) {
-    formatted << dspBackendName(backend.kind) << ": "
-              << (backend.available ? "available" : "unavailable")
-              << " (CPU: " << backend.cpuRequirement << ')';
-    if (!backend.error.empty()) {
-      formatted << " - " << backend.error;
+  for (const auto &variant : status.availableDspVariants) {
+    formatted << dspBackendVariantName(variant.variant) << ": "
+              << (variant.available ? "available" : "unavailable")
+              << " (CPU: " << variant.cpuRequirement << "; "
+              << (variant.cpuSupported ? "supported" : "unsupported")
+              << ')';
+    if (!variant.error.empty()) {
+      formatted << " - " << variant.error;
     }
     formatted << '\n';
   }

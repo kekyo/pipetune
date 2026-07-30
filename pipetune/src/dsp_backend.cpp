@@ -192,13 +192,15 @@ static std::string backendFilename(DspBackendVariant variant) {
 
 static DspBackendLoadResult
 loadError(DspBackendVariant variant, const std::filesystem::path &path,
-          std::string requirement, std::string message) {
+          bool cpuSupported, std::string requirement,
+          std::string message) {
   return {
       .backend = nullptr,
       .attemptedPath = path,
       .cpuRequirement = std::move(requirement),
       .error = std::move(message),
       .variant = variant,
+      .cpuSupported = cpuSupported,
   };
 }
 
@@ -402,6 +404,59 @@ dspBackendKind(DspBackendVariant variant) noexcept {
                                                : DspBackendKind::simd;
 }
 
+std::string_view dspSimdVariantName(DspSimdVariant variant) noexcept {
+  switch (variant) {
+  case DspSimdVariant::automatic:
+    return "auto";
+  case DspSimdVariant::baseline:
+    return "baseline";
+  case DspSimdVariant::x86_64_v3:
+    return "x86-64-v3";
+  case DspSimdVariant::x86_64_v4:
+    return "x86-64-v4";
+  case DspSimdVariant::arm64Sve:
+    return "sve";
+  }
+  return {};
+}
+
+std::optional<DspSimdVariant>
+parseDspSimdVariantName(std::string_view name) noexcept {
+  if (name == "auto") {
+    return DspSimdVariant::automatic;
+  }
+  if (name == "baseline") {
+    return DspSimdVariant::baseline;
+  }
+  if (name == "x86-64-v3") {
+    return DspSimdVariant::x86_64_v3;
+  }
+  if (name == "x86-64-v4") {
+    return DspSimdVariant::x86_64_v4;
+  }
+  if (name == "sve") {
+    return DspSimdVariant::arm64Sve;
+  }
+  return std::nullopt;
+}
+
+std::optional<DspBackendVariant>
+concreteDspBackendVariant(DspSimdVariant variant) noexcept {
+  switch (variant) {
+  case DspSimdVariant::automatic:
+    return std::nullopt;
+  case DspSimdVariant::baseline:
+    return DspBackendVariant::simdBaseline;
+  case DspSimdVariant::x86_64_v3:
+    return DspBackendVariant::x86_64_v3;
+  case DspSimdVariant::x86_64_v4:
+    return DspBackendVariant::x86_64_v4;
+  case DspSimdVariant::arm64Sve:
+    return DspBackendVariant::arm64Sve;
+  }
+  return std::nullopt;
+}
+
 DspBackendLoadResult
 loadDspBackendFromPath(DspBackendVariant variant,
                        const std::filesystem::path &libraryPath,
@@ -412,7 +467,7 @@ loadDspBackendFromPath(DspBackendVariant variant,
                                : std::string("none");
   if (kind == DspBackendKind::simd && !context.cpuSupported) {
     return loadError(
-        variant, libraryPath, requirement,
+        variant, libraryPath, context.cpuSupported, requirement,
         "SIMD DSP backend requires " + context.cpuRequirement +
             ", which is unavailable on this CPU");
   }
@@ -421,7 +476,7 @@ loadDspBackendFromPath(DspBackendVariant variant,
   if (rawHandle == nullptr) {
     const char *loaderError = dlerror();
     return loadError(
-        variant, libraryPath, requirement,
+        variant, libraryPath, context.cpuSupported, requirement,
         "cannot load DSP backend " + libraryPath.string() + ": " +
             (loaderError == nullptr ? "unknown dynamic loader error"
                                     : std::string(loaderError)));
@@ -431,47 +486,48 @@ loadDspBackendFromPath(DspBackendVariant variant,
   auto symbolError = std::string{};
   if (!loadSymbol(handle.get(), "et_abi_version", api.abiVersion,
                   symbolError)) {
-    return loadError(variant, libraryPath, requirement,
+    return loadError(variant, libraryPath, context.cpuSupported, requirement,
                      std::move(symbolError));
   }
   const auto abiVersion = api.abiVersion();
   if (abiVersion != EFFETUNE_DSP_ABI_VERSION) {
     return loadError(
-        variant, libraryPath, requirement,
+        variant, libraryPath, context.cpuSupported, requirement,
         "DSP backend ABI version " + std::to_string(abiVersion) +
             " does not match required ABI version " +
             std::to_string(EFFETUNE_DSP_ABI_VERSION));
   }
   if (!loadSymbol(handle.get(), "et_build_flags", api.buildFlags,
                   symbolError)) {
-    return loadError(variant, libraryPath, requirement,
+    return loadError(variant, libraryPath, context.cpuSupported, requirement,
                      std::move(symbolError));
   }
   const auto simdFlag = (api.buildFlags() & ET_BUILD_SIMD) != 0u;
   if (simdFlag != (kind == DspBackendKind::simd)) {
     return loadError(
-        variant, libraryPath, requirement,
+        variant, libraryPath, context.cpuSupported, requirement,
         "DSP backend build flags do not match the requested " +
             std::string(dspBackendName(kind)) + " variant");
   }
   if (!loadSymbol(handle.get(), "et_backend_variant", api.backendVariant,
                   symbolError)) {
-    return loadError(variant, libraryPath, requirement,
+    return loadError(variant, libraryPath, context.cpuSupported, requirement,
                      std::move(symbolError));
   }
   if (api.backendVariant() != abiVariant(variant)) {
     return loadError(
-        variant, libraryPath, requirement,
+        variant, libraryPath, context.cpuSupported, requirement,
         "DSP backend concrete variant does not match requested " +
             std::string(dspBackendVariantName(variant)));
   }
   if (!loadRemainingSymbols(handle.get(), api, symbolError)) {
-    return loadError(variant, libraryPath, requirement,
+    return loadError(variant, libraryPath, context.cpuSupported, requirement,
                      std::move(symbolError));
   }
   const auto catalogError = validateCatalog(api, context.expectedCatalog);
   if (!catalogError.empty()) {
-    return loadError(variant, libraryPath, requirement, catalogError);
+    return loadError(variant, libraryPath, context.cpuSupported, requirement,
+                     catalogError);
   }
 
   auto backend = DspBackendAccess::create(
@@ -482,6 +538,7 @@ loadDspBackendFromPath(DspBackendVariant variant,
       .cpuRequirement = requirement,
       .error = {},
       .variant = variant,
+      .cpuSupported = true,
   };
 }
 
@@ -496,7 +553,7 @@ DspBackendLoadResult loadDspBackend(DspBackendVariant variant) {
       std::filesystem::read_symlink("/proc/self/exe", pathError);
   if (pathError) {
     return loadError(
-        variant, {},
+        variant, {}, cpu.supported,
         variant == DspBackendVariant::scalar ? std::string("none")
                                              : cpu.requirement,
         "cannot resolve the PipeTune executable path: " +
@@ -530,7 +587,7 @@ DspBackendLoadResult loadDspBackend(DspBackendVariant variant) {
   }
 
   return loadError(
-      variant, buildPath,
+      variant, buildPath, cpu.supported,
       variant == DspBackendVariant::scalar ? std::string("none")
                                            : cpu.requirement,
       "DSP backend " + filename +
@@ -599,6 +656,24 @@ DspBackends discoverDspBackends() {
 DspBackendSelection
 selectDspBackend(DspBackendKind configuredBackend,
                  const DspBackends &backends) {
+  return selectDspBackend(configuredBackend, DspSimdVariant::automatic,
+                          backends);
+}
+
+static std::string unavailableVariantError(
+    DspBackendVariant variant, const DspBackendLoadResult *loaded) {
+  if (loaded != nullptr && !loaded->error.empty()) {
+    return loaded->error;
+  }
+  return "DSP SIMD variant " +
+         std::string(dspBackendVariantName(variant)) +
+         " is unavailable on this architecture";
+}
+
+DspBackendSelection
+selectDspBackend(DspBackendKind configuredBackend,
+                 DspSimdVariant configuredSimdVariant,
+                 const DspBackends &backends) {
   if (backends.scalar.backend == nullptr) {
     auto error = backends.scalar.error;
     if (error.empty()) {
@@ -606,7 +681,9 @@ selectDspBackend(DspBackendKind configuredBackend,
     }
     return {
         .configuredBackend = configuredBackend,
+        .configuredSimdVariant = configuredSimdVariant,
         .effectiveBackend = nullptr,
+        .effectiveVariant = std::nullopt,
         .fallback = false,
         .error = std::move(error),
     };
@@ -614,29 +691,81 @@ selectDspBackend(DspBackendKind configuredBackend,
   if (configuredBackend == DspBackendKind::scalar) {
     return {
         .configuredBackend = configuredBackend,
+        .configuredSimdVariant = configuredSimdVariant,
         .effectiveBackend = backends.scalar.backend,
+        .effectiveVariant = DspBackendVariant::scalar,
         .fallback = false,
         .error = {},
     };
   }
-  if (backends.simd.backend != nullptr) {
+  if (configuredBackend != DspBackendKind::simd ||
+      dspSimdVariantName(configuredSimdVariant).empty()) {
     return {
         .configuredBackend = configuredBackend,
-        .effectiveBackend = backends.simd.backend,
-        .fallback = false,
-        .error = {},
+        .configuredSimdVariant = configuredSimdVariant,
+        .effectiveBackend = backends.scalar.backend,
+        .effectiveVariant = DspBackendVariant::scalar,
+        .fallback = true,
+        .error = "configured DSP backend selection is invalid",
     };
   }
 
-  auto error = backends.simd.error;
-  if (error.empty()) {
-    error = "SIMD DSP backend is unavailable";
+  const auto pinned = concreteDspBackendVariant(configuredSimdVariant);
+  if (pinned.has_value()) {
+    const auto *requested = backends.find(*pinned);
+    if (requested != nullptr && requested->backend != nullptr) {
+      return {
+          .configuredBackend = configuredBackend,
+          .configuredSimdVariant = configuredSimdVariant,
+          .effectiveBackend = requested->backend,
+          .effectiveVariant = *pinned,
+          .fallback = false,
+          .error = {},
+      };
+    }
+    return {
+        .configuredBackend = configuredBackend,
+        .configuredSimdVariant = configuredSimdVariant,
+        .effectiveBackend = backends.scalar.backend,
+        .effectiveVariant = DspBackendVariant::scalar,
+        .fallback = true,
+        .error = unavailableVariantError(*pinned, requested),
+    };
+  }
+
+  auto supportedFailure = std::string{};
+  for (auto iterator = backends.simdVariants.rbegin();
+       iterator != backends.simdVariants.rend(); ++iterator) {
+    if (!iterator->cpuSupported) {
+      continue;
+    }
+    if (iterator->backend != nullptr) {
+      return {
+          .configuredBackend = configuredBackend,
+          .configuredSimdVariant = configuredSimdVariant,
+          .effectiveBackend = iterator->backend,
+          .effectiveVariant = iterator->variant,
+          .fallback = !supportedFailure.empty(),
+          .error = std::move(supportedFailure),
+      };
+    }
+    if (supportedFailure.empty()) {
+      supportedFailure = unavailableVariantError(iterator->variant,
+                                                 &*iterator);
+    }
+  }
+  if (supportedFailure.empty()) {
+    supportedFailure = backends.simd.error.empty()
+                           ? "SIMD DSP backend is unavailable"
+                           : backends.simd.error;
   }
   return {
       .configuredBackend = configuredBackend,
+      .configuredSimdVariant = configuredSimdVariant,
       .effectiveBackend = backends.scalar.backend,
+      .effectiveVariant = DspBackendVariant::scalar,
       .fallback = true,
-      .error = std::move(error),
+      .error = std::move(supportedFailure),
   };
 }
 

@@ -189,8 +189,9 @@ static bool testDspBackendRoundTripPreservesOtherChoices(
       pipetune::saveStartupPreset(configPath, presetPath);
   const auto savedTarget =
       pipetune::savePreferredOutput(configPath, "alsa_output.backend_dac");
-  const auto savedBackend = pipetune::saveDspBackendKind(
-      configPath, pipetune::DspBackendKind::simd);
+  const auto savedBackend = pipetune::saveDspBackendSelection(
+      configPath, pipetune::DspBackendKind::simd,
+      pipetune::DspSimdVariant::x86_64_v3);
   const auto configured = pipetune::loadStartupConfig(configPath);
   if (!check(savedPreset.empty(), savedPreset) ||
       !check(savedTarget.empty(), savedTarget) ||
@@ -198,6 +199,9 @@ static bool testDspBackendRoundTripPreservesOtherChoices(
       !check(configured.error.empty(), configured.error) ||
       !check(configured.dspBackend == pipetune::DspBackendKind::simd,
              "DSP backend did not round-trip") ||
+      !check(configured.dspSimdVariant ==
+                 pipetune::DspSimdVariant::x86_64_v3,
+             "DSP SIMD variant did not round-trip") ||
       !check(configured.presetFound && configured.presetPath == presetPath,
              "saving a DSP backend must preserve the startup preset") ||
       !check(configured.preferredOutputFound &&
@@ -215,7 +219,10 @@ static bool testDspBackendRoundTripPreservesOtherChoices(
   return check(savedRate.empty(), savedRate) &&
          check(preserved.error.empty(), preserved.error) &&
          check(preserved.dspBackend == pipetune::DspBackendKind::simd,
-               "saving another choice must preserve the DSP backend");
+               "saving another choice must preserve the DSP backend") &&
+         check(preserved.dspSimdVariant ==
+                   pipetune::DspSimdVariant::x86_64_v3,
+               "saving another choice must preserve the SIMD variant");
 }
 
 static bool testAcceptedInputForms(const std::filesystem::path &configPath) {
@@ -224,6 +231,7 @@ static bool testAcceptedInputForms(const std::filesystem::path &configPath) {
               "PIPETUNE_PRESET=/tmp/plain.effetune_preset\n"
               "PIPETUNE_TARGET=alsa_output.plain\n"
               "PIPETUNE_DSP_BACKEND=simd\n"
+              "PIPETUNE_DSP_SIMD_VARIANT=x86-64-v3\n"
               "PIPETUNE_RATE=96000\n"
               "PIPETUNE_RATE_ENFORCEMENT=force\n");
   const auto unquoted = pipetune::loadStartupConfig(configPath);
@@ -235,6 +243,9 @@ static bool testAcceptedInputForms(const std::filesystem::path &configPath) {
              "unquoted output assignments must be readable") ||
       !check(unquoted.dspBackend == pipetune::DspBackendKind::simd,
              "unquoted DSP backend assignments must be readable") ||
+      !check(unquoted.dspSimdVariant ==
+                 pipetune::DspSimdVariant::x86_64_v3,
+             "unquoted DSP SIMD variant assignments must be readable") ||
       !check(unquoted.ratePolicy.mode ==
                      pipetune::SampleRateMode::fixed &&
                  unquoted.ratePolicy.fixedRate == 96000 &&
@@ -268,6 +279,8 @@ static bool testAcceptedInputForms(const std::filesystem::path &configPath) {
          check(absentConfig.error.empty() &&
                    absentConfig.dspBackend ==
                        pipetune::DspBackendKind::scalar &&
+                   absentConfig.dspSimdVariant ==
+                       pipetune::DspSimdVariant::automatic &&
                    absentConfig.ratePolicy.mode ==
                        pipetune::SampleRateMode::maximum &&
                    absentConfig.ratePolicy.fixedRate == 0 &&
@@ -277,6 +290,8 @@ static bool testAcceptedInputForms(const std::filesystem::path &configPath) {
          check(missingConfig.error.empty() &&
                    missingConfig.dspBackend ==
                        pipetune::DspBackendKind::scalar &&
+                   missingConfig.dspSimdVariant ==
+                       pipetune::DspSimdVariant::automatic &&
                    missingConfig.ratePolicy.mode ==
                        pipetune::SampleRateMode::maximum &&
                    missingConfig.ratePolicy.fixedRate == 0 &&
@@ -330,6 +345,14 @@ static bool testRejectedInputForms(const std::filesystem::path &configPath) {
   const auto unsupportedBackend = pipetune::loadStartupConfig(configPath);
 
   writeConfig(configPath,
+              "PIPETUNE_DSP_SIMD_VARIANT=baseline\n"
+              "PIPETUNE_DSP_SIMD_VARIANT=sve\n");
+  const auto duplicateVariant = pipetune::loadStartupConfig(configPath);
+
+  writeConfig(configPath, "PIPETUNE_DSP_SIMD_VARIANT=avx2\n");
+  const auto unsupportedVariant = pipetune::loadStartupConfig(configPath);
+
+  writeConfig(configPath,
               std::string(64 * 1024 + 1, '#'));
   const auto oversized = pipetune::loadStartupPreset(configPath);
 
@@ -355,6 +378,10 @@ static bool testRejectedInputForms(const std::filesystem::path &configPath) {
                "duplicate DSP backend assignments must be rejected") &&
          check(!unsupportedBackend.error.empty(),
                "unsupported DSP backends must be rejected") &&
+         check(!duplicateVariant.error.empty(),
+               "duplicate DSP SIMD variants must be rejected") &&
+         check(!unsupportedVariant.error.empty(),
+               "unsupported DSP SIMD variants must be rejected") &&
          check(!oversized.error.empty(),
                "startup configurations larger than 64 KiB must be rejected") &&
          check(!rejectedEmptyTarget.empty(),

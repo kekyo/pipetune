@@ -110,6 +110,11 @@ DspPipelineSlot::backendKind() const noexcept {
   return active_.load(std::memory_order_acquire)->backendKind();
 }
 
+std::optional<DspBackendVariant>
+DspPipelineSlot::backendVariant() const noexcept {
+  return active_.load(std::memory_order_acquire)->backendVariant();
+}
+
 DspPerformanceCounters
 DspPipelineSlot::performanceCounters() const noexcept {
   return {

@@ -34,15 +34,19 @@ static bool testRunDefaults() {
          check(result.options.dspBackend ==
                    pipetune::DspBackendKind::scalar,
                "direct-run DSP backend must default to scalar") &&
+         check(result.options.dspSimdVariant ==
+                   pipetune::DspSimdVariant::automatic,
+               "direct-run SIMD variant must default to automatic") &&
          check(result.options.channelCount == 2, "default channels differ") &&
          check(!result.options.checkOnly, "normal run must not stop after readiness");
 }
 
 static bool testExplicitOptions() {
-  constexpr auto arguments = std::array<std::string_view, 13>{
+  constexpr auto arguments = std::array<std::string_view, 15>{
       "--check",   "--channels", "8",          "--target",
       "alsa_out", "--sink-name", "studio",     "--socket",
-      "/tmp/pipetune.sock", "--dsp-backend", "simd", "--preset",
+      "/tmp/pipetune.sock", "--dsp-backend", "simd", "--dsp-variant",
+      "x86-64-v4", "--preset",
       "studio.effetune_preset"};
   const auto result = pipetune::parseCommandLine(arguments);
   return check(result.error.empty(), result.error) &&
@@ -54,7 +58,10 @@ static bool testExplicitOptions() {
                "explicit control socket differs") &&
          check(result.options.dspBackend ==
                    pipetune::DspBackendKind::simd,
-               "explicit direct-run DSP backend differs");
+               "explicit direct-run DSP backend differs") &&
+         check(result.options.dspSimdVariant ==
+                   pipetune::DspSimdVariant::x86_64_v4,
+               "explicit direct-run SIMD variant differs");
 }
 
 static bool testControlActions() {
@@ -243,8 +250,9 @@ static bool testDspActions() {
       "dsp", "get", "--json", "--socket", "/tmp/pipetune.sock"};
   constexpr auto setScalar =
       std::array<std::string_view, 3>{"dsp", "set", "scalar"};
-  constexpr auto setSimd = std::array<std::string_view, 5>{
-      "dsp", "set", "simd", "--socket", "/tmp/pipetune.sock"};
+  constexpr auto setSimd = std::array<std::string_view, 7>{
+      "dsp", "set", "simd", "--variant", "x86-64-v3",
+      "--socket", "/tmp/pipetune.sock"};
   const auto listResult = pipetune::parseCommandLine(list);
   const auto getResult = pipetune::parseCommandLine(get);
   const auto scalarResult = pipetune::parseCommandLine(setScalar);
@@ -271,7 +279,9 @@ static bool testDspActions() {
          check(simdResult.options.action ==
                        pipetune::CommandLineAction::dspSet &&
                    simdResult.options.dspBackend ==
-                       pipetune::DspBackendKind::simd,
+                       pipetune::DspBackendKind::simd &&
+                   simdResult.options.dspSimdVariant ==
+                       pipetune::DspSimdVariant::x86_64_v3,
                "dsp set SIMD action differs");
 }
 
@@ -397,7 +407,8 @@ static bool testInformationalActions() {
                    std::string_view::npos,
                "usage must explain rate selection") &&
          check(pipetune::commandLineUsage().find(
-                   "pipetune dsp set scalar|simd [--socket PATH]") !=
+                   "pipetune dsp set scalar|simd [--variant VARIANT] "
+                   "[--socket PATH]") !=
                    std::string_view::npos,
                "usage must explain DSP backend selection") &&
          check(pipetune::commandLineUsage().find("--rate HZ") ==
@@ -504,6 +515,14 @@ static bool testRejectedArguments() {
       std::array<std::string_view, 2>{"dsp", "set"};
   constexpr auto invalidDspBackend =
       std::array<std::string_view, 3>{"dsp", "set", "avx2"};
+  constexpr auto scalarDspVariant = std::array<std::string_view, 5>{
+      "dsp", "set", "scalar", "--variant", "auto"};
+  constexpr auto missingDspVariant = std::array<std::string_view, 4>{
+      "dsp", "set", "simd", "--variant"};
+  constexpr auto invalidDspVariant = std::array<std::string_view, 5>{
+      "dsp", "set", "simd", "--variant", "avx2"};
+  constexpr auto duplicateDspVariant = std::array<std::string_view, 7>{
+      "dsp", "set", "simd", "--variant", "baseline", "--variant", "auto"};
   constexpr auto dspSetWithJson =
       std::array<std::string_view, 4>{"dsp", "set", "simd", "--json"};
   constexpr auto duplicateDspSocket = std::array<std::string_view, 6>{
@@ -513,6 +532,11 @@ static bool testRejectedArguments() {
   constexpr auto duplicateDirectDsp = std::array<std::string_view, 6>{
       "--preset", "x.effetune_preset", "--dsp-backend", "scalar",
       "--dsp-backend", "simd"};
+  constexpr auto scalarWithVariant = std::array<std::string_view, 6>{
+      "--preset", "x.effetune_preset", "--dsp-backend", "scalar",
+      "--dsp-variant", "baseline"};
+  constexpr auto invalidDirectVariant = std::array<std::string_view, 4>{
+      "--preset", "x.effetune_preset", "--dsp-variant", "avx2"};
   constexpr auto configWithoutAction =
       std::array<std::string_view, 1>{"config"};
   constexpr auto unknownConfigAction =
@@ -604,6 +628,14 @@ static bool testRejectedArguments() {
                "dsp set must require a backend") &&
          check(!pipetune::parseCommandLine(invalidDspBackend).error.empty(),
                "dsp set must reject unknown backends") &&
+         check(!pipetune::parseCommandLine(scalarDspVariant).error.empty(),
+               "dsp set scalar must reject SIMD variant options") &&
+         check(!pipetune::parseCommandLine(missingDspVariant).error.empty(),
+               "dsp set must require a SIMD variant value") &&
+         check(!pipetune::parseCommandLine(invalidDspVariant).error.empty(),
+               "dsp set must reject unknown SIMD variants") &&
+         check(!pipetune::parseCommandLine(duplicateDspVariant).error.empty(),
+               "dsp set must reject duplicate SIMD variants") &&
          check(!pipetune::parseCommandLine(dspSetWithJson).error.empty(),
                "dsp set must reject --json") &&
          check(!pipetune::parseCommandLine(duplicateDspSocket).error.empty(),
@@ -612,6 +644,10 @@ static bool testRejectedArguments() {
                "direct run must reject unknown DSP backends") &&
          check(!pipetune::parseCommandLine(duplicateDirectDsp).error.empty(),
                "direct run must reject duplicate DSP backends") &&
+         check(!pipetune::parseCommandLine(scalarWithVariant).error.empty(),
+               "scalar direct run must reject a SIMD variant") &&
+         check(!pipetune::parseCommandLine(invalidDirectVariant).error.empty(),
+               "direct run must reject unknown SIMD variants") &&
          check(!pipetune::parseCommandLine(configWithoutAction).error.empty(),
                "config must require a subcommand") &&
          check(!pipetune::parseCommandLine(unknownConfigAction).error.empty(),

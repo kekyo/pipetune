@@ -16,14 +16,26 @@ static std::string unavailableError(
 DspBackendRuntimeState
 makeDspBackendRuntimeState(DspBackends backends,
                            DspBackendKind configuredBackend) {
-  const auto selected = selectDspBackend(configuredBackend, backends);
+  return makeDspBackendRuntimeState(
+      std::move(backends), configuredBackend,
+      DspSimdVariant::automatic);
+}
+
+DspBackendRuntimeState
+makeDspBackendRuntimeState(DspBackends backends,
+                           DspBackendKind configuredBackend,
+                           DspSimdVariant configuredSimdVariant) {
+  const auto selected = selectDspBackend(
+      configuredBackend, configuredSimdVariant, backends);
   return {
       .backends = std::move(backends),
       .configuredBackend = configuredBackend,
+      .configuredSimdVariant = configuredSimdVariant,
       .effectiveBackend =
           selected.effectiveBackend == nullptr
               ? std::optional<DspBackendKind>{}
               : selected.effectiveBackend->kind(),
+      .effectiveVariant = selected.effectiveVariant,
       .fallback = selected.fallback,
       .error = selected.error,
   };
@@ -35,11 +47,30 @@ switchDspBackend(DspPipelineSlot &pipeline,
                  DspBackendKind requestedBackend,
                  const PipelineBuildOptions &options,
                  bool rateTransitioning) {
+  return switchDspBackend(
+      pipeline, state, requestedBackend, DspSimdVariant::automatic,
+      options, rateTransitioning);
+}
+
+DspBackendSwitchResult
+switchDspBackend(DspPipelineSlot &pipeline,
+                 DspBackendRuntimeState &state,
+                 DspBackendKind requestedBackend,
+                 DspSimdVariant requestedSimdVariant,
+                 const PipelineBuildOptions &options,
+                 bool rateTransitioning) {
   if (requestedBackend != DspBackendKind::scalar &&
       requestedBackend != DspBackendKind::simd) {
     return {.changed = false,
             .warnings = {},
             .error = "requested DSP backend is invalid"};
+  }
+  if (dspSimdVariantName(requestedSimdVariant).empty() ||
+      (requestedBackend == DspBackendKind::scalar &&
+       requestedSimdVariant != DspSimdVariant::automatic)) {
+    return {.changed = false,
+            .warnings = {},
+            .error = "requested DSP SIMD variant is invalid"};
   }
   if (rateTransitioning) {
     return {
@@ -49,39 +80,50 @@ switchDspBackend(DspPipelineSlot &pipeline,
             "cannot change DSP backend during sample-rate transition",
     };
   }
-  if (state.backends.scalar.backend == nullptr) {
+  const auto selected = selectDspBackend(
+      requestedBackend, requestedSimdVariant, state.backends);
+  if (selected.effectiveBackend == nullptr) {
     return {
         .changed = false,
         .warnings = {},
-        .error = unavailableError(DspBackendKind::scalar,
-                                  state.backends.scalar),
+        .error = selected.error.empty()
+                     ? unavailableError(DspBackendKind::scalar,
+                                        state.backends.scalar)
+                     : selected.error,
     };
   }
-  const auto &requested = state.backends.get(requestedBackend);
-  if (requested.backend == nullptr) {
+  if (selected.effectiveBackend->kind() != requestedBackend) {
     return {
         .changed = false,
         .warnings = {},
-        .error = unavailableError(requestedBackend, requested),
+        .error = selected.error.empty()
+                     ? std::string(dspBackendName(requestedBackend)) +
+                           " DSP backend is unavailable"
+                     : selected.error,
     };
   }
 
   const auto stateChanged =
       state.configuredBackend != requestedBackend ||
-      state.effectiveBackend != requestedBackend || state.fallback ||
-      !state.error.empty();
-  if (state.effectiveBackend == requestedBackend) {
+      state.configuredSimdVariant != requestedSimdVariant ||
+      state.effectiveBackend != requestedBackend ||
+      state.effectiveVariant != selected.effectiveVariant ||
+      state.fallback != selected.fallback ||
+      state.error != selected.error;
+  if (state.effectiveVariant == selected.effectiveVariant) {
     state.configuredBackend = requestedBackend;
+    state.configuredSimdVariant = requestedSimdVariant;
     state.effectiveBackend = requestedBackend;
-    state.fallback = false;
-    state.error.clear();
+    state.effectiveVariant = selected.effectiveVariant;
+    state.fallback = selected.fallback;
+    state.error = selected.error;
     return {.changed = stateChanged, .warnings = {}, .error = {}};
   }
 
   auto warnings = std::vector<PipelineWarning>{};
   if (pipeline.backendKind().has_value()) {
     auto rebuilt =
-        pipeline.rebuildActive(options, requested.backend);
+        pipeline.rebuildActive(options, selected.effectiveBackend);
     if (rebuilt.pipeline == nullptr) {
       return {.changed = false,
               .warnings = {},
@@ -92,9 +134,11 @@ switchDspBackend(DspPipelineSlot &pipeline,
   }
 
   state.configuredBackend = requestedBackend;
+  state.configuredSimdVariant = requestedSimdVariant;
   state.effectiveBackend = requestedBackend;
-  state.fallback = false;
-  state.error.clear();
+  state.effectiveVariant = selected.effectiveVariant;
+  state.fallback = selected.fallback;
+  state.error = selected.error;
   return {.changed = true,
           .warnings = std::move(warnings),
           .error = {}};

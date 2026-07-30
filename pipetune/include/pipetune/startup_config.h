@@ -48,6 +48,8 @@ struct StartupConfigLoadResult {
   SampleRatePolicy ratePolicy = {};
   /** User-selected native DSP backend. */
   DspBackendKind dspBackend = DspBackendKind::scalar;
+  /** Automatic or pinned SIMD dispatch preference. */
+  DspSimdVariant dspSimdVariant = DspSimdVariant::automatic;
   /** Read or validation diagnostic, or empty on success. */
   std::string error;
 };
@@ -144,6 +146,18 @@ std::string saveSampleRatePolicy(const std::filesystem::path &configPath,
  */
 std::string saveDspBackendKind(const std::filesystem::path &configPath,
                                DspBackendKind kind);
+
+/**
+ * Atomically stores a DSP backend and SIMD dispatch preference.
+ *
+ * @param configPath Configuration file path.
+ * @param kind Scalar compatibility or SIMD acceleration backend.
+ * @param simdVariant Automatic or pinned SIMD dispatch preference.
+ * @return Empty on success, otherwise a human-readable diagnostic.
+ */
+std::string saveDspBackendSelection(
+    const std::filesystem::path &configPath, DspBackendKind kind,
+    DspSimdVariant simdVariant);
 
 /**
  * Atomically replaces the startup configuration with PipeTune defaults.

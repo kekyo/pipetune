@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unistd.h>
@@ -21,10 +22,19 @@ static bool check(bool condition, std::string_view message) {
 
 static pipetune::ControlRuntimeStatus backendStatus(
     pipetune::DspBackendKind configured,
-    pipetune::DspBackendKind effective) {
+    pipetune::DspBackendKind effective,
+    pipetune::DspSimdVariant configuredVariant =
+        pipetune::DspSimdVariant::automatic) {
   auto status = pipetune::ControlRuntimeStatus{};
   status.configuredDspBackend = configured;
+  status.configuredDspSimdVariant = configuredVariant;
   status.effectiveDspBackend = effective;
+  status.effectiveDspVariant =
+      effective == pipetune::DspBackendKind::scalar
+          ? std::optional{pipetune::DspBackendVariant::scalar}
+          : pipetune::concreteDspBackendVariant(configuredVariant)
+                .value_or(
+                    pipetune::DspBackendVariant::simdBaseline);
   status.dspBackendFallback = configured != effective;
   status.dspBackendError =
       status.dspBackendFallback
@@ -42,6 +52,26 @@ static pipetune::ControlRuntimeStatus backendStatus(
                     ? std::string("SIMD backend is unavailable")
                     : std::string{}},
   }};
+  status.availableDspVariants = {
+      {.variant = pipetune::DspBackendVariant::scalar,
+       .available = true,
+       .cpuSupported = true,
+       .cpuRequirement = "none",
+       .error = {}},
+      {.variant = pipetune::DspBackendVariant::simdBaseline,
+       .available = !status.dspBackendFallback,
+       .cpuSupported = true,
+       .cpuRequirement = "test SIMD ISA",
+       .error = status.dspBackendFallback
+                    ? std::string("SIMD backend is unavailable")
+                    : std::string{}},
+      {.variant = pipetune::DspBackendVariant::x86_64_v3,
+       .available = !status.dspBackendFallback,
+       .cpuSupported = true,
+       .cpuRequirement = "x86-64-v3",
+       .error = status.dspBackendFallback
+                    ? std::string("SIMD backend is unavailable")
+                    : std::string{}}};
   return status;
 }
 
@@ -56,22 +86,28 @@ static pipetune_gtk::ApplicationState pendingState() {
 }
 
 static pipetune_gtk::ControlClientReply successfulReply(
-    pipetune::DspBackendKind kind) {
+    pipetune::DspBackendKind kind,
+    pipetune::DspSimdVariant variant =
+        pipetune::DspSimdVariant::automatic) {
   return {
       .response = pipetune::parseControlResponse(
           pipetune::makeControlSuccessResponse(
-              backendStatus(kind, kind), {})),
+              backendStatus(kind, kind, variant), {})),
       .transportError = {},
   };
 }
 
-static bool configHasBackend(
+static bool configHasBackendSelection(
     const std::filesystem::path &configPath,
-    pipetune::DspBackendKind expected) {
+    pipetune::DspBackendKind expectedKind,
+    pipetune::DspSimdVariant expectedVariant =
+        pipetune::DspSimdVariant::automatic) {
   const auto loaded = pipetune::loadStartupConfig(configPath);
   return check(loaded.error.empty(), loaded.error) &&
-         check(loaded.dspBackend == expected,
-               "GTK stored DSP backend differs");
+         check(loaded.dspBackend == expectedKind,
+               "GTK stored DSP backend differs") &&
+         check(loaded.dspSimdVariant == expectedVariant,
+               "GTK stored DSP SIMD variant differs");
 }
 
 static bool testRejectedAndUnconfirmedReplies(
@@ -97,8 +133,8 @@ static bool testRejectedAndUnconfirmedReplies(
              "rejected GTK backend operation phases differ") ||
       !check(!rejectedState.operationPending,
              "rejected GTK backend operation must leave pending mode") ||
-      !configHasBackend(configPath,
-                        pipetune::DspBackendKind::scalar)) {
+      !configHasBackendSelection(
+          configPath, pipetune::DspBackendKind::scalar)) {
     return false;
   }
 
@@ -122,17 +158,20 @@ static bool testRejectedAndUnconfirmedReplies(
          check(unconfirmedState.diagnostic.find("did not confirm") !=
                    std::string::npos,
                "unconfirmed backend must explain the failure") &&
-         configHasBackend(configPath,
-                          pipetune::DspBackendKind::scalar);
+         configHasBackendSelection(
+             configPath, pipetune::DspBackendKind::scalar);
 }
 
 static bool testSuccessfulAndOfflineChanges(
     const std::filesystem::path &configPath) {
   auto state = pendingState();
   const auto changed = pipetune_gtk::completeDspBackendOperation(
-      state, successfulReply(pipetune::DspBackendKind::simd),
+      state,
+      successfulReply(pipetune::DspBackendKind::simd,
+                      pipetune::DspSimdVariant::x86_64_v3),
       {.configPath = configPath,
-       .kind = pipetune::DspBackendKind::simd},
+       .kind = pipetune::DspBackendKind::simd,
+       .simdVariant = pipetune::DspSimdVariant::x86_64_v3},
       3000);
   if (!check(changed.liveApplied && changed.persistenceApplied &&
                  !changed.reconnectRequired,
@@ -143,7 +182,9 @@ static bool testSuccessfulAndOfflineChanges(
                      pipetune::DspBackendKind::simd &&
                  !state.operationPending,
              "successful GTK backend operation state differs") ||
-      !configHasBackend(configPath, pipetune::DspBackendKind::simd)) {
+      !configHasBackendSelection(
+          configPath, pipetune::DspBackendKind::simd,
+          pipetune::DspSimdVariant::x86_64_v3)) {
     return false;
   }
 
@@ -159,8 +200,8 @@ static bool testSuccessfulAndOfflineChanges(
          check(offlineState.diagnostic.find("next start") !=
                    std::string::npos,
                "offline GTK backend persistence must be explicit") &&
-         configHasBackend(configPath,
-                          pipetune::DspBackendKind::scalar);
+         configHasBackendSelection(
+             configPath, pipetune::DspBackendKind::scalar);
 }
 
 static bool testDisconnectPersistsForNextStart(
@@ -179,8 +220,39 @@ static bool testDisconnectPersistsForNextStart(
                "backend transport failure must disconnect GTK state") &&
          check(state.diagnostic.find("next start") != std::string::npos,
                "backend transport failure must report offline persistence") &&
-         configHasBackend(configPath,
-                          pipetune::DspBackendKind::scalar);
+         configHasBackendSelection(
+             configPath, pipetune::DspBackendKind::scalar);
+}
+
+static pipetune::DspSimdVariant unavailableForeignVariant() {
+#if defined(__aarch64__)
+  return pipetune::DspSimdVariant::x86_64_v4;
+#else
+  return pipetune::DspSimdVariant::arm64Sve;
+#endif
+}
+
+static bool testUnavailablePinDoesNotPersist(
+    const std::filesystem::path &configPath) {
+  const auto seeded = pipetune::saveDspBackendSelection(
+      configPath, pipetune::DspBackendKind::scalar,
+      pipetune::DspSimdVariant::automatic);
+  auto state = pipetune_gtk::initialApplicationState();
+  const auto changed =
+      pipetune_gtk::persistDspBackendOperationForNextStart(
+          state,
+          {.configPath = configPath,
+           .kind = pipetune::DspBackendKind::simd,
+           .simdVariant = unavailableForeignVariant()});
+  return check(seeded.empty(), seeded) &&
+         check(!changed.liveApplied && !changed.persistenceApplied &&
+                   !changed.reconnectRequired,
+               "unavailable pinned GTK backend must not persist") &&
+         check(state.diagnostic.find("could not be selected") !=
+                   std::string::npos,
+               "unavailable pinned GTK backend must explain rejection") &&
+         configHasBackendSelection(
+             configPath, pipetune::DspBackendKind::scalar);
 }
 
 static bool testPersistenceFailure(
@@ -213,6 +285,7 @@ int main() {
       testRejectedAndUnconfirmedReplies(configPath) &&
       testSuccessfulAndOfflineChanges(configPath) &&
       testDisconnectPersistsForNextStart(configPath) &&
+      testUnavailablePinDoesNotPersist(configPath) &&
       testPersistenceFailure(directory);
   std::filesystem::remove_all(directory);
   return passed ? 0 : 1;

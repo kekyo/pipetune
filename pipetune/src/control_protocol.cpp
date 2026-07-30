@@ -213,14 +213,16 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
             .error = {}};
   }
   if (command == "set-dsp-backend") {
-    if (yyjson_obj_size(root) != 2) {
+    if (yyjson_obj_size(root) != 3) {
       return requestError(
-          "set-dsp-backend request requires only command and backend fields");
+          "set-dsp-backend request requires only command, backend, and "
+          "simdVariant fields");
     }
     auto *backendValue = yyjson_obj_get(root, "backend");
-    if (!yyjson_is_str(backendValue)) {
+    auto *variantValue = yyjson_obj_get(root, "simdVariant");
+    if (!yyjson_is_str(backendValue) || !yyjson_is_str(variantValue)) {
       return requestError(
-          "set-dsp-backend request backend must be a string");
+          "set-dsp-backend request backend and simdVariant must be strings");
     }
     const auto backend = parseDspBackendName(
         std::string_view(yyjson_get_str(backendValue),
@@ -229,11 +231,21 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
       return requestError(
           "set-dsp-backend request contains an unsupported backend");
     }
+    const auto simdVariant = parseDspSimdVariantName(
+        std::string_view(yyjson_get_str(variantValue),
+                         yyjson_get_len(variantValue)));
+    if (!simdVariant.has_value() ||
+        (*backend == DspBackendKind::scalar &&
+         *simdVariant != DspSimdVariant::automatic)) {
+      return requestError(
+          "set-dsp-backend request contains an unsupported SIMD variant");
+    }
     return {.request = {.command = ControlCommand::setDspBackend,
                         .presetPath = {},
                         .outputTarget = {},
                         .ratePolicy = defaultSampleRatePolicy(),
-                        .dspBackend = *backend},
+                        .dspBackend = *backend,
+                        .dspSimdVariant = *simdVariant},
             .error = {}};
   }
   if (command != "load") {
@@ -309,7 +321,19 @@ std::string makeSetRateControlRequest(const SampleRatePolicy &policy) {
 }
 
 std::string makeSetDspBackendControlRequest(DspBackendKind kind) {
+  return makeSetDspBackendControlRequest(kind,
+                                         DspSimdVariant::automatic);
+}
+
+std::string
+makeSetDspBackendControlRequest(DspBackendKind kind,
+                                DspSimdVariant simdVariant) {
   if (kind != DspBackendKind::scalar && kind != DspBackendKind::simd) {
+    return {};
+  }
+  if (dspSimdVariantName(simdVariant).empty() ||
+      (kind == DspBackendKind::scalar &&
+       simdVariant != DspSimdVariant::automatic)) {
     return {};
   }
   yyjson_mut_val *root = nullptr;
@@ -318,7 +342,9 @@ std::string makeSetDspBackendControlRequest(DspBackendKind kind) {
       !yyjson_mut_obj_add_str(document.get(), root, "command",
                               "set-dsp-backend") ||
       !addString(document.get(), root, "backend",
-                 dspBackendName(kind))) {
+                 dspBackendName(kind)) ||
+      !addString(document.get(), root, "simdVariant",
+                 dspSimdVariantName(simdVariant))) {
     return {};
   }
   return writeDocument(document.get());
@@ -446,28 +472,80 @@ static bool dspBackendStatusIsConsistent(
       simd.error.find('\0') != std::string::npos ||
       scalar.available != scalar.error.empty() ||
       simd.available != simd.error.empty() ||
-      status.dspBackendError.find('\0') != std::string::npos) {
+      status.dspBackendError.find('\0') != std::string::npos ||
+      dspSimdVariantName(status.configuredDspSimdVariant).empty()) {
+    return false;
+  }
+  const ControlDspVariantAvailability *effectiveAvailability = nullptr;
+  auto scalarVariantAvailable = false;
+  auto simdVariantAvailable = false;
+  for (auto index = std::size_t{0};
+       index < status.availableDspVariants.size(); ++index) {
+    const auto &variant = status.availableDspVariants[index];
+    if (variant.cpuRequirement.empty() ||
+        variant.cpuRequirement.find('\0') != std::string::npos ||
+        variant.error.find('\0') != std::string::npos ||
+        variant.available != variant.error.empty() ||
+        (variant.available && !variant.cpuSupported)) {
+      return false;
+    }
+    for (auto earlier = std::size_t{0}; earlier < index; ++earlier) {
+      if (status.availableDspVariants[earlier].variant ==
+          variant.variant) {
+        return false;
+      }
+    }
+    scalarVariantAvailable |=
+        variant.variant == DspBackendVariant::scalar &&
+        variant.available;
+    simdVariantAvailable |=
+        dspBackendKind(variant.variant) == DspBackendKind::simd &&
+        variant.available;
+    if (status.effectiveDspVariant == variant.variant) {
+      effectiveAvailability = &variant;
+    }
+  }
+  if (scalar.available != scalarVariantAvailable ||
+      simd.available != simdVariantAvailable ||
+      status.effectiveDspBackend.has_value() !=
+          status.effectiveDspVariant.has_value() ||
+      (status.effectiveDspVariant.has_value() &&
+       (!status.effectiveDspBackend.has_value() ||
+        dspBackendKind(*status.effectiveDspVariant) !=
+            *status.effectiveDspBackend ||
+        effectiveAvailability == nullptr ||
+        !effectiveAvailability->available))) {
     return false;
   }
   if (!scalar.available) {
     return !status.effectiveDspBackend.has_value() &&
+           !status.effectiveDspVariant.has_value() &&
            !status.dspBackendFallback &&
            !status.dspBackendError.empty();
   }
   if (status.configuredDspBackend == DspBackendKind::scalar) {
     return status.effectiveDspBackend == DspBackendKind::scalar &&
+           status.effectiveDspVariant == DspBackendVariant::scalar &&
            !status.dspBackendFallback &&
            status.dspBackendError.empty();
   }
   if (status.configuredDspBackend != DspBackendKind::simd) {
     return false;
   }
-  if (simd.available) {
-    return status.effectiveDspBackend == DspBackendKind::simd &&
-           !status.dspBackendFallback &&
-           status.dspBackendError.empty();
+  if (status.effectiveDspBackend == DspBackendKind::simd) {
+    const auto pinned = concreteDspBackendVariant(
+        status.configuredDspSimdVariant);
+    return simd.available &&
+           (!pinned.has_value() ||
+            status.effectiveDspVariant == pinned) &&
+           (status.dspBackendFallback ==
+            !status.dspBackendError.empty()) &&
+           (!status.dspBackendFallback ||
+            status.configuredDspSimdVariant ==
+                DspSimdVariant::automatic);
   }
   return status.effectiveDspBackend == DspBackendKind::scalar &&
+         status.effectiveDspVariant == DspBackendVariant::scalar &&
          status.dspBackendFallback && !status.dspBackendError.empty();
 }
 
@@ -564,11 +642,19 @@ static std::string makeControlStatusMessage(
                          status.rateError) ||
       !addString(document.get(), root, "configuredDspBackend",
                  dspBackendName(status.configuredDspBackend)) ||
+      !addString(document.get(), root, "configuredDspSimdVariant",
+                 dspSimdVariantName(status.configuredDspSimdVariant)) ||
       (status.effectiveDspBackend.has_value()
            ? !addString(document.get(), root, "effectiveDspBackend",
                         dspBackendName(*status.effectiveDspBackend))
            : !yyjson_mut_obj_add_null(document.get(), root,
                                       "effectiveDspBackend")) ||
+      (status.effectiveDspVariant.has_value()
+           ? !addString(document.get(), root, "effectiveDspVariant",
+                        dspBackendVariantName(
+                            *status.effectiveDspVariant))
+           : !yyjson_mut_obj_add_null(document.get(), root,
+                                      "effectiveDspVariant")) ||
       !yyjson_mut_obj_add_bool(document.get(), root,
                                "dspBackendFallback",
                                status.dspBackendFallback) ||
@@ -593,6 +679,28 @@ static std::string makeControlStatusMessage(
                    backend.cpuRequirement) ||
         !addNullableString(document.get(), item, "error",
                            backend.error)) {
+      return makeControlErrorResponse("cannot encode control response");
+    }
+  }
+
+  auto *variantArray =
+      yyjson_mut_obj_add_arr(document.get(), root, "availableDspVariants");
+  if (variantArray == nullptr) {
+    return makeControlErrorResponse("cannot encode control response");
+  }
+  for (const auto &variant : status.availableDspVariants) {
+    auto *item = yyjson_mut_obj(document.get());
+    if (item == nullptr || !yyjson_mut_arr_append(variantArray, item) ||
+        !addString(document.get(), item, "name",
+                   dspBackendVariantName(variant.variant)) ||
+        !yyjson_mut_obj_add_bool(document.get(), item, "available",
+                                 variant.available) ||
+        !yyjson_mut_obj_add_bool(document.get(), item, "cpuSupported",
+                                 variant.cpuSupported) ||
+        !addString(document.get(), item, "cpuRequirement",
+                   variant.cpuRequirement) ||
+        !addNullableString(document.get(), item, "error",
+                           variant.error)) {
       return makeControlErrorResponse("cannot encode control response");
     }
   }
@@ -795,6 +903,52 @@ static bool readNullableDspBackendKindField(
   return true;
 }
 
+static bool readDspSimdVariantField(
+    yyjson_val *object, const char *key, DspSimdVariant &variant) {
+  auto *field = yyjson_obj_get(object, key);
+  if (!yyjson_is_str(field)) {
+    return false;
+  }
+  const auto parsed = parseDspSimdVariantName(
+      std::string_view(yyjson_get_str(field), yyjson_get_len(field)));
+  if (!parsed.has_value()) {
+    return false;
+  }
+  variant = *parsed;
+  return true;
+}
+
+static bool readDspBackendVariantField(
+    yyjson_val *object, const char *key, DspBackendVariant &variant) {
+  auto *field = yyjson_obj_get(object, key);
+  if (!yyjson_is_str(field)) {
+    return false;
+  }
+  const auto parsed = parseDspBackendVariantName(
+      std::string_view(yyjson_get_str(field), yyjson_get_len(field)));
+  if (!parsed.has_value()) {
+    return false;
+  }
+  variant = *parsed;
+  return true;
+}
+
+static bool readNullableDspBackendVariantField(
+    yyjson_val *object, const char *key,
+    std::optional<DspBackendVariant> &variant) {
+  auto *field = yyjson_obj_get(object, key);
+  if (yyjson_is_null(field)) {
+    variant.reset();
+    return true;
+  }
+  auto parsed = DspBackendVariant::scalar;
+  if (!readDspBackendVariantField(object, key, parsed)) {
+    return false;
+  }
+  variant = parsed;
+  return true;
+}
+
 static bool readSampleRatePolicy(yyjson_val *object,
                                  SampleRatePolicy &policy) {
   auto *modeField = yyjson_obj_get(object, "rateMode");
@@ -984,6 +1138,39 @@ static bool readAvailableDspBackends(
   return true;
 }
 
+static bool readAvailableDspVariants(
+    yyjson_val *object,
+    std::vector<ControlDspVariantAvailability> &variants) {
+  auto *array = yyjson_obj_get(object, "availableDspVariants");
+  if (!yyjson_is_arr(array)) {
+    return false;
+  }
+  variants.clear();
+  variants.reserve(yyjson_arr_size(array));
+  for (auto index = std::size_t{0}; index < yyjson_arr_size(array);
+       ++index) {
+    auto *item = yyjson_arr_get(array, index);
+    auto variant = ControlDspVariantAvailability{
+        .variant = DspBackendVariant::scalar,
+        .available = false,
+        .cpuSupported = false,
+        .cpuRequirement = {},
+        .error = {},
+    };
+    if (!yyjson_is_obj(item) || yyjson_obj_size(item) != 5 ||
+        !readDspBackendVariantField(item, "name", variant.variant) ||
+        !readBooleanField(item, "available", variant.available) ||
+        !readBooleanField(item, "cpuSupported", variant.cpuSupported) ||
+        !readStringField(item, "cpuRequirement",
+                         variant.cpuRequirement) ||
+        !readNullableStringField(item, "error", variant.error)) {
+      return false;
+    }
+    variants.push_back(std::move(variant));
+  }
+  return true;
+}
+
 static bool readSizeField(yyjson_val *object, const char *key,
                           std::size_t &value) {
   auto *field = yyjson_obj_get(object, key);
@@ -1147,13 +1334,18 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
                                status.rateError) ||
       !readDspBackendKindField(root, "configuredDspBackend",
                                status.configuredDspBackend) ||
+      !readDspSimdVariantField(root, "configuredDspSimdVariant",
+                               status.configuredDspSimdVariant) ||
       !readNullableDspBackendKindField(root, "effectiveDspBackend",
                                        status.effectiveDspBackend) ||
+      !readNullableDspBackendVariantField(root, "effectiveDspVariant",
+                                          status.effectiveDspVariant) ||
       !readBooleanField(root, "dspBackendFallback",
                         status.dspBackendFallback) ||
       !readNullableStringField(root, "dspBackendError",
                                status.dspBackendError) ||
-      !readAvailableDspBackends(root, status.availableDspBackends)) {
+      !readAvailableDspBackends(root, status.availableDspBackends) ||
+      !readAvailableDspVariants(root, status.availableDspVariants)) {
     return responseError("successful control response has invalid status");
   }
   if ((status.processingMode == ProcessingMode::preset &&

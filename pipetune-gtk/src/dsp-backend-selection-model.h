@@ -17,6 +17,8 @@ namespace pipetune_gtk {
 struct DspBackendChoice {
   /** Scalar compatibility or SIMD acceleration variant. */
   pipetune::DspBackendKind kind;
+  /** Automatic or pinned SIMD preference; automatic for the scalar row. */
+  pipetune::DspSimdVariant simdVariant;
   /** Human-readable variant, availability, CPU requirement, and diagnostic. */
   std::string label;
   /** True after the daemon reported availability for this row. */
@@ -29,9 +31,9 @@ struct DspBackendChoice {
  * Describes all DSP backend-selection values required by the GTK view.
  */
 struct DspBackendSelectionPresentation {
-  /** Scalar followed by SIMD in stable order. */
+  /** Scalar, automatic SIMD, and applicable pinned SIMD variants. */
   std::vector<DspBackendChoice> choices;
-  /** Row matching the backend currently edited by the user. */
+  /** Row matching the backend and SIMD preference edited by the user. */
   std::size_t activeIndex;
   /** Configured, effective, fallback, and selection diagnostic summary. */
   std::string effectiveBackend;
@@ -46,12 +48,14 @@ struct DspBackendSelectionPresentation {
  *
  * @param state Current application and daemon state.
  * @param editedBackend Backend currently represented by the GTK control.
+ * @param editedSimdVariant SIMD preference represented by the GTK control.
  * @return Drop-down rows, active selection, status text, and sensitivity.
  */
 DspBackendSelectionPresentation
 makeDspBackendSelectionPresentation(
     const ApplicationState &state,
-    pipetune::DspBackendKind editedBackend);
+    pipetune::DspBackendKind editedBackend,
+    pipetune::DspSimdVariant editedSimdVariant);
 
 } // namespace pipetune_gtk
 

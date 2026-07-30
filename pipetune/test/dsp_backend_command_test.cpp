@@ -16,6 +16,7 @@ struct ServerState {
   std::mutex mutex;
   bool rejectChanges;
   pipetune::DspBackendKind backend;
+  pipetune::DspSimdVariant simdVariant;
   std::size_t setRequests;
 };
 
@@ -50,7 +51,15 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
       .inputFramesReceived = 0,
       .inputLastReceivedUnixMilliseconds = 0,
       .configuredDspBackend = state.backend,
+      .configuredDspSimdVariant = state.simdVariant,
       .effectiveDspBackend = state.backend,
+      .effectiveDspVariant =
+          state.backend == pipetune::DspBackendKind::scalar
+              ? pipetune::DspBackendVariant::scalar
+              : pipetune::concreteDspBackendVariant(
+                    state.simdVariant)
+                    .value_or(
+                        pipetune::DspBackendVariant::simdBaseline),
       .dspBackendFallback = false,
       .dspBackendError = {},
       .availableDspBackends =
@@ -64,6 +73,22 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
                .cpuRequirement = "test SIMD ISA",
                .error = {}},
           }},
+      .availableDspVariants =
+          {{.variant = pipetune::DspBackendVariant::scalar,
+            .available = true,
+            .cpuSupported = true,
+            .cpuRequirement = "none",
+            .error = {}},
+           {.variant = pipetune::DspBackendVariant::simdBaseline,
+            .available = true,
+            .cpuSupported = true,
+            .cpuRequirement = "test SIMD ISA",
+            .error = {}},
+           {.variant = pipetune::DspBackendVariant::x86_64_v3,
+            .available = true,
+            .cpuSupported = true,
+            .cpuRequirement = "x86-64-v3",
+            .error = {}}},
   };
 }
 
@@ -103,6 +128,7 @@ static pipetune::ControlMessageResult handleRequest(
               .publishStatus = false};
     }
     state.backend = request.request.dspBackend;
+    state.simdVariant = request.request.dspSimdVariant;
     ++state.setRequests;
   }
   return {.response =
@@ -111,13 +137,17 @@ static pipetune::ControlMessageResult handleRequest(
           .publishStatus = true};
 }
 
-static bool configHasBackend(
+static bool configHasBackendSelection(
     const std::filesystem::path &configPath,
-    pipetune::DspBackendKind expected) {
+    pipetune::DspBackendKind expectedKind,
+    pipetune::DspSimdVariant expectedVariant =
+        pipetune::DspSimdVariant::automatic) {
   const auto loaded = pipetune::loadStartupConfig(configPath);
   return check(loaded.error.empty(), loaded.error) &&
-         check(loaded.dspBackend == expected,
-               "stored DSP backend differs");
+         check(loaded.dspBackend == expectedKind,
+               "stored DSP backend differs") &&
+         check(loaded.dspSimdVariant == expectedVariant,
+               "stored DSP SIMD variant differs");
 }
 
 static bool testStatusAndFormatting(
@@ -136,7 +166,7 @@ static bool testStatusAndFormatting(
                        std::string::npos,
                "formatted DSP backend status differs") &&
          check(list.find("scalar") != std::string::npos &&
-                   list.find("simd") != std::string::npos &&
+                   list.find("baseline") != std::string::npos &&
                    list.find("test SIMD ISA") != std::string::npos &&
                    list.find("available") != std::string::npos,
                "formatted DSP backend list differs");
@@ -162,7 +192,8 @@ static bool testRejectedChange(
          check(!changed.success && !changed.liveApplied &&
                    !changed.persistenceApplied,
                "daemon rejection must not persist a DSP backend") &&
-         configHasBackend(configPath, pipetune::DspBackendKind::scalar);
+         configHasBackendSelection(
+             configPath, pipetune::DspBackendKind::scalar);
 }
 
 static bool testSuccessfulAndPartialChanges(
@@ -171,16 +202,23 @@ static bool testSuccessfulAndPartialChanges(
     const std::filesystem::path &socketPath, ServerState &state) {
   const auto changed = pipetune::executeSetDspBackend(
       {.configPath = configPath, .socketPath = socketPath},
-      pipetune::DspBackendKind::simd);
+      pipetune::DspBackendKind::simd,
+      pipetune::DspSimdVariant::x86_64_v3);
   if (!check(changed.success && changed.liveApplied &&
                  changed.persistenceApplied,
              changed.error) ||
       !check(changed.status.configuredDspBackend ==
                      pipetune::DspBackendKind::simd &&
                  changed.status.effectiveDspBackend ==
-                     pipetune::DspBackendKind::simd,
+                     pipetune::DspBackendKind::simd &&
+                 changed.status.configuredDspSimdVariant ==
+                     pipetune::DspSimdVariant::x86_64_v3 &&
+                 changed.status.effectiveDspVariant ==
+                     pipetune::DspBackendVariant::x86_64_v3,
              "live DSP backend confirmation differs") ||
-      !configHasBackend(configPath, pipetune::DspBackendKind::simd)) {
+      !configHasBackendSelection(
+          configPath, pipetune::DspBackendKind::simd,
+          pipetune::DspSimdVariant::x86_64_v3)) {
     return false;
   }
 
@@ -218,7 +256,8 @@ static bool testOfflineChange(
                "offline DSP backend set must persist for the next start") &&
          check(!changed.notice.empty(),
                "offline DSP backend set must explain deferred live application") &&
-         configHasBackend(configPath, pipetune::DspBackendKind::scalar);
+         configHasBackendSelection(
+             configPath, pipetune::DspBackendKind::scalar);
 }
 
 int main() {
@@ -233,6 +272,7 @@ int main() {
       .mutex = {},
       .rejectChanges = false,
       .backend = pipetune::DspBackendKind::scalar,
+      .simdVariant = pipetune::DspSimdVariant::automatic,
       .setRequests = 0,
   };
   auto started = pipetune::startControlServer(

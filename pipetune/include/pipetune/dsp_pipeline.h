@@ -110,6 +110,8 @@ public:
   std::size_t activePluginCount() const noexcept;
   /** Returns the native backend in use, or no value for a bypass pipeline. */
   std::optional<DspBackendKind> backendKind() const noexcept;
+  /** Returns the concrete native variant, or no value for a bypass pipeline. */
+  std::optional<DspBackendVariant> backendVariant() const noexcept;
 
 private:
   explicit DspPipeline(std::unique_ptr<Impl> implementation);

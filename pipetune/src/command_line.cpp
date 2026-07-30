@@ -17,6 +17,7 @@ static CommandLineOptions defaultOptions() {
           .sinkName = "pipetune_sink",
           .ratePolicy = defaultSampleRatePolicy(),
           .dspBackend = DspBackendKind::scalar,
+          .dspSimdVariant = DspSimdVariant::automatic,
           .channelCount = 2,
           .checkOnly = false,
           .purge = false,
@@ -353,8 +354,28 @@ static CommandLineParseResult parseDspCommandLine(
   options.dspBackend = *backend;
 
   auto sawSocket = false;
+  auto sawVariant = false;
   for (auto index = std::size_t{2}; index < arguments.size(); ++index) {
     const auto argument = arguments[index];
+    if (argument == "--variant") {
+      if (sawVariant) {
+        return parseError(std::move(options),
+                          "duplicate option: --variant");
+      }
+      if (index + 1 >= arguments.size()) {
+        return parseError(std::move(options),
+                          "missing value for --variant");
+      }
+      const auto variant = parseDspSimdVariantName(arguments[++index]);
+      if (!variant.has_value()) {
+        return parseError(
+            std::move(options),
+            "--variant must be auto, baseline, x86-64-v3, x86-64-v4, or sve");
+      }
+      sawVariant = true;
+      options.dspSimdVariant = *variant;
+      continue;
+    }
     if (argument != "--socket") {
       return parseError(std::move(options),
                         "unknown dsp set option: " +
@@ -372,6 +393,10 @@ static CommandLineParseResult parseDspCommandLine(
     }
     sawSocket = true;
     options.controlSocketPath = value;
+  }
+  if (options.dspBackend == DspBackendKind::scalar && sawVariant) {
+    return parseError(std::move(options),
+                      "dsp set scalar does not accept --variant");
   }
   return {.options = std::move(options), .error = {}};
 }
@@ -499,6 +524,7 @@ CommandLineParseResult parseCommandLine(
   auto sawSinkName = false;
   auto sawChannels = false;
   auto sawDspBackend = false;
+  auto sawDspVariant = false;
   auto sawCheck = false;
   for (auto index = std::size_t{0}; index < arguments.size(); ++index) {
     const auto argument = arguments[index];
@@ -529,7 +555,7 @@ CommandLineParseResult parseCommandLine(
     if (argument != "--preset" && argument != "--load-preset" &&
         argument != "--socket" && argument != "--target" &&
         argument != "--sink-name" && argument != "--channels" &&
-        argument != "--dsp-backend") {
+        argument != "--dsp-backend" && argument != "--dsp-variant") {
       return parseError(std::move(options),
                         "unknown option: " + std::string(argument));
     }
@@ -607,6 +633,21 @@ CommandLineParseResult parseCommandLine(
       options.dspBackend = *backend;
       continue;
     }
+    if (argument == "--dsp-variant") {
+      if (sawDspVariant) {
+        return parseError(std::move(options),
+                          "duplicate option: --dsp-variant");
+      }
+      const auto variant = parseDspSimdVariantName(value);
+      if (!variant.has_value()) {
+        return parseError(
+            std::move(options),
+            "--dsp-variant must be auto, baseline, x86-64-v3, x86-64-v4, or sve");
+      }
+      sawDspVariant = true;
+      options.dspSimdVariant = *variant;
+      continue;
+    }
     if (sawChannels) {
       return parseError(std::move(options), "duplicate option: --channels");
     }
@@ -629,7 +670,8 @@ CommandLineParseResult parseCommandLine(
         "top-level action options are mutually exclusive");
   }
   if (sawRestoreDefault) {
-    if (sawTarget || sawChannels || sawDspBackend || sawCheck || sawSocket) {
+    if (sawTarget || sawChannels || sawDspBackend || sawDspVariant ||
+        sawCheck || sawSocket) {
       return parseError(
           std::move(options),
           "only --sink-name may modify --restore-default");
@@ -639,7 +681,7 @@ CommandLineParseResult parseCommandLine(
   }
   if (sawLoadPreset || sawStatus) {
     if (sawTarget || sawSinkName || sawChannels || sawDspBackend ||
-        sawCheck) {
+        sawDspVariant || sawCheck) {
       return parseError(
           std::move(options),
           "PipeWire run options cannot be used with control actions");
@@ -650,6 +692,15 @@ CommandLineParseResult parseCommandLine(
   }
   if (!sawPreset) {
     return parseError(std::move(options), "--preset FILE is required");
+  }
+  if (sawDspVariant) {
+    if (sawDspBackend &&
+        options.dspBackend == DspBackendKind::scalar) {
+      return parseError(
+          std::move(options),
+          "--dsp-variant cannot be used with scalar --dsp-backend");
+    }
+    options.dspBackend = DspBackendKind::simd;
   }
   return {.options = std::move(options), .error = {}};
 }
@@ -668,12 +719,13 @@ std::string_view commandLineUsage() noexcept {
          "  pipetune rate set RATE ENFORCEMENT [--socket PATH]\n"
          "  pipetune dsp list [--json] [--socket PATH]\n"
          "  pipetune dsp get [--json] [--socket PATH]\n"
-         "  pipetune dsp set scalar|simd [--socket PATH]\n"
+         "  pipetune dsp set scalar|simd [--variant VARIANT] [--socket PATH]\n"
          "  pipetune config reset [-y|--yes]\n"
          "  pipetune setup [--preset FILE]\n"
          "  pipetune unsetup [--purge]\n"
          "  pipetune --preset FILE [--target OBJECT] [--sink-name NAME]\n"
          "           [--channels COUNT] [--dsp-backend scalar|simd]\n"
+         "           [--dsp-variant VARIANT]\n"
          "           [--socket PATH] [--check]\n"
          "  pipetune --load-preset FILE [--socket PATH]\n"
          "  pipetune --status [--socket PATH]\n"
@@ -715,6 +767,8 @@ std::string_view commandLineUsage() noexcept {
          "  --channels COUNT  Use 1 through 8 planar channels (default: 2).\n"
          "  --dsp-backend BACKEND\n"
          "                    Use scalar or simd for this direct run.\n"
+         "  --dsp-variant VARIANT\n"
+         "                    Use auto, baseline, x86-64-v3, x86-64-v4, or sve.\n"
          "  --check           Verify stream negotiation, then exit.\n";
 }
 

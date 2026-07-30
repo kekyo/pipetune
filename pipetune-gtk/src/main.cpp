@@ -73,6 +73,9 @@ struct GtkRuntime {
   pipetune::DspBackendKind startupDspBackend;
   pipetune::DspBackendKind editedDspBackend;
   pipetune::DspBackendKind pendingDspBackend;
+  pipetune::DspSimdVariant startupDspSimdVariant;
+  pipetune::DspSimdVariant editedDspSimdVariant;
+  pipetune::DspSimdVariant pendingDspSimdVariant;
   std::vector<DspBackendChoice> dspBackendChoices;
   bool updatingDspBackendControls;
   bool dspBackendEditDirty;
@@ -315,14 +318,26 @@ static pipetune::DspBackendKind displayedDspBackend(
   return runtime.startupDspBackend;
 }
 
+static pipetune::DspSimdVariant displayedDspSimdVariant(
+    const GtkRuntime &runtime) {
+  if (runtime.state.connection == ControlConnectionState::connected &&
+      runtime.state.hasRuntimeStatus) {
+    return runtime.state.runtime.configuredDspSimdVariant;
+  }
+  return runtime.startupDspSimdVariant;
+}
+
 static void renderDspBackendSelection(GtkRuntime *runtime) {
   if (!runtime->dspBackendEditDirty &&
       !runtime->dspBackendChangePending) {
     runtime->editedDspBackend = displayedDspBackend(*runtime);
+    runtime->editedDspSimdVariant =
+        displayedDspSimdVariant(*runtime);
   }
   const auto presentation =
       makeDspBackendSelectionPresentation(
-          runtime->state, runtime->editedDspBackend);
+          runtime->state, runtime->editedDspBackend,
+          runtime->editedDspSimdVariant);
 
   runtime->updatingDspBackendControls = true;
   runtime->dspBackendChoices = presentation.choices;
@@ -804,7 +819,11 @@ static void onRateApplyClicked(GtkButton *, gpointer userData) {
 
 static void updateDspBackendEditDirty(GtkRuntime *runtime) {
   runtime->dspBackendEditDirty =
-      runtime->editedDspBackend != displayedDspBackend(*runtime);
+      runtime->editedDspBackend != displayedDspBackend(*runtime) ||
+      (runtime->editedDspBackend ==
+           pipetune::DspBackendKind::simd &&
+       runtime->editedDspSimdVariant !=
+           displayedDspSimdVariant(*runtime));
 }
 
 static void onDspBackendChanged(GtkComboBox *combo,
@@ -825,6 +844,10 @@ static void onDspBackendChanged(GtkComboBox *combo,
       runtime
           ->dspBackendChoices[static_cast<std::size_t>(selected)]
           .kind;
+  runtime->editedDspSimdVariant =
+      runtime
+          ->dspBackendChoices[static_cast<std::size_t>(selected)]
+          .simdVariant;
   updateDspBackendEditDirty(runtime);
   render(runtime);
 }
@@ -835,16 +858,21 @@ static void onDspBackendReply(const ControlClientReply &reply,
   const auto completion = completeDspBackendOperation(
       runtime->state, reply,
       {.configPath = runtime->startupConfigPath,
-       .kind = runtime->pendingDspBackend},
+       .kind = runtime->pendingDspBackend,
+       .simdVariant = runtime->pendingDspSimdVariant},
       currentMonotonicMilliseconds());
   runtime->dspBackendChangePending = false;
   if (completion.persistenceApplied) {
     runtime->startupDspBackend = runtime->pendingDspBackend;
+    runtime->startupDspSimdVariant =
+        runtime->pendingDspSimdVariant;
   }
   runtime->dspBackendEditDirty = !completion.persistenceApplied;
   if (completion.liveApplied) {
     runtime->editedDspBackend =
         reply.response.status.configuredDspBackend;
+    runtime->editedDspSimdVariant =
+        reply.response.status.configuredDspSimdVariant;
   }
   if (completion.reconnectRequired) {
     scheduleReconnect(runtime);
@@ -862,7 +890,8 @@ static void onDspBackendApplyClicked(GtkButton *,
   }
   const auto presentation =
       makeDspBackendSelectionPresentation(
-          runtime->state, runtime->editedDspBackend);
+          runtime->state, runtime->editedDspBackend,
+          runtime->editedDspSimdVariant);
   const auto connected =
       runtime->state.connection == ControlConnectionState::connected;
   if (connected &&
@@ -873,16 +902,21 @@ static void onDspBackendApplyClicked(GtkButton *,
 
   clearControlNotice(runtime->state);
   runtime->pendingDspBackend = runtime->editedDspBackend;
+  runtime->pendingDspSimdVariant =
+      runtime->editedDspSimdVariant;
   runtime->dspBackendChangePending = true;
   if (!connected) {
     const auto completion =
         persistDspBackendOperationForNextStart(
             runtime->state,
             {.configPath = runtime->startupConfigPath,
-             .kind = runtime->pendingDspBackend});
+             .kind = runtime->pendingDspBackend,
+             .simdVariant = runtime->pendingDspSimdVariant});
     runtime->dspBackendChangePending = false;
     if (completion.persistenceApplied) {
       runtime->startupDspBackend = runtime->pendingDspBackend;
+      runtime->startupDspSimdVariant =
+          runtime->pendingDspSimdVariant;
       runtime->dspBackendEditDirty = false;
     }
     render(runtime);
@@ -893,6 +927,7 @@ static void onDspBackendApplyClicked(GtkButton *,
   render(runtime);
   setControlDspBackendAsync(
       runtime->controlClient, runtime->pendingDspBackend,
+      runtime->pendingDspSimdVariant,
       onDspBackendReply, runtime);
 }
 
@@ -1327,6 +1362,9 @@ static std::string reloadStartupConfig(GtkRuntime *runtime,
   runtime->startupDspBackend = loaded.dspBackend;
   runtime->editedDspBackend = loaded.dspBackend;
   runtime->pendingDspBackend = loaded.dspBackend;
+  runtime->startupDspSimdVariant = loaded.dspSimdVariant;
+  runtime->editedDspSimdVariant = loaded.dspSimdVariant;
+  runtime->pendingDspSimdVariant = loaded.dspSimdVariant;
   runtime->dspBackendEditDirty = false;
   runtime->pendingPreset.clear();
 
@@ -1526,6 +1564,12 @@ static int runApplication(int argc, char **argv) {
       .startupDspBackend = pipetune::DspBackendKind::scalar,
       .editedDspBackend = pipetune::DspBackendKind::scalar,
       .pendingDspBackend = pipetune::DspBackendKind::scalar,
+      .startupDspSimdVariant =
+          pipetune::DspSimdVariant::automatic,
+      .editedDspSimdVariant =
+          pipetune::DspSimdVariant::automatic,
+      .pendingDspSimdVariant =
+          pipetune::DspSimdVariant::automatic,
       .dspBackendChoices = {},
       .updatingDspBackendControls = false,
       .dspBackendEditDirty = false,

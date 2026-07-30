@@ -231,7 +231,8 @@ struct PipeWireRuntime {
         configurationError(runtimeOptions.initialConfigurationError),
         dspBackendState(makeDspBackendRuntimeState(
             resolveRuntimeBackends(runtimeOptions),
-            runtimeOptions.configuredDspBackend)),
+            runtimeOptions.configuredDspBackend,
+            runtimeOptions.configuredDspSimdVariant)),
         outputStateMutex(), playbackTargetMutex(), rateStateMutex(),
         pipelineMutationMutex(), dspBackendStateMutex(), rateRequestMutex(),
         rateRequestCondition(),
@@ -267,7 +268,8 @@ struct PipeWireRuntime {
         completed(false), error() {
     if (processingMode == ProcessingMode::preset &&
         (!dspBackendState.effectiveBackend.has_value() ||
-         pipeline.backendKind() != dspBackendState.effectiveBackend)) {
+         !dspBackendState.effectiveVariant.has_value() ||
+         pipeline.backendVariant() != dspBackendState.effectiveVariant)) {
       throw std::invalid_argument(
           "initial preset pipeline does not match the effective DSP backend");
     }
@@ -2035,6 +2037,29 @@ static ControlDspBackendAvailability controlDspBackendAvailability(
   };
 }
 
+static ControlDspVariantAvailability controlDspVariantAvailability(
+    const DspBackendLoadResult &result) {
+  auto cpuRequirement = result.cpuRequirement;
+  if (cpuRequirement.empty()) {
+    cpuRequirement = result.variant == DspBackendVariant::scalar
+                         ? "none"
+                         : "unknown";
+  }
+  auto error = result.error;
+  if (result.backend == nullptr && error.empty()) {
+    error = "DSP variant " +
+            std::string(dspBackendVariantName(result.variant)) +
+            " is unavailable";
+  }
+  return {
+      .variant = result.variant,
+      .available = result.backend != nullptr,
+      .cpuSupported = result.cpuSupported,
+      .cpuRequirement = std::move(cpuRequirement),
+      .error = std::move(error),
+  };
+}
+
 static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
   const auto input = snapshotInputTelemetry(
       runtime.inputTelemetry, currentMonotonicNanoseconds(),
@@ -2053,12 +2078,17 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
   auto rateTransitioning = false;
   auto rateError = std::string{};
   auto configuredDspBackend = DspBackendKind::scalar;
+  auto configuredDspSimdVariant = DspSimdVariant::automatic;
   auto effectiveDspBackend =
       std::optional<DspBackendKind>{DspBackendKind::scalar};
+  auto effectiveDspVariant =
+      std::optional<DspBackendVariant>{DspBackendVariant::scalar};
   auto dspBackendFallback = false;
   auto dspBackendError = std::string{};
   auto availableDspBackends =
       std::array<ControlDspBackendAvailability, 2>{};
+  auto availableDspVariants =
+      std::vector<ControlDspVariantAvailability>{};
   {
     auto lock = std::scoped_lock(runtime.outputStateMutex);
     preferredTarget = runtime.deviceTracker.preferredTarget();
@@ -2080,7 +2110,10 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
     auto lock = std::scoped_lock(runtime.dspBackendStateMutex);
     configuredDspBackend =
         runtime.dspBackendState.configuredBackend;
+    configuredDspSimdVariant =
+        runtime.dspBackendState.configuredSimdVariant;
     effectiveDspBackend = runtime.dspBackendState.effectiveBackend;
+    effectiveDspVariant = runtime.dspBackendState.effectiveVariant;
     dspBackendFallback = runtime.dspBackendState.fallback;
     dspBackendError = runtime.dspBackendState.error;
     availableDspBackends = {
@@ -2091,6 +2124,15 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
             DspBackendKind::simd,
             runtime.dspBackendState.backends.simd),
     };
+    availableDspVariants.reserve(
+        runtime.dspBackendState.backends.simdVariants.size() + 1u);
+    availableDspVariants.push_back(controlDspVariantAvailability(
+        runtime.dspBackendState.backends.scalar));
+    for (const auto &variant :
+         runtime.dspBackendState.backends.simdVariants) {
+      availableDspVariants.push_back(
+          controlDspVariantAvailability(variant));
+    }
   }
   auto availableOutputs = std::vector<ControlOutputDevice>{};
   availableOutputs.reserve(devices.size());
@@ -2145,10 +2187,13 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .rateFallback = resolvedSampleRates.fallback,
           .rateError = std::move(rateError),
           .configuredDspBackend = configuredDspBackend,
+          .configuredDspSimdVariant = configuredDspSimdVariant,
           .effectiveDspBackend = effectiveDspBackend,
+          .effectiveDspVariant = effectiveDspVariant,
           .dspBackendFallback = dspBackendFallback,
           .dspBackendError = std::move(dspBackendError),
-          .availableDspBackends = std::move(availableDspBackends)};
+          .availableDspBackends = std::move(availableDspBackends),
+          .availableDspVariants = std::move(availableDspVariants)};
 }
 
 static ControlMessageResult closeControlResponse(std::string response,
@@ -2291,6 +2336,7 @@ static ControlMessageResult handleControlRequest(std::string_view message,
       switched = switchDspBackend(
           runtime.pipeline, runtime.dspBackendState,
           request.request.dspBackend,
+          request.request.dspSimdVariant,
           {.sampleRate = static_cast<float>(
                runtime.dspSampleRate.load(std::memory_order_acquire)),
            .maxChannels = runtime.options.channelCount,
@@ -2356,9 +2402,13 @@ static ControlMessageResult handleControlRequest(std::string_view message,
       auto backendLock =
           std::scoped_lock(runtime.dspBackendStateMutex);
       if (runtime.dspBackendState.effectiveBackend.has_value()) {
-        backend = runtime.dspBackendState.backends
-                      .get(*runtime.dspBackendState.effectiveBackend)
-                      .backend;
+        if (runtime.dspBackendState.effectiveVariant.has_value()) {
+          const auto *loaded = runtime.dspBackendState.backends.find(
+              *runtime.dspBackendState.effectiveVariant);
+          if (loaded != nullptr) {
+            backend = loaded->backend;
+          }
+        }
       }
     }
     if (backend == nullptr) {

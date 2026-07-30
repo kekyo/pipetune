@@ -74,6 +74,9 @@ struct PipeWirePipelineOptions {
   DspBackends dspBackends = {};
   /** Initial persisted DSP backend choice. */
   DspBackendKind configuredDspBackend = DspBackendKind::scalar;
+  /** Initial persisted automatic or pinned SIMD dispatch preference. */
+  DspSimdVariant configuredDspSimdVariant =
+      DspSimdVariant::automatic;
 };
 
 /**

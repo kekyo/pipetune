@@ -20,6 +20,8 @@ constexpr auto kPresetAssignment = std::string_view{"PIPETUNE_PRESET="};
 constexpr auto kTargetAssignment = std::string_view{"PIPETUNE_TARGET="};
 constexpr auto kDspBackendAssignment =
     std::string_view{"PIPETUNE_DSP_BACKEND="};
+constexpr auto kDspSimdVariantAssignment =
+    std::string_view{"PIPETUNE_DSP_SIMD_VARIANT="};
 constexpr auto kRateAssignment = std::string_view{"PIPETUNE_RATE="};
 constexpr auto kRateEnforcementAssignment =
     std::string_view{"PIPETUNE_RATE_ENFORCEMENT="};
@@ -198,6 +200,13 @@ static std::string writeStartupConfig(
   }
   contents += std::string(kDspBackendAssignment) +
               std::string(dspBackendName(configured.dspBackend)) + "\n";
+  const auto simdVariantName =
+      dspSimdVariantName(configured.dspSimdVariant);
+  if (simdVariantName.empty()) {
+    return "DSP SIMD variant is invalid";
+  }
+  contents += std::string(kDspSimdVariantAssignment) +
+              std::string(simdVariantName) + "\n";
   if (!sampleRatePolicyIsValid(configured.ratePolicy)) {
     return "sample-rate policy is invalid";
   }
@@ -310,6 +319,8 @@ loadStartupConfig(const std::filesystem::path &configPath) {
   auto preferredOutput = std::string{};
   auto dspBackendFound = false;
   auto dspBackend = DspBackendKind::scalar;
+  auto dspSimdVariantFound = false;
+  auto dspSimdVariant = DspSimdVariant::automatic;
   auto rateFound = false;
   auto enforcementFound = false;
   auto ratePolicy = defaultSampleRatePolicy();
@@ -406,6 +417,28 @@ loadStartupConfig(const std::filesystem::path &configPath) {
         }
         dspBackend = *parsed;
         dspBackendFound = true;
+      } else if (line.starts_with(kDspSimdVariantAssignment)) {
+        if (dspSimdVariantFound) {
+          return {.presetFound = false,
+                  .presetPath = {},
+                  .preferredOutputFound = false,
+                  .preferredOutput = {},
+                  .ratePolicy = defaultSampleRatePolicy(),
+                  .error = "startup configuration contains duplicate "
+                           "PIPETUNE_DSP_SIMD_VARIANT assignments"};
+        }
+        const auto parsed = parseDspSimdVariantName(
+            line.substr(kDspSimdVariantAssignment.size()));
+        if (!parsed.has_value()) {
+          return {.presetFound = false,
+                  .presetPath = {},
+                  .preferredOutputFound = false,
+                  .preferredOutput = {},
+                  .ratePolicy = defaultSampleRatePolicy(),
+                  .error = "DSP SIMD variant assignment is invalid"};
+        }
+        dspSimdVariant = *parsed;
+        dspSimdVariantFound = true;
       } else if (line.starts_with(kRateAssignment)) {
         if (rateFound) {
           return {.presetFound = false,
@@ -467,6 +500,7 @@ loadStartupConfig(const std::filesystem::path &configPath) {
           .preferredOutput = std::move(preferredOutput),
           .ratePolicy = ratePolicy,
           .dspBackend = dspBackend,
+          .dspSimdVariant = dspSimdVariant,
           .error = {}};
 }
 
@@ -538,6 +572,24 @@ std::string saveDspBackendKind(const std::filesystem::path &configPath,
   return writeStartupConfig(configPath, configured);
 }
 
+std::string saveDspBackendSelection(
+    const std::filesystem::path &configPath, DspBackendKind kind,
+    DspSimdVariant simdVariant) {
+  if (kind != DspBackendKind::scalar && kind != DspBackendKind::simd) {
+    return "DSP backend is invalid";
+  }
+  if (dspSimdVariantName(simdVariant).empty()) {
+    return "DSP SIMD variant is invalid";
+  }
+  auto configured = loadStartupConfig(configPath);
+  if (!configured.error.empty()) {
+    return configured.error;
+  }
+  configured.dspBackend = kind;
+  configured.dspSimdVariant = simdVariant;
+  return writeStartupConfig(configPath, configured);
+}
+
 std::string resetStartupConfig(const std::filesystem::path &configPath) {
   return writeStartupConfig(
       configPath,
@@ -547,6 +599,7 @@ std::string resetStartupConfig(const std::filesystem::path &configPath) {
        .preferredOutput = {},
        .ratePolicy = defaultSampleRatePolicy(),
        .dspBackend = DspBackendKind::scalar,
+       .dspSimdVariant = DspSimdVariant::automatic,
        .error = {}});
 }
 

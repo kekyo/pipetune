@@ -127,6 +127,10 @@ static bool testConfiguredSimdFallback(
   }
   backends.simd.backend.reset();
   backends.simd.error = "test SIMD backend is unavailable";
+  for (auto &variant : backends.simdVariants) {
+    variant.backend.reset();
+    variant.error = "test SIMD backend is unavailable";
+  }
 
   const auto prepared = pipetune::prepareStartupPipeline(
       configPath,

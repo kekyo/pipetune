@@ -19,6 +19,9 @@ struct DspBackendOperationRequest {
   std::filesystem::path configPath;
   /** Requested scalar compatibility or SIMD acceleration backend. */
   pipetune::DspBackendKind kind;
+  /** Requested automatic or pinned SIMD dispatch preference. */
+  pipetune::DspSimdVariant simdVariant =
+      pipetune::DspSimdVariant::automatic;
 };
 
 /**
@@ -37,8 +40,9 @@ struct DspBackendOperationCompletion {
  * Applies a daemon backend reply and persists only a confirmed live change.
  *
  * A transport failure validates the packaged SO and CPU support before
- * persisting the user's selection for the next daemon start. A rejected,
- * fallback, or otherwise incomplete reply does not overwrite startup
+ * persisting the user's selection for the next daemon start. Automatic
+ * dispatch may confirm a lower SIMD tier with a diagnostic. A rejection,
+ * scalar fallback, or pinned-tier mismatch does not overwrite startup
  * configuration.
  *
  * @param state Application state to update and take out of pending mode.

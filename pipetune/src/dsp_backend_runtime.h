@@ -20,9 +20,13 @@ struct DspBackendRuntimeState {
   DspBackends backends;
   /** Startup or successfully applied user choice. */
   DspBackendKind configuredBackend;
+  /** Startup or successfully applied SIMD dispatch preference. */
+  DspSimdVariant configuredSimdVariant;
   /** Effective backend, or no value without a usable scalar backend. */
   std::optional<DspBackendKind> effectiveBackend;
-  /** True when configured SIMD fell back to scalar at startup. */
+  /** Effective concrete variant, or no value without a usable backend. */
+  std::optional<DspBackendVariant> effectiveVariant;
+  /** True when a lower tier or scalar replaced the preferred SIMD tier. */
   bool fallback;
   /** Current selection diagnostic. */
   std::string error;
@@ -52,6 +56,19 @@ makeDspBackendRuntimeState(DspBackends backends,
                            DspBackendKind configuredBackend);
 
 /**
+ * Creates runtime state using logical kind and SIMD pinning rules.
+ *
+ * @param backends Scalar and SIMD discovery results.
+ * @param configuredBackend Persisted backend choice.
+ * @param configuredSimdVariant Persisted SIMD dispatch preference.
+ * @return Effective selection and retained discovery results.
+ */
+DspBackendRuntimeState
+makeDspBackendRuntimeState(DspBackends backends,
+                           DspBackendKind configuredBackend,
+                           DspSimdVariant configuredSimdVariant);
+
+/**
  * Transactionally rebuilds a preset pipeline with another backend.
  *
  * Bypass mode updates only the retained selection. A failed availability
@@ -68,6 +85,25 @@ DspBackendSwitchResult
 switchDspBackend(DspPipelineSlot &pipeline,
                  DspBackendRuntimeState &state,
                  DspBackendKind requestedBackend,
+                 const PipelineBuildOptions &options,
+                 bool rateTransitioning);
+
+/**
+ * Transactionally applies a logical backend and SIMD dispatch preference.
+ *
+ * @param pipeline Active pipeline slot.
+ * @param state Mutable runtime backend state.
+ * @param requestedBackend Requested logical backend.
+ * @param requestedSimdVariant Requested automatic or pinned SIMD preference.
+ * @param options Current DSP processing format.
+ * @param rateTransitioning True while a rate rebuild transaction is active.
+ * @return Change marker, rebuild warnings, and diagnostic.
+ */
+DspBackendSwitchResult
+switchDspBackend(DspPipelineSlot &pipeline,
+                 DspBackendRuntimeState &state,
+                 DspBackendKind requestedBackend,
+                 DspSimdVariant requestedSimdVariant,
                  const PipelineBuildOptions &options,
                  bool rateTransitioning);
 
