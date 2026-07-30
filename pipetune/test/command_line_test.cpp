@@ -414,7 +414,11 @@ static bool testInformationalActions() {
          check(pipetune::commandLineUsage().find(
                    "pipetune config reset [-y|--yes]") !=
                    std::string_view::npos,
-               "usage must explain configuration reset");
+               "usage must explain configuration reset") &&
+         check(pipetune::commandLineUsage().find(
+                   "Reset Bypass, output, PCM rate, and DSP backend.") !=
+                   std::string_view::npos,
+               "usage must describe every reset selection");
 }
 
 static bool testRejectedArguments() {

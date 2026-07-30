@@ -695,7 +695,7 @@ std::string_view commandLineUsage() noexcept {
          "  dsp list        List scalar and SIMD backend availability.\n"
          "  dsp get         Show configured and effective DSP backends.\n"
          "  dsp set         Select scalar compatibility or SIMD acceleration.\n"
-         "  config reset    Reset Bypass, output, and PCM rate configuration.\n"
+         "  config reset    Reset Bypass, output, PCM rate, and DSP backend.\n"
          "  -y, --yes       Skip the configuration reset confirmation.\n"
          "  --json           Print the complete machine-readable status.\n"
          "  setup            Enable PipeTune for the current user.\n"
