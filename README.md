@@ -273,6 +273,11 @@ kernel so stale delay, feedback, and telemetry state cannot leak into the next
 sound. Exact mode avoids truncating any nonzero tail, but effects that generate
 noise or never converge to exact zero may remain active.
 
+When both PipeWire streams pause, PipeTune clears already queued audio and
+flushes both stream queues. The DSP is reset by the first resumed capture
+callback, and playback emits GAP if it resumes before fresh capture data, so
+PCM from the previous playback interval is not replayed.
+
 See the [DSP and PipeWire idling notes](pipetune/docs/dsp-idle.md) for the
 complete state machine and EMPTY/GAP behavior.
 

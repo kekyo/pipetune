@@ -20,6 +20,14 @@ state. Avoiding suspension keeps the negotiated nodes available for prompt
 reuse. Status reports `pipeWireIdle=true` only while both streams are in
 PipeWire's `PAUSED` state.
 
+When both streams enter `PAUSED`, PipeTune discards every frame already queued
+in its internal ring and flushes both PipeWire streams without draining them.
+This clears PCM and converter state that belongs to the completed playback
+interval instead of replaying it after a later resume. The first resumed
+capture callback resets the active DSP pipeline on its real-time thread before
+processing new input. If playback resumes before that input arrives, it emits
+an intentional GAP until the first new capture frames have been queued.
+
 ## EMPTY and GAP preservation
 
 PipeTune preserves neutral-media information across its internal planar ring:
@@ -117,7 +125,9 @@ controller restarts after a policy, pipeline, or rate change.
 - Exact-zero detection is deliberately not a general silence gate. An
   application that emits dither or low-level noise keeps the DSP active.
 - PipeWire graph pausing and DSP sleeping are independent. Either one may be
-  active without the other.
+  active without the other. A paused graph schedules its DSP reset for the
+  first resumed capture callback, so the displayed DSP state may remain
+  `active` while no callback is running.
 - DSP sleep removes native pipeline processing, but active callbacks still
   perform bounded buffer handling and exact-zero scanning.
 - Actual CPU and battery savings depend on the preset, sample rate, quantum,

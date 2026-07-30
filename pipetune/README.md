@@ -46,8 +46,9 @@ not supported by this MVP.
   default and startup fallback.
 - Replaces the preset in a running process through a same-user Unix socket.
 - Rebuilds and atomically switches an active preset between DSP backends.
-- Preserves PipeWire EMPTY/GAP media, allows both streams to pause with an
-  idle graph, and skips native DSP work after sustained exact-zero input.
+- Preserves PipeWire EMPTY/GAP media, clears queued audio when both streams
+  pause with an idle graph, and skips native DSP work after sustained
+  exact-zero input.
 - Switches live and future startup processing to explicit DSP bypass.
 - Publishes initial and changed runtime state to same-user local subscribers.
 - Starts the managed daemon without a preset and passes audio through unchanged.
@@ -280,8 +281,11 @@ Conservative, the default, then requires one second of final DSP output at or
 below -150 dBFS. Exact requires one second of mathematically exact-zero output.
 Before sleeping, PipeTune resets the active EffeTune engine using its
 allocation-free real-time API. Any nonzero input wakes processing in the same
-callback block. See [the DSP idle notes](docs/dsp-idle.md) for PipeWire
-pausing, EMPTY/GAP propagation, state transitions, and operational limits.
+callback block. When both PipeWire streams pause, PipeTune clears its queued
+audio and resets the DSP in the first resumed capture callback; playback emits
+GAP if it resumes before fresh capture data. See
+[the DSP idle notes](docs/dsp-idle.md) for PipeWire pausing, EMPTY/GAP
+propagation, state transitions, and operational limits.
 
 Reset every saved PipeTune selection with:
 

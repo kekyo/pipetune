@@ -8,6 +8,7 @@
 #include "input_telemetry.h"
 #include "output_device_tracker.h"
 #include "pipewire_buffer_io.h"
+#include "pipewire_idle_epoch.h"
 #include "pipewire_rate_parser.h"
 #include "pipewire_volume_smoother.h"
 #include "pipetune/control_protocol.h"
@@ -125,6 +126,7 @@ struct PipeWireRuntime {
   PipeWireRunMode mode;
   OutputDeviceTracker deviceTracker;
   PlanarAudioRing ring;
+  PipeWireIdleEpoch idleEpoch;
   PipeWireVolumeSmoother volumeSmoother;
   DspIdleController dspIdleController;
   std::atomic<DspIdlePolicy> configuredDspIdlePolicy;
@@ -222,6 +224,7 @@ struct PipeWireRuntime {
         mode(runtimeMode),
         deviceTracker(runtimeOptions.sinkName, runtimeOptions.targetObject),
         ring(runtimeOptions.channelCount, runtimeOptions.ringCapacityFrames),
+        idleEpoch(),
         volumeSmoother(runtimeOptions.channelCount),
         dspIdleController(runtimeOptions.dspSampleRate,
                           runtimeOptions.dspIdlePolicy),
@@ -987,6 +990,29 @@ static void finishReadinessCheck(PipeWireRuntime &runtime) {
   }
 }
 
+static bool flushPausedAudio(PipeWireRuntime &runtime) {
+  static_cast<void>(runtime.ring.discardQueuedFrames());
+  if (runtime.playbackStream != nullptr) {
+    const auto result = pw_stream_flush(runtime.playbackStream, false);
+    if (result < 0) {
+      failRuntime(
+          runtime,
+          systemError("cannot flush paused PipeWire playback stream", result));
+      return false;
+    }
+  }
+  if (runtime.captureStream != nullptr) {
+    const auto result = pw_stream_flush(runtime.captureStream, false);
+    if (result < 0) {
+      failRuntime(
+          runtime,
+          systemError("cannot flush paused PipeWire capture stream", result));
+      return false;
+    }
+  }
+  return true;
+}
+
 static void streamStateChanged(void *data, pw_stream_state,
                                pw_stream_state state, const char *error) {
   auto &context = *static_cast<StreamCallbackContext *>(data);
@@ -1021,6 +1047,16 @@ static void streamStateChanged(void *data, pw_stream_state,
         std::memory_order_release);
   } else {
     runtime.playbackReady = isReadyState(state);
+  }
+  const auto capturePaused =
+      runtime.captureStreamState.load(std::memory_order_acquire) ==
+      PW_STREAM_STATE_PAUSED;
+  const auto playbackPaused =
+      runtime.playbackStreamState.load(std::memory_order_acquire) ==
+      PW_STREAM_STATE_PAUSED;
+  if (runtime.idleEpoch.observeStreamStates(capturePaused, playbackPaused) &&
+      !flushPausedAudio(runtime)) {
+    return;
   }
   requestControlStatusUpdate(runtime);
   maybeFinishRateTransition(runtime);
@@ -1253,6 +1289,15 @@ static void captureProcess(void *data) {
     pw_stream_queue_buffer(runtime.captureStream, pipeWireBuffer);
     return;
   }
+  if (frameCount != 0 && runtime.idleEpoch.takeDspResetRequest()) {
+    if (!runtime.pipeline.resetActive()) {
+      runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
+    }
+    runtime.dspIdleController.restart(
+        runtime.dspSampleRate.load(std::memory_order_acquire),
+        runtime.configuredDspIdlePolicy.load(std::memory_order_acquire));
+    publishDspIdleSnapshot(runtime);
+  }
   if (frameCount != 0) {
     recordInputFrames(runtime.inputTelemetry, frameCount,
                       currentMonotonicNanoseconds());
@@ -1325,6 +1370,9 @@ static void captureProcess(void *data) {
     runtime.processedInputFrames += blockFrames;
     sourceFrame += blockFrames;
   }
+  if (frameCount != 0) {
+    runtime.idleEpoch.captureFramesQueued();
+  }
 
   pipeWireBuffer->size = frameCount;
   pw_stream_queue_buffer(runtime.captureStream, pipeWireBuffer);
@@ -1371,9 +1419,10 @@ static void playbackProcess(void *data) {
           ? capacityFrames
           : static_cast<std::uint32_t>(
                 std::min<std::uint64_t>(pipeWireBuffer->requested, capacityFrames));
-  const auto producerSleeping =
+  const auto missingFramesAreGap =
       runtime.publishedDspIdleState.load(std::memory_order_acquire) ==
-      DspIdleState::sleeping;
+          DspIdleState::sleeping ||
+      runtime.idleEpoch.playbackShouldTreatMissingAsGap();
   auto gapFrames = std::uint32_t{0};
   auto outputFrame = std::uint32_t{0};
   while (outputFrame < suggestedFrames) {
@@ -1383,7 +1432,7 @@ static void playbackProcess(void *data) {
                        .first(static_cast<std::size_t>(runtime.options.channelCount) *
                               blockFrames);
     const auto readResult = runtime.ring.readWithGaps(
-        scratch, blockFrames, producerSleeping);
+        scratch, blockFrames, missingFramesAreGap);
     gapFrames += readResult.gapFrames;
     for (auto channel = std::uint32_t{0}; channel < runtime.options.channelCount;
          ++channel) {
