@@ -102,6 +102,11 @@ static void updateDspTiming(
     timing = initialDspTimingState();
     return;
   }
+  if (status.pipeWireIdle ||
+      status.dspIdleState == pipetune::DspIdleState::sleeping) {
+    establishDspTimingBaseline(timing, status);
+    return;
+  }
   if (!timing.hasBaseline ||
       status.dspProcessedFrames < timing.baselineFrames ||
       status.dspProcessingNanoseconds < timing.baselineNanoseconds) {
@@ -118,6 +123,9 @@ static void updateDspTiming(
         static_cast<double>(processingNanoseconds) /
         static_cast<double>(processedFrames);
     timing.hasAverage = true;
+  } else {
+    timing.hasAverage = false;
+    timing.nanosecondsPerFrame = 0.0;
   }
   timing.baselineFrames = status.dspProcessedFrames;
   timing.baselineNanoseconds = status.dspProcessingNanoseconds;

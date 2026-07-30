@@ -14,8 +14,9 @@ The window displays:
 - active native DSP node count;
 - configured and effective native DSP backends, availability, CPU requirement,
   fallback state, and validation diagnostics;
-- configured DSP idle policy, active/draining/sleeping state, cumulative
-  skipped frames and sleep transitions, and PipeWire graph-idle state;
+- configured DSP idle policy, effective active/draining/sleeping/paused state,
+  cumulative skipped frames and sleep transitions, and PipeWire graph-idle
+  state;
 - selectable and preferred physical outputs;
 - effective physical output and the engine's selection reason;
 - Max or fixed PCM rate and suggest or force behavior;
@@ -91,11 +92,14 @@ after five seconds of exact-zero input plus one second of final DSP output at
 or below -150 dBFS. Exact uses the same input interval but requires the final
 output to remain mathematically zero for one second.
 
-The **Runtime state** field shows the configured policy, controller state,
+The **Runtime state** field shows the configured policy, effective DSP state,
 cumulative skipped frames, sleep transitions, and whether both PipeWire
-streams are paused. Any nonzero input wakes DSP processing in the same
-callback block. PipeTune resets the active EffeTune engine through its
-real-time-safe reset API before sleeping.
+streams are paused. When PipeWire has stopped both process callbacks, the GUI
+shows **DSP Paused** instead of the controller's retained active or draining
+state. A controller that is already sleeping remains **DSP Sleeping**. Any
+nonzero input wakes DSP processing in the same callback block. PipeTune resets
+the active EffeTune engine through its real-time-safe reset API before
+sleeping.
 
 When connected, **Apply and Save** changes the daemon policy live, confirms
 the returned policy, and only then updates startup configuration. A rejection
@@ -192,9 +196,12 @@ EffeTune processing time, DSP idle counters/state, and PipeWire graph-idle
 state once per second. The GUI derives the displayed per-frame average between
 publications. It compares that average with the frame duration derived from
 the negotiated input sample rate and displays the ratio as **Load**; 100% is
-the theoretical real-time deadline, and values above 100% remain visible. It
-does not poll for status; a short retry timer is used only to reconnect after
-the socket becomes unavailable.
+the theoretical real-time deadline, and values above 100% remain visible.
+While PipeWire is paused, the DSP controller is sleeping, or the latest active
+interval contains no DSP frames, **EffeTune DSP time** displays `—` rather
+than retaining an earlier load measurement. It does not poll for status; a
+short retry timer is used only to reconnect after the socket becomes
+unavailable.
 
 ## System tray compatibility
 

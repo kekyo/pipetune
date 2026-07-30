@@ -59,9 +59,21 @@ static bool testConnectedPresentation() {
 
 static bool testRuntimeStatesAndSensitivity() {
   auto state = connectedState();
+  state.runtime.dspIdleState = pipetune::DspIdleState::active;
+  auto presentation =
+      pipetune_gtk::makeDspIdleSelectionPresentation(
+          state, pipetune::DspIdlePolicy::exact);
+  if (!check(presentation.runtimeStatus.find("DSP Paused") !=
+                 std::string::npos &&
+                 presentation.runtimeStatus.find("DSP Active") ==
+                     std::string::npos,
+             "PipeWire-paused DSP status must show effective inactivity")) {
+    return false;
+  }
+
   state.runtime.dspIdleState = pipetune::DspIdleState::draining;
   state.runtime.pipeWireIdle = false;
-  auto presentation =
+  presentation =
       pipetune_gtk::makeDspIdleSelectionPresentation(
           state, pipetune::DspIdlePolicy::exact);
   if (!check(presentation.activeIndex == 1,

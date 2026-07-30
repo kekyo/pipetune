@@ -18,12 +18,12 @@ static std::string_view policyDisplayName(
 }
 
 static std::string_view stateDisplayName(
-    pipetune::DspIdleState state) {
+    pipetune::DspIdleState state, bool pipeWireIdle) {
   switch (state) {
   case pipetune::DspIdleState::active:
-    return "Active";
+    return pipeWireIdle ? "Paused" : "Active";
   case pipetune::DspIdleState::draining:
-    return "Draining";
+    return pipeWireIdle ? "Paused" : "Draining";
   case pipetune::DspIdleState::sleeping:
     return "Sleeping";
   }
@@ -38,7 +38,8 @@ static std::string runtimeStatusText(const ApplicationState &state) {
   auto text = std::string("Configured ");
   text += policyDisplayName(state.runtime.dspIdlePolicy);
   text += "  •  DSP ";
-  text += stateDisplayName(state.runtime.dspIdleState);
+  text += stateDisplayName(state.runtime.dspIdleState,
+                           state.runtime.pipeWireIdle);
   text += "  •  Skipped ";
   text += std::to_string(state.runtime.dspIdleSkippedFrames);
   text += " frames  •  Sleep transitions ";

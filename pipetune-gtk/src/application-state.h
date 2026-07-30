@@ -66,9 +66,9 @@ struct DspTimingState {
   std::uint64_t baselineFrames;
   /** Cumulative processing nanoseconds at the current baseline. */
   std::uint64_t baselineNanoseconds;
-  /** True after an interval containing DSP frames was measured. */
+  /** True when the latest active interval contained DSP frames. */
   bool hasAverage;
-  /** Average native DSP processing nanoseconds per frame. */
+  /** Latest active-interval DSP processing nanoseconds per frame. */
   double nanosecondsPerFrame;
 };
 
