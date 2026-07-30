@@ -7,7 +7,7 @@
     <property name="window-position">center</property>
     <child type="titlebar">
       <object class="GtkHeaderBar" id="headerBar">
-        <property name="subtitle">PipeWire DSP control</property>
+        <property name="subtitle">EffeTune DSP control</property>
         <property name="show-close-button">True</property>
       </object>
     </child>

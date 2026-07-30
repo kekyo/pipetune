@@ -162,7 +162,8 @@ validate_installed_package() {
 	require_command node
 	assert_file "$package_path"
 
-	dpkg -i "$package_path"
+	dpkg "--path-include=/usr/share/doc/$PIPETUNE_PACKAGE_NAME/*" \
+		-i "$package_path"
 	installed_status=$(dpkg-query -W -f='${Status}' "$PIPETUNE_PACKAGE_NAME")
 	[ "$installed_status" = 'install ok installed' ] ||
 		fail "Package installation did not complete: $installed_status"

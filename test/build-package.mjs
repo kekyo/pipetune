@@ -702,6 +702,57 @@ printf '%s\\n' "$@" >"$PIPETUNE_TEST_WRAPPER_CAPTURE"
     assertSuccess(built, `could not create test package ${output}`);
   }
 
+  const installedValidationBinDirectory = join(
+    temporaryRoot,
+    "installed-validation-bin",
+  );
+  const dpkgInstallInvocation = join(
+    temporaryRoot,
+    "dpkg-install-invocation.txt",
+  );
+  mkdirSync(installedValidationBinDirectory);
+  writeExecutable(
+    join(installedValidationBinDirectory, "dpkg"),
+    `#!/bin/sh
+printf '%s\\n' "$@" >"$PIPETUNE_TEST_DPKG_INSTALL_INVOCATION"
+exit 73
+`,
+  );
+  for (const commandName of ["dpkg-query", "node"]) {
+    writeExecutable(
+      join(installedValidationBinDirectory, commandName),
+      `#!/bin/sh
+exit 74
+`,
+    );
+  }
+  const installedValidation = run(
+    join(projectRoot, "scripts/build_linux_dist_container.sh"),
+    ["--validate-package", goodPackage],
+    {
+      ...process.env,
+      PATH: `${installedValidationBinDirectory}:${process.env.PATH}`,
+      PIPETUNE_PACKAGE_NAME: "pipetune",
+      PIPETUNE_PACKAGE_VERSION: "1.2.3",
+      PIPETUNE_TEST_DPKG_INSTALL_INVOCATION: dpkgInstallInvocation,
+    },
+  );
+  assertEqual(
+    "73",
+    `${installedValidation.status}`,
+    "installed package validation did not reach dpkg",
+  );
+  assertEqual(
+    [
+      "--path-include=/usr/share/doc/pipetune/*",
+      "-i",
+      goodPackage,
+      "",
+    ].join("\n"),
+    readFileSync(dpkgInstallInvocation, "utf8"),
+    "installed package validation did not restore package documentation excluded by minimal images",
+  );
+
   const validateGoodPackage = runSourced(
     `
 VERSION=1.2.3
