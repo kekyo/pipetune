@@ -298,6 +298,9 @@ install(
   FILES packaging/pipetune.environment.example
   DESTINATION "${PIPETUNE_DOCUMENTATION_DIR}"
   RENAME environment.example)
+install(
+  FILES docs/dsp-backends.md
+  DESTINATION "${PIPETUNE_DOCUMENTATION_DIR}")
 
 if(BUILD_TESTING)
   add_custom_target(
@@ -896,6 +899,7 @@ if(BUILD_TESTING)
       ${CMAKE_INSTALL_PREFIX}
       ${CMAKE_INSTALL_BINDIR}
       ${PIPETUNE_SYSTEMD_USER_UNIT_DIR}
+      ${CMAKE_INSTALL_LIBDIR}
       ${PIPETUNE_DOCUMENTATION_DIR}
       ${CMAKE_CURRENT_BINARY_DIR}/pipetune.test.service)
 

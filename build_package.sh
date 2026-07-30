@@ -492,6 +492,8 @@ validate_deb_package() {
 	for required_file in \
 		usr/bin/pipetune \
 		usr/bin/pipetune-gtk \
+		usr/lib/pipetune/libeffetune-dsp-scalar.so \
+		usr/lib/pipetune/libeffetune-dsp-simd.so \
 		usr/lib/systemd/user/pipetune.service \
 		usr/share/applications/net.kekyo.pipetune-gtk.desktop \
 		etc/xdg/autostart/net.kekyo.pipetune-gtk.desktop \
@@ -500,6 +502,7 @@ validate_deb_package() {
 		usr/share/doc/pipetune/README.daemon.md \
 		usr/share/doc/pipetune/README.gtk.md \
 		usr/share/doc/pipetune/architecture.md \
+		usr/share/doc/pipetune/dsp-backends.md \
 		usr/share/doc/pipetune/copyright \
 		usr/share/doc/pipetune/environment.example; do
 		assert_file "$tmp_dir/$required_file"
@@ -511,6 +514,13 @@ validate_deb_package() {
 	readelf -h "$tmp_dir/usr/bin/pipetune-gtk" >"$tmp_dir/readelf-pipetune-gtk.txt"
 	assert_contains "$tmp_dir/readelf-pipetune-gtk.txt" "$(expected_elf_class "$expected_arch")"
 	assert_contains "$tmp_dir/readelf-pipetune-gtk.txt" "$(expected_elf_machine "$expected_arch")"
+	for backend in \
+		libeffetune-dsp-scalar.so \
+		libeffetune-dsp-simd.so; do
+		readelf -h "$tmp_dir/usr/lib/pipetune/$backend" >"$tmp_dir/readelf-$backend.txt"
+		assert_contains "$tmp_dir/readelf-$backend.txt" "$(expected_elf_class "$expected_arch")"
+		assert_contains "$tmp_dir/readelf-$backend.txt" "$(expected_elf_machine "$expected_arch")"
+	done
 
 	rm -rf "$tmp_dir"
 }

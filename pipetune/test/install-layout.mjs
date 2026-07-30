@@ -27,6 +27,7 @@ const [
   installPrefix,
   binaryDirectory,
   systemdUserUnitDirectory,
+  libraryDirectory,
   documentationDirectory,
   testService,
 ] = process.argv.slice(2);
@@ -37,6 +38,7 @@ if (
   !installPrefix ||
   !binaryDirectory ||
   !systemdUserUnitDirectory ||
+  !libraryDirectory ||
   !documentationDirectory ||
   !testService
 ) {
@@ -66,10 +68,25 @@ if (
         documentationDirectory,
         "environment.example",
       );
+      const scalarDspBackend = installPath(
+        join(libraryDirectory, "pipetune"),
+        "libeffetune-dsp-scalar.so",
+      );
+      const simdDspBackend = installPath(
+        join(libraryDirectory, "pipetune"),
+        "libeffetune-dsp-simd.so",
+      );
+      const dspBackendDocumentation = installPath(
+        documentationDirectory,
+        "dsp-backends.md",
+      );
       try {
         accessSync(executable, constants.X_OK);
         accessSync(service, constants.R_OK);
         accessSync(environmentExample, constants.R_OK);
+        accessSync(scalarDspBackend, constants.R_OK);
+        accessSync(simdDspBackend, constants.R_OK);
+        accessSync(dspBackendDocumentation, constants.R_OK);
       } catch (error) {
         fail(`installed PipeTune layout is incomplete: ${error.message}`);
       }

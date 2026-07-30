@@ -46,6 +46,7 @@ copy_docs() {
 	cp pipetune/README.md "$doc_dir/README.daemon.md"
 	cp pipetune-gtk/README.md "$doc_dir/README.gtk.md"
 	cp pipetune/docs/architecture.md "$doc_dir/architecture.md"
+	cp pipetune/docs/dsp-backends.md "$doc_dir/dsp-backends.md"
 	cp packaging/copyright "$doc_dir/copyright"
 }
 
@@ -115,10 +116,13 @@ validate_installed_package() {
 	for installed_file in \
 		/usr/bin/pipetune \
 		/usr/bin/pipetune-gtk \
+		/usr/lib/pipetune/libeffetune-dsp-scalar.so \
+		/usr/lib/pipetune/libeffetune-dsp-simd.so \
 		/usr/lib/systemd/user/pipetune.service \
 		/usr/share/applications/net.kekyo.pipetune-gtk.desktop \
 		/etc/xdg/autostart/net.kekyo.pipetune-gtk.desktop \
 		/usr/share/icons/hicolor/scalable/apps/pipetune.svg \
+		/usr/share/doc/pipetune/dsp-backends.md \
 		/usr/share/doc/pipetune/copyright; do
 		assert_file "$installed_file"
 	done
@@ -204,8 +208,11 @@ chmod 0644 "$control_dir/control"
 
 assert_file "$stage_dir/usr/bin/pipetune"
 assert_file "$stage_dir/usr/bin/pipetune-gtk"
+assert_file "$stage_dir/usr/lib/pipetune/libeffetune-dsp-scalar.so"
+assert_file "$stage_dir/usr/lib/pipetune/libeffetune-dsp-simd.so"
 assert_file "$stage_dir/usr/lib/systemd/user/pipetune.service"
 assert_file "$stage_dir/usr/share/applications/net.kekyo.pipetune-gtk.desktop"
 assert_file "$stage_dir/etc/xdg/autostart/net.kekyo.pipetune-gtk.desktop"
 assert_file "$stage_dir/usr/share/icons/hicolor/scalable/apps/pipetune.svg"
 assert_file "$stage_dir/usr/share/doc/pipetune/copyright"
+assert_file "$stage_dir/usr/share/doc/pipetune/dsp-backends.md"

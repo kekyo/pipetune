@@ -79,11 +79,14 @@ const writeExecutable = (path, contents) => {
 const createPackageStage = (
   stageRoot,
   includeAutostart,
+  includeDspBackendDocumentation,
+  includeDspBackends,
   debianArchitecture,
 ) => {
   const paths = [
     "DEBIAN",
     "usr/bin",
+    "usr/lib/pipetune",
     "usr/lib/systemd/user",
     "usr/share/applications",
     "usr/share/icons/hicolor/scalable/apps",
@@ -110,6 +113,16 @@ Description: PipeWire system-wide DSP and GTK control application
   );
   copyFileSync("/bin/true", join(stageRoot, "usr/bin/pipetune"));
   copyFileSync("/bin/true", join(stageRoot, "usr/bin/pipetune-gtk"));
+  if (includeDspBackends) {
+    copyFileSync(
+      "/bin/true",
+      join(stageRoot, "usr/lib/pipetune/libeffetune-dsp-scalar.so"),
+    );
+    copyFileSync(
+      "/bin/true",
+      join(stageRoot, "usr/lib/pipetune/libeffetune-dsp-simd.so"),
+    );
+  }
   writeFileSync(
     join(stageRoot, "usr/lib/systemd/user/pipetune.service"),
     "[Service]\nExecStart=/usr/bin/pipetune\n",
@@ -135,6 +148,7 @@ Description: PipeWire system-wide DSP and GTK control application
     "architecture.md",
     "copyright",
     "environment.example",
+    ...(includeDspBackendDocumentation ? ["dsp-backends.md"] : []),
   ]) {
     writeFileSync(
       join(stageRoot, "usr/share/doc/pipetune", documentName),
@@ -521,13 +535,48 @@ printf '%s\\n' "$@" >"$PIPETUNE_TEST_WRAPPER_CAPTURE"
 
   const goodStage = join(temporaryRoot, "good-stage");
   const badStage = join(temporaryRoot, "bad-stage");
+  const missingDspBackendDocumentationStage = join(
+    temporaryRoot,
+    "missing-dsp-backend-documentation-stage",
+  );
+  const missingDspBackendsStage = join(
+    temporaryRoot,
+    "missing-dsp-backends-stage",
+  );
   const goodPackage = join(temporaryRoot, "pipetune-good.deb");
   const badPackage = join(temporaryRoot, "pipetune-bad.deb");
-  createPackageStage(goodStage, true, hostDebianArchitecture);
-  createPackageStage(badStage, false, hostDebianArchitecture);
+  const missingDspBackendDocumentationPackage = join(
+    temporaryRoot,
+    "pipetune-missing-dsp-backend-documentation.deb",
+  );
+  const missingDspBackendsPackage = join(
+    temporaryRoot,
+    "pipetune-missing-dsp-backends.deb",
+  );
+  createPackageStage(goodStage, true, true, true, hostDebianArchitecture);
+  createPackageStage(badStage, false, true, true, hostDebianArchitecture);
+  createPackageStage(
+    missingDspBackendDocumentationStage,
+    true,
+    false,
+    true,
+    hostDebianArchitecture,
+  );
+  createPackageStage(
+    missingDspBackendsStage,
+    true,
+    true,
+    false,
+    hostDebianArchitecture,
+  );
   for (const [stage, output] of [
     [goodStage, goodPackage],
     [badStage, badPackage],
+    [
+      missingDspBackendDocumentationStage,
+      missingDspBackendDocumentationPackage,
+    ],
+    [missingDspBackendsStage, missingDspBackendsPackage],
   ]) {
     const built = run(
       dpkgDeb,
@@ -564,6 +613,38 @@ validate_deb_package "$2" "$3"
     validateBadPackage.stderr,
     "net.kekyo.pipetune-gtk.desktop",
     "deb validation did not identify the missing autostart entry",
+  );
+  const validateMissingDspBackendDocumentation = runSourced(
+    `
+VERSION=1.2.3
+validate_deb_package "$2" "$3"
+`,
+    [missingDspBackendDocumentationPackage, canonicalHostArchitecture],
+    process.env,
+  );
+  if (validateMissingDspBackendDocumentation.status === 0) {
+    fail("deb package without DSP backend documentation passed validation");
+  }
+  assertIncludes(
+    validateMissingDspBackendDocumentation.stderr,
+    "dsp-backends.md",
+    "deb validation did not identify missing DSP backend documentation",
+  );
+  const validateMissingDspBackends = runSourced(
+    `
+VERSION=1.2.3
+validate_deb_package "$2" "$3"
+`,
+    [missingDspBackendsPackage, canonicalHostArchitecture],
+    process.env,
+  );
+  if (validateMissingDspBackends.status === 0) {
+    fail("deb package without DSP backend shared libraries passed validation");
+  }
+  assertIncludes(
+    validateMissingDspBackends.stderr,
+    "libeffetune-dsp-scalar.so",
+    "deb validation did not identify missing DSP backend shared libraries",
   );
 } finally {
   rmSync(temporaryRoot, { recursive: true, force: true });
