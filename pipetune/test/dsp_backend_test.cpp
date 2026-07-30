@@ -79,6 +79,64 @@ static bool testValidBackends(const std::filesystem::path &scalarPath,
                "SIMD backend must retain its exact library path");
 }
 
+static bool testBackendDiscoveryAndSelection() {
+  const auto discovered = pipetune::discoverDspBackends();
+  if (!check(discovered.scalar.backend != nullptr,
+             discovered.scalar.error) ||
+      !check(discovered.simd.backend != nullptr, discovered.simd.error)) {
+    return false;
+  }
+
+  const auto scalar =
+      pipetune::selectDspBackend(pipetune::DspBackendKind::scalar,
+                                 discovered);
+  const auto simd =
+      pipetune::selectDspBackend(pipetune::DspBackendKind::simd,
+                                 discovered);
+  if (!check(scalar.effectiveBackend != nullptr &&
+                 scalar.effectiveBackend->kind() ==
+                     pipetune::DspBackendKind::scalar &&
+                 !scalar.fallback && scalar.error.empty(),
+             "available scalar selection differs") ||
+      !check(simd.effectiveBackend != nullptr &&
+                 simd.effectiveBackend->kind() ==
+                     pipetune::DspBackendKind::simd &&
+                 !simd.fallback && simd.error.empty(),
+             "available SIMD selection differs")) {
+    return false;
+  }
+
+  auto withoutSimd = discovered;
+  withoutSimd.simd.backend.reset();
+  withoutSimd.simd.error = "test SIMD backend is unavailable";
+  const auto fallback =
+      pipetune::selectDspBackend(pipetune::DspBackendKind::simd,
+                                 withoutSimd);
+  if (!check(fallback.effectiveBackend != nullptr &&
+                 fallback.effectiveBackend->kind() ==
+                     pipetune::DspBackendKind::scalar,
+             "unavailable SIMD must fall back to scalar") ||
+      !check(fallback.fallback,
+             "unavailable SIMD must report fallback") ||
+      !check(contains(fallback.error, "test SIMD backend is unavailable"),
+             "SIMD fallback must retain its availability diagnostic")) {
+    return false;
+  }
+
+  auto withoutScalar = discovered;
+  withoutScalar.scalar.backend.reset();
+  withoutScalar.scalar.error = "test scalar backend is unavailable";
+  const auto unusable =
+      pipetune::selectDspBackend(pipetune::DspBackendKind::simd,
+                                 withoutScalar);
+  return check(unusable.effectiveBackend == nullptr,
+               "missing mandatory scalar backend must reject DSP startup") &&
+         check(!unusable.fallback,
+               "missing scalar backend must not report a usable fallback") &&
+         check(contains(unusable.error, "test scalar backend is unavailable"),
+               "missing scalar diagnostic must be retained");
+}
+
 static bool testRejectedBackends(
     const std::filesystem::path &scalarPath,
     const std::filesystem::path &simdPath,
@@ -223,6 +281,7 @@ int main(int argc, char **argv) {
   const auto missingSymbolPath = std::filesystem::path(argv[4]);
   const auto passed =
       testNames() && testValidBackends(scalarPath, simdPath) &&
+      testBackendDiscoveryAndSelection() &&
       testRejectedBackends(scalarPath, simdPath, wrongAbiPath,
                            missingSymbolPath) &&
       testPipelineOwnership(scalarPath, simdPath);

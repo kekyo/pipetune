@@ -1,5 +1,6 @@
 #include "dsp_pipeline_slot.h"
 
+#include "pipetune/dsp_backend.h"
 #include "pipetune/dsp_pipeline.h"
 
 #include <atomic>
@@ -200,6 +201,52 @@ static bool testStagedReplacementCanCommitAndRollback(
                "commit must release rollback state");
 }
 
+static bool testBackendReplacementPreservesCounters(
+    const std::filesystem::path &presetPath) {
+  const auto backends = pipetune::discoverDspBackends();
+  if (!check(backends.scalar.backend != nullptr, backends.scalar.error) ||
+      !check(backends.simd.backend != nullptr, backends.simd.error)) {
+    return false;
+  }
+  auto initial = pipetune::loadDspPipeline(
+      presetPath,
+      {.sampleRate = 48000.0F, .maxChannels = 1, .maxFrames = 32},
+      backends.scalar.backend);
+  if (!check(initial.pipeline != nullptr, initial.error)) {
+    return false;
+  }
+  auto slot = pipetune::DspPipelineSlot(std::move(initial.pipeline));
+  auto samples = std::vector<float>{0.25F};
+  if (!check(slot.process(samples, 1, 1, 0.0) ==
+                 pipetune::ProcessStatus::ok,
+             "scalar pipeline processing failed before backend switch")) {
+    return false;
+  }
+  const auto before = slot.performanceCounters();
+  auto replacement = slot.rebuildActive(
+      {.sampleRate = 48000.0F, .maxChannels = 1, .maxFrames = 32},
+      backends.simd.backend);
+  if (!check(replacement.pipeline != nullptr, replacement.error) ||
+      !check(replacement.pipeline->backendKind() ==
+                 pipetune::DspBackendKind::simd,
+             "backend rebuild must use SIMD")) {
+    return false;
+  }
+  slot.replace(std::move(replacement.pipeline));
+  samples[0] = 0.25F;
+  return check(slot.backendKind() == pipetune::DspBackendKind::simd,
+               "slot must expose its effective replacement backend") &&
+         check(slot.process(samples, 1, 1, 0.1) ==
+                   pipetune::ProcessStatus::ok,
+               "SIMD pipeline processing failed after backend switch") &&
+         check(slot.performanceCounters().processedFrames ==
+                   before.processedFrames + 1,
+               "backend switch must preserve cumulative DSP frames") &&
+         check(slot.performanceCounters().processingNanoseconds >=
+                   before.processingNanoseconds,
+               "backend switch must preserve cumulative DSP time");
+}
+
 int main() {
   const auto directory =
       std::filesystem::temp_directory_path() /
@@ -215,7 +262,8 @@ int main() {
                       testConcurrentReplacementProducesOnlyCompletePipelines(
                           positive, negative) &&
                       testStagedReplacementCanCommitAndRollback(
-                          positive, negative);
+                          positive, negative) &&
+                      testBackendReplacementPreservesCounters(positive);
   std::filesystem::remove_all(directory);
   return passed ? 0 : 1;
 }

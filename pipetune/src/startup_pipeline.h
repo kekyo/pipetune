@@ -1,11 +1,13 @@
 #ifndef PIPETUNE_STARTUP_PIPELINE_H
 #define PIPETUNE_STARTUP_PIPELINE_H
 
+#include "pipetune/dsp_backend.h"
 #include "pipetune/dsp_pipeline.h"
 #include "pipetune/sample_rate.h"
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -29,6 +31,17 @@ struct StartupPipelineResult {
   std::vector<PipelineWarning> warnings;
   /** Fatal pipeline construction diagnostic. */
   std::string error;
+  /** Independently discovered scalar and SIMD backend variants. */
+  DspBackends dspBackends = {};
+  /** Persisted backend choice. */
+  DspBackendKind configuredDspBackend = DspBackendKind::scalar;
+  /** Active backend, or no value when the mandatory scalar backend failed. */
+  std::optional<DspBackendKind> effectiveDspBackend =
+      DspBackendKind::scalar;
+  /** True when configured SIMD could not be used and scalar is active. */
+  bool dspBackendFallback = false;
+  /** Backend availability or compatibility diagnostic. */
+  std::string dspBackendError = {};
 };
 
 /**
@@ -45,6 +58,22 @@ struct StartupPipelineResult {
 StartupPipelineResult
 prepareStartupPipeline(const std::filesystem::path &configPath,
                        const PipelineBuildOptions &options);
+
+/**
+ * Prepares startup state from an explicitly supplied backend discovery result.
+ *
+ * This overload is also useful to present a stable discovery snapshot to
+ * callers that will retain it for live backend switching.
+ *
+ * @param configPath Startup configuration file path.
+ * @param options Maximum processing format for the prepared pipeline.
+ * @param backends Independently discovered scalar and SIMD backends.
+ * @return Prepared startup pipeline and diagnostics.
+ */
+StartupPipelineResult
+prepareStartupPipeline(const std::filesystem::path &configPath,
+                       const PipelineBuildOptions &options,
+                       DspBackends backends);
 
 } // namespace pipetune
 

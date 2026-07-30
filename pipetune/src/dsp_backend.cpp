@@ -385,7 +385,63 @@ DspBackendLoadResult loadDspBackend(DspBackendKind kind) {
       kind == DspBackendKind::simd ? cpu.requirement : std::string("none"),
       "DSP backend " + filename +
           " was not found beside the executable or in its private "
-          "installation directory");
+      "installation directory");
+}
+
+const DspBackendLoadResult &
+DspBackends::get(DspBackendKind kind) const noexcept {
+  return kind == DspBackendKind::scalar ? scalar : simd;
+}
+
+DspBackends discoverDspBackends() {
+  return {
+      .scalar = loadDspBackend(DspBackendKind::scalar),
+      .simd = loadDspBackend(DspBackendKind::simd),
+  };
+}
+
+DspBackendSelection
+selectDspBackend(DspBackendKind configuredBackend,
+                 const DspBackends &backends) {
+  if (backends.scalar.backend == nullptr) {
+    auto error = backends.scalar.error;
+    if (error.empty()) {
+      error = "scalar DSP backend is unavailable";
+    }
+    return {
+        .configuredBackend = configuredBackend,
+        .effectiveBackend = nullptr,
+        .fallback = false,
+        .error = std::move(error),
+    };
+  }
+  if (configuredBackend == DspBackendKind::scalar) {
+    return {
+        .configuredBackend = configuredBackend,
+        .effectiveBackend = backends.scalar.backend,
+        .fallback = false,
+        .error = {},
+    };
+  }
+  if (backends.simd.backend != nullptr) {
+    return {
+        .configuredBackend = configuredBackend,
+        .effectiveBackend = backends.simd.backend,
+        .fallback = false,
+        .error = {},
+    };
+  }
+
+  auto error = backends.simd.error;
+  if (error.empty()) {
+    error = "SIMD DSP backend is unavailable";
+  }
+  return {
+      .configuredBackend = configuredBackend,
+      .effectiveBackend = backends.scalar.backend,
+      .fallback = true,
+      .error = std::move(error),
+  };
 }
 
 } // namespace pipetune

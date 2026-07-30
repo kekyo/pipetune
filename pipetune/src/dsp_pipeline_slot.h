@@ -77,6 +77,17 @@ public:
   rebuildActive(const PipelineBuildOptions &options) const;
 
   /**
+   * Builds a replacement from the retained recipe using another backend.
+   *
+   * @param options New maximum processing format.
+   * @param backend Validated backend for a preset pipeline.
+   * @return Prepared replacement and warnings, or a diagnostic.
+   */
+  PipelineLoadResult
+  rebuildActive(const PipelineBuildOptions &options,
+                std::shared_ptr<const DspBackend> backend) const;
+
+  /**
    * Activates a replacement while retaining the previous pipeline.
    *
    * Exactly one staged replacement may exist until commitStaged() or
@@ -107,6 +118,9 @@ public:
 
   /** Returns the active pipeline's enabled native DSP count. */
   std::size_t activePluginCount() const noexcept;
+
+  /** Returns the active native backend, or no value for bypass. */
+  std::optional<DspBackendKind> backendKind() const noexcept;
 
   /** Returns cumulative native EffeTune processing counters. */
   DspPerformanceCounters performanceCounters() const noexcept;

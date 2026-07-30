@@ -82,6 +82,38 @@ struct DspBackendLoadResult {
 };
 
 /**
+ * Holds the independently discovered scalar and SIMD backend variants.
+ */
+struct DspBackends {
+  /** Mandatory compatibility backend. */
+  DspBackendLoadResult scalar;
+  /** Optional accelerated backend. */
+  DspBackendLoadResult simd;
+
+  /**
+   * Returns the load result for one backend kind.
+   *
+   * @param kind Backend variant.
+   * @return Corresponding scalar or SIMD result.
+   */
+  const DspBackendLoadResult &get(DspBackendKind kind) const noexcept;
+};
+
+/**
+ * Reports the effective backend selected from a discovered pair.
+ */
+struct DspBackendSelection {
+  /** User-configured backend kind. */
+  DspBackendKind configuredBackend;
+  /** Backend to use, or null when the mandatory scalar backend is unavailable. */
+  std::shared_ptr<const DspBackend> effectiveBackend;
+  /** True when configured SIMD could not be used and scalar was selected. */
+  bool fallback;
+  /** Availability diagnostic, or empty when the configured backend is active. */
+  std::string error;
+};
+
+/**
  * Resolves and validates one packaged DSP backend.
  *
  * Only executable-relative build and private installation locations are
@@ -91,6 +123,30 @@ struct DspBackendLoadResult {
  * @return Loaded backend and diagnostics.
  */
 DspBackendLoadResult loadDspBackend(DspBackendKind kind);
+
+/**
+ * Resolves and validates both packaged DSP backend variants.
+ *
+ * Scalar is always inspected because it is the required compatibility
+ * fallback. Failure of either variant is retained independently.
+ *
+ * @return Scalar and SIMD load results.
+ */
+DspBackends discoverDspBackends();
+
+/**
+ * Selects an effective backend while enforcing scalar as the safe baseline.
+ *
+ * Configured SIMD falls back to scalar when SIMD is unavailable. If scalar is
+ * unavailable, no backend is selected even when SIMD itself loaded.
+ *
+ * @param configuredBackend User-configured backend kind.
+ * @param backends Previously discovered backend results.
+ * @return Effective backend, fallback state, and diagnostic.
+ */
+DspBackendSelection
+selectDspBackend(DspBackendKind configuredBackend,
+                 const DspBackends &backends);
 
 } // namespace pipetune
 

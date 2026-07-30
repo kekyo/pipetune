@@ -1,6 +1,7 @@
 #ifndef PIPETUNE_STARTUP_CONFIG_H
 #define PIPETUNE_STARTUP_CONFIG_H
 
+#include "pipetune/dsp_backend.h"
 #include "pipetune/sample_rate.h"
 
 #include <filesystem>
@@ -45,6 +46,8 @@ struct StartupConfigLoadResult {
   std::string preferredOutput;
   /** User-selected DSP and PipeWire graph-rate policy. */
   SampleRatePolicy ratePolicy = {};
+  /** User-selected native DSP backend. */
+  DspBackendKind dspBackend = DspBackendKind::scalar;
   /** Read or validation diagnostic, or empty on success. */
   std::string error;
 };
@@ -133,10 +136,21 @@ std::string saveSampleRatePolicy(const std::filesystem::path &configPath,
                                  const SampleRatePolicy &policy);
 
 /**
+ * Atomically stores a DSP backend choice while preserving other choices.
+ *
+ * @param configPath Configuration file path.
+ * @param kind Scalar compatibility or SIMD acceleration backend.
+ * @return Empty on success, otherwise a human-readable diagnostic.
+ */
+std::string saveDspBackendKind(const std::filesystem::path &configPath,
+                               DspBackendKind kind);
+
+/**
  * Atomically replaces the startup configuration with PipeTune defaults.
  *
  * The stored defaults select DSP bypass, the system-default output, and the
- * Max + Suggest sample-rate policy. Existing contents are not parsed.
+ * Max + Suggest sample-rate policy, and the scalar DSP backend. Existing
+ * contents are not parsed.
  *
  * @param configPath Configuration file path.
  * @return Empty on success, otherwise a human-readable diagnostic.

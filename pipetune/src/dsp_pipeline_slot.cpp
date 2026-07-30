@@ -58,6 +58,12 @@ PipelineLoadResult DspPipelineSlot::rebuildActive(
   return rebuildDspPipeline(*current_, options);
 }
 
+PipelineLoadResult DspPipelineSlot::rebuildActive(
+    const PipelineBuildOptions &options,
+    std::shared_ptr<const DspBackend> backend) const {
+  return rebuildDspPipeline(*current_, options, std::move(backend));
+}
+
 void DspPipelineSlot::stageReplacement(
     std::unique_ptr<DspPipeline> replacement) {
   if (replacement == nullptr) {
@@ -97,6 +103,11 @@ bool DspPipelineSlot::hasStagedReplacement() const noexcept {
 
 std::size_t DspPipelineSlot::activePluginCount() const noexcept {
   return active_.load(std::memory_order_acquire)->activePluginCount();
+}
+
+std::optional<DspBackendKind>
+DspPipelineSlot::backendKind() const noexcept {
+  return active_.load(std::memory_order_acquire)->backendKind();
 }
 
 DspPerformanceCounters
