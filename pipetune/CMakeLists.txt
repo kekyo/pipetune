@@ -129,6 +129,18 @@ add_custom_command(
   VERBATIM)
 
 set(ET_SIMD OFF CACHE BOOL "Match EffeTune's native scalar DSP configuration" FORCE)
+set(
+  ET_BUILD_NATIVE_SHARED_BACKENDS
+  ON
+  CACHE BOOL
+  "Build PipeTune's loadable EffeTune DSP backends"
+  FORCE)
+set(
+  ET_NATIVE_BACKEND_OUTPUT_DIRECTORY
+  "${CMAKE_BINARY_DIR}"
+  CACHE PATH
+  "Place loadable EffeTune DSP backends next to PipeTune"
+  FORCE)
 add_subdirectory(
   "${PIPETUNE_EFFETUNE_DIR}/dsp"
   "${CMAKE_CURRENT_BINARY_DIR}/effetune-dsp")
@@ -237,6 +249,9 @@ set(
 
 install(TARGETS pipetune RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(
+  TARGETS effetune_dsp_scalar_shared effetune_dsp_simd_shared
+  LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/pipetune")
+install(
   FILES "${CMAKE_CURRENT_BINARY_DIR}/pipetune.service"
   DESTINATION "${PIPETUNE_SYSTEMD_USER_UNIT_DIR}")
 install(
@@ -245,6 +260,33 @@ install(
   RENAME environment.example)
 
 if(BUILD_TESTING)
+  add_executable(
+    pipetune_effetune_backend_artifact_tests
+    test/effetune_backend_artifact_test.cpp)
+  target_include_directories(
+    pipetune_effetune_backend_artifact_tests
+    PRIVATE "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_link_libraries(
+    pipetune_effetune_backend_artifact_tests PRIVATE "${CMAKE_DL_LIBS}")
+  add_dependencies(
+    pipetune_effetune_backend_artifact_tests
+    effetune_dsp_scalar_shared
+    effetune_dsp_simd_shared)
+  if(MSVC)
+    target_compile_options(
+      pipetune_effetune_backend_artifact_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_effetune_backend_artifact_tests
+      PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_effetune_backend_artifact_tests
+    COMMAND
+      pipetune_effetune_backend_artifact_tests
+      "$<TARGET_FILE:effetune_dsp_scalar_shared>"
+      "$<TARGET_FILE:effetune_dsp_simd_shared>")
+
   add_test(NAME pipetune_cli_help COMMAND pipetune --help)
   set_tests_properties(
     pipetune_cli_help PROPERTIES
