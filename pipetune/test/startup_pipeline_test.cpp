@@ -27,8 +27,11 @@ static bool testIntentionalBypass(const std::filesystem::path &configPath) {
       {.mode = pipetune::SampleRateMode::fixed,
        .fixedRate = 384000,
        .enforcement = pipetune::SampleRateEnforcement::force});
+  const auto savedIdle = pipetune::saveDspIdlePolicy(
+      configPath, pipetune::DspIdlePolicy::exact);
   if (!check(savedOutput.empty(), savedOutput) ||
-      !check(savedRate.empty(), savedRate)) {
+      !check(savedRate.empty(), savedRate) ||
+      !check(savedIdle.empty(), savedIdle)) {
     return false;
   }
   const auto prepared = pipetune::prepareStartupPipeline(
@@ -48,6 +51,8 @@ static bool testIntentionalBypass(const std::filesystem::path &configPath) {
                      .enforcement =
                          pipetune::SampleRateEnforcement::force},
              "startup rate policy must be returned in bypass mode") ||
+      !check(prepared.dspIdlePolicy == pipetune::DspIdlePolicy::exact,
+             "startup DSP idle policy must be returned in bypass mode") ||
       !check(prepared.pipeline->activePluginCount() == 0,
              "startup bypass must not contain DSP nodes")) {
     return false;
@@ -91,6 +96,8 @@ static bool testConfiguredPreset(const std::filesystem::path &configPath,
                      .enforcement =
                          pipetune::SampleRateEnforcement::force},
              "loading a preset must preserve the startup rate policy") ||
+      !check(prepared.dspIdlePolicy == pipetune::DspIdlePolicy::exact,
+             "loading a preset must preserve the DSP idle policy") ||
       !check(prepared.pipeline->activePluginCount() == 1,
              "configured preset must prepare its DSP node") ||
       !check(prepared.configuredDspBackend ==

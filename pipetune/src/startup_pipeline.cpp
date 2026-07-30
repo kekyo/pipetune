@@ -10,6 +10,7 @@ namespace pipetune {
 static StartupPipelineResult
 prepareBypass(const PipelineBuildOptions &options,
               std::string preferredOutput, SampleRatePolicy ratePolicy,
+              DspIdlePolicy dspIdlePolicy,
               std::string configurationError, DspBackends backends,
               const DspBackendSelection &selection) {
   auto created = createBypassDspPipeline(options);
@@ -25,6 +26,7 @@ prepareBypass(const PipelineBuildOptions &options,
             .configuredDspBackend = selection.configuredBackend,
             .configuredDspSimdVariant =
                 selection.configuredSimdVariant,
+            .dspIdlePolicy = dspIdlePolicy,
             .effectiveDspBackend =
                 selection.effectiveBackend == nullptr
                     ? std::optional<DspBackendKind>{}
@@ -44,6 +46,7 @@ prepareBypass(const PipelineBuildOptions &options,
           .configuredDspBackend = selection.configuredBackend,
           .configuredDspSimdVariant =
               selection.configuredSimdVariant,
+          .dspIdlePolicy = dspIdlePolicy,
           .effectiveDspBackend =
               selection.effectiveBackend == nullptr
                   ? std::optional<DspBackendKind>{}
@@ -69,6 +72,7 @@ prepareStartupPipeline(const std::filesystem::path &configPath,
         selectDspBackend(DspBackendKind::scalar,
                          DspSimdVariant::automatic, backends);
     return prepareBypass(options, {}, defaultSampleRatePolicy(),
+                         defaultDspIdlePolicy(),
                          configured.error, std::move(backends), selection);
   }
   const auto selection =
@@ -76,12 +80,14 @@ prepareStartupPipeline(const std::filesystem::path &configPath,
                        configured.dspSimdVariant, backends);
   if (!configured.presetFound) {
     return prepareBypass(options, configured.preferredOutput,
-                         configured.ratePolicy, {}, std::move(backends),
+                         configured.ratePolicy, configured.dspIdlePolicy, {},
+                         std::move(backends),
                          selection);
   }
   if (selection.effectiveBackend == nullptr) {
     return prepareBypass(
         options, configured.preferredOutput, configured.ratePolicy,
+        configured.dspIdlePolicy,
         "cannot load configured preset: " + selection.error,
         std::move(backends), selection);
   }
@@ -91,6 +97,7 @@ prepareStartupPipeline(const std::filesystem::path &configPath,
   if (loaded.pipeline == nullptr) {
     return prepareBypass(
         options, configured.preferredOutput, configured.ratePolicy,
+        configured.dspIdlePolicy,
         "cannot load configured preset: " + loaded.error,
         std::move(backends), selection);
   }
@@ -105,6 +112,7 @@ prepareStartupPipeline(const std::filesystem::path &configPath,
           .configuredDspBackend = selection.configuredBackend,
           .configuredDspSimdVariant =
               selection.configuredSimdVariant,
+          .dspIdlePolicy = configured.dspIdlePolicy,
           .effectiveDspBackend = selection.effectiveBackend->kind(),
           .effectiveDspVariant = selection.effectiveVariant,
           .dspBackendFallback = selection.fallback,

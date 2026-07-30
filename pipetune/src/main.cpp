@@ -5,6 +5,7 @@
 #include "default_sink_restore.h"
 #include "dsp_backend_command.h"
 #include "installed_tools.h"
+#include "idle_command.h"
 #include "output_command.h"
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
@@ -65,7 +66,7 @@ static int runConfigResetCommand(
   if (!options.assumeYes) {
     std::cout
         << "Reset PipeTune configuration to Bypass, system-default output, "
-           "and Max + Suggest? [y/N] "
+           "Max + Suggest, scalar DSP, and conservative idling? [y/N] "
         << std::flush;
     auto response = std::string{};
     if (!std::getline(std::cin, response) ||
@@ -91,7 +92,8 @@ static int runConfigResetCommand(
     return 1;
   }
   std::cout << "PipeTune configuration was reset to Bypass, system-default "
-               "output, and Max + Suggest.\n";
+               "output, Max + Suggest, scalar DSP, and conservative "
+               "idling.\n";
   return 0;
 }
 
@@ -299,7 +301,8 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
        .dspBackends = std::move(prepared.dspBackends),
        .configuredDspBackend = prepared.configuredDspBackend,
        .configuredDspSimdVariant =
-           prepared.configuredDspSimdVariant},
+           prepared.configuredDspSimdVariant,
+       .dspIdlePolicy = prepared.dspIdlePolicy},
       pipetune::PipeWireRunMode::untilInterrupted);
   if (!result.success) {
     std::cerr << "pipetune: " << result.error << '\n';
@@ -438,6 +441,57 @@ static bool isDspCommand(pipetune::CommandLineAction action) {
   return action == pipetune::CommandLineAction::dspList ||
          action == pipetune::CommandLineAction::dspGet ||
          action == pipetune::CommandLineAction::dspSet;
+}
+
+static bool isIdleCommand(pipetune::CommandLineAction action) {
+  return action == pipetune::CommandLineAction::idleGet ||
+         action == pipetune::CommandLineAction::idleSet;
+}
+
+static int runIdleCommand(
+    const pipetune::CommandLineOptions &options) {
+  const auto socket =
+      pipetune::resolveControlSocketPath(options.controlSocketPath);
+  if (!socket.error.empty()) {
+    std::cerr << "pipetune: " << socket.error << '\n';
+    return 1;
+  }
+
+  if (options.action == pipetune::CommandLineAction::idleGet) {
+    const auto queried = pipetune::queryIdleStatus(socket.path);
+    if (!queried.success) {
+      std::cerr << "pipetune: " << queried.error << '\n';
+      return 1;
+    }
+    std::cout << (options.json ? queried.json + "\n"
+                              : pipetune::formatIdleStatus(queried.status));
+    return 0;
+  }
+
+  const auto config = resolveUserStartupConfigPath();
+  if (!config.error.empty()) {
+    std::cerr << "pipetune: " << config.error << '\n';
+    return 1;
+  }
+  const auto changed = pipetune::executeSetDspIdlePolicy(
+      {.configPath = config.path, .socketPath = socket.path},
+      options.dspIdlePolicy);
+  if (!changed.success) {
+    std::cerr << "pipetune: " << changed.error << '\n';
+    return 1;
+  }
+  if (changed.liveApplied) {
+    std::cout
+        << "DSP idle policy is active and saved for future starts.\n"
+        << pipetune::formatIdleStatus(changed.status);
+  } else {
+    std::cout << "DSP idle policy is saved for the next daemon start";
+    if (!changed.notice.empty()) {
+      std::cout << " (" << changed.notice << ')';
+    }
+    std::cout << ".\n";
+  }
+  return 0;
 }
 
 static int runDspCommand(const pipetune::CommandLineOptions &options) {
@@ -580,6 +634,9 @@ int main(int argc, char **argv) {
   if (isDspCommand(parsed.options.action)) {
     return runDspCommand(parsed.options);
   }
+  if (isIdleCommand(parsed.options.action)) {
+    return runIdleCommand(parsed.options);
+  }
   if (parsed.options.action ==
       pipetune::CommandLineAction::configReset) {
     return runConfigResetCommand(parsed.options);
@@ -676,7 +733,8 @@ int main(int argc, char **argv) {
        .dspBackends = std::move(backends),
        .configuredDspBackend = parsed.options.dspBackend,
        .configuredDspSimdVariant =
-           parsed.options.dspSimdVariant},
+           parsed.options.dspSimdVariant,
+       .dspIdlePolicy = parsed.options.dspIdlePolicy},
       mode);
   if (!result.success) {
     std::cerr << "pipetune: " << result.error << '\n';

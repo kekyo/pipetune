@@ -2,6 +2,7 @@
 #define PIPETUNE_CONTROL_PROTOCOL_H
 
 #include "pipetune/dsp_backend.h"
+#include "pipetune/dsp_idle.h"
 #include "pipetune/sample_rate.h"
 
 #include <array>
@@ -34,6 +35,8 @@ enum class ControlCommand {
   setRate,
   /** Rebuild the active preset with another native DSP backend. */
   setDspBackend,
+  /** Replace the DSP idle tail policy. */
+  setDspIdlePolicy,
   /** Keep the connection open and publish status changes. */
   subscribe
 };
@@ -54,6 +57,8 @@ struct ControlRequest {
   DspBackendKind dspBackend = DspBackendKind::scalar;
   /** Requested SIMD dispatch preference for setDspBackend. */
   DspSimdVariant dspSimdVariant = DspSimdVariant::automatic;
+  /** Requested policy for setDspIdlePolicy, or the default otherwise. */
+  DspIdlePolicy dspIdlePolicy = DspIdlePolicy::conservative;
 };
 
 /**
@@ -231,6 +236,16 @@ struct ControlRuntimeStatus {
        .cpuSupported = false,
        .cpuRequirement = "unknown",
        .error = "SIMD DSP variant availability was not reported"}};
+  /** Persisted or successfully applied DSP idle tail policy. */
+  DspIdlePolicy dspIdlePolicy = DspIdlePolicy::conservative;
+  /** Current real-time DSP idle controller state. */
+  DspIdleState dspIdleState = DspIdleState::active;
+  /** Frames forwarded without DSP processing while sleeping. */
+  std::uint64_t dspIdleSkippedFrames = 0;
+  /** Number of transitions into DSP sleep. */
+  std::uint64_t dspIdleSleepTransitions = 0;
+  /** True while both PipeWire streams are paused by graph idling. */
+  bool pipeWireIdle = false;
 };
 
 /**
@@ -339,6 +354,14 @@ std::string makeSetDspBackendControlRequest(DspBackendKind kind);
 std::string
 makeSetDspBackendControlRequest(DspBackendKind kind,
                                 DspSimdVariant simdVariant);
+
+/**
+ * Returns a JSON DSP-idle-policy request without framing newline.
+ *
+ * @param policy Conservative threshold or exact-zero output policy.
+ * @return Encoded request, or an empty string for invalid input or failure.
+ */
+std::string makeSetDspIdlePolicyControlRequest(DspIdlePolicy policy);
 
 /**
  * Returns a JSON live-preset request without framing newline.

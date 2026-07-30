@@ -248,6 +248,33 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
                         .dspSimdVariant = *simdVariant},
             .error = {}};
   }
+  if (command == "set-dsp-idle-policy") {
+    if (yyjson_obj_size(root) != 2) {
+      return requestError(
+          "set-dsp-idle-policy request requires only command and policy "
+          "fields");
+    }
+    auto *policyValue = yyjson_obj_get(root, "policy");
+    if (!yyjson_is_str(policyValue)) {
+      return requestError(
+          "set-dsp-idle-policy request policy must be a string");
+    }
+    const auto policy = parseDspIdlePolicyName(
+        std::string_view(yyjson_get_str(policyValue),
+                         yyjson_get_len(policyValue)));
+    if (!policy.has_value()) {
+      return requestError(
+          "set-dsp-idle-policy request contains an unsupported policy");
+    }
+    return {.request = {.command = ControlCommand::setDspIdlePolicy,
+                        .presetPath = {},
+                        .outputTarget = {},
+                        .ratePolicy = defaultSampleRatePolicy(),
+                        .dspBackend = DspBackendKind::scalar,
+                        .dspSimdVariant = DspSimdVariant::automatic,
+                        .dspIdlePolicy = *policy},
+            .error = {}};
+  }
   if (command != "load") {
     return requestError("unsupported control command");
   }
@@ -345,6 +372,22 @@ makeSetDspBackendControlRequest(DspBackendKind kind,
                  dspBackendName(kind)) ||
       !addString(document.get(), root, "simdVariant",
                  dspSimdVariantName(simdVariant))) {
+    return {};
+  }
+  return writeDocument(document.get());
+}
+
+std::string makeSetDspIdlePolicyControlRequest(DspIdlePolicy policy) {
+  const auto policyName = dspIdlePolicyName(policy);
+  if (policyName.empty()) {
+    return {};
+  }
+  yyjson_mut_val *root = nullptr;
+  auto document = createObjectDocument(root);
+  if (document == nullptr ||
+      !yyjson_mut_obj_add_str(document.get(), root, "command",
+                              "set-dsp-idle-policy") ||
+      !addString(document.get(), root, "policy", policyName)) {
     return {};
   }
   return writeDocument(document.get());
@@ -563,6 +606,8 @@ static std::string makeControlStatusMessage(
       (status.activeOutputSampleRate != 0 &&
        status.selectedOutputSampleRate == 0) ||
       status.rateError.find('\0') != std::string::npos ||
+      dspIdlePolicyName(status.dspIdlePolicy).empty() ||
+      dspIdleStateName(status.dspIdleState).empty() ||
       !dspBackendStatusIsConsistent(status)) {
     return makeControlErrorResponse("cannot encode inconsistent control status");
   }
@@ -659,7 +704,19 @@ static std::string makeControlStatusMessage(
                                "dspBackendFallback",
                                status.dspBackendFallback) ||
       !addNullableString(document.get(), root, "dspBackendError",
-                         status.dspBackendError)) {
+                         status.dspBackendError) ||
+      !addString(document.get(), root, "dspIdlePolicy",
+                 dspIdlePolicyName(status.dspIdlePolicy)) ||
+      !addString(document.get(), root, "dspIdleState",
+                 dspIdleStateName(status.dspIdleState)) ||
+      !yyjson_mut_obj_add_uint(document.get(), root,
+                               "dspIdleSkippedFrames",
+                               status.dspIdleSkippedFrames) ||
+      !yyjson_mut_obj_add_uint(document.get(), root,
+                               "dspIdleSleepTransitions",
+                               status.dspIdleSleepTransitions) ||
+      !yyjson_mut_obj_add_bool(document.get(), root, "pipeWireIdle",
+                               status.pipeWireIdle)) {
     return makeControlErrorResponse("cannot encode control response");
   }
 
@@ -916,6 +973,44 @@ static bool readDspSimdVariantField(
   }
   variant = *parsed;
   return true;
+}
+
+static bool readDspIdlePolicyField(yyjson_val *object, const char *key,
+                                   DspIdlePolicy &policy) {
+  auto *field = yyjson_obj_get(object, key);
+  if (!yyjson_is_str(field)) {
+    return false;
+  }
+  const auto parsed = parseDspIdlePolicyName(
+      std::string_view(yyjson_get_str(field), yyjson_get_len(field)));
+  if (!parsed.has_value()) {
+    return false;
+  }
+  policy = *parsed;
+  return true;
+}
+
+static bool readDspIdleStateField(yyjson_val *object, const char *key,
+                                  DspIdleState &state) {
+  auto *field = yyjson_obj_get(object, key);
+  if (!yyjson_is_str(field)) {
+    return false;
+  }
+  const auto value =
+      std::string_view(yyjson_get_str(field), yyjson_get_len(field));
+  if (value == "active") {
+    state = DspIdleState::active;
+    return true;
+  }
+  if (value == "draining") {
+    state = DspIdleState::draining;
+    return true;
+  }
+  if (value == "sleeping") {
+    state = DspIdleState::sleeping;
+    return true;
+  }
+  return false;
 }
 
 static bool readDspBackendVariantField(
@@ -1345,7 +1440,16 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       !readNullableStringField(root, "dspBackendError",
                                status.dspBackendError) ||
       !readAvailableDspBackends(root, status.availableDspBackends) ||
-      !readAvailableDspVariants(root, status.availableDspVariants)) {
+      !readAvailableDspVariants(root, status.availableDspVariants) ||
+      !readDspIdlePolicyField(root, "dspIdlePolicy",
+                              status.dspIdlePolicy) ||
+      !readDspIdleStateField(root, "dspIdleState",
+                             status.dspIdleState) ||
+      !readCounterField(root, "dspIdleSkippedFrames",
+                        status.dspIdleSkippedFrames) ||
+      !readCounterField(root, "dspIdleSleepTransitions",
+                        status.dspIdleSleepTransitions) ||
+      !readBooleanField(root, "pipeWireIdle", status.pipeWireIdle)) {
     return responseError("successful control response has invalid status");
   }
   if ((status.processingMode == ProcessingMode::preset &&

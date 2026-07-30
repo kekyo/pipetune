@@ -2,6 +2,7 @@
 #define PIPETUNE_COMMAND_LINE_H
 
 #include "pipetune/dsp_backend.h"
+#include "pipetune/dsp_idle.h"
 #include "pipetune/sample_rate.h"
 
 #include <cstdint>
@@ -44,6 +45,10 @@ enum class CommandLineAction {
   dspGet,
   /** Set and persist the DSP backend. */
   dspSet,
+  /** Show DSP and PipeWire idle state. */
+  idleGet,
+  /** Set and persist the DSP idle tail policy. */
+  idleSet,
   /** Reset all startup configuration to PipeTune defaults. */
   configReset,
   /** Configure and start PipeTune for the current user. */
@@ -86,6 +91,8 @@ struct CommandLineOptions {
   DspBackendKind dspBackend;
   /** Direct-run or dspSet automatic/pinned SIMD dispatch preference. */
   DspSimdVariant dspSimdVariant;
+  /** Direct-run or idleSet DSP idle tail policy. */
+  DspIdlePolicy dspIdlePolicy;
   /** Stream channel count. */
   std::uint32_t channelCount;
   /** True to stop once both PipeWire streams are ready. */

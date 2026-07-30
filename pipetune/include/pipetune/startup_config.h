@@ -2,6 +2,7 @@
 #define PIPETUNE_STARTUP_CONFIG_H
 
 #include "pipetune/dsp_backend.h"
+#include "pipetune/dsp_idle.h"
 #include "pipetune/sample_rate.h"
 
 #include <filesystem>
@@ -50,6 +51,8 @@ struct StartupConfigLoadResult {
   DspBackendKind dspBackend = DspBackendKind::scalar;
   /** Automatic or pinned SIMD dispatch preference. */
   DspSimdVariant dspSimdVariant = DspSimdVariant::automatic;
+  /** User-selected DSP idle tail policy. */
+  DspIdlePolicy dspIdlePolicy = DspIdlePolicy::conservative;
   /** Read or validation diagnostic, or empty on success. */
   std::string error;
 };
@@ -160,11 +163,21 @@ std::string saveDspBackendSelection(
     DspSimdVariant simdVariant);
 
 /**
+ * Atomically stores a DSP idle policy while preserving other choices.
+ *
+ * @param configPath Configuration file path.
+ * @param policy Conservative threshold or exact-zero output policy.
+ * @return Empty on success, otherwise a human-readable diagnostic.
+ */
+std::string saveDspIdlePolicy(const std::filesystem::path &configPath,
+                              DspIdlePolicy policy);
+
+/**
  * Atomically replaces the startup configuration with PipeTune defaults.
  *
  * The stored defaults select DSP bypass, the system-default output, and the
- * Max + Suggest sample-rate policy, and the scalar DSP backend. Existing
- * contents are not parsed.
+ * Max + Suggest sample-rate policy, the scalar DSP backend, and conservative
+ * DSP idling. Existing contents are not parsed.
  *
  * @param configPath Configuration file path.
  * @return Empty on success, otherwise a human-readable diagnostic.

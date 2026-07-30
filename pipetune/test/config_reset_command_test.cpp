@@ -68,7 +68,10 @@ static bool defaultsWereStored(
                        pipetune::DspBackendKind::scalar &&
                    loaded.dspSimdVariant ==
                        pipetune::DspSimdVariant::automatic,
-               "reset configuration must select scalar with automatic SIMD");
+               "reset configuration must select scalar with automatic SIMD") &&
+         check(loaded.dspIdlePolicy ==
+                   pipetune::DspIdlePolicy::conservative,
+               "reset configuration must select conservative DSP idling");
 }
 
 static bool testConfirmationParsing() {
