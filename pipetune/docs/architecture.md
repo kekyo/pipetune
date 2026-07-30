@@ -88,14 +88,16 @@ restart the controller.
 The PipeWire paused state and DSP sleep state are deliberately separate. When
 PipeWire pauses both streams, callbacks stop entirely. Entry into that state
 discards the internal ring and flushes both PipeWire stream queues without
-draining. Playback emits GAP if it restarts before fresh capture data. The
-first resumed capture callback resets the active DSP through its real-time
-owner before processing that data, preventing the previous playback interval's
-queued PCM or DSP state from leading the new interval. If an application keeps
-callbacks active by continuously writing zero, the DSP controller removes the
-native processing cost while retaining bounded input scanning and buffer
-handling. See [the DSP idle notes](dsp-idle.md) for exact state transitions,
-control commands, and operational limits.
+draining. Fully consumed capture chunks are recycled with zero valid size so a
+property-only graph wake cannot publish retained sample storage as fresh PCM.
+Playback emits GAP if it restarts before fresh capture data. The first resumed
+capture callback resets the active DSP through its real-time owner before
+processing that data, preventing the previous playback interval's queued PCM or
+DSP state from leading the new interval. If an application keeps callbacks
+active by continuously writing zero, the DSP controller removes the native
+processing cost while retaining bounded input scanning and buffer handling. See
+[the DSP idle notes](dsp-idle.md) for exact state transitions, control commands,
+and operational limits.
 
 ## Preset to native DSP mapping
 

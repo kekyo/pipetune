@@ -1224,26 +1224,6 @@ static void streamParameterChanged(void *data, std::uint32_t id,
   finishReadinessCheck(runtime);
 }
 
-static bool inspectCaptureBuffer(const spa_buffer &buffer, std::uint32_t channelCount,
-                                 std::uint32_t &frameCount) noexcept {
-  if (buffer.n_datas < channelCount || buffer.datas == nullptr) {
-    return false;
-  }
-  frameCount = UINT32_MAX;
-  for (auto channel = std::uint32_t{0}; channel < channelCount; ++channel) {
-    const auto &plane = buffer.datas[channel];
-    if (plane.data == nullptr || plane.chunk == nullptr ||
-        plane.maxsize < kSampleBytes || plane.maxsize % kSampleBytes != 0 ||
-        plane.chunk->stride != static_cast<std::int32_t>(kSampleBytes) ||
-        plane.chunk->offset % kSampleBytes != 0) {
-      return false;
-    }
-    const auto byteCount = std::min(plane.chunk->size, plane.maxsize);
-    frameCount = std::min(frameCount, byteCount / kSampleBytes);
-  }
-  return frameCount != UINT32_MAX;
-}
-
 static void copyCapturePlane(const spa_data &plane, std::uint32_t sourceFrame,
                              std::span<float> destination) noexcept {
   if ((plane.chunk->flags & SPA_CHUNK_FLAG_EMPTY) != 0) {
@@ -1283,9 +1263,11 @@ static void captureProcess(void *data) {
   auto &buffer = *pipeWireBuffer->buffer;
   const auto captureGap = pipeWireBufferHasGap(buffer);
   auto frameCount = std::uint32_t{0};
-  if (!inspectCaptureBuffer(buffer, runtime.options.channelCount, frameCount)) {
+  if (!inspectPipeWireCaptureBuffer(buffer, runtime.options.channelCount,
+                                    frameCount)) {
     runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
     pipeWireBuffer->size = 0;
+    retirePipeWireCaptureBuffer(buffer);
     pw_stream_queue_buffer(runtime.captureStream, pipeWireBuffer);
     return;
   }
@@ -1375,6 +1357,7 @@ static void captureProcess(void *data) {
   }
 
   pipeWireBuffer->size = frameCount;
+  retirePipeWireCaptureBuffer(buffer);
   pw_stream_queue_buffer(runtime.captureStream, pipeWireBuffer);
 }
 

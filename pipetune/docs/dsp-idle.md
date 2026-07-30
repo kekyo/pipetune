@@ -23,10 +23,14 @@ PipeWire's `PAUSED` state.
 When both streams enter `PAUSED`, PipeTune discards every frame already queued
 in its internal ring and flushes both PipeWire streams without draining them.
 This clears PCM and converter state that belongs to the completed playback
-interval instead of replaying it after a later resume. The first resumed
-capture callback resets the active DSP pipeline on its real-time thread before
-processing new input. If playback resumes before that input arrives, it emits
-an intentional GAP until the first new capture frames have been queued.
+interval instead of replaying it after a later resume. Each capture callback
+also clears the valid size of every fully consumed chunk before recycling its
+buffer. The sample storage and chunk layout remain available for the producer,
+but a property-only graph wake cannot reinterpret the previous PCM bytes as new
+input. The first resumed capture callback resets the active DSP pipeline on its
+real-time thread before processing new input. If playback resumes before that
+input arrives, it emits an intentional GAP until the first new capture frames
+have been queued.
 
 ## EMPTY and GAP preservation
 
