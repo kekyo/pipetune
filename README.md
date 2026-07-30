@@ -26,6 +26,8 @@ application that remains available through the desktop system tray.
 - Lets the user choose a physical output from the CLI or GTK application.
 - Falls back to the physical system default when the preferred output is
   unavailable, and returns automatically after hotplug.
+- Uses the selected physical output as the only system-volume gain stage and
+  mirrors its controls to PipeTune, avoiding double attenuation in bypass.
 - Runs the DSP at the selected output's maximum supported rate or at an
   explicit 44.1, 48, 96, 192, or 384 kHz rate.
 - Shows output-device rate support and the final DSP, graph, and active
@@ -131,6 +133,24 @@ flowchart LR
   device is available. While the selected device cannot be found—for example,
   while a USB device is unplugged—PipeTune automatically falls back to the
   system default and returns to the selected device when it is reconnected.
+
+## Volume behavior
+
+PipeTune treats the selected physical output as the sole system-volume gain
+stage. The PipeTune volume and mute controls shown by the desktop are a proxy:
+changing them updates the physical output, and an external change to the
+physical output is reflected back to PipeTune.
+
+At startup and after an output switch, the selected physical device's current
+volume and mute state take precedence. A newly selected device therefore keeps
+its own saved level instead of inheriting the previous device's level. In
+bypass mode, PipeTune does not apply that volume again to PCM, so playback is
+attenuated exactly once. Gain changes intentionally made by a DSP preset remain
+independent of this system-volume behavior.
+
+A physical sink must expose readable and writable effective volume controls to
+be selectable. PipeTune falls back to another eligible sink if those controls
+are unavailable or a write fails.
 
 ## Choosing PipeTune's output device
 

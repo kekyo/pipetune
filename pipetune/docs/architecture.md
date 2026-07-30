@@ -80,10 +80,9 @@ The EffeTune engine reset retains instances, parameters, assets, and pipeline
 configuration while clearing every kernel, arena, and telemetry state. It is
 guarded against allocation and can run through the hazard-protected active
 pipeline on the real-time thread. A reset failure prevents sleep for that
-silent interval. While sleeping, zero blocks advance the volume smoother and
-become ring gaps without invoking the DSP. A nonzero sample resumes processing
-in the same block. Pipeline revision, rate, backend, and policy changes also
-restart the controller.
+silent interval. While sleeping, zero blocks become ring gaps without invoking
+the DSP. A nonzero sample resumes processing in the same block. Pipeline
+revision, rate, backend, and policy changes also restart the controller.
 
 The PipeWire paused state and DSP sleep state are deliberately separate. When
 PipeWire pauses both streams, callbacks stop entirely. Entry into that state
@@ -127,10 +126,10 @@ pipeline active.
 
 ## Output selection
 
-The registry tracker accepts only non-virtual `Audio/Sink` nodes and always
-excludes PipeTune's own node. The user's optional preference is a stable
-`node.name`; the CLI and GTK application do not perform target selection
-themselves.
+The registry tracker accepts only non-virtual `Audio/Sink` nodes with readable
+and writable effective-volume controls and always excludes PipeTune's own node.
+The user's optional preference is a stable `node.name`; the CLI and GTK
+application do not perform target selection themselves.
 
 The tracker applies this order:
 
@@ -156,6 +155,39 @@ effective-default claim. The daemon and registry monitoring remain alive. A
 new device creates and negotiates a playback stream first; only then does
 PipeTune reclaim the effective default and resume audio. A retained preference
 is not cleared during this state.
+
+## System-volume ownership
+
+The selected physical sink is the only system-volume gain stage. PipeTune does
+not multiply PCM by the virtual sink volume in either preset or bypass mode.
+Both PipeTune stream nodes clamp their channel-mixer gain to unity and disable
+session-state property restoration. Per-application stream volume still
+belongs to PipeWire, while gain deliberately introduced by a DSP preset remains
+part of DSP processing.
+
+PipeTune binds each eligible physical node and subscribes to
+`SPA_PARAM_Props`. `SPA_PROP_channelVolumes` is treated as the effective linear
+gain and is never multiplied by `SPA_PROP_volume` or
+`SPA_PROP_softVolumes`. Physical writes normalize `SPA_PROP_volume` to unity
+and write the effective channel volumes and mute state. The virtual sink uses
+the public `pw_stream_get_control` and `pw_stream_set_control` API as a desktop
+control surface; its controls are not an additional PCM gain stage.
+
+Startup and output switches use the selected physical node as the source of
+truth. Its effective channel volumes and mute state are published to the
+virtual sink before readiness is reported, so switching devices does not carry
+the previous device's level forward. After that initialization, revisions from
+either side are synchronized bidirectionally. A PipeWire core sync separates
+an internal virtual-control publication from a later user change, preventing a
+stale callback from being mistaken for new input. On layouts with different
+channel maps, matching positions are copied directly and unmatched physical
+channels retain their relative balance as the virtual master changes.
+
+Nodes without read, write, and execute permissions for effective volume
+properties are ineligible. A malformed property, subscription loss, or
+physical write failure removes that node from selection and invokes the normal
+fallback rules. This failover preserves the single-stage-volume invariant
+instead of silently reintroducing attenuation in PipeTune's PCM path.
 
 ## Sample-rate selection and transitions
 
@@ -198,7 +230,8 @@ requests are serialized. A transition:
 1. rebuilds the active preset or bypass pipeline for the new R and stages it;
 2. disconnects capture and playback, clears queued frames, and applies the new
    R, H, and enforcement properties;
-3. reconnects both streams and waits for the required formats to become ready;
+3. reconnects both streams, re-synchronizes the selected physical volume, and
+   waits for the required formats and volume controls to become ready;
 4. commits the staged pipeline and publishes the final state; or
 5. reconnects the previous pipeline, rates, and enforcement after any failure.
 
@@ -214,8 +247,10 @@ writes WirePlumber's persistent `default.configured.audio.sink` selection.
 Startup is reported ready only after:
 
 1. the virtual sink negotiated its format;
-2. a physical output stream negotiated its format; and
-3. making the virtual sink effective completed a PipeWire core round trip.
+2. the selected physical output's effective volume was read and published to
+   the virtual sink;
+3. a physical output stream negotiated its format; and
+4. making the virtual sink effective completed a PipeWire core round trip.
 
 On `SIGINT` or `SIGTERM`, PipeTune writes the current physical sink back to the
 effective-default metadata and waits for another core round trip before
