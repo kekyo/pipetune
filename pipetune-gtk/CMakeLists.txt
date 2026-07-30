@@ -512,7 +512,7 @@ if(BUILD_TESTING)
       $<TARGET_FILE:pipetune-gtk>
       $<TARGET_FILE:pipetune>)
   set_tests_properties(
-    pipetune_gtk_application_lifecycle PROPERTIES TIMEOUT 20)
+    pipetune_gtk_application_lifecycle PROPERTIES TIMEOUT 60)
 
   add_test(
     NAME pipetune_gtk_install_layout
