@@ -30,8 +30,8 @@ application that remains available through the desktop system tray.
   explicit 44.1, 48, 96, 192, or 384 kHz rate.
 - Shows output-device rate support and the final DSP, graph, and active
   physical rates in the CLI and GTK application.
-- Selects either the scalar compatibility DSP backend or a CPU-validated SIMD
-  backend from the CLI or GTK application.
+- Selects the scalar compatibility DSP backend, automatic SIMD dispatch, or a
+  CPU-validated ISA tier from the CLI or GTK application.
 - Changes presets without restarting the daemon.
 - Starts safely in pass-through mode when no preset has been selected.
 - Sets up or removes all per-user integration with one CLI command.
@@ -202,9 +202,10 @@ the DSP and renegotiates its PipeWire streams.
 ## Choosing the native DSP backend
 
 The GTK window's **DSP backend** section provides a **Native engine**
-drop-down. **Scalar** is the compatibility default. **SIMD** enables
-architecture-specific PFFFT code where available and GCC auto-vectorization
-under a CPU-validated package baseline.
+drop-down. **Scalar** is the compatibility default. **SIMD (Auto)** selects
+the highest validated tier supported by the CPU. The same drop-down can pin
+the architecture baseline, x86-64-v3, x86-64-v4, or Arm64 SVE tier where
+applicable.
 
 The same information and controls are available from the CLI:
 
@@ -213,14 +214,15 @@ pipetune dsp list
 pipetune dsp get
 pipetune dsp set scalar
 pipetune dsp set simd
+pipetune dsp set simd --variant x86-64-v3
 ```
 
 A connected `dsp set` rebuilds and replaces the active preset pipeline, then
 saves the choice only after daemon confirmation. DSP histories are reset, so
 a discontinuity or brief silence is allowed. If the daemon is unavailable, a
 valid local backend is saved for the next start. Configured SIMD falls back to
-Scalar at startup when its CPU or library validation fails, with the reason
-shown in status.
+a lower SIMD tier or Scalar at startup when its CPU or library validation
+fails, with the concrete effective tier and reason shown in status.
 
 Expected gains depend strongly on the preset. The standard
 `visualize/all_analyzers` preset directly exercises PFFFT (including its SIMD
@@ -237,7 +239,7 @@ After confirmation, it resets every saved PipeTune choice to:
 - DSP **Bypass**;
 - the physical **System default** output;
 - PCM rate **Max** with **Suggest**; and
-- native DSP backend **Scalar**.
+- native DSP backend **Scalar**, with SIMD preference **Auto**.
 
 The same reset is available from the CLI:
 

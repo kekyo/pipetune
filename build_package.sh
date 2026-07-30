@@ -335,6 +335,38 @@ deb_arch_name() {
 	esac
 }
 
+dsp_backend_names_for_arch() {
+	case $1 in
+		x86_64)
+			printf '%s\n' \
+				'libeffetune-dsp-scalar.so' \
+				'libeffetune-dsp-simd.so' \
+				'libeffetune-dsp-simd-x86-64-v3.so' \
+				'libeffetune-dsp-simd-x86-64-v4.so'
+			;;
+		i686)
+			printf '%s\n' \
+				'libeffetune-dsp-scalar.so' \
+				'libeffetune-dsp-simd.so' \
+				'libeffetune-dsp-simd-x86-64-v3.so'
+			;;
+		arm64)
+			printf '%s\n' \
+				'libeffetune-dsp-scalar.so' \
+				'libeffetune-dsp-simd.so' \
+				'libeffetune-dsp-simd-arm64-sve.so'
+			;;
+		armv7l | riscv64)
+			printf '%s\n' \
+				'libeffetune-dsp-scalar.so' \
+				'libeffetune-dsp-simd.so'
+			;;
+		*)
+			fail "Unsupported DSP backend architecture: $1"
+			;;
+	esac
+}
+
 deb_artifact_path() {
 	package_name=$1
 	distro=$2
@@ -492,8 +524,6 @@ validate_deb_package() {
 	for required_file in \
 		usr/bin/pipetune \
 		usr/bin/pipetune-gtk \
-		usr/lib/pipetune/libeffetune-dsp-scalar.so \
-		usr/lib/pipetune/libeffetune-dsp-simd.so \
 		usr/lib/systemd/user/pipetune.service \
 		usr/share/applications/net.kekyo.pipetune-gtk.desktop \
 		etc/xdg/autostart/net.kekyo.pipetune-gtk.desktop \
@@ -507,6 +537,9 @@ validate_deb_package() {
 		usr/share/doc/pipetune/environment.example; do
 		assert_file "$tmp_dir/$required_file"
 	done
+	for backend in $(dsp_backend_names_for_arch "$expected_arch"); do
+		assert_file "$tmp_dir/usr/lib/pipetune/$backend"
+	done
 
 	readelf -h "$tmp_dir/usr/bin/pipetune" >"$tmp_dir/readelf-pipetune.txt"
 	assert_contains "$tmp_dir/readelf-pipetune.txt" "$(expected_elf_class "$expected_arch")"
@@ -514,9 +547,7 @@ validate_deb_package() {
 	readelf -h "$tmp_dir/usr/bin/pipetune-gtk" >"$tmp_dir/readelf-pipetune-gtk.txt"
 	assert_contains "$tmp_dir/readelf-pipetune-gtk.txt" "$(expected_elf_class "$expected_arch")"
 	assert_contains "$tmp_dir/readelf-pipetune-gtk.txt" "$(expected_elf_machine "$expected_arch")"
-	for backend in \
-		libeffetune-dsp-scalar.so \
-		libeffetune-dsp-simd.so; do
+	for backend in $(dsp_backend_names_for_arch "$expected_arch"); do
 		readelf -h "$tmp_dir/usr/lib/pipetune/$backend" >"$tmp_dir/readelf-$backend.txt"
 		assert_contains "$tmp_dir/readelf-$backend.txt" "$(expected_elf_class "$expected_arch")"
 		assert_contains "$tmp_dir/readelf-$backend.txt" "$(expected_elf_machine "$expected_arch")"

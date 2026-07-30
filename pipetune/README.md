@@ -41,8 +41,9 @@ not supported by this MVP.
   384 kHz rate, with a suggested or forced PipeWire graph-rate request.
 - Enumerates each physical output's sample-rate capabilities and immediately
   reevaluates the rates after capability, target, or policy changes.
-- Loads validated scalar and architecture-SIMD EffeTune DSP shared backends,
-  with scalar as the compatibility default and startup fallback.
+- Loads validated scalar, architecture-baseline SIMD, and applicable
+  higher-ISA EffeTune DSP shared backends, with scalar as the compatibility
+  default and startup fallback.
 - Replaces the preset in a running process through a same-user Unix socket.
 - Rebuilds and atomically switches an active preset between DSP backends.
 - Switches live and future startup processing to explicit DSP bypass.
@@ -108,8 +109,8 @@ make test
 ```
 
 `make` produces `build/release/pipetune`,
-`build/release/pipetune-gtk`, the private scalar and SIMD DSP libraries, and
-the developer-only `build/release/pipetune-dsp-benchmark`. `make test` always
+`build/release/pipetune-gtk`, the private scalar and ISA-tiered DSP libraries,
+and the developer-only `build/release/pipetune-dsp-benchmark`. `make test` always
 runs PipeTune's complete CTest suite, EffeTune's native DSP tests,
 JavaScript/native parameter packing parity, native DSP output parity, GTK
 lifecycle tests, and staged install validation. Tests that require a live
@@ -148,7 +149,8 @@ particular physical output for this direct process run:
 The direct `--target` value is a PipeWire `node.name` and is not persisted.
 Managed daemon output preferences use the `pipetune output` commands below.
 Use `--dsp-backend scalar` or `--dsp-backend simd` to select the native
-backend for this direct run; that choice is also not persisted.
+backend for this direct run. `--dsp-variant auto|baseline|x86-64-v3|x86-64-v4|sve`
+selects the SIMD dispatch preference. Those choices are not persisted.
 
 Inspect or replace the running pipeline:
 
@@ -229,12 +231,14 @@ Inspect and select the native DSP backend with:
 ./build/release/pipetune dsp get
 ./build/release/pipetune dsp set scalar
 ./build/release/pipetune dsp set simd
+./build/release/pipetune dsp set simd --variant x86-64-v3
 ```
 
 `dsp list` reports availability, CPU requirements, and validation errors for
-the packaged scalar and SIMD libraries. `dsp get` reports the configured and
-effective backend plus startup fallback state. Both queries accept `--json`
-and require a reachable daemon.
+every packaged scalar and architecture-applicable SIMD library. `dsp get`
+reports the configured SIMD preference, concrete effective variant, and
+startup fallback state. Both queries accept `--json` and require a reachable
+daemon.
 
 A connected `dsp set` rebuilds an active preset on the control thread,
 atomically replaces it, and persists the choice only after daemon
@@ -244,9 +248,10 @@ during a sample-rate transition. If the daemon is unavailable, the command
 validates the local CPU, library, ABI, and catalog before saving the choice for
 the next start.
 
-Scalar is the compatibility default. Configured SIMD falls back to scalar
-during startup if SIMD validation fails, with both variants and the diagnostic
-retained in status. See
+Scalar is the compatibility default. Automatic SIMD selects the highest
+usable tier. A CPU-supported broken upper tier falls back to a lower SIMD
+tier, while an unusable pinned tier falls back to scalar during startup.
+The concrete variants and diagnostic are retained in status. See
 [the DSP backend notes](docs/dsp-backends.md) for architecture flags, expected
 per-DSP and standard-preset effects, and the benchmark procedure.
 
@@ -270,6 +275,7 @@ file. It atomically replaces it with:
 PIPETUNE_RATE=max
 PIPETUNE_RATE_ENFORCEMENT=suggest
 PIPETUNE_DSP_BACKEND=scalar
+PIPETUNE_DSP_SIMD_VARIANT=auto
 ```
 
 The absent preset and target assignments select DSP bypass and the physical
@@ -432,13 +438,14 @@ PIPETUNE_TARGET="alsa_output.usb-example"
 PIPETUNE_RATE=192000
 PIPETUNE_RATE_ENFORCEMENT=force
 PIPETUNE_DSP_BACKEND=simd
+PIPETUNE_DSP_SIMD_VARIANT=auto
 ```
 
 An absent file or absent `PIPETUNE_PRESET` means bypass. An invalid
 configuration or unusable startup preset is reported in daemon status, but the
 daemon still starts in bypass so the audio path remains available. The GUI and
-CLI atomically preserve and update the four independent selections in this
-same file.
+CLI atomically preserve and update the preset, output, rate, backend, and SIMD
+variant selections in this same file.
 
 An absent `PIPETUNE_TARGET` means to follow the physical system default. When
 the configured target is unavailable, PipeTune retains the preference and
@@ -453,10 +460,12 @@ Max-and-suggest default. `PIPETUNE_RATE` accepts `max`, `44100`, `48000`,
 `force`.
 
 An absent `PIPETUNE_DSP_BACKEND` selects `scalar`. The only accepted values
-are `scalar` and `simd`. A configured SIMD backend that fails CPU, file, ABI,
-or catalog validation falls back to scalar during managed startup and retains
-the diagnostic in status. Failure of the mandatory scalar backend keeps the
-daemon available in bypass mode.
+are `scalar` and `simd`. An absent `PIPETUNE_DSP_SIMD_VARIANT` selects `auto`;
+the other accepted values are `baseline`, `x86-64-v3`, `x86-64-v4`, and
+`sve`. Automatic dispatch skips CPU-inapplicable upper tiers and falls back
+through usable lower tiers. An unusable pinned tier falls back to scalar
+during managed startup and retains the diagnostic in status. Failure of the
+mandatory scalar backend keeps the daemon available in bypass mode.
 
 `pipetune config reset` is also the recovery path for an `environment` file
 containing unsupported or obsolete assignments because it replaces the file

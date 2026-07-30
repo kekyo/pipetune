@@ -11,6 +11,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -42,15 +43,26 @@ struct TimedProcessResult {
   std::string error;
 };
 
+struct VariantBenchmarkResult {
+  pipetune::DspBackendVariant variant;
+  double nanosecondsPerFrame;
+  double speedupVsScalar;
+  double checksum;
+};
+
 struct PresetBenchmarkResult {
   std::filesystem::path preset;
   std::size_t activePluginCount;
   std::size_t omittedNodeCount;
-  double scalarNanosecondsPerFrame;
-  double simdNanosecondsPerFrame;
-  double speedup;
-  double scalarChecksum;
-  double simdChecksum;
+  std::vector<VariantBenchmarkResult> variants;
+};
+
+struct VariantBenchmarkState {
+  const pipetune::DspBackendLoadResult *backend;
+  std::unique_ptr<pipetune::DspPipeline> pipeline;
+  std::vector<float> working;
+  double nanoseconds = 0.0;
+  double checksum = 0.0;
 };
 
 static std::string_view usage() {
@@ -69,7 +81,8 @@ static std::string_view usage() {
          "  --json                  Emit one machine-readable JSON report.\n"
          "  -h, --help              Show this help.\n"
          "\n"
-         "Directories are searched recursively for *.effetune_preset files.\n";
+         "Directories are searched recursively for *.effetune_preset files.\n"
+         "Each preset is measured with every available backend variant.\n";
 }
 
 static bool parseUnsigned(std::string_view text, std::uint32_t minimum,
@@ -280,110 +293,130 @@ static TimedProcessResult processTimedBlock(
 
 static std::string benchmarkPreset(
     const std::filesystem::path &preset, const Options &options,
-    const pipetune::DspBackends &backends,
+    const std::vector<const pipetune::DspBackendLoadResult *> &backends,
     PresetBenchmarkResult &output) {
   const auto buildOptions = pipetune::PipelineBuildOptions{
       .sampleRate = static_cast<float>(options.sampleRate),
       .maxChannels = options.channels,
       .maxFrames = options.frames,
   };
-  auto scalar = pipetune::loadDspPipeline(
-      preset, buildOptions, backends.scalar.backend);
-  if (scalar.pipeline == nullptr) {
-    return "cannot build scalar pipeline for " + preset.string() + ": " +
-           scalar.error;
-  }
-  auto simd = pipetune::loadDspPipeline(
-      preset, buildOptions, backends.simd.backend);
-  if (simd.pipeline == nullptr) {
-    return "cannot build SIMD pipeline for " + preset.string() + ": " +
-           simd.error;
-  }
-  if (scalar.pipeline->activePluginCount() !=
-      simd.pipeline->activePluginCount()) {
-    return "backend plugin counts differ for " + preset.string();
+  const auto input = makeInput(options.channels, options.frames);
+  auto states = std::vector<VariantBenchmarkState>{};
+  states.reserve(backends.size());
+  auto activePluginCount = std::size_t{0};
+  auto omittedNodeCount = std::size_t{0};
+  for (const auto *backend : backends) {
+    auto loaded = pipetune::loadDspPipeline(
+        preset, buildOptions, backend->backend);
+    const auto variantName =
+        pipetune::dspBackendVariantName(backend->variant);
+    if (loaded.pipeline == nullptr) {
+      return "cannot build " + std::string(variantName) +
+             " pipeline for " + preset.string() + ": " + loaded.error;
+    }
+    if (states.empty()) {
+      activePluginCount = loaded.pipeline->activePluginCount();
+      omittedNodeCount = loaded.warnings.size();
+    } else if (loaded.pipeline->activePluginCount() != activePluginCount) {
+      return "backend plugin counts differ for " + preset.string();
+    } else if (loaded.warnings.size() != omittedNodeCount) {
+      return "backend omitted-node counts differ for " + preset.string();
+    }
+    states.push_back({
+        .backend = backend,
+        .pipeline = std::move(loaded.pipeline),
+        .working = input,
+    });
   }
 
-  const auto input = makeInput(options.channels, options.frames);
-  auto scalarWorking = input;
-  auto simdWorking = input;
   for (auto block = std::uint32_t{0}; block < options.warmupBlocks;
        ++block) {
     const auto timeSeconds =
         static_cast<double>(block) * options.frames /
         static_cast<double>(options.sampleRate);
-    auto error = processBlock(*scalar.pipeline, input, scalarWorking,
-                              options.channels, options.frames, timeSeconds);
-    if (!error.empty()) {
-      return "scalar warmup failed for " + preset.string() + ": " + error;
-    }
-    error = processBlock(*simd.pipeline, input, simdWorking,
-                         options.channels, options.frames, timeSeconds);
-    if (!error.empty()) {
-      return "SIMD warmup failed for " + preset.string() + ": " + error;
+    for (auto index = std::size_t{0}; index < states.size(); ++index) {
+      auto &state = states[index];
+      const auto error =
+          processBlock(*state.pipeline, input, state.working,
+                       options.channels, options.frames, timeSeconds);
+      if (!error.empty()) {
+        return std::string(
+                   pipetune::dspBackendVariantName(state.backend->variant)) +
+               " warmup failed for " + preset.string() + ": " + error;
+      }
     }
   }
 
-  auto scalarNanoseconds = 0.0;
-  auto simdNanoseconds = 0.0;
-  auto scalarChecksum = 0.0;
-  auto simdChecksum = 0.0;
   for (auto block = std::uint32_t{0}; block < options.measureBlocks;
        ++block) {
     const auto sequence = options.warmupBlocks + block;
     const auto timeSeconds =
         static_cast<double>(sequence) * options.frames /
         static_cast<double>(options.sampleRate);
-    auto scalarResult = TimedProcessResult{};
-    auto simdResult = TimedProcessResult{};
+    const auto measure = [&](std::size_t index) {
+      auto &state = states[index];
+      const auto result = processTimedBlock(
+          *state.pipeline, input, state.working, options.channels,
+          options.frames, timeSeconds, block);
+      if (result.error.empty()) {
+        state.nanoseconds += result.nanoseconds;
+        state.checksum += result.checksum;
+      }
+      return result.error;
+    };
     if ((block & 1u) == 0u) {
-      scalarResult = processTimedBlock(
-          *scalar.pipeline, input, scalarWorking, options.channels,
-          options.frames, timeSeconds, block);
-      simdResult = processTimedBlock(
-          *simd.pipeline, input, simdWorking, options.channels,
-          options.frames, timeSeconds, block);
+      for (auto index = std::size_t{0}; index < states.size(); ++index) {
+        const auto error = measure(index);
+        if (!error.empty()) {
+          return std::string(pipetune::dspBackendVariantName(
+                     states[index].backend->variant)) +
+                 " measurement failed for " + preset.string() + ": " +
+                 error;
+        }
+      }
     } else {
-      simdResult = processTimedBlock(
-          *simd.pipeline, input, simdWorking, options.channels,
-          options.frames, timeSeconds, block);
-      scalarResult = processTimedBlock(
-          *scalar.pipeline, input, scalarWorking, options.channels,
-          options.frames, timeSeconds, block);
+      for (auto index = states.size(); index != 0; --index) {
+        const auto stateIndex = index - 1;
+        const auto error = measure(stateIndex);
+        if (!error.empty()) {
+          return std::string(pipetune::dspBackendVariantName(
+                     states[stateIndex].backend->variant)) +
+                 " measurement failed for " + preset.string() + ": " +
+                 error;
+        }
+      }
     }
-    if (!scalarResult.error.empty()) {
-      return "scalar measurement failed for " + preset.string() + ": " +
-             scalarResult.error;
-    }
-    if (!simdResult.error.empty()) {
-      return "SIMD measurement failed for " + preset.string() + ": " +
-             simdResult.error;
-    }
-    scalarNanoseconds += scalarResult.nanoseconds;
-    simdNanoseconds += simdResult.nanoseconds;
-    scalarChecksum += scalarResult.checksum;
-    simdChecksum += simdResult.checksum;
   }
 
   const auto measuredFrames =
       static_cast<double>(options.measureBlocks) * options.frames;
-  const auto scalarPerFrame = scalarNanoseconds / measuredFrames;
-  const auto simdPerFrame = simdNanoseconds / measuredFrames;
-  if (!std::isfinite(scalarPerFrame) || scalarPerFrame <= 0.0 ||
-      !std::isfinite(simdPerFrame) || simdPerFrame <= 0.0) {
-    return "benchmark clock did not produce a usable duration for " +
-           preset.string();
+  auto nanosecondsPerFrame = std::vector<double>{};
+  nanosecondsPerFrame.reserve(states.size());
+  for (const auto &state : states) {
+    const auto perFrame = state.nanoseconds / measuredFrames;
+    if (!std::isfinite(perFrame) || perFrame <= 0.0) {
+      return "benchmark clock did not produce a usable duration for " +
+             preset.string();
+    }
+    nanosecondsPerFrame.push_back(perFrame);
   }
+  const auto scalarPerFrame = nanosecondsPerFrame.front();
   output = {
       .preset = preset,
-      .activePluginCount = scalar.pipeline->activePluginCount(),
-      .omittedNodeCount = scalar.warnings.size(),
-      .scalarNanosecondsPerFrame = scalarPerFrame,
-      .simdNanosecondsPerFrame = simdPerFrame,
-      .speedup = scalarPerFrame / simdPerFrame,
-      .scalarChecksum = scalarChecksum,
-      .simdChecksum = simdChecksum,
+      .activePluginCount = activePluginCount,
+      .omittedNodeCount = omittedNodeCount,
+      .variants = {},
   };
+  output.variants.reserve(states.size());
+  for (auto index = std::size_t{0}; index < states.size(); ++index) {
+    output.variants.push_back({
+        .variant = states[index].backend->variant,
+        .nanosecondsPerFrame = nanosecondsPerFrame[index],
+        .speedupVsScalar =
+            index == 0 ? 1.0 : scalarPerFrame / nanosecondsPerFrame[index],
+        .checksum = states[index].checksum,
+    });
+  }
   return {};
 }
 
@@ -430,7 +463,8 @@ static std::string jsonEscape(std::string_view value) {
 }
 
 static void printJson(
-    const Options &options, const pipetune::DspBackends &backends,
+    const Options &options,
+    const std::vector<const pipetune::DspBackendLoadResult *> &backends,
     const std::vector<PresetBenchmarkResult> &results) {
   std::cout << std::setprecision(12)
             << "{\"sampleRate\":" << options.sampleRate
@@ -438,11 +472,19 @@ static void printJson(
             << ",\"framesPerBlock\":" << options.frames
             << ",\"warmupBlocks\":" << options.warmupBlocks
             << ",\"measureBlocks\":" << options.measureBlocks
-            << ",\"scalarCpuRequirement\":\""
-            << jsonEscape(backends.scalar.cpuRequirement)
-            << "\",\"simdCpuRequirement\":\""
-            << jsonEscape(backends.simd.cpuRequirement)
-            << "\",\"results\":[";
+            << ",\"variants\":[";
+  for (auto index = std::size_t{0}; index < backends.size(); ++index) {
+    const auto *backend = backends[index];
+    if (index != 0) {
+      std::cout << ',';
+    }
+    std::cout << "{\"name\":\""
+              << jsonEscape(
+                     pipetune::dspBackendVariantName(backend->variant))
+              << "\",\"cpuRequirement\":\""
+              << jsonEscape(backend->cpuRequirement) << "\"}";
+  }
+  std::cout << "],\"results\":[";
   for (auto index = std::size_t{0}; index < results.size(); ++index) {
     const auto &result = results[index];
     if (index != 0) {
@@ -453,43 +495,62 @@ static void printJson(
               << "\",\"activePluginCount\":"
               << result.activePluginCount
               << ",\"omittedNodeCount\":" << result.omittedNodeCount
-              << ",\"scalarNanosecondsPerFrame\":"
-              << result.scalarNanosecondsPerFrame
-              << ",\"simdNanosecondsPerFrame\":"
-              << result.simdNanosecondsPerFrame
-              << ",\"speedup\":" << result.speedup
-              << ",\"scalarChecksum\":" << result.scalarChecksum
-              << ",\"simdChecksum\":" << result.simdChecksum << '}';
+              << ",\"variants\":[";
+    for (auto variantIndex = std::size_t{0};
+         variantIndex < result.variants.size(); ++variantIndex) {
+      const auto &variant = result.variants[variantIndex];
+      if (variantIndex != 0) {
+        std::cout << ',';
+      }
+      std::cout << "{\"name\":\""
+                << jsonEscape(
+                       pipetune::dspBackendVariantName(variant.variant))
+                << "\",\"nanosecondsPerFrame\":"
+                << variant.nanosecondsPerFrame
+                << ",\"speedupVsScalar\":"
+                << variant.speedupVsScalar
+                << ",\"checksum\":" << variant.checksum << '}';
+    }
+    std::cout << "]}";
   }
   std::cout << "]}\n";
 }
 
 static void printTable(
-    const Options &options, const pipetune::DspBackends &backends,
+    const Options &options,
+    const std::vector<const pipetune::DspBackendLoadResult *> &backends,
     const std::vector<PresetBenchmarkResult> &results) {
   std::cout << "DSP backend benchmark: " << options.sampleRate << " Hz, "
             << options.channels << " channels, " << options.frames
             << " frames/block, " << options.measureBlocks
-            << " measured blocks\n"
-            << "Scalar CPU requirement: "
-            << backends.scalar.cpuRequirement << '\n'
-            << "SIMD CPU requirement: " << backends.simd.cpuRequirement
-            << "\n\n"
-            << std::left << std::setw(42) << "Preset" << std::right
+            << " measured blocks\n";
+  for (const auto *backend : backends) {
+    std::cout << pipetune::dspBackendVariantName(backend->variant)
+              << " CPU requirement: " << backend->cpuRequirement << '\n';
+  }
+  std::cout << '\n'
+            << std::left << std::setw(34) << "Preset"
+            << std::setw(16) << "Variant" << std::right
             << std::setw(8) << "Nodes" << std::setw(16)
-            << "Scalar ns/frame" << std::setw(16) << "SIMD ns/frame"
-            << std::setw(12) << "Speedup" << '\n';
+            << "ns/frame" << std::setw(14) << "vs scalar" << '\n';
   for (const auto &result : results) {
     auto name = result.preset.filename().string();
-    if (name.size() > 40) {
-      name.resize(40);
+    if (name.size() > 32) {
+      name.resize(32);
     }
-    std::cout << std::left << std::setw(42) << name << std::right
-              << std::setw(8) << result.activePluginCount
-              << std::setw(16) << std::fixed << std::setprecision(3)
-              << result.scalarNanosecondsPerFrame << std::setw(16)
-              << result.simdNanosecondsPerFrame << std::setw(11)
-              << result.speedup << "x\n";
+    for (auto index = std::size_t{0}; index < result.variants.size();
+         ++index) {
+      const auto &variant = result.variants[index];
+      std::cout << std::left << std::setw(34)
+                << (index == 0 ? name : std::string{})
+                << std::setw(16)
+                << pipetune::dspBackendVariantName(variant.variant)
+                << std::right << std::setw(8)
+                << result.activePluginCount << std::setw(16)
+                << std::fixed << std::setprecision(3)
+                << variant.nanosecondsPerFrame << std::setw(13)
+                << variant.speedupVsScalar << "x\n";
+    }
     if (result.omittedNodeCount != 0) {
       std::cout << "  omitted unsupported/asset-backed nodes: "
                 << result.omittedNodeCount << '\n';
@@ -524,10 +585,15 @@ static int run(std::span<const std::string_view> arguments) {
               << backends.scalar.error << '\n';
     return 1;
   }
-  if (backends.simd.backend == nullptr) {
-    std::cerr << "pipetune-dsp-benchmark: SIMD DSP backend is unavailable: "
-              << backends.simd.error << '\n';
-    return 1;
+
+  auto availableBackends =
+      std::vector<const pipetune::DspBackendLoadResult *>{};
+  availableBackends.reserve(1 + backends.simdVariants.size());
+  availableBackends.push_back(&backends.scalar);
+  for (const auto &variant : backends.simdVariants) {
+    if (variant.backend != nullptr) {
+      availableBackends.push_back(&variant);
+    }
   }
 
   auto results = std::vector<PresetBenchmarkResult>{};
@@ -535,7 +601,7 @@ static int run(std::span<const std::string_view> arguments) {
   for (const auto &preset : presets) {
     auto result = PresetBenchmarkResult{};
     const auto error =
-        benchmarkPreset(preset, parsed.options, backends, result);
+        benchmarkPreset(preset, parsed.options, availableBackends, result);
     if (!error.empty()) {
       std::cerr << "pipetune-dsp-benchmark: " << error << '\n';
       return 1;
@@ -544,9 +610,9 @@ static int run(std::span<const std::string_view> arguments) {
   }
 
   if (parsed.options.json) {
-    printJson(parsed.options, backends, results);
+    printJson(parsed.options, availableBackends, results);
   } else {
-    printTable(parsed.options, backends, results);
+    printTable(parsed.options, availableBackends, results);
   }
   return 0;
 }

@@ -63,10 +63,11 @@ therefore leaves the previous startup selection unchanged. If the live apply
 succeeds but persistence fails, the new processing mode remains active and
 the window reports that partial success.
 
-The **DSP backend** section's **Native engine** drop-down selects **Scalar**
-or **SIMD**. Scalar is the compatibility default. Each row shows the
-availability and CPU requirement reported by the daemon; the effective field
-also shows startup fallback and validation diagnostics.
+The **DSP backend** section's **Native engine** drop-down selects **Scalar**,
+**SIMD (Auto)**, or an applicable baseline, x86-64-v3, x86-64-v4, or Arm64
+SVE tier. Scalar is the compatibility default. Each row shows the availability
+and CPU requirement reported by the daemon; the effective field also shows
+the concrete runtime tier, startup fallback, and validation diagnostics.
 
 When connected, **Apply and Save** asks the daemon to rebuild and atomically
 replace the active preset pipeline before saving the confirmed choice. DSP
@@ -77,10 +78,10 @@ backend remains active and the GUI reports partial success. Backend controls
 are disabled during a PCM rate transition.
 
 When disconnected, **Save for Next Start** performs local CPU, file, ABI, and
-catalog validation before persistence. An unavailable SIMD library is not
-saved by that operation. If a previously configured SIMD backend becomes
-unavailable at daemon startup, the status displays its scalar fallback and
-diagnostic.
+catalog validation before persistence. An unavailable pinned SIMD tier is not
+saved by that operation. If a previously configured SIMD tier becomes
+unavailable at daemon startup, the status displays its lower-SIMD or scalar
+fallback and diagnostic.
 
 The **Output preference** drop-down starts with **System default**, followed by
 the physical outputs enumerated by the daemon. If a persisted preference is
@@ -136,9 +137,11 @@ a preset; its absence starts the daemon in pass-through mode. A
 `PIPETUNE_TARGET` assignment stores a preferred PipeWire `node.name`; its
 absence follows the physical system default. `PIPETUNE_RATE` stores `max` or
 one of the five fixed rates, and `PIPETUNE_RATE_ENFORCEMENT` stores `suggest`
-or `force`. `PIPETUNE_DSP_BACKEND` stores `scalar` or `simd`. Missing rate
-assignments use Max-and-suggest, and a missing backend assignment uses Scalar.
-Updates to any selection preserve the others.
+or `force`. `PIPETUNE_DSP_BACKEND` stores `scalar` or `simd`, and
+`PIPETUNE_DSP_SIMD_VARIANT` stores `auto`, `baseline`, `x86-64-v3`,
+`x86-64-v4`, or `sve`. Missing rate assignments use Max-and-suggest, a missing
+backend assignment uses Scalar, and a missing SIMD variant uses Auto. Updates
+to any selection preserve the others.
 
 The constant **Configuration** section provides **Reset Configuration…**.
 Its modal confirmation defaults to **Cancel**. Confirming invokes the
@@ -146,13 +149,15 @@ installed CLI asynchronously as `pipetune config reset --yes`, so the GTK main
 loop remains responsive while the configuration is replaced and an active
 service is restarted. The GUI then reloads the shared configuration, clears
 the preset selection when the reset succeeded, restores the Max-and-suggest
-controls and Scalar backend, and reconnects its daemon subscription.
+controls, Scalar backend, and Auto SIMD preference, and reconnects its daemon
+subscription.
 
 The reset selects startup bypass, removes the preferred output so the system
-default is followed, selects Max with Suggest, and selects Scalar. It replaces
-unsupported legacy configuration without backing it up. An inactive service
-remains inactive. If restarting an active service fails, the window reports
-the partial failure while retaining and displaying the reset startup choices.
+default is followed, selects Max with Suggest, and selects Scalar with an Auto
+SIMD preference. It replaces unsupported legacy configuration without backing
+it up. An inactive service remains inactive. If restarting an active service
+fails, the window reports the partial failure while retaining and displaying
+the reset startup choices.
 
 ## Status subscription
 

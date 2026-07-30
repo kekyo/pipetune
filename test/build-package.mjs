@@ -76,12 +76,37 @@ const writeExecutable = (path, contents) => {
   chmodSync(path, 0o755);
 };
 
+const dspBackendsForArchitecture = (debianArchitecture) => {
+  const architectureBackends = new Map([
+    [
+      "amd64",
+      [
+        "libeffetune-dsp-simd-x86-64-v3.so",
+        "libeffetune-dsp-simd-x86-64-v4.so",
+      ],
+    ],
+    ["i386", ["libeffetune-dsp-simd-x86-64-v3.so"]],
+    ["arm64", ["libeffetune-dsp-simd-arm64-sve.so"]],
+    ["armhf", []],
+    ["riscv64", []],
+  ]).get(debianArchitecture);
+  if (architectureBackends === undefined) {
+    fail(`unsupported DSP package architecture: ${debianArchitecture}`);
+  }
+  return [
+    "libeffetune-dsp-scalar.so",
+    "libeffetune-dsp-simd.so",
+    ...architectureBackends,
+  ];
+};
+
 const createPackageStage = (
   stageRoot,
   includeAutostart,
   includeDspBackendDocumentation,
   includeDspBackends,
   debianArchitecture,
+  omittedDspBackend = undefined,
 ) => {
   const paths = [
     "DEBIAN",
@@ -114,14 +139,14 @@ Description: PipeWire system-wide DSP and GTK control application
   copyFileSync("/bin/true", join(stageRoot, "usr/bin/pipetune"));
   copyFileSync("/bin/true", join(stageRoot, "usr/bin/pipetune-gtk"));
   if (includeDspBackends) {
-    copyFileSync(
-      "/bin/true",
-      join(stageRoot, "usr/lib/pipetune/libeffetune-dsp-scalar.so"),
-    );
-    copyFileSync(
-      "/bin/true",
-      join(stageRoot, "usr/lib/pipetune/libeffetune-dsp-simd.so"),
-    );
+    for (const backend of dspBackendsForArchitecture(debianArchitecture)) {
+      if (backend !== omittedDspBackend) {
+        copyFileSync(
+          "/bin/true",
+          join(stageRoot, "usr/lib/pipetune", backend),
+        );
+      }
+    }
   }
   writeFileSync(
     join(stageRoot, "usr/lib/systemd/user/pipetune.service"),
@@ -543,6 +568,10 @@ printf '%s\\n' "$@" >"$PIPETUNE_TEST_WRAPPER_CAPTURE"
     temporaryRoot,
     "missing-dsp-backends-stage",
   );
+  const missingIsaDspBackendStage = join(
+    temporaryRoot,
+    "missing-isa-dsp-backend-stage",
+  );
   const goodPackage = join(temporaryRoot, "pipetune-good.deb");
   const badPackage = join(temporaryRoot, "pipetune-bad.deb");
   const missingDspBackendDocumentationPackage = join(
@@ -552,6 +581,10 @@ printf '%s\\n' "$@" >"$PIPETUNE_TEST_WRAPPER_CAPTURE"
   const missingDspBackendsPackage = join(
     temporaryRoot,
     "pipetune-missing-dsp-backends.deb",
+  );
+  const missingIsaDspBackendPackage = join(
+    temporaryRoot,
+    "pipetune-missing-isa-dsp-backend.deb",
   );
   createPackageStage(goodStage, true, true, true, hostDebianArchitecture);
   createPackageStage(badStage, false, true, true, hostDebianArchitecture);
@@ -569,6 +602,18 @@ printf '%s\\n' "$@" >"$PIPETUNE_TEST_WRAPPER_CAPTURE"
     false,
     hostDebianArchitecture,
   );
+  const expectedDspBackends = dspBackendsForArchitecture(
+    hostDebianArchitecture,
+  );
+  const omittedIsaDspBackend = expectedDspBackends.at(-1);
+  createPackageStage(
+    missingIsaDspBackendStage,
+    true,
+    true,
+    true,
+    hostDebianArchitecture,
+    omittedIsaDspBackend,
+  );
   for (const [stage, output] of [
     [goodStage, goodPackage],
     [badStage, badPackage],
@@ -577,6 +622,7 @@ printf '%s\\n' "$@" >"$PIPETUNE_TEST_WRAPPER_CAPTURE"
       missingDspBackendDocumentationPackage,
     ],
     [missingDspBackendsStage, missingDspBackendsPackage],
+    [missingIsaDspBackendStage, missingIsaDspBackendPackage],
   ]) {
     const built = run(
       dpkgDeb,
@@ -646,6 +692,27 @@ validate_deb_package "$2" "$3"
     "libeffetune-dsp-scalar.so",
     "deb validation did not identify missing DSP backend shared libraries",
   );
+  const validateMissingIsaDspBackend = runSourced(
+    `
+VERSION=1.2.3
+validate_deb_package "$2" "$3"
+`,
+    [missingIsaDspBackendPackage, canonicalHostArchitecture],
+    process.env,
+  );
+  if (
+    expectedDspBackends.length > 2 &&
+    validateMissingIsaDspBackend.status === 0
+  ) {
+    fail("deb package without an ISA DSP backend passed validation");
+  }
+  if (expectedDspBackends.length > 2) {
+    assertIncludes(
+      validateMissingIsaDspBackend.stderr,
+      omittedIsaDspBackend,
+      "deb validation did not identify the missing ISA DSP backend",
+    );
+  }
 } finally {
   rmSync(temporaryRoot, { recursive: true, force: true });
 }

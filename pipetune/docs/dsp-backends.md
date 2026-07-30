@@ -2,14 +2,20 @@
 
 ## Purpose and default
 
-PipeTune packages the EffeTune DSP engine as two private shared libraries:
+PipeTune packages the EffeTune DSP engine as a private shared-library family:
 
 - `libeffetune-dsp-scalar.so` is the compatibility backend. PFFFT is built
   with `PFFFT_SIMD_DISABLE=1`, and the remaining DSP code uses the normal
   CMake Release compiler policy.
 - `libeffetune-dsp-simd.so` enables PFFFT's architecture implementation where
   PFFFT provides one and explicitly enables GCC tree vectorization for the
-  complete EffeTune DSP translation set in Release builds.
+  complete EffeTune DSP translation set at the package architecture's
+  baseline.
+- `libeffetune-dsp-simd-x86-64-v3.so`,
+  `libeffetune-dsp-simd-x86-64-v4.so`, and
+  `libeffetune-dsp-simd-arm64-sve.so` are installed only on applicable
+  architectures. They compile the same DSP source set for a higher,
+  runtime-checked ISA level.
 
 `scalar` is the startup, missing-configuration, and configuration-reset
 default. The SIMD backend is opt-in because a compiler is not required to
@@ -17,40 +23,45 @@ produce numerically identical instruction sequences after vectorization.
 Neither backend uses `-Ofast`, `-ffast-math`, `-march=native`, or link-time
 optimization.
 
-This separation preserves one known compatibility path while allowing the
-same PipeTune process to replace an active preset pipeline with an optimized
-implementation. It does not load two implementations into one pipeline.
+This separation preserves one known compatibility path while allowing
+PipeTune to select the highest usable optimized implementation or a
+user-pinned tier. One pipeline always uses exactly one implementation.
 
 ## Architecture policy
 
-The SIMD library has one baseline per Debian package architecture:
+The package contents and dispatch tiers are:
 
-| Package architecture | PFFFT in SIMD library | Additional compiler target | Runtime requirement |
+| Package architecture | Variant | Compiler/PFFFT policy | Runtime requirement |
 | --- | --- | --- | --- |
-| amd64 | SSE1 float implementation | x86-64 compiler baseline; no extra ISA flag | x86-64 SSE2 architectural baseline |
-| i386 | SSE1 float implementation | `-msse2 -mfpmath=sse` | CPUID SSE2 |
-| arm64 | NEON implementation | `PFFFT_ENABLE_NEON=1` | AArch64 Advanced SIMD architectural baseline |
-| armhf | NEON implementation | `PFFFT_ENABLE_NEON=1 -mfpu=neon` | Linux `HWCAP_NEON` |
-| riscv64 | Portable PFFFT fallback | `-march=rv64gcv -mabi=lp64d` | Linux RISC-V V HWCAP |
+| amd64 | `baseline` | x86 PFFFT; x86-64 compiler baseline | x86-64 SSE2 architectural baseline |
+| amd64 | `x86-64-v3` | `-march=x86-64-v3` | GCC CPUID x86-64-v3 feature level |
+| amd64 | `x86-64-v4` | `-march=x86-64-v4` | GCC CPUID x86-64-v4 feature level |
+| i386 | `baseline` | x86 PFFFT; `-msse2 -mfpmath=sse` | CPUID SSE2 |
+| i386 | `x86-64-v3` | x86-64-v3 feature-targeted 32-bit code | GCC CPUID x86-64-v3 feature level |
+| arm64 | `baseline` | NEON PFFFT | AArch64 Advanced SIMD architectural baseline |
+| arm64 | `sve` | NEON PFFFT; `-march=armv8-a+sve -msve-vector-bits=scalable` for auto-vectorized code | Linux `HWCAP_SVE` |
+| armhf | `baseline` | NEON PFFFT; `-mfpu=neon` | Linux `HWCAP_NEON` |
+| riscv64 | `baseline` | portable PFFFT; `-march=rv64gcv -mabi=lp64d` for auto-vectorized code | Linux RISC-V V HWCAP |
 
 The vendored PFFFT has x86, Arm NEON, and PowerPC AltiVec float
 implementations, but no RISC-V V implementation. The riscv64 SIMD library
 therefore relies on GCC vectorization of PFFFT's portable code and the other
 EffeTune loops; it does not claim a native PFFFT RVV kernel.
 
-Both Release libraries are normally compiled with GCC's `-O3`. GCC already
+Release libraries are normally compiled with GCC's `-O3`. GCC already
 enables loop and SLP vectorization at that optimization level, so
 `-ftree-vectorize` on the SIMD target is primarily an explicit policy marker.
-The material differences are PFFFT's x86/NEON code and the additional i386,
-armhf, and riscv64 target options. A loop-carried dependency, aliasing,
-control flow, or a scalar math-library call can still prevent GCC from
-vectorizing an individual loop.
+The material differences are PFFFT's x86/NEON code and each tier's compiler
+target. x86-64-v3 groups AVX, AVX2, FMA, BMI, and related features rather than
+creating a library for every individual instruction extension. x86-64-v4
+adds the AVX-512 feature-level group. Arm64 similarly has one architectural
+NEON baseline and one scalable-vector SVE tier. armhf and riscv64 retain one
+SIMD tier because the current implementation and package matrix do not
+justify another independently dispatched library.
 
-There are deliberately no separate SSE4, AVX2, or AVX-512 libraries. Adding
-one would increase package size, loader and status states, test combinations,
-and numerical variants. It should be considered only after repeatable
-per-preset measurements show a useful gain beyond the current architecture
-baseline. `-march=native` must not be used for distributed packages.
+A loop-carried dependency, aliasing, control flow, or a scalar math-library
+call can still prevent GCC from vectorizing an individual loop.
+`-march=native` must not be used for distributed packages.
 
 ## Discovery and validation
 
@@ -61,7 +72,7 @@ PipeTune resolves each library only from:
    `/usr/lib/pipetune`.
 
 It does not pass a bare soname to the dynamic loader and does not search a
-generic plugin path. Before opening the SIMD library, PipeTune checks the
+generic plugin path. Before opening any SIMD library, PipeTune checks its
 architecture requirement listed above. It then uses `RTLD_NOW | RTLD_LOCAL`
 and validates:
 
@@ -74,10 +85,13 @@ and validates:
 
 The scalar backend is mandatory. If it cannot be validated, a managed daemon
 starts in pass-through mode and reports the error; a direct preset run fails.
-If configured SIMD is unavailable but scalar is valid, daemon startup uses
-scalar and reports configured `simd`, effective `scalar`, fallback state, and
-the exact diagnostic. A new live `dsp set simd` request instead rejects the
-unavailable choice and does not persist it.
+For automatic SIMD selection, CPU-inapplicable upper tiers are skipped
+silently. If a CPU-supported upper library is missing or fails validation,
+PipeTune uses the next lower SIMD tier and reports the failed upper tier as a
+fallback diagnostic. If no SIMD tier is usable, daemon startup uses scalar.
+A pinned tier that is unavailable also falls back to scalar at startup. A
+new live request for an unavailable pinned tier is rejected and is not
+persisted.
 
 ## Selection and live switching
 
@@ -85,10 +99,14 @@ The shared startup configuration accepts:
 
 ```text
 PIPETUNE_DSP_BACKEND=scalar
+PIPETUNE_DSP_SIMD_VARIANT=auto
 ```
 
-The value is exactly `scalar` or `simd`. An absent assignment selects scalar.
-The CLI operations are:
+The backend value is exactly `scalar` or `simd`. The SIMD variant is exactly
+`auto`, `baseline`, `x86-64-v3`, `x86-64-v4`, or `sve`; only
+architecture-applicable values can become effective. An absent backend
+assignment selects scalar, and an absent variant assignment selects `auto`.
+Configuration reset restores those defaults. The CLI operations are:
 
 ```sh
 pipetune dsp list
@@ -97,6 +115,8 @@ pipetune dsp get
 pipetune dsp get --json
 pipetune dsp set scalar
 pipetune dsp set simd
+pipetune dsp set simd --variant baseline
+pipetune dsp set simd --variant x86-64-v3
 ```
 
 `list` and `get` require the daemon and report both library availability,
@@ -104,7 +124,9 @@ CPU requirements, configured and effective variants, fallback, and loader
 diagnostics. A connected `set` rebuilds the active preset with the requested
 library on the control thread, then atomically replaces the real-time pipeline.
 Only a daemon-confirmed change is saved. A construction or daemon error keeps
-the old pipeline and startup choice.
+the old pipeline and startup choice. Changing only the saved preference when
+it resolves to the already-active concrete library does not rebuild the
+pipeline.
 
 The replacement creates fresh EffeTune instances, so filter histories, delay
 lines, analyzer windows, and other DSP state reset. PipeTune retains its
@@ -123,12 +145,17 @@ A direct, non-persistent run can select a backend separately:
 
 ```sh
 pipetune --preset /absolute/path/to/example.effetune_preset \
-  --dsp-backend simd
+  --dsp-backend simd \
+  --dsp-variant x86-64-v3
 ```
 
-The GTK window exposes the same state and selection in **DSP backend** /
-**Native engine**. It displays the effective variant, CPU requirement,
-fallback, and validation error.
+The GTK window exposes scalar, automatic SIMD, and applicable pinned tiers in
+one **DSP backend** / **Native engine** drop-down. It displays the effective
+variant, CPU requirement, fallback, and validation error.
+
+Machine-readable status includes `configuredDspSimdVariant`,
+`effectiveDspVariant`, and `availableDspVariants` in addition to the logical
+configured and effective backend fields.
 
 ## Where SIMD can help
 
@@ -175,8 +202,9 @@ accelerated FFT may run only periodically.
 ## Benchmarking
 
 The developer build includes `pipetune-dsp-benchmark`. It discovers and
-validates the same two libraries as PipeTune, constructs an independent
-pipeline for each, warms both, and alternates their timing order per block.
+validates the same library family as PipeTune, then constructs an independent
+pipeline for scalar and every SIMD variant usable on the current CPU. It
+warms each pipeline and reverses their timing order on alternating blocks.
 Input generation and buffer copies are outside the measured `process` call.
 Pipeline construction and backend switching are not timed.
 
@@ -206,9 +234,11 @@ may be supplied. `--json` emits machine-readable results. `--sample-rate`,
 `--channels`, and `--frames` should match the intended workload. Use
 `--help` for all bounds and defaults.
 
-The report gives scalar and SIMD nanoseconds per frame and
-`scalar / SIMD` speedup for each preset. It also exposes both output checksums
-as a coarse diagnostic, but does not require them to be bit-identical.
+The report gives each concrete variant's nanoseconds per frame and
+`scalar / variant` speedup for every preset. JSON reports a top-level
+`variants` array and a corresponding per-preset `variants` measurement array.
+Each measurement also exposes an output checksum as a coarse diagnostic, but
+checksums are not required to be bit-identical.
 
 For decisions about another backend variant:
 
@@ -224,10 +254,11 @@ useful for correctness but not for selecting optimization policy.
 
 ## Numerical verification
 
-The complete test suite loads both shared libraries, checks their ABI and
-catalogs, compares a scalar and SIMD PFFFT impulse transform within tolerance,
-and processes equivalent preset pipelines through both variants. It also runs
-the existing EffeTune native DSP tests and JavaScript/native parity corpus.
+The complete test suite loads every architecture-applicable shared library,
+checks its ABI and catalog, compares each CPU-runnable SIMD PFFFT impulse
+transform with scalar within tolerance, and processes equivalent preset
+pipelines through the runnable variants. It also runs the existing EffeTune
+native DSP tests and JavaScript/native parity corpus.
 
 These tests establish compatibility for covered inputs, not universal
 floating-point identity. Scalar remains the recovery backend when a user or

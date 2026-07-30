@@ -76,6 +76,22 @@ if (
         join(libraryDirectory, "pipetune"),
         "libeffetune-dsp-simd.so",
       );
+      const architectureDspBackends = new Map([
+        [
+          "x64",
+          [
+            "libeffetune-dsp-simd-x86-64-v3.so",
+            "libeffetune-dsp-simd-x86-64-v4.so",
+          ],
+        ],
+        ["ia32", ["libeffetune-dsp-simd-x86-64-v3.so"]],
+        ["arm64", ["libeffetune-dsp-simd-arm64-sve.so"]],
+        ["arm", []],
+        ["riscv64", []],
+      ]).get(process.arch);
+      if (architectureDspBackends === undefined) {
+        fail(`unsupported install-test architecture: ${process.arch}`);
+      }
       const dspBackendDocumentation = installPath(
         documentationDirectory,
         "dsp-backends.md",
@@ -86,6 +102,12 @@ if (
         accessSync(environmentExample, constants.R_OK);
         accessSync(scalarDspBackend, constants.R_OK);
         accessSync(simdDspBackend, constants.R_OK);
+        for (const backend of architectureDspBackends ?? []) {
+          accessSync(
+            installPath(join(libraryDirectory, "pipetune"), backend),
+            constants.R_OK,
+          );
+        }
         accessSync(dspBackendDocumentation, constants.R_OK);
       } catch (error) {
         fail(`installed PipeTune layout is incomplete: ${error.message}`);

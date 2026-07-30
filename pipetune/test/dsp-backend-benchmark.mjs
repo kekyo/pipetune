@@ -21,7 +21,8 @@ const help = spawnSync(benchmark, ["--help"], { encoding: "utf8" });
 if (
   help.status !== 0 ||
   !help.stdout.includes("pipetune-dsp-benchmark") ||
-  !help.stdout.includes("--measure-blocks")
+  !help.stdout.includes("--measure-blocks") ||
+  !help.stdout.includes("every available backend variant")
 ) {
   fail("DSP backend benchmark help differs", help);
 }
@@ -51,6 +52,9 @@ try {
   fail(`DSP backend benchmark JSON is invalid: ${error.message}`, measured);
 }
 const result = report?.results?.[0];
+const reportedVariants = report?.variants;
+const measuredVariants = result?.variants;
+const variantNames = reportedVariants?.map((variant) => variant.name);
 if (
   report.sampleRate !== 48000 ||
   report.channels !== 2 ||
@@ -60,9 +64,25 @@ if (
   report.results.length !== 1 ||
   result.preset !== preset ||
   result.activePluginCount < 1 ||
-  !(result.scalarNanosecondsPerFrame > 0) ||
-  !(result.simdNanosecondsPerFrame > 0) ||
-  !(result.speedup > 0)
+  !Array.isArray(reportedVariants) ||
+  reportedVariants.length < 2 ||
+  reportedVariants[0].name !== "scalar" ||
+  new Set(variantNames).size !== variantNames.length ||
+  reportedVariants.some(
+    (variant) =>
+      typeof variant.name !== "string" ||
+      typeof variant.cpuRequirement !== "string",
+  ) ||
+  !Array.isArray(measuredVariants) ||
+  measuredVariants.length !== reportedVariants.length ||
+  measuredVariants.some(
+    (variant, index) =>
+      variant.name !== reportedVariants[index].name ||
+      !(variant.nanosecondsPerFrame > 0) ||
+      !(variant.speedupVsScalar > 0) ||
+      !Number.isFinite(variant.checksum),
+  ) ||
+  measuredVariants[0].speedupVsScalar !== 1
 ) {
   fail("DSP backend benchmark result differs", measured);
 }

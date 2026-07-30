@@ -37,6 +37,38 @@ assert_file() {
 	[ -f "$1" ] || fail "Missing expected file: $1"
 }
 
+dsp_backend_names_for_deb_arch() {
+	case $1 in
+		amd64)
+			printf '%s\n' \
+				'libeffetune-dsp-scalar.so' \
+				'libeffetune-dsp-simd.so' \
+				'libeffetune-dsp-simd-x86-64-v3.so' \
+				'libeffetune-dsp-simd-x86-64-v4.so'
+			;;
+		i386)
+			printf '%s\n' \
+				'libeffetune-dsp-scalar.so' \
+				'libeffetune-dsp-simd.so' \
+				'libeffetune-dsp-simd-x86-64-v3.so'
+			;;
+		arm64)
+			printf '%s\n' \
+				'libeffetune-dsp-scalar.so' \
+				'libeffetune-dsp-simd.so' \
+				'libeffetune-dsp-simd-arm64-sve.so'
+			;;
+		armhf | riscv64)
+			printf '%s\n' \
+				'libeffetune-dsp-scalar.so' \
+				'libeffetune-dsp-simd.so'
+			;;
+		*)
+			fail "Unsupported DSP backend Debian architecture: $1"
+			;;
+	esac
+}
+
 copy_docs() {
 	stage_dir=$1
 	doc_dir="$stage_dir/usr/share/doc/$PIPETUNE_PACKAGE_NAME"
@@ -116,8 +148,6 @@ validate_installed_package() {
 	for installed_file in \
 		/usr/bin/pipetune \
 		/usr/bin/pipetune-gtk \
-		/usr/lib/pipetune/libeffetune-dsp-scalar.so \
-		/usr/lib/pipetune/libeffetune-dsp-simd.so \
 		/usr/lib/systemd/user/pipetune.service \
 		/usr/share/applications/net.kekyo.pipetune-gtk.desktop \
 		/etc/xdg/autostart/net.kekyo.pipetune-gtk.desktop \
@@ -125,6 +155,12 @@ validate_installed_package() {
 		/usr/share/doc/pipetune/dsp-backends.md \
 		/usr/share/doc/pipetune/copyright; do
 		assert_file "$installed_file"
+	done
+	installed_arch=$(
+		dpkg-query -W -f='${Architecture}' "$PIPETUNE_PACKAGE_NAME"
+	)
+	for backend in $(dsp_backend_names_for_deb_arch "$installed_arch"); do
+		assert_file "/usr/lib/pipetune/$backend"
 	done
 
 	effetune_version=$(
@@ -208,8 +244,9 @@ chmod 0644 "$control_dir/control"
 
 assert_file "$stage_dir/usr/bin/pipetune"
 assert_file "$stage_dir/usr/bin/pipetune-gtk"
-assert_file "$stage_dir/usr/lib/pipetune/libeffetune-dsp-scalar.so"
-assert_file "$stage_dir/usr/lib/pipetune/libeffetune-dsp-simd.so"
+for backend in $(dsp_backend_names_for_deb_arch "$deb_arch"); do
+	assert_file "$stage_dir/usr/lib/pipetune/$backend"
+done
 assert_file "$stage_dir/usr/lib/systemd/user/pipetune.service"
 assert_file "$stage_dir/usr/share/applications/net.kekyo.pipetune-gtk.desktop"
 assert_file "$stage_dir/etc/xdg/autostart/net.kekyo.pipetune-gtk.desktop"
