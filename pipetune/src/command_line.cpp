@@ -16,6 +16,7 @@ static CommandLineOptions defaultOptions() {
           .targetObject = {},
           .sinkName = "pipetune_sink",
           .ratePolicy = defaultSampleRatePolicy(),
+          .dspBackend = DspBackendKind::scalar,
           .channelCount = 2,
           .checkOnly = false,
           .purge = false,
@@ -287,6 +288,94 @@ static CommandLineParseResult parseRateCommandLine(
   return {.options = std::move(options), .error = {}};
 }
 
+static CommandLineParseResult parseDspQueryOptions(
+    CommandLineOptions options,
+    std::span<const std::string_view> arguments) {
+  auto sawSocket = false;
+  for (auto index = std::size_t{0}; index < arguments.size(); ++index) {
+    const auto argument = arguments[index];
+    if (argument == "--json") {
+      if (options.json) {
+        return parseError(std::move(options), "duplicate option: --json");
+      }
+      options.json = true;
+      continue;
+    }
+    if (argument != "--socket") {
+      return parseError(std::move(options),
+                        "unknown dsp option: " + std::string(argument));
+    }
+    if (sawSocket) {
+      return parseError(std::move(options), "duplicate option: --socket");
+    }
+    if (index + 1 >= arguments.size()) {
+      return parseError(std::move(options), "missing value for --socket");
+    }
+    const auto value = arguments[++index];
+    if (value.empty()) {
+      return parseError(std::move(options), "--socket must not be empty");
+    }
+    sawSocket = true;
+    options.controlSocketPath = value;
+  }
+  return {.options = std::move(options), .error = {}};
+}
+
+static CommandLineParseResult parseDspCommandLine(
+    std::span<const std::string_view> arguments) {
+  auto options = defaultOptions();
+  if (arguments.empty()) {
+    return parseError(std::move(options), "dsp requires list, get, or set");
+  }
+  const auto operation = arguments.front();
+  if (operation == "list") {
+    options.action = CommandLineAction::dspList;
+    return parseDspQueryOptions(std::move(options), arguments.subspan(1));
+  }
+  if (operation == "get") {
+    options.action = CommandLineAction::dspGet;
+    return parseDspQueryOptions(std::move(options), arguments.subspan(1));
+  }
+  if (operation != "set") {
+    return parseError(std::move(options),
+                      "unknown dsp operation: " + std::string(operation));
+  }
+  options.action = CommandLineAction::dspSet;
+  if (arguments.size() < 2) {
+    return parseError(std::move(options),
+                      "dsp set requires scalar or simd");
+  }
+  const auto backend = parseDspBackendName(arguments[1]);
+  if (!backend.has_value()) {
+    return parseError(std::move(options),
+                      "DSP backend must be scalar or simd");
+  }
+  options.dspBackend = *backend;
+
+  auto sawSocket = false;
+  for (auto index = std::size_t{2}; index < arguments.size(); ++index) {
+    const auto argument = arguments[index];
+    if (argument != "--socket") {
+      return parseError(std::move(options),
+                        "unknown dsp set option: " +
+                            std::string(argument));
+    }
+    if (sawSocket) {
+      return parseError(std::move(options), "duplicate option: --socket");
+    }
+    if (index + 1 >= arguments.size()) {
+      return parseError(std::move(options), "missing value for --socket");
+    }
+    const auto value = arguments[++index];
+    if (value.empty()) {
+      return parseError(std::move(options), "--socket must not be empty");
+    }
+    sawSocket = true;
+    options.controlSocketPath = value;
+  }
+  return {.options = std::move(options), .error = {}};
+}
+
 static CommandLineParseResult parseSetupCommandLine(
     std::span<const std::string_view> arguments) {
   auto options = defaultOptions();
@@ -382,6 +471,9 @@ CommandLineParseResult parseCommandLine(
   if (!arguments.empty() && arguments.front() == "rate") {
     return parseRateCommandLine(arguments.subspan(1));
   }
+  if (!arguments.empty() && arguments.front() == "dsp") {
+    return parseDspCommandLine(arguments.subspan(1));
+  }
   if (!arguments.empty() && arguments.front() == "config") {
     return parseConfigCommandLine(arguments.subspan(1));
   }
@@ -406,6 +498,7 @@ CommandLineParseResult parseCommandLine(
   auto sawTarget = false;
   auto sawSinkName = false;
   auto sawChannels = false;
+  auto sawDspBackend = false;
   auto sawCheck = false;
   for (auto index = std::size_t{0}; index < arguments.size(); ++index) {
     const auto argument = arguments[index];
@@ -435,7 +528,8 @@ CommandLineParseResult parseCommandLine(
 
     if (argument != "--preset" && argument != "--load-preset" &&
         argument != "--socket" && argument != "--target" &&
-        argument != "--sink-name" && argument != "--channels") {
+        argument != "--sink-name" && argument != "--channels" &&
+        argument != "--dsp-backend") {
       return parseError(std::move(options),
                         "unknown option: " + std::string(argument));
     }
@@ -499,6 +593,20 @@ CommandLineParseResult parseCommandLine(
       options.sinkName = value;
       continue;
     }
+    if (argument == "--dsp-backend") {
+      if (sawDspBackend) {
+        return parseError(std::move(options),
+                          "duplicate option: --dsp-backend");
+      }
+      const auto backend = parseDspBackendName(value);
+      if (!backend.has_value()) {
+        return parseError(std::move(options),
+                          "--dsp-backend must be scalar or simd");
+      }
+      sawDspBackend = true;
+      options.dspBackend = *backend;
+      continue;
+    }
     if (sawChannels) {
       return parseError(std::move(options), "duplicate option: --channels");
     }
@@ -521,7 +629,7 @@ CommandLineParseResult parseCommandLine(
         "top-level action options are mutually exclusive");
   }
   if (sawRestoreDefault) {
-    if (sawTarget || sawChannels || sawCheck || sawSocket) {
+    if (sawTarget || sawChannels || sawDspBackend || sawCheck || sawSocket) {
       return parseError(
           std::move(options),
           "only --sink-name may modify --restore-default");
@@ -530,7 +638,8 @@ CommandLineParseResult parseCommandLine(
     return {.options = std::move(options), .error = {}};
   }
   if (sawLoadPreset || sawStatus) {
-    if (sawTarget || sawSinkName || sawChannels || sawCheck) {
+    if (sawTarget || sawSinkName || sawChannels || sawDspBackend ||
+        sawCheck) {
       return parseError(
           std::move(options),
           "PipeWire run options cannot be used with control actions");
@@ -557,11 +666,15 @@ std::string_view commandLineUsage() noexcept {
          "  pipetune rate get [--json] [--socket PATH]\n"
          "  pipetune rate list [--json] [--socket PATH]\n"
          "  pipetune rate set RATE ENFORCEMENT [--socket PATH]\n"
+         "  pipetune dsp list [--json] [--socket PATH]\n"
+         "  pipetune dsp get [--json] [--socket PATH]\n"
+         "  pipetune dsp set scalar|simd [--socket PATH]\n"
          "  pipetune config reset [-y|--yes]\n"
          "  pipetune setup [--preset FILE]\n"
          "  pipetune unsetup [--purge]\n"
          "  pipetune --preset FILE [--target OBJECT] [--sink-name NAME]\n"
-         "           [--channels COUNT] [--socket PATH] [--check]\n"
+         "           [--channels COUNT] [--dsp-backend scalar|simd]\n"
+         "           [--socket PATH] [--check]\n"
          "  pipetune --load-preset FILE [--socket PATH]\n"
          "  pipetune --status [--socket PATH]\n"
          "  pipetune --restore-default [--sink-name NAME]\n"
@@ -579,6 +692,9 @@ std::string_view commandLineUsage() noexcept {
          "  rate get        Show configured and effective PCM rates.\n"
          "  rate list       List output-supported PCM rates.\n"
          "  rate set        Select max or a fixed rate and suggest or force.\n"
+         "  dsp list        List scalar and SIMD backend availability.\n"
+         "  dsp get         Show configured and effective DSP backends.\n"
+         "  dsp set         Select scalar compatibility or SIMD acceleration.\n"
          "  config reset    Reset Bypass, output, and PCM rate configuration.\n"
          "  -y, --yes       Skip the configuration reset confirmation.\n"
          "  --json           Print the complete machine-readable status.\n"
@@ -597,6 +713,8 @@ std::string_view commandLineUsage() noexcept {
          "  --sink-name NAME  Publish this virtual sink name (default: "
          "pipetune_sink).\n"
          "  --channels COUNT  Use 1 through 8 planar channels (default: 2).\n"
+         "  --dsp-backend BACKEND\n"
+         "                    Use scalar or simd for this direct run.\n"
          "  --check           Verify stream negotiation, then exit.\n";
 }
 

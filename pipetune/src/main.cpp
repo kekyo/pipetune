@@ -3,6 +3,7 @@
 #include "bypass_command.h"
 #include "config_reset_command.h"
 #include "default_sink_restore.h"
+#include "dsp_backend_command.h"
 #include "installed_tools.h"
 #include "output_command.h"
 #include "pipetune/control_protocol.h"
@@ -432,6 +433,63 @@ static bool isRateCommand(pipetune::CommandLineAction action) {
          action == pipetune::CommandLineAction::rateSet;
 }
 
+static bool isDspCommand(pipetune::CommandLineAction action) {
+  return action == pipetune::CommandLineAction::dspList ||
+         action == pipetune::CommandLineAction::dspGet ||
+         action == pipetune::CommandLineAction::dspSet;
+}
+
+static int runDspCommand(const pipetune::CommandLineOptions &options) {
+  const auto socket =
+      pipetune::resolveControlSocketPath(options.controlSocketPath);
+  if (!socket.error.empty()) {
+    std::cerr << "pipetune: " << socket.error << '\n';
+    return 1;
+  }
+
+  if (options.action == pipetune::CommandLineAction::dspList ||
+      options.action == pipetune::CommandLineAction::dspGet) {
+    const auto queried = pipetune::queryDspBackendStatus(socket.path);
+    if (!queried.success) {
+      std::cerr << "pipetune: " << queried.error << '\n';
+      return 1;
+    }
+    if (options.json) {
+      std::cout << queried.json << '\n';
+    } else if (options.action ==
+               pipetune::CommandLineAction::dspList) {
+      std::cout << pipetune::formatDspBackendList(queried.status);
+    } else {
+      std::cout << pipetune::formatDspBackendStatus(queried.status);
+    }
+    return 0;
+  }
+
+  const auto config = resolveUserStartupConfigPath();
+  if (!config.error.empty()) {
+    std::cerr << "pipetune: " << config.error << '\n';
+    return 1;
+  }
+  const auto changed = pipetune::executeSetDspBackend(
+      {.configPath = config.path, .socketPath = socket.path},
+      options.dspBackend);
+  if (!changed.success) {
+    std::cerr << "pipetune: " << changed.error << '\n';
+    return 1;
+  }
+  if (changed.liveApplied) {
+    std::cout << "DSP backend is active and saved for future starts.\n"
+              << pipetune::formatDspBackendStatus(changed.status);
+  } else {
+    std::cout << "DSP backend is saved for the next daemon start";
+    if (!changed.notice.empty()) {
+      std::cout << " (" << changed.notice << ')';
+    }
+    std::cout << ".\n";
+  }
+  return 0;
+}
+
 static int runRateCommand(
     const pipetune::CommandLineOptions &options) {
   const auto socket =
@@ -518,6 +576,9 @@ int main(int argc, char **argv) {
   if (isRateCommand(parsed.options.action)) {
     return runRateCommand(parsed.options);
   }
+  if (isDspCommand(parsed.options.action)) {
+    return runDspCommand(parsed.options);
+  }
   if (parsed.options.action ==
       pipetune::CommandLineAction::configReset) {
     return runConfigResetCommand(parsed.options);
@@ -553,11 +614,23 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  auto backends = pipetune::discoverDspBackends();
+  const auto selected = pipetune::selectDspBackend(
+      parsed.options.dspBackend, backends);
+  if (selected.effectiveBackend == nullptr) {
+    std::cerr << "pipetune: " << selected.error << '\n';
+    return 1;
+  }
+  if (selected.fallback) {
+    std::cerr << "pipetune: warning: " << selected.error
+              << "; using scalar DSP backend\n";
+  }
   auto loaded = pipetune::loadDspPipeline(
       presetPath,
       {.sampleRate = static_cast<float>(kInitialSampleRate),
        .maxChannels = parsed.options.channelCount,
-       .maxFrames = kMaximumProcessFrames});
+       .maxFrames = kMaximumProcessFrames},
+      selected.effectiveBackend);
   if (loaded.pipeline == nullptr) {
     std::cerr << "pipetune: " << loaded.error << '\n';
     return 1;
@@ -597,7 +670,9 @@ int main(int argc, char **argv) {
        .ringCapacityFrames = kRingCapacityFrames,
        .manageDefaultSink = !parsed.options.checkOnly,
        .readyCallback = nullptr,
-       .readyUserData = nullptr},
+       .readyUserData = nullptr,
+       .dspBackends = std::move(backends),
+       .configuredDspBackend = parsed.options.dspBackend},
       mode);
   if (!result.success) {
     std::cerr << "pipetune: " << result.error << '\n';

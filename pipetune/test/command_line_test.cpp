@@ -31,15 +31,18 @@ static bool testRunDefaults() {
                    result.options.ratePolicy.enforcement ==
                        pipetune::SampleRateEnforcement::suggest,
                "direct-run rate policy must default to Max and suggest") &&
+         check(result.options.dspBackend ==
+                   pipetune::DspBackendKind::scalar,
+               "direct-run DSP backend must default to scalar") &&
          check(result.options.channelCount == 2, "default channels differ") &&
          check(!result.options.checkOnly, "normal run must not stop after readiness");
 }
 
 static bool testExplicitOptions() {
-  constexpr auto arguments = std::array<std::string_view, 11>{
+  constexpr auto arguments = std::array<std::string_view, 13>{
       "--check",   "--channels", "8",          "--target",
       "alsa_out", "--sink-name", "studio",     "--socket",
-      "/tmp/pipetune.sock", "--preset",
+      "/tmp/pipetune.sock", "--dsp-backend", "simd", "--preset",
       "studio.effetune_preset"};
   const auto result = pipetune::parseCommandLine(arguments);
   return check(result.error.empty(), result.error) &&
@@ -48,7 +51,10 @@ static bool testExplicitOptions() {
          check(result.options.targetObject == "alsa_out", "explicit target differs") &&
          check(result.options.sinkName == "studio", "explicit sink name differs") &&
          check(result.options.controlSocketPath == "/tmp/pipetune.sock",
-               "explicit control socket differs");
+               "explicit control socket differs") &&
+         check(result.options.dspBackend ==
+                   pipetune::DspBackendKind::simd,
+               "explicit direct-run DSP backend differs");
 }
 
 static bool testControlActions() {
@@ -230,6 +236,45 @@ static bool testRateActions() {
                "rate set fixed force differs");
 }
 
+static bool testDspActions() {
+  constexpr auto list =
+      std::array<std::string_view, 2>{"dsp", "list"};
+  constexpr auto get = std::array<std::string_view, 5>{
+      "dsp", "get", "--json", "--socket", "/tmp/pipetune.sock"};
+  constexpr auto setScalar =
+      std::array<std::string_view, 3>{"dsp", "set", "scalar"};
+  constexpr auto setSimd = std::array<std::string_view, 5>{
+      "dsp", "set", "simd", "--socket", "/tmp/pipetune.sock"};
+  const auto listResult = pipetune::parseCommandLine(list);
+  const auto getResult = pipetune::parseCommandLine(get);
+  const auto scalarResult = pipetune::parseCommandLine(setScalar);
+  const auto simdResult = pipetune::parseCommandLine(setSimd);
+  return check(listResult.error.empty(), listResult.error) &&
+         check(listResult.options.action ==
+                       pipetune::CommandLineAction::dspList &&
+                   !listResult.options.json,
+               "dsp list action differs") &&
+         check(getResult.error.empty(), getResult.error) &&
+         check(getResult.options.action ==
+                       pipetune::CommandLineAction::dspGet &&
+                   getResult.options.json &&
+                   getResult.options.controlSocketPath ==
+                       "/tmp/pipetune.sock",
+               "dsp get action differs") &&
+         check(scalarResult.error.empty(), scalarResult.error) &&
+         check(scalarResult.options.action ==
+                       pipetune::CommandLineAction::dspSet &&
+                   scalarResult.options.dspBackend ==
+                       pipetune::DspBackendKind::scalar,
+               "dsp set scalar action differs") &&
+         check(simdResult.error.empty(), simdResult.error) &&
+         check(simdResult.options.action ==
+                       pipetune::CommandLineAction::dspSet &&
+                   simdResult.options.dspBackend ==
+                       pipetune::DspBackendKind::simd,
+               "dsp set SIMD action differs");
+}
+
 static bool testUserSetupActions() {
   constexpr auto setup = std::array<std::string_view, 1>{"setup"};
   constexpr auto setupPreset = std::array<std::string_view, 3>{
@@ -351,6 +396,10 @@ static bool testInformationalActions() {
                    "pipetune rate set RATE ENFORCEMENT [--socket PATH]") !=
                    std::string_view::npos,
                "usage must explain rate selection") &&
+         check(pipetune::commandLineUsage().find(
+                   "pipetune dsp set scalar|simd [--socket PATH]") !=
+                   std::string_view::npos,
+               "usage must explain DSP backend selection") &&
          check(pipetune::commandLineUsage().find("--rate HZ") ==
                    std::string_view::npos,
                "usage must not advertise legacy direct --rate") &&
@@ -443,6 +492,23 @@ static bool testRejectedArguments() {
       "rate", "set", "48000", "force", "--json"};
   constexpr auto duplicateRateSocket = std::array<std::string_view, 6>{
       "rate", "get", "--socket", "/tmp/a", "--socket", "/tmp/b"};
+  constexpr auto dspWithoutAction =
+      std::array<std::string_view, 1>{"dsp"};
+  constexpr auto unknownDspAction =
+      std::array<std::string_view, 2>{"dsp", "future"};
+  constexpr auto missingDspBackend =
+      std::array<std::string_view, 2>{"dsp", "set"};
+  constexpr auto invalidDspBackend =
+      std::array<std::string_view, 3>{"dsp", "set", "avx2"};
+  constexpr auto dspSetWithJson =
+      std::array<std::string_view, 4>{"dsp", "set", "simd", "--json"};
+  constexpr auto duplicateDspSocket = std::array<std::string_view, 6>{
+      "dsp", "get", "--socket", "/tmp/a", "--socket", "/tmp/b"};
+  constexpr auto invalidDirectDsp = std::array<std::string_view, 4>{
+      "--preset", "x.effetune_preset", "--dsp-backend", "avx2"};
+  constexpr auto duplicateDirectDsp = std::array<std::string_view, 6>{
+      "--preset", "x.effetune_preset", "--dsp-backend", "scalar",
+      "--dsp-backend", "simd"};
   constexpr auto configWithoutAction =
       std::array<std::string_view, 1>{"config"};
   constexpr auto unknownConfigAction =
@@ -526,6 +592,22 @@ static bool testRejectedArguments() {
                "rate set must reject --json") &&
          check(!pipetune::parseCommandLine(duplicateRateSocket).error.empty(),
                "rate get must reject duplicate sockets") &&
+         check(!pipetune::parseCommandLine(dspWithoutAction).error.empty(),
+               "dsp must require a subcommand") &&
+         check(!pipetune::parseCommandLine(unknownDspAction).error.empty(),
+               "dsp must reject unknown subcommands") &&
+         check(!pipetune::parseCommandLine(missingDspBackend).error.empty(),
+               "dsp set must require a backend") &&
+         check(!pipetune::parseCommandLine(invalidDspBackend).error.empty(),
+               "dsp set must reject unknown backends") &&
+         check(!pipetune::parseCommandLine(dspSetWithJson).error.empty(),
+               "dsp set must reject --json") &&
+         check(!pipetune::parseCommandLine(duplicateDspSocket).error.empty(),
+               "dsp get must reject duplicate sockets") &&
+         check(!pipetune::parseCommandLine(invalidDirectDsp).error.empty(),
+               "direct run must reject unknown DSP backends") &&
+         check(!pipetune::parseCommandLine(duplicateDirectDsp).error.empty(),
+               "direct run must reject duplicate DSP backends") &&
          check(!pipetune::parseCommandLine(configWithoutAction).error.empty(),
                "config must require a subcommand") &&
          check(!pipetune::parseCommandLine(unknownConfigAction).error.empty(),
@@ -540,7 +622,7 @@ int main() {
   const auto passed = testRunDefaults() && testExplicitOptions() &&
                       testControlActions() && testDaemonAction() &&
                       testBypassAction() && testOutputActions() &&
-                      testRateActions() &&
+                      testRateActions() && testDspActions() &&
                       testUserSetupActions() &&
                       testConfigResetAction() &&
                       testDefaultRestorationAction() &&

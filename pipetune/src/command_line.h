@@ -1,6 +1,7 @@
 #ifndef PIPETUNE_COMMAND_LINE_H
 #define PIPETUNE_COMMAND_LINE_H
 
+#include "pipetune/dsp_backend.h"
 #include "pipetune/sample_rate.h"
 
 #include <cstdint>
@@ -37,6 +38,12 @@ enum class CommandLineAction {
   rateList,
   /** Set and persist the sample-rate policy. */
   rateSet,
+  /** List packaged DSP backend availability. */
+  dspList,
+  /** Show configured and effective DSP backends. */
+  dspGet,
+  /** Set and persist the DSP backend. */
+  dspSet,
   /** Reset all startup configuration to PipeTune defaults. */
   configReset,
   /** Configure and start PipeTune for the current user. */
@@ -75,6 +82,8 @@ struct CommandLineOptions {
   std::string sinkName;
   /** DSP and PipeWire graph-rate policy. */
   SampleRatePolicy ratePolicy;
+  /** Direct-run or dspSet native backend choice. */
+  DspBackendKind dspBackend;
   /** Stream channel count. */
   std::uint32_t channelCount;
   /** True to stop once both PipeWire streams are ready. */
