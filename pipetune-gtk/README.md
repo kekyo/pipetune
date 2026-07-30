@@ -14,6 +14,8 @@ The window displays:
 - active native DSP node count;
 - configured and effective native DSP backends, availability, CPU requirement,
   fallback state, and validation diagnostics;
+- configured DSP idle policy, active/draining/sleeping state, cumulative
+  skipped frames and sleep transitions, and PipeWire graph-idle state;
 - selectable and preferred physical outputs;
 - effective physical output and the engine's selection reason;
 - Max or fixed PCM rate and suggest or force behavior;
@@ -83,6 +85,27 @@ saved by that operation. If a previously configured SIMD tier becomes
 unavailable at daemon startup, the status displays its lower-SIMD or scalar
 fallback and diagnostic.
 
+The **DSP idle** section's **Sleep policy** drop-down selects
+**Conservative** or **Exact**. Conservative is the default and permits sleep
+after five seconds of exact-zero input plus one second of final DSP output at
+or below -150 dBFS. Exact uses the same input interval but requires the final
+output to remain mathematically zero for one second.
+
+The **Runtime state** field shows the configured policy, controller state,
+cumulative skipped frames, sleep transitions, and whether both PipeWire
+streams are paused. Any nonzero input wakes DSP processing in the same
+callback block. PipeTune resets the active EffeTune engine through its
+real-time-safe reset API before sleeping.
+
+When connected, **Apply and Save** changes the daemon policy live, confirms
+the returned policy, and only then updates startup configuration. A rejection
+leaves the previous saved choice unchanged. If persistence fails after live
+confirmation, the new policy remains active and the window reports partial
+success. When disconnected, **Save for Next Start** stores the choice for the
+next daemon start. See the
+[DSP and PipeWire idling notes](../pipetune/docs/dsp-idle.md) for EMPTY/GAP
+propagation and the complete state machine.
+
 The **Output preference** drop-down starts with **System default**, followed by
 the physical outputs enumerated by the daemon. If a persisted preference is
 currently disconnected, an unavailable row keeps that preference visible.
@@ -139,9 +162,10 @@ absence follows the physical system default. `PIPETUNE_RATE` stores `max` or
 one of the five fixed rates, and `PIPETUNE_RATE_ENFORCEMENT` stores `suggest`
 or `force`. `PIPETUNE_DSP_BACKEND` stores `scalar` or `simd`, and
 `PIPETUNE_DSP_SIMD_VARIANT` stores `auto`, `baseline`, `x86-64-v3`,
-`x86-64-v4`, or `sve`. Missing rate assignments use Max-and-suggest, a missing
-backend assignment uses Scalar, and a missing SIMD variant uses Auto. Updates
-to any selection preserve the others.
+`x86-64-v4`, or `sve`. `PIPETUNE_DSP_IDLE_POLICY` stores `conservative` or
+`exact`. Missing rate assignments use Max-and-suggest, a missing backend
+assignment uses Scalar, a missing SIMD variant uses Auto, and a missing idle
+assignment uses Conservative. Updates to any selection preserve the others.
 
 The constant **Configuration** section provides **Reset Configuration…**.
 Its modal confirmation defaults to **Cancel**. Confirming invokes the
@@ -149,27 +173,28 @@ installed CLI asynchronously as `pipetune config reset --yes`, so the GTK main
 loop remains responsive while the configuration is replaced and an active
 service is restarted. The GUI then reloads the shared configuration, clears
 the preset selection when the reset succeeded, restores the Max-and-suggest
-controls, Scalar backend, and Auto SIMD preference, and reconnects its daemon
-subscription.
+controls, Scalar backend, Auto SIMD preference, and Conservative DSP idle
+policy, and reconnects its daemon subscription.
 
 The reset selects startup bypass, removes the preferred output so the system
 default is followed, selects Max with Suggest, and selects Scalar with an Auto
-SIMD preference. It replaces unsupported legacy configuration without backing
-it up. An inactive service remains inactive. If restarting an active service
-fails, the window reports the partial failure while retaining and displaying
-the reset startup choices.
+SIMD preference and Conservative DSP idling. It replaces unsupported legacy
+configuration without backing it up. An inactive service remains inactive. If
+restarting an active service fails, the window reports the partial failure
+while retaining and displaying the reset startup choices.
 
 ## Status subscription
 
 The GUI uses the daemon's same-user Unix control socket. It receives an initial
 status event and later daemon publications over a persistent asynchronous GIO
 connection. The daemon publishes runtime counters and cumulative native
-EffeTune processing time once per second. The GUI derives the displayed
-per-frame average between publications. It compares that average with the
-frame duration derived from the negotiated input sample rate and displays the
-ratio as **Load**; 100% is the theoretical real-time deadline, and values above
-100% remain visible. It does not poll for status; a short retry timer is used
-only to reconnect after the socket becomes unavailable.
+EffeTune processing time, DSP idle counters/state, and PipeWire graph-idle
+state once per second. The GUI derives the displayed per-frame average between
+publications. It compares that average with the frame duration derived from
+the negotiated input sample rate and displays the ratio as **Load**; 100% is
+the theoretical real-time deadline, and values above 100% remain visible. It
+does not poll for status; a short retry timer is used only to reconnect after
+the socket becomes unavailable.
 
 ## System tray compatibility
 

@@ -18,3 +18,7 @@ PIPETUNE_DSP_BACKEND=scalar
 # auto selects the highest usable SIMD tier. It can be pinned to baseline,
 # x86-64-v3, x86-64-v4, or sve where that variant applies.
 PIPETUNE_DSP_SIMD_VARIANT=auto
+
+# Conservative sleeps after an inaudible settled tail. Exact requires
+# mathematically zero DSP output and can remain active for feedback effects.
+PIPETUNE_DSP_IDLE_POLICY=conservative

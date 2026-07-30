@@ -32,6 +32,8 @@ application that remains available through the desktop system tray.
   physical rates in the CLI and GTK application.
 - Selects the scalar compatibility DSP backend, automatic SIMD dispatch, or a
   CPU-validated ISA tier from the CLI or GTK application.
+- Pauses with the PipeWire graph when possible and skips native DSP work after
+  sustained exact-zero input and a settled effect tail.
 - Changes presets without restarting the daemon.
 - Starts safely in pass-through mode when no preset has been selected.
 - Sets up or removes all per-user integration with one CLI command.
@@ -231,6 +233,49 @@ multiband presets are useful GCC auto-vectorization candidates. See the
 [DSP backend and benchmark notes](pipetune/docs/dsp-backends.md) for the
 architecture matrix and measurement procedure.
 
+## Reducing idle DSP work
+
+PipeTune combines PipeWire graph idling, preservation of PipeWire EMPTY/GAP
+information, and DSP sleep based on monitoring exact-zero input.
+
+When an application that is not producing any sound continues to send a
+zero-PCM stream, DSP computation otherwise continues and keeps consuming CPU.
+Applications that send zero PCM while inactive are common. Even a single such
+process in a user session can keep PipeTune's DSP computation running,
+increasing system temperatures and contributing to battery drain.
+
+PipeTune monitors the input PCM stream. Once the configured zero-PCM idle
+condition is satisfied, it stops DSP computation and waits until nonzero PCM
+data is detected again.
+
+The GTK window's **DSP idle** section displays the runtime state, cumulative
+skipped frames, sleep transitions, and whether both PipeWire streams are
+paused. Its policy selector provides:
+
+- **Conservative** (default): after five seconds of exact-zero input, sleep
+  once the final DSP output has remained at or below -150 dBFS for one second;
+  and
+- **Exact**: use the same input interval but require one second of
+  mathematically exact-zero DSP output.
+
+The same operations are available from the CLI:
+
+```sh
+pipetune idle get
+pipetune idle get --json
+pipetune idle set conservative
+pipetune idle set exact
+```
+
+Any nonzero input wakes DSP processing in the same callback block. Before
+sleeping, PipeTune performs a real-time-safe reset of every active EffeTune
+kernel so stale delay, feedback, and telemetry state cannot leak into the next
+sound. Exact mode avoids truncating any nonzero tail, but effects that generate
+noise or never converge to exact zero may remain active.
+
+See the [DSP and PipeWire idling notes](pipetune/docs/dsp-idle.md) for the
+complete state machine and EMPTY/GAP behavior.
+
 ## Resetting PipeTune configuration
 
 The GTK window's **Configuration** section provides **Reset Configuration…**.
@@ -238,8 +283,9 @@ After confirmation, it resets every saved PipeTune choice to:
 
 - DSP **Bypass**;
 - the physical **System default** output;
-- PCM rate **Max** with **Suggest**; and
-- native DSP backend **Scalar**, with SIMD preference **Auto**.
+- PCM rate **Max** with **Suggest**;
+- native DSP backend **Scalar**, with SIMD preference **Auto**; and
+- DSP idle policy **Conservative**.
 
 The same reset is available from the CLI:
 

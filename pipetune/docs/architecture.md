@@ -56,6 +56,42 @@ happens on the control thread. A hazard-protected pipeline slot swaps the
 prepared object atomically and defers reclamation until no real-time callback
 can still reference it.
 
+## Idle processing
+
+PipeTune uses three independent but cooperating idle mechanisms:
+
+1. Capture and playback advertise `node.pause-on-idle=true` and
+   `node.suspend-on-idle=false`. Capture starts with `node.always-process=true`
+   only for negotiation and effective-default activation, then returns to
+   passive scheduling after a PipeWire core sync.
+2. Capture GAP headers and EMPTY planar chunks become intentional zero frames
+   in the internal ring. A wholly neutral playback buffer carries EMPTY on
+   every chunk and GAP on its header, while unrelated flags are preserved.
+3. An audio-thread-owned controller scans every channel for exact-zero input.
+   After five seconds it may reset and skip the DSP once final output has also
+   qualified for one second.
+
+The default `conservative` output rule accepts finite samples at or below
+-150 dBFS. The `exact` rule requires mathematical zero. Input is exact-zero
+only in both modes, so low-level signal and dither wake or retain processing.
+States are `active`, `draining`, and `sleeping`.
+
+The EffeTune engine reset retains instances, parameters, assets, and pipeline
+configuration while clearing every kernel, arena, and telemetry state. It is
+guarded against allocation and can run through the hazard-protected active
+pipeline on the real-time thread. A reset failure prevents sleep for that
+silent interval. While sleeping, zero blocks advance the volume smoother and
+become ring gaps without invoking the DSP. A nonzero sample resumes processing
+in the same block. Pipeline revision, rate, backend, and policy changes also
+restart the controller.
+
+The PipeWire paused state and DSP sleep state are deliberately separate. When
+PipeWire pauses both streams, callbacks stop entirely. If an application keeps
+callbacks active by continuously writing zero, the DSP controller removes the
+native processing cost while retaining bounded input scanning and buffer
+handling. See [the DSP idle notes](dsp-idle.md) for exact state transitions,
+control commands, and operational limits.
+
 ## Preset to native DSP mapping
 
 At build time, `tools/generate-dsp-catalog.mjs` combines:
@@ -205,16 +241,19 @@ Supported commands are:
 - set a preferred physical output by `node.name`;
 - clear the preferred output and follow the physical system default;
 - set a Max/fixed and suggest/force sample-rate policy;
-- set the scalar or SIMD native DSP backend; and
+- set the scalar or SIMD native DSP backend;
+- set the conservative or exact DSP idle policy; and
 - subscribe to an initial status event and later status publications.
 
 Successful status and mutation replies include the preference, effective
 target, selection reason, sorted eligible output list, per-output rate
 capabilities, configured policy, R, H, active physical rate, fallback,
 transition state, configured and effective DSP backends, per-backend
-availability and CPU requirements, and the latest diagnostics. Registry,
-default device, capability, preference, final rate, and backend changes publish
-fresh state to subscribers.
+availability and CPU requirements, DSP idle policy and controller state,
+cumulative skipped frames and sleep transitions, PipeWire graph-idle state,
+and the latest diagnostics. Registry, default device, capability, preference,
+final rate, backend, idle-policy, and stream-state changes publish fresh state
+to subscribers.
 
 The subscriber server uses an `eventfd` wakeup and bounded, coalescing output
 per client. Preset activation and relevant PipeWire state transitions request
@@ -237,9 +276,10 @@ An optional `PIPETUNE_TARGET` assignment stores the preferred physical
 `PIPETUNE_RATE` stores `max` or one of `44100`, `48000`, `96000`, `192000`,
 and `384000`. `PIPETUNE_RATE_ENFORCEMENT` stores `suggest` or `force`.
 Missing rate assignments select Max-and-suggest. `PIPETUNE_DSP_BACKEND` stores
-`scalar` or `simd`, with missing assignment selecting scalar. Preset, output,
-rate, and backend updates use one atomic writer and preserve the other
-selections.
+`scalar` or `simd`, with missing assignment selecting scalar.
+`PIPETUNE_DSP_IDLE_POLICY` stores `conservative` or `exact`, with a missing
+assignment selecting conservative. Preset, output, rate, backend, and idle
+updates use one atomic writer and preserve the other selections.
 
 Malformed configuration, an unavailable preset, or a preset that fails
 validation also degrades to bypass instead of terminating the audio service.
@@ -274,13 +314,13 @@ shutdown operations succeed. Both commands reject effective user ID zero.
 
 `pipetune-gtk` is a single-instance `GtkApplication`. Its GIO client keeps one
 asynchronous subscription connection and uses separate asynchronous requests
-for preset changes, output preference changes, rate-policy changes, and DSP
-backend changes. Runtime counters and cumulative native EffeTune processing
-time are published once per second; the GUI derives a per-frame interval
-average. It divides that average by the input-frame duration implied by the
-negotiated sample rate to show DSP load, where 100% is the theoretical
-processing deadline. A retry timer reconnects a lost subscription; status
-itself is not polled.
+for preset changes, output preference changes, rate-policy changes, DSP
+backend changes, and DSP idle-policy changes. Runtime counters and cumulative
+native EffeTune processing time are published once per second; the GUI derives
+a per-frame interval average. It divides that average by the input-frame
+duration implied by the negotiated sample rate to show DSP load, where 100% is
+the theoretical processing deadline. A retry timer reconnects a lost
+subscription; status itself is not polled.
 
 The tray backend discovers a StatusNotifierItem host first. If none is
 available on X11, it creates the same `GtkStatusIcon`/XEmbed compatibility
@@ -311,6 +351,12 @@ confirm the live transaction before persistence. It marks each fixed row using
 daemon-reported device capabilities and passively shows R, H, the active
 physical rate, fallback/resampling, transition state, and errors. It does not
 resolve rates or implement oversampling.
+
+Idle-policy selection uses the same live-first persistence rule and remains
+editable while disconnected. The GUI passively shows configured policy,
+active/draining/sleeping state, skipped frames, sleep transitions, and whether
+both PipeWire streams are paused. It does not infer silence or run an
+independent timer.
 
 ## Known MVP limits
 

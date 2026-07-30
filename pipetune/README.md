@@ -46,6 +46,8 @@ not supported by this MVP.
   default and startup fallback.
 - Replaces the preset in a running process through a same-user Unix socket.
 - Rebuilds and atomically switches an active preset between DSP backends.
+- Preserves PipeWire EMPTY/GAP media, allows both streams to pause with an
+  idle graph, and skips native DSP work after sustained exact-zero input.
 - Switches live and future startup processing to explicit DSP bypass.
 - Publishes initial and changed runtime state to same-user local subscribers.
 - Starts the managed daemon without a preset and passes audio through unchanged.
@@ -150,7 +152,9 @@ The direct `--target` value is a PipeWire `node.name` and is not persisted.
 Managed daemon output preferences use the `pipetune output` commands below.
 Use `--dsp-backend scalar` or `--dsp-backend simd` to select the native
 backend for this direct run. `--dsp-variant auto|baseline|x86-64-v3|x86-64-v4|sve`
-selects the SIMD dispatch preference. Those choices are not persisted.
+selects the SIMD dispatch preference.
+`--dsp-idle-policy conservative|exact` selects tail detection for the direct
+run. Those choices are not persisted.
 
 Inspect or replace the running pipeline:
 
@@ -166,8 +170,9 @@ availability and fallback diagnostics, preferred and effective physical
 outputs, output selection reason, selectable output list and rate
 capabilities, configured and resolved PCM rates, active physical rate,
 transition and fallback state, whether PipeTune owns the effective default,
-configuration diagnostics, and audio bridge error counters. A live
-replacement made directly with `--load-preset` is not persisted.
+configuration diagnostics, audio bridge error counters, DSP idle policy and
+state, skipped frames, sleep transitions, and PipeWire graph-idle state. A
+live replacement made directly with `--load-preset` is not persisted.
 
 Switch live processing to bypass and save that selection for future daemon
 starts with:
@@ -255,6 +260,29 @@ The concrete variants and diagnostic are retained in status. See
 [the DSP backend notes](docs/dsp-backends.md) for architecture flags, expected
 per-DSP and standard-preset effects, and the benchmark procedure.
 
+Inspect and select DSP idle handling with:
+
+```sh
+./build/release/pipetune idle get
+./build/release/pipetune idle get --json
+./build/release/pipetune idle set conservative
+./build/release/pipetune idle set exact
+```
+
+`idle get` reports the configured policy, `active`, `draining`, or `sleeping`
+controller state, cumulative skipped frames, sleep transitions, and whether
+both PipeWire streams are paused. A connected `idle set` applies the policy
+live and persists it after daemon confirmation. If the daemon is unavailable,
+the choice is saved for the next start.
+
+Both policies require five seconds of exact-zero input on every channel.
+Conservative, the default, then requires one second of final DSP output at or
+below -150 dBFS. Exact requires one second of mathematically exact-zero output.
+Before sleeping, PipeTune resets the active EffeTune engine using its
+allocation-free real-time API. Any nonzero input wakes processing in the same
+callback block. See [the DSP idle notes](docs/dsp-idle.md) for PipeWire
+pausing, EMPTY/GAP propagation, state transitions, and operational limits.
+
 Reset every saved PipeTune selection with:
 
 ```sh
@@ -276,14 +304,16 @@ PIPETUNE_RATE=max
 PIPETUNE_RATE_ENFORCEMENT=suggest
 PIPETUNE_DSP_BACKEND=scalar
 PIPETUNE_DSP_SIMD_VARIANT=auto
+PIPETUNE_DSP_IDLE_POLICY=conservative
 ```
 
 The absent preset and target assignments select DSP bypass and the physical
-system default. Scalar is the reset backend. After persistence, the command
-waits for `systemctl --user try-restart pipetune.service`. A running service
-therefore restarts immediately with the defaults, while an inactive service
-remains inactive. If `systemctl` fails, the command exits nonzero and explains
-that the configuration was reset; the reset file remains in place.
+system default. Scalar is the reset backend and Conservative is the reset idle
+policy. After persistence, the command waits for
+`systemctl --user try-restart pipetune.service`. A running service therefore
+restarts immediately with the defaults, while an inactive service remains
+inactive. If `systemctl` fails, the command exits nonzero and explains that the
+configuration was reset; the reset file remains in place.
 
 Run the graphical control application with:
 
@@ -291,9 +321,9 @@ Run the graphical control application with:
 ./build/release/pipetune-gtk
 ```
 
-It subscribes to daemon status changes, applies a selected preset, bypass, or
-native DSP backend live, and persists a successful selection in the shared
-startup configuration. See the
+It subscribes to daemon status changes, applies a selected preset, bypass,
+native DSP backend, or DSP idle policy live, and persists a successful
+selection in the shared startup configuration. See the
 [PipeTune GTK documentation](../pipetune-gtk/README.md) for the exact failure
 and persistence behavior.
 
@@ -430,7 +460,7 @@ $XDG_CONFIG_HOME/pipetune/environment
 When `XDG_CONFIG_HOME` is unset, it resolves to
 `~/.config/pipetune/environment`. It can store an absolute preset path, a
 stable PipeWire output `node.name`, the PCM rate policy, and the native DSP
-backend:
+backend and idle policy:
 
 ```text
 PIPETUNE_PRESET="/home/user/My Presets/foo.effetune_preset"
@@ -439,13 +469,14 @@ PIPETUNE_RATE=192000
 PIPETUNE_RATE_ENFORCEMENT=force
 PIPETUNE_DSP_BACKEND=simd
 PIPETUNE_DSP_SIMD_VARIANT=auto
+PIPETUNE_DSP_IDLE_POLICY=conservative
 ```
 
 An absent file or absent `PIPETUNE_PRESET` means bypass. An invalid
 configuration or unusable startup preset is reported in daemon status, but the
 daemon still starts in bypass so the audio path remains available. The GUI and
-CLI atomically preserve and update the preset, output, rate, backend, and SIMD
-variant selections in this same file.
+CLI atomically preserve and update the preset, output, rate, backend, SIMD
+variant, and idle-policy selections in this same file.
 
 An absent `PIPETUNE_TARGET` means to follow the physical system default. When
 the configured target is unavailable, PipeTune retains the preference and
@@ -466,6 +497,10 @@ the other accepted values are `baseline`, `x86-64-v3`, `x86-64-v4`, and
 through usable lower tiers. An unusable pinned tier falls back to scalar
 during managed startup and retains the diagnostic in status. Failure of the
 mandatory scalar backend keeps the daemon available in bypass mode.
+
+An absent `PIPETUNE_DSP_IDLE_POLICY` selects `conservative`. Accepted values
+are `conservative` and `exact`. This policy changes only the required final
+DSP tail condition; input must be exact zero in both modes.
 
 `pipetune config reset` is also the recovery path for an `environment` file
 containing unsupported or obsolete assignments because it replaces the file
