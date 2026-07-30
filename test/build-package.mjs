@@ -337,6 +337,51 @@ assert_prereq_image localhost/missing:latest
   mkdirSync(fakeProject);
   mkdirSync(binDirectory);
 
+  const containerCmakeInvocation = join(
+    temporaryRoot,
+    "container-cmake-invocation.txt",
+  );
+  writeExecutable(
+    join(binDirectory, "cmake"),
+    `#!/bin/sh
+printf '%s\\n' "$@" >"$PIPETUNE_TEST_CONTAINER_CMAKE_INVOCATION"
+exit 91
+`,
+  );
+  writeExecutable(
+    join(binDirectory, "pkg-config"),
+    `#!/bin/sh
+exit 0
+`,
+  );
+  const containerConfigure = run(
+    join(projectRoot, "scripts/build_linux_dist_container.sh"),
+    [],
+    {
+      ...process.env,
+      PATH: `${binDirectory}:${process.env.PATH}`,
+      PIPETUNE_BUILD_TYPE: "Release",
+      PIPETUNE_MAKE_JOBS: "1",
+      PIPETUNE_PACKAGE_DESCRIPTION: "PipeTune package test",
+      PIPETUNE_PACKAGE_MAINTAINER: "PipeTune test <test@localhost>",
+      PIPETUNE_PACKAGE_NAME: "pipetune",
+      PIPETUNE_PACKAGE_VERSION: "1.2.3-test",
+      PIPETUNE_TEST_CONTAINER_CMAKE_INVOCATION:
+        containerCmakeInvocation,
+      PIPETUNE_WORK_DIR: join(temporaryRoot, "container-work"),
+    },
+  );
+  assertEqual(
+    "91",
+    `${containerConfigure.status}`,
+    "container package build did not reach the CMake configure command",
+  );
+  assertIncludes(
+    readFileSync(containerCmakeInvocation, "utf8"),
+    "-DCMAKE_INSTALL_LIBDIR=lib",
+    "container package configuration did not select /usr/lib/pipetune",
+  );
+
   const containerEngine = join(binDirectory, "container-engine");
   writeExecutable(
     containerEngine,
