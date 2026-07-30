@@ -243,6 +243,21 @@ else()
   target_compile_options(pipetune PRIVATE -Wall -Wextra -Wpedantic -Werror)
 endif()
 
+add_executable(
+  pipetune-dsp-benchmark
+  tools/dsp-backend-benchmark.cpp)
+set_target_properties(
+  pipetune-dsp-benchmark
+  PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+target_link_libraries(pipetune-dsp-benchmark PRIVATE pipetune_core)
+if(MSVC)
+  target_compile_options(pipetune-dsp-benchmark PRIVATE /W4 /WX)
+else()
+  target_compile_options(
+    pipetune-dsp-benchmark PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+endif()
+
 set(
   PIPETUNE_SYSTEMD_USER_UNIT_DIR
   "lib/systemd/user"
@@ -307,6 +322,9 @@ if(BUILD_TESTING)
       effetune_dsp_scalar_shared
       effetune_dsp_simd_shared
     VERBATIM)
+  add_dependencies(
+    pipetune-dsp-benchmark
+    pipetune_test_dsp_backend_copies)
 
   add_library(
     pipetune_dsp_backend_wrong_abi_fixture SHARED
@@ -853,6 +871,14 @@ if(BUILD_TESTING)
       --root ${PIPETUNE_EFFETUNE_DIR}
       --native-runner
       ${CMAKE_CURRENT_BINARY_DIR}/effetune-dsp/effetune-dsp-parity-runner)
+
+  add_test(
+    NAME pipetune_dsp_backend_benchmark
+    COMMAND
+      ${PIPETUNE_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/dsp-backend-benchmark.mjs
+      $<TARGET_FILE:pipetune-dsp-benchmark>
+      ${PIPETUNE_EFFETUNE_DIR}/presets/processor/bbe.effetune_preset)
 
   find_program(PIPETUNE_SYSTEMD_ANALYZE_EXECUTABLE systemd-analyze REQUIRED)
   add_test(
