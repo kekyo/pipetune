@@ -2,6 +2,7 @@
 
 #include "audio_bridge.h"
 #include "default_sink_restore.h"
+#include "dsp_backend_runtime.h"
 #include "dsp_pipeline_slot.h"
 #include "input_telemetry.h"
 #include "output_device_tracker.h"
@@ -37,6 +38,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -99,6 +101,21 @@ struct RateTransition {
   std::string failure = {};
 };
 
+static bool backendDiscoveryWasSupplied(
+    const DspBackendLoadResult &result) {
+  return result.backend != nullptr || !result.attemptedPath.empty() ||
+         !result.cpuRequirement.empty() || !result.error.empty();
+}
+
+static DspBackends
+resolveRuntimeBackends(const PipeWirePipelineOptions &options) {
+  if (!backendDiscoveryWasSupplied(options.dspBackends.scalar) &&
+      !backendDiscoveryWasSupplied(options.dspBackends.simd)) {
+    return discoverDspBackends();
+  }
+  return options.dspBackends;
+}
+
 struct PipeWireRuntime {
   DspPipelineSlot pipeline;
   PipeWirePipelineOptions options;
@@ -119,10 +136,12 @@ struct PipeWireRuntime {
   ProcessingMode processingMode;
   std::string activePreset;
   std::string configurationError;
+  DspBackendRuntimeState dspBackendState;
   std::mutex outputStateMutex;
   std::mutex playbackTargetMutex;
   std::mutex rateStateMutex;
   std::mutex pipelineMutationMutex;
+  std::mutex dspBackendStateMutex;
   std::mutex rateRequestMutex;
   std::condition_variable rateRequestCondition;
   SampleRatePolicy configuredRatePolicy;
@@ -210,8 +229,12 @@ struct PipeWireRuntime {
                            : ProcessingMode::preset),
         activePreset(runtimeOptions.initialPresetPath.string()),
         configurationError(runtimeOptions.initialConfigurationError),
+        dspBackendState(makeDspBackendRuntimeState(
+            resolveRuntimeBackends(runtimeOptions),
+            runtimeOptions.configuredDspBackend)),
         outputStateMutex(), playbackTargetMutex(), rateStateMutex(),
-        pipelineMutationMutex(), rateRequestMutex(), rateRequestCondition(),
+        pipelineMutationMutex(), dspBackendStateMutex(), rateRequestMutex(),
+        rateRequestCondition(),
         configuredRatePolicy(runtimeOptions.ratePolicy),
         resolvedSampleRates{.dspSampleRate = runtimeOptions.dspSampleRate,
                             .outputSampleRate =
@@ -241,7 +264,14 @@ struct PipeWireRuntime {
         playbackFormatReady(false), captureAlwaysProcess(true),
         captureSchedulingSyncPending(false), captureListenerInstalled(false),
         playbackListenerInstalled(false), readyNotified(false),
-        completed(false), error() {}
+        completed(false), error() {
+    if (processingMode == ProcessingMode::preset &&
+        (!dspBackendState.effectiveBackend.has_value() ||
+         pipeline.backendKind() != dspBackendState.effectiveBackend)) {
+      throw std::invalid_argument(
+          "initial preset pipeline does not match the effective DSP backend");
+    }
+  }
 
   ~PipeWireRuntime() {
     controlServer.reset();
@@ -1985,6 +2015,26 @@ controlOutputSelectionReason(OutputSelectionReason reason) noexcept {
   return ControlOutputSelectionReason::unavailable;
 }
 
+static ControlDspBackendAvailability controlDspBackendAvailability(
+    DspBackendKind kind, const DspBackendLoadResult &result) {
+  auto cpuRequirement = result.cpuRequirement;
+  if (cpuRequirement.empty()) {
+    cpuRequirement =
+        kind == DspBackendKind::scalar ? "none" : "unknown";
+  }
+  auto error = result.error;
+  if (result.backend == nullptr && error.empty()) {
+    error = std::string(dspBackendName(kind)) +
+            " DSP backend is unavailable";
+  }
+  return {
+      .kind = kind,
+      .available = result.backend != nullptr,
+      .cpuRequirement = std::move(cpuRequirement),
+      .error = std::move(error),
+  };
+}
+
 static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
   const auto input = snapshotInputTelemetry(
       runtime.inputTelemetry, currentMonotonicNanoseconds(),
@@ -2002,6 +2052,13 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
   auto resolvedSampleRates = ResolvedSampleRates{};
   auto rateTransitioning = false;
   auto rateError = std::string{};
+  auto configuredDspBackend = DspBackendKind::scalar;
+  auto effectiveDspBackend =
+      std::optional<DspBackendKind>{DspBackendKind::scalar};
+  auto dspBackendFallback = false;
+  auto dspBackendError = std::string{};
+  auto availableDspBackends =
+      std::array<ControlDspBackendAvailability, 2>{};
   {
     auto lock = std::scoped_lock(runtime.outputStateMutex);
     preferredTarget = runtime.deviceTracker.preferredTarget();
@@ -2018,6 +2075,22 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
     resolvedSampleRates = runtime.resolvedSampleRates;
     rateTransitioning = runtime.rateTransitioning;
     rateError = runtime.rateError;
+  }
+  {
+    auto lock = std::scoped_lock(runtime.dspBackendStateMutex);
+    configuredDspBackend =
+        runtime.dspBackendState.configuredBackend;
+    effectiveDspBackend = runtime.dspBackendState.effectiveBackend;
+    dspBackendFallback = runtime.dspBackendState.fallback;
+    dspBackendError = runtime.dspBackendState.error;
+    availableDspBackends = {
+        controlDspBackendAvailability(
+            DspBackendKind::scalar,
+            runtime.dspBackendState.backends.scalar),
+        controlDspBackendAvailability(
+            DspBackendKind::simd,
+            runtime.dspBackendState.backends.simd),
+    };
   }
   auto availableOutputs = std::vector<ControlOutputDevice>{};
   availableOutputs.reserve(devices.size());
@@ -2070,7 +2143,12 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .activeOutputSampleRate = activeOutputSampleRate,
           .rateTransitioning = rateTransitioning,
           .rateFallback = resolvedSampleRates.fallback,
-          .rateError = std::move(rateError)};
+          .rateError = std::move(rateError),
+          .configuredDspBackend = configuredDspBackend,
+          .effectiveDspBackend = effectiveDspBackend,
+          .dspBackendFallback = dspBackendFallback,
+          .dspBackendError = std::move(dspBackendError),
+          .availableDspBackends = std::move(availableDspBackends)};
 }
 
 static ControlMessageResult closeControlResponse(std::string response,
@@ -2198,6 +2276,41 @@ static ControlMessageResult handleControlRequest(std::string_view message,
     return closeControlResponse(
         makeControlSuccessResponse(controlStatus(runtime), warnings), true);
   }
+  if (request.request.command == ControlCommand::setDspBackend) {
+    auto switched = DspBackendSwitchResult{};
+    {
+      auto pipelineLock =
+          std::unique_lock<std::mutex>(runtime.pipelineMutationMutex);
+      auto rateTransitioning = false;
+      {
+        auto rateLock = std::scoped_lock(runtime.rateStateMutex);
+        rateTransitioning = runtime.rateTransitioning;
+      }
+      auto backendLock =
+          std::scoped_lock(runtime.dspBackendStateMutex);
+      switched = switchDspBackend(
+          runtime.pipeline, runtime.dspBackendState,
+          request.request.dspBackend,
+          {.sampleRate = static_cast<float>(
+               runtime.dspSampleRate.load(std::memory_order_acquire)),
+           .maxChannels = runtime.options.channelCount,
+           .maxFrames = runtime.options.maxFrames},
+          rateTransitioning);
+    }
+    if (!switched.error.empty()) {
+      return closeControlResponse(
+          makeControlErrorResponse(switched.error), false);
+    }
+    warnings.reserve(switched.warnings.size());
+    for (auto &warning : switched.warnings) {
+      warnings.push_back({.nodeIndex = warning.nodeIndex,
+                          .pluginName = std::move(warning.pluginName),
+                          .reason = std::move(warning.reason)});
+    }
+    return closeControlResponse(
+        makeControlSuccessResponse(controlStatus(runtime), warnings),
+        switched.changed);
+  }
   if (request.request.command == ControlCommand::bypass) {
     auto pipelineLock =
         std::unique_lock<std::mutex>(runtime.pipelineMutationMutex);
@@ -2238,12 +2351,29 @@ static ControlMessageResult handleControlRequest(std::string_view message,
             false);
       }
     }
+    auto backend = std::shared_ptr<const DspBackend>{};
+    {
+      auto backendLock =
+          std::scoped_lock(runtime.dspBackendStateMutex);
+      if (runtime.dspBackendState.effectiveBackend.has_value()) {
+        backend = runtime.dspBackendState.backends
+                      .get(*runtime.dspBackendState.effectiveBackend)
+                      .backend;
+      }
+    }
+    if (backend == nullptr) {
+      return closeControlResponse(
+          makeControlErrorResponse(
+              "cannot load a preset without a usable scalar DSP backend"),
+          false);
+    }
     auto loaded = loadDspPipeline(
         request.request.presetPath,
         {.sampleRate = static_cast<float>(
              runtime.dspSampleRate.load(std::memory_order_acquire)),
          .maxChannels = runtime.options.channelCount,
-         .maxFrames = runtime.options.maxFrames});
+         .maxFrames = runtime.options.maxFrames},
+        std::move(backend));
     if (loaded.pipeline == nullptr) {
       return closeControlResponse(makeControlErrorResponse(loaded.error),
                                   false);

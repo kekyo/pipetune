@@ -65,6 +65,15 @@ struct PipeWirePipelineOptions {
   PipeWireReadyCallback readyCallback;
   /** Opaque argument passed to readyCallback. */
   void *readyUserData;
+  /**
+   * Scalar and SIMD backends discovered for startup and live switching.
+   *
+   * When neither result was supplied, runPipeWirePipeline discovers both
+   * executable-relative backends before starting the runtime.
+   */
+  DspBackends dspBackends = {};
+  /** Initial persisted DSP backend choice. */
+  DspBackendKind configuredDspBackend = DspBackendKind::scalar;
 };
 
 /**

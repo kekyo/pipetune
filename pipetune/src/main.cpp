@@ -256,6 +256,18 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
     std::cerr << "pipetune: warning: " << prepared.configurationError
               << "; DSP processing is bypassed\n";
   }
+  if (!prepared.dspBackendError.empty()) {
+    std::cerr << "pipetune: warning: " << prepared.dspBackendError;
+    if (prepared.effectiveDspBackend.has_value()) {
+      std::cerr << "; using "
+                << pipetune::dspBackendName(
+                       *prepared.effectiveDspBackend)
+                << " DSP backend";
+    } else {
+      std::cerr << "; DSP presets are unavailable";
+    }
+    std::cerr << '\n';
+  }
   for (const auto &warning : prepared.warnings) {
     std::cerr << "pipetune: warning: preset node " << warning.nodeIndex
               << " (\"" << warning.pluginName
@@ -283,7 +295,9 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
        .ringCapacityFrames = kRingCapacityFrames,
        .manageDefaultSink = true,
        .readyCallback = nullptr,
-       .readyUserData = nullptr},
+       .readyUserData = nullptr,
+       .dspBackends = std::move(prepared.dspBackends),
+       .configuredDspBackend = prepared.configuredDspBackend},
       pipetune::PipeWireRunMode::untilInterrupted);
   if (!result.success) {
     std::cerr << "pipetune: " << result.error << '\n';

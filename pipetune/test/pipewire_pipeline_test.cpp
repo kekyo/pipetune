@@ -194,6 +194,30 @@ static bool testOrderlySignalShutdown(
     return false;
   }
 
+  const auto backendChange = pipetune::exchangeControlMessage(
+      socketPath,
+      pipetune::makeSetDspBackendControlRequest(
+          pipetune::DspBackendKind::simd));
+  const auto parsedBackend =
+      pipetune::parseControlResponse(backendChange.response);
+  if (!check(backendChange.error.empty(), backendChange.error) ||
+      !check(parsedBackend.valid, parsedBackend.error) ||
+      !check(parsedBackend.success,
+             "live DSP backend request failed") ||
+      !check(parsedBackend.status.configuredDspBackend ==
+                     pipetune::DspBackendKind::simd &&
+                 parsedBackend.status.effectiveDspBackend ==
+                     pipetune::DspBackendKind::simd &&
+                 !parsedBackend.status.dspBackendFallback &&
+                 parsedBackend.status.availableDspBackends[0].available &&
+                 parsedBackend.status.availableDspBackends[1].available,
+             "live DSP backend response does not report effective SIMD")) {
+    kill(child, SIGTERM);
+    auto childStatus = 0;
+    waitpid(child, &childStatus, 0);
+    return false;
+  }
+
   const auto load = pipetune::exchangeControlMessage(
       socketPath,
       pipetune::makeLoadPresetControlRequest(replacementPresetPath));

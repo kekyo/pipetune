@@ -208,6 +208,7 @@ add_library(
   src/command_line.cpp
   src/config_reset_command.cpp
   src/default_sink_restore.cpp
+  src/dsp_backend_runtime.cpp
   src/dsp_pipeline_slot.cpp
   src/input_telemetry.cpp
   src/output_command.cpp
@@ -725,6 +726,28 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_dsp_pipeline_slot_tests
     COMMAND pipetune_dsp_pipeline_slot_tests)
+
+  add_executable(
+    pipetune_dsp_backend_runtime_tests
+    test/dsp_backend_runtime_test.cpp)
+  target_include_directories(
+    pipetune_dsp_backend_runtime_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_dsp_backend_runtime_tests PRIVATE pipetune_pipewire)
+  add_dependencies(
+    pipetune_dsp_backend_runtime_tests
+    pipetune_test_dsp_backend_copies)
+  if(MSVC)
+    target_compile_options(
+      pipetune_dsp_backend_runtime_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_dsp_backend_runtime_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_dsp_backend_runtime_tests
+    COMMAND pipetune_dsp_backend_runtime_tests)
 
   add_executable(
     pipetune_control_protocol_tests
