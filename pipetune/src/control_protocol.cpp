@@ -212,6 +212,30 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
                         .ratePolicy = policy},
             .error = {}};
   }
+  if (command == "set-dsp-backend") {
+    if (yyjson_obj_size(root) != 2) {
+      return requestError(
+          "set-dsp-backend request requires only command and backend fields");
+    }
+    auto *backendValue = yyjson_obj_get(root, "backend");
+    if (!yyjson_is_str(backendValue)) {
+      return requestError(
+          "set-dsp-backend request backend must be a string");
+    }
+    const auto backend = parseDspBackendName(
+        std::string_view(yyjson_get_str(backendValue),
+                         yyjson_get_len(backendValue)));
+    if (!backend.has_value()) {
+      return requestError(
+          "set-dsp-backend request contains an unsupported backend");
+    }
+    return {.request = {.command = ControlCommand::setDspBackend,
+                        .presetPath = {},
+                        .outputTarget = {},
+                        .ratePolicy = defaultSampleRatePolicy(),
+                        .dspBackend = *backend},
+            .error = {}};
+  }
   if (command != "load") {
     return requestError("unsupported control command");
   }
@@ -279,6 +303,22 @@ std::string makeSetRateControlRequest(const SampleRatePolicy &policy) {
                                       policy.fixedRate)) ||
       !addString(document.get(), root, "enforcement",
                  sampleRateEnforcementName(policy.enforcement))) {
+    return {};
+  }
+  return writeDocument(document.get());
+}
+
+std::string makeSetDspBackendControlRequest(DspBackendKind kind) {
+  if (kind != DspBackendKind::scalar && kind != DspBackendKind::simd) {
+    return {};
+  }
+  yyjson_mut_val *root = nullptr;
+  auto document = createObjectDocument(root);
+  if (document == nullptr ||
+      !yyjson_mut_obj_add_str(document.get(), root, "command",
+                              "set-dsp-backend") ||
+      !addString(document.get(), root, "backend",
+                 dspBackendName(kind))) {
     return {};
   }
   return writeDocument(document.get());
@@ -393,6 +433,44 @@ static bool outputStatusIsConsistent(
          selectedCount == (status.selectedTarget.empty() ? 0U : 1U);
 }
 
+static bool dspBackendStatusIsConsistent(
+    const ControlRuntimeStatus &status) noexcept {
+  const auto &scalar = status.availableDspBackends[0];
+  const auto &simd = status.availableDspBackends[1];
+  if (scalar.kind != DspBackendKind::scalar ||
+      simd.kind != DspBackendKind::simd ||
+      scalar.cpuRequirement.empty() || simd.cpuRequirement.empty() ||
+      scalar.cpuRequirement.find('\0') != std::string::npos ||
+      simd.cpuRequirement.find('\0') != std::string::npos ||
+      scalar.error.find('\0') != std::string::npos ||
+      simd.error.find('\0') != std::string::npos ||
+      scalar.available != scalar.error.empty() ||
+      simd.available != simd.error.empty() ||
+      status.dspBackendError.find('\0') != std::string::npos) {
+    return false;
+  }
+  if (!scalar.available) {
+    return !status.effectiveDspBackend.has_value() &&
+           !status.dspBackendFallback &&
+           !status.dspBackendError.empty();
+  }
+  if (status.configuredDspBackend == DspBackendKind::scalar) {
+    return status.effectiveDspBackend == DspBackendKind::scalar &&
+           !status.dspBackendFallback &&
+           status.dspBackendError.empty();
+  }
+  if (status.configuredDspBackend != DspBackendKind::simd) {
+    return false;
+  }
+  if (simd.available) {
+    return status.effectiveDspBackend == DspBackendKind::simd &&
+           !status.dspBackendFallback &&
+           status.dspBackendError.empty();
+  }
+  return status.effectiveDspBackend == DspBackendKind::scalar &&
+         status.dspBackendFallback && !status.dspBackendError.empty();
+}
+
 static std::string makeControlStatusMessage(
     const ControlRuntimeStatus &status,
     std::span<const ControlWarning> warnings, bool statusEvent) {
@@ -406,7 +484,8 @@ static std::string makeControlStatusMessage(
        !isSelectableSampleRate(status.dspSampleRate)) ||
       (status.activeOutputSampleRate != 0 &&
        status.selectedOutputSampleRate == 0) ||
-      status.rateError.find('\0') != std::string::npos) {
+      status.rateError.find('\0') != std::string::npos ||
+      !dspBackendStatusIsConsistent(status)) {
     return makeControlErrorResponse("cannot encode inconsistent control status");
   }
 
@@ -482,8 +561,40 @@ static std::string makeControlStatusMessage(
       !yyjson_mut_obj_add_bool(document.get(), root, "rateFallback",
                                status.rateFallback) ||
       !addNullableString(document.get(), root, "rateError",
-                         status.rateError)) {
+                         status.rateError) ||
+      !addString(document.get(), root, "configuredDspBackend",
+                 dspBackendName(status.configuredDspBackend)) ||
+      (status.effectiveDspBackend.has_value()
+           ? !addString(document.get(), root, "effectiveDspBackend",
+                        dspBackendName(*status.effectiveDspBackend))
+           : !yyjson_mut_obj_add_null(document.get(), root,
+                                      "effectiveDspBackend")) ||
+      !yyjson_mut_obj_add_bool(document.get(), root,
+                               "dspBackendFallback",
+                               status.dspBackendFallback) ||
+      !addNullableString(document.get(), root, "dspBackendError",
+                         status.dspBackendError)) {
     return makeControlErrorResponse("cannot encode control response");
+  }
+
+  auto *backendArray =
+      yyjson_mut_obj_add_arr(document.get(), root, "availableDspBackends");
+  if (backendArray == nullptr) {
+    return makeControlErrorResponse("cannot encode control response");
+  }
+  for (const auto &backend : status.availableDspBackends) {
+    auto *item = yyjson_mut_obj(document.get());
+    if (item == nullptr || !yyjson_mut_arr_append(backendArray, item) ||
+        !addString(document.get(), item, "name",
+                   dspBackendName(backend.kind)) ||
+        !yyjson_mut_obj_add_bool(document.get(), item, "available",
+                                 backend.available) ||
+        !addString(document.get(), item, "cpuRequirement",
+                   backend.cpuRequirement) ||
+        !addNullableString(document.get(), item, "error",
+                           backend.error)) {
+      return makeControlErrorResponse("cannot encode control response");
+    }
   }
 
   auto *outputArray =
@@ -649,6 +760,41 @@ static bool readProcessingMode(yyjson_val *object, ProcessingMode &mode) {
   return false;
 }
 
+static bool readDspBackendKindField(yyjson_val *object, const char *key,
+                                    DspBackendKind &kind) {
+  auto *field = yyjson_obj_get(object, key);
+  if (!yyjson_is_str(field)) {
+    return false;
+  }
+  const auto parsed = parseDspBackendName(
+      std::string_view(yyjson_get_str(field), yyjson_get_len(field)));
+  if (!parsed.has_value()) {
+    return false;
+  }
+  kind = *parsed;
+  return true;
+}
+
+static bool readNullableDspBackendKindField(
+    yyjson_val *object, const char *key,
+    std::optional<DspBackendKind> &kind) {
+  auto *field = yyjson_obj_get(object, key);
+  if (yyjson_is_null(field)) {
+    kind.reset();
+    return true;
+  }
+  if (!yyjson_is_str(field)) {
+    return false;
+  }
+  const auto parsed = parseDspBackendName(
+      std::string_view(yyjson_get_str(field), yyjson_get_len(field)));
+  if (!parsed.has_value()) {
+    return false;
+  }
+  kind = *parsed;
+  return true;
+}
+
 static bool readSampleRatePolicy(yyjson_val *object,
                                  SampleRatePolicy &policy) {
   auto *modeField = yyjson_obj_get(object, "rateMode");
@@ -806,6 +952,34 @@ static bool readAvailableOutputs(
       return false;
     }
     outputs.push_back(std::move(output));
+  }
+  return true;
+}
+
+static bool readAvailableDspBackends(
+    yyjson_val *object,
+    std::array<ControlDspBackendAvailability, 2> &backends) {
+  auto *array = yyjson_obj_get(object, "availableDspBackends");
+  if (!yyjson_is_arr(array) || yyjson_arr_size(array) != backends.size()) {
+    return false;
+  }
+  for (auto index = std::size_t{0}; index < backends.size(); ++index) {
+    auto *item = yyjson_arr_get(array, index);
+    auto backend = ControlDspBackendAvailability{
+        .kind = DspBackendKind::scalar,
+        .available = false,
+        .cpuRequirement = {},
+        .error = {},
+    };
+    if (!yyjson_is_obj(item) || yyjson_obj_size(item) != 4 ||
+        !readDspBackendKindField(item, "name", backend.kind) ||
+        !readBooleanField(item, "available", backend.available) ||
+        !readStringField(item, "cpuRequirement",
+                         backend.cpuRequirement) ||
+        !readNullableStringField(item, "error", backend.error)) {
+      return false;
+    }
+    backends[index] = std::move(backend);
   }
   return true;
 }
@@ -970,7 +1144,16 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
                         status.rateTransitioning) ||
       !readBooleanField(root, "rateFallback", status.rateFallback) ||
       !readNullableStringField(root, "rateError",
-                               status.rateError)) {
+                               status.rateError) ||
+      !readDspBackendKindField(root, "configuredDspBackend",
+                               status.configuredDspBackend) ||
+      !readNullableDspBackendKindField(root, "effectiveDspBackend",
+                                       status.effectiveDspBackend) ||
+      !readBooleanField(root, "dspBackendFallback",
+                        status.dspBackendFallback) ||
+      !readNullableStringField(root, "dspBackendError",
+                               status.dspBackendError) ||
+      !readAvailableDspBackends(root, status.availableDspBackends)) {
     return responseError("successful control response has invalid status");
   }
   if ((status.processingMode == ProcessingMode::preset &&
@@ -982,7 +1165,8 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
        !isSelectableSampleRate(status.dspSampleRate)) ||
       (status.activeOutputSampleRate != 0 &&
        status.selectedOutputSampleRate == 0) ||
-      status.rateError.find('\0') != std::string::npos) {
+      status.rateError.find('\0') != std::string::npos ||
+      !dspBackendStatusIsConsistent(status)) {
     return responseError(
         "successful control response has inconsistent status");
   }

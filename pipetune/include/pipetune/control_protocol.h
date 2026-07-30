@@ -1,11 +1,14 @@
 #ifndef PIPETUNE_CONTROL_PROTOCOL_H
 #define PIPETUNE_CONTROL_PROTOCOL_H
 
+#include "pipetune/dsp_backend.h"
 #include "pipetune/sample_rate.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -29,6 +32,8 @@ enum class ControlCommand {
   clearOutput,
   /** Replace the configured DSP and graph-rate policy. */
   setRate,
+  /** Rebuild the active preset with another native DSP backend. */
+  setDspBackend,
   /** Keep the connection open and publish status changes. */
   subscribe
 };
@@ -45,6 +50,8 @@ struct ControlRequest {
   std::string outputTarget;
   /** Requested policy for setRate, or the default policy otherwise. */
   SampleRatePolicy ratePolicy = {};
+  /** Requested backend for setDspBackend, or scalar otherwise. */
+  DspBackendKind dspBackend = DspBackendKind::scalar;
 };
 
 /**
@@ -97,6 +104,20 @@ struct ControlOutputDevice {
   bool selected;
   /** Enumerated output sample-rate support, or unknown before enumeration. */
   SampleRateCapabilities sampleRateCapabilities = {};
+};
+
+/**
+ * Describes one packaged DSP backend in a runtime status response.
+ */
+struct ControlDspBackendAvailability {
+  /** Backend variant. */
+  DspBackendKind kind;
+  /** True when CPU checks, loading, and ABI validation succeeded. */
+  bool available;
+  /** CPU feature level required on the running architecture. */
+  std::string cpuRequirement;
+  /** Availability diagnostic, or empty when available is true. */
+  std::string error;
 };
 
 /**
@@ -155,6 +176,26 @@ struct ControlRuntimeStatus {
   bool rateFallback = false;
   /** Most recent automatic or live rate-transition diagnostic. */
   std::string rateError = {};
+  /** Persisted or successfully applied DSP backend choice. */
+  DspBackendKind configuredDspBackend = DspBackendKind::scalar;
+  /** Backend used by active presets, or no value without a usable scalar SO. */
+  std::optional<DspBackendKind> effectiveDspBackend =
+      DspBackendKind::scalar;
+  /** True when configured SIMD is unavailable and scalar is effective. */
+  bool dspBackendFallback = false;
+  /** DSP backend selection diagnostic, or empty without fallback. */
+  std::string dspBackendError = {};
+  /** Scalar and SIMD availability in stable order. */
+  std::array<ControlDspBackendAvailability, 2> availableDspBackends = {{
+      {.kind = DspBackendKind::scalar,
+       .available = true,
+       .cpuRequirement = "none",
+       .error = {}},
+      {.kind = DspBackendKind::simd,
+       .available = false,
+       .cpuRequirement = "unknown",
+       .error = "SIMD DSP backend availability was not reported"},
+  }};
 };
 
 /**
@@ -244,6 +285,14 @@ std::string makeClearOutputControlRequest();
  * @return Encoded request, or an empty string for invalid input or failure.
  */
 std::string makeSetRateControlRequest(const SampleRatePolicy &policy);
+
+/**
+ * Returns a JSON DSP-backend request without framing newline.
+ *
+ * @param kind Scalar compatibility or SIMD acceleration backend.
+ * @return Encoded request, or an empty string for an invalid kind or failure.
+ */
+std::string makeSetDspBackendControlRequest(DspBackendKind kind);
 
 /**
  * Returns a JSON live-preset request without framing newline.

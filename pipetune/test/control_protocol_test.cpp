@@ -84,6 +84,9 @@ static bool testRequests() {
           {.mode = pipetune::SampleRateMode::fixed,
            .fixedRate = 192000,
            .enforcement = pipetune::SampleRateEnforcement::force}));
+  const auto setDspBackend = pipetune::parseControlRequest(
+      pipetune::makeSetDspBackendControlRequest(
+          pipetune::DspBackendKind::simd));
   return check(setOutput.error.empty(), setOutput.error) &&
          check(setOutput.request.command ==
                    pipetune::ControlCommand::setOutput,
@@ -114,11 +117,17 @@ static bool testRequests() {
                    setFixedRate.request.ratePolicy.fixedRate == 192000 &&
                    setFixedRate.request.ratePolicy.enforcement ==
                        pipetune::SampleRateEnforcement::force,
-               "set-rate fixed request differs");
+               "set-rate fixed request differs") &&
+         check(setDspBackend.error.empty(), setDspBackend.error) &&
+         check(setDspBackend.request.command ==
+                       pipetune::ControlCommand::setDspBackend &&
+                   setDspBackend.request.dspBackend ==
+                       pipetune::DspBackendKind::simd,
+               "set-dsp-backend request differs");
 }
 
 static bool testRejectedRequests() {
-  constexpr auto inputs = std::array<std::string_view, 21>{
+  constexpr auto inputs = std::array<std::string_view, 24>{
       "",
       "[]",
       R"json({"command":"unknown"})json",
@@ -139,7 +148,10 @@ static bool testRejectedRequests() {
       R"json({"command":"set-rate","rateMode":"fixed","sampleRate":null,"enforcement":"suggest"})json",
       R"json({"command":"set-rate","rateMode":"fixed","sampleRate":88200,"enforcement":"suggest"})json",
       R"json({"command":"set-rate","rateMode":"fixed","sampleRate":48000,"enforcement":"strict"})json",
-      R"json({"command":"set-rate","rateMode":"fixed","sampleRate":"48000","enforcement":"suggest"})json"};
+      R"json({"command":"set-rate","rateMode":"fixed","sampleRate":"48000","enforcement":"suggest"})json",
+      R"json({"command":"set-dsp-backend"})json",
+      R"json({"command":"set-dsp-backend","backend":"avx2"})json",
+      R"json({"command":"set-dsp-backend","backend":"simd","extra":true})json"};
   for (const auto input : inputs) {
     if (!check(!pipetune::parseControlRequest(input).error.empty(),
                "invalid control request must be rejected")) {
@@ -210,7 +222,23 @@ static bool testSuccessResponse() {
        .activeOutputSampleRate = 48000,
        .rateTransitioning = false,
        .rateFallback = true,
-       .rateError = {}},
+       .rateError = {},
+       .configuredDspBackend = pipetune::DspBackendKind::simd,
+       .effectiveDspBackend = pipetune::DspBackendKind::simd,
+       .dspBackendFallback = false,
+       .dspBackendError = {},
+       .availableDspBackends =
+           {{
+               {.kind = pipetune::DspBackendKind::scalar,
+                .available = true,
+                .cpuRequirement = "none",
+                .error = {}},
+               {.kind = pipetune::DspBackendKind::simd,
+                .available = true,
+                .cpuRequirement =
+                    "x86-64 SSE2 architectural baseline",
+                .error = {}},
+           }}},
       warnings);
   const auto inspection = pipetune::inspectControlResponse(response);
   const auto parsed = pipetune::parseControlResponse(response);
@@ -278,6 +306,15 @@ static bool testSuccessResponse() {
                  parsed.status.rateFallback &&
                  parsed.status.rateError.empty(),
              "parsed response rate status differs") ||
+      !check(parsed.status.configuredDspBackend ==
+                     pipetune::DspBackendKind::simd &&
+                 parsed.status.effectiveDspBackend ==
+                     pipetune::DspBackendKind::simd &&
+                 !parsed.status.dspBackendFallback &&
+                 parsed.status.dspBackendError.empty() &&
+                 parsed.status.availableDspBackends[0].available &&
+                 parsed.status.availableDspBackends[1].available,
+             "parsed response DSP backend status differs") ||
       !check(parsed.warnings.size() == 1 &&
                  parsed.warnings.front().nodeIndex == 3 &&
                  parsed.warnings.front().pluginName == "Future DSP" &&
@@ -353,6 +390,20 @@ static bool testSuccessResponse() {
       !yyjson_get_bool(yyjson_obj_get(root, "rateTransitioning")) &&
       yyjson_get_bool(yyjson_obj_get(root, "rateFallback")) &&
       yyjson_is_null(yyjson_obj_get(root, "rateError")) &&
+      std::string_view(yyjson_get_str(
+          yyjson_obj_get(root, "configuredDspBackend"))) == "simd" &&
+      std::string_view(yyjson_get_str(
+          yyjson_obj_get(root, "effectiveDspBackend"))) == "simd" &&
+      !yyjson_get_bool(
+          yyjson_obj_get(root, "dspBackendFallback")) &&
+      yyjson_is_null(yyjson_obj_get(root, "dspBackendError")) &&
+      yyjson_is_arr(yyjson_obj_get(root, "availableDspBackends")) &&
+      yyjson_arr_size(
+          yyjson_obj_get(root, "availableDspBackends")) == 2 &&
+      yyjson_get_bool(yyjson_obj_get(
+          yyjson_arr_get(
+              yyjson_obj_get(root, "availableDspBackends"), 1),
+          "available")) &&
       yyjson_is_arr(warningArray) && yyjson_arr_size(warningArray) == 1 &&
       yyjson_get_uint(
           yyjson_obj_get(yyjson_arr_get(warningArray, 0), "nodeIndex")) == 3;
@@ -534,6 +585,70 @@ static bool testBypassStatus() {
           yyjson_obj_get(root, "inputLastReceivedUnixMilliseconds")) == 0;
   yyjson_doc_free(document);
   return check(correct, "bypass response fields differ");
+}
+
+static bool testDspBackendFallbackStatus() {
+  const auto response = pipetune::makeControlSuccessResponse(
+      {.processingMode = pipetune::ProcessingMode::bypass,
+       .activePreset = {},
+       .configurationError = {},
+       .activePluginCount = 0,
+       .preferredTarget = {},
+       .selectedTarget = {},
+       .outputSelectionReason =
+           pipetune::ControlOutputSelectionReason::unavailable,
+       .availableOutputs = {},
+       .defaultSinkActive = false,
+       .overrunFrames = 0,
+       .underrunFrames = 0,
+       .processingErrors = 0,
+       .dspProcessedFrames = 0,
+       .dspProcessingNanoseconds = 0,
+       .inputSampleFormat = {},
+       .inputSampleRate = 0,
+       .inputChannelCount = 0,
+       .inputFramesReceived = 0,
+       .inputLastReceivedUnixMilliseconds = 0,
+       .configuredDspBackend = pipetune::DspBackendKind::simd,
+       .effectiveDspBackend = pipetune::DspBackendKind::scalar,
+       .dspBackendFallback = true,
+       .dspBackendError = "SIMD backend requires test ISA",
+       .availableDspBackends =
+           {{
+               {.kind = pipetune::DspBackendKind::scalar,
+                .available = true,
+                .cpuRequirement = "none",
+                .error = {}},
+               {.kind = pipetune::DspBackendKind::simd,
+                .available = false,
+                .cpuRequirement = "test ISA",
+                .error = "SIMD backend requires test ISA"},
+           }}},
+      {});
+  const auto parsed = pipetune::parseControlResponse(response);
+  auto inconsistent = response;
+  if (!check(replaceOnce(inconsistent,
+                         R"json("dspBackendFallback":true)json",
+                         R"json("dspBackendFallback":false)json"),
+             "cannot prepare inconsistent DSP backend fallback")) {
+    return false;
+  }
+  return check(parsed.valid, parsed.error) &&
+         check(parsed.status.configuredDspBackend ==
+                   pipetune::DspBackendKind::simd,
+               "fallback must retain configured SIMD") &&
+         check(parsed.status.effectiveDspBackend ==
+                   pipetune::DspBackendKind::scalar,
+               "fallback must report effective scalar") &&
+         check(parsed.status.dspBackendFallback,
+               "fallback marker differs") &&
+         check(parsed.status.dspBackendError ==
+                   "SIMD backend requires test ISA",
+               "fallback diagnostic differs") &&
+         check(!parsed.status.availableDspBackends[1].available,
+               "unavailable SIMD must be reported") &&
+         check(!pipetune::parseControlResponse(inconsistent).valid,
+               "inconsistent DSP backend fallback must be rejected");
 }
 
 static bool testUnavailableOutputStatus() {
@@ -724,6 +839,7 @@ static bool testErrorResponse() {
 int main() {
   return testRequests() && testRejectedRequests() && testSuccessResponse() &&
                  testStatusEvent() && testBypassStatus() &&
+                 testDspBackendFallbackStatus() &&
                  testUnavailableOutputStatus() &&
                  testRejectedOutputStatus() &&
                  testRejectedInputTelemetry() && testErrorResponse()
