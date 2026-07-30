@@ -107,6 +107,51 @@ if (!cmake || !sourceDirectory || !workspaceExecutable) {
             version,
           );
         }
+
+        const benchmarkBuilt = run(
+          cmake,
+          [
+            "--build",
+            buildDirectory,
+            "--target",
+            "pipetune-dsp-benchmark",
+            "--parallel",
+            "2",
+          ],
+          {},
+        );
+        if (benchmarkBuilt.status !== 0) {
+          fail(
+            "standalone DSP backend benchmark build failed",
+            benchmarkBuilt,
+          );
+        } else {
+          const benchmark = run(
+            join(buildDirectory, "pipetune-dsp-benchmark"),
+            [
+              "--json",
+              "--warmup-blocks",
+              "1",
+              "--measure-blocks",
+              "2",
+              join(
+                dirname(sourceDirectory),
+                "deps",
+                "effetune",
+                "presets",
+                "processor",
+                "bbe.effetune_preset",
+              ),
+            ],
+            {},
+          );
+          if (benchmark.status !== 0) {
+            fail(
+              "standalone DSP backend benchmark was not runnable",
+              benchmark,
+            );
+          }
+        }
       }
     }
   } finally {

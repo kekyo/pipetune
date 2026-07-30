@@ -250,6 +250,10 @@ set_target_properties(
   pipetune-dsp-benchmark
   PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 target_link_libraries(pipetune-dsp-benchmark PRIVATE pipetune_core)
+add_dependencies(
+  pipetune-dsp-benchmark
+  effetune_dsp_scalar_shared
+  effetune_dsp_simd_shared)
 if(MSVC)
   target_compile_options(pipetune-dsp-benchmark PRIVATE /W4 /WX)
 else()
