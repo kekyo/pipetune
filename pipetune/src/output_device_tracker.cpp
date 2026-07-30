@@ -52,6 +52,18 @@ bool OutputDeviceTracker::updateActiveSampleRate(
   return true;
 }
 
+bool OutputDeviceTracker::updateVolumeControlAvailability(
+    std::uint32_t id, bool available) {
+  const auto found = devices_.find(id);
+  if (found == devices_.end() ||
+      found->second.volumeControlAvailable == available) {
+    return false;
+  }
+  found->second.volumeControlAvailable = available;
+  static_cast<void>(recomputeSelection());
+  return true;
+}
+
 bool OutputDeviceTracker::setDefaultTarget(std::string nodeName) {
   if (nodeName.empty() || nodeName == excludedNodeName_) {
     return false;
@@ -121,7 +133,8 @@ OutputDeviceTracker::selectedActiveSampleRate() const noexcept {
 
 bool OutputDeviceTracker::isEligible(const OutputDevice &device) const noexcept {
   return !device.virtualNode && !device.name.empty() &&
-         device.name != excludedNodeName_;
+         device.name != excludedNodeName_ &&
+         device.volumeControlAvailable;
 }
 
 const OutputDevice *

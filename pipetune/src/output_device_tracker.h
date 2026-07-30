@@ -39,6 +39,8 @@ struct OutputDevice {
   std::int32_t priority;
   /** True for software or other virtual sinks. */
   bool virtualNode;
+  /** True when effective volume controls can be read and written. */
+  bool volumeControlAvailable = true;
   /** PipeWire EnumFormat sample-rate capabilities. */
   SampleRateCapabilities sampleRateCapabilities = {};
   /** Current physical Format rate, or zero while inactive. */
@@ -100,6 +102,19 @@ public:
    */
   bool updateActiveSampleRate(std::uint32_t id,
                               std::uint32_t sampleRate);
+
+  /**
+   * Replaces one device's effective-volume control availability.
+   *
+   * Outputs without readable and writable effective volume controls are not
+   * eligible for selection.
+   *
+   * @param id PipeWire global identifier.
+   * @param available True when effective volume can be read and written.
+   * @return True when availability changed.
+   */
+  bool updateVolumeControlAvailability(std::uint32_t id,
+                                       bool available);
 
   /**
    * Updates default.audio.sink from PipeWire metadata.

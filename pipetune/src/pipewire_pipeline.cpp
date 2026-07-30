@@ -10,7 +10,7 @@
 #include "pipewire_buffer_io.h"
 #include "pipewire_idle_epoch.h"
 #include "pipewire_rate_parser.h"
-#include "pipewire_volume_smoother.h"
+#include "pipewire_volume_state.h"
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
 
@@ -22,6 +22,7 @@
 #include <spa/param/audio/raw-utils.h>
 #include <spa/param/buffers.h>
 #include <spa/param/format.h>
+#include <spa/param/props.h>
 #include <spa/pod/builder.h>
 #include <algorithm>
 #include <array>
@@ -30,6 +31,7 @@
 #include <charconv>
 #include <cerrno>
 #include <climits>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -54,18 +56,24 @@ namespace pipetune {
 constexpr auto kSampleBytes = std::uint32_t{sizeof(float)};
 constexpr auto kReadinessTimeoutSeconds = std::time_t{5};
 constexpr auto kRateTransitionTimeoutSeconds = std::time_t{5};
-constexpr auto kVolumeRampMilliseconds = std::uint32_t{5};
 
 struct PipeWireRuntime;
 
 struct TrackedOutputNode {
   PipeWireRuntime *runtime;
   std::uint32_t id;
+  std::string name;
   pw_node *node;
   pw_node_events events;
   spa_hook listener;
   std::vector<SampleRateConstraint> pendingConstraints;
   PipeWireRateParameterAvailability parameterAvailability;
+  PipeWireVolumeState volumeState;
+  std::uint32_t permissions;
+  bool propsReadable;
+  bool propsWritable;
+  bool volumeWriteFailed;
+  std::uint64_t volumeRevision;
 };
 
 struct StreamCallbackContext {
@@ -105,6 +113,9 @@ struct RateTransition {
   std::string failure = {};
 };
 
+static PipeWireVolumeState makeInitialVirtualVolumeState(
+    const PipeWirePipelineOptions &options);
+
 static bool backendDiscoveryWasSupplied(
     const DspBackendLoadResult &result) {
   return result.backend != nullptr || !result.attemptedPath.empty() ||
@@ -127,7 +138,6 @@ struct PipeWireRuntime {
   OutputDeviceTracker deviceTracker;
   PlanarAudioRing ring;
   PipeWireIdleEpoch idleEpoch;
-  PipeWireVolumeSmoother volumeSmoother;
   DspIdleController dspIdleController;
   std::atomic<DspIdlePolicy> configuredDspIdlePolicy;
   std::atomic<DspIdleState> publishedDspIdleState;
@@ -179,6 +189,7 @@ struct PipeWireRuntime {
       trackedOutputNodes;
   pw_metadata *defaultMetadata;
   spa_source *outputChangeSource;
+  spa_source *volumeChangeSource;
   spa_source *rateChangeSource;
   spa_source *rateTimeoutSource;
   spa_source *timeoutSource;
@@ -197,14 +208,23 @@ struct PipeWireRuntime {
   StreamCallbackContext captureContext;
   StreamCallbackContext playbackContext;
   std::uint32_t defaultMetadataId;
-  int trackingSyncSequence;
-  CoreSyncPurpose trackingSyncPurpose;
+  std::unordered_map<int, CoreSyncPurpose> trackingSyncRequests;
   DefaultSinkTransition defaultSinkTransition;
   bool trackingReady;
   bool shutdownRequested;
   std::string observedDefaultSink;
   std::string defaultMetadataValue;
   std::string playbackTarget;
+  PipeWireVolumeState virtualVolumeState;
+  PipeWireVolumeState publishedVirtualVolumeState;
+  PipeWireVolumeState pendingVirtualVolumeState;
+  std::string volumeTarget;
+  std::uint64_t volumeRevision;
+  std::uint64_t pendingVirtualVolumeRevision;
+  int virtualVolumeSyncSequence;
+  bool publishedVirtualVolumeKnown;
+  bool pendingVirtualVolume;
+  bool volumeReady;
   bool captureReady;
   bool playbackReady;
   bool captureFormatReady;
@@ -225,7 +245,6 @@ struct PipeWireRuntime {
         deviceTracker(runtimeOptions.sinkName, runtimeOptions.targetObject),
         ring(runtimeOptions.channelCount, runtimeOptions.ringCapacityFrames),
         idleEpoch(),
-        volumeSmoother(runtimeOptions.channelCount),
         dspIdleController(runtimeOptions.dspSampleRate,
                           runtimeOptions.dspIdlePolicy),
         configuredDspIdlePolicy(runtimeOptions.dspIdlePolicy),
@@ -270,7 +289,8 @@ struct PipeWireRuntime {
         mainLoop(nullptr), context(nullptr),
         captureStream(nullptr), playbackStream(nullptr), trackingCore(nullptr),
         registry(nullptr), trackedOutputNodes(), defaultMetadata(nullptr),
-        outputChangeSource(nullptr), rateChangeSource(nullptr),
+        outputChangeSource(nullptr), volumeChangeSource(nullptr),
+        rateChangeSource(nullptr),
         rateTimeoutSource(nullptr),
         timeoutSource(nullptr), interruptSource(nullptr),
         terminateSource(nullptr), captureEvents{},
@@ -278,11 +298,17 @@ struct PipeWireRuntime {
         coreListener{}, registryListener{}, metadataListener{},
         captureListener{}, playbackListener{},
         captureContext{this, true}, playbackContext{this, false},
-        defaultMetadataId(PW_ID_ANY), trackingSyncSequence(0),
-        trackingSyncPurpose(CoreSyncPurpose::enumeration),
+        defaultMetadataId(PW_ID_ANY), trackingSyncRequests(),
         defaultSinkTransition(DefaultSinkTransition::inactive),
         trackingReady(false), shutdownRequested(false),
         observedDefaultSink(), defaultMetadataValue(), playbackTarget(),
+        virtualVolumeState(makeInitialVirtualVolumeState(runtimeOptions)),
+        publishedVirtualVolumeState(), pendingVirtualVolumeState(),
+        volumeTarget(), volumeRevision(0),
+        pendingVirtualVolumeRevision(0),
+        virtualVolumeSyncSequence(0),
+        publishedVirtualVolumeKnown(false), pendingVirtualVolume(false),
+        volumeReady(false),
         captureReady(false), playbackReady(false), captureFormatReady(false),
         playbackFormatReady(false), captureAlwaysProcess(true),
         captureSchedulingSyncPending(false), captureListenerInstalled(false),
@@ -339,6 +365,9 @@ struct PipeWireRuntime {
       }
       if (outputChangeSource != nullptr) {
         pw_loop_destroy_source(loop, outputChangeSource);
+      }
+      if (volumeChangeSource != nullptr) {
+        pw_loop_destroy_source(loop, volumeChangeSource);
       }
       if (rateChangeSource != nullptr) {
         pw_loop_destroy_source(loop, rateChangeSource);
@@ -403,6 +432,9 @@ static void requestAutomaticRateUpdate(PipeWireRuntime &runtime);
 static void reportStreamFailure(PipeWireRuntime &runtime,
                                 std::string message);
 static void signalRateChange(PipeWireRuntime &runtime);
+static void signalVolumeChange(PipeWireRuntime &runtime);
+static void completeVirtualVolumePublication(
+    PipeWireRuntime &runtime);
 static bool settleCaptureScheduling(PipeWireRuntime &runtime);
 static void stopTrackingOutputNode(PipeWireRuntime &runtime,
                                    std::uint32_t id);
@@ -449,8 +481,7 @@ static void requestTrackingSync(PipeWireRuntime &runtime,
                                      sequence));
     return;
   }
-  runtime.trackingSyncSequence = sequence;
-  runtime.trackingSyncPurpose = purpose;
+  runtime.trackingSyncRequests.insert_or_assign(sequence, purpose);
 }
 
 static void completeRuntime(PipeWireRuntime &runtime) {
@@ -490,17 +521,29 @@ static bool writeEffectiveDefaultSink(
 
 static void trackingCoreDone(void *data, std::uint32_t id, int sequence) {
   auto &runtime = *static_cast<PipeWireRuntime *>(data);
-  if (id != PW_ID_CORE || sequence != runtime.trackingSyncSequence) {
+  if (id != PW_ID_CORE) {
     return;
   }
-  if (runtime.trackingSyncPurpose == CoreSyncPurpose::capturePassive) {
+  if (runtime.virtualVolumeSyncSequence != 0 &&
+      sequence == runtime.virtualVolumeSyncSequence) {
+    completeVirtualVolumePublication(runtime);
+    return;
+  }
+  const auto request =
+      runtime.trackingSyncRequests.find(sequence);
+  if (request == runtime.trackingSyncRequests.end()) {
+    return;
+  }
+  const auto purpose = request->second;
+  runtime.trackingSyncRequests.erase(request);
+  if (purpose == CoreSyncPurpose::capturePassive) {
     runtime.captureSchedulingSyncPending = false;
     maybeFinishRateTransition(runtime);
     finishReadinessCheck(runtime);
     signalRateChange(runtime);
     return;
   }
-  if (runtime.trackingSyncPurpose == CoreSyncPurpose::defaultActivation) {
+  if (purpose == CoreSyncPurpose::defaultActivation) {
     if (runtime.observedDefaultSink != runtime.options.sinkName) {
       runtime.defaultSinkTransition = DefaultSinkTransition::inactive;
       maybeActivateDefaultSink(runtime);
@@ -517,14 +560,14 @@ static void trackingCoreDone(void *data, std::uint32_t id, int sequence) {
     finishReadinessCheck(runtime);
     return;
   }
-  if (runtime.trackingSyncPurpose == CoreSyncPurpose::defaultRelease) {
+  if (purpose == CoreSyncPurpose::defaultRelease) {
     runtime.defaultSinkTransition = DefaultSinkTransition::inactive;
     runtime.defaultSinkActive.store(false, std::memory_order_release);
     requestControlStatusUpdate(runtime);
     maybeActivateDefaultSink(runtime);
     return;
   }
-  if (runtime.trackingSyncPurpose == CoreSyncPurpose::defaultRestoration) {
+  if (purpose == CoreSyncPurpose::defaultRestoration) {
     runtime.defaultSinkTransition = DefaultSinkTransition::inactive;
     runtime.defaultSinkActive.store(false, std::memory_order_release);
     requestControlStatusUpdate(runtime);
@@ -565,6 +608,54 @@ static bool resetTrackedOutputRateState(TrackedOutputNode &tracked) {
   return changed;
 }
 
+static bool trackedOutputVolumeIsUsable(
+    const TrackedOutputNode &tracked) noexcept {
+  return tracked.propsReadable && tracked.propsWritable &&
+         PW_PERM_IS_R(tracked.permissions) &&
+         PW_PERM_IS_W(tracked.permissions) &&
+         PW_PERM_IS_X(tracked.permissions) &&
+         !tracked.volumeWriteFailed &&
+         tracked.volumeState.channelCount != 0;
+}
+
+static bool trackedOutputIsSelected(
+    PipeWireRuntime &runtime,
+    const TrackedOutputNode &tracked) {
+  auto lock = std::scoped_lock(runtime.outputStateMutex);
+  return runtime.deviceTracker.selectedTarget() == tracked.name;
+}
+
+static bool publishTrackedOutputVolumeAvailability(
+    TrackedOutputNode &tracked) {
+  auto &runtime = *tracked.runtime;
+  auto changed = false;
+  {
+    auto lock = std::scoped_lock(runtime.outputStateMutex);
+    changed = runtime.deviceTracker.updateVolumeControlAvailability(
+        tracked.id, trackedOutputVolumeIsUsable(tracked));
+  }
+  if (changed && runtime.trackingReady) {
+    applyTrackedTarget(runtime);
+    requestControlStatusUpdate(runtime);
+  }
+  return changed;
+}
+
+static bool resetTrackedOutputVolumeState(TrackedOutputNode &tracked) {
+  auto &runtime = *tracked.runtime;
+  const auto hadState = tracked.volumeState.channelCount != 0;
+  tracked.volumeState = {};
+  tracked.volumeRevision = ++runtime.volumeRevision;
+  const auto availabilityChanged =
+      publishTrackedOutputVolumeAvailability(tracked);
+  if (hadState && runtime.trackingReady &&
+      trackedOutputIsSelected(runtime, tracked)) {
+    runtime.volumeReady = false;
+    signalVolumeChange(runtime);
+  }
+  return hadState || availabilityChanged;
+}
+
 static void trackingCoreError(void *data, std::uint32_t id, int, int result,
                               const char *message) {
   auto &runtime = *static_cast<PipeWireRuntime *>(data);
@@ -577,6 +668,7 @@ static void trackingCoreError(void *data, std::uint32_t id, int, int result,
     }
     const auto globalId = iterator->first;
     static_cast<void>(resetTrackedOutputRateState(*iterator->second));
+    static_cast<void>(resetTrackedOutputVolumeState(*iterator->second));
     stopTrackingOutputNode(runtime, globalId);
     return;
   }
@@ -651,6 +743,23 @@ static void outputNodeParameter(void *data, int, std::uint32_t id,
                                 const spa_pod *parameter) {
   auto &tracked = *static_cast<TrackedOutputNode *>(data);
   auto &runtime = *tracked.runtime;
+  if (id == SPA_PARAM_Props) {
+    const auto merged =
+        mergePipeWireVolumeState(parameter, tracked.volumeState);
+    if (!merged.valid) {
+      return;
+    }
+    if (merged.changed) {
+      tracked.volumeRevision = ++runtime.volumeRevision;
+    }
+    const auto availabilityChanged =
+        publishTrackedOutputVolumeAvailability(tracked);
+    if (runtime.trackingReady && trackedOutputIsSelected(runtime, tracked) &&
+        (merged.changed || availabilityChanged)) {
+      signalVolumeChange(runtime);
+    }
+    return;
+  }
   if (id == SPA_PARAM_EnumFormat) {
     static_cast<void>(next);
     publishOutputRateCapabilities(
@@ -680,6 +789,16 @@ static void outputNodeParameter(void *data, int, std::uint32_t id,
   }
 }
 
+static std::uint32_t nodeParameterFlags(
+    const pw_node_info &info, std::uint32_t id) noexcept {
+  for (auto index = std::uint32_t{0}; index < info.n_params; ++index) {
+    if (info.params[index].id == id) {
+      return info.params[index].flags;
+    }
+  }
+  return 0;
+}
+
 static void outputNodeInfo(void *data, const pw_node_info *info) {
   auto &tracked = *static_cast<TrackedOutputNode *>(data);
   if (info == nullptr ||
@@ -688,11 +807,18 @@ static void outputNodeInfo(void *data, const pw_node_info *info) {
   }
   const auto availability =
       pipeWireRateParameterAvailability(info->params, info->n_params);
-  if (availability == tracked.parameterAvailability) {
+  const auto propsFlags = nodeParameterFlags(*info, SPA_PARAM_Props);
+  const auto propsReadable =
+      (propsFlags & SPA_PARAM_INFO_READ) != 0;
+  const auto propsWritable =
+      (propsFlags & SPA_PARAM_INFO_WRITE) != 0;
+  if (availability == tracked.parameterAvailability &&
+      propsReadable == tracked.propsReadable &&
+      propsWritable == tracked.propsWritable) {
     return;
   }
 
-  auto parameterIds = std::array<std::uint32_t, 2>{};
+  auto parameterIds = std::array<std::uint32_t, 3>{};
   auto parameterCount = std::size_t{0};
   if (availability.enumFormatReadable) {
     parameterIds[parameterCount++] = SPA_PARAM_EnumFormat;
@@ -700,9 +826,13 @@ static void outputNodeInfo(void *data, const pw_node_info *info) {
   if (availability.formatReadable) {
     parameterIds[parameterCount++] = SPA_PARAM_Format;
   }
+  if (propsReadable) {
+    parameterIds[parameterCount++] = SPA_PARAM_Props;
+  }
   if (pw_node_subscribe_params(tracked.node, parameterIds.data(),
                                parameterCount) < 0) {
     static_cast<void>(resetTrackedOutputRateState(tracked));
+    static_cast<void>(resetTrackedOutputVolumeState(tracked));
     return;
   }
 
@@ -750,7 +880,26 @@ static void outputNodeInfo(void *data, const pw_node_info *info) {
       requestControlStatusUpdate(runtime);
     }
   }
+
+  const auto shouldEnumerateProps =
+      propsReadable &&
+      (!tracked.propsReadable ||
+       tracked.volumeState.channelCount == 0);
   tracked.parameterAvailability = availability;
+  tracked.propsReadable = propsReadable;
+  tracked.propsWritable = propsWritable;
+  if (!propsReadable || !propsWritable) {
+    static_cast<void>(resetTrackedOutputVolumeState(tracked));
+  } else if (shouldEnumerateProps &&
+             pw_node_enum_params(
+                 tracked.node, 3, SPA_PARAM_Props, 0,
+                 std::numeric_limits<std::uint32_t>::max(),
+                 nullptr) < 0) {
+    static_cast<void>(resetTrackedOutputVolumeState(tracked));
+  } else {
+    static_cast<void>(
+        publishTrackedOutputVolumeAvailability(tracked));
+  }
 }
 
 static void stopTrackingOutputNode(PipeWireRuntime &runtime,
@@ -767,13 +916,16 @@ static void stopTrackingOutputNode(PipeWireRuntime &runtime,
 
 static void startTrackingOutputNode(PipeWireRuntime &runtime,
                                     std::uint32_t id,
-                                    std::uint32_t version) {
+                                    std::uint32_t version,
+                                    std::string name,
+                                    std::uint32_t permissions) {
   if (runtime.trackedOutputNodes.contains(id)) {
     return;
   }
   auto tracked = std::make_unique<TrackedOutputNode>();
   tracked->runtime = &runtime;
   tracked->id = id;
+  tracked->name = std::move(name);
   tracked->node = static_cast<pw_node *>(pw_registry_bind(
       runtime.registry, id, PW_TYPE_INTERFACE_Node,
       std::min(version, static_cast<std::uint32_t>(PW_VERSION_NODE)), 0));
@@ -788,6 +940,12 @@ static void startTrackingOutputNode(PipeWireRuntime &runtime,
   tracked->pendingConstraints = {};
   tracked->parameterAvailability = {
       .enumFormatReadable = false, .formatReadable = false};
+  tracked->volumeState = {};
+  tracked->permissions = permissions;
+  tracked->propsReadable = false;
+  tracked->propsWritable = false;
+  tracked->volumeWriteFailed = false;
+  tracked->volumeRevision = 0;
   const auto listenerResult =
       pw_node_add_listener(tracked->node, &tracked->listener,
                            &tracked->events, tracked.get());
@@ -803,7 +961,8 @@ static void startTrackingOutputNode(PipeWireRuntime &runtime,
   }
 }
 
-static void registryGlobal(void *data, std::uint32_t id, std::uint32_t,
+static void registryGlobal(void *data, std::uint32_t id,
+                           std::uint32_t permissions,
                            const char *type, std::uint32_t version,
                            const spa_dict *properties) {
   auto &runtime = *static_cast<PipeWireRuntime *>(data);
@@ -836,10 +995,11 @@ static void registryGlobal(void *data, std::uint32_t id, std::uint32_t,
            .name = name,
            .description = description,
            .priority = parsePriority(priority),
-           .virtualNode = isVirtual});
+           .virtualNode = isVirtual,
+           .volumeControlAvailable = false});
     }
     if (!isVirtual && std::string_view(name) != runtime.options.sinkName) {
-      startTrackingOutputNode(runtime, id, version);
+      startTrackingOutputNode(runtime, id, version, name, permissions);
     }
     if (changed && runtime.trackingReady) {
       applyTrackedTarget(runtime);
@@ -965,6 +1125,7 @@ static bool settleCaptureScheduling(PipeWireRuntime &runtime) {
 static void finishReadinessCheck(PipeWireRuntime &runtime) {
   if (!runtime.captureReady || !runtime.playbackReady ||
       !runtime.captureFormatReady || !runtime.playbackFormatReady ||
+      !runtime.volumeReady ||
       !runtime.inputFormatNegotiated.load(std::memory_order_acquire) ||
       runtime.rateTransition.phase != RateTransitionPhase::idle ||
       runtime.automaticRateUpdatePending) {
@@ -1045,6 +1206,9 @@ static void streamStateChanged(void *data, pw_stream_state,
     runtime.inputFormatNegotiated.store(
         runtime.captureReady && runtime.captureFormatReady,
         std::memory_order_release);
+    if (runtime.captureReady) {
+      signalVolumeChange(runtime);
+    }
   } else {
     runtime.playbackReady = isReadyState(state);
   }
@@ -1129,6 +1293,22 @@ static spa_audio_info_raw makeRawFormat(const PipeWirePipelineOptions &options,
   return info;
 }
 
+static PipeWireVolumeState makeInitialVirtualVolumeState(
+    const PipeWirePipelineOptions &options) {
+  const auto format = makeRawFormat(options, options.dspSampleRate);
+  auto state = PipeWireVolumeState{};
+  state.channelCount =
+      std::min(options.channelCount, SPA_AUDIO_MAX_CHANNELS);
+  state.channelMapCount = state.channelCount;
+  state.muteKnown = true;
+  for (auto channel = std::uint32_t{0}; channel < state.channelCount;
+       ++channel) {
+    state.channelVolumes[channel] = 1.0F;
+    state.channelMap[channel] = format.position[channel];
+  }
+  return state;
+}
+
 static spa_pod *buildBufferParameter(spa_pod_builder &builder,
                                      const PipeWirePipelineOptions &options) {
   auto frame = spa_pod_frame{};
@@ -1162,6 +1342,103 @@ static spa_pod *buildHeaderMetaParameter(
       spa_pod_builder_pop(&builder, &frame));
 }
 
+static bool readVirtualVolumeControls(
+    PipeWireRuntime &runtime,
+    PipeWireVolumeState &state) noexcept {
+  if (runtime.captureStream == nullptr) {
+    return false;
+  }
+  const auto *volumes = pw_stream_get_control(
+      runtime.captureStream, SPA_PROP_channelVolumes);
+  const auto *mute =
+      pw_stream_get_control(runtime.captureStream, SPA_PROP_mute);
+  const auto layout = makeInitialVirtualVolumeState(runtime.options);
+  if (volumes == nullptr || volumes->values == nullptr ||
+      volumes->n_values == 0 ||
+      volumes->n_values != layout.channelCount ||
+      mute == nullptr || mute->values == nullptr ||
+      mute->n_values == 0) {
+    return false;
+  }
+
+  auto observed = layout;
+  for (auto channel = std::uint32_t{0};
+       channel < volumes->n_values; ++channel) {
+    const auto value = volumes->values[channel];
+    if (!std::isfinite(value) || value < 0.0F) {
+      return false;
+    }
+    observed.channelVolumes[channel] = value;
+  }
+  if (!std::isfinite(mute->values[0])) {
+    return false;
+  }
+  observed.muted = mute->values[0] >= 0.5F;
+  state = observed;
+  return true;
+}
+
+static void observeVirtualVolumeControls(
+    PipeWireRuntime &runtime) {
+  auto observed = PipeWireVolumeState{};
+  if (!readVirtualVolumeControls(runtime, observed)) {
+    return;
+  }
+  runtime.virtualVolumeState = observed;
+  if (runtime.virtualVolumeSyncSequence != 0) {
+    return;
+  }
+  if (!runtime.volumeReady ||
+      !runtime.publishedVirtualVolumeKnown) {
+    signalVolumeChange(runtime);
+    return;
+  }
+  if (pipeWireVolumeStatesEquivalent(
+          observed, runtime.publishedVirtualVolumeState)) {
+    return;
+  }
+  runtime.pendingVirtualVolumeState = observed;
+  runtime.pendingVirtualVolume = true;
+  runtime.pendingVirtualVolumeRevision = ++runtime.volumeRevision;
+  signalVolumeChange(runtime);
+}
+
+static void completeVirtualVolumePublication(
+    PipeWireRuntime &runtime) {
+  runtime.virtualVolumeSyncSequence = 0;
+  runtime.volumeReady = true;
+
+  auto observed = PipeWireVolumeState{};
+  if (readVirtualVolumeControls(runtime, observed)) {
+    runtime.virtualVolumeState = observed;
+    if (!pipeWireVolumeStatesEquivalent(
+            observed, runtime.publishedVirtualVolumeState)) {
+      runtime.pendingVirtualVolumeState = observed;
+      runtime.pendingVirtualVolume = true;
+      runtime.pendingVirtualVolumeRevision = ++runtime.volumeRevision;
+      signalVolumeChange(runtime);
+      return;
+    }
+  }
+
+  applyTrackedTarget(runtime);
+  maybeFinishRateTransition(runtime);
+  maybeActivateDefaultSink(runtime);
+  finishReadinessCheck(runtime);
+}
+
+static void streamControlChanged(
+    void *data, std::uint32_t id,
+    const pw_stream_control *) {
+  auto &context = *static_cast<StreamCallbackContext *>(data);
+  if (!context.capture ||
+      (id != SPA_PROP_volume &&
+       id != SPA_PROP_channelVolumes && id != SPA_PROP_mute)) {
+    return;
+  }
+  observeVirtualVolumeControls(*context.runtime);
+}
+
 static void streamParameterChanged(void *data, std::uint32_t id,
                                    const spa_pod *parameter) {
   if (parameter == nullptr) {
@@ -1171,13 +1448,7 @@ static void streamParameterChanged(void *data, std::uint32_t id,
   auto &context = *static_cast<StreamCallbackContext *>(data);
   auto &runtime = *context.runtime;
   if (id == SPA_PARAM_Props && context.capture) {
-    const auto sampleRate =
-        runtime.dspSampleRate.load(std::memory_order_acquire);
-    const auto rampSamples = std::max(
-        std::uint32_t{1},
-        sampleRate * kVolumeRampMilliseconds / std::uint32_t{1000});
-    static_cast<void>(
-        runtime.volumeSmoother.update(parameter, rampSamples));
+    observeVirtualVolumeControls(runtime);
     return;
   }
   if (id != SPA_PARAM_Format) {
@@ -1217,6 +1488,7 @@ static void streamParameterChanged(void *data, std::uint32_t id,
     runtime.captureFormatReady = true;
     runtime.inputFormatNegotiated.store(
         runtime.captureReady, std::memory_order_release);
+    signalVolumeChange(runtime);
   } else {
     runtime.playbackFormatReady = true;
   }
@@ -1317,7 +1589,6 @@ static void captureProcess(void *data) {
     if (!runtime.dspIdleController.observeInput(
             scratch, runtime.options.channelCount, blockFrames)) {
       publishDspIdleSnapshot(runtime);
-      runtime.volumeSmoother.advance(blockFrames);
       static_cast<void>(runtime.ring.writeGap(blockFrames));
       runtime.processedInputFrames += blockFrames;
       sourceFrame += blockFrames;
@@ -1325,7 +1596,6 @@ static void captureProcess(void *data) {
     }
     publishDspIdleSnapshot(runtime);
 
-    runtime.volumeSmoother.process(scratch, blockFrames);
     const auto sampleRate =
         runtime.dspSampleRate.load(std::memory_order_relaxed);
     const auto timeSeconds =
@@ -1482,6 +1752,7 @@ static pw_properties *makeCommonProperties(const PipeWireRuntime &runtime,
   pw_properties_set(properties, SPA_KEY_AUDIO_FORMAT, "F32P");
   pw_properties_set(properties, SPA_KEY_AUDIO_RATE, mediaRate.c_str());
   pw_properties_set(properties, SPA_KEY_AUDIO_CHANNELS, channels.c_str());
+  pw_properties_set(properties, "state.restore-props", "false");
   setPipeWireIdleProperties(*properties);
   return properties;
 }
@@ -1502,8 +1773,8 @@ static pw_properties *makeCaptureProperties(const PipeWireRuntime &runtime) {
   // Negotiate formats immediately, then return to passive processing after
   // the initial setup or a sample-rate transition completes.
   pw_properties_set(properties, PW_KEY_NODE_ALWAYS_PROCESS, "true");
-  // Preserve desktop-visible sink volume while the daemon applies a short,
-  // click-free gain ramp to the PCM stream.
+  // Keep the desktop-visible volume as a control surface without applying it
+  // before the selected physical sink.
   pw_properties_set(properties, "channelmix.min-volume", "1.0");
   pw_properties_set(properties, "channelmix.max-volume", "1.0");
   return properties;
@@ -1523,6 +1794,9 @@ static pw_properties *makePlaybackProperties(const PipeWireRuntime &runtime,
   pw_properties_set(properties, PW_KEY_NODE_PASSIVE, "true");
   pw_properties_set(properties, PW_KEY_TARGET_OBJECT,
                     std::string(target).c_str());
+  // The physical sink is the sole system-volume gain stage.
+  pw_properties_set(properties, "channelmix.min-volume", "1.0");
+  pw_properties_set(properties, "channelmix.max-volume", "1.0");
   if (runtime.rateEnforcement.load(std::memory_order_acquire) ==
       SampleRateEnforcement::force) {
     pw_properties_set(properties, PW_KEY_NODE_FORCE_RATE, "0");
@@ -1603,6 +1877,185 @@ static void destroyPlaybackStream(PipeWireRuntime &runtime) {
                                     std::memory_order_release);
 }
 
+static TrackedOutputNode *findTrackedOutput(
+    PipeWireRuntime &runtime, std::string_view name) noexcept {
+  for (auto &[id, tracked] : runtime.trackedOutputNodes) {
+    static_cast<void>(id);
+    if (tracked->name == name) {
+      return tracked.get();
+    }
+  }
+  return nullptr;
+}
+
+static bool publishVirtualVolume(
+    PipeWireRuntime &runtime,
+    const PipeWireVolumeState &state) {
+  if (runtime.captureStream == nullptr || state.channelCount == 0 ||
+      pw_stream_get_control(runtime.captureStream,
+                            SPA_PROP_volume) == nullptr ||
+      pw_stream_get_control(runtime.captureStream,
+                            SPA_PROP_channelVolumes) == nullptr ||
+      pw_stream_get_control(runtime.captureStream,
+                            SPA_PROP_mute) == nullptr) {
+    return false;
+  }
+
+  auto masterVolume = 1.0F;
+  const auto masterResult = pw_stream_set_control(
+      runtime.captureStream, SPA_PROP_volume, 1, &masterVolume, 0);
+  if (masterResult < 0) {
+    failRuntime(
+        runtime,
+        systemError("cannot publish PipeTune virtual sink master volume",
+                    masterResult));
+    return false;
+  }
+  auto values = state.channelVolumes;
+  const auto volumeResult = pw_stream_set_control(
+      runtime.captureStream, SPA_PROP_channelVolumes,
+      state.channelCount, values.data(), 0);
+  if (volumeResult < 0) {
+    failRuntime(
+        runtime,
+        systemError("cannot publish PipeTune virtual sink volume",
+                    volumeResult));
+    return false;
+  }
+  auto mute = state.muted ? 1.0F : 0.0F;
+  const auto muteResult = pw_stream_set_control(
+      runtime.captureStream, SPA_PROP_mute, 1, &mute, 0);
+  if (muteResult < 0) {
+    failRuntime(
+        runtime,
+        systemError("cannot publish PipeTune virtual sink mute",
+                    muteResult));
+    return false;
+  }
+
+  runtime.virtualVolumeState = state;
+  runtime.publishedVirtualVolumeState = state;
+  runtime.publishedVirtualVolumeKnown = true;
+  const auto sequence =
+      pw_core_sync(runtime.trackingCore, PW_ID_CORE, 0);
+  if (sequence < 0) {
+    failRuntime(
+        runtime,
+        systemError("cannot synchronize PipeTune virtual sink volume",
+                    sequence));
+    return false;
+  }
+  runtime.virtualVolumeSyncSequence = sequence;
+  runtime.volumeReady = false;
+  return true;
+}
+
+static bool rejectTrackedOutputVolume(
+    PipeWireRuntime &runtime, TrackedOutputNode &tracked) {
+  tracked.volumeWriteFailed = true;
+  runtime.volumeReady = false;
+  runtime.volumeTarget.clear();
+  const auto changed =
+      publishTrackedOutputVolumeAvailability(tracked);
+  if (!changed) {
+    applyTrackedTarget(runtime);
+  }
+  return false;
+}
+
+static bool writePhysicalVolume(
+    PipeWireRuntime &runtime, TrackedOutputNode &tracked,
+    const PipeWireVolumeState &state) {
+  auto storage = std::array<std::uint8_t, 4096>{};
+  auto builder = spa_pod_builder{};
+  spa_pod_builder_init(&builder, storage.data(), storage.size());
+  const auto *parameter =
+      buildPipeWireVolumeParameter(builder, state);
+  if (parameter == nullptr) {
+    return rejectTrackedOutputVolume(runtime, tracked);
+  }
+  const auto setResult =
+      pw_node_set_param(tracked.node, SPA_PARAM_Props, 0, parameter);
+  if (setResult < 0) {
+    return rejectTrackedOutputVolume(runtime, tracked);
+  }
+  const auto enumResult = pw_node_enum_params(
+      tracked.node, 4, SPA_PARAM_Props, 0,
+      std::numeric_limits<std::uint32_t>::max(), nullptr);
+  if (enumResult < 0) {
+    return rejectTrackedOutputVolume(runtime, tracked);
+  }
+  return true;
+}
+
+static bool synchronizeSelectedOutputVolume(
+    PipeWireRuntime &runtime) {
+  auto target = std::string{};
+  {
+    auto lock = std::scoped_lock(runtime.outputStateMutex);
+    target = runtime.deviceTracker.selectedTarget();
+  }
+  if (target.empty()) {
+    runtime.volumeReady = false;
+    runtime.volumeTarget.clear();
+    runtime.pendingVirtualVolume = false;
+    return false;
+  }
+
+  auto *tracked = findTrackedOutput(runtime, target);
+  if (tracked == nullptr || !trackedOutputVolumeIsUsable(*tracked)) {
+    runtime.volumeReady = false;
+    runtime.volumeTarget.clear();
+    return false;
+  }
+  const auto targetChanged = runtime.volumeTarget != target;
+  if (targetChanged) {
+    runtime.volumeReady = false;
+    runtime.pendingVirtualVolume = false;
+    runtime.volumeTarget = target;
+  }
+
+  const auto physicalIsNewest =
+      targetChanged || !runtime.pendingVirtualVolume ||
+      tracked->volumeRevision >=
+          runtime.pendingVirtualVolumeRevision;
+  if (physicalIsNewest) {
+    const auto virtualLayout =
+        makeInitialVirtualVolumeState(runtime.options);
+    const auto mapped = mapPhysicalVolumeToVirtual(
+        tracked->volumeState,
+        std::span<const std::uint32_t>(
+            virtualLayout.channelMap.data(),
+            virtualLayout.channelMapCount));
+    if (!publishVirtualVolume(runtime, mapped)) {
+      return false;
+    }
+    runtime.pendingVirtualVolume = false;
+    return true;
+  }
+
+  const auto requested = mapVirtualVolumeToPhysical(
+      runtime.pendingVirtualVolumeState,
+      runtime.publishedVirtualVolumeState,
+      tracked->volumeState);
+  runtime.pendingVirtualVolume = false;
+  runtime.virtualVolumeState =
+      runtime.pendingVirtualVolumeState;
+  runtime.publishedVirtualVolumeState =
+      runtime.pendingVirtualVolumeState;
+  runtime.publishedVirtualVolumeKnown = true;
+  if (pipeWireVolumeStatesEquivalent(requested,
+                                     tracked->volumeState)) {
+    runtime.volumeReady = true;
+    return true;
+  }
+  if (!writePhysicalVolume(runtime, *tracked, requested)) {
+    return false;
+  }
+  runtime.volumeReady = true;
+  return true;
+}
+
 static void signalRateChange(PipeWireRuntime &runtime) {
   if (runtime.mainLoop == nullptr || runtime.rateChangeSource == nullptr) {
     return;
@@ -1612,6 +2065,21 @@ static void signalRateChange(PipeWireRuntime &runtime) {
   if (result < 0) {
     failRuntime(runtime,
                 systemError("cannot schedule PipeWire rate change", result));
+  }
+}
+
+static void signalVolumeChange(PipeWireRuntime &runtime) {
+  if (runtime.mainLoop == nullptr ||
+      runtime.volumeChangeSource == nullptr) {
+    return;
+  }
+  const auto result = pw_loop_signal_event(
+      pw_main_loop_get_loop(runtime.mainLoop),
+      runtime.volumeChangeSource);
+  if (result < 0) {
+    failRuntime(runtime,
+                systemError("cannot schedule PipeWire volume change",
+                            result));
   }
 }
 
@@ -1693,6 +2161,11 @@ static std::string disconnectAudioStreams(PipeWireRuntime &runtime) {
   runtime.inputFormatNegotiated.store(false, std::memory_order_release);
   static_cast<void>(runtime.ring.discardQueuedFrames());
   runtime.processedInputFrames = 0;
+  runtime.volumeReady = false;
+  runtime.volumeTarget.clear();
+  runtime.publishedVirtualVolumeKnown = false;
+  runtime.pendingVirtualVolume = false;
+  runtime.virtualVolumeSyncSequence = 0;
   runtime.dspIdleController.restart(
       runtime.dspSampleRate.load(std::memory_order_acquire),
       runtime.configuredDspIdlePolicy.load(std::memory_order_acquire));
@@ -1728,11 +2201,13 @@ static std::string reconnectAudioStreams(PipeWireRuntime &runtime) {
   if (target.empty()) {
     return {};
   }
-  return createPlaybackStream(runtime, target);
+  signalVolumeChange(runtime);
+  return {};
 }
 
 static bool rateTransitionAudioIsReady(PipeWireRuntime &runtime) {
-  if (!runtime.captureReady || !runtime.captureFormatReady) {
+  if (!runtime.captureReady || !runtime.captureFormatReady ||
+      !runtime.volumeReady) {
     return false;
   }
   return currentPlaybackTarget(runtime).empty() ||
@@ -1994,6 +2469,30 @@ static void requestAutomaticRateUpdate(PipeWireRuntime &runtime) {
   signalRateChange(runtime);
 }
 
+static std::string rateTransitionReadinessDetail(
+    PipeWireRuntime &runtime) {
+  return "captureReady=" + std::to_string(runtime.captureReady) +
+         ", captureFormatReady=" +
+         std::to_string(runtime.captureFormatReady) +
+         ", playbackReady=" +
+         std::to_string(runtime.playbackReady) +
+         ", playbackFormatReady=" +
+         std::to_string(runtime.playbackFormatReady) +
+         ", volumeReady=" + std::to_string(runtime.volumeReady) +
+         ", captureAlwaysProcess=" +
+         std::to_string(runtime.captureAlwaysProcess) +
+         ", captureSchedulingSyncPending=" +
+         std::to_string(runtime.captureSchedulingSyncPending) +
+         ", volumeSyncSequence=" +
+         std::to_string(runtime.virtualVolumeSyncSequence) +
+         ", pendingTrackingSyncs=" +
+         std::to_string(runtime.trackingSyncRequests.size()) +
+         ", defaultSinkTransition=" +
+         std::to_string(static_cast<int>(
+             runtime.defaultSinkTransition)) +
+         ", target=" + currentPlaybackTarget(runtime);
+}
+
 static void rateTransitionTimedOut(void *data, std::uint64_t) {
   auto &runtime = *static_cast<PipeWireRuntime *>(data);
   if (runtime.rateTransition.phase == RateTransitionPhase::idle) {
@@ -2002,11 +2501,13 @@ static void rateTransitionTimedOut(void *data, std::uint64_t) {
   if (runtime.rateTransition.phase == RateTransitionPhase::rollingBack) {
     fatalRateRollback(
         runtime,
-        "timed out while restoring the previous PipeWire format");
+        "timed out while restoring the previous PipeWire format (" +
+            rateTransitionReadinessDetail(runtime) + ")");
     return;
   }
   runtime.rateTransition.failure =
-      "timed out while negotiating the requested PipeWire format";
+      "timed out while negotiating the requested PipeWire format (" +
+      rateTransitionReadinessDetail(runtime) + ")";
   beginRateRollback(runtime);
 }
 
@@ -2062,9 +2563,15 @@ static void applyTrackedTarget(PipeWireRuntime &runtime) {
       ((target.empty() && runtime.playbackStream == nullptr) ||
        (!target.empty() && runtime.playbackStream != nullptr))) {
     if (target.empty()) {
+      runtime.volumeReady = false;
+      runtime.volumeTarget.clear();
       maybeReleaseDefaultSink(runtime);
+    } else if (!runtime.volumeReady) {
+      static_cast<void>(synchronizeSelectedOutputVolume(runtime));
     }
     requestAutomaticRateUpdate(runtime);
+    maybeActivateDefaultSink(runtime);
+    finishReadinessCheck(runtime);
     return;
   }
   if (runtime.playbackStream != nullptr) {
@@ -2077,8 +2584,16 @@ static void applyTrackedTarget(PipeWireRuntime &runtime) {
     auto lock = std::scoped_lock(runtime.playbackTargetMutex);
     runtime.playbackTarget = target;
   }
+  runtime.volumeReady = false;
+  runtime.pendingVirtualVolume = false;
   requestControlStatusUpdate(runtime);
   if (!target.empty()) {
+    if (!synchronizeSelectedOutputVolume(runtime)) {
+      signalVolumeChange(runtime);
+      requestAutomaticRateUpdate(runtime);
+      maybeReleaseDefaultSink(runtime);
+      return;
+    }
     const auto playbackError = createPlaybackStream(runtime, target);
     if (!playbackError.empty()) {
       reportStreamFailure(runtime, playbackError);
@@ -2111,7 +2626,7 @@ static void maybeReleaseDefaultSink(PipeWireRuntime &runtime) {
 static void maybeActivateDefaultSink(PipeWireRuntime &runtime) {
   if (!runtime.options.manageDefaultSink || runtime.shutdownRequested ||
       !runtime.trackingReady || !runtime.captureReady ||
-      !runtime.playbackReady ||
+      !runtime.playbackReady || !runtime.volumeReady ||
       runtime.defaultSinkTransition == DefaultSinkTransition::activating ||
       runtime.defaultSinkTransition == DefaultSinkTransition::releasing ||
       runtime.defaultSinkTransition == DefaultSinkTransition::restoring ||
@@ -2597,6 +3112,15 @@ static void outputChangeRequested(void *data, std::uint64_t) {
   applyTrackedTarget(runtime);
 }
 
+static void volumeChangeRequested(void *data, std::uint64_t) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  static_cast<void>(synchronizeSelectedOutputVolume(runtime));
+  applyTrackedTarget(runtime);
+  maybeFinishRateTransition(runtime);
+  maybeActivateDefaultSink(runtime);
+  finishReadinessCheck(runtime);
+}
+
 static bool createControlServer(PipeWireRuntime &runtime) {
   if (runtime.options.controlSocketPath.empty()) {
     return true;
@@ -2632,6 +3156,15 @@ static bool createMainLoop(PipeWireRuntime &runtime) {
                             -errno));
     return false;
   }
+  runtime.volumeChangeSource =
+      pw_loop_add_event(pw_main_loop_get_loop(runtime.mainLoop),
+                        volumeChangeRequested, &runtime);
+  if (runtime.volumeChangeSource == nullptr) {
+    failRuntime(runtime,
+                systemError("cannot create PipeWire volume-change event",
+                            -errno));
+    return false;
+  }
   runtime.rateChangeSource =
       pw_loop_add_event(pw_main_loop_get_loop(runtime.mainLoop),
                         rateChangeRequested, &runtime);
@@ -2656,6 +3189,7 @@ static bool createMainLoop(PipeWireRuntime &runtime) {
 static bool createStreams(PipeWireRuntime &runtime) {
   runtime.captureEvents.version = PW_VERSION_STREAM_EVENTS;
   runtime.captureEvents.state_changed = streamStateChanged;
+  runtime.captureEvents.control_info = streamControlChanged;
   runtime.captureEvents.param_changed = streamParameterChanged;
   runtime.captureEvents.process = captureProcess;
   runtime.playbackEvents.version = PW_VERSION_STREAM_EVENTS;

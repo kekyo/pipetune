@@ -58,8 +58,7 @@ static void reportReadyToParent(void *userData) {
 
 static bool responseHasLivePreset(std::string_view response,
                                   const std::filesystem::path &presetPath,
-                                  std::size_t expectedWarningCount,
-                                  bool expectedDefaultSinkActive) {
+                                  std::size_t expectedWarningCount) {
   auto *document = yyjson_read(response.data(), response.size(), 0);
   if (document == nullptr) {
     return false;
@@ -68,17 +67,11 @@ static bool responseHasLivePreset(std::string_view response,
   auto *preset = yyjson_is_obj(root) ? yyjson_obj_get(root, "preset") : nullptr;
   auto *warnings =
       yyjson_is_obj(root) ? yyjson_obj_get(root, "warnings") : nullptr;
-  auto *defaultSinkActive =
-      yyjson_is_obj(root)
-          ? yyjson_obj_get(root, "defaultSinkActive")
-          : nullptr;
   const auto matches =
       yyjson_is_str(preset) &&
       std::string_view(yyjson_get_str(preset), yyjson_get_len(preset)) ==
       presetPath.string() &&
       yyjson_get_uint(yyjson_obj_get(root, "activePluginCount")) == 1 &&
-      yyjson_is_bool(defaultSinkActive) &&
-      yyjson_get_bool(defaultSinkActive) == expectedDefaultSinkActive &&
       yyjson_is_arr(warnings) &&
       yyjson_arr_size(warnings) == expectedWarningCount;
   yyjson_doc_free(document);
@@ -224,8 +217,7 @@ static bool testOrderlySignalShutdown(
   if (!check(load.error.empty(), load.error) ||
       !check(pipetune::inspectControlResponse(load.response).success,
              "live preset request failed") ||
-      !check(responseHasLivePreset(load.response, replacementPresetPath, 1,
-                                   true),
+      !check(responseHasLivePreset(load.response, replacementPresetPath, 1),
              "live preset response does not report the active replacement")) {
     kill(child, SIGTERM);
     auto childStatus = 0;
@@ -244,7 +236,7 @@ static bool testOrderlySignalShutdown(
              "missing live preset must be rejected") ||
       !check(statusAfterFailure.error.empty(), statusAfterFailure.error) ||
       !check(responseHasLivePreset(statusAfterFailure.response,
-                                   replacementPresetPath, 0, true),
+                                   replacementPresetPath, 0),
              "failed loading must leave the previous preset active")) {
     kill(child, SIGTERM);
     auto childStatus = 0;

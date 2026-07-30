@@ -18,7 +18,8 @@ static pipetune::OutputDevice device(std::uint32_t id, std::string name,
           .name = std::move(name),
           .description = std::move(description),
           .priority = priority,
-          .virtualNode = virtualNode};
+          .virtualNode = virtualNode,
+          .volumeControlAvailable = true};
 }
 
 static bool testAutomaticDefaultAndFallback() {
@@ -281,6 +282,42 @@ static bool testSampleRateStateFollowsSelectedDevice() {
                "presentation copy must include device rate state");
 }
 
+static bool testVolumeControlAvailabilityDrivesFallbackAndRecovery() {
+  auto tracker = pipetune::OutputDeviceTracker("pipetune_sink", "usb");
+  auto speaker = device(10, "speaker", "Speakers", 100);
+  auto usb = device(20, "usb", "USB DAC", 200);
+  usb.volumeControlAvailable = false;
+  tracker.updateDevice(std::move(speaker));
+  tracker.updateDevice(std::move(usb));
+  tracker.setDefaultTarget("speaker");
+  tracker.commitSelection();
+
+  if (!check(tracker.selectedTarget() == "speaker" &&
+                 tracker.selectionReason() ==
+                     pipetune::OutputSelectionReason::fallback,
+             "unsupported preference must fall back to a controllable sink") ||
+      !check(tracker.availableDevices().size() == 1,
+             "unsupported sink must not be listed as available") ||
+      !check(tracker.updateVolumeControlAvailability(20, true),
+             "restored volume support must be observable") ||
+      !check(tracker.selectedTarget() == "usb" &&
+                 tracker.selectionReason() ==
+                     pipetune::OutputSelectionReason::preferred,
+             "restored preferred sink must be selected")) {
+    return false;
+  }
+
+  return check(
+             tracker.updateVolumeControlAvailability(20, false),
+             "lost volume support must be observable") &&
+         check(tracker.selectedTarget() == "speaker" &&
+                   tracker.selectionReason() ==
+                       pipetune::OutputSelectionReason::fallback,
+               "lost volume support must activate the fallback") &&
+         check(!tracker.updateVolumeControlAvailability(20, false),
+               "unchanged volume support must not report a change");
+}
+
 int main() {
   const auto passed = testAutomaticDefaultAndFallback() &&
                       testInitialEnumerationChoosesHighestPriority() &&
@@ -289,6 +326,7 @@ int main() {
                       testDefaultChangesWhilePreferredTargetIsActive() &&
                       testInitialPriorityTieBreak() &&
                       testAvailableDevicesAreSortedForPresentation() &&
-                      testSampleRateStateFollowsSelectedDevice();
+                      testSampleRateStateFollowsSelectedDevice() &&
+                      testVolumeControlAvailabilityDrivesFallbackAndRecovery();
   return passed ? 0 : 1;
 }

@@ -237,7 +237,7 @@ add_library(
   src/pipewire_buffer_io.cpp
   src/pipewire_idle_epoch.cpp
   src/pipewire_rate_parser.cpp
-  src/pipewire_volume_smoother.cpp
+  src/pipewire_volume_state.cpp
   src/pipewire_pipeline.cpp
   src/process_runner.cpp
   src/rate_command.cpp
@@ -581,6 +581,28 @@ if(BUILD_TESTING)
     pipetune_pipewire_pipeline_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 20)
 
   add_executable(
+    pipetune_pipewire_volume_routing_tests
+    test/pipewire_volume_routing_test.cpp)
+  target_include_directories(
+    pipetune_pipewire_volume_routing_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_pipewire_volume_routing_tests PRIVATE pipetune_pipewire)
+  if(MSVC)
+    target_compile_options(
+      pipetune_pipewire_volume_routing_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_pipewire_volume_routing_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_pipewire_volume_routing_tests
+    COMMAND pipetune_pipewire_volume_routing_tests)
+  set_tests_properties(
+    pipetune_pipewire_volume_routing_tests
+    PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+
+  add_executable(
     pipetune_command_line_tests
     test/command_line_test.cpp)
   target_include_directories(pipetune_command_line_tests PRIVATE src)
@@ -793,24 +815,24 @@ if(BUILD_TESTING)
     COMMAND pipetune_pipewire_rate_parser_tests)
 
   add_executable(
-    pipetune_pipewire_volume_smoother_tests
-    test/pipewire_volume_smoother_test.cpp)
+    pipetune_pipewire_volume_state_tests
+    test/pipewire_volume_state_test.cpp)
   target_include_directories(
-    pipetune_pipewire_volume_smoother_tests PRIVATE src)
+    pipetune_pipewire_volume_state_tests PRIVATE src)
   target_link_libraries(
-    pipetune_pipewire_volume_smoother_tests
+    pipetune_pipewire_volume_state_tests
     PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE)
   if(MSVC)
     target_compile_options(
-      pipetune_pipewire_volume_smoother_tests PRIVATE /W4 /WX)
+      pipetune_pipewire_volume_state_tests PRIVATE /W4 /WX)
   else()
     target_compile_options(
-      pipetune_pipewire_volume_smoother_tests PRIVATE
+      pipetune_pipewire_volume_state_tests PRIVATE
       -Wall -Wextra -Wpedantic -Werror)
   endif()
   add_test(
-    NAME pipetune_pipewire_volume_smoother_tests
-    COMMAND pipetune_pipewire_volume_smoother_tests)
+    NAME pipetune_pipewire_volume_state_tests
+    COMMAND pipetune_pipewire_volume_state_tests)
 
   add_executable(
     pipetune_pipewire_buffer_io_tests
