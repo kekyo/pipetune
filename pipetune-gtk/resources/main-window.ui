@@ -467,6 +467,86 @@
         </child>
         <child>
           <object class="GtkLabel">
+            <property name="label">&lt;b&gt;DSP backend&lt;/b&gt;</property>
+            <property name="use-markup">True</property>
+            <property name="xalign">0</property>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">False</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkGrid" id="dspBackendGrid">
+            <property name="column-spacing">8</property>
+            <property name="row-spacing">8</property>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Native engine</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+              <packing>
+                <property name="left-attach">0</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkComboBoxText" id="dspBackendCombo">
+                <property name="hexpand">True</property>
+                <property name="tooltip-text">Choose the scalar compatibility backend or the CPU-validated SIMD backend</property>
+              </object>
+              <packing>
+                <property name="left-attach">1</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkButton" id="dspBackendApplyButton">
+                <property name="label">Save for Next Start</property>
+              </object>
+              <packing>
+                <property name="left-attach">2</property>
+                <property name="top-attach">0</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel">
+                <property name="label">Effective backend</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+              <packing>
+                <property name="left-attach">0</property>
+                <property name="top-attach">1</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkLabel" id="dspBackendStatusLabel">
+                <property name="label">Effective backend unavailable</property>
+                <property name="xalign">0</property>
+                <property name="selectable">True</property>
+                <property name="wrap">True</property>
+                <property name="hexpand">True</property>
+              </object>
+              <packing>
+                <property name="left-attach">1</property>
+                <property name="top-attach">1</property>
+                <property name="width">2</property>
+              </packing>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">True</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkLabel">
             <property name="label">&lt;b&gt;PCM rate&lt;/b&gt;</property>
             <property name="use-markup">True</property>
             <property name="xalign">0</property>
@@ -731,7 +811,7 @@
             <property name="column-spacing">12</property>
             <child>
               <object class="GtkLabel">
-                <property name="label">Restore Bypass, system-default output, and Max + Suggest.</property>
+                <property name="label">Restore Bypass, system-default output, Max + Suggest, and the Scalar DSP backend.</property>
                 <property name="xalign">0</property>
                 <property name="wrap">True</property>
                 <property name="hexpand">True</property>

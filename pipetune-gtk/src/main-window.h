@@ -39,6 +39,12 @@ struct MainWindowUi {
   GtkWidget *rateApplyButton = nullptr;
   /** Final input/DSP, output, and active physical rates. */
   GtkWidget *rateStatusLabel = nullptr;
+  /** Scalar compatibility or SIMD acceleration backend drop-down. */
+  GtkWidget *dspBackendCombo = nullptr;
+  /** Applies and persists the edited native DSP backend. */
+  GtkWidget *dspBackendApplyButton = nullptr;
+  /** Configured, effective, and fallback backend state. */
+  GtkWidget *dspBackendStatusLabel = nullptr;
   /** Selected output target text. */
   GtkWidget *targetLabel = nullptr;
   /** Engine-owned output-selection reason text. */

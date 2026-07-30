@@ -1,6 +1,8 @@
 #include "application-state.h"
 #include "configuration-reset-client.h"
 #include "control-client.h"
+#include "dsp-backend-operation.h"
+#include "dsp-backend-selection-model.h"
 #include "installed-presets.h"
 #include "installed-tools.h"
 #include "launch-options.h"
@@ -68,6 +70,13 @@ struct GtkRuntime {
   bool updatingRateControls;
   bool rateEditDirty;
   bool rateChangePending;
+  pipetune::DspBackendKind startupDspBackend;
+  pipetune::DspBackendKind editedDspBackend;
+  pipetune::DspBackendKind pendingDspBackend;
+  std::vector<DspBackendChoice> dspBackendChoices;
+  bool updatingDspBackendControls;
+  bool dspBackendEditDirty;
+  bool dspBackendChangePending;
   guint reconnectSource;
   bool applicationHeld;
   bool activationHandled;
@@ -161,6 +170,11 @@ static std::string noticeText(
   }
   if (state.hasRuntimeStatus && !state.runtime.rateError.empty()) {
     appendNotice(notice, "PCM rate: " + state.runtime.rateError);
+  }
+  if (state.hasRuntimeStatus &&
+      !state.runtime.dspBackendError.empty()) {
+    appendNotice(notice, "DSP backend: " +
+                             state.runtime.dspBackendError);
   }
   for (const auto &warning : state.warnings) {
     appendNotice(
@@ -292,6 +306,58 @@ static void renderRateSelection(GtkRuntime *runtime) {
                            canEdit && runtime->rateEditDirty);
 }
 
+static pipetune::DspBackendKind displayedDspBackend(
+    const GtkRuntime &runtime) {
+  if (runtime.state.connection == ControlConnectionState::connected &&
+      runtime.state.hasRuntimeStatus) {
+    return runtime.state.runtime.configuredDspBackend;
+  }
+  return runtime.startupDspBackend;
+}
+
+static void renderDspBackendSelection(GtkRuntime *runtime) {
+  if (!runtime->dspBackendEditDirty &&
+      !runtime->dspBackendChangePending) {
+    runtime->editedDspBackend = displayedDspBackend(*runtime);
+  }
+  const auto presentation =
+      makeDspBackendSelectionPresentation(
+          runtime->state, runtime->editedDspBackend);
+
+  runtime->updatingDspBackendControls = true;
+  runtime->dspBackendChoices = presentation.choices;
+  gtk_combo_box_text_remove_all(
+      GTK_COMBO_BOX_TEXT(runtime->ui.dspBackendCombo));
+  for (const auto &choice : runtime->dspBackendChoices) {
+    gtk_combo_box_text_append_text(
+        GTK_COMBO_BOX_TEXT(runtime->ui.dspBackendCombo),
+        choice.label.c_str());
+  }
+  gtk_combo_box_set_active(
+      GTK_COMBO_BOX(runtime->ui.dspBackendCombo),
+      static_cast<gint>(presentation.activeIndex));
+  runtime->updatingDspBackendControls = false;
+
+  gtk_label_set_text(
+      GTK_LABEL(runtime->ui.dspBackendStatusLabel),
+      presentation.effectiveBackend.c_str());
+  const auto connected =
+      runtime->state.connection == ControlConnectionState::connected;
+  const auto canEdit =
+      !runtime->startupConfigPath.empty() &&
+      !runtime->state.operationPending &&
+      !runtime->dspBackendChangePending &&
+      (!connected || presentation.sensitive);
+  gtk_widget_set_sensitive(runtime->ui.dspBackendCombo, canEdit);
+  gtk_button_set_label(
+      GTK_BUTTON(runtime->ui.dspBackendApplyButton),
+      connected ? "Apply and Save" : "Save for Next Start");
+  gtk_widget_set_sensitive(
+      runtime->ui.dspBackendApplyButton,
+      canEdit && runtime->dspBackendEditDirty &&
+          (!connected || presentation.selectedBackendAvailable));
+}
+
 static void render(GtkRuntime *runtime) {
   if (runtime == nullptr || runtime->ui.window == nullptr) {
     return;
@@ -345,6 +411,7 @@ static void render(GtkRuntime *runtime) {
   gtk_label_set_text(GTK_LABEL(runtime->ui.pluginCountLabel),
                      pluginCount.c_str());
   renderOutputSelection(runtime);
+  renderDspBackendSelection(runtime);
   renderRateSelection(runtime);
   const auto defaultSink =
       runtime->state.hasRuntimeStatus
@@ -567,7 +634,8 @@ static void onConfigurationResetClicked(GtkButton *,
   gtk_message_dialog_format_secondary_text(
       GTK_MESSAGE_DIALOG(dialog), "%s",
       "This selects Bypass, follows the system-default output, and uses "
-      "Max + Suggest. The PipeTune service will restart if it is running.");
+      "Max + Suggest with the Scalar DSP backend. The PipeTune service will "
+      "restart if it is running.");
   gtk_dialog_add_button(GTK_DIALOG(dialog), "Cancel",
                         GTK_RESPONSE_CANCEL);
   gtk_dialog_add_button(GTK_DIALOG(dialog), "Reset",
@@ -732,6 +800,100 @@ static void onRateApplyClicked(GtkButton *, gpointer userData) {
   render(runtime);
   setControlRateAsync(runtime->controlClient,
                       runtime->pendingRatePolicy, onRateReply, runtime);
+}
+
+static void updateDspBackendEditDirty(GtkRuntime *runtime) {
+  runtime->dspBackendEditDirty =
+      runtime->editedDspBackend != displayedDspBackend(*runtime);
+}
+
+static void onDspBackendChanged(GtkComboBox *combo,
+                                gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (runtime->updatingDspBackendControls ||
+      runtime->dspBackendChangePending ||
+      runtime->state.operationPending) {
+    return;
+  }
+  const auto selected = gtk_combo_box_get_active(combo);
+  if (selected < 0 ||
+      static_cast<std::size_t>(selected) >=
+          runtime->dspBackendChoices.size()) {
+    return;
+  }
+  runtime->editedDspBackend =
+      runtime
+          ->dspBackendChoices[static_cast<std::size_t>(selected)]
+          .kind;
+  updateDspBackendEditDirty(runtime);
+  render(runtime);
+}
+
+static void onDspBackendReply(const ControlClientReply &reply,
+                              void *userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  const auto completion = completeDspBackendOperation(
+      runtime->state, reply,
+      {.configPath = runtime->startupConfigPath,
+       .kind = runtime->pendingDspBackend},
+      currentMonotonicMilliseconds());
+  runtime->dspBackendChangePending = false;
+  if (completion.persistenceApplied) {
+    runtime->startupDspBackend = runtime->pendingDspBackend;
+  }
+  runtime->dspBackendEditDirty = !completion.persistenceApplied;
+  if (completion.liveApplied) {
+    runtime->editedDspBackend =
+        reply.response.status.configuredDspBackend;
+  }
+  if (completion.reconnectRequired) {
+    scheduleReconnect(runtime);
+  }
+  render(runtime);
+}
+
+static void onDspBackendApplyClicked(GtkButton *,
+                                     gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (!runtime->dspBackendEditDirty ||
+      runtime->dspBackendChangePending ||
+      runtime->state.operationPending) {
+    return;
+  }
+  const auto presentation =
+      makeDspBackendSelectionPresentation(
+          runtime->state, runtime->editedDspBackend);
+  const auto connected =
+      runtime->state.connection == ControlConnectionState::connected;
+  if (connected &&
+      (!presentation.sensitive ||
+       !presentation.selectedBackendAvailable)) {
+    return;
+  }
+
+  clearControlNotice(runtime->state);
+  runtime->pendingDspBackend = runtime->editedDspBackend;
+  runtime->dspBackendChangePending = true;
+  if (!connected) {
+    const auto completion =
+        persistDspBackendOperationForNextStart(
+            runtime->state,
+            {.configPath = runtime->startupConfigPath,
+             .kind = runtime->pendingDspBackend});
+    runtime->dspBackendChangePending = false;
+    if (completion.persistenceApplied) {
+      runtime->startupDspBackend = runtime->pendingDspBackend;
+      runtime->dspBackendEditDirty = false;
+    }
+    render(runtime);
+    return;
+  }
+
+  setControlOperationPending(runtime->state, true);
+  render(runtime);
+  setControlDspBackendAsync(
+      runtime->controlClient, runtime->pendingDspBackend,
+      onDspBackendReply, runtime);
 }
 
 static std::string savePendingPreset(GtkRuntime *runtime) {
@@ -1091,6 +1253,10 @@ static void connectMainWindowSignals(GtkRuntime *runtime) {
                    G_CALLBACK(onRateEnforcementChanged), runtime);
   g_signal_connect(runtime->ui.rateApplyButton, "clicked",
                    G_CALLBACK(onRateApplyClicked), runtime);
+  g_signal_connect(runtime->ui.dspBackendCombo, "changed",
+                   G_CALLBACK(onDspBackendChanged), runtime);
+  g_signal_connect(runtime->ui.dspBackendApplyButton, "clicked",
+                   G_CALLBACK(onDspBackendApplyClicked), runtime);
   g_signal_connect(runtime->ui.presetCombo, "changed",
                    G_CALLBACK(onPresetComboChanged), runtime);
   g_signal_connect(runtime->ui.presetChooser, "file-set",
@@ -1158,6 +1324,10 @@ static std::string reloadStartupConfig(GtkRuntime *runtime,
   runtime->editedRatePolicy = loaded.ratePolicy;
   runtime->pendingRatePolicy = loaded.ratePolicy;
   runtime->rateEditDirty = false;
+  runtime->startupDspBackend = loaded.dspBackend;
+  runtime->editedDspBackend = loaded.dspBackend;
+  runtime->pendingDspBackend = loaded.dspBackend;
+  runtime->dspBackendEditDirty = false;
   runtime->pendingPreset.clear();
 
   if (resetSelections) {
@@ -1353,6 +1523,13 @@ static int runApplication(int argc, char **argv) {
       .updatingRateControls = false,
       .rateEditDirty = false,
       .rateChangePending = false,
+      .startupDspBackend = pipetune::DspBackendKind::scalar,
+      .editedDspBackend = pipetune::DspBackendKind::scalar,
+      .pendingDspBackend = pipetune::DspBackendKind::scalar,
+      .dspBackendChoices = {},
+      .updatingDspBackendControls = false,
+      .dspBackendEditDirty = false,
+      .dspBackendChangePending = false,
       .reconnectSource = 0,
       .applicationHeld = false,
       .activationHandled = false,

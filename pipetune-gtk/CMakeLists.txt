@@ -67,6 +67,8 @@ add_library(
   src/application-state.cpp
   src/configuration-reset-client.cpp
   src/control-client.cpp
+  src/dsp-backend-operation.cpp
+  src/dsp-backend-selection-model.cpp
   src/output-operation.cpp
   src/output-selection-model.cpp
   src/rate-operation.cpp
@@ -299,6 +301,45 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_gtk_rate_operation_tests
     COMMAND pipetune_gtk_rate_operation_tests)
+
+  add_executable(
+    pipetune_gtk_dsp_backend_selection_model_tests
+    test/dsp-backend-selection-model-test.cpp)
+  target_link_libraries(
+    pipetune_gtk_dsp_backend_selection_model_tests
+    PRIVATE pipetune_gtk_core)
+  if(MSVC)
+    target_compile_options(
+      pipetune_gtk_dsp_backend_selection_model_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_dsp_backend_selection_model_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_gtk_dsp_backend_selection_model_tests
+    COMMAND pipetune_gtk_dsp_backend_selection_model_tests)
+
+  add_executable(
+    pipetune_gtk_dsp_backend_operation_tests
+    test/dsp-backend-operation-test.cpp)
+  target_link_libraries(
+    pipetune_gtk_dsp_backend_operation_tests
+    PRIVATE pipetune_gtk_core)
+  add_dependencies(
+    pipetune_gtk_dsp_backend_operation_tests
+    pipetune_test_dsp_backend_copies)
+  if(MSVC)
+    target_compile_options(
+      pipetune_gtk_dsp_backend_operation_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_dsp_backend_operation_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_gtk_dsp_backend_operation_tests
+    COMMAND pipetune_gtk_dsp_backend_operation_tests)
 
   add_executable(
     pipetune_gtk_preset_catalog_tests

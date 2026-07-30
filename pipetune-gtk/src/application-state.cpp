@@ -237,6 +237,8 @@ TrayVisualState trayVisualState(const ApplicationState &state) {
       !state.runtime.configurationError.empty() ||
       !state.runtime.rateError.empty() ||
       state.runtime.rateTransitioning ||
+      state.runtime.dspBackendFallback ||
+      !state.runtime.dspBackendError.empty() ||
       !state.runtime.defaultSinkActive ||
       state.runtime.selectedTarget.empty() ||
       state.runtime.overrunFrames != 0 ||

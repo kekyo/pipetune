@@ -39,6 +39,12 @@ static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
                "rate apply button type differs") &&
          check(GTK_IS_LABEL(ui.rateStatusLabel),
                "rate status label type differs") &&
+         check(GTK_IS_COMBO_BOX_TEXT(ui.dspBackendCombo),
+               "DSP backend combo-box type differs") &&
+         check(GTK_IS_BUTTON(ui.dspBackendApplyButton),
+               "DSP backend apply button type differs") &&
+         check(GTK_IS_LABEL(ui.dspBackendStatusLabel),
+               "DSP backend status label type differs") &&
          check(GTK_IS_LABEL(ui.targetLabel),
                "target label type differs") &&
          check(GTK_IS_LABEL(ui.outputReasonLabel),
@@ -159,6 +165,10 @@ int main(int argc, char **argv) {
                 gtk_button_get_label(GTK_BUTTON(ui.resetButton))) ==
                 "Reset Configuration…",
             "configuration reset button label differs") &&
+      check(std::string_view(gtk_button_get_label(
+                GTK_BUTTON(ui.dspBackendApplyButton))) ==
+                "Save for Next Start",
+            "DSP backend apply button label differs") &&
       check(gtk_widget_get_hexpand(ui.statusLabel) != FALSE,
             "status label must expand");
   gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ui.outputCombo),
@@ -169,6 +179,15 @@ int main(int argc, char **argv) {
   const auto selectionWorks =
       check(gtk_combo_box_get_active(GTK_COMBO_BOX(ui.outputCombo)) == 1,
             "output combo-box selection differs");
+  gtk_combo_box_text_append_text(
+      GTK_COMBO_BOX_TEXT(ui.dspBackendCombo), "Scalar");
+  gtk_combo_box_text_append_text(
+      GTK_COMBO_BOX_TEXT(ui.dspBackendCombo), "SIMD");
+  gtk_combo_box_set_active(GTK_COMBO_BOX(ui.dspBackendCombo), 1);
+  const auto backendSelectionWorks =
+      check(gtk_combo_box_get_active(
+                GTK_COMBO_BOX(ui.dspBackendCombo)) == 1,
+            "DSP backend combo-box selection differs");
 
   gtk_widget_hide(ui.window);
   pipetune_gtk::presentMainWindow(ui, 1234);
@@ -178,5 +197,8 @@ int main(int argc, char **argv) {
 
   pipetune_gtk::destroyMainWindowUi(ui);
   g_object_unref(application);
-  return valid && selectionWorks && presentationWorks ? 0 : 1;
+  return valid && selectionWorks && backendSelectionWorks &&
+                 presentationWorks
+             ? 0
+             : 1;
 }

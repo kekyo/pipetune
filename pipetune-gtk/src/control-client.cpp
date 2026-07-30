@@ -528,4 +528,12 @@ void setControlRateAsync(ControlClient *client,
                userData);
 }
 
+void setControlDspBackendAsync(ControlClient *client,
+                               pipetune::DspBackendKind kind,
+                               ControlClientReplyCallback callback,
+                               void *userData) {
+  startRequest(client, pipetune::makeSetDspBackendControlRequest(kind),
+               callback, userData);
+}
+
 } // namespace pipetune_gtk

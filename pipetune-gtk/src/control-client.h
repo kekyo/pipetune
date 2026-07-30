@@ -169,6 +169,19 @@ void setControlRateAsync(ControlClient *client,
                          ControlClientReplyCallback callback,
                          void *userData);
 
+/**
+ * Requests a live native DSP backend change.
+ *
+ * @param client Client used for the request.
+ * @param kind Scalar compatibility or SIMD acceleration backend.
+ * @param callback Non-null completion callback.
+ * @param userData Opaque callback argument.
+ */
+void setControlDspBackendAsync(ControlClient *client,
+                               pipetune::DspBackendKind kind,
+                               ControlClientReplyCallback callback,
+                               void *userData);
+
 } // namespace pipetune_gtk
 
 #endif

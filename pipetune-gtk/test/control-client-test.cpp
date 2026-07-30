@@ -20,6 +20,7 @@ struct ServerState {
   bool bypassed;
   std::string preferredTarget;
   pipetune::SampleRatePolicy ratePolicy;
+  pipetune::DspBackendKind dspBackend;
 };
 
 static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
@@ -74,7 +75,22 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
           .rateFallback =
               state.ratePolicy.mode == pipetune::SampleRateMode::fixed &&
               state.ratePolicy.fixedRate != 96000,
-          .rateError = {}};
+          .rateError = {},
+          .configuredDspBackend = state.dspBackend,
+          .effectiveDspBackend = state.dspBackend,
+          .dspBackendFallback = false,
+          .dspBackendError = {},
+          .availableDspBackends =
+              {{
+                  {.kind = pipetune::DspBackendKind::scalar,
+                   .available = true,
+                   .cpuRequirement = "none",
+                   .error = {}},
+                  {.kind = pipetune::DspBackendKind::simd,
+                   .available = true,
+                   .cpuRequirement = "test SIMD ISA",
+                   .error = {}},
+              }}};
 }
 
 static std::string provideStatus(void *userData) {
@@ -148,6 +164,17 @@ static pipetune::ControlMessageResult handleRequest(
             .connectionMode = pipetune::ControlConnectionMode::close,
             .publishStatus = true};
   }
+  if (request.request.command ==
+      pipetune::ControlCommand::setDspBackend) {
+    {
+      auto lock = std::scoped_lock(state.mutex);
+      state.dspBackend = request.request.dspBackend;
+    }
+    return {.response = pipetune::makeControlSuccessResponse(
+                serverStatus(state), {}),
+            .connectionMode = pipetune::ControlConnectionMode::close,
+            .publishStatus = true};
+  }
   return {.response =
               pipetune::makeControlSuccessResponse(serverStatus(state), {}),
           .connectionMode = pipetune::ControlConnectionMode::close,
@@ -173,6 +200,9 @@ struct ClientTestState {
   bool setRateRequested;
   bool setRateReply;
   bool publishedSetRate;
+  bool setDspBackendRequested;
+  bool setDspBackendReply;
+  bool publishedSetDspBackend;
   bool disconnected;
   bool timedOut;
   bool failed;
@@ -189,13 +219,15 @@ static void maybeStopServer(ClientTestState &state) {
       state.publishedBypass && state.setOutputReply &&
       state.publishedSetOutput && state.clearOutputReply &&
       state.publishedClearOutput && state.setRateReply &&
-      state.publishedSetRate && *state.server != nullptr) {
+      state.publishedSetRate && state.setDspBackendReply &&
+      state.publishedSetDspBackend && *state.server != nullptr) {
     g_idle_add(stopServer, &state);
   }
 }
 
 static void maybeStartClearOutput(ClientTestState &state);
 static void maybeStartSetRate(ClientTestState &state);
+static void maybeStartSetDspBackend(ClientTestState &state);
 
 static void onSetOutputReply(
     const pipetune_gtk::ControlClientReply &reply, void *userData) {
@@ -244,6 +276,35 @@ static void onSetRateReply(
     state.failed = true;
   } else {
     state.setRateReply = true;
+  }
+  maybeStartSetDspBackend(state);
+}
+
+static void onSetDspBackendReply(
+    const pipetune_gtk::ControlClientReply &reply, void *userData) {
+  auto &state = *static_cast<ClientTestState *>(userData);
+  if (!reply.transportError.empty() || !reply.response.valid ||
+      !reply.response.success ||
+      reply.response.status.configuredDspBackend !=
+          pipetune::DspBackendKind::simd ||
+      reply.response.status.effectiveDspBackend !=
+          pipetune::DspBackendKind::simd ||
+      reply.response.status.dspBackendFallback ||
+      !reply.response.status.dspBackendError.empty()) {
+    state.failed = true;
+  } else {
+    state.setDspBackendReply = true;
+  }
+  maybeStopServer(state);
+}
+
+static void maybeStartSetDspBackend(ClientTestState &state) {
+  if (state.setRateReply && state.publishedSetRate &&
+      !state.setDspBackendRequested) {
+    state.setDspBackendRequested = true;
+    pipetune_gtk::setControlDspBackendAsync(
+        state.client, pipetune::DspBackendKind::simd,
+        onSetDspBackendReply, &state);
   }
   maybeStopServer(state);
 }
@@ -350,8 +411,14 @@ static void onMessage(
         message.status.configuredRatePolicy.fixedRate == 192000 &&
         message.status.configuredRatePolicy.enforcement ==
             pipetune::SampleRateEnforcement::force) {
-      state.publishedSetRate = true;
-      maybeStopServer(state);
+      if (message.status.configuredDspBackend ==
+          pipetune::DspBackendKind::simd) {
+        state.publishedSetDspBackend = true;
+        maybeStopServer(state);
+      } else {
+        state.publishedSetRate = true;
+        maybeStartSetDspBackend(state);
+      }
       return;
     }
     if (!state.setOutputRequested) {
@@ -400,7 +467,8 @@ int main() {
                   .activePreset = "/tmp/initial.effetune_preset",
                   .bypassed = false,
                   .preferredTarget = {},
-                  .ratePolicy = pipetune::defaultSampleRatePolicy()};
+                  .ratePolicy = pipetune::defaultSampleRatePolicy(),
+                  .dspBackend = pipetune::DspBackendKind::scalar};
   auto started = pipetune::startControlServer(
       socketPath,
       {.handler = handleRequest,
@@ -432,6 +500,9 @@ int main() {
       .setRateRequested = false,
       .setRateReply = false,
       .publishedSetRate = false,
+      .setDspBackendRequested = false,
+      .setDspBackendReply = false,
+      .publishedSetDspBackend = false,
       .disconnected = false,
       .timedOut = false,
       .failed = false,
@@ -458,7 +529,8 @@ int main() {
       !state.publishedBypass || !state.setOutputReply ||
       !state.publishedSetOutput || !state.clearOutputReply ||
       !state.publishedClearOutput || !state.setRateReply ||
-      !state.publishedSetRate || !state.disconnected) {
+      !state.publishedSetRate || !state.setDspBackendReply ||
+      !state.publishedSetDspBackend || !state.disconnected) {
     std::cerr << "asynchronous control client lifecycle differs\n";
     return 1;
   }

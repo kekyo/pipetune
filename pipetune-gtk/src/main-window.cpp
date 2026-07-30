@@ -58,6 +58,15 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
           requiredWidget(builder, "rateApplyButton", GTK_TYPE_BUTTON),
       .rateStatusLabel =
           requiredWidget(builder, "rateStatusLabel", GTK_TYPE_LABEL),
+      .dspBackendCombo =
+          requiredWidget(builder, "dspBackendCombo",
+                         GTK_TYPE_COMBO_BOX_TEXT),
+      .dspBackendApplyButton =
+          requiredWidget(builder, "dspBackendApplyButton",
+                         GTK_TYPE_BUTTON),
+      .dspBackendStatusLabel =
+          requiredWidget(builder, "dspBackendStatusLabel",
+                         GTK_TYPE_LABEL),
       .targetLabel =
           requiredWidget(builder, "targetLabel", GTK_TYPE_LABEL),
       .outputReasonLabel =

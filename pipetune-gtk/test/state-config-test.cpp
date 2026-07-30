@@ -244,6 +244,15 @@ static bool testApplicationState() {
              "an active rate transition must request attention")) {
     return false;
   }
+  rateErrorState.runtime.rateTransitioning = false;
+  rateErrorState.runtime.dspBackendFallback = true;
+  rateErrorState.runtime.dspBackendError =
+      "SIMD backend is unavailable";
+  if (!check(pipetune_gtk::trayVisualState(rateErrorState) ==
+                 pipetune_gtk::TrayVisualState::attention,
+             "a DSP backend fallback must request attention")) {
+    return false;
+  }
 
   pipetune_gtk::markControlDisconnected(state, "daemon stopped");
   return check(state.connection ==
