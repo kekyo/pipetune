@@ -69,6 +69,28 @@ dsp_backend_names_for_deb_arch() {
 	esac
 }
 
+assert_dsp_backend_set() {
+	backend_directory=$1
+	backend_architecture=$2
+
+	for expected_backend in $(dsp_backend_names_for_deb_arch "$backend_architecture"); do
+		assert_file "$backend_directory/$expected_backend"
+	done
+	for backend_path in "$backend_directory"/libeffetune-dsp-*.so; do
+		[ -e "$backend_path" ] || continue
+		backend_name=${backend_path##*/}
+		backend_is_expected=0
+		for expected_backend in $(dsp_backend_names_for_deb_arch "$backend_architecture"); do
+			if [ "$backend_name" = "$expected_backend" ]; then
+				backend_is_expected=1
+				break
+			fi
+		done
+		[ "$backend_is_expected" -eq 1 ] ||
+			fail "Unexpected DSP backend: $backend_path"
+	done
+}
+
 copy_docs() {
 	stage_dir=$1
 	doc_dir="$stage_dir/usr/share/doc/$PIPETUNE_PACKAGE_NAME"
@@ -159,9 +181,7 @@ validate_installed_package() {
 	installed_arch=$(
 		dpkg-query -W -f='${Architecture}' "$PIPETUNE_PACKAGE_NAME"
 	)
-	for backend in $(dsp_backend_names_for_deb_arch "$installed_arch"); do
-		assert_file "/usr/lib/pipetune/$backend"
-	done
+	assert_dsp_backend_set "/usr/lib/pipetune" "$installed_arch"
 
 	effetune_version=$(
 		node --input-type=module -e \
@@ -244,9 +264,7 @@ chmod 0644 "$control_dir/control"
 
 assert_file "$stage_dir/usr/bin/pipetune"
 assert_file "$stage_dir/usr/bin/pipetune-gtk"
-for backend in $(dsp_backend_names_for_deb_arch "$deb_arch"); do
-	assert_file "$stage_dir/usr/lib/pipetune/$backend"
-done
+assert_dsp_backend_set "$stage_dir/usr/lib/pipetune" "$deb_arch"
 assert_file "$stage_dir/usr/lib/systemd/user/pipetune.service"
 assert_file "$stage_dir/usr/share/applications/net.kekyo.pipetune-gtk.desktop"
 assert_file "$stage_dir/etc/xdg/autostart/net.kekyo.pipetune-gtk.desktop"

@@ -572,6 +572,10 @@ printf '%s\\n' "$@" >"$PIPETUNE_TEST_WRAPPER_CAPTURE"
     temporaryRoot,
     "missing-isa-dsp-backend-stage",
   );
+  const unexpectedDspBackendStage = join(
+    temporaryRoot,
+    "unexpected-dsp-backend-stage",
+  );
   const goodPackage = join(temporaryRoot, "pipetune-good.deb");
   const badPackage = join(temporaryRoot, "pipetune-bad.deb");
   const missingDspBackendDocumentationPackage = join(
@@ -585,6 +589,10 @@ printf '%s\\n' "$@" >"$PIPETUNE_TEST_WRAPPER_CAPTURE"
   const missingIsaDspBackendPackage = join(
     temporaryRoot,
     "pipetune-missing-isa-dsp-backend.deb",
+  );
+  const unexpectedDspBackendPackage = join(
+    temporaryRoot,
+    "pipetune-unexpected-dsp-backend.deb",
   );
   createPackageStage(goodStage, true, true, true, hostDebianArchitecture);
   createPackageStage(badStage, false, true, true, hostDebianArchitecture);
@@ -614,6 +622,22 @@ printf '%s\\n' "$@" >"$PIPETUNE_TEST_WRAPPER_CAPTURE"
     hostDebianArchitecture,
     omittedIsaDspBackend,
   );
+  createPackageStage(
+    unexpectedDspBackendStage,
+    true,
+    true,
+    true,
+    hostDebianArchitecture,
+  );
+  const unexpectedDspBackend = "libeffetune-dsp-simd-unexpected.so";
+  copyFileSync(
+    "/bin/true",
+    join(
+      unexpectedDspBackendStage,
+      "usr/lib/pipetune",
+      unexpectedDspBackend,
+    ),
+  );
   for (const [stage, output] of [
     [goodStage, goodPackage],
     [badStage, badPackage],
@@ -623,6 +647,7 @@ printf '%s\\n' "$@" >"$PIPETUNE_TEST_WRAPPER_CAPTURE"
     ],
     [missingDspBackendsStage, missingDspBackendsPackage],
     [missingIsaDspBackendStage, missingIsaDspBackendPackage],
+    [unexpectedDspBackendStage, unexpectedDspBackendPackage],
   ]) {
     const built = run(
       dpkgDeb,
@@ -713,6 +738,22 @@ validate_deb_package "$2" "$3"
       "deb validation did not identify the missing ISA DSP backend",
     );
   }
+  const validateUnexpectedDspBackend = runSourced(
+    `
+VERSION=1.2.3
+validate_deb_package "$2" "$3"
+`,
+    [unexpectedDspBackendPackage, canonicalHostArchitecture],
+    process.env,
+  );
+  if (validateUnexpectedDspBackend.status === 0) {
+    fail("deb package with an unexpected ISA DSP backend passed validation");
+  }
+  assertIncludes(
+    validateUnexpectedDspBackend.stderr,
+    unexpectedDspBackend,
+    "deb validation did not identify the unexpected ISA DSP backend",
+  );
 } finally {
   rmSync(temporaryRoot, { recursive: true, force: true });
 }

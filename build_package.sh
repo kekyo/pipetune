@@ -367,6 +367,28 @@ dsp_backend_names_for_arch() {
 	esac
 }
 
+assert_dsp_backend_set() {
+	backend_directory=$1
+	backend_architecture=$2
+
+	for expected_backend in $(dsp_backend_names_for_arch "$backend_architecture"); do
+		assert_file "$backend_directory/$expected_backend"
+	done
+	for backend_path in "$backend_directory"/libeffetune-dsp-*.so; do
+		[ -e "$backend_path" ] || continue
+		backend_name=${backend_path##*/}
+		backend_is_expected=0
+		for expected_backend in $(dsp_backend_names_for_arch "$backend_architecture"); do
+			if [ "$backend_name" = "$expected_backend" ]; then
+				backend_is_expected=1
+				break
+			fi
+		done
+		[ "$backend_is_expected" -eq 1 ] ||
+			fail "Unexpected DSP backend: $backend_path"
+	done
+}
+
 deb_artifact_path() {
 	package_name=$1
 	distro=$2
@@ -537,9 +559,7 @@ validate_deb_package() {
 		usr/share/doc/pipetune/environment.example; do
 		assert_file "$tmp_dir/$required_file"
 	done
-	for backend in $(dsp_backend_names_for_arch "$expected_arch"); do
-		assert_file "$tmp_dir/usr/lib/pipetune/$backend"
-	done
+	assert_dsp_backend_set "$tmp_dir/usr/lib/pipetune" "$expected_arch"
 
 	readelf -h "$tmp_dir/usr/bin/pipetune" >"$tmp_dir/readelf-pipetune.txt"
 	assert_contains "$tmp_dir/readelf-pipetune.txt" "$(expected_elf_class "$expected_arch")"
