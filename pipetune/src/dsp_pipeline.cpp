@@ -1,8 +1,8 @@
 #include "pipetune/dsp_pipeline.h"
 
+#include "dsp_backend_loader.h"
 #include "dsp_catalog.h"
 
-#include <effetune/abi.h>
 #include <yyjson.h>
 
 #include <algorithm>
@@ -31,6 +31,7 @@ constexpr auto kPipelineDescriptorHeaderBytes = std::size_t{8};
 constexpr auto kPipelineDescriptorNodeBytes = std::size_t{12};
 
 struct DspPipeline::Impl {
+  std::shared_ptr<const DspBackend> backend;
   et_engine engine = 0;
   bool bypass = false;
   float sampleRate = 0.0F;
@@ -41,8 +42,8 @@ struct DspPipeline::Impl {
   std::shared_ptr<const std::string> presetRecipe;
 
   ~Impl() {
-    if (engine != 0) {
-      et_engine_destroy(engine);
+    if (engine != 0 && backend != nullptr) {
+      dspBackendApi(*backend).engineDestroy(engine);
     }
   }
 };
@@ -295,14 +296,16 @@ ProcessStatus DspPipeline::process(std::span<float> planarSamples, std::uint32_t
   if (implementation_->bypass) {
     return ProcessStatus::ok;
   }
-  auto *arena = et_arena_combined_ptr(implementation_->engine);
+  const auto &api = dspBackendApi(*implementation_->backend);
+  auto *arena = api.arenaCombinedPtr(implementation_->engine);
   if (arena == nullptr) {
     return ProcessStatus::dspError;
   }
   const auto byteCount = planarSamples.size_bytes();
   std::memcpy(arena, planarSamples.data(), byteCount);
   const auto status =
-      et_pipeline_process(implementation_->engine, channelCount, frameCount, timeSeconds, 0);
+      api.pipelineProcess(implementation_->engine, channelCount, frameCount,
+                          timeSeconds, 0);
   if (status != ET_OK) {
     return ProcessStatus::dspError;
   }
@@ -330,6 +333,13 @@ std::size_t DspPipeline::activePluginCount() const noexcept {
   return implementation_ == nullptr ? 0 : implementation_->activePluginCount;
 }
 
+std::optional<DspBackendKind> DspPipeline::backendKind() const noexcept {
+  if (implementation_ == nullptr || implementation_->backend == nullptr) {
+    return std::nullopt;
+  }
+  return implementation_->backend->kind();
+}
+
 bool DspPipeline::usesNativeDsp() const noexcept {
   return implementation_ != nullptr && !implementation_->bypass;
 }
@@ -353,7 +363,8 @@ createBypassDspPipeline(const PipelineBuildOptions &options) {
 
 PipelineLoadResult DspPipeline::buildFromRecipe(
     std::shared_ptr<const std::string> presetRecipe,
-    const PipelineBuildOptions &options) {
+    const PipelineBuildOptions &options,
+    std::shared_ptr<const DspBackend> backend) {
   const auto validation = validateBuildOptions(options);
   if (!validation.empty()) {
     return loadError(validation);
@@ -361,6 +372,9 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
   if (presetRecipe == nullptr || presetRecipe->empty() ||
       presetRecipe->size() > kMaximumPresetBytes) {
     return loadError("retained preset recipe is unavailable");
+  }
+  if (backend == nullptr) {
+    return loadError("DSP backend is unavailable");
   }
   auto document = JsonDocument(
       yyjson_read(presetRecipe->data(), presetRecipe->size(), 0));
@@ -377,13 +391,15 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
   implementation->maxChannels = options.maxChannels;
   implementation->maxFrames = options.maxFrames;
   implementation->presetRecipe = std::move(presetRecipe);
-  implementation->engine = et_engine_create();
+  implementation->backend = std::move(backend);
+  const auto &api = dspBackendApi(*implementation->backend);
+  implementation->engine = api.engineCreate();
   if (implementation->engine == 0) {
     return loadError("cannot create EffeTune DSP engine");
   }
   const auto prepareStatus =
-      et_engine_prepare(implementation->engine, options.sampleRate, options.maxChannels,
-                        options.maxFrames, 0);
+      api.enginePrepare(implementation->engine, options.sampleRate,
+                        options.maxChannels, options.maxFrames, 0);
   if (prepareStatus != ET_OK) {
     return loadError("cannot prepare EffeTune DSP engine (status " +
                      std::to_string(prepareStatus) + ", handle " +
@@ -391,7 +407,7 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
                      std::to_string(options.sampleRate) + ", channels " +
                      std::to_string(options.maxChannels) + ", frames " +
                      std::to_string(options.maxFrames) + ", required " +
-                     std::to_string(et_engine_memory_required(
+                     std::to_string(api.engineMemoryRequired(
                          options.sampleRate, options.maxChannels, options.maxFrames, 0)) +
                      ")");
   }
@@ -447,7 +463,8 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
                        std::move(warnings));
     }
 
-    const auto instance = et_instance_create(implementation->engine, definition->typeName.data());
+    const auto instance =
+        api.instanceCreate(implementation->engine, definition->typeName.data());
     if (instance == 0) {
       return loadError(nodeError(index, "cannot create native DSP instance"),
                        std::move(warnings));
@@ -457,14 +474,16 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
       return loadError(nodeError(index, packed.error), std::move(warnings));
     }
     const auto floatStatus =
-        et_instance_set_params(implementation->engine, instance, packed.floats.data(),
-                               static_cast<std::uint32_t>(packed.floats.size()), definition->hash, 0);
+        api.instanceSetParams(
+            implementation->engine, instance, packed.floats.data(),
+            static_cast<std::uint32_t>(packed.floats.size()),
+            definition->hash, 0);
     if (floatStatus != ET_OK) {
       return loadError(nodeError(index, "native DSP rejected packed parameters"),
                        std::move(warnings));
     }
     if (definition->structured.present) {
-      const auto byteStatus = et_instance_set_param_bytes(
+      const auto byteStatus = api.instanceSetParamBytes(
           implementation->engine, instance, packed.bytes.data(),
           static_cast<std::uint32_t>(packed.bytes.size()), definition->hash, 0);
       if (byteStatus != ET_OK) {
@@ -476,11 +495,12 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
                            .inputBus = inputBus,
                            .outputBus = outputBus,
                            .channelSpec = channelSpec,
-                           .latency = et_instance_latency(implementation->engine, instance)});
+                           .latency = api.instanceLatency(
+                               implementation->engine, instance)});
   }
 
   const auto descriptor = buildDescriptor(activeNodes);
-  const auto descriptorStatus = et_pipeline_configure(
+  const auto descriptorStatus = api.pipelineConfigure(
       implementation->engine, descriptor.data(), static_cast<std::uint32_t>(descriptor.size()));
   if (descriptorStatus != ET_OK) {
     return loadError("EffeTune rejected the native pipeline descriptor", std::move(warnings));
@@ -494,6 +514,18 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
 
 PipelineLoadResult loadDspPipeline(const std::filesystem::path &presetPath,
                                    const PipelineBuildOptions &options) {
+  auto backend = loadDspBackend(DspBackendKind::scalar);
+  if (backend.backend == nullptr) {
+    return loadError("scalar DSP backend is unavailable: " +
+                     backend.error);
+  }
+  return loadDspPipeline(presetPath, options, std::move(backend.backend));
+}
+
+PipelineLoadResult
+loadDspPipeline(const std::filesystem::path &presetPath,
+                const PipelineBuildOptions &options,
+                std::shared_ptr<const DspBackend> backend) {
   if (presetPath.extension() != ".effetune_preset") {
     return loadError("preset path must use the exact .effetune_preset extension");
   }
@@ -524,12 +556,24 @@ PipelineLoadResult loadDspPipeline(const std::filesystem::path &presetPath,
     return loadError("cannot read preset file");
   }
   return DspPipeline::buildFromRecipe(
-      std::make_shared<const std::string>(std::move(contents)), options);
+      std::make_shared<const std::string>(std::move(contents)), options,
+      std::move(backend));
 }
 
 PipelineLoadResult
 rebuildDspPipeline(const DspPipeline &source,
                    const PipelineBuildOptions &options) {
+  if (source.implementation_ == nullptr) {
+    return loadError("source DSP pipeline is unavailable");
+  }
+  return rebuildDspPipeline(source, options,
+                            source.implementation_->backend);
+}
+
+PipelineLoadResult
+rebuildDspPipeline(const DspPipeline &source,
+                   const PipelineBuildOptions &options,
+                   std::shared_ptr<const DspBackend> backend) {
   if (source.implementation_ == nullptr) {
     return loadError("source DSP pipeline is unavailable");
   }
@@ -540,7 +584,7 @@ rebuildDspPipeline(const DspPipeline &source,
             .error = std::move(created.error)};
   }
   return DspPipeline::buildFromRecipe(
-      source.implementation_->presetRecipe, options);
+      source.implementation_->presetRecipe, options, std::move(backend));
 }
 
 } // namespace pipetune

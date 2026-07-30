@@ -64,6 +64,13 @@ const numberLiteral = value => {
 
 const identifier = value => value.replaceAll(/[^A-Za-z0-9_]/gu, '_');
 
+const nativeAssetCapacity = asset => {
+  if (asset.capacity === '32 MiB convolution cap') {
+    return 32 * 1024 * 1024;
+  }
+  fail(`unsupported native asset capacity metadata for ${asset.slot}: ${asset.capacity}`);
+};
+
 const emitElement = (field, index, enumName) => {
   const kind = {
     float: 'ParameterKind::floating',
@@ -148,6 +155,10 @@ const generateCatalog = () => {
         `${cppString(spec.structured.defaultValue)}, ${spec.structured.maxItems}u}`
       : 'StructuredParameter{false, {}, {}, 0u}';
     const definitionName = `${base}Definition`;
+    const assetCapacities = Array.from({ length: 32 }, () => 0);
+    for (const asset of spec.assets) {
+      assetCapacities[asset.slot] = nativeAssetCapacity(asset);
+    }
     chunks.push(
       `static constexpr DspDefinition ${definitionName} = {`,
       `  ${cppString(plugin.displayName)},`,
@@ -156,6 +167,8 @@ const generateCatalog = () => {
       `  ${spec.floatCount}u,`,
       `  std::span<const ParameterElement>(${base}Elements),`,
       `  ${structured},`,
+      `  ${spec.byteCapacity}u,`,
+      `  std::array<std::uint32_t, 32>{${assetCapacities.map(value => `${value}u`).join(', ')}},`,
       `  ${spec.assets.length > 0 ? 'true' : 'false'}`,
       '};',
       ''

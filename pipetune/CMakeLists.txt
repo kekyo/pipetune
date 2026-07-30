@@ -112,6 +112,15 @@ configure_file(
   src/installed_tools.h.in
   "${PIPETUNE_GENERATED_DIR}/installed_tools.h"
   @ONLY)
+file(
+  RELATIVE_PATH
+  PIPETUNE_INSTALLED_DSP_BACKEND_RELATIVE_PATH
+  "${CMAKE_INSTALL_FULL_BINDIR}"
+  "${CMAKE_INSTALL_FULL_LIBDIR}/pipetune")
+configure_file(
+  src/dsp_backend_paths.h.in
+  "${PIPETUNE_GENERATED_DIR}/dsp_backend_paths.h"
+  @ONLY)
 set(PIPETUNE_GENERATED_DSP_CATALOG
     "${PIPETUNE_GENERATED_DIR}/dsp_catalog.generated.cpp")
 add_custom_command(
@@ -153,14 +162,24 @@ add_library(
   pipetune_core STATIC
   "${PIPETUNE_GENERATED_DIR}/version.cpp"
   src/audio_bridge.cpp
+  src/dsp_backend.cpp
   src/dsp_catalog.cpp
   src/dsp_pipeline.cpp
   src/sample_rate.cpp
   src/startup_config.cpp
   src/startup_pipeline.cpp
   "${PIPETUNE_GENERATED_DSP_CATALOG}")
-target_include_directories(pipetune_core PUBLIC include PRIVATE src)
-target_link_libraries(pipetune_core PUBLIC effetune_dsp_core yyjson)
+target_include_directories(
+  pipetune_core
+  PUBLIC include
+  PRIVATE
+    src
+    "${PIPETUNE_GENERATED_DIR}"
+    "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+target_link_libraries(
+  pipetune_core
+  PUBLIC yyjson
+  PRIVATE "${CMAKE_DL_LIBS}")
 
 if(MSVC)
   target_compile_options(pipetune_core PRIVATE /W4 /WX)
@@ -260,6 +279,91 @@ install(
   RENAME environment.example)
 
 if(BUILD_TESTING)
+  add_custom_target(
+    pipetune_test_dsp_backend_copies ALL
+    COMMAND
+      "${CMAKE_COMMAND}" -E make_directory
+      "${CMAKE_CURRENT_BINARY_DIR}"
+      "${CMAKE_BINARY_DIR}/pipetune-gtk-build"
+    COMMAND
+      "${CMAKE_COMMAND}" -E copy_if_different
+      "$<TARGET_FILE:effetune_dsp_scalar_shared>"
+      "${CMAKE_CURRENT_BINARY_DIR}/$<TARGET_FILE_NAME:effetune_dsp_scalar_shared>"
+    COMMAND
+      "${CMAKE_COMMAND}" -E copy_if_different
+      "$<TARGET_FILE:effetune_dsp_simd_shared>"
+      "${CMAKE_CURRENT_BINARY_DIR}/$<TARGET_FILE_NAME:effetune_dsp_simd_shared>"
+    COMMAND
+      "${CMAKE_COMMAND}" -E copy_if_different
+      "$<TARGET_FILE:effetune_dsp_scalar_shared>"
+      "${CMAKE_BINARY_DIR}/pipetune-gtk-build/$<TARGET_FILE_NAME:effetune_dsp_scalar_shared>"
+    COMMAND
+      "${CMAKE_COMMAND}" -E copy_if_different
+      "$<TARGET_FILE:effetune_dsp_simd_shared>"
+      "${CMAKE_BINARY_DIR}/pipetune-gtk-build/$<TARGET_FILE_NAME:effetune_dsp_simd_shared>"
+    DEPENDS
+      effetune_dsp_scalar_shared
+      effetune_dsp_simd_shared
+    VERBATIM)
+
+  add_library(
+    pipetune_dsp_backend_wrong_abi_fixture SHARED
+    test/dsp_backend_fixture.c)
+  target_include_directories(
+    pipetune_dsp_backend_wrong_abi_fixture
+    PRIVATE "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_compile_definitions(
+    pipetune_dsp_backend_wrong_abi_fixture
+    PRIVATE PIPETUNE_FIXTURE_WRONG_ABI=1)
+
+  add_library(
+    pipetune_dsp_backend_missing_symbol_fixture SHARED
+    test/dsp_backend_fixture.c)
+  target_include_directories(
+    pipetune_dsp_backend_missing_symbol_fixture
+    PRIVATE "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+
+  add_executable(
+    pipetune_dsp_backend_tests
+    test/dsp_backend_test.cpp)
+  target_include_directories(
+    pipetune_dsp_backend_tests
+    PRIVATE
+      src
+      "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_link_libraries(
+    pipetune_dsp_backend_tests PRIVATE pipetune_core)
+  add_dependencies(
+    pipetune_dsp_backend_tests
+    effetune_dsp_scalar_shared
+    effetune_dsp_simd_shared)
+  if(MSVC)
+    target_compile_options(pipetune_dsp_backend_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_dsp_backend_tests
+      PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_dsp_backend_tests
+    COMMAND
+      pipetune_dsp_backend_tests
+      "$<TARGET_FILE:effetune_dsp_scalar_shared>"
+      "$<TARGET_FILE:effetune_dsp_simd_shared>"
+      "$<TARGET_FILE:pipetune_dsp_backend_wrong_abi_fixture>"
+      "$<TARGET_FILE:pipetune_dsp_backend_missing_symbol_fixture>")
+
+  find_program(PIPETUNE_NM_EXECUTABLE nm REQUIRED)
+  find_program(PIPETUNE_READELF_EXECUTABLE readelf REQUIRED)
+  add_test(
+    NAME pipetune_dsp_linkage
+    COMMAND
+      "${PIPETUNE_NODE_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/test/dsp-linkage.mjs"
+      "$<TARGET_FILE:pipetune>"
+      "${PIPETUNE_NM_EXECUTABLE}"
+      "${PIPETUNE_READELF_EXECUTABLE}")
+
   add_executable(
     pipetune_effetune_backend_artifact_tests
     test/effetune_backend_artifact_test.cpp)
@@ -293,7 +397,9 @@ if(BUILD_TESTING)
     PASS_REGULAR_EXPRESSION "\\.effetune_preset")
 
   add_executable(pipetune_bootstrap_tests test/bootstrap_test.cpp)
-  target_link_libraries(pipetune_bootstrap_tests PRIVATE pipetune_core)
+  target_link_libraries(
+    pipetune_bootstrap_tests
+    PRIVATE pipetune_core effetune_pffft_scalar)
   if(MSVC)
     target_compile_options(pipetune_bootstrap_tests PRIVATE /W4 /WX)
   else()

@@ -1,10 +1,13 @@
 #ifndef PIPETUNE_DSP_PIPELINE_H
 #define PIPETUNE_DSP_PIPELINE_H
 
+#include "pipetune/dsp_backend.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -105,12 +108,15 @@ public:
   std::uint32_t latencyFrames() const noexcept;
   /** Returns the number of enabled, supported native DSP nodes. */
   std::size_t activePluginCount() const noexcept;
+  /** Returns the native backend in use, or no value for a bypass pipeline. */
+  std::optional<DspBackendKind> backendKind() const noexcept;
 
 private:
   explicit DspPipeline(std::unique_ptr<Impl> implementation);
   static PipelineLoadResult
   buildFromRecipe(std::shared_ptr<const std::string> presetRecipe,
-                  const PipelineBuildOptions &options);
+                  const PipelineBuildOptions &options,
+                  std::shared_ptr<const DspBackend> backend);
   bool usesNativeDsp() const noexcept;
   std::unique_ptr<Impl> implementation_;
 
@@ -122,8 +128,16 @@ private:
   friend PipelineLoadResult loadDspPipeline(const std::filesystem::path &presetPath,
                                             const PipelineBuildOptions &options);
   friend PipelineLoadResult
+  loadDspPipeline(const std::filesystem::path &presetPath,
+                  const PipelineBuildOptions &options,
+                  std::shared_ptr<const DspBackend> backend);
+  friend PipelineLoadResult
   rebuildDspPipeline(const DspPipeline &source,
                      const PipelineBuildOptions &options);
+  friend PipelineLoadResult
+  rebuildDspPipeline(const DspPipeline &source,
+                     const PipelineBuildOptions &options,
+                     std::shared_ptr<const DspBackend> backend);
 };
 
 /**
@@ -175,6 +189,19 @@ PipelineLoadResult loadDspPipeline(const std::filesystem::path &presetPath,
                                    const PipelineBuildOptions &options);
 
 /**
+ * Loads a preset with an explicitly selected, validated DSP backend.
+ *
+ * @param presetPath Preset path with the exact `.effetune_preset` extension.
+ * @param options Maximum processing format for the prepared native engine.
+ * @param backend Backend whose library must outlive the prepared engine.
+ * @return A pipeline or a fatal diagnostic, plus any non-fatal warnings.
+ */
+PipelineLoadResult
+loadDspPipeline(const std::filesystem::path &presetPath,
+                const PipelineBuildOptions &options,
+                std::shared_ptr<const DspBackend> backend);
+
+/**
  * Rebuilds a pipeline at another rate from its retained preset recipe.
  *
  * No preset file is reopened. A bypass source produces another bypass
@@ -187,6 +214,22 @@ PipelineLoadResult loadDspPipeline(const std::filesystem::path &presetPath,
 PipelineLoadResult
 rebuildDspPipeline(const DspPipeline &source,
                    const PipelineBuildOptions &options);
+
+/**
+ * Rebuilds a retained preset recipe with an explicitly selected backend.
+ *
+ * A successful rebuild creates fresh DSP state. The source pipeline and its
+ * backend remain unchanged.
+ *
+ * @param source Existing prepared preset or bypass pipeline.
+ * @param options New maximum processing format.
+ * @param backend Backend to use for the rebuilt native pipeline.
+ * @return Rebuilt pipeline and warnings, or a fatal diagnostic.
+ */
+PipelineLoadResult
+rebuildDspPipeline(const DspPipeline &source,
+                   const PipelineBuildOptions &options,
+                   std::shared_ptr<const DspBackend> backend);
 
 } // namespace pipetune
 

@@ -3,6 +3,7 @@
 
 #include <yyjson.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -46,6 +47,8 @@ struct DspDefinition {
   std::uint32_t floatCount;
   std::span<const ParameterElement> elements;
   StructuredParameter structured;
+  std::uint32_t paramBytesCapacity;
+  std::array<std::uint32_t, 32> assetCapacities;
   bool requiresExternalAssets;
 };
 
