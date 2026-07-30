@@ -326,6 +326,12 @@ pipetune --restore-default
 - [GTK application behavior](pipetune-gtk/README.md)
 - [Native DSP backends and benchmarking](pipetune/docs/dsp-backends.md)
 
+## Limitations
+
+Room EQ and IR Reverb are not supported in the current version. Their required
+assets are stored in EffeTune's IndexedDB and are not included in
+`.effetune_preset` files, so PipeTune cannot load them.
+
 ## License
 
 Under MIT.

@@ -317,6 +317,12 @@ pipetune --restore-default
 - [GTKアプリケーションの動作 (英語)](pipetune-gtk/README.md)
 - [ネイティブDSPバックエンドとベンチマーク (英語)](pipetune/docs/dsp-backends.md)
 
+## 制約
+
+現在のバージョンでは、Room EQとIR Reverbは使用できません。これらに必要なアセットは
+EffeTuneのIndexedDB内に保存され、`.effetune_preset`ファイルには含まれないため、
+PipeTuneから読み込むことができません。
+
 ## ライセンス
 
 Under MIT.
