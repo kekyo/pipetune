@@ -41,7 +41,10 @@ not supported by this MVP.
   384 kHz rate, with a suggested or forced PipeWire graph-rate request.
 - Enumerates each physical output's sample-rate capabilities and immediately
   reevaluates the rates after capability, target, or policy changes.
+- Loads validated scalar and architecture-SIMD EffeTune DSP shared backends,
+  with scalar as the compatibility default and startup fallback.
 - Replaces the preset in a running process through a same-user Unix socket.
+- Rebuilds and atomically switches an active preset between DSP backends.
 - Switches live and future startup processing to explicit DSP bypass.
 - Publishes initial and changed runtime state to same-user local subscribers.
 - Starts the managed daemon without a preset and passes audio through unchanged.
@@ -104,12 +107,14 @@ make
 make test
 ```
 
-`make` produces `build/release/pipetune` and
-`build/release/pipetune-gtk`. `make test` always runs PipeTune's complete
-CTest suite, EffeTune's native DSP tests, JavaScript/native parameter packing
-parity, native DSP output parity, GTK lifecycle tests, and staged install
-validation. Tests that require a live PipeWire user session report a skip only
-when its session socket is unavailable.
+`make` produces `build/release/pipetune`,
+`build/release/pipetune-gtk`, the private scalar and SIMD DSP libraries, and
+the developer-only `build/release/pipetune-dsp-benchmark`. `make test` always
+runs PipeTune's complete CTest suite, EffeTune's native DSP tests,
+JavaScript/native parameter packing parity, native DSP output parity, GTK
+lifecycle tests, and staged install validation. Tests that require a live
+PipeWire user session report a skip only when its session socket is
+unavailable.
 
 Node.js and `npx` are required. Unless `PIPETUNE_BUILD_VERSION` is supplied to
 CMake, the version embedded in both executables is resolved from the repository
@@ -142,6 +147,8 @@ particular physical output for this direct process run:
 
 The direct `--target` value is a PipeWire `node.name` and is not persisted.
 Managed daemon output preferences use the `pipetune output` commands below.
+Use `--dsp-backend scalar` or `--dsp-backend simd` to select the native
+backend for this direct run; that choice is also not persisted.
 
 Inspect or replace the running pipeline:
 
@@ -152,12 +159,13 @@ Inspect or replace the running pipeline:
 ```
 
 The status response includes the processing mode, active preset when
-applicable, native DSP count, preferred and effective physical outputs, output
-selection reason, selectable output list and rate capabilities, configured and
-resolved PCM rates, active physical rate, transition and fallback state,
-whether PipeTune owns the effective default, configuration diagnostics, and
-audio bridge error counters. A live replacement made directly with
-`--load-preset` is not persisted.
+applicable, native DSP count, configured and effective DSP backends, backend
+availability and fallback diagnostics, preferred and effective physical
+outputs, output selection reason, selectable output list and rate
+capabilities, configured and resolved PCM rates, active physical rate,
+transition and fallback state, whether PipeTune owns the effective default,
+configuration diagnostics, and audio bridge error counters. A live
+replacement made directly with `--load-preset` is not persisted.
 
 Switch live processing to bypass and save that selection for future daemon
 starts with:
@@ -214,6 +222,34 @@ mode, the requested rate is always used for capture, playback media format,
 and DSP. An unsupported output uses the greatest advertised rate not above the
 fixed rate, or the device minimum, and PipeWire resamples between them.
 
+Inspect and select the native DSP backend with:
+
+```sh
+./build/release/pipetune dsp list
+./build/release/pipetune dsp get
+./build/release/pipetune dsp set scalar
+./build/release/pipetune dsp set simd
+```
+
+`dsp list` reports availability, CPU requirements, and validation errors for
+the packaged scalar and SIMD libraries. `dsp get` reports the configured and
+effective backend plus startup fallback state. Both queries accept `--json`
+and require a reachable daemon.
+
+A connected `dsp set` rebuilds an active preset on the control thread,
+atomically replaces it, and persists the choice only after daemon
+confirmation. The new EffeTune instances have reset DSP state. A failure keeps
+the previous live pipeline and startup choice. Backend changes are rejected
+during a sample-rate transition. If the daemon is unavailable, the command
+validates the local CPU, library, ABI, and catalog before saving the choice for
+the next start.
+
+Scalar is the compatibility default. Configured SIMD falls back to scalar
+during startup if SIMD validation fails, with both variants and the diagnostic
+retained in status. See
+[the DSP backend notes](docs/dsp-backends.md) for architecture flags, expected
+per-DSP and standard-preset effects, and the benchmark procedure.
+
 Reset every saved PipeTune selection with:
 
 ```sh
@@ -233,14 +269,15 @@ file. It atomically replaces it with:
 # Managed by PipeTune.
 PIPETUNE_RATE=max
 PIPETUNE_RATE_ENFORCEMENT=suggest
+PIPETUNE_DSP_BACKEND=scalar
 ```
 
 The absent preset and target assignments select DSP bypass and the physical
-system default. After persistence, the command waits for
-`systemctl --user try-restart pipetune.service`. A running service therefore
-restarts immediately with the defaults, while an inactive service remains
-inactive. If `systemctl` fails, the command exits nonzero and explains that
-the configuration was reset; the reset file remains in place.
+system default. Scalar is the reset backend. After persistence, the command
+waits for `systemctl --user try-restart pipetune.service`. A running service
+therefore restarts immediately with the defaults, while an inactive service
+remains inactive. If `systemctl` fails, the command exits nonzero and explains
+that the configuration was reset; the reset file remains in place.
 
 Run the graphical control application with:
 
@@ -248,9 +285,9 @@ Run the graphical control application with:
 ./build/release/pipetune-gtk
 ```
 
-It subscribes to daemon status changes, applies a selected preset or bypass
-live, and persists a successful selection in the shared startup configuration.
-See the
+It subscribes to daemon status changes, applies a selected preset, bypass, or
+native DSP backend live, and persists a successful selection in the shared
+startup configuration. See the
 [PipeTune GTK documentation](../pipetune-gtk/README.md) for the exact failure
 and persistence behavior.
 
@@ -386,19 +423,21 @@ $XDG_CONFIG_HOME/pipetune/environment
 
 When `XDG_CONFIG_HOME` is unset, it resolves to
 `~/.config/pipetune/environment`. It can store an absolute preset path, a
-stable PipeWire output `node.name`, and the PCM rate policy:
+stable PipeWire output `node.name`, the PCM rate policy, and the native DSP
+backend:
 
 ```text
 PIPETUNE_PRESET="/home/user/My Presets/foo.effetune_preset"
 PIPETUNE_TARGET="alsa_output.usb-example"
 PIPETUNE_RATE=192000
 PIPETUNE_RATE_ENFORCEMENT=force
+PIPETUNE_DSP_BACKEND=simd
 ```
 
 An absent file or absent `PIPETUNE_PRESET` means bypass. An invalid
 configuration or unusable startup preset is reported in daemon status, but the
 daemon still starts in bypass so the audio path remains available. The GUI and
-CLI atomically preserve and update the three independent selections in this
+CLI atomically preserve and update the four independent selections in this
 same file.
 
 An absent `PIPETUNE_TARGET` means to follow the physical system default. When
@@ -412,6 +451,12 @@ An absent `PIPETUNE_RATE` or `PIPETUNE_RATE_ENFORCEMENT` uses the
 Max-and-suggest default. `PIPETUNE_RATE` accepts `max`, `44100`, `48000`,
 `96000`, `192000`, or `384000`; the enforcement value accepts `suggest` or
 `force`.
+
+An absent `PIPETUNE_DSP_BACKEND` selects `scalar`. The only accepted values
+are `scalar` and `simd`. A configured SIMD backend that fails CPU, file, ABI,
+or catalog validation falls back to scalar during managed startup and retains
+the diagnostic in status. Failure of the mandatory scalar backend keeps the
+daemon available in bypass mode.
 
 `pipetune config reset` is also the recovery path for an `environment` file
 containing unsupported or obsolete assignments because it replaces the file
@@ -454,7 +499,10 @@ pipetune --restore-default
 ```
 
 The fail-open path can contain a short audio interruption.
-See [the architecture notes](docs/architecture.md) for the process, real-time, and recovery design.
+See [the architecture notes](docs/architecture.md) for the process, real-time,
+and recovery design, and
+[the DSP backend notes](docs/dsp-backends.md) for optimization and benchmark
+details.
 
 ---
 

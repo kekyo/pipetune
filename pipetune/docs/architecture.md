@@ -8,13 +8,18 @@ linked output stream. This keeps the implementation on PipeWire's public client
 API and covers native PipeWire applications as well as PulseAudio applications
 served by `pipewire-pulse`.
 
-The MVP builds only for the host architecture. EffeTune, yyjson, and PFFFT are
-compiled from source in the same build; no WebAssembly or prebuilt DSP object is
-loaded at runtime. EffeTune's `dsp/vendor/pffft` supplies PFFFT, and the current
-native build uses its portable scalar configuration (`ET_SIMD=OFF`). This
-configuration works with the host compiler and ABI without assuming WebAssembly
-SIMD or another target's instruction set. Per-architecture optimized builds are
-future work.
+Each package builds EffeTune, yyjson, and PFFFT from source for one target
+architecture. The PipeTune executable does not statically contain the
+EffeTune engine. It explicitly loads one validated private shared backend:
+`libeffetune-dsp-scalar.so` uses portable scalar PFFFT, while
+`libeffetune-dsp-simd.so` uses the package architecture's SIMD policy and GCC
+auto-vectorization. No WebAssembly or backend for another architecture is
+loaded.
+
+Scalar is the compatibility default. SIMD CPU support is checked before
+`dlopen`, and both libraries must match PipeTune's ABI and complete DSP
+catalog. See [the DSP backend notes](dsp-backends.md) for exact compiler flags,
+architecture requirements, fallback, and benchmarking.
 
 ## Data flow
 
@@ -25,7 +30,7 @@ application streams ──> PipeTune Audio/Sink
                               |
                        F32P capture callback
                               |
-                  native EffeTune pipeline
+            selected native EffeTune backend pipeline
                      or explicit bypass
                               |
                     preallocated planar ring
@@ -199,15 +204,17 @@ Supported commands are:
 - bypass DSP and atomically activate pass-through processing;
 - set a preferred physical output by `node.name`;
 - clear the preferred output and follow the physical system default;
-- set a Max/fixed and suggest/force sample-rate policy; and
+- set a Max/fixed and suggest/force sample-rate policy;
+- set the scalar or SIMD native DSP backend; and
 - subscribe to an initial status event and later status publications.
 
 Successful status and mutation replies include the preference, effective
 target, selection reason, sorted eligible output list, per-output rate
 capabilities, configured policy, R, H, active physical rate, fallback,
-transition state, and the latest transition diagnostic. Registry, default
-device, capability, preference, and final rate changes publish fresh state to
-subscribers.
+transition state, configured and effective DSP backends, per-backend
+availability and CPU requirements, and the latest diagnostics. Registry,
+default device, capability, preference, final rate, and backend changes publish
+fresh state to subscribers.
 
 The subscriber server uses an `eventfd` wakeup and bounded, coalescing output
 per client. Preset activation and relevant PipeWire state transitions request
@@ -229,8 +236,10 @@ An optional `PIPETUNE_TARGET` assignment stores the preferred physical
 
 `PIPETUNE_RATE` stores `max` or one of `44100`, `48000`, `96000`, `192000`,
 and `384000`. `PIPETUNE_RATE_ENFORCEMENT` stores `suggest` or `force`.
-Missing rate assignments select Max-and-suggest. Preset, output, and rate
-updates use one atomic writer and preserve the other selections.
+Missing rate assignments select Max-and-suggest. `PIPETUNE_DSP_BACKEND` stores
+`scalar` or `simd`, with missing assignment selecting scalar. Preset, output,
+rate, and backend updates use one atomic writer and preserve the other
+selections.
 
 Malformed configuration, an unavailable preset, or a preset that fails
 validation also degrades to bypass instead of terminating the audio service.
@@ -238,6 +247,14 @@ The diagnostic is retained in runtime status so the CLI and GTK application
 can distinguish an intentional bypass from a configuration failure. Live load
 and bypass commands atomically replace the pipeline slot and publish the
 resulting state.
+
+The daemon discovers both backend libraries at startup. Configured SIMD falls
+back to scalar when its CPU, file, ABI, or catalog validation fails. Failure of
+the mandatory scalar backend also degrades preset processing to bypass. A live
+backend change constructs a fresh active preset pipeline on the control
+thread, atomically replaces the slot, and resets EffeTune state without
+resetting the surrounding audio counters. A failed build retains the old
+pipeline, and backend changes are rejected during sample-rate transitions.
 
 The `setup` and `unsetup` coordinators run external `systemctl` and
 `pipetune-gtk` operations with direct argument vectors and no shell. Default
@@ -257,12 +274,13 @@ shutdown operations succeed. Both commands reject effective user ID zero.
 
 `pipetune-gtk` is a single-instance `GtkApplication`. Its GIO client keeps one
 asynchronous subscription connection and uses separate asynchronous requests
-for preset changes, output preference changes, and rate-policy changes.
-Runtime counters and cumulative native EffeTune processing time are published
-once per second; the GUI derives a per-frame interval average. It divides that
-average by the input-frame duration implied by the negotiated sample rate to
-show DSP load, where 100% is the theoretical processing deadline. A retry
-timer reconnects a lost subscription; status itself is not polled.
+for preset changes, output preference changes, rate-policy changes, and DSP
+backend changes. Runtime counters and cumulative native EffeTune processing
+time are published once per second; the GUI derives a per-frame interval
+average. It divides that average by the input-frame duration implied by the
+negotiated sample rate to show DSP load, where 100% is the theoretical
+processing deadline. A retry timer reconnects a lost subscription; status
+itself is not polled.
 
 The tray backend discovers a StatusNotifierItem host first. If none is
 available on X11, it creates the same `GtkStatusIcon`/XEmbed compatibility
@@ -281,6 +299,12 @@ persisted only after daemon confirmation, and persistence failure leaves the
 live engine choice active. The GUI presents the engine's candidates and reason
 without implementing fallback or hotplug policy.
 
+Backend selection follows the same live-first persistence rule. While
+disconnected, the GUI locally validates CPU support, the exact private shared
+object, ABI, and catalog before saving a next-start choice. It passively
+displays daemon-reported availability, configured/effective variants, startup
+fallback, and diagnostics.
+
 The rate controls remain editable while disconnected so a policy can be saved
 for the next start. While connected, the GUI waits for the daemon to finish and
 confirm the live transaction before persistence. It marks each fixed row using
@@ -291,8 +315,8 @@ resolve rates or implement oversampling.
 ## Known MVP limits
 
 - Linux PipeWire 0.3 and systemd user sessions only.
-- Each build contains native DSP code for one target architecture; no portable
-  runtime DSP object is distributed.
+- Each package contains scalar and SIMD DSP objects for one target
+  architecture; no cross-architecture portable runtime object is distributed.
 - Standalone PulseAudio without `pipewire-pulse` is unsupported.
 - DSPs requiring external assets are skipped.
 - The channel count is fixed for one process run.

@@ -28,6 +28,8 @@ PipeTuneは、Linuxのデスクトップセッションの音声に
   指定周波数でDSPを計算します。
 - CLIとGTKアプリケーションに、出力デバイスの対応周波数と、最終的な
   DSP・グラフ・物理出力周波数を表示します。
+- CLIまたはGTKアプリケーションから、互換性重視のScalar DSPバックエンドと、
+  CPU検証済みのSIMDバックエンドを選択できます。
 - デーモンを再起動せずにプリセットを変更できます。
 - プリセットが未選択の場合は、安全なパススルーモードで起動します。
 - CLIコマンド1つで、ユーザーごとの設定または解除を行えます。
@@ -188,6 +190,59 @@ pipetune rate set 192000 force
 切り替え中はDSPとPipeWireストリームを再構築するため、短い無音区間が発生する
 場合があります。
 
+## ネイティブDSPバックエンドの選択
+
+GTKウィンドウの**DSP backend**セクションにある**Native engine**から
+選択できます。**Scalar**は互換性重視の既定値です。**SIMD**は、
+CPUとパッケージの検証に通ったアーキテクチャ固有PFFFT実装と
+GCCのオートベクター化を使用します。
+
+CLIでは、同じ情報の表示と設定を次のコマンドで行えます。
+
+```sh
+pipetune dsp list
+pipetune dsp get
+pipetune dsp set scalar
+pipetune dsp set simd
+```
+
+デーモン接続中の`dsp set`は、現在のプリセットパイプラインを新しい
+バックエンドで再構築し、デーモンが成功を確定した後でのみ設定を保存します。
+DSP内部状態はリセットされるため、切り替え時の不連続や短い無音は許容されます。
+デーモンが利用できない場合は、ローカル検証に通った選択を次回起動用に保存します。
+起動時にSIMDのCPU要件またはライブラリ検証を満たせない場合はScalarへ
+フォールバックし、理由を状態表示に残します。
+
+効果はプリセットに大きく依存します。標準の
+`visualize/all_analyzers`はPFFFT（x86とArmではSIMD実装）を直接使用し、
+多数のPitch Shifterやマルチバンド処理を含むプリセットはGCCの
+オートベクター化を測定する候補です。アーキテクチャ別の条件と測定方法は
+[DSPバックエンドとベンチマークの詳細（英語）](pipetune/docs/dsp-backends.md)
+を参照してください。
+
+## PipeTune設定のリセット
+
+GTKウィンドウの**Configuration**セクションから
+**Reset Configuration…**を実行できます。確認後、保存済みの選択を
+次の状態へ戻します。
+
+- DSPは**Bypass**
+- 物理出力は**System default**
+- PCM周波数は**Max**、PipeWire要求は**Suggest**
+- ネイティブDSPバックエンドは**Scalar**
+
+CLIでは同じリセットを次のコマンドで実行できます。
+
+```sh
+pipetune config reset
+pipetune config reset --yes
+```
+
+`--yes`（または`-y`）を付けない場合は確認を求めます。設定ファイルは
+バックアップせずに原子的に置き換えられるため、非対応の旧形式設定からの
+復旧にも使用できます。実行中のユーザーサービスは直ちに再起動し、
+停止中のサービスは停止したままです。
+
 ## EffeTune DSPプリセット選択
 
 EffeTune DSPプリセットをPipeTuneにロードする場合、以下のファイルを選択できます:
@@ -257,6 +312,7 @@ pipetune --restore-default
 
 - [デーモンの操作方法と開発者向けドキュメント (英語)](pipetune/README.md)
 - [GTKアプリケーションの動作 (英語)](pipetune-gtk/README.md)
+- [ネイティブDSPバックエンドとベンチマーク (英語)](pipetune/docs/dsp-backends.md)
 
 ## ライセンス
 

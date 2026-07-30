@@ -10,3 +10,7 @@
 # PIPETUNE_RATE accepts max, 44100, 48000, 96000, 192000, or 384000.
 # PIPETUNE_RATE=max
 # PIPETUNE_RATE_ENFORCEMENT=suggest
+
+# Scalar is the compatibility default. SIMD requires a supported CPU and
+# validated libeffetune-dsp-simd.so; it falls back to Scalar at daemon startup.
+PIPETUNE_DSP_BACKEND=scalar

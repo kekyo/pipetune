@@ -30,6 +30,8 @@ application that remains available through the desktop system tray.
   explicit 44.1, 48, 96, 192, or 384 kHz rate.
 - Shows output-device rate support and the final DSP, graph, and active
   physical rates in the CLI and GTK application.
+- Selects either the scalar compatibility DSP backend or a CPU-validated SIMD
+  backend from the CLI or GTK application.
 - Changes presets without restarting the daemon.
 - Starts safely in pass-through mode when no preset has been selected.
 - Sets up or removes all per-user integration with one CLI command.
@@ -197,14 +199,45 @@ confirmation. If the daemon is unavailable, the policy is saved for its next
 start. A live change may cause a short silent interval while PipeTune rebuilds
 the DSP and renegotiates its PipeWire streams.
 
+## Choosing the native DSP backend
+
+The GTK window's **DSP backend** section provides a **Native engine**
+drop-down. **Scalar** is the compatibility default. **SIMD** enables
+architecture-specific PFFFT code where available and GCC auto-vectorization
+under a CPU-validated package baseline.
+
+The same information and controls are available from the CLI:
+
+```sh
+pipetune dsp list
+pipetune dsp get
+pipetune dsp set scalar
+pipetune dsp set simd
+```
+
+A connected `dsp set` rebuilds and replaces the active preset pipeline, then
+saves the choice only after daemon confirmation. DSP histories are reset, so
+a discontinuity or brief silence is allowed. If the daemon is unavailable, a
+valid local backend is saved for the next start. Configured SIMD falls back to
+Scalar at startup when its CPU or library validation fails, with the reason
+shown in status.
+
+Expected gains depend strongly on the preset. The standard
+`visualize/all_analyzers` preset directly exercises PFFFT (including its SIMD
+implementation on x86 and Arm), while multi-instance pitch-shifting and
+multiband presets are useful GCC auto-vectorization candidates. See the
+[DSP backend and benchmark notes](pipetune/docs/dsp-backends.md) for the
+architecture matrix and measurement procedure.
+
 ## Resetting PipeTune configuration
 
 The GTK window's **Configuration** section provides **Reset Configuration…**.
 After confirmation, it resets every saved PipeTune choice to:
 
 - DSP **Bypass**;
-- the physical **System default** output; and
-- PCM rate **Max** with **Suggest**.
+- the physical **System default** output;
+- PCM rate **Max** with **Suggest**; and
+- native DSP backend **Scalar**.
 
 The same reset is available from the CLI:
 
@@ -289,6 +322,7 @@ pipetune --restore-default
 
 - [Daemon operation and developer documentation](pipetune/README.md)
 - [GTK application behavior](pipetune-gtk/README.md)
+- [Native DSP backends and benchmarking](pipetune/docs/dsp-backends.md)
 
 ## License
 
