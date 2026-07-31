@@ -144,9 +144,9 @@ static bool configHasBackendSelection(
         pipetune::DspSimdVariant::automatic) {
   const auto loaded = pipetune::loadStartupConfig(configPath);
   return check(loaded.error.empty(), loaded.error) &&
-         check(loaded.dspBackend == expectedKind,
+         check(loaded.config.dspBackend == expectedKind,
                "stored DSP backend differs") &&
-         check(loaded.dspSimdVariant == expectedVariant,
+         check(loaded.config.dspSimdVariant == expectedVariant,
                "stored DSP SIMD variant differs");
 }
 

@@ -82,9 +82,9 @@ static bool configHasOutput(const std::filesystem::path &configPath,
                             std::string_view expectedTarget) {
   const auto loaded = pipetune::loadStartupConfig(configPath);
   return check(loaded.error.empty(), loaded.error) &&
-         check(loaded.preferredOutputFound == expectedFound,
+         check(loaded.config.preferredOutputFound == expectedFound,
                "GTK stored output-presence state differs") &&
-         check(loaded.preferredOutput == expectedTarget,
+         check(loaded.config.preferredOutput == expectedTarget,
                "GTK stored output target differs");
 }
 

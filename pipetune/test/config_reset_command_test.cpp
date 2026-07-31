@@ -56,20 +56,21 @@ static bool defaultsWereStored(
     const std::filesystem::path &configPath) {
   const auto loaded = pipetune::loadStartupConfig(configPath);
   return check(loaded.error.empty(), loaded.error) &&
-         check(!loaded.presetFound && loaded.presetPath.empty(),
+         check(!loaded.config.presetFound &&
+                   loaded.config.presetPath.empty(),
                "reset configuration must select startup bypass") &&
-         check(!loaded.preferredOutputFound &&
-                   loaded.preferredOutput.empty(),
+         check(!loaded.config.preferredOutputFound &&
+                   loaded.config.preferredOutput.empty(),
                "reset configuration must follow the system output") &&
-         check(loaded.ratePolicy ==
+         check(loaded.config.ratePolicy ==
                    pipetune::defaultSampleRatePolicy(),
                "reset configuration must select Max and suggest") &&
-         check(loaded.dspBackend ==
+         check(loaded.config.dspBackend ==
                        pipetune::DspBackendKind::scalar &&
-                   loaded.dspSimdVariant ==
+                   loaded.config.dspSimdVariant ==
                        pipetune::DspSimdVariant::automatic,
                "reset configuration must select scalar with automatic SIMD") &&
-         check(loaded.dspIdlePolicy ==
+         check(loaded.config.dspIdlePolicy ==
                    pipetune::DspIdlePolicy::conservative,
                "reset configuration must select conservative DSP idling");
 }

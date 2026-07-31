@@ -99,7 +99,7 @@ static bool configHasPolicy(
     const pipetune::SampleRatePolicy &expected) {
   const auto loaded = pipetune::loadStartupConfig(configPath);
   return check(loaded.error.empty(), loaded.error) &&
-         check(loaded.ratePolicy == expected,
+         check(loaded.config.ratePolicy == expected,
                "GTK stored sample-rate policy differs");
 }
 

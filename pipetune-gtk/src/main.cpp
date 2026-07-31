@@ -1511,22 +1511,23 @@ static std::string reloadStartupConfig(GtkRuntime *runtime,
     return loaded.error;
   }
 
-  runtime->hasStartupPreset = loaded.presetFound;
-  runtime->startupPreset = loaded.presetPath;
-  runtime->startupRatePolicy = loaded.ratePolicy;
-  runtime->editedRatePolicy = loaded.ratePolicy;
-  runtime->pendingRatePolicy = loaded.ratePolicy;
+  const auto &config = loaded.config;
+  runtime->hasStartupPreset = config.presetFound;
+  runtime->startupPreset = config.presetPath;
+  runtime->startupRatePolicy = config.ratePolicy;
+  runtime->editedRatePolicy = config.ratePolicy;
+  runtime->pendingRatePolicy = config.ratePolicy;
   runtime->rateEditDirty = false;
-  runtime->startupDspBackend = loaded.dspBackend;
-  runtime->editedDspBackend = loaded.dspBackend;
-  runtime->pendingDspBackend = loaded.dspBackend;
-  runtime->startupDspSimdVariant = loaded.dspSimdVariant;
-  runtime->editedDspSimdVariant = loaded.dspSimdVariant;
-  runtime->pendingDspSimdVariant = loaded.dspSimdVariant;
+  runtime->startupDspBackend = config.dspBackend;
+  runtime->editedDspBackend = config.dspBackend;
+  runtime->pendingDspBackend = config.dspBackend;
+  runtime->startupDspSimdVariant = config.dspSimdVariant;
+  runtime->editedDspSimdVariant = config.dspSimdVariant;
+  runtime->pendingDspSimdVariant = config.dspSimdVariant;
   runtime->dspBackendEditDirty = false;
-  runtime->startupDspIdlePolicy = loaded.dspIdlePolicy;
-  runtime->editedDspIdlePolicy = loaded.dspIdlePolicy;
-  runtime->pendingDspIdlePolicy = loaded.dspIdlePolicy;
+  runtime->startupDspIdlePolicy = config.dspIdlePolicy;
+  runtime->editedDspIdlePolicy = config.dspIdlePolicy;
+  runtime->pendingDspIdlePolicy = config.dspIdlePolicy;
   runtime->dspIdleEditDirty = false;
   runtime->pendingPreset.clear();
 
@@ -1538,11 +1539,11 @@ static std::string reloadStartupConfig(GtkRuntime *runtime,
         GTK_COMBO_BOX(runtime->ui.presetCombo), 0);
     runtime->updatingPresetCombo = false;
   }
-  if (loaded.presetFound &&
-      std::filesystem::exists(loaded.presetPath)) {
+  if (config.presetFound &&
+      std::filesystem::exists(config.presetPath)) {
     gtk_file_chooser_set_filename(
         GTK_FILE_CHOOSER(runtime->ui.presetChooser),
-        loaded.presetPath.c_str());
+        config.presetPath.c_str());
   }
   return {};
 }

@@ -34,15 +34,15 @@ struct StartupPresetLoadResult {
 };
 
 /**
- * Reports all user choices stored in the startup configuration.
+ * Contains all user choices stored in the startup configuration.
  */
-struct StartupConfigLoadResult {
+struct StartupConfig {
   /** True when the configuration contains a preset assignment. */
-  bool presetFound;
+  bool presetFound = false;
   /** Absolute preset path when presetFound is true. */
   std::filesystem::path presetPath;
   /** True when the configuration contains an output preference. */
-  bool preferredOutputFound;
+  bool preferredOutputFound = false;
   /** Preferred PipeWire node.name when preferredOutputFound is true. */
   std::string preferredOutput;
   /** User-selected DSP and PipeWire graph-rate policy. */
@@ -53,6 +53,14 @@ struct StartupConfigLoadResult {
   DspSimdVariant dspSimdVariant = DspSimdVariant::automatic;
   /** User-selected DSP idle tail policy. */
   DspIdlePolicy dspIdlePolicy = DspIdlePolicy::conservative;
+};
+
+/**
+ * Reports all user choices loaded from the startup configuration.
+ */
+struct StartupConfigLoadResult {
+  /** Loaded configuration, or defaults when loading fails. */
+  StartupConfig config;
   /** Read or validation diagnostic, or empty on success. */
   std::string error;
 };
@@ -90,6 +98,16 @@ loadStartupPreset(const std::filesystem::path &configPath);
  */
 StartupConfigLoadResult
 loadStartupConfig(const std::filesystem::path &configPath);
+
+/**
+ * Atomically replaces the startup configuration with one complete snapshot.
+ *
+ * @param configPath Configuration file path.
+ * @param config Complete validated configuration to store.
+ * @return Empty on success, otherwise a human-readable diagnostic.
+ */
+std::string saveStartupConfig(const std::filesystem::path &configPath,
+                              const StartupConfig &config);
 
 /**
  * Atomically stores an absolute startup preset while preserving the output

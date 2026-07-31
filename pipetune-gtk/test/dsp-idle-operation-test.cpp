@@ -50,7 +50,7 @@ static bool configHasPolicy(
     pipetune::DspIdlePolicy expected) {
   const auto loaded = pipetune::loadStartupConfig(configPath);
   return check(loaded.error.empty(), loaded.error) &&
-         check(loaded.dspIdlePolicy == expected,
+         check(loaded.config.dspIdlePolicy == expected,
                "GTK stored DSP idle policy differs");
 }
 

@@ -179,55 +179,56 @@ static std::string writeAll(int descriptor, std::string_view contents) {
   return {};
 }
 
-static std::string writeStartupConfig(
-    const std::filesystem::path &configPath,
-    const StartupConfigLoadResult &configured) {
+std::string saveStartupConfig(const std::filesystem::path &configPath,
+                              const StartupConfig &config) {
   auto contents = std::string("# Managed by PipeTune.\n");
-  if (configured.presetFound) {
-    const auto validation = validatePresetPath(configured.presetPath);
+  if (config.presetFound) {
+    const auto validation = validatePresetPath(config.presetPath);
     if (!validation.empty()) {
       return validation;
     }
     contents += std::string(kPresetAssignment) +
-                encodeConfigValue(configured.presetPath.string()) + "\n";
+                encodeConfigValue(config.presetPath.string()) + "\n";
   }
-  if (configured.preferredOutputFound) {
+  if (config.preferredOutputFound) {
     const auto validation =
-        validatePreferredOutput(configured.preferredOutput);
+        validatePreferredOutput(config.preferredOutput);
     if (!validation.empty()) {
       return validation;
     }
     contents += std::string(kTargetAssignment) +
-                encodeConfigValue(configured.preferredOutput) + "\n";
+                encodeConfigValue(config.preferredOutput) + "\n";
+  }
+  const auto backendName = dspBackendName(config.dspBackend);
+  if (backendName.empty()) {
+    return "DSP backend is invalid";
   }
   contents += std::string(kDspBackendAssignment) +
-              std::string(dspBackendName(configured.dspBackend)) + "\n";
-  const auto simdVariantName =
-      dspSimdVariantName(configured.dspSimdVariant);
+              std::string(backendName) + "\n";
+  const auto simdVariantName = dspSimdVariantName(config.dspSimdVariant);
   if (simdVariantName.empty()) {
     return "DSP SIMD variant is invalid";
   }
   contents += std::string(kDspSimdVariantAssignment) +
               std::string(simdVariantName) + "\n";
-  const auto idlePolicyName =
-      dspIdlePolicyName(configured.dspIdlePolicy);
+  const auto idlePolicyName = dspIdlePolicyName(config.dspIdlePolicy);
   if (idlePolicyName.empty()) {
     return "DSP idle policy is invalid";
   }
   contents += std::string(kDspIdlePolicyAssignment) +
               std::string(idlePolicyName) + "\n";
-  if (!sampleRatePolicyIsValid(configured.ratePolicy)) {
+  if (!sampleRatePolicyIsValid(config.ratePolicy)) {
     return "sample-rate policy is invalid";
   }
   contents += std::string(kRateAssignment);
-  if (configured.ratePolicy.mode == SampleRateMode::maximum) {
+  if (config.ratePolicy.mode == SampleRateMode::maximum) {
     contents += "max\n";
   } else {
-    contents += std::to_string(configured.ratePolicy.fixedRate) + "\n";
+    contents += std::to_string(config.ratePolicy.fixedRate) + "\n";
   }
   contents += std::string(kRateEnforcementAssignment) +
               std::string(sampleRateEnforcementName(
-                  configured.ratePolicy.enforcement)) +
+                  config.ratePolicy.enforcement)) +
               "\n";
 
   auto filesystemError = std::error_code{};
@@ -295,46 +296,32 @@ resolveStartupConfigPath(std::string_view xdgConfigHome,
 StartupPresetLoadResult
 loadStartupPreset(const std::filesystem::path &configPath) {
   const auto configured = loadStartupConfig(configPath);
-  return {.found = configured.presetFound,
-          .presetPath = configured.presetPath,
+  return {.found = configured.config.presetFound,
+          .presetPath = configured.config.presetPath,
           .error = configured.error};
 }
 
 StartupConfigLoadResult
 loadStartupConfig(const std::filesystem::path &configPath) {
+  const auto fail = [](std::string error) {
+    return StartupConfigLoadResult{.config = {}, .error = std::move(error)};
+  };
   auto contents = std::string{};
   auto configFound = false;
   const auto readError = readConfig(configPath, contents, configFound);
   if (!readError.empty()) {
-    return {.presetFound = false,
-            .presetPath = {},
-            .preferredOutputFound = false,
-            .preferredOutput = {},
-            .ratePolicy = defaultSampleRatePolicy(),
-            .error = readError};
+    return fail(readError);
   }
   if (!configFound) {
-    return {.presetFound = false,
-            .presetPath = {},
-            .preferredOutputFound = false,
-            .preferredOutput = {},
-            .ratePolicy = defaultSampleRatePolicy(),
-            .error = {}};
+    return {.config = {}, .error = {}};
   }
 
-  auto presetFound = false;
-  auto presetPath = std::filesystem::path{};
-  auto preferredOutputFound = false;
-  auto preferredOutput = std::string{};
+  auto config = StartupConfig{};
   auto dspBackendFound = false;
-  auto dspBackend = DspBackendKind::scalar;
   auto dspSimdVariantFound = false;
-  auto dspSimdVariant = DspSimdVariant::automatic;
   auto dspIdlePolicyFound = false;
-  auto dspIdlePolicy = defaultDspIdlePolicy();
   auto rateFound = false;
   auto enforcementFound = false;
-  auto ratePolicy = defaultSampleRatePolicy();
   auto offset = std::size_t{0};
   while (offset <= contents.size()) {
     const auto end = contents.find('\n', offset);
@@ -346,180 +333,95 @@ loadStartupConfig(const std::filesystem::path &configPath) {
     }
     if (!line.empty() && !line.starts_with('#')) {
       if (line.starts_with(kPresetAssignment)) {
-        if (presetFound) {
-          return {.presetFound = false,
-                  .presetPath = {},
-                  .preferredOutputFound = false,
-                  .preferredOutput = {},
-                  .ratePolicy = defaultSampleRatePolicy(),
-                  .error = "startup configuration contains duplicate "
-                           "PIPETUNE_PRESET assignments"};
+        if (config.presetFound) {
+          return fail("startup configuration contains duplicate "
+                      "PIPETUNE_PRESET assignments");
         }
         auto decoded = std::string{};
         if (!decodeConfigValue(line.substr(kPresetAssignment.size()),
                                decoded)) {
-          return {.presetFound = false,
-                  .presetPath = {},
-                  .preferredOutputFound = false,
-                  .preferredOutput = {},
-                  .ratePolicy = defaultSampleRatePolicy(),
-                  .error = "startup preset assignment is invalid"};
+          return fail("startup preset assignment is invalid");
         }
-        presetPath = std::filesystem::path(decoded);
-        const auto validation = validatePresetPath(presetPath);
+        config.presetPath = std::filesystem::path(decoded);
+        const auto validation = validatePresetPath(config.presetPath);
         if (!validation.empty()) {
-          return {.presetFound = false,
-                  .presetPath = {},
-                  .preferredOutputFound = false,
-                  .preferredOutput = {},
-                  .ratePolicy = defaultSampleRatePolicy(),
-                  .error = validation};
+          return fail(validation);
         }
-        presetFound = true;
+        config.presetFound = true;
       } else if (line.starts_with(kTargetAssignment)) {
-        if (preferredOutputFound) {
-          return {.presetFound = false,
-                  .presetPath = {},
-                  .preferredOutputFound = false,
-                  .preferredOutput = {},
-                  .ratePolicy = defaultSampleRatePolicy(),
-                  .error = "startup configuration contains duplicate "
-                           "PIPETUNE_TARGET assignments"};
+        if (config.preferredOutputFound) {
+          return fail("startup configuration contains duplicate "
+                      "PIPETUNE_TARGET assignments");
         }
         if (!decodeConfigValue(line.substr(kTargetAssignment.size()),
-                               preferredOutput)) {
-          return {.presetFound = false,
-                  .presetPath = {},
-                  .preferredOutputFound = false,
-                  .preferredOutput = {},
-                  .ratePolicy = defaultSampleRatePolicy(),
-                  .error = "preferred output assignment is invalid"};
+                               config.preferredOutput)) {
+          return fail("preferred output assignment is invalid");
         }
         const auto validation =
-            validatePreferredOutput(preferredOutput);
+            validatePreferredOutput(config.preferredOutput);
         if (!validation.empty()) {
-          return {.presetFound = false,
-                  .presetPath = {},
-                  .preferredOutputFound = false,
-                  .preferredOutput = {},
-                  .ratePolicy = defaultSampleRatePolicy(),
-                  .error = validation};
+          return fail(validation);
         }
-        preferredOutputFound = true;
+        config.preferredOutputFound = true;
       } else if (line.starts_with(kDspBackendAssignment)) {
         if (dspBackendFound) {
-          return {.presetFound = false,
-                  .presetPath = {},
-                  .preferredOutputFound = false,
-                  .preferredOutput = {},
-                  .ratePolicy = defaultSampleRatePolicy(),
-                  .error = "startup configuration contains duplicate "
-                           "PIPETUNE_DSP_BACKEND assignments"};
+          return fail("startup configuration contains duplicate "
+                      "PIPETUNE_DSP_BACKEND assignments");
         }
         const auto parsed = parseDspBackendName(
             line.substr(kDspBackendAssignment.size()));
         if (!parsed.has_value()) {
-          return {.presetFound = false,
-                  .presetPath = {},
-                  .preferredOutputFound = false,
-                  .preferredOutput = {},
-                  .ratePolicy = defaultSampleRatePolicy(),
-                  .error = "DSP backend assignment is invalid"};
+          return fail("DSP backend assignment is invalid");
         }
-        dspBackend = *parsed;
+        config.dspBackend = *parsed;
         dspBackendFound = true;
       } else if (line.starts_with(kDspSimdVariantAssignment)) {
         if (dspSimdVariantFound) {
-          return {.presetFound = false,
-                  .presetPath = {},
-                  .preferredOutputFound = false,
-                  .preferredOutput = {},
-                  .ratePolicy = defaultSampleRatePolicy(),
-                  .error = "startup configuration contains duplicate "
-                           "PIPETUNE_DSP_SIMD_VARIANT assignments"};
+          return fail("startup configuration contains duplicate "
+                      "PIPETUNE_DSP_SIMD_VARIANT assignments");
         }
         const auto parsed = parseDspSimdVariantName(
             line.substr(kDspSimdVariantAssignment.size()));
         if (!parsed.has_value()) {
-          return {.presetFound = false,
-                  .presetPath = {},
-                  .preferredOutputFound = false,
-                  .preferredOutput = {},
-                  .ratePolicy = defaultSampleRatePolicy(),
-                  .error = "DSP SIMD variant assignment is invalid"};
+          return fail("DSP SIMD variant assignment is invalid");
         }
-        dspSimdVariant = *parsed;
+        config.dspSimdVariant = *parsed;
         dspSimdVariantFound = true;
       } else if (line.starts_with(kDspIdlePolicyAssignment)) {
         if (dspIdlePolicyFound) {
-          return {.presetFound = false,
-                  .presetPath = {},
-                  .preferredOutputFound = false,
-                  .preferredOutput = {},
-                  .ratePolicy = defaultSampleRatePolicy(),
-                  .error = "startup configuration contains duplicate "
-                           "PIPETUNE_DSP_IDLE_POLICY assignments"};
+          return fail("startup configuration contains duplicate "
+                      "PIPETUNE_DSP_IDLE_POLICY assignments");
         }
         const auto parsed = parseDspIdlePolicyName(
             line.substr(kDspIdlePolicyAssignment.size()));
         if (!parsed.has_value()) {
-          return {.presetFound = false,
-                  .presetPath = {},
-                  .preferredOutputFound = false,
-                  .preferredOutput = {},
-                  .ratePolicy = defaultSampleRatePolicy(),
-                  .error = "DSP idle policy assignment is invalid"};
+          return fail("DSP idle policy assignment is invalid");
         }
-        dspIdlePolicy = *parsed;
+        config.dspIdlePolicy = *parsed;
         dspIdlePolicyFound = true;
       } else if (line.starts_with(kRateAssignment)) {
         if (rateFound) {
-          return {.presetFound = false,
-                  .presetPath = {},
-                  .preferredOutputFound = false,
-                  .preferredOutput = {},
-                  .ratePolicy = defaultSampleRatePolicy(),
-                  .error = "startup configuration contains duplicate "
-                           "PIPETUNE_RATE assignments"};
+          return fail("startup configuration contains duplicate "
+                      "PIPETUNE_RATE assignments");
         }
         if (!parseConfiguredRate(line.substr(kRateAssignment.size()),
-                                 ratePolicy)) {
-          return {.presetFound = false,
-                  .presetPath = {},
-                  .preferredOutputFound = false,
-                  .preferredOutput = {},
-                  .ratePolicy = defaultSampleRatePolicy(),
-                  .error = "sample-rate assignment is invalid"};
+                                 config.ratePolicy)) {
+          return fail("sample-rate assignment is invalid");
         }
         rateFound = true;
       } else if (line.starts_with(kRateEnforcementAssignment)) {
         if (enforcementFound) {
-          return {.presetFound = false,
-                  .presetPath = {},
-                  .preferredOutputFound = false,
-                  .preferredOutput = {},
-                  .ratePolicy = defaultSampleRatePolicy(),
-                  .error = "startup configuration contains duplicate "
-                           "PIPETUNE_RATE_ENFORCEMENT assignments"};
+          return fail("startup configuration contains duplicate "
+                      "PIPETUNE_RATE_ENFORCEMENT assignments");
         }
         if (!parseSampleRateEnforcement(
                 line.substr(kRateEnforcementAssignment.size()),
-                ratePolicy.enforcement)) {
-          return {.presetFound = false,
-                  .presetPath = {},
-                  .preferredOutputFound = false,
-                  .preferredOutput = {},
-                  .ratePolicy = defaultSampleRatePolicy(),
-                  .error = "sample-rate enforcement assignment is invalid"};
+                config.ratePolicy.enforcement)) {
+          return fail("sample-rate enforcement assignment is invalid");
         }
         enforcementFound = true;
       } else {
-        return {.presetFound = false,
-                .presetPath = {},
-                .preferredOutputFound = false,
-                .preferredOutput = {},
-                .ratePolicy = defaultSampleRatePolicy(),
-                .error = "startup configuration contains an unsupported line"};
+        return fail("startup configuration contains an unsupported line");
       }
     }
     if (end == std::string::npos) {
@@ -527,15 +429,7 @@ loadStartupConfig(const std::filesystem::path &configPath) {
     }
     offset = end + 1;
   }
-  return {.presetFound = presetFound,
-          .presetPath = std::move(presetPath),
-          .preferredOutputFound = preferredOutputFound,
-          .preferredOutput = std::move(preferredOutput),
-          .ratePolicy = ratePolicy,
-          .dspBackend = dspBackend,
-          .dspSimdVariant = dspSimdVariant,
-          .dspIdlePolicy = dspIdlePolicy,
-          .error = {}};
+  return {.config = std::move(config), .error = {}};
 }
 
 std::string saveStartupPreset(const std::filesystem::path &configPath,
@@ -544,9 +438,9 @@ std::string saveStartupPreset(const std::filesystem::path &configPath,
   if (!configured.error.empty()) {
     return configured.error;
   }
-  configured.presetFound = true;
-  configured.presetPath = presetPath;
-  return writeStartupConfig(configPath, configured);
+  configured.config.presetFound = true;
+  configured.config.presetPath = presetPath;
+  return saveStartupConfig(configPath, configured.config);
 }
 
 std::string clearStartupPreset(const std::filesystem::path &configPath) {
@@ -554,9 +448,9 @@ std::string clearStartupPreset(const std::filesystem::path &configPath) {
   if (!configured.error.empty()) {
     return configured.error;
   }
-  configured.presetFound = false;
-  configured.presetPath.clear();
-  return writeStartupConfig(configPath, configured);
+  configured.config.presetFound = false;
+  configured.config.presetPath.clear();
+  return saveStartupConfig(configPath, configured.config);
 }
 
 std::string savePreferredOutput(const std::filesystem::path &configPath,
@@ -565,9 +459,9 @@ std::string savePreferredOutput(const std::filesystem::path &configPath,
   if (!configured.error.empty()) {
     return configured.error;
   }
-  configured.preferredOutputFound = true;
-  configured.preferredOutput = nodeName;
-  return writeStartupConfig(configPath, configured);
+  configured.config.preferredOutputFound = true;
+  configured.config.preferredOutput = nodeName;
+  return saveStartupConfig(configPath, configured.config);
 }
 
 std::string clearPreferredOutput(const std::filesystem::path &configPath) {
@@ -575,9 +469,9 @@ std::string clearPreferredOutput(const std::filesystem::path &configPath) {
   if (!configured.error.empty()) {
     return configured.error;
   }
-  configured.preferredOutputFound = false;
-  configured.preferredOutput.clear();
-  return writeStartupConfig(configPath, configured);
+  configured.config.preferredOutputFound = false;
+  configured.config.preferredOutput.clear();
+  return saveStartupConfig(configPath, configured.config);
 }
 
 std::string saveSampleRatePolicy(const std::filesystem::path &configPath,
@@ -589,8 +483,8 @@ std::string saveSampleRatePolicy(const std::filesystem::path &configPath,
   if (!configured.error.empty()) {
     return configured.error;
   }
-  configured.ratePolicy = policy;
-  return writeStartupConfig(configPath, configured);
+  configured.config.ratePolicy = policy;
+  return saveStartupConfig(configPath, configured.config);
 }
 
 std::string saveDspBackendKind(const std::filesystem::path &configPath,
@@ -602,8 +496,8 @@ std::string saveDspBackendKind(const std::filesystem::path &configPath,
   if (!configured.error.empty()) {
     return configured.error;
   }
-  configured.dspBackend = kind;
-  return writeStartupConfig(configPath, configured);
+  configured.config.dspBackend = kind;
+  return saveStartupConfig(configPath, configured.config);
 }
 
 std::string saveDspBackendSelection(
@@ -619,9 +513,9 @@ std::string saveDspBackendSelection(
   if (!configured.error.empty()) {
     return configured.error;
   }
-  configured.dspBackend = kind;
-  configured.dspSimdVariant = simdVariant;
-  return writeStartupConfig(configPath, configured);
+  configured.config.dspBackend = kind;
+  configured.config.dspSimdVariant = simdVariant;
+  return saveStartupConfig(configPath, configured.config);
 }
 
 std::string saveDspIdlePolicy(const std::filesystem::path &configPath,
@@ -633,12 +527,12 @@ std::string saveDspIdlePolicy(const std::filesystem::path &configPath,
   if (!configured.error.empty()) {
     return configured.error;
   }
-  configured.dspIdlePolicy = policy;
-  return writeStartupConfig(configPath, configured);
+  configured.config.dspIdlePolicy = policy;
+  return saveStartupConfig(configPath, configured.config);
 }
 
 std::string resetStartupConfig(const std::filesystem::path &configPath) {
-  return writeStartupConfig(
+  return saveStartupConfig(
       configPath,
       {.presetFound = false,
        .presetPath = {},
@@ -647,8 +541,7 @@ std::string resetStartupConfig(const std::filesystem::path &configPath) {
        .ratePolicy = defaultSampleRatePolicy(),
        .dspBackend = DspBackendKind::scalar,
        .dspSimdVariant = DspSimdVariant::automatic,
-       .dspIdlePolicy = defaultDspIdlePolicy(),
-       .error = {}});
+       .dspIdlePolicy = defaultDspIdlePolicy()});
 }
 
 } // namespace pipetune

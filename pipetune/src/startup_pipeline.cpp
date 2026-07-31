@@ -75,36 +75,36 @@ prepareStartupPipeline(const std::filesystem::path &configPath,
                          defaultDspIdlePolicy(),
                          configured.error, std::move(backends), selection);
   }
+  const auto &config = configured.config;
   const auto selection =
-      selectDspBackend(configured.dspBackend,
-                       configured.dspSimdVariant, backends);
-  if (!configured.presetFound) {
-    return prepareBypass(options, configured.preferredOutput,
-                         configured.ratePolicy, configured.dspIdlePolicy, {},
+      selectDspBackend(config.dspBackend, config.dspSimdVariant, backends);
+  if (!config.presetFound) {
+    return prepareBypass(options, config.preferredOutput,
+                         config.ratePolicy, config.dspIdlePolicy, {},
                          std::move(backends),
                          selection);
   }
   if (selection.effectiveBackend == nullptr) {
     return prepareBypass(
-        options, configured.preferredOutput, configured.ratePolicy,
-        configured.dspIdlePolicy,
+        options, config.preferredOutput, config.ratePolicy,
+        config.dspIdlePolicy,
         "cannot load configured preset: " + selection.error,
         std::move(backends), selection);
   }
 
-  auto loaded = loadDspPipeline(configured.presetPath, options,
+  auto loaded = loadDspPipeline(config.presetPath, options,
                                 selection.effectiveBackend);
   if (loaded.pipeline == nullptr) {
     return prepareBypass(
-        options, configured.preferredOutput, configured.ratePolicy,
-        configured.dspIdlePolicy,
+        options, config.preferredOutput, config.ratePolicy,
+        config.dspIdlePolicy,
         "cannot load configured preset: " + loaded.error,
         std::move(backends), selection);
   }
   return {.pipeline = std::move(loaded.pipeline),
-          .activePresetPath = configured.presetPath,
-          .preferredOutput = configured.preferredOutput,
-          .ratePolicy = configured.ratePolicy,
+          .activePresetPath = config.presetPath,
+          .preferredOutput = config.preferredOutput,
+          .ratePolicy = config.ratePolicy,
           .configurationError = {},
           .warnings = std::move(loaded.warnings),
           .error = {},
@@ -112,7 +112,7 @@ prepareStartupPipeline(const std::filesystem::path &configPath,
           .configuredDspBackend = selection.configuredBackend,
           .configuredDspSimdVariant =
               selection.configuredSimdVariant,
-          .dspIdlePolicy = configured.dspIdlePolicy,
+          .dspIdlePolicy = config.dspIdlePolicy,
           .effectiveDspBackend = selection.effectiveBackend->kind(),
           .effectiveDspVariant = selection.effectiveVariant,
           .dspBackendFallback = selection.fallback,
