@@ -64,6 +64,7 @@ add_custom_command(
 
 add_library(
   pipetune_gtk_core STATIC
+  src/action-log.cpp
   src/application-state.cpp
   src/configuration-reset-client.cpp
   src/control-client.cpp
@@ -75,8 +76,10 @@ add_library(
   src/output-selection-model.cpp
   src/rate-operation.cpp
   src/rate-selection-model.cpp
+  src/settings-transaction.cpp
   src/preset-catalog.cpp
   src/preset-file-monitor.cpp
+  src/status-model.cpp
   src/status-text.cpp)
 target_include_directories(pipetune_gtk_core PUBLIC src)
 target_link_libraries(
@@ -235,6 +238,22 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_gtk_state_config_tests
     COMMAND pipetune_gtk_state_config_tests)
+
+  add_executable(
+    pipetune_gtk_dialog_model_tests
+    test/dialog-model-test.cpp)
+  target_link_libraries(
+    pipetune_gtk_dialog_model_tests PRIVATE pipetune_gtk_core)
+  if(MSVC)
+    target_compile_options(pipetune_gtk_dialog_model_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_dialog_model_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_gtk_dialog_model_tests
+    COMMAND pipetune_gtk_dialog_model_tests)
 
   add_executable(
     pipetune_gtk_output_selection_model_tests
