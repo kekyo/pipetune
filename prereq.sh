@@ -35,6 +35,7 @@ cmake
 dbus-user-session
 desktop-file-utils
 dpkg-dev
+gettext
 hicolor-icon-theme
 libgtk-3-dev
 libpipewire-0.3-dev

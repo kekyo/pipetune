@@ -8,12 +8,51 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
+find_package(Intl REQUIRED)
 pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-2.0 gio-unix-2.0)
 pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0 gdk-x11-3.0)
 find_program(
   PIPETUNE_GTK_GLIB_COMPILE_RESOURCES
   glib-compile-resources
   REQUIRED)
+
+set(PIPETUNE_GTK_GETTEXT_DOMAIN "pipetune-gtk")
+set(PIPETUNE_GTK_PO_FILE "${CMAKE_CURRENT_SOURCE_DIR}/po/ja.po")
+set(PIPETUNE_GTK_LOCALE_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/locale")
+set(
+  PIPETUNE_GTK_JAPANESE_CATALOG
+  "${PIPETUNE_GTK_LOCALE_BUILD_DIR}/ja/LC_MESSAGES/${PIPETUNE_GTK_GETTEXT_DOMAIN}.mo")
+find_program(PIPETUNE_GTK_MSGFMT_EXECUTABLE msgfmt)
+if(PIPETUNE_GTK_MSGFMT_EXECUTABLE)
+  add_custom_command(
+    OUTPUT "${PIPETUNE_GTK_JAPANESE_CATALOG}"
+    COMMAND
+      "${CMAKE_COMMAND}" -E make_directory
+      "${PIPETUNE_GTK_LOCALE_BUILD_DIR}/ja/LC_MESSAGES"
+    COMMAND
+      "${PIPETUNE_GTK_MSGFMT_EXECUTABLE}"
+      --check
+      --output-file="${PIPETUNE_GTK_JAPANESE_CATALOG}"
+      "${PIPETUNE_GTK_PO_FILE}"
+    DEPENDS "${PIPETUNE_GTK_PO_FILE}"
+    VERBATIM)
+else()
+  find_program(PIPETUNE_GTK_TRANSLATION_NODE_EXECUTABLE node REQUIRED)
+  add_custom_command(
+    OUTPUT "${PIPETUNE_GTK_JAPANESE_CATALOG}"
+    COMMAND
+      "${PIPETUNE_GTK_TRANSLATION_NODE_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/compile-po.mjs"
+      "${PIPETUNE_GTK_PO_FILE}"
+      "${PIPETUNE_GTK_JAPANESE_CATALOG}"
+    DEPENDS
+      "${PIPETUNE_GTK_PO_FILE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/compile-po.mjs"
+    VERBATIM)
+endif()
+add_custom_target(
+  pipetune_gtk_translations ALL
+  DEPENDS "${PIPETUNE_GTK_JAPANESE_CATALOG}")
 
 if(BUILD_TESTING)
   find_program(PIPETUNE_GTK_NPM npm REQUIRED)
@@ -105,6 +144,7 @@ add_library(
   src/dsp-backend-selection-model.cpp
   src/dsp-idle-operation.cpp
   src/dsp-idle-selection-model.cpp
+  src/localization.cpp
   src/output-operation.cpp
   src/output-selection-model.cpp
   src/rate-operation.cpp
@@ -113,12 +153,14 @@ add_library(
   src/preset-catalog.cpp
   src/preset-file-monitor.cpp
   src/status-model.cpp
-  src/status-text.cpp)
+  src/status-text.cpp
+  src/ui-language.cpp)
 target_include_directories(pipetune_gtk_core PUBLIC src)
 target_link_libraries(
   pipetune_gtk_core
   PUBLIC pipetune_control pipetune_core
-  PRIVATE PkgConfig::GIO)
+  PRIVATE Intl::Intl PkgConfig::GIO)
+add_dependencies(pipetune_gtk_core pipetune_gtk_translations)
 if(MSVC)
   target_compile_options(pipetune_gtk_core PRIVATE /W4 /WX)
 else()
@@ -260,6 +302,10 @@ install(
   FILES packaging/icons/hicolor/scalable/apps/pipetune.svg
   DESTINATION "${PIPETUNE_GTK_ICON_DIR}")
 install(
+  FILES "${PIPETUNE_GTK_JAPANESE_CATALOG}"
+  DESTINATION
+    "${CMAKE_INSTALL_LOCALEDIR}/ja/LC_MESSAGES")
+install(
   DIRECTORY "${PIPETUNE_GTK_EFFETUNE_PRESET_SOURCE_DIR}/"
   DESTINATION "${PIPETUNE_GTK_EFFETUNE_PRESET_DIR}"
   FILES_MATCHING
@@ -295,6 +341,37 @@ if(BUILD_TESTING)
   set_tests_properties(
     pipetune_gtk_version PROPERTIES
     PASS_REGULAR_EXPRESSION "PipeTune GTK .* EffeTune DSP")
+
+  add_executable(
+    pipetune_gtk_ui_language_tests
+    test/ui-language-test.cpp)
+  target_link_libraries(
+    pipetune_gtk_ui_language_tests
+    PRIVATE pipetune_gtk_core PkgConfig::GIO)
+  if(MSVC)
+    target_compile_options(
+      pipetune_gtk_ui_language_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_ui_language_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_gtk_ui_language_tests
+    COMMAND
+      pipetune_gtk_ui_language_tests
+      "${CMAKE_CURRENT_BINARY_DIR}/locale")
+
+  add_test(
+    NAME pipetune_gtk_help_remains_english
+    COMMAND
+      "${CMAKE_COMMAND}" -E env
+      "LC_ALL=C.UTF-8"
+      "LANGUAGE=ja"
+      $<TARGET_FILE:pipetune-gtk> --help)
+  set_tests_properties(
+    pipetune_gtk_help_remains_english PROPERTIES
+    PASS_REGULAR_EXPRESSION "Show this help text")
 
   add_executable(
     pipetune_gtk_state_config_tests
