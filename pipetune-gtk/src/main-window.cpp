@@ -148,11 +148,24 @@ void presentMainWindow(const MainWindowUi &ui,
     return;
   }
   gtk_widget_show_all(ui.window);
-  gtk_revealer_set_reveal_child(GTK_REVEALER(ui.logRevealer),
-                                gtk_toggle_button_get_active(
-                                    GTK_TOGGLE_BUTTON(ui.logToggleButton)));
+  setLogDrawerVisible(
+      ui, gtk_toggle_button_get_active(
+              GTK_TOGGLE_BUTTON(ui.logToggleButton)) != FALSE);
   gtk_window_present_with_time(GTK_WINDOW(ui.window),
                                userInteractionTime);
+}
+
+void setLogDrawerVisible(const MainWindowUi &ui, bool visible) noexcept {
+  if (ui.logRevealer == nullptr) {
+    return;
+  }
+  if (visible) {
+    gtk_widget_show(ui.logRevealer);
+    gtk_revealer_set_reveal_child(GTK_REVEALER(ui.logRevealer), TRUE);
+    return;
+  }
+  gtk_revealer_set_reveal_child(GTK_REVEALER(ui.logRevealer), FALSE);
+  gtk_widget_hide(ui.logRevealer);
 }
 
 void destroyMainWindowUi(MainWindowUi &ui) noexcept {

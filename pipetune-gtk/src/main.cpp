@@ -617,7 +617,7 @@ static void renderActionLog(GtkRuntime *runtime) {
 static void revealActionLog(GtkRuntime *runtime) {
   gtk_toggle_button_set_active(
       GTK_TOGGLE_BUTTON(runtime->ui.logToggleButton), TRUE);
-  gtk_revealer_set_reveal_child(GTK_REVEALER(runtime->ui.logRevealer), TRUE);
+  setLogDrawerVisible(runtime->ui, true);
 }
 
 static void appendCompletedAction(
@@ -1293,9 +1293,8 @@ static void onApplyClicked(GtkButton *, gpointer userData) {
 static void onLogToggleChanged(GtkToggleButton *button,
                                gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
-  gtk_revealer_set_reveal_child(
-      GTK_REVEALER(runtime->ui.logRevealer),
-      gtk_toggle_button_get_active(button));
+  setLogDrawerVisible(runtime->ui,
+                      gtk_toggle_button_get_active(button) != FALSE);
 }
 
 static void onLogFilterChanged(GtkComboBox *combo, gpointer userData) {

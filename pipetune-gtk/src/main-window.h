@@ -107,6 +107,15 @@ void presentMainWindow(const MainWindowUi &ui,
                        guint32 userInteractionTime) noexcept;
 
 /**
+ * Shows or fully removes the action-log drawer from window allocation.
+ *
+ * @param ui Loaded main-window widgets.
+ * @param visible True to reveal the drawer, false to collapse it to zero
+ * height.
+ */
+void setLogDrawerVisible(const MainWindowUi &ui, bool visible) noexcept;
+
+/**
  * Destroys the main window and releases its GtkBuilder.
  *
  * @param ui UI state to release and reset.

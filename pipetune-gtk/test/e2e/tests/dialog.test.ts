@@ -113,6 +113,26 @@ const selectSettingsPage = async (index: number): Promise<void> => {
   await child.click();
 };
 
+const expectInsideWindow = async (
+  element: GtkWidgetElement,
+  window: GtkElementOfKind<'window'>
+): Promise<void> => {
+  const windowCapture = await window.capture();
+  const elementCapture = await element.capture();
+  expect(elementCapture.bounds.x).toBeGreaterThanOrEqual(
+    windowCapture.bounds.x
+  );
+  expect(elementCapture.bounds.y).toBeGreaterThanOrEqual(
+    windowCapture.bounds.y
+  );
+  expect(
+    elementCapture.bounds.x + elementCapture.bounds.width
+  ).toBeLessThanOrEqual(windowCapture.bounds.x + windowCapture.bounds.width);
+  expect(
+    elementCapture.bounds.y + elementCapture.bounds.height
+  ).toBeLessThanOrEqual(windowCapture.bounds.y + windowCapture.bounds.height);
+};
+
 const changeRateTo96Khz = async (): Promise<void> => {
   await selectSettingsPage(2);
   await selectComboItem('rateCombo', 3);
@@ -149,13 +169,38 @@ describe('PipeTune GTK dialog', () => {
     const settingsPane = await getElement('settingsPane', 'container');
     expect((await statusPane.capture()).clipped).toBe(false);
     expect((await settingsPane.capture()).clipped).toBe(false);
+    await expectInsideWindow(statusPane, window);
+    await expectInsideWindow(settingsPane, window);
+    expect((await statusPane.capture()).bounds.width).toBeGreaterThanOrEqual(
+      340
+    );
 
+    const switcher = await getElement('settingsSwitcher', 'container');
     for (let page = 0; page < 5; page += 1) {
+      const pageButton = await switcher.childAt(page);
+      expect(pageButton).toBeDefined();
+      await expectInsideWindow(pageButton as GtkWidgetElement, window);
       await selectSettingsPage(page);
       expect(
         await (await getElement('status-live-processing', 'label')).text()
       ).toBe('Preset');
     }
+    await expectInsideWindow(
+      await getElement('logToggleButton', 'toggleButton'),
+      window
+    );
+    await expectInsideWindow(
+      await getElement('dialogFooter', 'container'),
+      window
+    );
+    await expectInsideWindow(
+      await getElement('cancelButton', 'button'),
+      window
+    );
+    await expectInsideWindow(await getElement('applyButton', 'button'), window);
+    expect(
+      (await (await getElement('logRevealer', 'container')).info()).states
+    ).not.toContain('showing');
 
     await selectSettingsPage(1);
     const outputButton = await getElement('outputMenuButton', 'toggleButton');
@@ -164,6 +209,21 @@ describe('PipeTune GTK dialog', () => {
     expect(outputInfo.name).not.toContain('alsa_output.usb-long');
     expect(outputInfo.description).toContain(
       'alsa_output.usb-long-studio-dac.analog-stereo'
+    );
+    await outputButton.click();
+    const outputPopover = await getElement('outputPopover', 'container');
+    const outputList = await getElement('outputList', 'list');
+    await toPass(
+      async () => {
+        const capture = await outputPopover.capture();
+        expect(capture.bounds.width).toBeGreaterThanOrEqual(440);
+        expect(capture.bounds.height).toBeGreaterThanOrEqual(140);
+        expect((await outputList.info()).states).toContain('showing');
+      },
+      {
+        timeoutMs: 10_000,
+        message: 'Output choices did not become visibly available.',
+      }
     );
   });
 

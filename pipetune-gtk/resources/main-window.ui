@@ -31,7 +31,7 @@
         <child>
           <object class="GtkPaned" id="mainPaned">
             <property name="orientation">horizontal</property>
-            <property name="position">400</property>
+            <property name="position">390</property>
             <property name="wide-handle">True</property>
             <property name="vexpand">True</property>
             <child>
@@ -131,7 +131,7 @@
               </object>
               <packing>
                 <property name="resize">False</property>
-                <property name="shrink">False</property>
+                <property name="shrink">True</property>
               </packing>
             </child>
             <child>
@@ -144,9 +144,13 @@
                 <child>
                   <object class="GtkStackSwitcher" id="settingsSwitcher">
                     <property name="halign">center</property>
+                    <property name="homogeneous">False</property>
                     <property name="margin-top">14</property>
                     <property name="margin-bottom">10</property>
                     <property name="stack">settingsStack</property>
+                    <style>
+                      <class name="settings-switcher"/>
+                    </style>
                   </object>
                   <packing>
                     <property name="expand">False</property>
@@ -211,6 +215,7 @@
                                           <object class="GtkLabel">
                                             <property name="label">Turn off to pass audio through without an EffeTune preset.</property>
                                             <property name="xalign">0</property>
+                                            <property name="max-width-chars">30</property>
                                             <property name="wrap">True</property>
                                             <style>
                                               <class name="dim-label"/>
@@ -372,6 +377,7 @@
                                       <object class="GtkLabel">
                                         <property name="label">Long PipeWire node names are available in the device tooltip.</property>
                                         <property name="xalign">0</property>
+                                        <property name="max-width-chars">30</property>
                                         <property name="wrap">True</property>
                                         <style>
                                           <class name="dim-label"/>
@@ -602,6 +608,7 @@
                                           <object class="GtkLabel">
                                             <property name="label">Choose bypass, system default output, Max + Suggest, Scalar, and Conservative.</property>
                                             <property name="xalign">0</property>
+                                            <property name="max-width-chars">30</property>
                                             <property name="wrap">True</property>
                                             <style>
                                               <class name="dim-label"/>
@@ -859,8 +866,11 @@
     <property name="position">bottom</property>
     <child>
       <object class="GtkScrolledWindow">
-        <property name="min-content-width">460</property>
+        <property name="visible">True</property>
+        <property name="width-request">460</property>
+        <property name="min-content-height">160</property>
         <property name="max-content-height">360</property>
+        <property name="propagate-natural-height">True</property>
         <property name="hscrollbar-policy">never</property>
         <property name="vscrollbar-policy">automatic</property>
         <child>

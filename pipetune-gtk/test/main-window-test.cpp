@@ -142,6 +142,9 @@ int main(int argc, char **argv) {
                 GTK_STACK_SWITCHER(ui.settingsSwitcher)) ==
                 GTK_STACK(ui.settingsStack),
             "settings switcher is not attached to the stack") &&
+      check(gtk_box_get_homogeneous(
+                GTK_BOX(ui.settingsSwitcher)) == FALSE,
+            "settings switcher must fit labels independently") &&
       check(gtk_revealer_get_reveal_child(
                 GTK_REVEALER(ui.logRevealer)) == FALSE,
             "log drawer must start collapsed") &&
@@ -166,7 +169,9 @@ int main(int argc, char **argv) {
       check(gtk_widget_get_visible(ui.persistentStatusPane) != FALSE,
             "persistent status pane must be visible") &&
       check(gtk_widget_get_visible(ui.settingsPane) != FALSE,
-            "settings pane must be visible");
+            "settings pane must be visible") &&
+      check(gtk_widget_get_visible(ui.logRevealer) == FALSE,
+            "collapsed log drawer must not retain window height");
 
   pipetune_gtk::destroyMainWindowUi(ui);
   g_object_unref(application);

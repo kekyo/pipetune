@@ -6,6 +6,12 @@
   background-color: @theme_base_color;
 }
 
+.settings-switcher button {
+  min-width: 48px;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
 .title {
   font-weight: 700;
   font-size: 1.15em;
