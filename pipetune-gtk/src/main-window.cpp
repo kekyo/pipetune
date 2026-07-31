@@ -46,6 +46,12 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
   auto *builder = gtk_builder_new_from_resource(kMainWindowResourcePath);
 #ifdef PIPETUNE_GTK_E2E_ACCESSIBILITY
   gestament_gtk_assign_accessible_ids_from_builder(builder);
+  auto *statusScrolledWindow = requiredWidget(
+      builder, "statusScrolledWindow", GTK_TYPE_SCROLLED_WINDOW);
+  gestament_gtk_assign_accessible_id(
+      gtk_scrolled_window_get_vscrollbar(
+          GTK_SCROLLED_WINDOW(statusScrolledWindow)),
+      "statusScrollbar");
 #endif
   auto ui = MainWindowUi{
       .builder = builder,

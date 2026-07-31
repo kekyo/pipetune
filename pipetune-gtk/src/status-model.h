@@ -30,8 +30,8 @@ enum class StatusSeverity {
 enum class StatusDisplayKind {
   /** Render the formatted value as text. */
   text,
-  /** Render graph-ready numeric data as a progress indicator. */
-  progress
+  /** Render bounded numeric data as a horizontal level bar. */
+  levelBar
 };
 
 /**
@@ -73,11 +73,32 @@ struct StatusSection {
 };
 
 /**
+ * Holds normalized drawing data for one bounded status level.
+ */
+struct StatusLevelPresentation {
+  /** Numeric value clamped to the item's inclusive bounds. */
+  double clampedValue;
+  /** Normalized position from zero through one. */
+  double fraction;
+  /** Low-saturation HUE step from zero through ten. */
+  std::uint8_t hueStep;
+};
+
+/**
+ * Normalizes graph-ready metadata for level-bar rendering.
+ *
+ * @param item Status item to inspect.
+ * @return Drawing data when all bounds and values are finite and valid.
+ */
+std::optional<StatusLevelPresentation>
+statusLevelPresentation(const StatusItem &item);
+
+/**
  * Builds the complete persistent status tree presentation.
  *
- * Values remain separated into independent rows, while numeric metadata is
- * retained so text rows such as DSP Load can later become graphs without
- * changing the state boundary.
+ * Values remain separated into independent rows. DSP Load requests a bounded
+ * level-bar presentation, while other numeric metadata remains available for
+ * future visualizations without changing the state boundary.
  *
  * @param state Current application and daemon state.
  * @param saved Configuration loaded from persistent storage.

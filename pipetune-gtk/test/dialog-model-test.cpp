@@ -6,9 +6,12 @@
 #include "pipetune/startup_config.h"
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <string_view>
 
@@ -17,6 +20,10 @@ static bool check(bool condition, std::string_view message) {
     std::cerr << message << '\n';
   }
   return condition;
+}
+
+static bool approximately(double actual, double expected) {
+  return std::abs(actual - expected) < 0.000001;
 }
 
 static pipetune::StartupConfig baseConfig() {
@@ -252,11 +259,19 @@ static bool testStructuredStatusModel() {
   const auto *underrun = findItem(*performance, "errors.underrun");
   const auto *processing =
       findItem(*performance, "errors.processing");
+  const auto *processingTime =
+      findItem(*performance, "dsp.processing-time");
   const auto *selected = findItem(*routing, "routing.selected-output");
   if (!check(load != nullptr && load->numericValue.has_value() &&
                  *load->numericValue == 20.0 && load->unit == "%" &&
-                 load->minimum == 0.0 && load->maximum == 100.0,
-             "DSP load must retain graph-ready numeric metadata") ||
+                 load->minimum == 0.0 && load->maximum == 100.0 &&
+                 load->displayKind ==
+                     pipetune_gtk::StatusDisplayKind::levelBar,
+             "DSP load must request a bounded graph presentation") ||
+      !check(processingTime != nullptr &&
+                 processingTime->displayKind ==
+                     pipetune_gtk::StatusDisplayKind::text,
+             "other numeric status rows must remain text") ||
       !check(overrun != nullptr && overrun->value == "1" &&
                  underrun != nullptr && underrun->value == "2" &&
                  processing != nullptr && processing->value == "3",
@@ -277,6 +292,108 @@ static bool testStructuredStatusModel() {
     }
   }
   return true;
+}
+
+static bool testStatusLevelPresentation() {
+  auto state = pipetune_gtk::initialApplicationState();
+  state.connection = pipetune_gtk::ControlConnectionState::connected;
+  state.hasRuntimeStatus = true;
+  state.runtime.inputSampleRate = 200000;
+  state.dspTiming.hasAverage = true;
+  state.dspTiming.nanosecondsPerFrame = 1000.0;
+  const auto sections = pipetune_gtk::buildStatusSections(
+      state, baseConfig(), 1704164645012ULL);
+  const auto *performance = findSection(sections, "dsp-performance");
+  if (!check(performance != nullptr,
+             "DSP performance section is unavailable")) {
+    return false;
+  }
+  const auto *load = findItem(*performance, "dsp.load");
+  if (!check(load != nullptr, "DSP load item is unavailable")) {
+    return false;
+  }
+
+  struct LevelCase {
+    double value;
+    double clamped;
+    double fraction;
+    std::uint8_t hueStep;
+  };
+  constexpr auto cases = std::array{
+      LevelCase{.value = 0.0, .clamped = 0.0, .fraction = 0.0,
+                .hueStep = 0},
+      LevelCase{.value = 9.99, .clamped = 9.99, .fraction = 0.0999,
+                .hueStep = 0},
+      LevelCase{.value = 10.0, .clamped = 10.0, .fraction = 0.1,
+                .hueStep = 1},
+      LevelCase{.value = 99.9, .clamped = 99.9, .fraction = 0.999,
+                .hueStep = 9},
+      LevelCase{.value = 100.0, .clamped = 100.0, .fraction = 1.0,
+                .hueStep = 10},
+      LevelCase{.value = 120.0, .clamped = 100.0, .fraction = 1.0,
+                .hueStep = 10},
+  };
+  for (const auto &expected : cases) {
+    auto item = *load;
+    item.numericValue = expected.value;
+    const auto presentation =
+        pipetune_gtk::statusLevelPresentation(item);
+    if (!check(
+            presentation.has_value() &&
+                approximately(presentation->clampedValue,
+                              expected.clamped) &&
+                approximately(presentation->fraction,
+                              expected.fraction) &&
+                presentation->hueStep == expected.hueStep,
+            "bounded status level presentation differs")) {
+      return false;
+    }
+  }
+
+  auto invalid = *load;
+  invalid.numericValue = std::numeric_limits<double>::infinity();
+  if (!check(!pipetune_gtk::statusLevelPresentation(invalid).has_value(),
+             "non-finite status levels must not be graphed")) {
+    return false;
+  }
+
+  state.dspTiming.nanosecondsPerFrame = 6000.0;
+  const auto overloadedSections = pipetune_gtk::buildStatusSections(
+      state, baseConfig(), 1704164645012ULL);
+  const auto *overloadedPerformance =
+      findSection(overloadedSections, "dsp-performance");
+  const auto *overloaded = overloadedPerformance == nullptr
+                               ? nullptr
+                               : findItem(*overloadedPerformance, "dsp.load");
+  const auto overloadedPresentation =
+      overloaded == nullptr
+          ? std::optional<pipetune_gtk::StatusLevelPresentation>{}
+          : pipetune_gtk::statusLevelPresentation(*overloaded);
+  if (!check(overloaded != nullptr && overloaded->value == "120.0%" &&
+                 overloaded->severity ==
+                     pipetune_gtk::StatusSeverity::error &&
+                 overloadedPresentation.has_value() &&
+                 overloadedPresentation->clampedValue == 100.0 &&
+                 overloadedPresentation->hueStep == 10,
+             "overload text must remain actual while its graph is capped")) {
+    return false;
+  }
+
+  state.dspTiming.hasAverage = false;
+  const auto unavailableSections = pipetune_gtk::buildStatusSections(
+      state, baseConfig(), 1704164645012ULL);
+  const auto *unavailablePerformance =
+      findSection(unavailableSections, "dsp-performance");
+  const auto *unavailable =
+      unavailablePerformance == nullptr
+          ? nullptr
+          : findItem(*unavailablePerformance, "dsp.load");
+  return check(
+      unavailable != nullptr && unavailable->value == "—" &&
+          unavailable->displayKind ==
+              pipetune_gtk::StatusDisplayKind::text &&
+          !pipetune_gtk::statusLevelPresentation(*unavailable).has_value(),
+      "unavailable DSP load must remain a text fallback");
 }
 
 static bool testActionLogHistory() {
@@ -331,7 +448,8 @@ static bool testActionLogHistory() {
 int main() {
   return testLiveCoalescingApplyAndCancel() &&
                  testFailuresDisconnectAndConflict() &&
-                 testStructuredStatusModel() && testActionLogHistory()
+                 testStructuredStatusModel() &&
+                 testStatusLevelPresentation() && testActionLogHistory()
              ? 0
              : 1;
 }

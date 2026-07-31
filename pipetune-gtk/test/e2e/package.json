@@ -11,7 +11,9 @@
   },
   "devDependencies": {
     "@types/node": "25.9.1",
+    "@types/pngjs": "6.0.5",
     "gestament": "1.4.0",
+    "pngjs": "7.0.0",
     "prettier-max": "1.16.0",
     "typescript": "6.0.3",
     "vite": "6.4.3",

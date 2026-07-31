@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { PNG } from 'pngjs';
 
 import type {
   GtkElementOfKind,
@@ -133,7 +134,7 @@ const expectInsideWindow = async (
   ).toBeLessThanOrEqual(windowCapture.bounds.y + windowCapture.bounds.height);
 };
 
-const expandStatusPaneTo = async (targetWidth: number): Promise<void> => {
+const resizeStatusPaneTo = async (targetWidth: number): Promise<void> => {
   if (session === undefined) {
     throw new Error('GTK session is unavailable');
   }
@@ -152,15 +153,110 @@ const expandStatusPaneTo = async (targetWidth: number): Promise<void> => {
   }
   await toPass(
     async () => {
-      expect((await statusPane.capture()).bounds.width).toBeGreaterThanOrEqual(
-        targetWidth - 5
-      );
+      expect(
+        Math.abs((await statusPane.capture()).bounds.width - targetWidth)
+      ).toBeLessThanOrEqual(5);
     },
     {
       timeoutMs: 10_000,
-      message: 'Status pane did not expand after dragging its divider.',
+      message: 'Status pane did not reach the requested divider position.',
     }
   );
+};
+
+const scrollStatusPaneTo = async (fraction: number): Promise<void> => {
+  const scrollbar = await getElement('statusScrollbar', 'scrollbar');
+  const value = await scrollbar.valueInfo();
+  await scrollbar.setValue(
+    value.minimum + (value.maximum - value.minimum) * fraction
+  );
+};
+
+interface PixelBounds {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+const findOpaqueColorBounds = (
+  image: Buffer,
+  target: readonly [number, number, number]
+): PixelBounds => {
+  const png = PNG.sync.read(image);
+  let minimumX = Number.POSITIVE_INFINITY;
+  let minimumY = Number.POSITIVE_INFINITY;
+  let maximumX = -1;
+  let maximumY = -1;
+  for (let y = 0; y < png.height; y += 1) {
+    for (let x = 0; x < png.width; x += 1) {
+      const offset = (y * png.width + x) * 4;
+      if (
+        png.data[offset] === target[0] &&
+        png.data[offset + 1] === target[1] &&
+        png.data[offset + 2] === target[2] &&
+        png.data[offset + 3] === 255
+      ) {
+        minimumX = Math.min(minimumX, x);
+        minimumY = Math.min(minimumY, y);
+        maximumX = Math.max(maximumX, x);
+        maximumY = Math.max(maximumY, y);
+      }
+    }
+  }
+  if (!Number.isFinite(minimumX)) {
+    throw new Error(
+      'The load meter HUE was not present in the window capture.'
+    );
+  }
+  return {
+    x: minimumX,
+    y: minimumY,
+    width: maximumX - minimumX + 1,
+    height: maximumY - minimumY + 1,
+  };
+};
+
+interface LoadMeterRasterMeasurement {
+  readonly width: number;
+  readonly rightInset: number;
+}
+
+const measureLoadMeterRaster = async (
+  window: GtkElementOfKind<'window'>,
+  statusPane: GtkElementOfKind<'container'>
+): Promise<LoadMeterRasterMeasurement> => {
+  const windowCapture = await window.capture();
+  const statusCapture = await statusPane.capture();
+  const filled = findOpaqueColorBounds(windowCapture.image, [134, 166, 78]);
+  // Rounded ends exclude three boundary pixels from the exact solid HUE.
+  const width = (filled.width + 3) / 0.6;
+  const right = windowCapture.visibleBounds.x + filled.x + width;
+  return {
+    width,
+    rightInset: statusCapture.bounds.x + statusCapture.bounds.width - right,
+  };
+};
+
+const revealAndMeasureLoadMeter = async (
+  window: GtkElementOfKind<'window'>,
+  statusPane: GtkElementOfKind<'container'>
+): Promise<LoadMeterRasterMeasurement> => {
+  let lastError: unknown;
+  for (const fraction of [
+    0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95,
+  ]) {
+    await scrollStatusPaneTo(fraction);
+    try {
+      return await measureLoadMeterRaster(window, statusPane);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (lastError instanceof Error) {
+    throw lastError;
+  }
+  throw new Error('The load meter could not be revealed in the status pane.');
 };
 
 const changeRateTo96Khz = async (): Promise<void> => {
@@ -269,11 +365,67 @@ describe('PipeTune GTK dialog', () => {
     );
     const initialWidth = (await savedOutput.capture()).bounds.width;
 
-    await expandStatusPaneTo(680);
+    await resizeStatusPaneTo(680);
 
     const expandedWidth = (await savedOutput.capture()).bounds.width;
     expect(expandedWidth).toBeGreaterThanOrEqual(480);
     expect(expandedWidth).toBeGreaterThan(initialWidth + 200);
+  });
+
+  it('renders DSP load as a right-aligned level meter with a capped responsive width', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    const window = await getElement('mainWindow', 'window');
+    await window.resizeTo(900, 560);
+    await resizeStatusPaneTo(340);
+    await changeRateTo96Khz();
+
+    const meter = await getElement('status-dsp-load-meter', 'progressBar');
+    await toPass(
+      async () => {
+        const value = await meter.valueInfo();
+        expect(value.value).toBeCloseTo(60, 5);
+        expect(value.minimum).toBe(0);
+        expect(value.maximum).toBe(100);
+        expect((await meter.info()).name).toBe('Load 60.0%');
+      },
+      {
+        timeoutMs: 10_000,
+        message: 'DSP load meter did not expose its current bounded value.',
+      }
+    );
+    const statusPane = await getElement('persistentStatusPane', 'container');
+    const narrowMeter = await waitForResult(
+      async () => revealAndMeasureLoadMeter(window, statusPane),
+      {
+        timeoutMs: 10_000,
+        message: 'DSP load meter was not measurable at the narrow pane width.',
+      }
+    );
+    expect(narrowMeter.width).toBeGreaterThanOrEqual(150);
+    expect(narrowMeter.width).toBeLessThan(280);
+    expect(narrowMeter.rightInset).toBeGreaterThanOrEqual(15);
+    expect(narrowMeter.rightInset).toBeLessThanOrEqual(30);
+
+    await window.resizeTo(1200, 740);
+    await resizeStatusPaneTo(680);
+    await toPass(
+      async () => {
+        const expandedMeter = await revealAndMeasureLoadMeter(
+          window,
+          statusPane
+        );
+        expect(expandedMeter.width).toBeGreaterThan(narrowMeter.width);
+        expect(expandedMeter.width).toBeGreaterThanOrEqual(278);
+        expect(expandedMeter.width).toBeLessThanOrEqual(282);
+        expect(expandedMeter.rightInset).toBeGreaterThanOrEqual(15);
+        expect(expandedMeter.rightInset).toBeLessThanOrEqual(30);
+      },
+      {
+        timeoutMs: 10_000,
+        message: 'DSP load meter did not grow to its capped width.',
+      }
+    );
   });
 
   it('applies every setting live, persists once, and remains open', async () => {

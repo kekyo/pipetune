@@ -3,6 +3,7 @@
 #include "pipetune/startup_config.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -20,6 +21,7 @@ struct FakeDaemonState {
   pipetune::StartupConfig liveConfig;
   std::filesystem::path requestLogPath;
   std::string rejectedCommand;
+  std::uint64_t dspTelemetrySequence;
 };
 
 static std::string environmentValue(const char *name) {
@@ -184,7 +186,13 @@ makeStatus(const pipetune::StartupConfig &config) {
 static pipetune::ControlRuntimeStatus snapshotStatus(
     FakeDaemonState &state) {
   auto lock = std::scoped_lock(state.mutex);
-  return makeStatus(state.liveConfig);
+  auto status = makeStatus(state.liveConfig);
+  status.dspProcessedFrames +=
+      state.dspTelemetrySequence * status.inputSampleRate;
+  status.dspProcessingNanoseconds +=
+      state.dspTelemetrySequence * std::uint64_t{600000000};
+  ++state.dspTelemetrySequence;
+  return status;
 }
 
 static std::string provideStatus(void *userData) {
@@ -402,6 +410,7 @@ int main(int argc, char **argv) {
       .requestLogPath = environmentValue("PIPETUNE_E2E_REQUEST_LOG"),
       .rejectedCommand =
           environmentValue("PIPETUNE_E2E_REJECT_COMMAND"),
+      .dspTelemetrySequence = 0,
   };
   auto started = pipetune::startControlServer(
       socketPath.path,

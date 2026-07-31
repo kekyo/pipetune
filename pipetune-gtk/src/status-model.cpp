@@ -6,6 +6,7 @@
 #include "pipetune/dsp_idle.h"
 #include "pipetune/sample_rate.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -56,6 +57,18 @@ static StatusItem numericTextItem(
       .maximum = maximum,
       .tooltip = {},
   };
+}
+
+static StatusItem numericLevelItem(
+    std::string id, std::string label, std::string value,
+    double numericValue, std::string unit, double minimum,
+    double maximum, StatusSeverity severity, std::string tooltip) {
+  auto item = numericTextItem(
+      std::move(id), std::move(label), std::move(value), numericValue,
+      std::move(unit), minimum, maximum, severity);
+  item.displayKind = StatusDisplayKind::levelBar;
+  item.tooltip = std::move(tooltip);
+  return item;
 }
 
 static std::string fixedDecimal(double value, int precision) {
@@ -243,10 +256,11 @@ static StatusItem dspLoadItem(const ApplicationState &state) {
       static_cast<double>(state.runtime.inputSampleRate);
   const auto load =
       state.dspTiming.nanosecondsPerFrame / frameBudget * 100.0;
-  return numericTextItem(
+  return numericLevelItem(
       "dsp.load", "Load", fixedDecimal(load, 1) + "%", load, "%",
       0.0, 100.0,
-      load > 100.0 ? StatusSeverity::error : StatusSeverity::normal);
+      load > 100.0 ? StatusSeverity::error : StatusSeverity::normal,
+      "DSP processing load; graph capped at 100%.");
 }
 
 static StatusItem dspTimeItem(const ApplicationState &state) {
@@ -276,6 +290,31 @@ static std::string errorText(std::string_view error) {
 
 static StatusSeverity errorSeverity(std::string_view error) {
   return error.empty() ? StatusSeverity::normal : StatusSeverity::error;
+}
+
+std::optional<StatusLevelPresentation>
+statusLevelPresentation(const StatusItem &item) {
+  if (item.displayKind != StatusDisplayKind::levelBar ||
+      !item.numericValue.has_value() || !item.minimum.has_value() ||
+      !item.maximum.has_value() || !std::isfinite(*item.numericValue) ||
+      !std::isfinite(*item.minimum) || !std::isfinite(*item.maximum) ||
+      *item.maximum <= *item.minimum) {
+    return std::nullopt;
+  }
+
+  const auto value =
+      std::clamp(*item.numericValue, *item.minimum, *item.maximum);
+  const auto fraction =
+      (value - *item.minimum) / (*item.maximum - *item.minimum);
+  const auto hueStep =
+      fraction >= 1.0
+          ? std::uint8_t{10}
+          : static_cast<std::uint8_t>(std::floor(fraction * 10.0));
+  return StatusLevelPresentation{
+      .clampedValue = value,
+      .fraction = fraction,
+      .hueStep = hueStep,
+  };
 }
 
 std::vector<StatusSection> buildStatusSections(

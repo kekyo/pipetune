@@ -12,6 +12,7 @@
 #include "rate-selection-model.h"
 #include "settings-transaction.h"
 #include "status-icon.h"
+#include "status-level-meter.h"
 #include "status-model.h"
 #include "tray-backend.h"
 
@@ -25,7 +26,6 @@
 
 #include <gtk/gtk.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
@@ -50,7 +50,7 @@ constexpr auto kActionLogCapacity = std::size_t{500};
 
 struct StatusRowWidgets {
   GtkWidget *text;
-  GtkWidget *progress;
+  StatusLevelMeterWidgets levelMeter;
   GtkWidget *stack;
 };
 
@@ -292,16 +292,16 @@ static StatusRowWidgets createStatusItemRow(const StatusItem &item,
   gtk_label_set_max_width_chars(GTK_LABEL(text), 28);
   gtk_label_set_selectable(GTK_LABEL(text), TRUE);
   gtk_stack_add_named(GTK_STACK(stack), text, "text");
-  auto *progress = gtk_progress_bar_new();
-  gtk_progress_bar_set_show_text(GTK_PROGRESS_BAR(progress), TRUE);
-  gtk_widget_set_size_request(progress, 150, -1);
-  gtk_stack_add_named(GTK_STACK(stack), progress, "progress");
+  const auto levelMeter = createStatusLevelMeter();
+  gtk_stack_add_named(GTK_STACK(stack), levelMeter.root, "level");
   gtk_stack_set_visible_child_name(GTK_STACK(stack), "text");
   gtk_box_pack_end(GTK_BOX(box), stack, TRUE, TRUE, 0);
   gtk_container_add(GTK_CONTAINER(row), box);
-  assignDynamicAccessibleId(text, accessibleStatusId(item.id));
+  const auto statusId = accessibleStatusId(item.id);
+  assignDynamicAccessibleId(text, statusId);
+  assignDynamicAccessibleId(levelMeter.levelBar, statusId + "-meter");
   *rowOut = row;
-  return {.text = text, .progress = progress, .stack = stack};
+  return {.text = text, .levelMeter = levelMeter, .stack = stack};
 }
 
 static void initializeStatusRows(GtkRuntime *runtime) {
@@ -348,19 +348,25 @@ static void renderStatusRows(GtkRuntime *runtime) {
       } else if (item.severity == StatusSeverity::error) {
         addStyleClass(widgets.text, "status-error");
       }
-      if (item.displayKind == StatusDisplayKind::progress &&
-          item.numericValue.has_value() && item.minimum.has_value() &&
-          item.maximum.has_value() && *item.maximum > *item.minimum) {
-        const auto fraction = std::clamp(
-            (*item.numericValue - *item.minimum) /
-                (*item.maximum - *item.minimum),
-            0.0, 1.0);
-        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(widgets.progress),
-                                      fraction);
-        gtk_progress_bar_set_text(GTK_PROGRESS_BAR(widgets.progress),
-                                  item.value.c_str());
+      const auto level = statusLevelPresentation(item);
+      if (level.has_value()) {
+        const auto accessibleName = item.label + " " + item.value;
+        updateStatusLevelMeter(
+            widgets.levelMeter,
+            {
+                .minimum = *item.minimum,
+                .maximum = *item.maximum,
+                .value = level->clampedValue,
+                .hueStep = level->hueStep,
+                .valueText = item.value,
+                .accessibleName = accessibleName,
+                .accessibleDescription = item.tooltip,
+            });
+        gtk_widget_set_tooltip_text(
+            widgets.levelMeter.root,
+            item.tooltip.empty() ? nullptr : item.tooltip.c_str());
         gtk_stack_set_visible_child_name(GTK_STACK(widgets.stack),
-                                         "progress");
+                                         "level");
       } else {
         gtk_stack_set_visible_child_name(GTK_STACK(widgets.stack), "text");
       }
