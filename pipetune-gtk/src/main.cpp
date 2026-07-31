@@ -280,12 +280,12 @@ static StatusRowWidgets createStatusItemRow(const StatusItem &item,
   addStyleClass(box, "status-row");
   auto *title = gtk_label_new(item.label.c_str());
   gtk_label_set_xalign(GTK_LABEL(title), 0.0F);
-  gtk_widget_set_hexpand(title, TRUE);
+  gtk_widget_set_hexpand(title, FALSE);
   addStyleClass(title, "dim-label");
-  gtk_box_pack_start(GTK_BOX(box), title, TRUE, TRUE, 0);
+  gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
 
   auto *stack = gtk_stack_new();
-  gtk_widget_set_hexpand(stack, FALSE);
+  gtk_widget_set_hexpand(stack, TRUE);
   auto *text = gtk_label_new(item.value.c_str());
   gtk_label_set_xalign(GTK_LABEL(text), 1.0F);
   gtk_label_set_ellipsize(GTK_LABEL(text), PANGO_ELLIPSIZE_END);
@@ -297,7 +297,7 @@ static StatusRowWidgets createStatusItemRow(const StatusItem &item,
   gtk_widget_set_size_request(progress, 150, -1);
   gtk_stack_add_named(GTK_STACK(stack), progress, "progress");
   gtk_stack_set_visible_child_name(GTK_STACK(stack), "text");
-  gtk_box_pack_end(GTK_BOX(box), stack, FALSE, TRUE, 0);
+  gtk_box_pack_end(GTK_BOX(box), stack, TRUE, TRUE, 0);
   gtk_container_add(GTK_CONTAINER(row), box);
   assignDynamicAccessibleId(text, accessibleStatusId(item.id));
   *rowOut = row;

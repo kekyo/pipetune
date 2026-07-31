@@ -133,6 +133,36 @@ const expectInsideWindow = async (
   ).toBeLessThanOrEqual(windowCapture.bounds.y + windowCapture.bounds.height);
 };
 
+const expandStatusPaneTo = async (targetWidth: number): Promise<void> => {
+  if (session === undefined) {
+    throw new Error('GTK session is unavailable');
+  }
+  const window = await getElement('mainWindow', 'window');
+  const statusPane = await getElement('persistentStatusPane', 'container');
+  const initialBounds = (await statusPane.capture()).bounds;
+  const handleX = initialBounds.x + initialBounds.width + 2;
+  const handleY = initialBounds.y + Math.floor(initialBounds.height / 2);
+  await window.activate();
+  await session.app.input.moveMouseTo(handleX, handleY);
+  await session.app.input.setMouseButton('left', true);
+  try {
+    await session.app.input.moveMouseTo(initialBounds.x + targetWidth, handleY);
+  } finally {
+    await session.app.input.setMouseButton('left', false);
+  }
+  await toPass(
+    async () => {
+      expect((await statusPane.capture()).bounds.width).toBeGreaterThanOrEqual(
+        targetWidth - 5
+      );
+    },
+    {
+      timeoutMs: 10_000,
+      message: 'Status pane did not expand after dragging its divider.',
+    }
+  );
+};
+
 const changeRateTo96Khz = async (): Promise<void> => {
   await selectSettingsPage(2);
   await selectComboItem('rateCombo', 3);
@@ -225,6 +255,25 @@ describe('PipeTune GTK dialog', () => {
         message: 'Output choices did not become visibly available.',
       }
     );
+  });
+
+  it('uses expanded status-pane space for long values', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    const window = await getElement('mainWindow', 'window');
+    await window.resizeTo(1200, 740);
+    const savedOutput = await getElement('status-saved-output', 'label');
+    expect((await savedOutput.info()).states).toContain('showing');
+    expect(await savedOutput.text()).toBe(
+      'alsa_output.usb-long-studio-dac.analog-stereo'
+    );
+    const initialWidth = (await savedOutput.capture()).bounds.width;
+
+    await expandStatusPaneTo(680);
+
+    const expandedWidth = (await savedOutput.capture()).bounds.width;
+    expect(expandedWidth).toBeGreaterThanOrEqual(480);
+    expect(expandedWidth).toBeGreaterThan(initialWidth + 200);
   });
 
   it('applies every setting live, persists once, and remains open', async () => {
