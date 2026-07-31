@@ -27,9 +27,14 @@ Together they display the daemon connection and virtual-sink state, live and
 saved processing choices, routing decisions, input format and rates, DSP
 backend and idle state, processing time and load, error counters, and
 diagnostics. Long values are ellipsized in the row and remain available in a
-tooltip. Numeric status items retain their value, unit, and range separately
-from their current text presentation, so a later UI can render values such as
-**Load** as a progress or bar graph without changing status acquisition.
+tooltip. **Load** is a horizontal level meter aligned to the right of its row.
+It grows with the status pane from 150 to 280 pixels and overlays the existing
+percentage text at the right edge. The meter uses 11 restrained-saturation hue
+steps from teal through muted red. Its graphical fill is capped at 100%, while
+the text preserves the measured value above 100% so overload remains explicit.
+Numeric status items retain their value, unit, and range separately from their
+text presentation, allowing other bounded measurements to adopt the same
+component later without changing status acquisition.
 
 The physical-output chooser is a menu popover rather than a plain combo box.
 It shows a short, disambiguated device description as the primary label, the
@@ -237,6 +242,8 @@ protocol, and runs the dialog under Xvfb. The scenarios verify:
 
 - the persistent status pane, all five settings pages, minimum geometry, and
   compact output-device presentation;
+- the DSP Load meter's accessible range, measured value, responsive
+  right-aligned width, rendered fill, and hue;
 - immediate live changes followed by one dialog-wide atomic Apply;
 - rollback before hide through Escape and title-bar close;
 - live default restoration without persistence before Apply;
