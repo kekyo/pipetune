@@ -6,31 +6,85 @@ desktop system tray.
 
 ## Controls and status
 
-The window displays:
+The main window uses a persistent two-pane layout. The left pane remains
+visible while the right pane switches between **Processing**, **Output**,
+**Rate**, **DSP**, and **Advanced** settings. The default window size is
+1080 × 680 pixels and its supported minimum is 900 × 560 pixels. Both panes
+scroll independently at compact sizes.
 
-- daemon connection state;
-- active processing mode (`Preset` or `Bypass`);
-- active and startup preset paths;
-- active native DSP node count;
-- configured and effective native DSP backends, availability, CPU requirement,
-  fallback state, and validation diagnostics;
-- configured DSP idle policy, effective active/draining/sleeping/paused state,
-  cumulative skipped frames and sleep transitions, and PipeWire graph-idle
-  state;
-- selectable and preferred physical outputs;
-- effective physical output and the engine's selection reason;
-- Max or fixed PCM rate and suggest or force behavior;
-- selected-device support for 44.1, 48, 96, 192, and 384 kHz;
-- final input/DSP, selected output, and active physical rates, including
-  PipeWire resampling and transition state;
-- effective-default-sink state;
-- measured input rate, data rate, and readable stream format;
-- average native EffeTune DSP processing time and input-frame budget load;
-- overrun, underrun, and DSP processing error counters; and
-- warnings for preset nodes omitted by the daemon.
+The left pane uses sectioned, non-selectable list rows instead of combining
+unrelated values into one line. Its always-expanded sections are:
 
-The main window title is **PipeTune**. The status area shows the PipeTune and
-EffeTune DSP versions below the output-selection reason.
+- **System**;
+- **Live Configuration**;
+- **Saved Configuration**;
+- **Routing**;
+- **Input / Rates**;
+- **DSP / Performance**; and
+- **Errors**.
+
+Together they display the daemon connection and virtual-sink state, live and
+saved processing choices, routing decisions, input format and rates, DSP
+backend and idle state, processing time and load, error counters, and
+diagnostics. Long values are ellipsized in the row and remain available in a
+tooltip. Numeric status items retain their value, unit, and range separately
+from their current text presentation, so a later UI can render values such as
+**Load** as a progress or bar graph without changing status acquisition.
+
+The physical-output chooser is a menu popover rather than a plain combo box.
+It shows a short, disambiguated device description as the primary label, the
+PipeWire node name as ellipsized secondary text, and availability or connector
+badges where applicable. The full description and node name are exposed
+through the tooltip and accessible description.
+
+## Live preview and persistence
+
+The window treats all settings as one transaction. Opening it captures the
+saved startup configuration and the daemon's live configuration. Changing any
+control immediately previews that choice in PipeTune; no per-setting apply
+button remains. When several fields differ, requests are serialized in this
+dependency order:
+
+1. output;
+2. sample-rate policy;
+3. DSP backend;
+4. DSP idle policy; and
+5. processing mode or preset.
+
+The global **Apply** button becomes available only after the daemon has
+confirmed every requested live change. It atomically writes the complete
+configuration snapshot and leaves the window open. The newly saved and live
+state then becomes the transaction baseline.
+
+**Cancel**, Escape, and the title-bar close button first restore the live
+configuration captured when the window opened, or the latest successfully
+applied baseline, and hide the window only after the daemon confirms the
+rollback. The startup configuration is not modified. **Restore Defaults** on
+the Advanced page follows the same rules: defaults are previewed live and
+remain unsaved until the global Apply button is used.
+
+Settings become read-only while the daemon is disconnected. If the connection
+drops during a transaction, the desired live state is retained and reapplied
+after reconnection. If a subscribed live configuration changes outside the
+dialog, editing and Apply stop until the window is closed and reopened, so an
+external change cannot be silently overwritten.
+
+If a live request fails, the failed choice is not persisted. Adjusting a
+setting permits a retry. If live preview succeeds but atomic persistence
+fails, the live choices remain active, the saved snapshot remains unchanged,
+the window stays open, and the action log opens with the diagnostic.
+
+## Action log
+
+The full-width **Action Log** drawer at the bottom retains the latest 500
+connection, settings, persistence, and application actions in memory.
+Pending, successful, warning, and failed actions keep their timestamp,
+summary, and diagnostic. The drawer can show all entries, warnings and errors,
+or errors only. **Copy** copies the currently filtered history and **Clear**
+removes the retained history. A failed action opens the drawer automatically;
+closing the drawer does not close the settings window.
+
+## Processing presets
 
 The **EffeTune presets** drop-down contains the standard presets bundled with
 the pinned EffeTune release and named presets saved by the EffeTune desktop
@@ -58,70 +112,42 @@ the startup configuration. The snapshot lets the daemon load one entry from
 EffeTune's multi-preset JSON file and remains valid after the AppImage exits.
 
 The **Preset file** chooser remains available for any standalone
-`.effetune_preset` file. Use **Apply and Save** to change the startup
-selection, or use **Bypass and Save** to pass audio through without DSP. When
-the daemon is connected, the GUI first applies the selected mode live and
-writes the startup configuration only after that succeeds. A daemon rejection
-therefore leaves the previous startup selection unchanged. If the live apply
-succeeds but persistence fails, the new processing mode remains active and
-the window reports that partial success.
+`.effetune_preset` file. The **Enable DSP processing** switch selects preset
+processing or pass-through bypass. Both the preset selection and the switch
+participate in the dialog-wide live preview and persistence transaction.
 
-The **DSP backend** section's **Native engine** drop-down selects **Scalar**,
+## DSP backend and idle policy
+
+The DSP page's **Native backend** drop-down selects **Scalar**,
 **SIMD (Auto)**, or an applicable baseline, x86-64-v3, x86-64-v4, or Arm64
 SVE tier. Scalar is the compatibility default. Each row shows the availability
-and CPU requirement reported by the daemon; the effective field also shows
-the concrete runtime tier, startup fallback, and validation diagnostics.
+and CPU requirement reported by the daemon; the status pane also shows the
+concrete effective tier, startup fallback, and validation diagnostics. A live
+backend change rebuilds and atomically replaces the active preset pipeline.
+DSP histories reset during replacement, and a discontinuity or brief silence
+is allowed.
 
-When connected, **Apply and Save** asks the daemon to rebuild and atomically
-replace the active preset pipeline before saving the confirmed choice. DSP
-histories reset during replacement, and a discontinuity or brief silence is
-allowed. A rejection leaves both the previous live backend and persisted
-choice unchanged. If live apply succeeds but persistence fails, the new
-backend remains active and the GUI reports partial success. Backend controls
-are disabled during a PCM rate transition.
+The **Idle policy** drop-down selects **Conservative** or **Exact**.
+Conservative is the default and permits sleep after five seconds of exact-zero
+input plus one second of final DSP output at or below -150 dBFS. Exact uses the
+same input interval but requires the final output to remain mathematically zero
+for one second.
 
-When disconnected, **Save for Next Start** performs local CPU, file, ABI, and
-catalog validation before persistence. An unavailable pinned SIMD tier is not
-saved by that operation. If a previously configured SIMD tier becomes
-unavailable at daemon startup, the status displays its lower-SIMD or scalar
-fallback and diagnostic.
-
-The **DSP idle** section's **Sleep policy** drop-down selects
-**Conservative** or **Exact**. Conservative is the default and permits sleep
-after five seconds of exact-zero input plus one second of final DSP output at
-or below -150 dBFS. Exact uses the same input interval but requires the final
-output to remain mathematically zero for one second.
-
-The **Runtime state** field shows the configured policy, effective DSP state,
-cumulative skipped frames, sleep transitions, and whether both PipeWire
-streams are paused. When PipeWire has stopped both process callbacks, the GUI
-shows **DSP Paused** instead of the controller's retained active or draining
-state. A controller that is already sleeping remains **DSP Sleeping**. Any
-nonzero input wakes DSP processing in the same callback block. PipeTune resets
-the active EffeTune engine through its real-time-safe reset API before
-sleeping.
-
-When connected, **Apply and Save** changes the daemon policy live, confirms
-the returned policy, and only then updates startup configuration. A rejection
-leaves the previous saved choice unchanged. If persistence fails after live
-confirmation, the new policy remains active and the window reports partial
-success. When disconnected, **Save for Next Start** stores the choice for the
-next daemon start. See the
+The status pane shows the configured policy, effective DSP state, cumulative
+skipped frames, sleep transitions, and whether the PipeWire graph is idle.
+Any nonzero input wakes DSP processing in the same callback block. PipeTune
+resets the active EffeTune engine through its real-time-safe reset API before
+sleeping. See the
 [DSP and PipeWire idling notes](../pipetune/docs/dsp-idle.md) for EMPTY/GAP
 propagation and the complete state machine.
 
-The **Output preference** drop-down starts with **System default**, followed by
-the physical outputs enumerated by the daemon. If a persisted preference is
-currently disconnected, an unavailable row keeps that preference visible.
-The effective-output and reason fields show whether the daemon is using the
-preference, the system default, a fallback, or no device.
+## Output and sample rate
 
-Output changes are available only while connected. The GUI sends the requested
-preference or clear operation to the daemon first and persists it only after
-confirmation. The drop-down is disabled while that request is pending. A
-rejection restores the engine-reported selection; a later persistence failure
-leaves the confirmed live change active and reports partial success. The GUI
-does not calculate fallback or hotplug behavior.
+The **Preferred physical output** menu starts with **System default**, followed
+by the physical outputs enumerated by the daemon. If a persisted preference is
+currently disconnected, an unavailable row keeps that preference visible.
+The routing status shows whether the daemon is using the preference, the
+system default, a fallback, or no device.
 
 The **DSP rate** drop-down contains **Max** followed by 44.1, 48, 96, 192, and
 384 kHz. Each fixed row is marked **supported**, **unsupported; PipeWire will
@@ -142,16 +168,7 @@ rate, selected output rate, and active physical rate. An idle device reports
 transition the field and connection status say that switching is in progress,
 and the PCM rate controls are disabled.
 
-When connected, **Apply and Save** sends the rate policy to the daemon and
-persists it only after the complete live transition succeeds. A daemon
-rejection preserves the previous startup policy. A persistence failure leaves
-the confirmed live policy active and reports partial success. When
-disconnected, **Save for Next Start** writes the selection without attempting
-a live transition.
-
-Preset and bypass controls retain their existing disconnected behavior: when
-the daemon is disconnected, that DSP selection is saved without a live apply
-and takes effect on the next successful service start. The GUI writes:
+The GUI writes the complete applied snapshot to:
 
 ```text
 $XDG_CONFIG_HOME/pipetune/environment
@@ -169,23 +186,13 @@ or `force`. `PIPETUNE_DSP_BACKEND` stores `scalar` or `simd`, and
 `x86-64-v4`, or `sve`. `PIPETUNE_DSP_IDLE_POLICY` stores `conservative` or
 `exact`. Missing rate assignments use Max-and-suggest, a missing backend
 assignment uses Scalar, a missing SIMD variant uses Auto, and a missing idle
-assignment uses Conservative. Updates to any selection preserve the others.
+assignment uses Conservative. Apply replaces this file atomically while
+retaining restrictive directory and file permissions.
 
-The constant **Configuration** section provides **Reset Configuration…**.
-Its modal confirmation defaults to **Cancel**. Confirming invokes the
-installed CLI asynchronously as `pipetune config reset --yes`, so the GTK main
-loop remains responsive while the configuration is replaced and an active
-service is restarted. The GUI then reloads the shared configuration, clears
-the preset selection when the reset succeeded, restores the Max-and-suggest
-controls, Scalar backend, Auto SIMD preference, and Conservative DSP idle
-policy, and reconnects its daemon subscription.
-
-The reset selects startup bypass, removes the preferred output so the system
-default is followed, selects Max with Suggest, and selects Scalar with an Auto
-SIMD preference and Conservative DSP idling. It replaces unsupported legacy
-configuration without backing it up. An inactive service remains inactive. If
-restarting an active service fails, the window reports the partial failure
-while retaining and displaying the reset startup choices.
+The Advanced page's **Restore Defaults** selects bypass, System default,
+Max with Suggest, Scalar with an Auto SIMD preference, and Conservative DSP
+idling. It does not restart the service and does not write the environment
+file until Apply succeeds.
 
 ## Status subscription
 
@@ -215,6 +222,28 @@ opens and presents the window, and its menu provides Open PipeTune and Quit
 actions. A `--hidden` start remains unmapped regardless of tray discovery, so
 desktop-session autostart does not open a GTK window. In a session without a
 tray host, run `pipetune-gtk` normally to present the existing instance.
+
+## End-to-end tests
+
+`test/e2e` is a private, non-distributed TypeScript project for the GTK dialog.
+It requires Node.js 20 or later, pins `gestament` 1.4.0, and uses Vite,
+Vitest, and prettier-max. It intentionally has no package-release or screw-up
+configuration.
+
+The repository-wide `make test` command installs the locked npm dependencies,
+builds the production GTK executable with stable test-only accessibility IDs,
+starts a deterministic fake control daemon that speaks the production control
+protocol, and runs the dialog under Xvfb. The scenarios verify:
+
+- the persistent status pane, all five settings pages, minimum geometry, and
+  compact output-device presentation;
+- immediate live changes followed by one dialog-wide atomic Apply;
+- rollback before hide through Escape and title-bar close;
+- live default restoration without persistence before Apply;
+- retained, filtered, cleared, and automatically revealed failure logs;
+- persistence failure without loss of the saved snapshot; and
+- read-only disconnect behavior followed by pending-state reapplication after
+  reconnect.
 
 ## Run
 

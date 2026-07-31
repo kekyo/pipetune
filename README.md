@@ -140,17 +140,32 @@ route-less effective node-volume controls to be selectable. PipeTune falls
 back to another eligible sink if those controls are unavailable or a write
 fails.
 
+## GTK control window
+
+The GTK window keeps the sectioned PipeTune status pane visible on the left
+while **Processing**, **Output**, **Rate**, **DSP**, and **Advanced** settings
+switch on the right. Changing a setting previews it immediately in the running
+daemon. The single **Apply** button saves all daemon-confirmed choices as one
+atomic startup snapshot; **Cancel**, Escape, or the title-bar close button
+restores the previous live state before hiding the window.
+
+The bottom **Action Log** drawer retains recent connection, preview,
+persistence, and failure history. Settings become read-only while PipeTune is
+disconnected and resume after reconnection. See
+[GTK application behavior](pipetune-gtk/README.md) for the complete
+transaction and rollback behavior.
+
 ## Choosing PipeTune's output device
 
 The user can explicitly choose the device used for step ③ in the previous
 section.
 
-![Output preference](./images/output-preference.png)
-
-The GTK window provides an **Output preference** drop-down. Its first item,
-**System default**, clears an explicit preference. It also shows the effective
-output and whether it was selected as the preference, the system default, or a
-fallback.
+The GTK window's Output page provides a **Preferred physical output** menu. Its
+first item, **System default**, clears an explicit preference. Device rows use
+short descriptions and connector hints; the full PipeWire node name remains
+available as secondary text and in the tooltip. The persistent status pane
+shows the effective output and whether it was selected as the preference, the
+system default, or a fallback.
 
 The same operations are available from the CLI:
 
@@ -211,7 +226,7 @@ the DSP and renegotiates its PipeWire streams.
 
 ## Choosing the native DSP backend
 
-The GTK window's **DSP backend** section provides a **Native engine**
+The GTK window's DSP page provides a **Native backend**
 drop-down. **Scalar** is the compatibility default. **SIMD (Auto)** selects
 the highest validated tier supported by the CPU. The same drop-down can pin
 the architecture baseline, x86-64-v3, x86-64-v4, or Arm64 SVE tier where
@@ -256,9 +271,9 @@ PipeTune monitors the input PCM stream. Once the configured zero-PCM idle
 condition is satisfied, it stops DSP computation and waits until nonzero PCM
 data is detected again.
 
-The GTK window's **DSP idle** section displays the runtime state, cumulative
-skipped frames, sleep transitions, and whether both PipeWire streams are
-paused. Its policy selector provides:
+The GTK window's DSP page provides an **Idle policy** selector, while the
+persistent status pane displays its runtime state, skipped-frame and
+sleep-transition counters, and PipeWire idle state:
 
 - **Conservative** (default): after five seconds of exact-zero input, sleep
   once the final DSP output has remained at or below -150 dBFS for one second;
@@ -291,8 +306,8 @@ complete state machine and EMPTY/GAP behavior.
 
 ## Resetting PipeTune configuration
 
-The GTK window's **Configuration** section provides **Reset Configuration…**.
-After confirmation, it resets every saved PipeTune choice to:
+The GTK window's Advanced page provides **Restore Defaults**. It previews these
+choices live without saving them:
 
 - DSP **Bypass**;
 - the physical **System default** output;
@@ -300,7 +315,10 @@ After confirmation, it resets every saved PipeTune choice to:
 - native DSP backend **Scalar**, with SIMD preference **Auto**; and
 - DSP idle policy **Conservative**.
 
-The same reset is available from the CLI:
+Click **Apply** to persist the defaults, or **Cancel** to restore the prior
+live configuration. This GTK action does not restart the service. The CLI
+reset below remains available for immediate configuration replacement and
+service restart:
 
 ```sh
 pipetune config reset
@@ -326,10 +344,10 @@ The user preset file saved by the Linux AppImage is located at
 `$XDG_CONFIG_HOME/effetune/effetune_presets.json` (or
 `~/.config/effetune/effetune_presets.json`).
 
-Select a preset from the list or specify a file, then click
-`Apply and Save` to load the preset into the DSP and start processing with the
-EffeTune DSP engine. `Bypass and Save` ignores the preset file and bypasses
-the audio stream without DSP processing.
+Select a preset from the list or specify a file. The choice is loaded into the
+DSP immediately as a live preview; click **Apply** to save the complete dialog
+configuration. Turn off **Enable DSP processing** to preview bypass mode.
+Cancel restores the previous live processing choice.
 
 From the CLI, you can specify either a preset file path or bypass mode:
 
