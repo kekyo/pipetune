@@ -76,6 +76,8 @@ export interface PipeTuneGtkTestSession {
   readonly root: string;
   /** Absolute startup configuration path used by the application. */
   readonly configPath: string;
+  /** Absolute dedicated PipeTune GTK language preference path. */
+  readonly languageConfigPath: string;
   /** Reads all daemon requests captured since the last clear. */
   readonly readRequests: () => Promise<readonly FakeControlRequest[]>;
   /** Truncates the deterministic daemon request history. */
@@ -84,6 +86,10 @@ export interface PipeTuneGtkTestSession {
   readonly inspectConfig: () => Promise<StartupConfigSnapshot>;
   /** Makes atomic configuration replacement succeed or fail. */
   readonly setConfigDirectoryWritable: (writable: boolean) => Promise<void>;
+  /** Replaces the language preference path with a directory to reject saves. */
+  readonly blockLanguagePreferenceSave: () => Promise<void>;
+  /** Restarts only the GTK application in the same isolated session. */
+  readonly restartApplication: () => Promise<void>;
   /** Stops the fake daemon while leaving the GTK application running. */
   readonly disconnectDaemon: () => Promise<void>;
   /** Starts a fresh fake daemon from the current persisted configuration. */
@@ -195,6 +201,7 @@ export const launchPipeTuneGtk = async (
   const configDirectory = join(root, 'config');
   const pipeTuneConfigDirectory = join(configDirectory, 'pipetune');
   const configPath = join(pipeTuneConfigDirectory, 'environment');
+  const languageConfigPath = join(pipeTuneConfigDirectory, 'gtk.conf');
   const requestLogPath = join(root, 'requests.jsonl');
   const persistenceGuardPath = join(root, 'persistence-guard');
   const homeDirectory = join(root, 'home');
@@ -267,6 +274,16 @@ export const launchPipeTuneGtk = async (
       mode: 0o600,
     });
   };
+  const blockLanguagePreferenceSave = async (): Promise<void> => {
+    await mkdir(languageConfigPath);
+  };
+  const restartApplication = async (): Promise<void> => {
+    if (app === undefined) {
+      throw new Error('GTK application is unavailable');
+    }
+    await app.release();
+    app = await launcher.launch();
+  };
   const disconnectDaemon = async (): Promise<void> => {
     if (daemon === undefined) {
       return;
@@ -300,14 +317,22 @@ export const launchPipeTuneGtk = async (
     }
   };
   return {
-    app,
+    get app() {
+      if (app === undefined) {
+        throw new Error('GTK application is unavailable');
+      }
+      return app;
+    },
     launcher,
     root,
     configPath,
+    languageConfigPath,
     readRequests,
     clearRequests,
     inspectConfig: async () => inspectStartupConfig(configPath),
     setConfigDirectoryWritable,
+    blockLanguagePreferenceSave,
+    restartApplication,
     disconnectDaemon,
     reconnectDaemon,
     release,

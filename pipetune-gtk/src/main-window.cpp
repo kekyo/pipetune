@@ -1,6 +1,7 @@
 #include "main-window.h"
 
 #include "gtk-resources.h"
+#include "localization.h"
 
 #ifdef PIPETUNE_GTK_E2E_ACCESSIBILITY
 #include <gestament/gtk.h>
@@ -43,7 +44,15 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
                                 std::string_view effetuneDspVersion) {
   ensureGtkResourcesRegistered();
   installStyle();
-  auto *builder = gtk_builder_new_from_resource(kMainWindowResourcePath);
+  auto *builder = gtk_builder_new();
+  gtk_builder_set_translation_domain(builder, translationDomain());
+  auto *builderError = static_cast<GError *>(nullptr);
+  if (gtk_builder_add_from_resource(
+          builder, kMainWindowResourcePath, &builderError) == 0) {
+    g_error("Cannot load the PipeTune GTK main window: %s",
+            builderError == nullptr ? "unknown error"
+                                    : builderError->message);
+  }
 #ifdef PIPETUNE_GTK_E2E_ACCESSIBILITY
   gestament_gtk_assign_accessible_ids_from_builder(builder);
   auto *statusScrolledWindow = requiredWidget(
@@ -99,6 +108,10 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
           builder, "dspBackendCombo", GTK_TYPE_COMBO_BOX_TEXT),
       .dspIdlePolicyCombo = requiredWidget(
           builder, "dspIdlePolicyCombo", GTK_TYPE_COMBO_BOX_TEXT),
+      .languageCombo = requiredWidget(
+          builder, "languageCombo", GTK_TYPE_COMBO_BOX_TEXT),
+      .languageRestartNotice = requiredWidget(
+          builder, "languageRestartNotice", GTK_TYPE_LABEL),
       .restoreDefaultsButton = requiredWidget(
           builder, "restoreDefaultsButton", GTK_TYPE_BUTTON),
       .versionLabel =
@@ -144,7 +157,7 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
   gtk_widget_set_size_request(ui.window, 900, 560);
 
   auto *filter = gtk_file_filter_new();
-  gtk_file_filter_set_name(filter, "EffeTune presets");
+  gtk_file_filter_set_name(filter, translate("EffeTune presets"));
   gtk_file_filter_add_pattern(filter, "*.effetune_preset");
   gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(ui.presetChooser), filter);
   return ui;

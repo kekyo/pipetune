@@ -1,0 +1,11 @@
+#ifndef PIPETUNE_GTK_INSTALLED_LOCALES_H
+#define PIPETUNE_GTK_INSTALLED_LOCALES_H
+
+namespace pipetune_gtk {
+
+inline constexpr char kGtkLocaleDirectory[] =
+    "@PIPETUNE_GTK_RUNTIME_LOCALE_DIR@";
+
+} // namespace pipetune_gtk
+
+#endif

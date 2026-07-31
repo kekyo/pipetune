@@ -1,5 +1,8 @@
 #include "dsp-idle-selection-model.h"
 
+#include "localization.h"
+#include "ui-message.h"
+
 #include <string>
 #include <string_view>
 #include <vector>
@@ -10,43 +13,48 @@ static std::string_view policyDisplayName(
     pipetune::DspIdlePolicy policy) {
   switch (policy) {
   case pipetune::DspIdlePolicy::conservative:
-    return "Conservative";
+    return translate("Conservative");
   case pipetune::DspIdlePolicy::exact:
-    return "Exact";
+    return translate("Exact");
   }
-  return "Unknown";
+  return translate("Unknown");
 }
 
 static std::string_view stateDisplayName(
     pipetune::DspIdleState state, bool pipeWireIdle) {
   switch (state) {
   case pipetune::DspIdleState::active:
-    return pipeWireIdle ? "Paused" : "Active";
+    return pipeWireIdle ? translate("Paused") : translate("Active");
   case pipetune::DspIdleState::draining:
-    return pipeWireIdle ? "Paused" : "Draining";
+    return pipeWireIdle ? translate("Paused") : translate("Draining");
   case pipetune::DspIdleState::sleeping:
-    return "Sleeping";
+    return translate("Sleeping");
   }
-  return "Unknown";
+  return translate("Unknown");
 }
 
 static std::string runtimeStatusText(const ApplicationState &state) {
   if (!state.hasRuntimeStatus) {
-    return "DSP idle state unavailable";
+    return translate("DSP idle state unavailable");
   }
 
-  auto text = std::string("Configured ");
-  text += policyDisplayName(state.runtime.dspIdlePolicy);
-  text += "  •  DSP ";
-  text += stateDisplayName(state.runtime.dspIdleState,
-                           state.runtime.pipeWireIdle);
-  text += "  •  Skipped ";
-  text += std::to_string(state.runtime.dspIdleSkippedFrames);
-  text += " frames  •  Sleep transitions ";
-  text += std::to_string(state.runtime.dspIdleSleepTransitions);
-  text += state.runtime.pipeWireIdle ? "  •  PipeWire paused"
-                                     : "  •  PipeWire running";
-  return text;
+  const auto *statusTemplate =
+      state.runtime.pipeWireIdle
+          ? translate(
+                "Configured {0}  •  DSP {1}  •  Skipped {2} frames  •  "
+                "Sleep transitions {3}  •  PipeWire paused")
+          : translate(
+                "Configured {0}  •  DSP {1}  •  Skipped {2} frames  •  "
+                "Sleep transitions {3}  •  PipeWire running");
+  return formatUiMessage(
+      {.translatable = false,
+       .messageId = statusTemplate,
+       .arguments =
+           {std::string(policyDisplayName(state.runtime.dspIdlePolicy)),
+            std::string(stateDisplayName(state.runtime.dspIdleState,
+                                         state.runtime.pipeWireIdle)),
+            std::to_string(state.runtime.dspIdleSkippedFrames),
+            std::to_string(state.runtime.dspIdleSleepTransitions)}});
 }
 
 DspIdleSelectionPresentation makeDspIdleSelectionPresentation(
@@ -54,10 +62,11 @@ DspIdleSelectionPresentation makeDspIdleSelectionPresentation(
     pipetune::DspIdlePolicy editedPolicy) {
   auto choices = std::vector<DspIdleChoice>{
       {.policy = pipetune::DspIdlePolicy::conservative,
-       .label =
-           "Conservative — sleep after exact-zero input and inaudible tails"},
+       .label = translate(
+           "Conservative — sleep after exact-zero input and inaudible tails")},
       {.policy = pipetune::DspIdlePolicy::exact,
-       .label = "Exact — require exact-zero input and output"}};
+       .label = translate(
+           "Exact — require exact-zero input and output")}};
   const auto activeIndex =
       editedPolicy == pipetune::DspIdlePolicy::exact
           ? std::size_t{1}

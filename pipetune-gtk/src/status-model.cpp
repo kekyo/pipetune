@@ -1,5 +1,6 @@
 #include "status-model.h"
 
+#include "localization.h"
 #include "status-text.h"
 
 #include "pipetune/dsp_backend.h"
@@ -80,32 +81,32 @@ static std::string fixedDecimal(double value, int precision) {
 static std::string connectionText(ControlConnectionState connection) {
   switch (connection) {
   case ControlConnectionState::disconnected:
-    return "Disconnected";
+    return translate("Disconnected");
   case ControlConnectionState::connecting:
-    return "Connecting";
+    return translate("Connecting");
   case ControlConnectionState::connected:
-    return "Connected";
+    return translate("Connected");
   }
-  return "Unknown";
+  return translate("Unknown");
 }
 
 static std::string yesNo(bool value) {
-  return value ? "Yes" : "No";
+  return value ? translate("Yes") : translate("No");
 }
 
 static std::string processingModeText(pipetune::ProcessingMode mode) {
   switch (mode) {
   case pipetune::ProcessingMode::bypass:
-    return "Bypass";
+    return translate("Bypass");
   case pipetune::ProcessingMode::preset:
-    return "Preset";
+    return translate("Preset");
   }
-  return "Unknown";
+  return translate("Unknown");
 }
 
 static std::string configuredProcessingText(
     const pipetune::StartupConfig &config) {
-  return config.presetFound ? "Preset" : "Bypass";
+  return config.presetFound ? translate("Preset") : translate("Bypass");
 }
 
 static std::string shortPath(const std::filesystem::path &path) {
@@ -128,83 +129,86 @@ static std::string sampleRateText(std::uint32_t rate) {
 static std::string sampleRateModeText(pipetune::SampleRateMode mode) {
   switch (mode) {
   case pipetune::SampleRateMode::maximum:
-    return "Maximum";
+    return translate("Maximum");
   case pipetune::SampleRateMode::fixed:
-    return "Fixed";
+    return translate("Fixed");
   }
-  return "Unknown";
+  return translate("Unknown");
 }
 
 static std::string rateEnforcementText(
     pipetune::SampleRateEnforcement enforcement) {
   switch (enforcement) {
   case pipetune::SampleRateEnforcement::suggest:
-    return "Suggest";
+    return translate("Suggest");
   case pipetune::SampleRateEnforcement::force:
-    return "Force";
+    return translate("Force");
   }
-  return "Unknown";
+  return translate("Unknown");
 }
 
 static std::string backendText(pipetune::DspBackendKind backend) {
   switch (backend) {
   case pipetune::DspBackendKind::scalar:
-    return "Scalar";
+    return translate("Scalar");
   case pipetune::DspBackendKind::simd:
     return "SIMD";
   }
-  return "Unknown";
+  return translate("Unknown");
 }
 
 static std::string simdVariantText(pipetune::DspSimdVariant variant) {
   const auto name = pipetune::dspSimdVariantName(variant);
-  return name.empty() ? "Unknown" : std::string(name);
+  return name.empty() ? std::string(translate("Unknown"))
+                      : std::string(name);
 }
 
 static std::string effectiveVariantText(
     const std::optional<pipetune::DspBackendVariant> &variant) {
   if (!variant.has_value()) {
-    return "Unavailable";
+    return translate("Unavailable");
   }
   const auto name = pipetune::dspBackendVariantName(*variant);
-  return name.empty() ? "Unknown" : std::string(name);
+  return name.empty() ? std::string(translate("Unknown"))
+                      : std::string(name);
 }
 
 static std::string idlePolicyText(pipetune::DspIdlePolicy policy) {
   const auto name = pipetune::dspIdlePolicyName(policy);
   if (name == "conservative") {
-    return "Conservative";
+    return translate("Conservative");
   }
   if (name == "exact") {
-    return "Exact";
+    return translate("Exact");
   }
-  return "Unknown";
+  return translate("Unknown");
 }
 
 static std::string idleStateText(pipetune::DspIdleState state) {
   const auto name = pipetune::dspIdleStateName(state);
   if (name == "active") {
-    return "Active";
+    return translate("Active");
   }
   if (name == "sleeping") {
-    return "Sleeping";
+    return translate("Sleeping");
   }
-  return name.empty() ? "Unknown" : std::string(name);
+  return name.empty() ? std::string(translate("Unknown"))
+                      : std::string(name);
 }
 
 static std::string selectionReasonText(
     pipetune::ControlOutputSelectionReason reason) {
   switch (reason) {
   case pipetune::ControlOutputSelectionReason::unavailable:
-    return "No output available";
+    return translate("No output available");
   case pipetune::ControlOutputSelectionReason::systemDefault:
-    return "System default";
+    return translate("System default");
   case pipetune::ControlOutputSelectionReason::preferred:
-    return "Preferred output";
+    return translate("Preferred output");
   case pipetune::ControlOutputSelectionReason::fallback:
-    return "System-default fallback";
+    return translate("System-default fallback");
   }
-  return "Unknown";
+  return translate("Unknown");
 }
 
 static const pipetune::ControlOutputDevice *findOutput(
@@ -223,8 +227,8 @@ static StatusItem outputItem(
     const pipetune::ControlRuntimeStatus &runtime,
     std::string_view name, StatusSeverity severity) {
   if (name.empty()) {
-    return textItem(std::move(id), std::move(label), "Unavailable",
-                    severity);
+    return textItem(std::move(id), std::move(label),
+                    translate("Unavailable"), severity);
   }
   const auto *output = findOutput(runtime, name);
   if (output == nullptr) {
@@ -249,7 +253,7 @@ static StatusItem dspLoadItem(const ApplicationState &state) {
       !std::isfinite(state.dspTiming.nanosecondsPerFrame) ||
       state.dspTiming.nanosecondsPerFrame < 0.0 ||
       state.runtime.inputSampleRate == 0) {
-    return textItem("dsp.load", "Load", "—");
+    return textItem("dsp.load", translate("Load"), "—");
   }
   const auto frameBudget =
       kNanosecondsPerSecond /
@@ -257,10 +261,10 @@ static StatusItem dspLoadItem(const ApplicationState &state) {
   const auto load =
       state.dspTiming.nanosecondsPerFrame / frameBudget * 100.0;
   return numericLevelItem(
-      "dsp.load", "Load", fixedDecimal(load, 1) + "%", load, "%",
+      "dsp.load", translate("Load"), fixedDecimal(load, 1) + "%", load, "%",
       0.0, 100.0,
       load > 100.0 ? StatusSeverity::error : StatusSeverity::normal,
-      "DSP processing load; graph capped at 100%.");
+      translate("DSP processing load; graph capped at 100%."));
 }
 
 static StatusItem dspTimeItem(const ApplicationState &state) {
@@ -270,12 +274,13 @@ static StatusItem dspTimeItem(const ApplicationState &state) {
       !state.dspTiming.hasAverage ||
       !std::isfinite(state.dspTiming.nanosecondsPerFrame) ||
       state.dspTiming.nanosecondsPerFrame < 0.0) {
-    return textItem("dsp.processing-time", "Processing time", "—");
+    return textItem("dsp.processing-time", translate("Processing time"),
+                    "—");
   }
   const auto microseconds =
       state.dspTiming.nanosecondsPerFrame / 1000.0;
   return numericTextItem(
-      "dsp.processing-time", "Processing time",
+      "dsp.processing-time", translate("Processing time"),
       fixedDecimal(microseconds, 2) + " µs/frame", microseconds,
       "µs/frame", 0.0, microseconds, StatusSeverity::normal);
 }
@@ -285,7 +290,8 @@ static StatusSeverity nonzeroSeverity(std::uint64_t value) {
 }
 
 static std::string errorText(std::string_view error) {
-  return error.empty() ? "None" : std::string(error);
+  return error.empty() ? std::string(translate("None"))
+                       : std::string(error);
 }
 
 static StatusSeverity errorSeverity(std::string_view error) {
@@ -332,58 +338,62 @@ std::vector<StatusSection> buildStatusSections(
       std::filesystem::path(state.runtime.activePreset);
   const auto savedPreset = saved.presetPath;
   const auto savedOutput =
-      saved.preferredOutputFound ? saved.preferredOutput : "System default";
+      saved.preferredOutputFound
+          ? saved.preferredOutput
+          : std::string(translate("System default"));
   const auto livePreference =
       state.runtime.preferredTarget.empty()
-          ? std::string("System default")
+          ? std::string(translate("System default"))
           : state.runtime.preferredTarget;
   const auto fixedSavedRate =
       saved.ratePolicy.mode == pipetune::SampleRateMode::fixed
           ? sampleRateText(saved.ratePolicy.fixedRate)
-          : std::string("Automatic");
+          : std::string(translate("Automatic"));
   const auto fixedLiveRate =
       state.runtime.configuredRatePolicy.mode ==
               pipetune::SampleRateMode::fixed
           ? sampleRateText(
                 state.runtime.configuredRatePolicy.fixedRate)
-          : std::string("Automatic");
+          : std::string(translate("Automatic"));
 
   auto sections = std::vector<StatusSection>{};
   sections.reserve(7);
   sections.push_back({
       .id = "system",
-      .label = "System",
+      .label = translate("System"),
       .items =
           {
               textItem("system.connection", "PipeTune",
                        connectionText(state.connection), unavailable),
               textItem(
-                  "system.default-sink", "Virtual sink active",
+                  "system.default-sink",
+                  translate("Virtual sink active"),
                   connected ? yesNo(state.runtime.defaultSinkActive) : "—",
                   connected && !state.runtime.defaultSinkActive
                       ? StatusSeverity::warning
                       : unavailable),
-              textItem("system.pipewire-idle", "PipeWire idle",
+              textItem("system.pipewire-idle",
+                       translate("PipeWire idle"),
                        connected ? yesNo(state.runtime.pipeWireIdle) : "—",
                        unavailable),
           },
   });
   sections.push_back({
       .id = "live-configuration",
-      .label = "Live Configuration",
+      .label = translate("Live Configuration"),
       .items =
           {
               textItem(
-                  "live.processing", "Processing",
+                  "live.processing", translate("Processing"),
                   connected
                       ? processingModeText(state.runtime.processingMode)
                       : "—",
                   unavailable),
-              textItem("live.preset", "Preset",
+              textItem("live.preset", translate("Preset"),
                        connected ? shortPath(livePreset) : "—",
                        unavailable, livePreset.string()),
               numericTextItem(
-                  "live.plugins", "Active plugins",
+                  "live.plugins", translate("Active plugins"),
                   connected
                       ? std::to_string(state.runtime.activePluginCount)
                       : "—",
@@ -401,45 +411,49 @@ std::vector<StatusSection> buildStatusSections(
   });
   sections.push_back({
       .id = "saved-configuration",
-      .label = "Saved Configuration",
+      .label = translate("Saved Configuration"),
       .items =
           {
-              textItem("saved.processing", "Processing",
+              textItem("saved.processing", translate("Processing"),
                        configuredProcessingText(saved)),
-              textItem("saved.preset", "Preset",
+              textItem("saved.preset", translate("Preset"),
                        saved.presetFound ? shortPath(savedPreset) : "—",
                        StatusSeverity::normal, savedPreset.string()),
-              textItem("saved.output", "Output", savedOutput,
+              textItem("saved.output", translate("Output"), savedOutput,
                        StatusSeverity::normal, savedOutput),
-              textItem("saved.rate-mode", "Rate mode",
+              textItem("saved.rate-mode", translate("Rate mode"),
                        sampleRateModeText(saved.ratePolicy.mode)),
-              textItem("saved.fixed-rate", "Fixed rate", fixedSavedRate),
+              textItem("saved.fixed-rate", translate("Fixed rate"),
+                       fixedSavedRate),
               textItem(
-                  "saved.rate-enforcement", "Rate enforcement",
+                  "saved.rate-enforcement",
+                  translate("Rate enforcement"),
                   rateEnforcementText(saved.ratePolicy.enforcement)),
-              textItem("saved.backend", "DSP backend",
+              textItem("saved.backend", translate("DSP backend"),
                        backendText(saved.dspBackend)),
-              textItem("saved.simd-variant", "SIMD variant",
+              textItem("saved.simd-variant", translate("SIMD variant"),
                        simdVariantText(saved.dspSimdVariant)),
-              textItem("saved.idle-policy", "Idle policy",
+              textItem("saved.idle-policy", translate("Idle policy"),
                        idlePolicyText(saved.dspIdlePolicy)),
           },
   });
   sections.push_back({
       .id = "routing",
-      .label = "Routing",
+      .label = translate("Routing"),
       .items =
           {
-              textItem("routing.preference", "Preference", livePreference,
+              textItem("routing.preference", translate("Preference"),
+                       livePreference,
                        unavailable, livePreference),
               outputItem(
-                  "routing.selected-output", "Selected output",
+                  "routing.selected-output",
+                  translate("Selected output"),
                   state.runtime, state.runtime.selectedTarget,
                   state.runtime.selectedTarget.empty()
                       ? StatusSeverity::warning
                       : unavailable),
               textItem(
-                  "routing.reason", "Selection reason",
+                  "routing.reason", translate("Selection reason"),
                   connected
                       ? selectionReasonText(
                             state.runtime.outputSelectionReason)
@@ -452,63 +466,66 @@ std::vector<StatusSection> buildStatusSections(
   });
   sections.push_back({
       .id = "input-rates",
-      .label = "Input / Rates",
+      .label = translate("Input / Rates"),
       .items =
           {
-              textItem("input.format", "Input format",
+              textItem("input.format", translate("Input format"),
                        connected &&
                                !state.runtime.inputSampleFormat.empty()
                            ? state.runtime.inputSampleFormat
                            : "—",
                        unavailable),
               textItem(
-                  "input.sample-rate", "Input sample rate",
+                  "input.sample-rate", translate("Input sample rate"),
                   connected
                       ? sampleRateText(state.runtime.inputSampleRate)
                       : "—",
                   unavailable),
               textItem(
-                  "input.channels", "Input channels",
+                  "input.channels", translate("Input channels"),
                   connected && state.runtime.inputChannelCount != 0
                       ? std::to_string(state.runtime.inputChannelCount)
                       : "—",
                   unavailable),
-              textItem("input.frame-rate", "Measured frame rate",
+              textItem("input.frame-rate",
+                       translate("Measured frame rate"),
                        input.frameRate, unavailable),
-              textItem("input.last-received", "Last input",
+              textItem("input.last-received", translate("Last input"),
                        input.lastReceived, unavailable),
-              textItem("input.pcm-rate", "PCM data rate",
+              textItem("input.pcm-rate", translate("PCM data rate"),
                        input.pcmDataRate, unavailable),
               textItem(
-                  "rates.mode", "Live rate mode",
+                  "rates.mode", translate("Live rate mode"),
                   connected
                       ? sampleRateModeText(
                             state.runtime.configuredRatePolicy.mode)
                       : "—",
                   unavailable),
-              textItem("rates.fixed", "Live fixed rate",
+              textItem("rates.fixed", translate("Live fixed rate"),
                        connected ? fixedLiveRate : "—", unavailable),
               textItem(
-                  "rates.enforcement", "Live enforcement",
+                  "rates.enforcement", translate("Live enforcement"),
                   connected
                       ? rateEnforcementText(
                             state.runtime.configuredRatePolicy.enforcement)
                       : "—",
                   unavailable),
               textItem(
-                  "rates.dsp", "DSP rate",
+                  "rates.dsp", translate("DSP rate"),
                   connected ? sampleRateText(state.runtime.dspSampleRate)
                             : "—",
                   unavailable),
               textItem(
-                  "rates.selected-output", "Selected output rate",
+                  "rates.selected-output",
+                  translate("Selected output rate"),
                   connected
                       ? sampleRateText(
                             state.runtime.selectedOutputSampleRate)
                       : "—",
                   unavailable),
               textItem(
-                  "rates.active-output", "Active output rate",
+                  "rates.active-output",
+                  translate("Active output rate"),
                   connected
                       ? sampleRateText(
                             state.runtime.activeOutputSampleRate)
@@ -518,24 +535,25 @@ std::vector<StatusSection> buildStatusSections(
   });
   sections.push_back({
       .id = "dsp-performance",
-      .label = "DSP / Performance",
+      .label = translate("DSP / Performance"),
       .items =
           {
               textItem(
-                  "dsp.backend", "Configured backend",
+                  "dsp.backend", translate("Configured backend"),
                   connected
                       ? backendText(state.runtime.configuredDspBackend)
                       : "—",
                   unavailable),
               textItem(
-                  "dsp.simd-variant", "Configured SIMD",
+                  "dsp.simd-variant", translate("Configured SIMD"),
                   connected
                       ? simdVariantText(
                             state.runtime.configuredDspSimdVariant)
                       : "—",
                   unavailable),
               textItem(
-                  "dsp.effective-variant", "Effective backend",
+                  "dsp.effective-variant",
+                  translate("Effective backend"),
                   connected
                       ? effectiveVariantText(
                             state.runtime.effectiveDspVariant)
@@ -544,13 +562,13 @@ std::vector<StatusSection> buildStatusSections(
                       ? StatusSeverity::warning
                       : unavailable),
               textItem(
-                  "dsp.idle-policy", "Idle policy",
+                  "dsp.idle-policy", translate("Idle policy"),
                   connected
                       ? idlePolicyText(state.runtime.dspIdlePolicy)
                       : "—",
                   unavailable),
               textItem(
-                  "dsp.idle-state", "Idle state",
+                  "dsp.idle-state", translate("Idle state"),
                   connected
                       ? idleStateText(state.runtime.dspIdleState)
                       : "—",
@@ -558,7 +576,7 @@ std::vector<StatusSection> buildStatusSections(
               dspTimeItem(state),
               dspLoadItem(state),
               textItem(
-                  "errors.overrun", "Overrun frames",
+                  "errors.overrun", translate("Overrun frames"),
                   connected
                       ? std::to_string(state.runtime.overrunFrames)
                       : "—",
@@ -566,7 +584,7 @@ std::vector<StatusSection> buildStatusSections(
                       ? nonzeroSeverity(state.runtime.overrunFrames)
                       : unavailable),
               textItem(
-                  "errors.underrun", "Underrun frames",
+                  "errors.underrun", translate("Underrun frames"),
                   connected
                       ? std::to_string(state.runtime.underrunFrames)
                       : "—",
@@ -574,7 +592,7 @@ std::vector<StatusSection> buildStatusSections(
                       ? nonzeroSeverity(state.runtime.underrunFrames)
                       : unavailable),
               textItem(
-                  "errors.processing", "Processing errors",
+                  "errors.processing", translate("Processing errors"),
                   connected
                       ? std::to_string(state.runtime.processingErrors)
                       : "—",
@@ -585,11 +603,11 @@ std::vector<StatusSection> buildStatusSections(
   });
   sections.push_back({
       .id = "errors",
-      .label = "Errors",
+      .label = translate("Errors"),
       .items =
           {
               textItem(
-                  "errors.configuration", "Configuration",
+                  "errors.configuration", translate("Configuration"),
                   connected
                       ? errorText(state.runtime.configurationError)
                       : "—",
@@ -599,13 +617,13 @@ std::vector<StatusSection> buildStatusSections(
                       : unavailable,
                   state.runtime.configurationError),
               textItem(
-                  "errors.rate", "Rate",
+                  "errors.rate", translate("Rate"),
                   connected ? errorText(state.runtime.rateError) : "—",
                   connected ? errorSeverity(state.runtime.rateError)
                             : unavailable,
                   state.runtime.rateError),
               textItem(
-                  "errors.backend", "DSP backend",
+                  "errors.backend", translate("DSP backend"),
                   connected
                       ? errorText(state.runtime.dspBackendError)
                       : "—",
@@ -614,11 +632,11 @@ std::vector<StatusSection> buildStatusSections(
                       : unavailable,
                   state.runtime.dspBackendError),
               textItem(
-                  "errors.control", "Control",
+                  "errors.control", translate("Control"),
                   errorText(state.diagnostic),
                   errorSeverity(state.diagnostic), state.diagnostic),
               textItem(
-                  "errors.warnings", "Preset warnings",
+                  "errors.warnings", translate("Preset warnings"),
                   std::to_string(state.warnings.size()),
                   state.warnings.empty() ? StatusSeverity::normal
                                          : StatusSeverity::warning),

@@ -58,6 +58,10 @@ struct MainWindowUi {
   GtkWidget *dspBackendCombo = nullptr;
   /** Conservative or exact-zero DSP idle policy drop-down. */
   GtkWidget *dspIdlePolicyCombo = nullptr;
+  /** System, English, or Japanese presentation-language drop-down. */
+  GtkWidget *languageCombo = nullptr;
+  /** Inline notice that a restart is required to apply a language change. */
+  GtkWidget *languageRestartNotice = nullptr;
   /** Restores the transaction to PipeTune defaults. */
   GtkWidget *restoreDefaultsButton = nullptr;
   /** PipeTune and EffeTune DSP version text. */

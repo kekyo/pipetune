@@ -1,6 +1,7 @@
 #include "tray-backend.h"
 
 #include "gtk-resources.h"
+#include "localization.h"
 
 #include <gdk/gdkx.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
@@ -373,10 +374,11 @@ static GVariant *buildMenuLayout() {
   g_variant_builder_add_value(
       &children,
       g_variant_new_variant(
-          buildMenuItem(kOpenMenuItemId, "Open PipeTune")));
+          buildMenuItem(kOpenMenuItemId, translate("Open PipeTune"))));
   g_variant_builder_add_value(
       &children,
-      g_variant_new_variant(buildMenuItem(kQuitMenuItemId, "Quit")));
+      g_variant_new_variant(
+          buildMenuItem(kQuitMenuItemId, translate("Quit"))));
   auto *root =
       g_variant_new("(i@a{sv}@av)", 0,
                     g_variant_builder_end(&rootProperties),
@@ -392,10 +394,10 @@ buildMenuGroupProperties(const std::vector<int> &identifiers) {
     if (identifier == kOpenMenuItemId) {
       g_variant_builder_add(
           &builder, "(i@a{sv})", identifier,
-          buildMenuItemProperties("Open PipeTune"));
+          buildMenuItemProperties(translate("Open PipeTune")));
     } else if (identifier == kQuitMenuItemId) {
       g_variant_builder_add(&builder, "(i@a{sv})", identifier,
-                            buildMenuItemProperties("Quit"));
+                            buildMenuItemProperties(translate("Quit")));
     }
   }
   return g_variant_builder_end(&builder);
@@ -812,8 +814,9 @@ static void createXEmbedBackend(
   gtk_status_icon_set_title(implementation->statusIcon,
                             implementation->options.title.c_str());
 
-  auto *openItem = gtk_menu_item_new_with_label("Open PipeTune");
-  auto *quitItem = gtk_menu_item_new_with_label("Quit");
+  auto *openItem =
+      gtk_menu_item_new_with_label(translate("Open PipeTune"));
+  auto *quitItem = gtk_menu_item_new_with_label(translate("Quit"));
   gtk_menu_shell_append(GTK_MENU_SHELL(implementation->statusMenu),
                         openItem);
   gtk_menu_shell_append(GTK_MENU_SHELL(implementation->statusMenu),

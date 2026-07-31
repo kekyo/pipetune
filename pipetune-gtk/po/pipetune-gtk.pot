@@ -1,0 +1,726 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: PipeTune GTK\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-07-31 00:00+0900\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#, brace-format
+msgid "{0}  •  Fallback"
+msgstr ""
+
+#, brace-format
+msgid "{0}  •  Load —"
+msgstr ""
+
+#, brace-format
+msgid "{0}  •  Load {1}%"
+msgstr ""
+
+#, brace-format
+msgid "{0}  •  PipeWire resampling"
+msgstr ""
+
+#, brace-format
+msgid "{0} — availability not reported"
+msgstr ""
+
+#, brace-format
+msgid "{0} — availability unknown"
+msgstr ""
+
+#, brace-format
+msgid "{0} — available"
+msgstr ""
+
+#, brace-format
+msgid "{0} — support unknown"
+msgstr ""
+
+#, brace-format
+msgid "{0} — supported"
+msgstr ""
+
+#, brace-format
+msgid "{0} — system default"
+msgstr ""
+
+#, brace-format
+msgid "{0} — unavailable"
+msgstr ""
+
+#, brace-format
+msgid "{0} — unsupported; PipeWire will resample"
+msgstr ""
+
+#, brace-format
+msgid "{0} · {1} kHz · {2}"
+msgstr ""
+
+#, brace-format
+msgid "{0} ({1})"
+msgstr ""
+
+#, brace-format
+msgid "{0} channel"
+msgid_plural "{0} channels"
+msgstr[0] ""
+msgstr[1] ""
+
+#, brace-format
+msgid "{0} frames/s"
+msgstr ""
+
+#, brace-format
+msgid "{0} h ago"
+msgstr ""
+
+#, brace-format
+msgid "{0} min ago"
+msgstr ""
+
+#, brace-format
+msgid "{0} ms ago"
+msgstr ""
+
+#, brace-format
+msgid "{0} s ago"
+msgstr ""
+
+#, brace-format
+msgid "{0}; CPU: {1}"
+msgstr ""
+
+msgid "32-bit floating-point PCM (planar)"
+msgstr ""
+
+msgid "Action Log"
+msgstr ""
+
+#, brace-format
+msgid "Action Log ({0})"
+msgstr ""
+
+msgid "Active"
+msgstr ""
+
+msgid "Active output rate"
+msgstr ""
+
+msgid "Active plugins"
+msgstr ""
+
+msgid "Advanced"
+msgstr ""
+
+msgid "All"
+msgstr ""
+
+msgid "All settings saved"
+msgstr ""
+
+msgid "Apply"
+msgstr ""
+
+msgid "Automatic"
+msgstr ""
+
+msgid "Baseline"
+msgstr ""
+
+msgid "Bypass"
+msgstr ""
+
+msgid "Cancel"
+msgstr ""
+
+msgid "Cannot apply UI language"
+msgstr ""
+
+msgid "Cannot load startup configuration"
+msgstr ""
+
+msgid "Cannot prepare preset"
+msgstr ""
+
+msgid "Cannot resolve preset"
+msgstr ""
+
+msgid "Cannot save language preference"
+msgstr ""
+
+msgid "Cannot save settings"
+msgstr ""
+
+msgid "Cannot use saved language preference"
+msgstr ""
+
+msgid "Changing DSP backend"
+msgstr ""
+
+msgid "Changing DSP backend failed"
+msgstr ""
+
+msgid "Changing DSP idle policy"
+msgstr ""
+
+msgid "Changing DSP idle policy failed"
+msgstr ""
+
+msgid "Changing output"
+msgstr ""
+
+msgid "Changing output failed"
+msgstr ""
+
+msgid "Changing processing mode"
+msgstr ""
+
+msgid "Changing processing mode failed"
+msgstr ""
+
+msgid "Changing sample-rate policy"
+msgstr ""
+
+msgid "Changing sample-rate policy failed"
+msgstr ""
+
+msgid "Choose a preset before enabling DSP processing"
+msgstr ""
+
+msgid "Choose a standard or saved EffeTune preset…"
+msgstr ""
+
+msgid "Choose an EffeTune preset"
+msgstr ""
+
+msgid "Choose bypass, system default output, Max + Suggest, Scalar, and Conservative."
+msgstr ""
+
+msgid "Choose the language used by PipeTune GTK."
+msgstr ""
+
+msgid "Clear"
+msgstr ""
+
+msgid "Close"
+msgstr ""
+
+msgid "Configuration"
+msgstr ""
+
+#, brace-format
+msgid "Configured {0}  •  DSP {1}  •  Skipped {2} frames  •  Sleep transitions {3}  •  PipeWire paused"
+msgstr ""
+
+#, brace-format
+msgid "Configured {0}  •  DSP {1}  •  Skipped {2} frames  •  Sleep transitions {3}  •  PipeWire running"
+msgstr ""
+
+#, brace-format
+msgid "Configured {0}  •  Effective {1}"
+msgstr ""
+
+msgid "Configured backend"
+msgstr ""
+
+msgid "Configured SIMD"
+msgstr ""
+
+msgid "Connected"
+msgstr ""
+
+msgid "Connected · changing sample rate"
+msgstr ""
+
+msgid "Connected · virtual sink inactive"
+msgstr ""
+
+msgid "Connected and monitoring"
+msgstr ""
+
+msgid "Connected to PipeTune"
+msgstr ""
+
+msgid "Connecting"
+msgstr ""
+
+msgid "Connecting to PipeTune"
+msgstr ""
+
+msgid "Connecting to the control service…"
+msgstr ""
+
+msgid "Connecting…"
+msgstr ""
+
+msgid "Conservative"
+msgstr ""
+
+msgid "Conservative — sleep after exact-zero input and inaudible tails"
+msgstr ""
+
+msgid "Control"
+msgstr ""
+
+msgid "Control service unavailable"
+msgstr ""
+
+msgid "Control socket unavailable"
+msgstr ""
+
+msgid "Copy"
+msgstr ""
+
+msgid "Custom preset file"
+msgstr ""
+
+msgid "Default"
+msgstr ""
+
+msgid "Defaults are being applied live; use Apply to save them"
+msgstr ""
+
+msgid "Defaults selected"
+msgstr ""
+
+msgid "Device"
+msgstr ""
+
+msgid "Disconnected"
+msgstr ""
+
+msgid "Disconnected · settings are read-only"
+msgstr ""
+
+msgid "Draining"
+msgstr ""
+
+msgid "DSP"
+msgstr ""
+
+msgid "DSP / Performance"
+msgstr ""
+
+msgid "DSP backend"
+msgstr ""
+
+msgid "DSP backend changed"
+msgstr ""
+
+msgid "DSP Engine"
+msgstr ""
+
+msgid "DSP idle policy changed"
+msgstr ""
+
+msgid "DSP idle state unavailable"
+msgstr ""
+
+msgid "DSP processing load; graph capped at 100%."
+msgstr ""
+
+msgid "DSP rate"
+msgstr ""
+
+msgid "DSP sample rate"
+msgstr ""
+
+msgid "Effective backend"
+msgstr ""
+
+msgid "Effective backend unavailable"
+msgstr ""
+
+msgid "EffeTune DSP control"
+msgstr ""
+
+msgid "EffeTune presets"
+msgstr ""
+
+msgid "Enable DSP processing"
+msgstr ""
+
+msgid "English"
+msgstr ""
+
+msgid "Errors"
+msgstr ""
+
+msgid "Exact"
+msgstr ""
+
+msgid "Exact — require exact-zero input and output"
+msgstr ""
+
+msgid "Finishing rollback…"
+msgstr ""
+
+msgid "Fixed"
+msgstr ""
+
+msgid "Fixed rate"
+msgstr ""
+
+msgid "Follow PipeWire's current default"
+msgstr ""
+
+msgid "Follow PipeWire's current default output"
+msgstr ""
+
+msgid "Following the system default"
+msgstr ""
+
+msgid "Force"
+msgstr ""
+
+msgid "Force — request the selected output rate"
+msgstr ""
+
+msgid "idle"
+msgstr ""
+
+msgid "Idle policy"
+msgstr ""
+
+msgid "Idle state"
+msgstr ""
+
+msgid "Input / Rates"
+msgstr ""
+
+msgid "Input channels"
+msgstr ""
+
+msgid "Input format"
+msgstr ""
+
+msgid "Input sample rate"
+msgstr ""
+
+#, brace-format
+msgid "Input/DSP {0}  •  Output {1}  •  Physical {2}"
+msgstr ""
+
+msgid "Language"
+msgstr ""
+
+msgid "Language preference saved"
+msgstr ""
+
+msgid "Last input"
+msgstr ""
+
+msgid "Live Configuration"
+msgstr ""
+
+msgid "Live enforcement"
+msgstr ""
+
+msgid "Live fixed rate"
+msgstr ""
+
+msgid "Live preview active · changes are not saved"
+msgstr ""
+
+msgid "Live preview failed · adjust a setting to retry"
+msgstr ""
+
+msgid "Live rate mode"
+msgstr ""
+
+msgid "Live settings changed elsewhere · reopen this dialog"
+msgstr ""
+
+msgid "Live settings changed externally"
+msgstr ""
+
+msgid "Live settings match the saved configuration"
+msgstr ""
+
+msgid "Live status subscription established"
+msgstr ""
+
+msgid "Load"
+msgstr ""
+
+msgid "Long PipeWire node names are available in the device tooltip."
+msgstr ""
+
+msgid "Max — highest supported rate"
+msgstr ""
+
+msgid "Maximum"
+msgstr ""
+
+msgid "Measured frame rate"
+msgstr ""
+
+msgid "Native backend"
+msgstr ""
+
+msgid "Never"
+msgstr ""
+
+msgid "No"
+msgstr ""
+
+msgid "No audio output is available"
+msgstr ""
+
+msgid "No output available"
+msgstr ""
+
+msgid "None"
+msgstr ""
+
+msgid "Open PipeTune"
+msgstr ""
+
+msgid "Output"
+msgstr ""
+
+msgid "Output changed"
+msgstr ""
+
+msgid "Output Routing"
+msgstr ""
+
+#, brace-format
+msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
+msgstr ""
+
+msgid "Overrun frames"
+msgstr ""
+
+msgid "Paused"
+msgstr ""
+
+msgid "PCM data rate"
+msgstr ""
+
+msgid "Pending dialog settings will be reapplied"
+msgstr ""
+
+msgid "PipeTune disconnected"
+msgstr ""
+
+msgid "PipeTune reconnected"
+msgstr ""
+
+msgid "PipeTune Status"
+msgstr ""
+
+#, brace-format
+msgid "PipeTune: {0}"
+msgstr ""
+
+msgid "PipeTune: active"
+msgstr ""
+
+msgid "PipeTune: attention required"
+msgstr ""
+
+msgid "PipeTune: connecting"
+msgstr ""
+
+msgid "PipeTune: disconnected"
+msgstr ""
+
+msgid "PipeWire enforcement"
+msgstr ""
+
+msgid "PipeWire idle"
+msgstr ""
+
+msgid "Preference"
+msgstr ""
+
+msgid "Preferred output"
+msgstr ""
+
+msgid "Preferred output is unavailable — using the system default fallback"
+msgstr ""
+
+msgid "Preferred physical output"
+msgstr ""
+
+msgid "Preset"
+msgstr ""
+
+msgid "Preset library"
+msgstr ""
+
+msgid "Preset required"
+msgstr ""
+
+msgid "Preset warnings"
+msgstr ""
+
+msgid "Processing"
+msgstr ""
+
+msgid "Processing errors"
+msgstr ""
+
+msgid "Processing mode changed"
+msgstr ""
+
+msgid "Processing time"
+msgstr ""
+
+msgid "Quit"
+msgstr ""
+
+msgid "Rate"
+msgstr ""
+
+msgid "Rate enforcement"
+msgstr ""
+
+msgid "Rate mode"
+msgstr ""
+
+msgid "Rates unavailable"
+msgstr ""
+
+msgid "Restart PipeTune GTK to use the selected language."
+msgstr ""
+
+msgid "Restore defaults"
+msgstr ""
+
+msgid "Restore Defaults"
+msgstr ""
+
+msgid "Restoring the live settings captured when the dialog opened"
+msgstr ""
+
+msgid "Restoring the previous live settings…"
+msgstr ""
+
+msgid "Rollback requested"
+msgstr ""
+
+msgid "Routing"
+msgstr ""
+
+msgid "Sample Rate"
+msgstr ""
+
+msgid "Sample-rate policy changed"
+msgstr ""
+
+msgid "Saved Configuration"
+msgstr ""
+
+#, brace-format
+msgid "Saved in EffeTune · {0}"
+msgstr ""
+
+msgid "Saving all settings"
+msgstr ""
+
+msgid "Scalar"
+msgstr ""
+
+msgid "Selected output"
+msgstr ""
+
+msgid "Selected output rate"
+msgstr ""
+
+msgid "Selection reason"
+msgstr ""
+
+msgid "Settings updated"
+msgstr ""
+
+msgid "SIMD variant"
+msgstr ""
+
+msgid "Sleeping"
+msgstr ""
+
+msgid "Some preset sources are unavailable"
+msgstr ""
+
+#, brace-format
+msgid "Standard · {0} · {1}"
+msgstr ""
+
+msgid "Startup configuration path unavailable"
+msgstr ""
+
+msgid "Suggest"
+msgstr ""
+
+msgid "Suggest — let PipeWire choose"
+msgstr ""
+
+#, brace-format
+msgid "Switching — {0}"
+msgstr ""
+
+msgid "System"
+msgstr ""
+
+msgid "System default"
+msgstr ""
+
+msgid "System-default fallback"
+msgstr ""
+
+msgid "Turn off to pass audio through without an EffeTune preset."
+msgstr ""
+
+msgid "unavailable"
+msgstr ""
+
+msgid "Unavailable"
+msgstr ""
+
+#, brace-format
+msgid "Unavailable — {0}"
+msgstr ""
+
+msgid "Unavailable output"
+msgstr ""
+
+msgid "Underrun frames"
+msgstr ""
+
+msgid "unknown"
+msgstr ""
+
+msgid "Unknown"
+msgstr ""
+
+msgid "Unknown sample format"
+msgstr ""
+
+msgid "Updating settings"
+msgstr ""
+
+msgid "Updating settings failed"
+msgstr ""
+
+msgid "Using the preferred output"
+msgstr ""
+
+msgid "Versions"
+msgstr ""
+
+msgid "Virtual sink active"
+msgstr ""
+
+msgid "Waiting for live PipeTune state…"
+msgstr ""
+
+msgid "Warnings"
+msgstr ""
+
+msgid "Yes"
+msgstr ""

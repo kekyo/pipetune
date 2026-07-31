@@ -1,8 +1,13 @@
+#include "application-state.h"
+#include "localization.h"
 #include "main-window.h"
+#include "status-model.h"
 
 #include <gtk/gtk.h>
 
+#include <filesystem>
 #include <iostream>
+#include <string>
 #include <string_view>
 
 static bool check(bool condition, std::string_view message) {
@@ -55,6 +60,10 @@ static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
                "DSP backend combo-box type differs") &&
          check(GTK_IS_COMBO_BOX_TEXT(ui.dspIdlePolicyCombo),
                "DSP idle policy combo-box type differs") &&
+         check(GTK_IS_COMBO_BOX_TEXT(ui.languageCombo),
+               "language combo-box type differs") &&
+         check(GTK_IS_LABEL(ui.languageRestartNotice),
+               "language restart notice type differs") &&
          check(GTK_IS_BUTTON(ui.restoreDefaultsButton),
                "restore-defaults button type differs") &&
          check(GTK_IS_LABEL(ui.versionLabel),
@@ -102,7 +111,44 @@ static bool checkSettingsPages(const pipetune_gtk::MainWindowUi &ui) {
                "advanced page is missing");
 }
 
+static bool checkJapaneseMeasuredStatusLabels() {
+  auto state = pipetune_gtk::initialApplicationState();
+  state.connection = pipetune_gtk::ControlConnectionState::connected;
+  state.hasRuntimeStatus = true;
+  state.runtime.inputSampleRate = 48'000;
+  state.runtime.pipeWireIdle = false;
+  state.runtime.dspIdleState = pipetune::DspIdleState::active;
+  state.dspTiming.hasAverage = true;
+  state.dspTiming.nanosecondsPerFrame = 100.0;
+  const auto sections = pipetune_gtk::buildStatusSections(
+      state, pipetune::StartupConfig{}, 0);
+  for (const auto &section : sections) {
+    for (const auto &item : section.items) {
+      if (item.id == "dsp.load") {
+        return check(item.label == "負荷",
+                     "measured DSP load label was not translated");
+      }
+    }
+  }
+  return check(false, "measured DSP load status is missing");
+}
+
 int main(int argc, char **argv) {
+  if (argc != 2) {
+    std::cerr << "locale directory is required\n";
+    return 1;
+  }
+  const auto localeDirectory = std::filesystem::path(argv[1]);
+  const auto originalLocalization =
+      pipetune_gtk::captureUiLocalizationEnvironment();
+  const auto english = pipetune_gtk::applyUiLanguage(
+      originalLocalization, pipetune_gtk::UiLanguage::english,
+      localeDirectory);
+  if (!english.warning.empty()) {
+    std::cerr << english.warning << '\n';
+    return 1;
+  }
+  gtk_disable_setlocale();
   if (!gtk_init_check(&argc, &argv)) {
     std::cerr << "GTK display is unavailable\n";
     return 1;
@@ -160,6 +206,8 @@ int main(int argc, char **argv) {
       check(gtk_revealer_get_reveal_child(
                 GTK_REVEALER(ui.logRevealer)) == FALSE,
             "log drawer must start collapsed") &&
+      check(gtk_widget_get_visible(ui.languageRestartNotice) == FALSE,
+            "language restart notice must start hidden") &&
       check(std::string_view(
                 gtk_label_get_text(GTK_LABEL(ui.versionLabel))) ==
                 "PipeTune 1.2.3  •  EffeTune DSP 4.5.6",
@@ -221,6 +269,29 @@ int main(int argc, char **argv) {
                 GTK_COMBO_BOX(ui.logFilterCombo)) == 2,
             "a presentation rebuild must retain the log filter");
   pipetune_gtk::destroyMainWindowUi(ui);
+
+  const auto japanese = pipetune_gtk::applyUiLanguage(
+      originalLocalization, pipetune_gtk::UiLanguage::japanese,
+      localeDirectory);
+  auto japaneseUi = pipetune_gtk::createMainWindowUi(
+      application, "1.2.3", "4.5.6");
+  const auto japanesePresentationWorks =
+      check(japanese.warning.empty(),
+            "Japanese localization could not be applied") &&
+      check(std::string_view(gtk_button_get_label(
+                GTK_BUTTON(japaneseUi.restoreDefaultsButton))) ==
+                "既定値に戻す",
+            "GtkBuilder button was not translated") &&
+      check(std::string_view(
+                pipetune_gtk::translate("Connected")) == "接続済み",
+            "dynamic presentation text was not translated") &&
+      checkJapaneseMeasuredStatusLabels();
+  pipetune_gtk::destroyMainWindowUi(japaneseUi);
+  pipetune_gtk::restoreUiLocalizationEnvironment(
+      originalLocalization);
   g_object_unref(application);
-  return valid && presentationWorks && rebuildPreservesView ? 0 : 1;
+  return valid && presentationWorks && rebuildPreservesView &&
+                 japanesePresentationWorks
+             ? 0
+             : 1;
 }

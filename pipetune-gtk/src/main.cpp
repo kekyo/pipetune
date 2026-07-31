@@ -3,8 +3,10 @@
 #include "control-client.h"
 #include "dsp-backend-selection-model.h"
 #include "dsp-idle-selection-model.h"
+#include "installed-locales.h"
 #include "installed-presets.h"
 #include "launch-options.h"
+#include "localization.h"
 #include "main-window.h"
 #include "output-selection-model.h"
 #include "preset-catalog.h"
@@ -15,6 +17,7 @@
 #include "status-level-meter.h"
 #include "status-model.h"
 #include "tray-backend.h"
+#include "ui-language.h"
 #include "ui-message.h"
 
 #include "pipetune/control_socket.h"
@@ -74,6 +77,13 @@ struct GtkRuntime {
   std::filesystem::path startupConfigPath;
   pipetune::StartupConfig savedConfig;
   bool startupConfigAvailable;
+  UiLocalizationEnvironment originalLocalization;
+  std::filesystem::path uiLanguageConfigPath;
+  UiLanguage presentationLanguage;
+  UiLanguage uiLanguage;
+  bool languageRestartRequired;
+  std::string uiLanguageLoadWarning;
+  std::string localizationWarning;
   SettingsTransaction transaction;
   bool transactionReady;
   bool dialogActive;
@@ -175,35 +185,37 @@ static TrayIconState iconStateForApplication(
 static std::string connectionSummary(const ApplicationState &state) {
   switch (state.connection) {
   case ControlConnectionState::connecting:
-    return "Connecting to the control service…";
+    return translate("Connecting to the control service…");
   case ControlConnectionState::disconnected:
-    return "Control service unavailable";
+    return translate("Control service unavailable");
   case ControlConnectionState::connected:
     break;
   }
   if (state.hasRuntimeStatus && state.runtime.rateTransitioning) {
-    return "Connected · changing sample rate";
+    return translate("Connected · changing sample rate");
   }
   if (state.hasRuntimeStatus && !state.runtime.defaultSinkActive) {
-    return "Connected · virtual sink inactive";
+    return translate("Connected · virtual sink inactive");
   }
-  return "Connected and monitoring";
+  return translate("Connected and monitoring");
 }
 
 static std::string trayTooltip(const ApplicationState &state) {
   if (state.connection == ControlConnectionState::connecting) {
-    return "PipeTune: connecting";
+    return translate("PipeTune: connecting");
   }
   if (state.connection == ControlConnectionState::disconnected) {
-    return "PipeTune: disconnected";
+    return translate("PipeTune: disconnected");
   }
   if (trayVisualState(state) == TrayVisualState::attention) {
-    return "PipeTune: attention required";
+    return translate("PipeTune: attention required");
   }
   const auto filename =
       std::filesystem::path(state.runtime.activePreset).filename().string();
-  return filename.empty() ? std::string("PipeTune: active")
-                          : "PipeTune: " + filename;
+  return filename.empty()
+             ? std::string(translate("PipeTune: active"))
+             : formatUiMessage(
+                   localizedMessage("PipeTune: {0}", {filename}));
 }
 
 static const char *badgeIconName(StatusBadge badge) {
@@ -397,7 +409,7 @@ static std::string connectorHint(std::string_view target) {
       target.find("bluez") != std::string_view::npos) {
     return "Bluetooth";
   }
-  return "Device";
+  return translate("Device");
 }
 
 static std::vector<OutputViewChoice> buildOutputChoices(
@@ -405,10 +417,10 @@ static std::vector<OutputViewChoice> buildOutputChoices(
   auto choices = std::vector<OutputViewChoice>{{
       .clearPreference = true,
       .target = {},
-      .primary = "System default",
-      .secondary = "Follow PipeWire's current default",
-      .badge = "Default",
-      .tooltip = "Follow PipeWire's current default output",
+      .primary = translate("System default"),
+      .secondary = translate("Follow PipeWire's current default"),
+      .badge = translate("Default"),
+      .tooltip = translate("Follow PipeWire's current default output"),
       .unavailable = false,
   }};
   auto descriptionCounts = std::map<std::string, std::size_t>{};
@@ -424,7 +436,7 @@ static std::vector<OutputViewChoice> buildOutputChoices(
     }
     auto badge = std::string{};
     if (device.systemDefault) {
-      badge = "Default";
+      badge = translate("Default");
     }
     auto tooltip = primary + "\n" + device.name;
     choices.push_back({
@@ -445,9 +457,9 @@ static std::vector<OutputViewChoice> buildOutputChoices(
     choices.push_back({
         .clearPreference = false,
         .target = desired.preferredOutput,
-        .primary = "Unavailable output",
+        .primary = translate("Unavailable output"),
         .secondary = desired.preferredOutput,
-        .badge = "Unavailable",
+        .badge = translate("Unavailable"),
         .tooltip = desired.preferredOutput,
         .unavailable = true,
     });
@@ -616,8 +628,9 @@ static void renderActionLog(GtkRuntime *runtime) {
     gtk_list_box_insert(GTK_LIST_BOX(runtime->ui.logList), row, -1);
   }
   gtk_widget_show_all(runtime->ui.logList);
-  const auto label = "Action Log (" +
-                     std::to_string(runtime->actionLog.entries.size()) + ")";
+  const auto label = formatUiMessage(localizedMessage(
+      "Action Log ({0})",
+      {std::to_string(runtime->actionLog.entries.size())}));
   gtk_label_set_text(GTK_LABEL(runtime->ui.logToggleLabel), label.c_str());
   gtk_widget_set_sensitive(runtime->ui.logCopyButton, !entries.empty());
   gtk_widget_set_sensitive(runtime->ui.logClearButton,
@@ -703,22 +716,23 @@ static std::string transactionStateText(const GtkRuntime &runtime) {
     return {};
   }
   if (!runtime.transactionReady) {
-    return "Waiting for live PipeTune state…";
+    return translate("Waiting for live PipeTune state…");
   }
   const auto &transaction = runtime.transaction;
   if (!transaction.connected) {
-    return "Disconnected · settings are read-only";
+    return translate("Disconnected · settings are read-only");
   }
   if (transaction.conflict) {
-    return "Live settings changed elsewhere · reopen this dialog";
+    return translate(
+        "Live settings changed elsewhere · reopen this dialog");
   }
   if (transaction.liveChangeFailed) {
-    return "Live preview failed · adjust a setting to retry";
+    return translate("Live preview failed · adjust a setting to retry");
   }
   if (transaction.cancelRequested) {
     return transaction.inFlight == SettingsOperation::none
-               ? "Finishing rollback…"
-               : "Restoring the previous live settings…";
+               ? translate("Finishing rollback…")
+               : translate("Restoring the previous live settings…");
   }
   if (transaction.inFlight != SettingsOperation::none) {
     return formatUiMessage(
@@ -726,9 +740,9 @@ static std::string transactionStateText(const GtkRuntime &runtime) {
            "…";
   }
   if (settingsTransactionIsDirty(transaction)) {
-    return "Live preview active · changes are not saved";
+    return translate("Live preview active · changes are not saved");
   }
-  return "Live settings match the saved configuration";
+  return translate("Live settings match the saved configuration");
 }
 
 static bool controlsAreEditable(const GtkRuntime &runtime) {
@@ -768,10 +782,10 @@ static void renderRateControls(GtkRuntime *runtime) {
       GTK_COMBO_BOX_TEXT(runtime->ui.rateEnforcementCombo));
   gtk_combo_box_text_append_text(
       GTK_COMBO_BOX_TEXT(runtime->ui.rateEnforcementCombo),
-      "Suggest — let PipeWire choose");
+      translate("Suggest — let PipeWire choose"));
   gtk_combo_box_text_append_text(
       GTK_COMBO_BOX_TEXT(runtime->ui.rateEnforcementCombo),
-      "Force — request the selected output rate");
+      translate("Force — request the selected output rate"));
   gtk_combo_box_set_active(
       GTK_COMBO_BOX(runtime->ui.rateEnforcementCombo),
       static_cast<gint>(presentation.activeEnforcementIndex));
@@ -810,12 +824,56 @@ static void renderDspControls(GtkRuntime *runtime) {
       static_cast<gint>(idle.activeIndex));
 }
 
+static gint uiLanguageComboIndex(UiLanguage language) noexcept {
+  switch (language) {
+  case UiLanguage::system:
+    return 0;
+  case UiLanguage::english:
+    return 1;
+  case UiLanguage::japanese:
+    return 2;
+  }
+  return 0;
+}
+
+static bool uiLanguageFromComboIndex(gint index,
+                                     UiLanguage *language) noexcept {
+  if (language == nullptr) {
+    return false;
+  }
+  switch (index) {
+  case 0:
+    *language = UiLanguage::system;
+    return true;
+  case 1:
+    *language = UiLanguage::english;
+    return true;
+  case 2:
+    *language = UiLanguage::japanese;
+    return true;
+  default:
+    return false;
+  }
+}
+
+static void renderLanguageControl(GtkRuntime *runtime) {
+  gtk_combo_box_set_active(
+      GTK_COMBO_BOX(runtime->ui.languageCombo),
+      uiLanguageComboIndex(runtime->uiLanguage));
+  if (runtime->languageRestartRequired) {
+    gtk_widget_show(runtime->ui.languageRestartNotice);
+  } else {
+    gtk_widget_hide(runtime->ui.languageRestartNotice);
+  }
+}
+
 static void renderSettingsControls(GtkRuntime *runtime) {
   runtime->updatingControls = true;
   renderPresetControls(runtime);
   renderOutputChoices(runtime);
   renderRateControls(runtime);
   renderDspControls(runtime);
+  renderLanguageControl(runtime);
   runtime->updatingControls = false;
   const auto editable = controlsAreEditable(*runtime);
   gtk_widget_set_sensitive(runtime->ui.processingEnabledSwitch, editable);
@@ -1054,6 +1112,44 @@ static void onDspIdlePolicyChanged(GtkComboBox *combo,
   editDesiredSettings(runtime, desired);
 }
 
+static void onLanguageChanged(GtkComboBox *combo, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (runtime->updatingControls) {
+    return;
+  }
+  auto selected = UiLanguage::system;
+  if (!uiLanguageFromComboIndex(
+          gtk_combo_box_get_active(combo), &selected) ||
+      selected == runtime->uiLanguage) {
+    return;
+  }
+  const auto saved = saveUiLanguagePreference(
+      runtime->uiLanguageConfigPath, selected);
+  if (!saved.error.empty()) {
+    runtime->updatingControls = true;
+    gtk_combo_box_set_active(
+        GTK_COMBO_BOX(runtime->ui.languageCombo),
+        uiLanguageComboIndex(runtime->uiLanguage));
+    runtime->updatingControls = false;
+    appendCompletedAction(
+        runtime, ActionLogSeverity::error,
+        ActionLogCategory::persistence, false,
+        localizedMessage("Cannot save language preference", {}),
+        technicalMessage(saved.error));
+    render(runtime);
+    return;
+  }
+  runtime->uiLanguage = selected;
+  runtime->languageRestartRequired =
+      runtime->uiLanguage != runtime->presentationLanguage;
+  appendCompletedAction(
+      runtime, ActionLogSeverity::info,
+      ActionLogCategory::persistence, true,
+      localizedMessage("Language preference saved", {}),
+      technicalMessage(runtime->uiLanguageConfigPath.string()));
+  render(runtime);
+}
+
 static void onProcessingActiveChanged(GObject *object, GParamSpec *,
                                       gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
@@ -1091,9 +1187,11 @@ static void onProcessingActiveChanged(GObject *object, GParamSpec *,
 
 static std::string presetChoiceLabel(const PresetChoice &choice) {
   if (choice.source == PresetSource::saved) {
-    return "Saved in EffeTune · " + choice.name;
+    return formatUiMessage(localizedMessage(
+        "Saved in EffeTune · {0}", {choice.name}));
   }
-  return "Standard · " + choice.category + " · " + choice.name;
+  return formatUiMessage(localizedMessage(
+      "Standard · {0} · {1}", {choice.category, choice.name}));
 }
 
 static std::string catalogDiagnosticText(
@@ -1115,7 +1213,7 @@ static void replacePresetChoices(
       GTK_COMBO_BOX_TEXT(runtime->ui.presetCombo));
   gtk_combo_box_text_append_text(
       GTK_COMBO_BOX_TEXT(runtime->ui.presetCombo),
-      "Choose a standard or saved EffeTune preset…");
+      translate("Choose a standard or saved EffeTune preset…"));
   auto activeIndex = gint{0};
   for (auto index = std::size_t{0}; index < runtime->presetChoices.size();
        ++index) {
@@ -1613,6 +1711,8 @@ static void connectMainWindowSignals(GtkRuntime *runtime) {
                    G_CALLBACK(onDspBackendChanged), runtime);
   g_signal_connect(runtime->ui.dspIdlePolicyCombo, "changed",
                    G_CALLBACK(onDspIdlePolicyChanged), runtime);
+  g_signal_connect(runtime->ui.languageCombo, "changed",
+                   G_CALLBACK(onLanguageChanged), runtime);
   g_signal_connect(runtime->ui.processingEnabledSwitch, "notify::active",
                    G_CALLBACK(onProcessingActiveChanged), runtime);
   g_signal_connect(runtime->ui.presetCombo, "changed",
@@ -1719,6 +1819,23 @@ static void initializeStartupConfig(GtkRuntime *runtime) {
   }
 }
 
+static void appendLocalizationWarnings(GtkRuntime *runtime) {
+  if (!runtime->uiLanguageLoadWarning.empty()) {
+    appendCompletedAction(
+        runtime, ActionLogSeverity::warning,
+        ActionLogCategory::persistence, false,
+        localizedMessage("Cannot use saved language preference", {}),
+        technicalMessage(runtime->uiLanguageLoadWarning));
+  }
+  if (!runtime->localizationWarning.empty()) {
+    appendCompletedAction(
+        runtime, ActionLogSeverity::warning,
+        ActionLogCategory::application, false,
+        localizedMessage("Cannot apply UI language", {}),
+        technicalMessage(runtime->localizationWarning));
+  }
+}
+
 static void initializeControlClient(GtkRuntime *runtime) {
   const auto socket = pipetune::resolveControlSocketPath({});
   if (!socket.error.empty()) {
@@ -1746,6 +1863,7 @@ static void onApplicationStartup(GApplication *, gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
   createMainWindowPresentation(runtime);
   initializeStatusArtwork(runtime);
+  appendLocalizationWarnings(runtime);
   initializeStartupConfig(runtime);
   initializeStatusRows(runtime);
   initializePresetCatalog(runtime);
@@ -1757,7 +1875,7 @@ static void onApplicationStartup(GApplication *, gpointer userData) {
       .title = "PipeTune",
       .iconState = TrayIconState::disconnected,
       .colorMode = TrayIconColorMode::grayscale,
-      .tooltip = "PipeTune: disconnected",
+      .tooltip = translate("PipeTune: disconnected"),
       .callbacks =
           {
               .activate =
@@ -1842,6 +1960,27 @@ static void onApplicationShutdown(GApplication *, gpointer userData) {
 }
 
 static int runApplication(int argc, char **argv) {
+  const auto originalLocalization = captureUiLocalizationEnvironment();
+  const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
+  const auto *home = std::getenv("HOME");
+  const auto uiLanguageConfigPath = resolveUiLanguageConfigPath(
+      xdgConfigHome == nullptr ? std::string_view{}
+                               : std::string_view(xdgConfigHome),
+      home == nullptr ? std::string_view{} : std::string_view(home));
+  const auto loadedLanguage =
+      loadUiLanguagePreference(uiLanguageConfigPath);
+  auto presentationLanguage = loadedLanguage.language;
+  auto localization = applyUiLanguage(
+      originalLocalization, presentationLanguage, kGtkLocaleDirectory);
+  auto localizationWarning = localization.warning;
+  if (!localization.warning.empty() &&
+      presentationLanguage != UiLanguage::system) {
+    presentationLanguage = UiLanguage::system;
+    localization = applyUiLanguage(
+        originalLocalization, presentationLanguage, kGtkLocaleDirectory);
+    appendDetail(localizationWarning, localization.warning);
+  }
+  gtk_disable_setlocale();
   auto *application = gtk_application_new(
       applicationId(), G_APPLICATION_HANDLES_COMMAND_LINE);
   auto runtime = GtkRuntime{
@@ -1853,6 +1992,13 @@ static int runApplication(int argc, char **argv) {
       .startupConfigPath = {},
       .savedConfig = defaultStartupConfig(),
       .startupConfigAvailable = false,
+      .originalLocalization = originalLocalization,
+      .uiLanguageConfigPath = uiLanguageConfigPath,
+      .presentationLanguage = presentationLanguage,
+      .uiLanguage = presentationLanguage,
+      .languageRestartRequired = false,
+      .uiLanguageLoadWarning = loadedLanguage.warning,
+      .localizationWarning = localizationWarning,
       .transaction = {},
       .transactionReady = false,
       .dialogActive = false,
@@ -1891,6 +2037,7 @@ static int runApplication(int argc, char **argv) {
   const auto result =
       g_application_run(G_APPLICATION(application), argc, argv);
   g_object_unref(application);
+  restoreUiLocalizationEnvironment(originalLocalization);
   return result;
 }
 

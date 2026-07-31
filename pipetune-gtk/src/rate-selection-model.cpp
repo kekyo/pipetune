@@ -1,5 +1,8 @@
 #include "rate-selection-model.h"
 
+#include "localization.h"
+#include "ui-message.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -20,7 +23,7 @@ static const pipetune::SampleRateCapabilities *selectedCapabilities(
 
 static std::string sampleRateText(std::uint32_t sampleRate) {
   if (sampleRate == 0) {
-    return "unavailable";
+    return translate("unavailable");
   }
   if (sampleRate % 1000 == 0) {
     return std::to_string(sampleRate / 1000) + " kHz";
@@ -46,11 +49,14 @@ static std::string fixedRateLabel(std::uint32_t sampleRate,
   auto label = sampleRateText(sampleRate);
   switch (support) {
   case DeviceRateSupport::supported:
-    return label + " — supported";
+    return formatUiMessage(localizedMessage(
+        "{0} — supported", {label}));
   case DeviceRateSupport::unsupported:
-    return label + " — unsupported; PipeWire will resample";
+    return formatUiMessage(localizedMessage(
+        "{0} — unsupported; PipeWire will resample", {label}));
   case DeviceRateSupport::unknown:
-    return label + " — support unknown";
+    return formatUiMessage(localizedMessage(
+        "{0} — support unknown", {label}));
   case DeviceRateSupport::notApplicable:
     break;
   }
@@ -60,25 +66,27 @@ static std::string fixedRateLabel(std::uint32_t sampleRate,
 static std::string effectiveRateText(
     const ApplicationState &state) {
   if (!state.hasRuntimeStatus) {
-    return "Rates unavailable";
+    return translate("Rates unavailable");
   }
   const auto &runtime = state.runtime;
-  auto text = std::string{};
+  const auto physical =
+      runtime.activeOutputSampleRate == 0
+          ? std::string(translate("idle"))
+          : sampleRateText(runtime.activeOutputSampleRate);
+  auto text = formatUiMessage(localizedMessage(
+      "Input/DSP {0}  •  Output {1}  •  Physical {2}",
+      {sampleRateText(runtime.dspSampleRate),
+       sampleRateText(runtime.selectedOutputSampleRate), physical}));
   if (runtime.rateTransitioning) {
-    text = "Switching — ";
+    text = formatUiMessage(localizedMessage(
+        "Switching — {0}", {text}));
   }
-  text += "Input/DSP " + sampleRateText(runtime.dspSampleRate);
-  text += "  •  Output " +
-          sampleRateText(runtime.selectedOutputSampleRate);
-  text += "  •  Physical ";
-  text += runtime.activeOutputSampleRate == 0
-              ? std::string("idle")
-              : sampleRateText(runtime.activeOutputSampleRate);
   if (runtime.rateFallback ||
       (runtime.dspSampleRate != 0 &&
        runtime.selectedOutputSampleRate != 0 &&
        runtime.dspSampleRate != runtime.selectedOutputSampleRate)) {
-    text += "  •  PipeWire resampling";
+    text = formatUiMessage(localizedMessage(
+        "{0}  •  PipeWire resampling", {text}));
   }
   return text;
 }
@@ -90,7 +98,7 @@ RateSelectionPresentation makeRateSelectionPresentation(
   auto choices = std::vector<SampleRateChoice>{{
       .mode = pipetune::SampleRateMode::maximum,
       .fixedRate = 0,
-      .label = "Max — highest supported rate",
+      .label = translate("Max — highest supported rate"),
       .support = DeviceRateSupport::notApplicable,
   }};
   choices.reserve(pipetune::selectableSampleRates().size() + 1);

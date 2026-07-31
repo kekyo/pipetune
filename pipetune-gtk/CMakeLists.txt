@@ -56,6 +56,7 @@ add_custom_target(
 
 if(BUILD_TESTING)
   find_program(PIPETUNE_GTK_NPM npm REQUIRED)
+  find_program(PIPETUNE_GTK_NODE_EXECUTABLE node REQUIRED)
   set(
     PIPETUNE_GTK_E2E_DIRECTORY
     "${CMAKE_CURRENT_SOURCE_DIR}/test/e2e")
@@ -99,6 +100,19 @@ set(
 set(
   PIPETUNE_GTK_RESOURCE_HEADER
   "${PIPETUNE_GTK_RESOURCE_DIRECTORY}/pipetune-gtk-resources.h")
+if(BUILD_TESTING)
+  set(
+    PIPETUNE_GTK_RUNTIME_LOCALE_DIR
+    "${PIPETUNE_GTK_LOCALE_BUILD_DIR}")
+else()
+  set(
+    PIPETUNE_GTK_RUNTIME_LOCALE_DIR
+    "${CMAKE_INSTALL_FULL_LOCALEDIR}")
+endif()
+configure_file(
+  src/installed-locales.h.in
+  "${PIPETUNE_GTK_RESOURCE_DIRECTORY}/installed-locales.h"
+  @ONLY)
 add_custom_command(
   OUTPUT
     "${PIPETUNE_GTK_RESOURCE_SOURCE}"
@@ -393,6 +407,18 @@ if(BUILD_TESTING)
   set_tests_properties(
     pipetune_gtk_help_remains_english PROPERTIES
     PASS_REGULAR_EXPRESSION "Show this help text")
+  add_test(
+    NAME pipetune_gtk_cli_remains_english
+    COMMAND
+      ${PIPETUNE_GTK_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/cli-language.mjs
+      $<TARGET_FILE:pipetune-gtk>)
+  add_test(
+    NAME pipetune_gtk_translation_catalog
+    COMMAND
+      ${PIPETUNE_GTK_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-translations.mjs
+      ${CMAKE_CURRENT_SOURCE_DIR})
 
   add_executable(
     pipetune_gtk_state_config_tests
@@ -689,7 +715,8 @@ if(BUILD_TESTING)
     NAME pipetune_gtk_main_window_tests
     COMMAND
       ${PIPETUNE_GTK_XVFB_RUN} -a
-      $<TARGET_FILE:pipetune_gtk_main_window_tests>)
+      $<TARGET_FILE:pipetune_gtk_main_window_tests>
+      "${CMAKE_CURRENT_BINARY_DIR}/locale")
 
   add_executable(
     pipetune_gtk_status_level_meter_tests
@@ -742,7 +769,6 @@ if(BUILD_TESTING)
     NAME pipetune_gtk_launch_options_tests
     COMMAND pipetune_gtk_launch_options_tests)
 
-  find_program(PIPETUNE_GTK_NODE_EXECUTABLE node REQUIRED)
   find_program(PIPETUNE_GTK_DBUS_RUN_SESSION dbus-run-session REQUIRED)
   find_program(PIPETUNE_GTK_GDBUS gdbus REQUIRED)
   find_program(
@@ -789,5 +815,6 @@ if(BUILD_TESTING)
       ${PIPETUNE_GTK_APPLICATION_DIR}
       ${PIPETUNE_GTK_AUTOSTART_DIR}
       ${PIPETUNE_GTK_ICON_DIR}
-      ${PIPETUNE_GTK_EFFETUNE_PRESET_DIR})
+      ${PIPETUNE_GTK_EFFETUNE_PRESET_DIR}
+      ${CMAKE_INSTALL_LOCALEDIR})
 endif()

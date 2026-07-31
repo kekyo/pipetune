@@ -1,5 +1,8 @@
 #include "dsp-backend-selection-model.h"
 
+#include "localization.h"
+#include "ui-message.h"
+
 #include <algorithm>
 #include <optional>
 #include <string>
@@ -12,7 +15,7 @@ namespace pipetune_gtk {
 static std::string_view backendDisplayName(
     pipetune::DspBackendKind kind) {
   return kind == pipetune::DspBackendKind::scalar
-             ? std::string_view("Scalar")
+             ? std::string_view(translate("Scalar"))
              : std::string_view("SIMD");
 }
 
@@ -20,9 +23,9 @@ static std::string_view simdVariantDisplayName(
     pipetune::DspSimdVariant variant) {
   switch (variant) {
   case pipetune::DspSimdVariant::automatic:
-    return "Automatic";
+    return translate("Automatic");
   case pipetune::DspSimdVariant::baseline:
-    return "Baseline";
+    return translate("Baseline");
   case pipetune::DspSimdVariant::x86_64_v3:
     return "x86-64-v3";
   case pipetune::DspSimdVariant::x86_64_v4:
@@ -30,7 +33,7 @@ static std::string_view simdVariantDisplayName(
   case pipetune::DspSimdVariant::arm64Sve:
     return "sve";
   }
-  return "Unknown";
+  return translate("Unknown");
 }
 
 static std::optional<pipetune::DspSimdVariant>
@@ -79,9 +82,18 @@ variantAvailability(const pipetune::ControlRuntimeStatus &status,
 static void appendAvailability(std::string &label, bool available,
                                std::string_view cpuRequirement,
                                std::string_view error) {
-  label += available ? " — available" : " — unavailable";
-  label += "; CPU: ";
-  label += cpuRequirement.empty() ? "unknown" : cpuRequirement;
+  const auto *availabilityTemplate =
+      available ? translate("{0} — available")
+                : translate("{0} — unavailable");
+  label = formatUiMessage(
+      {.translatable = false,
+       .messageId = availabilityTemplate,
+       .arguments = {label}});
+  label = formatUiMessage(localizedMessage(
+      "{0}; CPU: {1}",
+      {label, cpuRequirement.empty()
+                  ? std::string(translate("unknown"))
+                  : std::string(cpuRequirement)}));
   if (!error.empty()) {
     label += " — ";
     label += error;
@@ -97,7 +109,8 @@ static DspBackendChoice makeChoice(
     label += simdVariantDisplayName(simdVariant);
   }
   if (!state.hasRuntimeStatus) {
-    label += " — availability unknown";
+    label = formatUiMessage(localizedMessage(
+        "{0} — availability unknown", {label}));
     return {.kind = kind,
             .simdVariant = simdVariant,
             .label = std::move(label),
@@ -110,7 +123,8 @@ static DspBackendChoice makeChoice(
     const auto *availability =
         backendAvailability(state.runtime, kind);
     if (availability == nullptr) {
-      label += " — availability not reported";
+      label = formatUiMessage(localizedMessage(
+          "{0} — availability not reported", {label}));
       return {.kind = kind,
               .simdVariant = simdVariant,
               .label = std::move(label),
@@ -130,7 +144,8 @@ static DspBackendChoice makeChoice(
   const auto *availability =
       variantAvailability(state.runtime, simdVariant);
   if (availability == nullptr) {
-    label += " — availability not reported";
+    label = formatUiMessage(localizedMessage(
+        "{0} — availability not reported", {label}));
     return {.kind = kind,
             .simdVariant = simdVariant,
             .label = std::move(label),
@@ -185,30 +200,34 @@ applicableSimdVariants(const ApplicationState &state,
 static std::string effectiveBackendText(
     const ApplicationState &state) {
   if (!state.hasRuntimeStatus) {
-    return "Effective backend unavailable";
+    return translate("Effective backend unavailable");
   }
 
-  auto text = std::string("Configured ");
-  text += backendDisplayName(state.runtime.configuredDspBackend);
+  auto configured =
+      std::string(backendDisplayName(state.runtime.configuredDspBackend));
   if (state.runtime.configuredDspBackend ==
       pipetune::DspBackendKind::simd) {
-    text += " (";
-    text += simdVariantDisplayName(
-        state.runtime.configuredDspSimdVariant);
-    text += ")";
+    configured = formatUiMessage(localizedMessage(
+        "{0} ({1})",
+        {configured,
+         std::string(simdVariantDisplayName(
+             state.runtime.configuredDspSimdVariant))}));
   }
-  text += "  •  Effective ";
+  auto effective = std::string{};
   if (state.runtime.effectiveDspVariant.has_value()) {
-    text += pipetune::dspBackendVariantName(
+    effective = pipetune::dspBackendVariantName(
         *state.runtime.effectiveDspVariant);
   } else if (state.runtime.effectiveDspBackend.has_value()) {
-    text += pipetune::dspBackendName(
+    effective = pipetune::dspBackendName(
         *state.runtime.effectiveDspBackend);
   } else {
-    text += "unavailable";
+    effective = translate("unavailable");
   }
+  auto text = formatUiMessage(localizedMessage(
+      "Configured {0}  •  Effective {1}", {configured, effective}));
   if (state.runtime.dspBackendFallback) {
-    text += "  •  Fallback";
+    text = formatUiMessage(localizedMessage(
+        "{0}  •  Fallback", {text}));
   }
   if (!state.runtime.dspBackendError.empty()) {
     text += " — ";

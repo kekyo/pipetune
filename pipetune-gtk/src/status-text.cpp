@@ -1,5 +1,8 @@
 #include "status-text.h"
 
+#include "localization.h"
+#include "ui-message.h"
+
 #include <cmath>
 #include <cstdint>
 #include <ctime>
@@ -63,15 +66,17 @@ static std::string dspProcessingTimeText(
       fixedDecimal(state.dspTiming.nanosecondsPerFrame / 1000.0, 2) +
       " µs/frame";
   if (state.runtime.inputSampleRate == 0) {
-    return processingTime + "  •  Load —";
+    return formatUiMessage(localizedMessage(
+        "{0}  •  Load —", {processingTime}));
   }
   const auto frameBudgetNanoseconds =
       kNanosecondsPerSecond /
       static_cast<double>(state.runtime.inputSampleRate);
   const auto loadPercentage =
       state.dspTiming.nanosecondsPerFrame / frameBudgetNanoseconds * 100.0;
-  return processingTime + "  •  Load " +
-         fixedDecimal(loadPercentage, 1) + "%";
+  return formatUiMessage(localizedMessage(
+      "{0}  •  Load {1}%",
+      {processingTime, fixedDecimal(loadPercentage, 1)}));
 }
 
 static std::string frameRateText(const InputRateState &inputRate) {
@@ -81,7 +86,8 @@ static std::string frameRateText(const InputRateState &inputRate) {
   }
   const auto rounded =
       static_cast<std::uint64_t>(std::llround(inputRate.framesPerSecond));
-  return groupedInteger(rounded) + " frames/s";
+  return formatUiMessage(localizedMessage(
+      "{0} frames/s", {groupedInteger(rounded)}));
 }
 
 static std::string pcmDataRateText(const ApplicationState &state) {
@@ -119,35 +125,43 @@ static std::string streamFormatText(
                      3);
   const auto sampleFormat =
       status.inputSampleFormat == "F32P"
-          ? std::string_view("32-bit floating-point PCM (planar)")
-          : std::string_view("Unknown sample format");
-  const auto channelCount =
-      std::to_string(status.inputChannelCount) +
-      (status.inputChannelCount == 1 ? " channel" : " channels");
-  return std::string(sampleFormat) + " · " + sampleRate + " kHz · " +
-         channelCount;
+          ? translate("32-bit floating-point PCM (planar)")
+          : translate("Unknown sample format");
+  const auto *channelTemplate = translatePlural(
+      "{0} channel", "{0} channels", status.inputChannelCount);
+  const auto channelCount = formatUiMessage(
+      {.translatable = false,
+       .messageId = channelTemplate,
+       .arguments = {std::to_string(status.inputChannelCount)}});
+  return formatUiMessage(localizedMessage(
+      "{0} · {1} kHz · {2}",
+      {sampleFormat, sampleRate, channelCount}));
 }
 
 static std::string relativeAgeText(std::uint64_t ageMilliseconds) {
   if (ageMilliseconds < kMillisecondsPerSecond) {
-    return std::to_string(ageMilliseconds) + " ms ago";
+    return formatUiMessage(localizedMessage(
+        "{0} ms ago", {std::to_string(ageMilliseconds)}));
   }
   if (ageMilliseconds < kMillisecondsPerMinute) {
-    return std::to_string(ageMilliseconds / kMillisecondsPerSecond) +
-           " s ago";
+    return formatUiMessage(localizedMessage(
+        "{0} s ago",
+        {std::to_string(ageMilliseconds / kMillisecondsPerSecond)}));
   }
   if (ageMilliseconds < kMillisecondsPerHour) {
-    return std::to_string(ageMilliseconds / kMillisecondsPerMinute) +
-           " min ago";
+    return formatUiMessage(localizedMessage(
+        "{0} min ago",
+        {std::to_string(ageMilliseconds / kMillisecondsPerMinute)}));
   }
-  return std::to_string(ageMilliseconds / kMillisecondsPerHour) +
-         " h ago";
+  return formatUiMessage(localizedMessage(
+      "{0} h ago",
+      {std::to_string(ageMilliseconds / kMillisecondsPerHour)}));
 }
 
 static std::string lastReceivedText(std::uint64_t receivedUnixMilliseconds,
                                     std::uint64_t currentUnixMilliseconds) {
   if (receivedUnixMilliseconds == 0) {
-    return "Never";
+    return translate("Never");
   }
   const auto receivedSeconds =
       static_cast<std::time_t>(receivedUnixMilliseconds /
@@ -162,7 +176,8 @@ static std::string lastReceivedText(std::uint64_t receivedUnixMilliseconds,
       currentUnixMilliseconds >= receivedUnixMilliseconds
           ? currentUnixMilliseconds - receivedUnixMilliseconds
           : std::uint64_t{0};
-  return stream.str() + " (" + relativeAgeText(age) + ")";
+  return formatUiMessage(localizedMessage(
+      "{0} ({1})", {stream.str(), relativeAgeText(age)}));
 }
 
 InputStatusText inputStatusText(const ApplicationState &state,
@@ -191,12 +206,11 @@ RuntimeStatusText runtimeStatusText(const ApplicationState &state) {
   }
   return {
       .dspProcessingTime = dspProcessingTimeText(state),
-      .counters =
-          "Overrun " + std::to_string(state.runtime.overrunFrames) +
-          "  •  Underrun " +
-          std::to_string(state.runtime.underrunFrames) +
-          "  •  Processing " +
-          std::to_string(state.runtime.processingErrors),
+      .counters = formatUiMessage(localizedMessage(
+          "Overrun {0}  •  Underrun {1}  •  Processing {2}",
+          {std::to_string(state.runtime.overrunFrames),
+           std::to_string(state.runtime.underrunFrames),
+           std::to_string(state.runtime.processingErrors)})),
   };
 }
 

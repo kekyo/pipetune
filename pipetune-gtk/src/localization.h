@@ -63,6 +63,13 @@ UiLocalizationResult applyUiLanguage(
     const std::filesystem::path &localeDirectory);
 
 /**
+ * Returns the gettext domain used by PipeTune GTK presentation strings.
+ *
+ * @return Process-lifetime translation domain string.
+ */
+const char *translationDomain() noexcept;
+
+/**
  * Translates one GUI message in the PipeTune GTK gettext domain.
  *
  * @param message English message identifier.

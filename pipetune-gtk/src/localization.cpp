@@ -100,6 +100,10 @@ UiLocalizationResult applyUiLanguage(
   return {.warning = {}};
 }
 
+const char *translationDomain() noexcept {
+  return kGettextDomain;
+}
+
 const char *translate(const char *message) noexcept {
   return ::dgettext(kGettextDomain, message);
 }

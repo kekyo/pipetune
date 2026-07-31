@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { readFile } from 'node:fs/promises';
 import { PNG } from 'pngjs';
 
 import type {
@@ -88,8 +89,21 @@ const waitForCommands = async (
 };
 
 const selectComboItem = async (id: string, index: number): Promise<void> => {
-  const combo = await getElement(id, 'comboBox');
-  await combo.selectChildAt(index);
+  await toPass(
+    async () => {
+      const combo = await getElement(id, 'comboBox');
+      if (!(await combo.isChildSelected(index))) {
+        await combo.selectChildAt(index);
+      }
+      expect(
+        await (await getElement(id, 'comboBox')).isChildSelected(index)
+      ).toBe(true);
+    },
+    {
+      timeoutMs: 10_000,
+      message: `${id} did not select item ${String(index)}`,
+    }
+  );
 };
 
 const selectSettingsPage = async (index: number): Promise<void> => {
@@ -562,6 +576,83 @@ describe('PipeTune GTK dialog', () => {
       dspSimdVariant: 'auto',
       dspIdlePolicy: 'conservative',
     });
+  });
+
+  it('saves the UI language independently and applies it after restart', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    const initial = await session.inspectConfig();
+    await selectSettingsPage(4);
+    await selectComboItem('languageCombo', 2);
+    await toPass(
+      async () => {
+        expect(await readFile(session?.languageConfigPath ?? '', 'utf8')).toBe(
+          '[ui]\nlanguage=ja\n'
+        );
+      },
+      {
+        timeoutMs: 10_000,
+        message: 'Japanese language preference was not saved.',
+      }
+    );
+    await waitForLabel(
+      'languageRestartNotice',
+      'Restart PipeTune GTK to use the selected language.'
+    );
+    expect(await session.inspectConfig()).toEqual(initial);
+
+    await session.restartApplication();
+    await waitForLabel('statusHeadingLabel', 'PipeTune の状態');
+    await waitForLabel('status-system-connection', '接続済み');
+    await selectSettingsPage(4);
+    const combo = await getElement('languageCombo', 'comboBox');
+    expect(await combo.isChildSelected(2)).toBe(true);
+    expect(await session.inspectConfig()).toEqual(initial);
+  });
+
+  it('reverts the language selector and logs a preference save failure', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await session.blockLanguagePreferenceSave();
+    await selectSettingsPage(4);
+    try {
+      await (await getElement('languageCombo', 'comboBox')).selectChildAt(2);
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !error.message.includes(
+          'ComboBox child selection did not change the selected item.'
+        )
+      ) {
+        throw error;
+      }
+    }
+    const combo = await getElement('languageCombo', 'comboBox');
+    await toPass(
+      async () => {
+        expect(await combo.isChildSelected(0)).toBe(true);
+      },
+      {
+        timeoutMs: 10_000,
+        message: 'Failed language selection was not reverted.',
+      }
+    );
+    expect(
+      (await (await getElement('languageRestartNotice', 'label')).info()).states
+    ).not.toContain('showing');
+    await toPass(
+      async () => {
+        expect(
+          await (
+            await getElement('logToggleButton', 'toggleButton')
+          ).isChecked()
+        ).toBe(true);
+      },
+      {
+        timeoutMs: 10_000,
+        message: 'Language preference failure was not logged.',
+      }
+    );
   });
 
   it('retains, filters, clears, and dismisses rejected-action logs', async () => {

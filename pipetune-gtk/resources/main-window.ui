@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<interface>
+<interface domain="pipetune-gtk">
   <requires lib="gtk+" version="3.24"/>
   <object class="GtkApplicationWindow" id="mainWindow">
     <property name="default-width">1080</property>
@@ -7,12 +7,12 @@
     <property name="window-position">center</property>
     <child type="titlebar">
       <object class="GtkHeaderBar" id="headerBar">
-        <property name="subtitle">EffeTune DSP control</property>
+        <property name="subtitle" translatable="yes">EffeTune DSP control</property>
         <property name="show-close-button">False</property>
         <child>
           <object class="GtkButton" id="closeButton">
             <property name="relief">none</property>
-            <property name="tooltip-text">Close</property>
+            <property name="tooltip-text" translatable="yes">Close</property>
             <child>
               <object class="GtkImage">
                 <property name="icon-name">window-close-symbolic</property>
@@ -77,8 +77,8 @@
                         <property name="spacing">3</property>
                         <property name="valign">center</property>
                         <child>
-                          <object class="GtkLabel">
-                            <property name="label">PipeTune Status</property>
+                          <object class="GtkLabel" id="statusHeadingLabel">
+                            <property name="label" translatable="yes">PipeTune Status</property>
                             <property name="xalign">0</property>
                             <style>
                               <class name="title"/>
@@ -87,7 +87,7 @@
                         </child>
                         <child>
                           <object class="GtkLabel" id="connectionSummaryLabel">
-                            <property name="label">Connecting…</property>
+                            <property name="label" translatable="yes">Connecting…</property>
                             <property name="xalign">0</property>
                             <property name="ellipsize">end</property>
                             <property name="hexpand">True</property>
@@ -182,7 +182,7 @@
                                 <property name="activatable">False</property>
                                 <child>
                                   <object class="GtkLabel">
-                                    <property name="label">Processing</property>
+                                    <property name="label" translatable="yes">Processing</property>
                                     <property name="xalign">0</property>
                                     <style>
                                       <class name="section-heading"/>
@@ -207,13 +207,13 @@
                                         <property name="hexpand">True</property>
                                         <child>
                                           <object class="GtkLabel">
-                                            <property name="label">Enable DSP processing</property>
+                                            <property name="label" translatable="yes">Enable DSP processing</property>
                                             <property name="xalign">0</property>
                                           </object>
                                         </child>
                                         <child>
                                           <object class="GtkLabel">
-                                            <property name="label">Turn off to pass audio through without an EffeTune preset.</property>
+                                            <property name="label" translatable="yes">Turn off to pass audio through without an EffeTune preset.</property>
                                             <property name="xalign">0</property>
                                             <property name="max-width-chars">30</property>
                                             <property name="wrap">True</property>
@@ -252,7 +252,7 @@
                                     <property name="margin">14</property>
                                     <child>
                                       <object class="GtkLabel">
-                                        <property name="label">Preset library</property>
+                                        <property name="label" translatable="yes">Preset library</property>
                                         <property name="xalign">0</property>
                                       </object>
                                     </child>
@@ -274,13 +274,13 @@
                                     <property name="margin">14</property>
                                     <child>
                                       <object class="GtkLabel">
-                                        <property name="label">Custom preset file</property>
+                                        <property name="label" translatable="yes">Custom preset file</property>
                                         <property name="xalign">0</property>
                                       </object>
                                     </child>
                                     <child>
                                       <object class="GtkFileChooserButton" id="presetChooser">
-                                        <property name="title">Choose an EffeTune preset</property>
+                                        <property name="title" translatable="yes">Choose an EffeTune preset</property>
                                         <property name="action">open</property>
                                         <property name="hexpand">True</property>
                                       </object>
@@ -294,7 +294,7 @@
                       </object>
                       <packing>
                         <property name="name">processing</property>
-                        <property name="title">Processing</property>
+                        <property name="title" translatable="yes">Processing</property>
                       </packing>
                     </child>
                     <child>
@@ -316,7 +316,7 @@
                                 <property name="activatable">False</property>
                                 <child>
                                   <object class="GtkLabel">
-                                    <property name="label">Output Routing</property>
+                                    <property name="label" translatable="yes">Output Routing</property>
                                     <property name="xalign">0</property>
                                     <style>
                                       <class name="section-heading"/>
@@ -336,7 +336,7 @@
                                     <property name="margin">14</property>
                                     <child>
                                       <object class="GtkLabel">
-                                        <property name="label">Preferred physical output</property>
+                                        <property name="label" translatable="yes">Preferred physical output</property>
                                         <property name="xalign">0</property>
                                       </object>
                                     </child>
@@ -350,7 +350,7 @@
                                             <property name="spacing">8</property>
                                             <child>
                                               <object class="GtkLabel" id="outputButtonLabel">
-                                                <property name="label">System default</property>
+                                                <property name="label" translatable="yes">System default</property>
                                                 <property name="xalign">0</property>
                                                 <property name="ellipsize">end</property>
                                                 <property name="hexpand">True</property>
@@ -375,7 +375,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkLabel">
-                                        <property name="label">Long PipeWire node names are available in the device tooltip.</property>
+                                        <property name="label" translatable="yes">Long PipeWire node names are available in the device tooltip.</property>
                                         <property name="xalign">0</property>
                                         <property name="max-width-chars">30</property>
                                         <property name="wrap">True</property>
@@ -393,7 +393,7 @@
                       </object>
                       <packing>
                         <property name="name">output</property>
-                        <property name="title">Output</property>
+                        <property name="title" translatable="yes">Output</property>
                       </packing>
                     </child>
                     <child>
@@ -415,7 +415,7 @@
                                 <property name="activatable">False</property>
                                 <child>
                                   <object class="GtkLabel">
-                                    <property name="label">Sample Rate</property>
+                                    <property name="label" translatable="yes">Sample Rate</property>
                                     <property name="xalign">0</property>
                                     <style>
                                       <class name="section-heading"/>
@@ -435,7 +435,7 @@
                                     <property name="margin">14</property>
                                     <child>
                                       <object class="GtkLabel">
-                                        <property name="label">DSP sample rate</property>
+                                        <property name="label" translatable="yes">DSP sample rate</property>
                                         <property name="xalign">0</property>
                                       </object>
                                     </child>
@@ -457,7 +457,7 @@
                                     <property name="margin">14</property>
                                     <child>
                                       <object class="GtkLabel">
-                                        <property name="label">PipeWire enforcement</property>
+                                        <property name="label" translatable="yes">PipeWire enforcement</property>
                                         <property name="xalign">0</property>
                                       </object>
                                     </child>
@@ -473,7 +473,7 @@
                       </object>
                       <packing>
                         <property name="name">rate</property>
-                        <property name="title">Rate</property>
+                        <property name="title" translatable="yes">Rate</property>
                       </packing>
                     </child>
                     <child>
@@ -495,7 +495,7 @@
                                 <property name="activatable">False</property>
                                 <child>
                                   <object class="GtkLabel">
-                                    <property name="label">DSP Engine</property>
+                                    <property name="label" translatable="yes">DSP Engine</property>
                                     <property name="xalign">0</property>
                                     <style>
                                       <class name="section-heading"/>
@@ -515,7 +515,7 @@
                                     <property name="margin">14</property>
                                     <child>
                                       <object class="GtkLabel">
-                                        <property name="label">Native backend</property>
+                                        <property name="label" translatable="yes">Native backend</property>
                                         <property name="xalign">0</property>
                                       </object>
                                     </child>
@@ -537,7 +537,7 @@
                                     <property name="margin">14</property>
                                     <child>
                                       <object class="GtkLabel">
-                                        <property name="label">Idle policy</property>
+                                        <property name="label" translatable="yes">Idle policy</property>
                                         <property name="xalign">0</property>
                                       </object>
                                     </child>
@@ -553,7 +553,7 @@
                       </object>
                       <packing>
                         <property name="name">dsp</property>
-                        <property name="title">DSP</property>
+                        <property name="title" translatable="yes">DSP</property>
                       </packing>
                     </child>
                     <child>
@@ -575,11 +575,82 @@
                                 <property name="activatable">False</property>
                                 <child>
                                   <object class="GtkLabel">
-                                    <property name="label">Advanced</property>
+                                    <property name="label" translatable="yes">Advanced</property>
                                     <property name="xalign">0</property>
                                     <style>
                                       <class name="section-heading"/>
                                     </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">8</property>
+                                    <property name="margin">14</property>
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="orientation">horizontal</property>
+                                        <property name="spacing">18</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">vertical</property>
+                                            <property name="spacing">3</property>
+                                            <property name="hexpand">True</property>
+                                            <child>
+                                              <object class="GtkLabel">
+                                                <property name="label" translatable="yes">Language</property>
+                                                <property name="xalign">0</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkLabel">
+                                                <property name="label" translatable="yes">Choose the language used by PipeTune GTK.</property>
+                                                <property name="xalign">0</property>
+                                                <property name="wrap">True</property>
+                                                <style>
+                                                  <class name="dim-label"/>
+                                                </style>
+                                              </object>
+                                            </child>
+                                          </object>
+                                          <packing>
+                                            <property name="expand">True</property>
+                                            <property name="fill">True</property>
+                                          </packing>
+                                        </child>
+                                        <child>
+                                          <object class="GtkComboBoxText" id="languageCombo">
+                                            <property name="valign">center</property>
+                                            <items>
+                                              <item translatable="yes">System default</item>
+                                              <item translatable="yes">English</item>
+                                              <item>日本語</item>
+                                            </items>
+                                          </object>
+                                          <packing>
+                                            <property name="expand">False</property>
+                                            <property name="fill">False</property>
+                                          </packing>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="languageRestartNotice">
+                                        <property name="label" translatable="yes">Restart PipeTune GTK to use the selected language.</property>
+                                        <property name="xalign">0</property>
+                                        <property name="wrap">True</property>
+                                        <property name="no-show-all">True</property>
+                                        <style>
+                                          <class name="dim-label"/>
+                                        </style>
+                                      </object>
+                                    </child>
                                   </object>
                                 </child>
                               </object>
@@ -600,13 +671,13 @@
                                         <property name="hexpand">True</property>
                                         <child>
                                           <object class="GtkLabel">
-                                            <property name="label">Restore defaults</property>
+                                            <property name="label" translatable="yes">Restore defaults</property>
                                             <property name="xalign">0</property>
                                           </object>
                                         </child>
                                         <child>
                                           <object class="GtkLabel">
-                                            <property name="label">Choose bypass, system default output, Max + Suggest, Scalar, and Conservative.</property>
+                                            <property name="label" translatable="yes">Choose bypass, system default output, Max + Suggest, Scalar, and Conservative.</property>
                                             <property name="xalign">0</property>
                                             <property name="max-width-chars">30</property>
                                             <property name="wrap">True</property>
@@ -623,7 +694,7 @@
                                     </child>
                                     <child>
                                       <object class="GtkButton" id="restoreDefaultsButton">
-                                        <property name="label">Restore Defaults</property>
+                                        <property name="label" translatable="yes">Restore Defaults</property>
                                         <property name="valign">center</property>
                                       </object>
                                       <packing>
@@ -646,7 +717,7 @@
                                     <property name="margin">14</property>
                                     <child>
                                       <object class="GtkLabel">
-                                        <property name="label">Versions</property>
+                                        <property name="label" translatable="yes">Versions</property>
                                         <property name="xalign">0</property>
                                         <property name="hexpand">True</property>
                                       </object>
@@ -674,7 +745,7 @@
                       </object>
                       <packing>
                         <property name="name">advanced</property>
-                        <property name="title">Advanced</property>
+                        <property name="title" translatable="yes">Advanced</property>
                       </packing>
                     </child>
                   </object>
@@ -712,7 +783,7 @@
                 </child>
                 <child>
                   <object class="GtkLabel" id="logToggleLabel">
-                    <property name="label">Action Log</property>
+                    <property name="label" translatable="yes">Action Log</property>
                     <property name="xalign">0</property>
                     <property name="hexpand">True</property>
                   </object>
@@ -757,7 +828,7 @@
                     </child>
                     <child>
                       <object class="GtkButton" id="logCopyButton">
-                        <property name="label">Copy</property>
+                        <property name="label" translatable="yes">Copy</property>
                       </object>
                       <packing>
                         <property name="pack-type">end</property>
@@ -765,7 +836,7 @@
                     </child>
                     <child>
                       <object class="GtkButton" id="logClearButton">
-                        <property name="label">Clear</property>
+                        <property name="label" translatable="yes">Clear</property>
                       </object>
                       <packing>
                         <property name="pack-type">end</property>
@@ -818,7 +889,7 @@
             <property name="margin-bottom">12</property>
             <child>
               <object class="GtkLabel" id="transactionStateLabel">
-                <property name="label">Connecting…</property>
+                <property name="label" translatable="yes">Connecting…</property>
                 <property name="xalign">0</property>
                 <property name="ellipsize">end</property>
                 <property name="hexpand">True</property>
@@ -833,7 +904,7 @@
             </child>
             <child>
               <object class="GtkButton" id="cancelButton">
-                <property name="label">Cancel</property>
+                <property name="label" translatable="yes">Cancel</property>
               </object>
               <packing>
                 <property name="expand">False</property>
@@ -842,7 +913,7 @@
             </child>
             <child>
               <object class="GtkButton" id="applyButton">
-                <property name="label">Apply</property>
+                <property name="label" translatable="yes">Apply</property>
                 <property name="can-default">True</property>
                 <style>
                   <class name="suggested-action"/>

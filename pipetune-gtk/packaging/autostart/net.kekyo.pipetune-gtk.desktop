@@ -2,7 +2,9 @@
 Version=1.5
 Type=Application
 Name=PipeTune
+Name[ja]=PipeTune
 Comment=Keep PipeTune audio controls available
+Comment[ja]=PipeTuneのオーディオコントロールを利用可能にします
 TryExec=pipetune-gtk
 Exec=pipetune-gtk --hidden
 Icon=pipetune
