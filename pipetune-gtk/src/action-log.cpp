@@ -31,18 +31,18 @@ ActionLog createActionLog(std::size_t capacity) {
 
 std::uint64_t appendPendingAction(
     ActionLog &log, std::uint64_t timestampUnixMilliseconds,
-    ActionLogCategory category, std::string_view summary,
-    std::string_view detail) {
+    ActionLogCategory category, UiMessage summary,
+    UiMessage detail) {
   return appendAction(
       log, timestampUnixMilliseconds, ActionLogSeverity::info, category,
-      ActionLogState::pending, summary, detail);
+      ActionLogState::pending, std::move(summary), std::move(detail));
 }
 
 bool completePendingAction(
     ActionLog &log, std::uint64_t id,
     std::uint64_t timestampUnixMilliseconds, bool success,
-    ActionLogSeverity severity, std::string_view summary,
-    std::string_view detail) {
+    ActionLogSeverity severity, UiMessage summary,
+    UiMessage detail) {
   for (auto &entry : log.entries) {
     if (entry.id != id) {
       continue;
@@ -51,8 +51,8 @@ bool completePendingAction(
     entry.severity = severity;
     entry.state =
         success ? ActionLogState::success : ActionLogState::failure;
-    entry.summary = summary;
-    entry.detail = detail;
+    entry.summary = std::move(summary);
+    entry.detail = std::move(detail);
     return true;
   }
   return false;
@@ -61,8 +61,7 @@ bool completePendingAction(
 std::uint64_t appendAction(
     ActionLog &log, std::uint64_t timestampUnixMilliseconds,
     ActionLogSeverity severity, ActionLogCategory category,
-    ActionLogState state, std::string_view summary,
-    std::string_view detail) {
+    ActionLogState state, UiMessage summary, UiMessage detail) {
   const auto id = log.nextId++;
   log.entries.push_back({
       .id = id,
@@ -70,8 +69,8 @@ std::uint64_t appendAction(
       .severity = severity,
       .category = category,
       .state = state,
-      .summary = std::string(summary),
-      .detail = std::string(detail),
+      .summary = std::move(summary),
+      .detail = std::move(detail),
   });
   trimActionLog(log);
   return id;

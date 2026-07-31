@@ -400,10 +400,12 @@ static bool testActionLogHistory() {
   auto log = pipetune_gtk::createActionLog(500);
   const auto pending = pipetune_gtk::appendPendingAction(
       log, 1000, pipetune_gtk::ActionLogCategory::settings,
-      "Change output", "Studio DAC");
+      pipetune_gtk::localizedMessage("Change output", {}),
+      pipetune_gtk::technicalMessage("Studio DAC"));
   pipetune_gtk::completePendingAction(
       log, pending, 1010, true, pipetune_gtk::ActionLogSeverity::info,
-      "Output changed", {});
+      pipetune_gtk::localizedMessage("Output changed", {}),
+      pipetune_gtk::technicalMessage({}));
   if (!check(log.entries.size() == 1 &&
                  log.entries.front().state ==
                      pipetune_gtk::ActionLogState::success,
@@ -414,13 +416,16 @@ static bool testActionLogHistory() {
   pipetune_gtk::appendAction(
       log, 1020, pipetune_gtk::ActionLogSeverity::warning,
       pipetune_gtk::ActionLogCategory::control,
-      pipetune_gtk::ActionLogState::failure, "Fallback selected",
-      "Preferred output is unavailable");
+      pipetune_gtk::ActionLogState::failure,
+      pipetune_gtk::localizedMessage("Fallback selected", {}),
+      pipetune_gtk::localizedMessage(
+          "Preferred output is unavailable", {}));
   pipetune_gtk::appendAction(
       log, 1030, pipetune_gtk::ActionLogSeverity::error,
       pipetune_gtk::ActionLogCategory::persistence,
-      pipetune_gtk::ActionLogState::failure, "Apply failed",
-      "Read-only file system");
+      pipetune_gtk::ActionLogState::failure,
+      pipetune_gtk::localizedMessage("Apply failed", {}),
+      pipetune_gtk::technicalMessage("Read-only file system"));
   const auto warnings = pipetune_gtk::filteredActionLogEntries(
       log, pipetune_gtk::ActionLogFilter::warnings);
   const auto errors = pipetune_gtk::filteredActionLogEntries(
@@ -434,7 +439,9 @@ static bool testActionLogHistory() {
     pipetune_gtk::appendAction(
         log, 2000 + index, pipetune_gtk::ActionLogSeverity::info,
         pipetune_gtk::ActionLogCategory::control,
-        pipetune_gtk::ActionLogState::success, "Status", {});
+        pipetune_gtk::ActionLogState::success,
+        pipetune_gtk::localizedMessage("Status", {}),
+        pipetune_gtk::technicalMessage({}));
   }
   if (!check(log.entries.size() == 500 &&
                  log.entries.front().timestampUnixMilliseconds == 2002,

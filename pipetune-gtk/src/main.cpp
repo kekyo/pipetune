@@ -15,6 +15,7 @@
 #include "status-level-meter.h"
 #include "status-model.h"
 #include "tray-backend.h"
+#include "ui-message.h"
 
 #include "pipetune/control_socket.h"
 #include "pipetune/startup_config.h"
@@ -305,6 +306,7 @@ static StatusRowWidgets createStatusItemRow(const StatusItem &item,
 }
 
 static void initializeStatusRows(GtkRuntime *runtime) {
+  runtime->statusRows.clear();
   const auto sections = buildStatusSections(
       runtime->state, runtime->savedConfig, currentUnixMilliseconds());
   for (const auto &section : sections) {
@@ -582,12 +584,14 @@ static GtkWidget *createActionLogRow(const ActionLogEntry &entry) {
   gtk_box_pack_start(GTK_BOX(box), symbol, FALSE, FALSE, 0);
   auto *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
   gtk_widget_set_hexpand(text, TRUE);
-  auto *summary = gtk_label_new(entry.summary.c_str());
+  const auto summaryText = formatUiMessage(entry.summary);
+  auto *summary = gtk_label_new(summaryText.c_str());
   gtk_label_set_xalign(GTK_LABEL(summary), 0.0F);
   gtk_label_set_ellipsize(GTK_LABEL(summary), PANGO_ELLIPSIZE_END);
   gtk_box_pack_start(GTK_BOX(text), summary, FALSE, TRUE, 0);
-  if (!entry.detail.empty()) {
-    auto *detail = gtk_label_new(entry.detail.c_str());
+  if (!uiMessageIsEmpty(entry.detail)) {
+    const auto detailText = formatUiMessage(entry.detail);
+    auto *detail = gtk_label_new(detailText.c_str());
     gtk_label_set_xalign(GTK_LABEL(detail), 0.0F);
     gtk_label_set_line_wrap(GTK_LABEL(detail), TRUE);
     addStyleClass(detail, "log-detail");
@@ -628,52 +632,70 @@ static void revealActionLog(GtkRuntime *runtime) {
 
 static void appendCompletedAction(
     GtkRuntime *runtime, ActionLogSeverity severity,
-    ActionLogCategory category, bool success, std::string_view summary,
-    std::string_view detail) {
+    ActionLogCategory category, bool success, UiMessage summary,
+    UiMessage detail) {
   appendAction(runtime->actionLog, currentUnixMilliseconds(), severity,
                category,
                success ? ActionLogState::success
                        : ActionLogState::failure,
-               summary, detail);
+               std::move(summary), std::move(detail));
   if (severity == ActionLogSeverity::error) {
     revealActionLog(runtime);
   }
 }
 
-static std::string settingsOperationName(SettingsOperation operation) {
+static UiMessage settingsOperationName(SettingsOperation operation) {
   switch (operation) {
   case SettingsOperation::output:
-    return "Changing output";
+    return localizedMessage("Changing output", {});
   case SettingsOperation::rate:
-    return "Changing sample-rate policy";
+    return localizedMessage("Changing sample-rate policy", {});
   case SettingsOperation::dspBackend:
-    return "Changing DSP backend";
+    return localizedMessage("Changing DSP backend", {});
   case SettingsOperation::dspIdle:
-    return "Changing DSP idle policy";
+    return localizedMessage("Changing DSP idle policy", {});
   case SettingsOperation::processing:
-    return "Changing processing mode";
+    return localizedMessage("Changing processing mode", {});
   case SettingsOperation::none:
-    return "Updating settings";
+    return localizedMessage("Updating settings", {});
   }
-  return "Updating settings";
+  return localizedMessage("Updating settings", {});
 }
 
-static std::string settingsOperationSuccess(SettingsOperation operation) {
+static UiMessage settingsOperationSuccess(SettingsOperation operation) {
   switch (operation) {
   case SettingsOperation::output:
-    return "Output changed";
+    return localizedMessage("Output changed", {});
   case SettingsOperation::rate:
-    return "Sample-rate policy changed";
+    return localizedMessage("Sample-rate policy changed", {});
   case SettingsOperation::dspBackend:
-    return "DSP backend changed";
+    return localizedMessage("DSP backend changed", {});
   case SettingsOperation::dspIdle:
-    return "DSP idle policy changed";
+    return localizedMessage("DSP idle policy changed", {});
   case SettingsOperation::processing:
-    return "Processing mode changed";
+    return localizedMessage("Processing mode changed", {});
   case SettingsOperation::none:
-    return "Settings updated";
+    return localizedMessage("Settings updated", {});
   }
-  return "Settings updated";
+  return localizedMessage("Settings updated", {});
+}
+
+static UiMessage settingsOperationFailure(SettingsOperation operation) {
+  switch (operation) {
+  case SettingsOperation::output:
+    return localizedMessage("Changing output failed", {});
+  case SettingsOperation::rate:
+    return localizedMessage("Changing sample-rate policy failed", {});
+  case SettingsOperation::dspBackend:
+    return localizedMessage("Changing DSP backend failed", {});
+  case SettingsOperation::dspIdle:
+    return localizedMessage("Changing DSP idle policy failed", {});
+  case SettingsOperation::processing:
+    return localizedMessage("Changing processing mode failed", {});
+  case SettingsOperation::none:
+    return localizedMessage("Updating settings failed", {});
+  }
+  return localizedMessage("Updating settings failed", {});
 }
 
 static std::string transactionStateText(const GtkRuntime &runtime) {
@@ -699,7 +721,9 @@ static std::string transactionStateText(const GtkRuntime &runtime) {
                : "Restoring the previous live settings…";
   }
   if (transaction.inFlight != SettingsOperation::none) {
-    return settingsOperationName(transaction.inFlight) + "…";
+    return formatUiMessage(
+               settingsOperationName(transaction.inFlight)) +
+           "…";
   }
   if (settingsTransactionIsDirty(transaction)) {
     return "Live preview active · changes are not saved";
@@ -881,9 +905,11 @@ static void beginRollbackAndClose(GtkRuntime *runtime,
   requestSettingsCancel(runtime->transaction);
   appendCompletedAction(runtime, ActionLogSeverity::info,
                         ActionLogCategory::settings, true,
-                        "Rollback requested",
-                        "Restoring the live settings captured when the "
-                        "dialog opened");
+                        localizedMessage("Rollback requested", {}),
+                        localizedMessage(
+                            "Restoring the live settings captured when the "
+                            "dialog opened",
+                            {}));
   render(runtime);
   driveSettings(runtime);
   finishRollbackIfReady(runtime);
@@ -1052,8 +1078,9 @@ static void onProcessingActiveChanged(GObject *object, GParamSpec *,
     runtime->updatingControls = false;
     appendCompletedAction(
         runtime, ActionLogSeverity::warning, ActionLogCategory::settings,
-        false, "Preset required",
-        "Choose a preset before enabling DSP processing");
+        false, localizedMessage("Preset required", {}),
+        localizedMessage(
+            "Choose a preset before enabling DSP processing", {}));
     render(runtime);
     return;
   }
@@ -1158,7 +1185,8 @@ static void initializePresetCatalog(GtkRuntime *runtime) {
     appendCompletedAction(
         runtime, ActionLogSeverity::warning,
         ActionLogCategory::application, false,
-        "Some preset sources are unavailable", diagnostics);
+        localizedMessage("Some preset sources are unavailable", {}),
+        technicalMessage(diagnostics));
   }
 }
 
@@ -1194,7 +1222,8 @@ static void onPresetComboChanged(GtkComboBox *combo,
   if (!resolved.error.empty()) {
     appendCompletedAction(
         runtime, ActionLogSeverity::error, ActionLogCategory::settings,
-        false, "Cannot prepare preset", resolved.error);
+        false, localizedMessage("Cannot prepare preset", {}),
+        technicalMessage(resolved.error));
     render(runtime);
     return;
   }
@@ -1223,7 +1252,8 @@ static void onPresetFileSet(GtkFileChooserButton *, gpointer userData) {
   if (error) {
     appendCompletedAction(
         runtime, ActionLogSeverity::error, ActionLogCategory::settings,
-        false, "Cannot resolve preset", error.message());
+        false, localizedMessage("Cannot resolve preset", {}),
+        technicalMessage(error.message()));
     render(runtime);
     return;
   }
@@ -1240,8 +1270,9 @@ static void onRestoreDefaultsClicked(GtkButton *, gpointer userData) {
   }
   appendCompletedAction(
       runtime, ActionLogSeverity::info, ActionLogCategory::settings, true,
-      "Defaults selected",
-      "Defaults are being applied live; use Apply to save them");
+      localizedMessage("Defaults selected", {}),
+      localizedMessage(
+          "Defaults are being applied live; use Apply to save them", {}));
   editDesiredSettings(runtime, defaultStartupConfig());
 }
 
@@ -1269,8 +1300,9 @@ static void onApplyClicked(GtkButton *, gpointer userData) {
   }
   const auto pending = appendPendingAction(
       runtime->actionLog, currentUnixMilliseconds(),
-      ActionLogCategory::persistence, "Saving all settings",
-      runtime->startupConfigPath.string());
+      ActionLogCategory::persistence,
+      localizedMessage("Saving all settings", {}),
+      technicalMessage(runtime->startupConfigPath.string()));
   auto error = persistenceTestDiagnostic();
   if (error.empty()) {
     error = pipetune::saveStartupConfig(
@@ -1282,15 +1314,18 @@ static void onApplyClicked(GtkButton *, gpointer userData) {
     runtime->savedConfig = runtime->transaction.saved;
     completePendingAction(
         runtime->actionLog, pending, currentUnixMilliseconds(), true,
-        ActionLogSeverity::info, "All settings saved",
-        runtime->startupConfigPath.string());
+        ActionLogSeverity::info,
+        localizedMessage("All settings saved", {}),
+        technicalMessage(runtime->startupConfigPath.string()));
   } else {
     setControlDiagnostic(
         runtime->state,
         "Live settings remain active, but persistence failed: " + error);
     completePendingAction(
         runtime->actionLog, pending, currentUnixMilliseconds(), false,
-        ActionLogSeverity::error, "Cannot save settings", error);
+        ActionLogSeverity::error,
+        localizedMessage("Cannot save settings", {}),
+        technicalMessage(error));
     revealActionLog(runtime);
   }
   render(runtime);
@@ -1323,10 +1358,10 @@ static std::string visibleActionLogText(const GtkRuntime &runtime) {
     }
     text += formatActionTime(entry->timestampUnixMilliseconds);
     text += "  ";
-    text += entry->summary;
-    if (!entry->detail.empty()) {
+    text += formatUiMessage(entry->summary);
+    if (!uiMessageIsEmpty(entry->detail)) {
       text += " — ";
-      text += entry->detail;
+      text += formatUiMessage(entry->detail);
     }
   }
   return text;
@@ -1361,8 +1396,8 @@ static void onSettingsOperationReply(const ControlClientReply &reply,
     markSettingsDisconnected(runtime->transaction, reply.transportError);
     completePendingAction(
         runtime->actionLog, pendingId, currentUnixMilliseconds(), false,
-        ActionLogSeverity::error, settingsOperationName(operation) + " failed",
-        reply.transportError);
+        ActionLogSeverity::error, settingsOperationFailure(operation),
+        technicalMessage(reply.transportError));
     revealActionLog(runtime);
     render(runtime);
     scheduleReconnect(runtime);
@@ -1383,8 +1418,8 @@ static void onSettingsOperationReply(const ControlClientReply &reply,
       runtime->actionLog, pendingId, currentUnixMilliseconds(), success,
       success ? ActionLogSeverity::info : ActionLogSeverity::error,
       success ? settingsOperationSuccess(operation)
-              : settingsOperationName(operation) + " failed",
-      diagnostic);
+              : settingsOperationFailure(operation),
+      technicalMessage(diagnostic));
   if (!success) {
     revealActionLog(runtime);
   }
@@ -1453,7 +1488,8 @@ static void driveSettings(GtkRuntime *runtime) {
   }
   runtime->pendingActionId = appendPendingAction(
       runtime->actionLog, currentUnixMilliseconds(),
-      ActionLogCategory::settings, settingsOperationName(operation), {});
+      ActionLogCategory::settings, settingsOperationName(operation),
+      technicalMessage({}));
   setControlOperationPending(runtime->state, true);
   render(runtime);
   dispatchSettingsOperation(runtime, operation);
@@ -1487,8 +1523,9 @@ static void onSubscriptionMessage(
   if (!previouslyConnected && runtime->state.hasRuntimeStatus) {
     appendCompletedAction(runtime, ActionLogSeverity::info,
                           ActionLogCategory::control, true,
-                          "Connected to PipeTune",
-                          "Live status subscription established");
+                          localizedMessage("Connected to PipeTune", {}),
+                          localizedMessage(
+                              "Live status subscription established", {}));
   }
   if (runtime->dialogActive) {
     const auto live = startupConfigFromRuntime(runtime->state.runtime);
@@ -1498,16 +1535,17 @@ static void onSubscriptionMessage(
       reconnectSettingsTransaction(runtime->transaction, live);
       appendCompletedAction(
           runtime, ActionLogSeverity::info, ActionLogCategory::control,
-          true, "PipeTune reconnected",
-          "Pending dialog settings will be reapplied");
+          true, localizedMessage("PipeTune reconnected", {}),
+          localizedMessage(
+              "Pending dialog settings will be reapplied", {}));
     } else {
       observeSettingsRuntime(runtime->transaction, live);
       if (runtime->transaction.conflict) {
         appendCompletedAction(
             runtime, ActionLogSeverity::warning,
             ActionLogCategory::settings, false,
-            "Live settings changed externally",
-            runtime->transaction.diagnostic);
+            localizedMessage("Live settings changed externally", {}),
+            technicalMessage(runtime->transaction.diagnostic));
       }
     }
   }
@@ -1527,7 +1565,8 @@ static void onConnectionChanged(bool connected, std::string_view error,
   }
   appendCompletedAction(
       runtime, ActionLogSeverity::warning, ActionLogCategory::control,
-      false, "PipeTune disconnected", error);
+      false, localizedMessage("PipeTune disconnected", {}),
+      technicalMessage(error));
   render(runtime);
   scheduleReconnect(runtime);
 }
@@ -1592,6 +1631,18 @@ static void connectMainWindowSignals(GtkRuntime *runtime) {
                    G_CALLBACK(onLogClearClicked), runtime);
 }
 
+static void createMainWindowPresentation(GtkRuntime *runtime) {
+  runtime->ui = createMainWindowUi(
+      runtime->application, pipetune::version(),
+      pipetune::effetuneVersion());
+  connectMainWindowSignals(runtime);
+}
+
+static void destroyMainWindowPresentation(GtkRuntime *runtime) noexcept {
+  runtime->statusRows.clear();
+  destroyMainWindowUi(runtime->ui);
+}
+
 static void presentWindow(GtkRuntime *runtime,
                           guint32 userInteractionTime) {
   if (runtime == nullptr || runtime->ui.window == nullptr) {
@@ -1644,7 +1695,9 @@ static void initializeStartupConfig(GtkRuntime *runtime) {
     appendCompletedAction(
         runtime, ActionLogSeverity::error,
         ActionLogCategory::persistence, false,
-        "Startup configuration path unavailable", resolved.error);
+        localizedMessage(
+            "Startup configuration path unavailable", {}),
+        technicalMessage(resolved.error));
     return;
   }
   runtime->startupConfigPath = resolved.path;
@@ -1655,7 +1708,8 @@ static void initializeStartupConfig(GtkRuntime *runtime) {
     appendCompletedAction(
         runtime, ActionLogSeverity::error,
         ActionLogCategory::persistence, false,
-        "Cannot load startup configuration", loaded.error);
+        localizedMessage("Cannot load startup configuration", {}),
+        technicalMessage(loaded.error));
     return;
   }
   runtime->savedConfig = loaded.config;
@@ -1671,7 +1725,8 @@ static void initializeControlClient(GtkRuntime *runtime) {
     markControlDisconnected(runtime->state, socket.error);
     appendCompletedAction(
         runtime, ActionLogSeverity::error, ActionLogCategory::control,
-        false, "Control socket unavailable", socket.error);
+        false, localizedMessage("Control socket unavailable", {}),
+        technicalMessage(socket.error));
     return;
   }
   runtime->controlClient = createControlClient(
@@ -1682,17 +1737,15 @@ static void initializeControlClient(GtkRuntime *runtime) {
   markControlConnecting(runtime->state);
   appendCompletedAction(runtime, ActionLogSeverity::info,
                         ActionLogCategory::control, true,
-                        "Connecting to PipeTune", socket.path.string());
+                        localizedMessage("Connecting to PipeTune", {}),
+                        technicalMessage(socket.path.string()));
   startControlSubscription(runtime->controlClient);
 }
 
 static void onApplicationStartup(GApplication *, gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
-  runtime->ui = createMainWindowUi(
-      runtime->application, pipetune::version(),
-      pipetune::effetuneVersion());
+  createMainWindowPresentation(runtime);
   initializeStatusArtwork(runtime);
-  connectMainWindowSignals(runtime);
   initializeStartupConfig(runtime);
   initializeStatusRows(runtime);
   initializePresetCatalog(runtime);
@@ -1783,7 +1836,7 @@ static void onApplicationShutdown(GApplication *, gpointer userData) {
   runtime->controlClient = nullptr;
   destroyTrayBackend(runtime->trayBackend);
   runtime->trayBackend = nullptr;
-  destroyMainWindowUi(runtime->ui);
+  destroyMainWindowPresentation(runtime);
   releaseStatusArtwork(runtime);
   releaseApplicationHold(runtime);
 }

@@ -14,3 +14,6 @@ msgstr ""
 
 msgid "System default"
 msgstr "システム設定"
+
+msgid "Could not save {0}"
+msgstr "{0} を保存できませんでした"

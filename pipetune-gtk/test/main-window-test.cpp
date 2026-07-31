@@ -109,6 +109,18 @@ int main(int argc, char **argv) {
   }
   auto *application = gtk_application_new(
       "net.kekyo.pipetune-gtk.tests", G_APPLICATION_NON_UNIQUE);
+  auto *registrationError = static_cast<GError *>(nullptr);
+  if (!g_application_register(G_APPLICATION(application), nullptr,
+                              &registrationError)) {
+    std::cerr << "GTK application registration failed: "
+              << (registrationError == nullptr
+                      ? "unknown error"
+                      : registrationError->message)
+              << '\n';
+    g_clear_error(&registrationError);
+    g_object_unref(application);
+    return 1;
+  }
   auto ui = pipetune_gtk::createMainWindowUi(
       application, "1.2.3", "4.5.6");
 
@@ -173,7 +185,42 @@ int main(int argc, char **argv) {
       check(gtk_widget_get_visible(ui.logRevealer) == FALSE,
             "collapsed log drawer must not retain window height");
 
+  gtk_stack_set_transition_duration(GTK_STACK(ui.settingsStack), 0);
+  gtk_stack_set_visible_child_name(GTK_STACK(ui.settingsStack),
+                                   "advanced");
+  gtk_paned_set_position(GTK_PANED(ui.mainPaned), 455);
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ui.logToggleButton),
+                               TRUE);
+  gtk_revealer_set_transition_duration(GTK_REVEALER(ui.logRevealer), 0);
+  gtk_combo_box_set_active(GTK_COMBO_BOX(ui.logFilterCombo), 2);
+  pipetune_gtk::setLogDrawerVisible(ui, true);
+  const auto viewState =
+      pipetune_gtk::captureMainWindowViewState(ui);
+  pipetune_gtk::destroyMainWindowUi(ui);
+  while (gtk_events_pending() != FALSE) {
+    gtk_main_iteration();
+  }
+  ui = pipetune_gtk::createMainWindowUi(
+      application, "1.2.3", "4.5.6");
+  gtk_stack_set_transition_duration(GTK_STACK(ui.settingsStack), 0);
+  gtk_revealer_set_transition_duration(GTK_REVEALER(ui.logRevealer), 0);
+  pipetune_gtk::restoreMainWindowViewState(ui, viewState);
+  const auto *restoredPage = gtk_stack_get_visible_child_name(
+      GTK_STACK(ui.settingsStack));
+  const auto rebuildPreservesView =
+      check(restoredPage != nullptr &&
+                std::string_view(restoredPage) == "advanced",
+            "a presentation rebuild must retain the selected page") &&
+      check(gtk_paned_get_position(GTK_PANED(ui.mainPaned)) == 455,
+            "a presentation rebuild must retain the pane position") &&
+      check(gtk_toggle_button_get_active(
+                GTK_TOGGLE_BUTTON(ui.logToggleButton)) != FALSE &&
+                gtk_widget_get_visible(ui.logRevealer) != FALSE,
+            "a presentation rebuild must retain log visibility") &&
+      check(gtk_combo_box_get_active(
+                GTK_COMBO_BOX(ui.logFilterCombo)) == 2,
+            "a presentation rebuild must retain the log filter");
   pipetune_gtk::destroyMainWindowUi(ui);
   g_object_unref(application);
-  return valid && presentationWorks ? 0 : 1;
+  return valid && presentationWorks && rebuildPreservesView ? 0 : 1;
 }

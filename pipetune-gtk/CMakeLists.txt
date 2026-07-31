@@ -154,7 +154,8 @@ add_library(
   src/preset-file-monitor.cpp
   src/status-model.cpp
   src/status-text.cpp
-  src/ui-language.cpp)
+  src/ui-language.cpp
+  src/ui-message.cpp)
 target_include_directories(pipetune_gtk_core PUBLIC src)
 target_link_libraries(
   pipetune_gtk_core
@@ -360,6 +361,26 @@ if(BUILD_TESTING)
     NAME pipetune_gtk_ui_language_tests
     COMMAND
       pipetune_gtk_ui_language_tests
+      "${CMAKE_CURRENT_BINARY_DIR}/locale")
+
+  add_executable(
+    pipetune_gtk_ui_message_tests
+    test/ui-message-test.cpp)
+  target_link_libraries(
+    pipetune_gtk_ui_message_tests
+    PRIVATE pipetune_gtk_core)
+  if(MSVC)
+    target_compile_options(
+      pipetune_gtk_ui_message_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_ui_message_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_gtk_ui_message_tests
+    COMMAND
+      pipetune_gtk_ui_message_tests
       "${CMAKE_CURRENT_BINARY_DIR}/locale")
 
   add_test(

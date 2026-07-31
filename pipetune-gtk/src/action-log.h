@@ -1,6 +1,8 @@
 #ifndef PIPETUNE_GTK_ACTION_LOG_H
 #define PIPETUNE_GTK_ACTION_LOG_H
 
+#include "ui-message.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -74,10 +76,10 @@ struct ActionLogEntry {
   ActionLogCategory category;
   /** Pending, successful, or failed lifecycle state. */
   ActionLogState state;
-  /** Concise one-line action summary. */
-  std::string summary;
-  /** Optional diagnostic or contextual detail. */
-  std::string detail;
+  /** Concise one-line semantic action summary. */
+  UiMessage summary;
+  /** Optional localized context or untranslated technical detail. */
+  UiMessage detail;
 };
 
 /**
@@ -106,14 +108,14 @@ ActionLog createActionLog(std::size_t capacity);
  * @param log History to update.
  * @param timestampUnixMilliseconds Start timestamp.
  * @param category Originating subsystem.
- * @param summary Concise action summary.
- * @param detail Optional contextual detail.
+ * @param summary Deferred concise action summary.
+ * @param detail Deferred contextual or technical detail.
  * @return Identifier used to complete the action in place.
  */
 std::uint64_t appendPendingAction(
     ActionLog &log, std::uint64_t timestampUnixMilliseconds,
-    ActionLogCategory category, std::string_view summary,
-    std::string_view detail);
+    ActionLogCategory category, UiMessage summary,
+    UiMessage detail);
 
 /**
  * Completes a retained pending action in place.
@@ -123,15 +125,15 @@ std::uint64_t appendPendingAction(
  * @param timestampUnixMilliseconds Completion timestamp.
  * @param success True for success, false for failure.
  * @param severity Final attention level.
- * @param summary Final concise summary.
- * @param detail Final diagnostic or contextual detail.
+ * @param summary Final deferred concise summary.
+ * @param detail Final deferred diagnostic or contextual detail.
  * @return True when the pending entry was still retained.
  */
 bool completePendingAction(
     ActionLog &log, std::uint64_t id,
     std::uint64_t timestampUnixMilliseconds, bool success,
-    ActionLogSeverity severity, std::string_view summary,
-    std::string_view detail);
+    ActionLogSeverity severity, UiMessage summary,
+    UiMessage detail);
 
 /**
  * Appends an already completed action.
@@ -141,15 +143,14 @@ bool completePendingAction(
  * @param severity Attention level.
  * @param category Originating subsystem.
  * @param state Successful or failed state.
- * @param summary Concise action summary.
- * @param detail Optional diagnostic or contextual detail.
+ * @param summary Deferred concise action summary.
+ * @param detail Deferred contextual or technical detail.
  * @return Identifier assigned to the entry.
  */
 std::uint64_t appendAction(
     ActionLog &log, std::uint64_t timestampUnixMilliseconds,
     ActionLogSeverity severity, ActionLogCategory category,
-    ActionLogState state, std::string_view summary,
-    std::string_view detail);
+    ActionLogState state, UiMessage summary, UiMessage detail);
 
 /**
  * Selects retained entries for one drawer filter.

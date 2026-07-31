@@ -63,6 +63,8 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
           requiredWidget(builder, "persistentStatusPane", GTK_TYPE_BOX),
       .settingsPane =
           requiredWidget(builder, "settingsPane", GTK_TYPE_BOX),
+      .mainPaned =
+          requiredWidget(builder, "mainPaned", GTK_TYPE_PANED),
       .settingsSwitcher = requiredWidget(
           builder, "settingsSwitcher", GTK_TYPE_STACK_SWITCHER),
       .settingsStack =
@@ -172,6 +174,68 @@ void setLogDrawerVisible(const MainWindowUi &ui, bool visible) noexcept {
   }
   gtk_revealer_set_reveal_child(GTK_REVEALER(ui.logRevealer), FALSE);
   gtk_widget_hide(ui.logRevealer);
+}
+
+MainWindowViewState
+captureMainWindowViewState(const MainWindowUi &ui) noexcept {
+  auto width = int{};
+  auto height = int{};
+  auto x = int{};
+  auto y = int{};
+  gtk_window_get_size(GTK_WINDOW(ui.window), &width, &height);
+  gtk_window_get_position(GTK_WINDOW(ui.window), &x, &y);
+  const auto *page = gtk_stack_get_visible_child_name(
+      GTK_STACK(ui.settingsStack));
+  return {
+      .settingsPage = page == nullptr ? std::string{}
+                                     : std::string(page),
+      .mainPanedPosition =
+          gtk_paned_get_position(GTK_PANED(ui.mainPaned)),
+      .logVisible =
+          gtk_toggle_button_get_active(
+              GTK_TOGGLE_BUTTON(ui.logToggleButton)) != FALSE,
+      .logFilter =
+          gtk_combo_box_get_active(GTK_COMBO_BOX(ui.logFilterCombo)),
+      .windowWidth = width,
+      .windowHeight = height,
+      .windowX = x,
+      .windowY = y,
+      .maximized =
+          gtk_window_is_maximized(GTK_WINDOW(ui.window)) != FALSE,
+  };
+}
+
+void restoreMainWindowViewState(
+    const MainWindowUi &ui,
+    const MainWindowViewState &state) noexcept {
+  auto *settingsPage =
+      state.settingsPage.empty()
+          ? nullptr
+          : gtk_stack_get_child_by_name(
+                GTK_STACK(ui.settingsStack),
+                state.settingsPage.c_str());
+  if (settingsPage != nullptr) {
+    gtk_widget_show(settingsPage);
+    gtk_stack_set_visible_child_name(GTK_STACK(ui.settingsStack),
+                                     state.settingsPage.c_str());
+  }
+  gtk_paned_set_position(GTK_PANED(ui.mainPaned),
+                         state.mainPanedPosition);
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ui.logToggleButton),
+                               state.logVisible ? TRUE : FALSE);
+  setLogDrawerVisible(ui, state.logVisible);
+  gtk_combo_box_set_active(GTK_COMBO_BOX(ui.logFilterCombo),
+                           state.logFilter);
+  if (state.windowWidth > 0 && state.windowHeight > 0) {
+    gtk_window_resize(GTK_WINDOW(ui.window), state.windowWidth,
+                      state.windowHeight);
+  }
+  gtk_window_move(GTK_WINDOW(ui.window), state.windowX, state.windowY);
+  if (state.maximized) {
+    gtk_window_maximize(GTK_WINDOW(ui.window));
+  } else {
+    gtk_window_unmaximize(GTK_WINDOW(ui.window));
+  }
 }
 
 void destroyMainWindowUi(MainWindowUi &ui) noexcept {

@@ -3,6 +3,7 @@
 
 #include <gtk/gtk.h>
 
+#include <string>
 #include <string_view>
 
 namespace pipetune_gtk {
@@ -21,6 +22,8 @@ struct MainWindowUi {
   GtkWidget *persistentStatusPane = nullptr;
   /** Settings pane containing the page switcher and stack. */
   GtkWidget *settingsPane = nullptr;
+  /** Resizable divider between status and settings panes. */
+  GtkWidget *mainPaned = nullptr;
   /** Settings page switcher. */
   GtkWidget *settingsSwitcher = nullptr;
   /** Settings page stack. */
@@ -82,6 +85,30 @@ struct MainWindowUi {
 };
 
 /**
+ * Captures presentation-only state retained across a GtkBuilder rebuild.
+ */
+struct MainWindowViewState {
+  /** Stable GtkStack child name for the selected settings page. */
+  std::string settingsPage;
+  /** Horizontal status/settings pane divider position. */
+  int mainPanedPosition;
+  /** Whether the action-log drawer is expanded. */
+  bool logVisible;
+  /** Zero-based action-log filter selection. */
+  int logFilter;
+  /** Current window width in logical pixels. */
+  int windowWidth;
+  /** Current window height in logical pixels. */
+  int windowHeight;
+  /** Current window horizontal position. */
+  int windowX;
+  /** Current window vertical position. */
+  int windowY;
+  /** Whether the window is maximized. */
+  bool maximized;
+};
+
+/**
  * Builds the main window from the embedded GtkBuilder UI definition.
  *
  * Missing or incorrectly typed bundled objects are treated as fatal build
@@ -114,6 +141,25 @@ void presentMainWindow(const MainWindowUi &ui,
  * height.
  */
 void setLogDrawerVisible(const MainWindowUi &ui, bool visible) noexcept;
+
+/**
+ * Captures state owned by the current main-window presentation.
+ *
+ * @param ui Loaded main-window widgets.
+ * @return View state suitable for a replacement GtkBuilder presentation.
+ */
+MainWindowViewState
+captureMainWindowViewState(const MainWindowUi &ui) noexcept;
+
+/**
+ * Restores presentation-only state after a GtkBuilder rebuild.
+ *
+ * @param ui Replacement main-window widgets.
+ * @param state Previously captured view state.
+ */
+void restoreMainWindowViewState(
+    const MainWindowUi &ui,
+    const MainWindowViewState &state) noexcept;
 
 /**
  * Destroys the main window and releases its GtkBuilder.
