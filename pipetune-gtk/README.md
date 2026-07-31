@@ -27,11 +27,13 @@ Together they display the daemon connection and virtual-sink state, live and
 saved processing choices, routing decisions, input format and rates, DSP
 backend and idle state, processing time and load, error counters, and
 diagnostics. Long values are ellipsized in the row and remain available in a
-tooltip. **Load** is a horizontal level meter aligned to the right of its row.
-It grows with the status pane from 150 to 280 pixels and overlays the existing
-percentage text at the right edge. The meter uses 11 restrained-saturation hue
-steps from teal through muted red. Its graphical fill is capped at 100%, while
-the text preserves the measured value above 100% so overload remains explicit.
+tooltip. **Load** is a horizontal level meter below the connection summary,
+outside the scrolling status rows. Its left edge matches the heading and
+summary labels so it clears the status icon. It grows with the status pane from
+150 to 280 pixels and overlays the existing percentage text at the right edge.
+The meter uses 11 restrained-saturation hue steps from teal through muted red.
+Its graphical fill is capped at 100%, while the text preserves the measured
+value above 100% so overload remains explicit.
 Numeric status items retain their value, unit, and range separately from their
 text presentation, allowing other bounded measurements to adopt the same
 component later without changing status acquisition.

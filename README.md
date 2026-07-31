@@ -106,9 +106,11 @@ Changing a setting previews it immediately in the running daemon. The single
 snapshot; **Cancel**, Escape, or the title-bar close button restores the
 previous live state before hiding the window.
 
-The persistent pane presents DSP **Load** as a responsive horizontal meter
-with the current percentage inside it. The graphical fill is capped at 100%,
-but the text continues to show measured overload values above 100%.
+The persistent pane presents DSP **Load** directly below the connection
+summary, aligned with the summary's left edge so it remains clear of the
+status icon. The responsive horizontal meter contains the current percentage.
+Its graphical fill is capped at 100%, but the text continues to show measured
+overload values above 100%.
 
 The bottom **Action Log** drawer retains recent connection, preview,
 persistence, and failure history. Settings become read-only while PipeTune is

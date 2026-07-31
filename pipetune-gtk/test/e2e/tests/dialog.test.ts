@@ -178,14 +178,6 @@ const resizeStatusPaneTo = async (targetWidth: number): Promise<void> => {
   );
 };
 
-const scrollStatusPaneTo = async (fraction: number): Promise<void> => {
-  const scrollbar = await getElement('statusScrollbar', 'scrollbar');
-  const value = await scrollbar.valueInfo();
-  await scrollbar.setValue(
-    value.minimum + (value.maximum - value.minimum) * fraction
-  );
-};
-
 interface PixelBounds {
   readonly x: number;
   readonly y: number;
@@ -252,25 +244,30 @@ const measureLoadMeterRaster = async (
   };
 };
 
-const revealAndMeasureLoadMeter = async (
-  window: GtkElementOfKind<'window'>,
-  statusPane: GtkElementOfKind<'container'>
-): Promise<LoadMeterRasterMeasurement> => {
-  let lastError: unknown;
-  for (const fraction of [
-    0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95,
-  ]) {
-    await scrollStatusPaneTo(fraction);
-    try {
-      return await measureLoadMeterRaster(window, statusPane);
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  if (lastError instanceof Error) {
-    throw lastError;
-  }
-  throw new Error('The load meter could not be revealed in the status pane.');
+const expectLoadMeterBelowConnectionStatus = async (
+  meter: GtkElementOfKind<'progressBar'>
+): Promise<void> => {
+  const heading = await getElement('statusHeadingLabel', 'label');
+  const summary = await getElement('connectionSummaryLabel', 'label');
+  const icon = await getElement('statusImage', 'image');
+  const [meterCapture, headingCapture, summaryCapture, iconCapture] =
+    await Promise.all([
+      meter.capture(),
+      heading.capture(),
+      summary.capture(),
+      icon.capture(),
+    ]);
+  const summaryBottom = summaryCapture.bounds.y + summaryCapture.bounds.height;
+  const iconRight = iconCapture.bounds.x + iconCapture.bounds.width;
+  expect(
+    Math.abs(meterCapture.bounds.x - headingCapture.bounds.x)
+  ).toBeLessThanOrEqual(2);
+  expect(
+    Math.abs(summaryCapture.bounds.x - headingCapture.bounds.x)
+  ).toBeLessThanOrEqual(2);
+  expect(meterCapture.bounds.y).toBeGreaterThan(summaryBottom);
+  expect(meterCapture.bounds.y - summaryBottom).toBeLessThanOrEqual(8);
+  expect(meterCapture.bounds.x).toBeGreaterThan(iconRight);
 };
 
 const changeRateTo96Khz = async (): Promise<void> => {
@@ -386,9 +383,10 @@ describe('PipeTune GTK dialog', () => {
     expect(expandedWidth).toBeGreaterThan(initialWidth + 200);
   });
 
-  it('renders DSP load as a right-aligned level meter with a capped responsive width', async () => {
+  it('renders DSP load below the connection status from the label left edge', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
+    await waitForLabel('connectionSummaryLabel', 'Connected and monitoring');
     const window = await getElement('mainWindow', 'window');
     await window.resizeTo(900, 560);
     await resizeStatusPaneTo(340);
@@ -409,8 +407,9 @@ describe('PipeTune GTK dialog', () => {
       }
     );
     const statusPane = await getElement('persistentStatusPane', 'container');
+    await expectLoadMeterBelowConnectionStatus(meter);
     const narrowMeter = await waitForResult(
-      async () => revealAndMeasureLoadMeter(window, statusPane),
+      async () => measureLoadMeterRaster(window, statusPane),
       {
         timeoutMs: 10_000,
         message: 'DSP load meter was not measurable at the narrow pane width.',
@@ -425,15 +424,14 @@ describe('PipeTune GTK dialog', () => {
     await resizeStatusPaneTo(680);
     await toPass(
       async () => {
-        const expandedMeter = await revealAndMeasureLoadMeter(
-          window,
-          statusPane
-        );
+        await expectLoadMeterBelowConnectionStatus(meter);
+        const expandedMeter = await measureLoadMeterRaster(window, statusPane);
         expect(expandedMeter.width).toBeGreaterThan(narrowMeter.width);
         expect(expandedMeter.width).toBeGreaterThanOrEqual(278);
         expect(expandedMeter.width).toBeLessThanOrEqual(282);
-        expect(expandedMeter.rightInset).toBeGreaterThanOrEqual(15);
-        expect(expandedMeter.rightInset).toBeLessThanOrEqual(30);
+        expect(expandedMeter.rightInset).toBeGreaterThan(
+          narrowMeter.rightInset + 250
+        );
       },
       {
         timeoutMs: 10_000,

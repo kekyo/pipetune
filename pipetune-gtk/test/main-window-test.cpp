@@ -36,6 +36,8 @@ static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
                "status badge type differs") &&
          check(GTK_IS_LABEL(ui.connectionSummaryLabel),
                "connection summary type differs") &&
+         check(GTK_IS_BOX(ui.statusLoadMeterBox),
+               "status Load meter host type differs") &&
          check(GTK_IS_LIST_BOX(ui.statusList),
                "status list type differs") &&
          check(GTK_IS_SWITCH(ui.processingEnabledSwitch),
@@ -111,6 +113,35 @@ static bool checkSettingsPages(const pipetune_gtk::MainWindowUi &ui) {
                "advanced page is missing");
 }
 
+static bool checkLoadMeterHost(const pipetune_gtk::MainWindowUi &ui) {
+  auto *heading = GTK_WIDGET(
+      gtk_builder_get_object(ui.builder, "statusHeadingLabel"));
+  auto *host = ui.statusLoadMeterBox;
+  if (!check(GTK_IS_LABEL(heading),
+             "status heading label is missing") ||
+      !check(GTK_IS_BOX(host), "status Load meter host is missing")) {
+    return false;
+  }
+  auto *labelColumn = gtk_widget_get_parent(ui.connectionSummaryLabel);
+  if (!check(labelColumn != nullptr && GTK_IS_BOX(labelColumn),
+             "connection label column is missing") ||
+      !check(gtk_widget_get_parent(heading) == labelColumn &&
+                 gtk_widget_get_parent(host) == labelColumn,
+             "status Load meter must share the connection label column")) {
+    return false;
+  }
+  auto *children = gtk_container_get_children(GTK_CONTAINER(labelColumn));
+  const auto headingPosition = g_list_index(children, heading);
+  const auto summaryPosition =
+      g_list_index(children, ui.connectionSummaryLabel);
+  const auto hostPosition = g_list_index(children, host);
+  g_list_free(children);
+  return check(headingPosition >= 0 &&
+                   summaryPosition > headingPosition &&
+                   hostPosition > summaryPosition,
+               "status Load meter must follow the connection summary");
+}
+
 static bool checkJapaneseMeasuredStatusLabels() {
   auto state = pipetune_gtk::initialApplicationState();
   state.connection = pipetune_gtk::ControlConnectionState::connected;
@@ -180,6 +211,7 @@ int main(int argc, char **argv) {
   const auto valid =
       check(ui.builder != nullptr, "main window builder is unavailable") &&
       checkWidgetTypes(ui) && checkSettingsPages(ui) &&
+      checkLoadMeterHost(ui) &&
       check(gtk_window_get_application(GTK_WINDOW(ui.window)) ==
                 application,
             "main window application differs") &&

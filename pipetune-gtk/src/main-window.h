@@ -34,6 +34,8 @@ struct MainWindowUi {
   GtkWidget *statusBadge = nullptr;
   /** Concise connection summary. */
   GtkWidget *connectionSummaryLabel = nullptr;
+  /** DSP Load meter host aligned below the connection labels. */
+  GtkWidget *statusLoadMeterBox = nullptr;
   /** Dynamic, always-expanded status section list. */
   GtkWidget *statusList = nullptr;
   /** Enables preset processing or selects bypass. */

@@ -51,11 +51,10 @@ namespace pipetune_gtk {
 constexpr auto kReconnectDelaySeconds = guint{2};
 constexpr auto kStatusArtworkSize = int{48};
 constexpr auto kActionLogCapacity = std::size_t{500};
+constexpr auto kDspLoadStatusId = std::string_view{"dsp.load"};
 
 struct StatusRowWidgets {
   GtkWidget *text;
-  StatusLevelMeterWidgets levelMeter;
-  GtkWidget *stack;
 };
 
 struct OutputViewChoice {
@@ -101,6 +100,7 @@ struct GtkRuntime {
   std::vector<DspBackendChoice> dspBackendChoices;
   std::vector<DspIdleChoice> dspIdleChoices;
   std::map<std::string, StatusRowWidgets> statusRows;
+  StatusLevelMeterWidgets statusLoadMeter;
   ActionLog actionLog;
   ActionLogFilter logFilter;
   std::uint64_t pendingActionId;
@@ -297,34 +297,37 @@ static StatusRowWidgets createStatusItemRow(const StatusItem &item,
   addStyleClass(title, "dim-label");
   gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
 
-  auto *stack = gtk_stack_new();
-  gtk_widget_set_hexpand(stack, TRUE);
   auto *text = gtk_label_new(item.value.c_str());
   gtk_label_set_xalign(GTK_LABEL(text), 1.0F);
   gtk_label_set_ellipsize(GTK_LABEL(text), PANGO_ELLIPSIZE_END);
   gtk_label_set_max_width_chars(GTK_LABEL(text), 28);
   gtk_label_set_selectable(GTK_LABEL(text), TRUE);
-  gtk_stack_add_named(GTK_STACK(stack), text, "text");
-  const auto levelMeter = createStatusLevelMeter();
-  gtk_stack_add_named(GTK_STACK(stack), levelMeter.root, "level");
-  gtk_stack_set_visible_child_name(GTK_STACK(stack), "text");
-  gtk_box_pack_end(GTK_BOX(box), stack, TRUE, TRUE, 0);
+  gtk_widget_set_hexpand(text, TRUE);
+  gtk_box_pack_end(GTK_BOX(box), text, TRUE, TRUE, 0);
   gtk_container_add(GTK_CONTAINER(row), box);
   const auto statusId = accessibleStatusId(item.id);
   assignDynamicAccessibleId(text, statusId);
-  assignDynamicAccessibleId(levelMeter.levelBar, statusId + "-meter");
   *rowOut = row;
-  return {.text = text, .levelMeter = levelMeter, .stack = stack};
+  return {.text = text};
 }
 
 static void initializeStatusRows(GtkRuntime *runtime) {
   runtime->statusRows.clear();
+  runtime->statusLoadMeter = createStatusLevelMeter();
+  gtk_box_pack_start(GTK_BOX(runtime->ui.statusLoadMeterBox),
+                     runtime->statusLoadMeter.root, TRUE, TRUE, 0);
+  assignDynamicAccessibleId(runtime->statusLoadMeter.levelBar,
+                            "status-dsp-load-meter");
+  gtk_widget_show_all(runtime->ui.statusLoadMeterBox);
   const auto sections = buildStatusSections(
       runtime->state, runtime->savedConfig, currentUnixMilliseconds());
   for (const auto &section : sections) {
     auto *heading = createStatusSectionRow(section);
     gtk_list_box_insert(GTK_LIST_BOX(runtime->ui.statusList), heading, -1);
     for (const auto &item : section.items) {
+      if (item.id == kDspLoadStatusId) {
+        continue;
+      }
       auto *row = static_cast<GtkWidget *>(nullptr);
       auto widgets = createStatusItemRow(item, &row);
       gtk_list_box_insert(GTK_LIST_BOX(runtime->ui.statusList), row, -1);
@@ -340,6 +343,27 @@ static void removeStatusSeverityClasses(GtkWidget *widget) {
   gtk_style_context_remove_class(context, "status-error");
 }
 
+static void renderStatusLoadMeter(GtkRuntime *runtime,
+                                  const StatusItem &item) {
+  const auto level = statusLevelPresentation(item);
+  const auto accessibleName = item.label + " " + item.value;
+  updateStatusLevelMeter(
+      runtime->statusLoadMeter,
+      {
+          .minimum = level.has_value() ? *item.minimum : 0.0,
+          .maximum = level.has_value() ? *item.maximum : 100.0,
+          .value = level.has_value() ? level->clampedValue : 0.0,
+          .hueStep = level.has_value() ? level->hueStep
+                                       : std::uint8_t{0},
+          .valueText = item.value,
+          .accessibleName = accessibleName,
+          .accessibleDescription = item.tooltip,
+      });
+  gtk_widget_set_tooltip_text(
+      runtime->statusLoadMeter.root,
+      item.tooltip.empty() ? nullptr : item.tooltip.c_str());
+}
+
 static void renderStatusRows(GtkRuntime *runtime) {
   const auto &saved = runtime->transactionReady
                           ? runtime->transaction.saved
@@ -348,6 +372,10 @@ static void renderStatusRows(GtkRuntime *runtime) {
       runtime->state, saved, currentUnixMilliseconds());
   for (const auto &section : sections) {
     for (const auto &item : section.items) {
+      if (item.id == kDspLoadStatusId) {
+        renderStatusLoadMeter(runtime, item);
+        continue;
+      }
       const auto found = runtime->statusRows.find(item.id);
       if (found == runtime->statusRows.end()) {
         continue;
@@ -361,28 +389,6 @@ static void renderStatusRows(GtkRuntime *runtime) {
         addStyleClass(widgets.text, "status-warning");
       } else if (item.severity == StatusSeverity::error) {
         addStyleClass(widgets.text, "status-error");
-      }
-      const auto level = statusLevelPresentation(item);
-      if (level.has_value()) {
-        const auto accessibleName = item.label + " " + item.value;
-        updateStatusLevelMeter(
-            widgets.levelMeter,
-            {
-                .minimum = *item.minimum,
-                .maximum = *item.maximum,
-                .value = level->clampedValue,
-                .hueStep = level->hueStep,
-                .valueText = item.value,
-                .accessibleName = accessibleName,
-                .accessibleDescription = item.tooltip,
-            });
-        gtk_widget_set_tooltip_text(
-            widgets.levelMeter.root,
-            item.tooltip.empty() ? nullptr : item.tooltip.c_str());
-        gtk_stack_set_visible_child_name(GTK_STACK(widgets.stack),
-                                         "level");
-      } else {
-        gtk_stack_set_visible_child_name(GTK_STACK(widgets.stack), "text");
       }
     }
   }
@@ -1740,6 +1746,7 @@ static void createMainWindowPresentation(GtkRuntime *runtime) {
 
 static void destroyMainWindowPresentation(GtkRuntime *runtime) noexcept {
   runtime->statusRows.clear();
+  runtime->statusLoadMeter = {};
   destroyMainWindowUi(runtime->ui);
 }
 
@@ -2016,6 +2023,7 @@ static int runApplication(int argc, char **argv) {
       .dspBackendChoices = {},
       .dspIdleChoices = {},
       .statusRows = {},
+      .statusLoadMeter = {},
       .actionLog = createActionLog(kActionLogCapacity),
       .logFilter = ActionLogFilter::all,
       .pendingActionId = 0,

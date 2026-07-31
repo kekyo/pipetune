@@ -84,6 +84,8 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
           requiredWidget(builder, "statusBadge", GTK_TYPE_IMAGE),
       .connectionSummaryLabel = requiredWidget(
           builder, "connectionSummaryLabel", GTK_TYPE_LABEL),
+      .statusLoadMeterBox = requiredWidget(
+          builder, "statusLoadMeterBox", GTK_TYPE_BOX),
       .statusList =
           requiredWidget(builder, "statusList", GTK_TYPE_LIST_BOX),
       .processingEnabledSwitch = requiredWidget(
