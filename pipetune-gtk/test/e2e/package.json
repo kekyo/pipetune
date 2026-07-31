@@ -1,0 +1,20 @@
+{
+  "name": "pipetune-gtk-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "vite build && vitest run --reporter=verbose"
+  },
+  "devDependencies": {
+    "@types/node": "25.9.1",
+    "gestament": "1.4.0",
+    "prettier-max": "1.16.0",
+    "typescript": "6.0.3",
+    "vite": "6.4.3",
+    "vitest": "4.1.8"
+  }
+}

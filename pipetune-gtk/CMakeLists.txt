@@ -15,6 +15,30 @@ find_program(
   glib-compile-resources
   REQUIRED)
 
+if(BUILD_TESTING)
+  find_program(PIPETUNE_GTK_NPM npm REQUIRED)
+  set(
+    PIPETUNE_GTK_E2E_DIRECTORY
+    "${CMAKE_CURRENT_SOURCE_DIR}/test/e2e")
+  set(
+    PIPETUNE_GTK_E2E_INSTALL_STAMP
+    "${PIPETUNE_GTK_E2E_DIRECTORY}/node_modules/.pipetune-ci-stamp")
+  add_custom_command(
+    OUTPUT "${PIPETUNE_GTK_E2E_INSTALL_STAMP}"
+    COMMAND "${PIPETUNE_GTK_NPM}" ci
+    COMMAND
+      "${CMAKE_COMMAND}" -E touch
+      "${PIPETUNE_GTK_E2E_INSTALL_STAMP}"
+    WORKING_DIRECTORY "${PIPETUNE_GTK_E2E_DIRECTORY}"
+    DEPENDS
+      "${PIPETUNE_GTK_E2E_DIRECTORY}/package.json"
+      "${PIPETUNE_GTK_E2E_DIRECTORY}/package-lock.json"
+    VERBATIM)
+  add_custom_target(
+    pipetune_gtk_e2e_dependencies ALL
+    DEPENDS "${PIPETUNE_GTK_E2E_INSTALL_STAMP}")
+endif()
+
 set(
   PIPETUNE_GTK_RESOURCE_MANIFEST
   "${CMAKE_CURRENT_SOURCE_DIR}/resources/pipetune-gtk.gresource.xml")
@@ -108,6 +132,17 @@ target_include_directories(
 target_link_libraries(
   pipetune_gtk_ui_core
   PUBLIC pipetune_gtk_core PkgConfig::GTK3)
+if(BUILD_TESTING)
+  add_dependencies(
+    pipetune_gtk_ui_core pipetune_gtk_e2e_dependencies)
+  target_include_directories(
+    pipetune_gtk_ui_core
+    PRIVATE
+      "${PIPETUNE_GTK_E2E_DIRECTORY}/node_modules/gestament/include")
+  target_compile_definitions(
+    pipetune_gtk_ui_core
+    PRIVATE PIPETUNE_GTK_E2E_ACCESSIBILITY=1)
+endif()
 if(MSVC)
   target_compile_options(pipetune_gtk_ui_core PRIVATE /W4 /WX)
 else()
@@ -213,6 +248,24 @@ install(
 
 if(BUILD_TESTING)
   find_program(PIPETUNE_GTK_XVFB_RUN xvfb-run REQUIRED)
+
+  add_executable(
+    pipetune_gtk_e2e_daemon
+    test/e2e/fake-control-daemon.cpp)
+  set_target_properties(
+    pipetune_gtk_e2e_daemon PROPERTIES
+    OUTPUT_NAME pipetune-gtk-e2e-daemon
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+  target_link_libraries(
+    pipetune_gtk_e2e_daemon
+    PRIVATE pipetune_control Threads::Threads)
+  if(MSVC)
+    target_compile_options(pipetune_gtk_e2e_daemon PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_e2e_daemon PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
 
   add_test(NAME pipetune_gtk_help COMMAND pipetune-gtk --help)
   set_tests_properties(
@@ -572,6 +625,18 @@ if(BUILD_TESTING)
       ${PIPETUNE_GTK_GDBUS})
   set_tests_properties(
     pipetune_gtk_application_lifecycle PROPERTIES TIMEOUT 60)
+
+  add_test(
+    NAME pipetune_gtk_gestament_e2e
+    COMMAND
+      "${CMAKE_COMMAND}" -E env
+      "PIPETUNE_GTK_BINARY=$<TARGET_FILE:pipetune-gtk>"
+      "PIPETUNE_GTK_E2E_DAEMON=$<TARGET_FILE:pipetune_gtk_e2e_daemon>"
+      "${PIPETUNE_GTK_NPM}" test)
+  set_tests_properties(
+    pipetune_gtk_gestament_e2e PROPERTIES
+    WORKING_DIRECTORY "${PIPETUNE_GTK_E2E_DIRECTORY}"
+    TIMEOUT 180)
 
   add_test(
     NAME pipetune_gtk_install_layout

@@ -2,6 +2,10 @@
 
 #include "gtk-resources.h"
 
+#ifdef PIPETUNE_GTK_E2E_ACCESSIBILITY
+#include <gestament/gtk.h>
+#endif
+
 #include <string>
 
 namespace pipetune_gtk {
@@ -25,6 +29,9 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
                                 std::string_view effetuneDspVersion) {
   ensureGtkResourcesRegistered();
   auto *builder = gtk_builder_new_from_resource(kMainWindowResourcePath);
+#ifdef PIPETUNE_GTK_E2E_ACCESSIBILITY
+  gestament_gtk_assign_accessible_ids_from_builder(builder);
+#endif
   auto ui = MainWindowUi{
       .builder = builder,
       .window =
