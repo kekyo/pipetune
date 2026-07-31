@@ -49,6 +49,9 @@ set(
   PIPETUNE_GTK_MAIN_WINDOW_UI
   "${CMAKE_CURRENT_SOURCE_DIR}/resources/main-window.ui")
 set(
+  PIPETUNE_GTK_STYLE
+  "${CMAKE_CURRENT_SOURCE_DIR}/resources/style.css")
+set(
   PIPETUNE_GTK_RESOURCE_DIRECTORY
   "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(
@@ -84,7 +87,13 @@ add_custom_command(
     "${PIPETUNE_GTK_RESOURCE_MANIFEST}"
     "${PIPETUNE_GTK_ICON_SOURCE}"
     "${PIPETUNE_GTK_MAIN_WINDOW_UI}"
+    "${PIPETUNE_GTK_STYLE}"
   VERBATIM)
+if(NOT MSVC)
+  set_source_files_properties(
+    "${PIPETUNE_GTK_RESOURCE_SOURCE}"
+    PROPERTIES COMPILE_OPTIONS "-Wno-overlength-strings")
+endif()
 
 add_library(
   pipetune_gtk_core STATIC
@@ -157,6 +166,16 @@ target_link_libraries(
   pipetune-gtk
   PRIVATE pipetune_gtk_core pipetune_gtk_ui_core pipetune_core
           PkgConfig::GTK3)
+if(BUILD_TESTING)
+  add_dependencies(pipetune-gtk pipetune_gtk_e2e_dependencies)
+  target_include_directories(
+    pipetune-gtk
+    PRIVATE
+      "${PIPETUNE_GTK_E2E_DIRECTORY}/node_modules/gestament/include")
+  target_compile_definitions(
+    pipetune-gtk
+    PRIVATE PIPETUNE_GTK_E2E_ACCESSIBILITY=1)
+endif()
 if(MSVC)
   target_compile_options(pipetune-gtk PRIVATE /W4 /WX)
 else()

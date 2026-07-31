@@ -1,917 +1,849 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
-  <requires lib="gtk+" version="3.20"/>
+  <requires lib="gtk+" version="3.24"/>
   <object class="GtkApplicationWindow" id="mainWindow">
-    <property name="default-width">680</property>
-    <property name="default-height">720</property>
+    <property name="default-width">1080</property>
+    <property name="default-height">680</property>
     <property name="window-position">center</property>
     <child type="titlebar">
       <object class="GtkHeaderBar" id="headerBar">
         <property name="subtitle">EffeTune DSP control</property>
-        <property name="show-close-button">True</property>
+        <property name="show-close-button">False</property>
+        <child>
+          <object class="GtkButton" id="closeButton">
+            <property name="relief">none</property>
+            <property name="tooltip-text">Close</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">window-close-symbolic</property>
+              </object>
+            </child>
+          </object>
+          <packing>
+            <property name="pack-type">end</property>
+          </packing>
+        </child>
       </object>
     </child>
     <child>
-      <object class="GtkBox">
+      <object class="GtkBox" id="windowContent">
         <property name="orientation">vertical</property>
-        <property name="spacing">18</property>
-        <property name="border-width">20</property>
         <child>
-          <object class="GtkBox">
+          <object class="GtkPaned" id="mainPaned">
             <property name="orientation">horizontal</property>
-            <property name="spacing">12</property>
+            <property name="position">400</property>
+            <property name="wide-handle">True</property>
+            <property name="vexpand">True</property>
             <child>
-              <object class="GtkOverlay">
-                <property name="width-request">48</property>
-                <property name="height-request">48</property>
+              <object class="GtkBox" id="persistentStatusPane">
+                <property name="orientation">vertical</property>
+                <property name="width-request">340</property>
+                <style>
+                  <class name="status-pane"/>
+                </style>
                 <child>
-                  <object class="GtkImage" id="statusImage"/>
-                </child>
-                <child type="overlay">
-                  <object class="GtkImage" id="statusBadge">
-                    <property name="icon-name">network-offline-symbolic</property>
-                    <property name="pixel-size">18</property>
-                    <property name="halign">end</property>
-                    <property name="valign">end</property>
-                    <property name="no-show-all">True</property>
+                  <object class="GtkBox" id="connectionHero">
+                    <property name="orientation">horizontal</property>
+                    <property name="spacing">12</property>
+                    <property name="margin-start">20</property>
+                    <property name="margin-end">20</property>
+                    <property name="margin-top">18</property>
+                    <property name="margin-bottom">14</property>
+                    <child>
+                      <object class="GtkOverlay">
+                        <property name="width-request">48</property>
+                        <property name="height-request">48</property>
+                        <child>
+                          <object class="GtkImage" id="statusImage"/>
+                        </child>
+                        <child type="overlay">
+                          <object class="GtkImage" id="statusBadge">
+                            <property name="icon-name">network-offline-symbolic</property>
+                            <property name="pixel-size">18</property>
+                            <property name="halign">end</property>
+                            <property name="valign">end</property>
+                            <property name="no-show-all">True</property>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">False</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">3</property>
+                        <property name="valign">center</property>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label">PipeTune Status</property>
+                            <property name="xalign">0</property>
+                            <style>
+                              <class name="title"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="connectionSummaryLabel">
+                            <property name="label">Connecting…</property>
+                            <property name="xalign">0</property>
+                            <property name="ellipsize">end</property>
+                            <property name="hexpand">True</property>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">True</property>
+                        <property name="fill">True</property>
+                      </packing>
+                    </child>
                   </object>
                 </child>
+                <child>
+                  <object class="GtkSeparator"/>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkScrolledWindow" id="statusScrolledWindow">
+                    <property name="hscrollbar-policy">never</property>
+                    <property name="vscrollbar-policy">automatic</property>
+                    <property name="vexpand">True</property>
+                    <property name="shadow-type">none</property>
+                    <child>
+                      <object class="GtkListBox" id="statusList">
+                        <property name="selection-mode">none</property>
+                        <style>
+                          <class name="status-list"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                  <packing>
+                    <property name="expand">True</property>
+                    <property name="fill">True</property>
+                  </packing>
+                </child>
               </object>
               <packing>
-                <property name="expand">False</property>
-                <property name="fill">False</property>
+                <property name="resize">False</property>
+                <property name="shrink">False</property>
               </packing>
             </child>
             <child>
-              <object class="GtkLabel" id="statusLabel">
-                <property name="label">PipeTune is disconnected</property>
-                <property name="xalign">0</property>
+              <object class="GtkBox" id="settingsPane">
+                <property name="orientation">vertical</property>
                 <property name="hexpand">True</property>
+                <style>
+                  <class name="settings-pane"/>
+                </style>
+                <child>
+                  <object class="GtkStackSwitcher" id="settingsSwitcher">
+                    <property name="halign">center</property>
+                    <property name="margin-top">14</property>
+                    <property name="margin-bottom">10</property>
+                    <property name="stack">settingsStack</property>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">False</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkStack" id="settingsStack">
+                    <property name="transition-type">slide-left-right</property>
+                    <property name="transition-duration">160</property>
+                    <property name="homogeneous">True</property>
+                    <property name="vexpand">True</property>
+                    <child>
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">never</property>
+                        <property name="vscrollbar-policy">automatic</property>
+                        <child>
+                          <object class="GtkListBox" id="processingSettingsList">
+                            <property name="selection-mode">none</property>
+                            <property name="margin-start">22</property>
+                            <property name="margin-end">22</property>
+                            <property name="margin-bottom">22</property>
+                            <style>
+                              <class name="settings-list"/>
+                            </style>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Processing</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="section-heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">18</property>
+                                    <property name="margin">14</property>
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="orientation">vertical</property>
+                                        <property name="spacing">3</property>
+                                        <property name="hexpand">True</property>
+                                        <child>
+                                          <object class="GtkLabel">
+                                            <property name="label">Enable DSP processing</property>
+                                            <property name="xalign">0</property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkLabel">
+                                            <property name="label">Turn off to pass audio through without an EffeTune preset.</property>
+                                            <property name="xalign">0</property>
+                                            <property name="wrap">True</property>
+                                            <style>
+                                              <class name="dim-label"/>
+                                            </style>
+                                          </object>
+                                        </child>
+                                      </object>
+                                      <packing>
+                                        <property name="expand">True</property>
+                                        <property name="fill">True</property>
+                                      </packing>
+                                    </child>
+                                    <child>
+                                      <object class="GtkSwitch" id="processingEnabledSwitch">
+                                        <property name="valign">center</property>
+                                      </object>
+                                      <packing>
+                                        <property name="expand">False</property>
+                                        <property name="fill">False</property>
+                                      </packing>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">8</property>
+                                    <property name="margin">14</property>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label">Preset library</property>
+                                        <property name="xalign">0</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkComboBoxText" id="presetCombo"/>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">8</property>
+                                    <property name="margin">14</property>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label">Custom preset file</property>
+                                        <property name="xalign">0</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkFileChooserButton" id="presetChooser">
+                                        <property name="title">Choose an EffeTune preset</property>
+                                        <property name="action">open</property>
+                                        <property name="hexpand">True</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="name">processing</property>
+                        <property name="title">Processing</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">never</property>
+                        <property name="vscrollbar-policy">automatic</property>
+                        <child>
+                          <object class="GtkListBox" id="outputSettingsList">
+                            <property name="selection-mode">none</property>
+                            <property name="margin-start">22</property>
+                            <property name="margin-end">22</property>
+                            <property name="margin-bottom">22</property>
+                            <style>
+                              <class name="settings-list"/>
+                            </style>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Output Routing</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="section-heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">8</property>
+                                    <property name="margin">14</property>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label">Preferred physical output</property>
+                                        <property name="xalign">0</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkMenuButton" id="outputMenuButton">
+                                        <property name="hexpand">True</property>
+                                        <property name="popover">outputPopover</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">horizontal</property>
+                                            <property name="spacing">8</property>
+                                            <child>
+                                              <object class="GtkLabel" id="outputButtonLabel">
+                                                <property name="label">System default</property>
+                                                <property name="xalign">0</property>
+                                                <property name="ellipsize">end</property>
+                                                <property name="hexpand">True</property>
+                                              </object>
+                                              <packing>
+                                                <property name="expand">True</property>
+                                                <property name="fill">True</property>
+                                              </packing>
+                                            </child>
+                                            <child>
+                                              <object class="GtkImage">
+                                                <property name="icon-name">pan-down-symbolic</property>
+                                              </object>
+                                              <packing>
+                                                <property name="expand">False</property>
+                                                <property name="fill">False</property>
+                                              </packing>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label">Long PipeWire node names are available in the device tooltip.</property>
+                                        <property name="xalign">0</property>
+                                        <property name="wrap">True</property>
+                                        <style>
+                                          <class name="dim-label"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="name">output</property>
+                        <property name="title">Output</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">never</property>
+                        <property name="vscrollbar-policy">automatic</property>
+                        <child>
+                          <object class="GtkListBox" id="rateSettingsList">
+                            <property name="selection-mode">none</property>
+                            <property name="margin-start">22</property>
+                            <property name="margin-end">22</property>
+                            <property name="margin-bottom">22</property>
+                            <style>
+                              <class name="settings-list"/>
+                            </style>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Sample Rate</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="section-heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">8</property>
+                                    <property name="margin">14</property>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label">DSP sample rate</property>
+                                        <property name="xalign">0</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkComboBoxText" id="rateCombo"/>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">8</property>
+                                    <property name="margin">14</property>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label">PipeWire enforcement</property>
+                                        <property name="xalign">0</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkComboBoxText" id="rateEnforcementCombo"/>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="name">rate</property>
+                        <property name="title">Rate</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">never</property>
+                        <property name="vscrollbar-policy">automatic</property>
+                        <child>
+                          <object class="GtkListBox" id="dspSettingsList">
+                            <property name="selection-mode">none</property>
+                            <property name="margin-start">22</property>
+                            <property name="margin-end">22</property>
+                            <property name="margin-bottom">22</property>
+                            <style>
+                              <class name="settings-list"/>
+                            </style>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">DSP Engine</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="section-heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">8</property>
+                                    <property name="margin">14</property>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label">Native backend</property>
+                                        <property name="xalign">0</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkComboBoxText" id="dspBackendCombo"/>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">8</property>
+                                    <property name="margin">14</property>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label">Idle policy</property>
+                                        <property name="xalign">0</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkComboBoxText" id="dspIdlePolicyCombo"/>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="name">dsp</property>
+                        <property name="title">DSP</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">never</property>
+                        <property name="vscrollbar-policy">automatic</property>
+                        <child>
+                          <object class="GtkListBox" id="advancedSettingsList">
+                            <property name="selection-mode">none</property>
+                            <property name="margin-start">22</property>
+                            <property name="margin-end">22</property>
+                            <property name="margin-bottom">22</property>
+                            <style>
+                              <class name="settings-list"/>
+                            </style>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Advanced</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="section-heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">18</property>
+                                    <property name="margin">14</property>
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="orientation">vertical</property>
+                                        <property name="spacing">3</property>
+                                        <property name="hexpand">True</property>
+                                        <child>
+                                          <object class="GtkLabel">
+                                            <property name="label">Restore defaults</property>
+                                            <property name="xalign">0</property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkLabel">
+                                            <property name="label">Choose bypass, system default output, Max + Suggest, Scalar, and Conservative.</property>
+                                            <property name="xalign">0</property>
+                                            <property name="wrap">True</property>
+                                            <style>
+                                              <class name="dim-label"/>
+                                            </style>
+                                          </object>
+                                        </child>
+                                      </object>
+                                      <packing>
+                                        <property name="expand">True</property>
+                                        <property name="fill">True</property>
+                                      </packing>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="restoreDefaultsButton">
+                                        <property name="label">Restore Defaults</property>
+                                        <property name="valign">center</property>
+                                      </object>
+                                      <packing>
+                                        <property name="expand">False</property>
+                                        <property name="fill">False</property>
+                                      </packing>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">18</property>
+                                    <property name="margin">14</property>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label">Versions</property>
+                                        <property name="xalign">0</property>
+                                        <property name="hexpand">True</property>
+                                      </object>
+                                      <packing>
+                                        <property name="expand">True</property>
+                                        <property name="fill">True</property>
+                                      </packing>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="versionLabel">
+                                        <property name="label">—</property>
+                                        <property name="xalign">1</property>
+                                        <property name="selectable">True</property>
+                                        <style>
+                                          <class name="dim-label"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="name">advanced</property>
+                        <property name="title">Advanced</property>
+                      </packing>
+                    </child>
+                  </object>
+                  <packing>
+                    <property name="expand">True</property>
+                    <property name="fill">True</property>
+                  </packing>
+                </child>
               </object>
               <packing>
-                <property name="expand">True</property>
-                <property name="fill">True</property>
+                <property name="resize">True</property>
+                <property name="shrink">True</property>
               </packing>
             </child>
           </object>
           <packing>
-            <property name="expand">False</property>
-            <property name="fill">False</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkGrid" id="runtimeStatusGrid">
-            <property name="column-spacing">18</property>
-            <property name="row-spacing">10</property>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">DSP mode</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">0</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel" id="processingModeLabel">
-                <property name="label">—</property>
-                <property name="xalign">0</property>
-                <property name="selectable">True</property>
-                <property name="ellipsize">middle</property>
-                <property name="hexpand">True</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">0</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">Active preset</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">1</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel" id="activePresetLabel">
-                <property name="label">—</property>
-                <property name="xalign">0</property>
-                <property name="selectable">True</property>
-                <property name="ellipsize">middle</property>
-                <property name="hexpand">True</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">1</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">Startup preset</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">2</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel" id="startupPresetLabel">
-                <property name="label">—</property>
-                <property name="xalign">0</property>
-                <property name="selectable">True</property>
-                <property name="ellipsize">middle</property>
-                <property name="hexpand">True</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">2</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">Active DSP nodes</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">3</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel" id="pluginCountLabel">
-                <property name="label">—</property>
-                <property name="xalign">0</property>
-                <property name="selectable">True</property>
-                <property name="ellipsize">middle</property>
-                <property name="hexpand">True</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">3</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">Effective output</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">4</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel" id="targetLabel">
-                <property name="label">—</property>
-                <property name="xalign">0</property>
-                <property name="selectable">True</property>
-                <property name="ellipsize">middle</property>
-                <property name="hexpand">True</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">4</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">Default sink</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">5</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel" id="defaultSinkLabel">
-                <property name="label">—</property>
-                <property name="xalign">0</property>
-                <property name="selectable">True</property>
-                <property name="ellipsize">middle</property>
-                <property name="hexpand">True</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">5</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">Input frame rate</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">6</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel" id="inputFrameRateLabel">
-                <property name="label">—</property>
-                <property name="xalign">0</property>
-                <property name="selectable">True</property>
-                <property name="ellipsize">middle</property>
-                <property name="hexpand">True</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">6</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">Last input</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">7</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel" id="lastInputLabel">
-                <property name="label">—</property>
-                <property name="xalign">0</property>
-                <property name="selectable">True</property>
-                <property name="ellipsize">middle</property>
-                <property name="hexpand">True</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">7</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">PCM data rate</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">8</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel" id="pcmDataRateLabel">
-                <property name="label">—</property>
-                <property name="xalign">0</property>
-                <property name="selectable">True</property>
-                <property name="ellipsize">middle</property>
-                <property name="hexpand">True</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">8</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">Input stream format</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">9</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel" id="streamFormatLabel">
-                <property name="label">—</property>
-                <property name="xalign">0</property>
-                <property name="selectable">True</property>
-                <property name="ellipsize">middle</property>
-                <property name="hexpand">True</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">9</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">EffeTune DSP time</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">10</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel" id="dspProcessingTimeLabel">
-                <property name="label">—</property>
-                <property name="xalign">0</property>
-                <property name="selectable">True</property>
-                <property name="ellipsize">middle</property>
-                <property name="hexpand">True</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">10</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">Runtime counters</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">11</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel" id="counterLabel">
-                <property name="label">—</property>
-                <property name="xalign">0</property>
-                <property name="selectable">True</property>
-                <property name="ellipsize">middle</property>
-                <property name="hexpand">True</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">11</property>
-              </packing>
-            </child>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">False</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkGrid" id="outputStatusGrid">
-            <property name="column-spacing">18</property>
-            <property name="row-spacing">10</property>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">Output preference</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">0</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkComboBoxText" id="outputCombo">
-                <property name="hexpand">True</property>
-                <property name="tooltip-text">Choose a physical output or follow the system default</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">0</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">Selection reason</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">1</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel" id="outputReasonLabel">
-                <property name="label">—</property>
-                <property name="xalign">0</property>
-                <property name="wrap">True</property>
-                <property name="hexpand">True</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">1</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">Versions</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">2</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel" id="versionLabel">
-                <property name="label">—</property>
-                <property name="xalign">0</property>
-                <property name="selectable">True</property>
-                <property name="ellipsize">middle</property>
-                <property name="hexpand">True</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">2</property>
-              </packing>
-            </child>
-          </object>
-          <packing>
-            <property name="expand">False</property>
+            <property name="expand">True</property>
             <property name="fill">True</property>
           </packing>
         </child>
         <child>
-          <object class="GtkLabel">
-            <property name="label">&lt;b&gt;DSP backend&lt;/b&gt;</property>
-            <property name="use-markup">True</property>
-            <property name="xalign">0</property>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">False</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkGrid" id="dspBackendGrid">
-            <property name="column-spacing">8</property>
-            <property name="row-spacing">8</property>
+          <object class="GtkToggleButton" id="logToggleButton">
+            <property name="relief">none</property>
+            <property name="active">False</property>
             <child>
-              <object class="GtkLabel">
-                <property name="label">Native engine</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">0</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkComboBoxText" id="dspBackendCombo">
-                <property name="hexpand">True</property>
-                <property name="tooltip-text">Choose the scalar compatibility backend or the CPU-validated SIMD backend</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">0</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkButton" id="dspBackendApplyButton">
-                <property name="label">Save for Next Start</property>
-              </object>
-              <packing>
-                <property name="left-attach">2</property>
-                <property name="top-attach">0</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">Effective backend</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">1</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel" id="dspBackendStatusLabel">
-                <property name="label">Effective backend unavailable</property>
-                <property name="xalign">0</property>
-                <property name="selectable">True</property>
-                <property name="wrap">True</property>
-                <property name="hexpand">True</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">1</property>
-                <property name="width">2</property>
-              </packing>
-            </child>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">True</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkLabel">
-            <property name="label">&lt;b&gt;DSP idle&lt;/b&gt;</property>
-            <property name="use-markup">True</property>
-            <property name="xalign">0</property>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">False</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkGrid" id="dspIdleGrid">
-            <property name="column-spacing">8</property>
-            <property name="row-spacing">8</property>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">Sleep policy</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">0</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkComboBoxText" id="dspIdlePolicyCombo">
-                <property name="hexpand">True</property>
-                <property name="tooltip-text">Conservative preserves inaudible tails; Exact requires mathematically zero DSP output before sleeping</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">0</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkButton" id="dspIdlePolicyApplyButton">
-                <property name="label">Save for Next Start</property>
-              </object>
-              <packing>
-                <property name="left-attach">2</property>
-                <property name="top-attach">0</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">Runtime state</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">1</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel" id="dspIdleStatusLabel">
-                <property name="label">DSP idle state unavailable</property>
-                <property name="xalign">0</property>
-                <property name="selectable">True</property>
-                <property name="wrap">True</property>
-                <property name="hexpand">True</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">1</property>
-                <property name="width">2</property>
-              </packing>
-            </child>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">True</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkLabel">
-            <property name="label">&lt;b&gt;PCM rate&lt;/b&gt;</property>
-            <property name="use-markup">True</property>
-            <property name="xalign">0</property>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">False</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkGrid" id="rateGrid">
-            <property name="column-spacing">8</property>
-            <property name="row-spacing">8</property>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">DSP rate</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">0</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkComboBoxText" id="rateCombo">
-                <property name="hexpand">True</property>
-                <property name="tooltip-text">Choose Max or a fixed DSP sample rate; device support is shown for each fixed rate</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">0</property>
-                <property name="width">2</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">PipeWire request</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">1</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkComboBoxText" id="rateEnforcementCombo">
-                <property name="hexpand">True</property>
-                <property name="tooltip-text">Suggest lets PipeWire decide; Force requests the selected output graph rate while playback is active</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">1</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkButton" id="rateApplyButton">
-                <property name="label">Save for Next Start</property>
-              </object>
-              <packing>
-                <property name="left-attach">2</property>
-                <property name="top-attach">1</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">Effective rates</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">2</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel" id="rateStatusLabel">
-                <property name="label">Rates unavailable</property>
-                <property name="xalign">0</property>
-                <property name="selectable">True</property>
-                <property name="wrap">True</property>
-                <property name="hexpand">True</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">2</property>
-                <property name="width">2</property>
-              </packing>
-            </child>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">True</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkBox" id="noticeBox">
-            <property name="orientation">horizontal</property>
-            <property name="spacing">8</property>
-            <style>
-              <class name="warning"/>
-            </style>
-            <child>
-              <object class="GtkLabel" id="noticeLabel">
-                <property name="xalign">0</property>
-                <property name="wrap">True</property>
-                <property name="hexpand">True</property>
-              </object>
-              <packing>
-                <property name="expand">True</property>
-                <property name="fill">True</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkButton" id="dismissButton">
-                <property name="tooltip-text">Dismiss</property>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <property name="margin-start">14</property>
+                <property name="margin-end">14</property>
                 <child>
                   <object class="GtkImage">
-                    <property name="visible">True</property>
-                    <property name="icon-name">window-close-symbolic</property>
-                    <property name="icon-size">4</property>
+                    <property name="icon-name">pan-up-symbolic</property>
                   </object>
                 </child>
+                <child>
+                  <object class="GtkLabel" id="logToggleLabel">
+                    <property name="label">Action Log</property>
+                    <property name="xalign">0</property>
+                    <property name="hexpand">True</property>
+                  </object>
+                  <packing>
+                    <property name="expand">True</property>
+                    <property name="fill">True</property>
+                  </packing>
+                </child>
+              </object>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">True</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkRevealer" id="logRevealer">
+            <property name="transition-type">slide-up</property>
+            <property name="transition-duration">160</property>
+            <property name="reveal-child">False</property>
+            <child>
+              <object class="GtkBox" id="logDrawer">
+                <property name="orientation">vertical</property>
+                <property name="height-request">190</property>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">horizontal</property>
+                    <property name="spacing">8</property>
+                    <property name="margin-start">14</property>
+                    <property name="margin-end">14</property>
+                    <property name="margin-top">10</property>
+                    <property name="margin-bottom">8</property>
+                    <child>
+                      <object class="GtkComboBoxText" id="logFilterCombo">
+                        <items>
+                          <item translatable="yes">All</item>
+                          <item translatable="yes">Warnings</item>
+                          <item translatable="yes">Errors</item>
+                        </items>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="logCopyButton">
+                        <property name="label">Copy</property>
+                      </object>
+                      <packing>
+                        <property name="pack-type">end</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="logClearButton">
+                        <property name="label">Clear</property>
+                      </object>
+                      <packing>
+                        <property name="pack-type">end</property>
+                      </packing>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkScrolledWindow">
+                    <property name="hscrollbar-policy">never</property>
+                    <property name="vscrollbar-policy">automatic</property>
+                    <property name="shadow-type">in</property>
+                    <property name="vexpand">True</property>
+                    <child>
+                      <object class="GtkListBox" id="logList">
+                        <property name="selection-mode">none</property>
+                        <style>
+                          <class name="log-list"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                  <packing>
+                    <property name="expand">True</property>
+                    <property name="fill">True</property>
+                  </packing>
+                </child>
+              </object>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">True</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkSeparator"/>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">True</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkBox" id="dialogFooter">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">10</property>
+            <property name="margin-start">16</property>
+            <property name="margin-end">16</property>
+            <property name="margin-top">12</property>
+            <property name="margin-bottom">12</property>
+            <child>
+              <object class="GtkLabel" id="transactionStateLabel">
+                <property name="label">Connecting…</property>
+                <property name="xalign">0</property>
+                <property name="ellipsize">end</property>
+                <property name="hexpand">True</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
               </object>
               <packing>
-                <property name="pack-type">end</property>
+                <property name="expand">True</property>
+                <property name="fill">True</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkButton" id="cancelButton">
+                <property name="label">Cancel</property>
+              </object>
+              <packing>
                 <property name="expand">False</property>
                 <property name="fill">False</property>
-              </packing>
-            </child>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">False</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkSeparator">
-            <property name="orientation">horizontal</property>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">False</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkLabel">
-            <property name="label">&lt;b&gt;Preset selection&lt;/b&gt;</property>
-            <property name="use-markup">True</property>
-            <property name="xalign">0</property>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">False</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkGrid">
-            <property name="column-spacing">8</property>
-            <property name="row-spacing">8</property>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">EffeTune presets</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">0</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkComboBoxText" id="presetCombo">
-                <property name="hexpand">True</property>
-                <property name="tooltip-text">Choose a standard preset or one saved in EffeTune</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">0</property>
-                <property name="width">3</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">Preset file</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="dim-label"/>
-                </style>
-              </object>
-              <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">1</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkFileChooserButton" id="presetChooser">
-                <property name="title">Select an EffeTune preset</property>
-                <property name="action">open</property>
-                <property name="hexpand">True</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">1</property>
               </packing>
             </child>
             <child>
               <object class="GtkButton" id="applyButton">
-                <property name="label">Save for Next Start</property>
-              </object>
-              <packing>
-                <property name="left-attach">2</property>
-                <property name="top-attach">1</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkButton" id="bypassButton">
-                <property name="label">Save Bypass</property>
-              </object>
-              <packing>
-                <property name="left-attach">3</property>
-                <property name="top-attach">1</property>
-              </packing>
-            </child>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">False</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkSeparator">
-            <property name="orientation">horizontal</property>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">False</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkLabel">
-            <property name="label">&lt;b&gt;Configuration&lt;/b&gt;</property>
-            <property name="use-markup">True</property>
-            <property name="xalign">0</property>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">False</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkGrid" id="configurationGrid">
-            <property name="column-spacing">12</property>
-            <child>
-              <object class="GtkLabel">
-                <property name="label">Restore Bypass, system-default output, Max + Suggest, and the Scalar DSP backend.</property>
-                <property name="xalign">0</property>
-                <property name="wrap">True</property>
-                <property name="hexpand">True</property>
+                <property name="label">Apply</property>
+                <property name="can-default">True</property>
                 <style>
-                  <class name="dim-label"/>
+                  <class name="suggested-action"/>
                 </style>
               </object>
               <packing>
-                <property name="left-attach">0</property>
-                <property name="top-attach">0</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkButton" id="resetButton">
-                <property name="label">Reset Configuration…</property>
-                <property name="tooltip-text">Reset every PipeTune startup choice</property>
-              </object>
-              <packing>
-                <property name="left-attach">1</property>
-                <property name="top-attach">0</property>
+                <property name="expand">False</property>
+                <property name="fill">False</property>
               </packing>
             </child>
           </object>
@@ -919,6 +851,25 @@
             <property name="expand">False</property>
             <property name="fill">True</property>
           </packing>
+        </child>
+      </object>
+    </child>
+  </object>
+  <object class="GtkPopover" id="outputPopover">
+    <property name="position">bottom</property>
+    <child>
+      <object class="GtkScrolledWindow">
+        <property name="min-content-width">460</property>
+        <property name="max-content-height">360</property>
+        <property name="hscrollbar-policy">never</property>
+        <property name="vscrollbar-policy">automatic</property>
+        <child>
+          <object class="GtkListBox" id="outputList">
+            <property name="selection-mode">none</property>
+            <style>
+              <class name="output-list"/>
+            </style>
+          </object>
         </child>
       </object>
     </child>

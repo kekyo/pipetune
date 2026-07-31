@@ -1,35 +1,41 @@
+#include "action-log.h"
 #include "application-state.h"
-#include "configuration-reset-client.h"
 #include "control-client.h"
-#include "dsp-backend-operation.h"
 #include "dsp-backend-selection-model.h"
-#include "dsp-idle-operation.h"
 #include "dsp-idle-selection-model.h"
 #include "installed-presets.h"
-#include "installed-tools.h"
 #include "launch-options.h"
 #include "main-window.h"
-#include "output-operation.h"
 #include "output-selection-model.h"
 #include "preset-catalog.h"
 #include "preset-file-monitor.h"
-#include "rate-operation.h"
 #include "rate-selection-model.h"
+#include "settings-transaction.h"
 #include "status-icon.h"
-#include "status-text.h"
+#include "status-model.h"
 #include "tray-backend.h"
 
 #include "pipetune/control_socket.h"
 #include "pipetune/startup_config.h"
 #include "pipetune/version.h"
 
+#ifdef PIPETUNE_GTK_E2E_ACCESSIBILITY
+#include <gestament/gtk.h>
+#endif
+
 #include <gtk/gtk.h>
 
-#include <cstdlib>
+#include <algorithm>
 #include <cstdint>
+#include <cstdlib>
+#include <ctime>
 #include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <map>
 #include <span>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -40,55 +46,53 @@ namespace pipetune_gtk {
 
 constexpr auto kReconnectDelaySeconds = guint{2};
 constexpr auto kStatusArtworkSize = int{48};
+constexpr auto kActionLogCapacity = std::size_t{500};
+
+struct StatusRowWidgets {
+  GtkWidget *text;
+  GtkWidget *progress;
+  GtkWidget *stack;
+};
+
+struct OutputViewChoice {
+  bool clearPreference;
+  std::string target;
+  std::string primary;
+  std::string secondary;
+  std::string badge;
+  std::string tooltip;
+  bool unavailable;
+};
 
 struct GtkRuntime {
   GtkApplication *application;
   ApplicationState state;
   ControlClient *controlClient;
-  ConfigurationResetClient *configurationResetClient;
-  bool configurationResetPending;
   TrayBackendState *trayBackend;
   TrayBackendAvailabilityState trayAvailability;
   std::filesystem::path startupConfigPath;
-  std::filesystem::path startupPreset;
-  bool hasStartupPreset;
-  std::filesystem::path pendingPreset;
+  pipetune::StartupConfig savedConfig;
+  bool startupConfigAvailable;
+  SettingsTransaction transaction;
+  bool transactionReady;
+  bool dialogActive;
+  bool updatingControls;
+  bool closeAfterRollback;
+  bool quitAfterRollback;
+  std::filesystem::path lastPresetPath;
   std::vector<PresetChoice> presetChoices;
   std::filesystem::path effetuneUserPresetPath;
   EffeTunePresetFileMonitor *presetFileMonitor;
-  bool updatingPresetCombo;
   std::string presetCatalogSourceDiagnostic;
   std::string presetCatalogSavedDiagnostic;
-  std::string presetCatalogDiagnostic;
-  std::vector<OutputDeviceChoice> outputChoices;
-  bool updatingOutputCombo;
-  bool outputChangePending;
-  bool pendingOutputClear;
-  std::string pendingOutputTarget;
-  pipetune::SampleRatePolicy startupRatePolicy;
-  pipetune::SampleRatePolicy editedRatePolicy;
-  pipetune::SampleRatePolicy pendingRatePolicy;
+  std::vector<OutputViewChoice> outputChoices;
   std::vector<SampleRateChoice> rateChoices;
-  bool updatingRateControls;
-  bool rateEditDirty;
-  bool rateChangePending;
-  pipetune::DspBackendKind startupDspBackend;
-  pipetune::DspBackendKind editedDspBackend;
-  pipetune::DspBackendKind pendingDspBackend;
-  pipetune::DspSimdVariant startupDspSimdVariant;
-  pipetune::DspSimdVariant editedDspSimdVariant;
-  pipetune::DspSimdVariant pendingDspSimdVariant;
   std::vector<DspBackendChoice> dspBackendChoices;
-  bool updatingDspBackendControls;
-  bool dspBackendEditDirty;
-  bool dspBackendChangePending;
-  pipetune::DspIdlePolicy startupDspIdlePolicy;
-  pipetune::DspIdlePolicy editedDspIdlePolicy;
-  pipetune::DspIdlePolicy pendingDspIdlePolicy;
   std::vector<DspIdleChoice> dspIdleChoices;
-  bool updatingDspIdleControls;
-  bool dspIdleEditDirty;
-  bool dspIdleChangePending;
+  std::map<std::string, StatusRowWidgets> statusRows;
+  ActionLog actionLog;
+  ActionLogFilter logFilter;
+  std::uint64_t pendingActionId;
   guint reconnectSource;
   bool applicationHeld;
   bool activationHandled;
@@ -99,9 +103,12 @@ struct GtkRuntime {
   GdkPixbuf *statusGrayscaleIcon;
 };
 
-static std::string pathText(const std::filesystem::path &path) {
-  return path.empty() ? std::string("—") : path.string();
-}
+static void render(GtkRuntime *runtime);
+static void driveSettings(GtkRuntime *runtime);
+static void presentWindow(GtkRuntime *runtime,
+                          guint32 userInteractionTime);
+static void requestQuit(GtkRuntime *runtime);
+static void scheduleReconnect(GtkRuntime *runtime);
 
 static std::string versionText() {
   return "PipeTune GTK " + std::string(pipetune::version()) +
@@ -116,6 +123,42 @@ static std::uint64_t currentUnixMilliseconds() noexcept {
   return static_cast<std::uint64_t>(g_get_real_time() / 1000);
 }
 
+static pipetune::StartupConfig defaultStartupConfig() {
+  return {
+      .presetFound = false,
+      .presetPath = {},
+      .preferredOutputFound = false,
+      .preferredOutput = {},
+      .ratePolicy = pipetune::defaultSampleRatePolicy(),
+      .dspBackend = pipetune::DspBackendKind::scalar,
+      .dspSimdVariant = pipetune::DspSimdVariant::automatic,
+      .dspIdlePolicy = pipetune::defaultDspIdlePolicy(),
+  };
+}
+
+static void appendDetail(std::string &text, std::string_view detail) {
+  if (detail.empty()) {
+    return;
+  }
+  if (!text.empty()) {
+    text.push_back('\n');
+  }
+  text.append(detail);
+}
+
+static std::string controlDiagnostic(const ControlClientReply &reply) {
+  if (!reply.transportError.empty()) {
+    return reply.transportError;
+  }
+  if (!reply.response.error.empty()) {
+    return reply.response.error;
+  }
+  if (!reply.response.valid) {
+    return "PipeTune returned an invalid control reply";
+  }
+  return "PipeTune rejected the requested setting";
+}
+
 static TrayIconState iconStateForApplication(
     const ApplicationState &state) {
   const auto visual = trayVisualState(state);
@@ -128,20 +171,22 @@ static TrayIconState iconStateForApplication(
   return TrayIconState::active;
 }
 
-static std::string connectionText(const ApplicationState &state) {
-  if (state.connection == ControlConnectionState::connecting) {
-    return "Connecting to PipeTune…";
-  }
-  if (state.connection == ControlConnectionState::disconnected) {
-    return "PipeTune is disconnected";
+static std::string connectionSummary(const ApplicationState &state) {
+  switch (state.connection) {
+  case ControlConnectionState::connecting:
+    return "Connecting to the control service…";
+  case ControlConnectionState::disconnected:
+    return "Control service unavailable";
+  case ControlConnectionState::connected:
+    break;
   }
   if (state.hasRuntimeStatus && state.runtime.rateTransitioning) {
-    return "Connected — switching PCM rate…";
+    return "Connected · changing sample rate";
   }
-  if (!state.runtime.defaultSinkActive) {
-    return "Connected — default sink is inactive";
+  if (state.hasRuntimeStatus && !state.runtime.defaultSinkActive) {
+    return "Connected · virtual sink inactive";
   }
-  return "Connected";
+  return "Connected and monitoring";
 }
 
 static std::string trayTooltip(const ApplicationState &state) {
@@ -158,44 +203,6 @@ static std::string trayTooltip(const ApplicationState &state) {
       std::filesystem::path(state.runtime.activePreset).filename().string();
   return filename.empty() ? std::string("PipeTune: active")
                           : "PipeTune: " + filename;
-}
-
-static void appendNotice(std::string &notice, std::string_view addition) {
-  if (addition.empty()) {
-    return;
-  }
-  if (!notice.empty()) {
-    notice.push_back('\n');
-  }
-  notice.append(addition);
-}
-
-static std::string noticeText(
-    const ApplicationState &state,
-    std::string_view presetCatalogDiagnostic) {
-  auto notice = state.diagnostic;
-  appendNotice(notice, presetCatalogDiagnostic);
-  if (state.hasRuntimeStatus &&
-      !state.runtime.configurationError.empty()) {
-    appendNotice(notice, "Startup configuration: " +
-                             state.runtime.configurationError);
-  }
-  if (state.hasRuntimeStatus && !state.runtime.rateError.empty()) {
-    appendNotice(notice, "PCM rate: " + state.runtime.rateError);
-  }
-  if (state.hasRuntimeStatus &&
-      !state.runtime.dspBackendError.empty()) {
-    appendNotice(notice, "DSP backend: " +
-                             state.runtime.dspBackendError);
-  }
-  for (const auto &warning : state.warnings) {
-    appendNotice(
-        notice,
-        "Preset node " + std::to_string(warning.nodeIndex + 1) +
-            " (\"" + warning.pluginName + "\") was skipped: " +
-            warning.reason);
-  }
-  return notice;
 }
 
 static const char *badgeIconName(StatusBadge badge) {
@@ -230,63 +237,503 @@ static void releaseStatusArtwork(GtkRuntime *runtime) noexcept {
   }
 }
 
-static void renderOutputSelection(GtkRuntime *runtime) {
-  const auto presentation =
-      makeOutputSelectionPresentation(runtime->state);
-  gtk_label_set_text(GTK_LABEL(runtime->ui.targetLabel),
-                     presentation.effectiveOutput.c_str());
-  gtk_label_set_text(GTK_LABEL(runtime->ui.outputReasonLabel),
-                     presentation.reason.c_str());
+static void addStyleClass(GtkWidget *widget, const char *name) {
+  gtk_style_context_add_class(gtk_widget_get_style_context(widget), name);
+}
 
-  if (!runtime->outputChangePending) {
-    runtime->updatingOutputCombo = true;
-    gtk_combo_box_text_remove_all(
-        GTK_COMBO_BOX_TEXT(runtime->ui.outputCombo));
-    runtime->outputChoices = presentation.choices;
-    for (const auto &choice : runtime->outputChoices) {
-      gtk_combo_box_text_append_text(
-          GTK_COMBO_BOX_TEXT(runtime->ui.outputCombo),
-          choice.label.c_str());
+static std::string accessibleStatusId(std::string_view modelId) {
+  auto id = std::string("status-");
+  id.reserve(id.size() + modelId.size());
+  for (const auto character : modelId) {
+    id.push_back(character == '.' ? '-' : character);
+  }
+  return id;
+}
+
+static void assignDynamicAccessibleId(GtkWidget *widget,
+                                      const std::string &id) {
+#ifdef PIPETUNE_GTK_E2E_ACCESSIBILITY
+  gestament_gtk_assign_accessible_id(widget, id.c_str());
+#else
+  static_cast<void>(widget);
+  static_cast<void>(id);
+#endif
+}
+
+static GtkWidget *createStatusSectionRow(const StatusSection &section) {
+  auto *row = gtk_list_box_row_new();
+  gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(row), FALSE);
+  gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), FALSE);
+  auto *label = gtk_label_new(section.label.c_str());
+  gtk_label_set_xalign(GTK_LABEL(label), 0.0F);
+  addStyleClass(label, "status-section");
+  gtk_container_add(GTK_CONTAINER(row), label);
+  return row;
+}
+
+static StatusRowWidgets createStatusItemRow(const StatusItem &item,
+                                            GtkWidget **rowOut) {
+  auto *row = gtk_list_box_row_new();
+  gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(row), FALSE);
+  gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), FALSE);
+  auto *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 14);
+  addStyleClass(box, "status-row");
+  auto *title = gtk_label_new(item.label.c_str());
+  gtk_label_set_xalign(GTK_LABEL(title), 0.0F);
+  gtk_widget_set_hexpand(title, TRUE);
+  addStyleClass(title, "dim-label");
+  gtk_box_pack_start(GTK_BOX(box), title, TRUE, TRUE, 0);
+
+  auto *stack = gtk_stack_new();
+  gtk_widget_set_hexpand(stack, FALSE);
+  auto *text = gtk_label_new(item.value.c_str());
+  gtk_label_set_xalign(GTK_LABEL(text), 1.0F);
+  gtk_label_set_ellipsize(GTK_LABEL(text), PANGO_ELLIPSIZE_END);
+  gtk_label_set_max_width_chars(GTK_LABEL(text), 28);
+  gtk_label_set_selectable(GTK_LABEL(text), TRUE);
+  gtk_stack_add_named(GTK_STACK(stack), text, "text");
+  auto *progress = gtk_progress_bar_new();
+  gtk_progress_bar_set_show_text(GTK_PROGRESS_BAR(progress), TRUE);
+  gtk_widget_set_size_request(progress, 150, -1);
+  gtk_stack_add_named(GTK_STACK(stack), progress, "progress");
+  gtk_stack_set_visible_child_name(GTK_STACK(stack), "text");
+  gtk_box_pack_end(GTK_BOX(box), stack, FALSE, TRUE, 0);
+  gtk_container_add(GTK_CONTAINER(row), box);
+  assignDynamicAccessibleId(text, accessibleStatusId(item.id));
+  *rowOut = row;
+  return {.text = text, .progress = progress, .stack = stack};
+}
+
+static void initializeStatusRows(GtkRuntime *runtime) {
+  const auto sections = buildStatusSections(
+      runtime->state, runtime->savedConfig, currentUnixMilliseconds());
+  for (const auto &section : sections) {
+    auto *heading = createStatusSectionRow(section);
+    gtk_list_box_insert(GTK_LIST_BOX(runtime->ui.statusList), heading, -1);
+    for (const auto &item : section.items) {
+      auto *row = static_cast<GtkWidget *>(nullptr);
+      auto widgets = createStatusItemRow(item, &row);
+      gtk_list_box_insert(GTK_LIST_BOX(runtime->ui.statusList), row, -1);
+      runtime->statusRows.emplace(item.id, widgets);
     }
-    gtk_combo_box_set_active(
-        GTK_COMBO_BOX(runtime->ui.outputCombo),
-        static_cast<gint>(presentation.activeIndex));
-    runtime->updatingOutputCombo = false;
   }
-  gtk_widget_set_sensitive(runtime->ui.outputCombo,
-                           presentation.sensitive &&
-                               !runtime->outputChangePending);
+  gtk_widget_show_all(runtime->ui.statusList);
 }
 
-static pipetune::SampleRatePolicy displayedRatePolicy(
+static void removeStatusSeverityClasses(GtkWidget *widget) {
+  auto *context = gtk_widget_get_style_context(widget);
+  gtk_style_context_remove_class(context, "status-warning");
+  gtk_style_context_remove_class(context, "status-error");
+}
+
+static void renderStatusRows(GtkRuntime *runtime) {
+  const auto &saved = runtime->transactionReady
+                          ? runtime->transaction.saved
+                          : runtime->savedConfig;
+  const auto sections = buildStatusSections(
+      runtime->state, saved, currentUnixMilliseconds());
+  for (const auto &section : sections) {
+    for (const auto &item : section.items) {
+      const auto found = runtime->statusRows.find(item.id);
+      if (found == runtime->statusRows.end()) {
+        continue;
+      }
+      auto &widgets = found->second;
+      gtk_label_set_text(GTK_LABEL(widgets.text), item.value.c_str());
+      gtk_widget_set_tooltip_text(
+          widgets.text, item.tooltip.empty() ? nullptr : item.tooltip.c_str());
+      removeStatusSeverityClasses(widgets.text);
+      if (item.severity == StatusSeverity::warning) {
+        addStyleClass(widgets.text, "status-warning");
+      } else if (item.severity == StatusSeverity::error) {
+        addStyleClass(widgets.text, "status-error");
+      }
+      if (item.displayKind == StatusDisplayKind::progress &&
+          item.numericValue.has_value() && item.minimum.has_value() &&
+          item.maximum.has_value() && *item.maximum > *item.minimum) {
+        const auto fraction = std::clamp(
+            (*item.numericValue - *item.minimum) /
+                (*item.maximum - *item.minimum),
+            0.0, 1.0);
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(widgets.progress),
+                                      fraction);
+        gtk_progress_bar_set_text(GTK_PROGRESS_BAR(widgets.progress),
+                                  item.value.c_str());
+        gtk_stack_set_visible_child_name(GTK_STACK(widgets.stack),
+                                         "progress");
+      } else {
+        gtk_stack_set_visible_child_name(GTK_STACK(widgets.stack), "text");
+      }
+    }
+  }
+}
+
+static const pipetune::ControlOutputDevice *findOutputDevice(
+    const ApplicationState &state, std::string_view target) {
+  for (const auto &device : state.runtime.availableOutputs) {
+    if (device.name == target) {
+      return &device;
+    }
+  }
+  return nullptr;
+}
+
+static std::string connectorHint(std::string_view target) {
+  if (target.find("usb") != std::string_view::npos) {
+    return "USB";
+  }
+  if (target.find("hdmi") != std::string_view::npos) {
+    return "HDMI";
+  }
+  if (target.find("bluetooth") != std::string_view::npos ||
+      target.find("bluez") != std::string_view::npos) {
+    return "Bluetooth";
+  }
+  return "Device";
+}
+
+static std::vector<OutputViewChoice> buildOutputChoices(
     const GtkRuntime &runtime) {
-  if (runtime.state.connection == ControlConnectionState::connected &&
-      runtime.state.hasRuntimeStatus) {
-    return runtime.state.runtime.configuredRatePolicy;
+  auto choices = std::vector<OutputViewChoice>{{
+      .clearPreference = true,
+      .target = {},
+      .primary = "System default",
+      .secondary = "Follow PipeWire's current default",
+      .badge = "Default",
+      .tooltip = "Follow PipeWire's current default output",
+      .unavailable = false,
+  }};
+  auto descriptionCounts = std::map<std::string, std::size_t>{};
+  for (const auto &device : runtime.state.runtime.availableOutputs) {
+    ++descriptionCounts[device.description];
   }
-  return runtime.startupRatePolicy;
+  for (const auto &device : runtime.state.runtime.availableOutputs) {
+    auto primary =
+        device.description.empty() ? device.name : device.description;
+    if (!device.description.empty() &&
+        descriptionCounts[device.description] > 1) {
+      primary += " — " + connectorHint(device.name);
+    }
+    auto badge = std::string{};
+    if (device.systemDefault) {
+      badge = "Default";
+    }
+    auto tooltip = primary + "\n" + device.name;
+    choices.push_back({
+        .clearPreference = false,
+        .target = device.name,
+        .primary = std::move(primary),
+        .secondary = device.name,
+        .badge = std::move(badge),
+        .tooltip = std::move(tooltip),
+        .unavailable = false,
+    });
+  }
+  const auto &desired = runtime.transactionReady
+                            ? runtime.transaction.desiredLive
+                            : runtime.savedConfig;
+  if (desired.preferredOutputFound &&
+      findOutputDevice(runtime.state, desired.preferredOutput) == nullptr) {
+    choices.push_back({
+        .clearPreference = false,
+        .target = desired.preferredOutput,
+        .primary = "Unavailable output",
+        .secondary = desired.preferredOutput,
+        .badge = "Unavailable",
+        .tooltip = desired.preferredOutput,
+        .unavailable = true,
+    });
+  }
+  return choices;
 }
 
-static void renderRateSelection(GtkRuntime *runtime) {
-  if (!runtime->rateEditDirty && !runtime->rateChangePending) {
-    runtime->editedRatePolicy = displayedRatePolicy(*runtime);
+static std::size_t selectedOutputIndex(const GtkRuntime &runtime) {
+  const auto &desired = runtime.transactionReady
+                            ? runtime.transaction.desiredLive
+                            : runtime.savedConfig;
+  if (!desired.preferredOutputFound) {
+    return 0;
   }
-  const auto presentation = makeRateSelectionPresentation(
-      runtime->state, runtime->editedRatePolicy);
+  for (auto index = std::size_t{0}; index < runtime.outputChoices.size();
+       ++index) {
+    if (runtime.outputChoices[index].target == desired.preferredOutput) {
+      return index;
+    }
+  }
+  return 0;
+}
 
-  runtime->updatingRateControls = true;
+static void clearContainer(GtkWidget *container) {
+  auto *children = gtk_container_get_children(GTK_CONTAINER(container));
+  for (auto *child = children; child != nullptr; child = child->next) {
+    gtk_widget_destroy(GTK_WIDGET(child->data));
+  }
+  g_list_free(children);
+}
+
+static void onOutputChoiceClicked(GtkButton *button, gpointer userData);
+
+static GtkWidget *createOutputChoiceButton(
+    const OutputViewChoice &choice, std::size_t index,
+    GtkRuntime *runtime) {
+  auto *button = gtk_button_new();
+  gtk_button_set_relief(GTK_BUTTON(button), GTK_RELIEF_NONE);
+  gtk_widget_set_hexpand(button, TRUE);
+  gtk_widget_set_tooltip_text(button, choice.tooltip.c_str());
+  addStyleClass(button, "output-row");
+  auto *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+  auto *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
+  gtk_widget_set_hexpand(text, TRUE);
+  auto *primary = gtk_label_new(choice.primary.c_str());
+  gtk_label_set_xalign(GTK_LABEL(primary), 0.0F);
+  gtk_label_set_ellipsize(GTK_LABEL(primary), PANGO_ELLIPSIZE_END);
+  auto *secondary = gtk_label_new(choice.secondary.c_str());
+  gtk_label_set_xalign(GTK_LABEL(secondary), 0.0F);
+  gtk_label_set_ellipsize(GTK_LABEL(secondary), PANGO_ELLIPSIZE_MIDDLE);
+  gtk_label_set_max_width_chars(GTK_LABEL(secondary), 48);
+  addStyleClass(secondary, "device-name");
+  gtk_box_pack_start(GTK_BOX(text), primary, FALSE, TRUE, 0);
+  gtk_box_pack_start(GTK_BOX(text), secondary, FALSE, TRUE, 0);
+  gtk_box_pack_start(GTK_BOX(box), text, TRUE, TRUE, 0);
+  if (!choice.badge.empty()) {
+    auto *badge = gtk_label_new(choice.badge.c_str());
+    gtk_widget_set_valign(badge, GTK_ALIGN_CENTER);
+    addStyleClass(badge, "badge");
+    if (choice.unavailable) {
+      addStyleClass(badge, "status-warning");
+    }
+    gtk_box_pack_end(GTK_BOX(box), badge, FALSE, FALSE, 0);
+  }
+  gtk_container_add(GTK_CONTAINER(button), box);
+  g_object_set_data(G_OBJECT(button), "pipetune-output-index",
+                    GSIZE_TO_POINTER(index + 1));
+  g_signal_connect(button, "clicked", G_CALLBACK(onOutputChoiceClicked),
+                   runtime);
+  assignDynamicAccessibleId(
+      button, "outputChoice" + std::to_string(index));
+  return button;
+}
+
+static void renderOutputChoices(GtkRuntime *runtime) {
+  runtime->outputChoices = buildOutputChoices(*runtime);
+  clearContainer(runtime->ui.outputList);
+  for (auto index = std::size_t{0}; index < runtime->outputChoices.size();
+       ++index) {
+    auto *button = createOutputChoiceButton(
+        runtime->outputChoices[index], index, runtime);
+    gtk_list_box_insert(GTK_LIST_BOX(runtime->ui.outputList), button, -1);
+  }
+  gtk_widget_show_all(runtime->ui.outputList);
+  const auto index = selectedOutputIndex(*runtime);
+  const auto &choice = runtime->outputChoices[index];
+  gtk_label_set_text(GTK_LABEL(runtime->ui.outputButtonLabel),
+                     choice.primary.c_str());
+  gtk_widget_set_tooltip_text(runtime->ui.outputMenuButton,
+                              choice.tooltip.c_str());
+  auto *accessible =
+      gtk_widget_get_accessible(runtime->ui.outputMenuButton);
+  if (accessible != nullptr) {
+    atk_object_set_name(accessible, choice.primary.c_str());
+  }
+}
+
+static std::string formatActionTime(std::uint64_t unixMilliseconds) {
+  const auto raw =
+      static_cast<std::time_t>(unixMilliseconds / std::uint64_t{1000});
+  auto local = std::tm{};
+  localtime_r(&raw, &local);
+  auto stream = std::ostringstream{};
+  stream << std::put_time(&local, "%H:%M:%S");
+  return stream.str();
+}
+
+static const char *actionStateSymbol(const ActionLogEntry &entry) {
+  if (entry.state == ActionLogState::pending) {
+    return "…";
+  }
+  if (entry.state == ActionLogState::failure) {
+    return "!";
+  }
+  return "✓";
+}
+
+static GtkWidget *createActionLogRow(const ActionLogEntry &entry) {
+  auto *row = gtk_list_box_row_new();
+  gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(row), FALSE);
+  gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), FALSE);
+  auto *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+  gtk_widget_set_margin_start(box, 14);
+  gtk_widget_set_margin_end(box, 14);
+  gtk_widget_set_margin_top(box, 8);
+  gtk_widget_set_margin_bottom(box, 8);
+  auto *symbol = gtk_label_new(actionStateSymbol(entry));
+  gtk_widget_set_valign(symbol, GTK_ALIGN_START);
+  if (entry.severity == ActionLogSeverity::warning) {
+    addStyleClass(symbol, "status-warning");
+  } else if (entry.severity == ActionLogSeverity::error) {
+    addStyleClass(symbol, "status-error");
+  }
+  gtk_box_pack_start(GTK_BOX(box), symbol, FALSE, FALSE, 0);
+  auto *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+  gtk_widget_set_hexpand(text, TRUE);
+  auto *summary = gtk_label_new(entry.summary.c_str());
+  gtk_label_set_xalign(GTK_LABEL(summary), 0.0F);
+  gtk_label_set_ellipsize(GTK_LABEL(summary), PANGO_ELLIPSIZE_END);
+  gtk_box_pack_start(GTK_BOX(text), summary, FALSE, TRUE, 0);
+  if (!entry.detail.empty()) {
+    auto *detail = gtk_label_new(entry.detail.c_str());
+    gtk_label_set_xalign(GTK_LABEL(detail), 0.0F);
+    gtk_label_set_line_wrap(GTK_LABEL(detail), TRUE);
+    addStyleClass(detail, "log-detail");
+    gtk_box_pack_start(GTK_BOX(text), detail, FALSE, TRUE, 0);
+  }
+  gtk_box_pack_start(GTK_BOX(box), text, TRUE, TRUE, 0);
+  const auto timestamp = formatActionTime(entry.timestampUnixMilliseconds);
+  auto *time = gtk_label_new(timestamp.c_str());
+  gtk_widget_set_valign(time, GTK_ALIGN_START);
+  addStyleClass(time, "dim-label");
+  gtk_box_pack_end(GTK_BOX(box), time, FALSE, FALSE, 0);
+  gtk_container_add(GTK_CONTAINER(row), box);
+  return row;
+}
+
+static void renderActionLog(GtkRuntime *runtime) {
+  clearContainer(runtime->ui.logList);
+  const auto entries =
+      filteredActionLogEntries(runtime->actionLog, runtime->logFilter);
+  for (const auto *entry : entries) {
+    auto *row = createActionLogRow(*entry);
+    gtk_list_box_insert(GTK_LIST_BOX(runtime->ui.logList), row, -1);
+  }
+  gtk_widget_show_all(runtime->ui.logList);
+  const auto label = "Action Log (" +
+                     std::to_string(runtime->actionLog.entries.size()) + ")";
+  gtk_label_set_text(GTK_LABEL(runtime->ui.logToggleLabel), label.c_str());
+  gtk_widget_set_sensitive(runtime->ui.logCopyButton, !entries.empty());
+  gtk_widget_set_sensitive(runtime->ui.logClearButton,
+                           !runtime->actionLog.entries.empty());
+}
+
+static void revealActionLog(GtkRuntime *runtime) {
+  gtk_toggle_button_set_active(
+      GTK_TOGGLE_BUTTON(runtime->ui.logToggleButton), TRUE);
+  gtk_revealer_set_reveal_child(GTK_REVEALER(runtime->ui.logRevealer), TRUE);
+}
+
+static void appendCompletedAction(
+    GtkRuntime *runtime, ActionLogSeverity severity,
+    ActionLogCategory category, bool success, std::string_view summary,
+    std::string_view detail) {
+  appendAction(runtime->actionLog, currentUnixMilliseconds(), severity,
+               category,
+               success ? ActionLogState::success
+                       : ActionLogState::failure,
+               summary, detail);
+  if (severity == ActionLogSeverity::error) {
+    revealActionLog(runtime);
+  }
+}
+
+static std::string settingsOperationName(SettingsOperation operation) {
+  switch (operation) {
+  case SettingsOperation::output:
+    return "Changing output";
+  case SettingsOperation::rate:
+    return "Changing sample-rate policy";
+  case SettingsOperation::dspBackend:
+    return "Changing DSP backend";
+  case SettingsOperation::dspIdle:
+    return "Changing DSP idle policy";
+  case SettingsOperation::processing:
+    return "Changing processing mode";
+  case SettingsOperation::none:
+    return "Updating settings";
+  }
+  return "Updating settings";
+}
+
+static std::string settingsOperationSuccess(SettingsOperation operation) {
+  switch (operation) {
+  case SettingsOperation::output:
+    return "Output changed";
+  case SettingsOperation::rate:
+    return "Sample-rate policy changed";
+  case SettingsOperation::dspBackend:
+    return "DSP backend changed";
+  case SettingsOperation::dspIdle:
+    return "DSP idle policy changed";
+  case SettingsOperation::processing:
+    return "Processing mode changed";
+  case SettingsOperation::none:
+    return "Settings updated";
+  }
+  return "Settings updated";
+}
+
+static std::string transactionStateText(const GtkRuntime &runtime) {
+  if (!runtime.dialogActive) {
+    return {};
+  }
+  if (!runtime.transactionReady) {
+    return "Waiting for live PipeTune state…";
+  }
+  const auto &transaction = runtime.transaction;
+  if (!transaction.connected) {
+    return "Disconnected · settings are read-only";
+  }
+  if (transaction.conflict) {
+    return "Live settings changed elsewhere · reopen this dialog";
+  }
+  if (transaction.liveChangeFailed) {
+    return "Live preview failed · adjust a setting to retry";
+  }
+  if (transaction.cancelRequested) {
+    return transaction.inFlight == SettingsOperation::none
+               ? "Finishing rollback…"
+               : "Restoring the previous live settings…";
+  }
+  if (transaction.inFlight != SettingsOperation::none) {
+    return settingsOperationName(transaction.inFlight) + "…";
+  }
+  if (settingsTransactionIsDirty(transaction)) {
+    return "Live preview active · changes are not saved";
+  }
+  return "Live settings match the saved configuration";
+}
+
+static bool controlsAreEditable(const GtkRuntime &runtime) {
+  return runtime.dialogActive && runtime.startupConfigAvailable &&
+         runtime.transactionReady &&
+         runtime.transaction.connected &&
+         !runtime.transaction.cancelRequested &&
+         !runtime.transaction.conflict;
+}
+
+static void renderPresetControls(GtkRuntime *runtime) {
+  const auto &settings = runtime->transactionReady
+                             ? runtime->transaction.desiredLive
+                             : runtime->savedConfig;
+  gtk_switch_set_active(
+      GTK_SWITCH(runtime->ui.processingEnabledSwitch),
+      settings.presetFound ? TRUE : FALSE);
+}
+
+static void renderRateControls(GtkRuntime *runtime) {
+  const auto &settings = runtime->transactionReady
+                             ? runtime->transaction.desiredLive
+                             : runtime->savedConfig;
+  const auto presentation =
+      makeRateSelectionPresentation(runtime->state, settings.ratePolicy);
   runtime->rateChoices = presentation.choices;
   gtk_combo_box_text_remove_all(
       GTK_COMBO_BOX_TEXT(runtime->ui.rateCombo));
   for (const auto &choice : runtime->rateChoices) {
     gtk_combo_box_text_append_text(
-        GTK_COMBO_BOX_TEXT(runtime->ui.rateCombo),
-        choice.label.c_str());
+        GTK_COMBO_BOX_TEXT(runtime->ui.rateCombo), choice.label.c_str());
   }
   gtk_combo_box_set_active(
       GTK_COMBO_BOX(runtime->ui.rateCombo),
       static_cast<gint>(presentation.activeRateIndex));
-
   gtk_combo_box_text_remove_all(
       GTK_COMBO_BOX_TEXT(runtime->ui.rateEnforcementCombo));
   gtk_combo_box_text_append_text(
@@ -298,58 +745,15 @@ static void renderRateSelection(GtkRuntime *runtime) {
   gtk_combo_box_set_active(
       GTK_COMBO_BOX(runtime->ui.rateEnforcementCombo),
       static_cast<gint>(presentation.activeEnforcementIndex));
-  runtime->updatingRateControls = false;
-
-  gtk_label_set_text(GTK_LABEL(runtime->ui.rateStatusLabel),
-                     presentation.effectiveRates.c_str());
-  const auto connected =
-      runtime->state.connection == ControlConnectionState::connected;
-  const auto canEdit =
-      !runtime->startupConfigPath.empty() &&
-      !runtime->state.operationPending &&
-      !runtime->rateChangePending &&
-      (!connected || presentation.sensitive);
-  gtk_widget_set_sensitive(runtime->ui.rateCombo, canEdit);
-  gtk_widget_set_sensitive(runtime->ui.rateEnforcementCombo, canEdit);
-  gtk_button_set_label(
-      GTK_BUTTON(runtime->ui.rateApplyButton),
-      connected ? "Apply and Save" : "Save for Next Start");
-  gtk_widget_set_sensitive(runtime->ui.rateApplyButton,
-                           canEdit && runtime->rateEditDirty);
 }
 
-static pipetune::DspBackendKind displayedDspBackend(
-    const GtkRuntime &runtime) {
-  if (runtime.state.connection == ControlConnectionState::connected &&
-      runtime.state.hasRuntimeStatus) {
-    return runtime.state.runtime.configuredDspBackend;
-  }
-  return runtime.startupDspBackend;
-}
-
-static pipetune::DspSimdVariant displayedDspSimdVariant(
-    const GtkRuntime &runtime) {
-  if (runtime.state.connection == ControlConnectionState::connected &&
-      runtime.state.hasRuntimeStatus) {
-    return runtime.state.runtime.configuredDspSimdVariant;
-  }
-  return runtime.startupDspSimdVariant;
-}
-
-static void renderDspBackendSelection(GtkRuntime *runtime) {
-  if (!runtime->dspBackendEditDirty &&
-      !runtime->dspBackendChangePending) {
-    runtime->editedDspBackend = displayedDspBackend(*runtime);
-    runtime->editedDspSimdVariant =
-        displayedDspSimdVariant(*runtime);
-  }
-  const auto presentation =
-      makeDspBackendSelectionPresentation(
-          runtime->state, runtime->editedDspBackend,
-          runtime->editedDspSimdVariant);
-
-  runtime->updatingDspBackendControls = true;
-  runtime->dspBackendChoices = presentation.choices;
+static void renderDspControls(GtkRuntime *runtime) {
+  const auto &settings = runtime->transactionReady
+                             ? runtime->transaction.desiredLive
+                             : runtime->savedConfig;
+  const auto backend = makeDspBackendSelectionPresentation(
+      runtime->state, settings.dspBackend, settings.dspSimdVariant);
+  runtime->dspBackendChoices = backend.choices;
   gtk_combo_box_text_remove_all(
       GTK_COMBO_BOX_TEXT(runtime->ui.dspBackendCombo));
   for (const auto &choice : runtime->dspBackendChoices) {
@@ -359,50 +763,11 @@ static void renderDspBackendSelection(GtkRuntime *runtime) {
   }
   gtk_combo_box_set_active(
       GTK_COMBO_BOX(runtime->ui.dspBackendCombo),
-      static_cast<gint>(presentation.activeIndex));
-  runtime->updatingDspBackendControls = false;
+      static_cast<gint>(backend.activeIndex));
 
-  gtk_label_set_text(
-      GTK_LABEL(runtime->ui.dspBackendStatusLabel),
-      presentation.effectiveBackend.c_str());
-  const auto connected =
-      runtime->state.connection == ControlConnectionState::connected;
-  const auto canEdit =
-      !runtime->startupConfigPath.empty() &&
-      !runtime->state.operationPending &&
-      !runtime->dspBackendChangePending &&
-      (!connected || presentation.sensitive);
-  gtk_widget_set_sensitive(runtime->ui.dspBackendCombo, canEdit);
-  gtk_button_set_label(
-      GTK_BUTTON(runtime->ui.dspBackendApplyButton),
-      connected ? "Apply and Save" : "Save for Next Start");
-  gtk_widget_set_sensitive(
-      runtime->ui.dspBackendApplyButton,
-      canEdit && runtime->dspBackendEditDirty &&
-          (!connected || presentation.selectedBackendAvailable));
-}
-
-static pipetune::DspIdlePolicy displayedDspIdlePolicy(
-    const GtkRuntime &runtime) {
-  if (runtime.state.connection == ControlConnectionState::connected &&
-      runtime.state.hasRuntimeStatus) {
-    return runtime.state.runtime.dspIdlePolicy;
-  }
-  return runtime.startupDspIdlePolicy;
-}
-
-static void renderDspIdleSelection(GtkRuntime *runtime) {
-  if (!runtime->dspIdleEditDirty &&
-      !runtime->dspIdleChangePending) {
-    runtime->editedDspIdlePolicy =
-        displayedDspIdlePolicy(*runtime);
-  }
-  const auto presentation =
-      makeDspIdleSelectionPresentation(
-          runtime->state, runtime->editedDspIdlePolicy);
-
-  runtime->updatingDspIdleControls = true;
-  runtime->dspIdleChoices = presentation.choices;
+  const auto idle = makeDspIdleSelectionPresentation(
+      runtime->state, settings.dspIdlePolicy);
+  runtime->dspIdleChoices = idle.choices;
   gtk_combo_box_text_remove_all(
       GTK_COMBO_BOX_TEXT(runtime->ui.dspIdlePolicyCombo));
   for (const auto &choice : runtime->dspIdleChoices) {
@@ -412,42 +777,45 @@ static void renderDspIdleSelection(GtkRuntime *runtime) {
   }
   gtk_combo_box_set_active(
       GTK_COMBO_BOX(runtime->ui.dspIdlePolicyCombo),
-      static_cast<gint>(presentation.activeIndex));
-  runtime->updatingDspIdleControls = false;
-
-  gtk_label_set_text(
-      GTK_LABEL(runtime->ui.dspIdleStatusLabel),
-      presentation.runtimeStatus.c_str());
-  const auto connected =
-      runtime->state.connection == ControlConnectionState::connected;
-  const auto canEdit =
-      !runtime->startupConfigPath.empty() &&
-      !runtime->state.operationPending &&
-      !runtime->dspIdleChangePending &&
-      (!connected || presentation.sensitive);
-  gtk_widget_set_sensitive(runtime->ui.dspIdlePolicyCombo, canEdit);
-  gtk_button_set_label(
-      GTK_BUTTON(runtime->ui.dspIdlePolicyApplyButton),
-      connected ? "Apply and Save" : "Save for Next Start");
-  gtk_widget_set_sensitive(
-      runtime->ui.dspIdlePolicyApplyButton,
-      canEdit && runtime->dspIdleEditDirty);
+      static_cast<gint>(idle.activeIndex));
 }
 
-static void render(GtkRuntime *runtime) {
-  if (runtime == nullptr || runtime->ui.window == nullptr) {
-    return;
-  }
-  const auto status = connectionText(runtime->state);
-  gtk_label_set_text(GTK_LABEL(runtime->ui.statusLabel), status.c_str());
-  const auto iconPresentation =
-      statusIconPresentation(runtime->state);
+static void renderSettingsControls(GtkRuntime *runtime) {
+  runtime->updatingControls = true;
+  renderPresetControls(runtime);
+  renderOutputChoices(runtime);
+  renderRateControls(runtime);
+  renderDspControls(runtime);
+  runtime->updatingControls = false;
+  const auto editable = controlsAreEditable(*runtime);
+  gtk_widget_set_sensitive(runtime->ui.processingEnabledSwitch, editable);
+  gtk_widget_set_sensitive(runtime->ui.presetCombo, editable &&
+                              !runtime->presetChoices.empty());
+  gtk_widget_set_sensitive(runtime->ui.presetChooser, editable);
+  gtk_widget_set_sensitive(runtime->ui.outputMenuButton, editable);
+  gtk_widget_set_sensitive(runtime->ui.rateCombo, editable);
+  gtk_widget_set_sensitive(runtime->ui.rateEnforcementCombo, editable);
+  gtk_widget_set_sensitive(runtime->ui.dspBackendCombo, editable);
+  gtk_widget_set_sensitive(runtime->ui.dspIdlePolicyCombo, editable);
+  gtk_widget_set_sensitive(runtime->ui.restoreDefaultsButton, editable);
+  gtk_widget_set_sensitive(
+      runtime->ui.applyButton,
+      runtime->transactionReady &&
+          settingsTransactionCanApply(runtime->transaction));
+  gtk_widget_set_sensitive(runtime->ui.cancelButton,
+                           runtime->dialogActive);
+  const auto transactionText = transactionStateText(*runtime);
+  gtk_label_set_text(GTK_LABEL(runtime->ui.transactionStateLabel),
+                     transactionText.c_str());
+}
+
+static void renderStatusArtwork(GtkRuntime *runtime) {
+  const auto iconPresentation = statusIconPresentation(runtime->state);
   auto *statusIcon =
       iconPresentation.colorMode == TrayIconColorMode::color
           ? runtime->statusColorIcon
           : runtime->statusGrayscaleIcon;
-  gtk_image_set_from_pixbuf(GTK_IMAGE(runtime->ui.statusImage),
-                            statusIcon);
+  gtk_image_set_from_pixbuf(GTK_IMAGE(runtime->ui.statusImage), statusIcon);
   const auto *badge = badgeIconName(iconPresentation.badge);
   if (badge == nullptr) {
     gtk_widget_hide(runtime->ui.statusBadge);
@@ -456,108 +824,86 @@ static void render(GtkRuntime *runtime) {
                                  GTK_ICON_SIZE_MENU);
     gtk_widget_show(runtime->ui.statusBadge);
   }
-
-  const auto processingMode =
-      runtime->state.hasRuntimeStatus
-          ? (runtime->state.runtime.processingMode ==
-                     pipetune::ProcessingMode::bypass
-                 ? "Bypass"
-                 : "Preset")
-          : "—";
-  gtk_label_set_text(GTK_LABEL(runtime->ui.processingModeLabel),
-                     processingMode);
-  const auto activePreset =
-      runtime->state.hasRuntimeStatus
-          ? (runtime->state.runtime.processingMode ==
-                     pipetune::ProcessingMode::bypass
-                 ? std::string("None — pass-through")
-                 : pathText(runtime->state.runtime.activePreset))
-          : std::string("—");
-  gtk_label_set_text(GTK_LABEL(runtime->ui.activePresetLabel),
-                     activePreset.c_str());
-  const auto startupPreset =
-      runtime->hasStartupPreset ? pathText(runtime->startupPreset)
-                                : std::string("Bypass");
-  gtk_label_set_text(GTK_LABEL(runtime->ui.startupPresetLabel),
-                     startupPreset.c_str());
-  const auto pluginCount =
-      runtime->state.hasRuntimeStatus
-          ? std::to_string(runtime->state.runtime.activePluginCount)
-          : std::string("—");
-  gtk_label_set_text(GTK_LABEL(runtime->ui.pluginCountLabel),
-                     pluginCount.c_str());
-  renderOutputSelection(runtime);
-  renderDspBackendSelection(runtime);
-  renderDspIdleSelection(runtime);
-  renderRateSelection(runtime);
-  const auto defaultSink =
-      runtime->state.hasRuntimeStatus
-          ? (runtime->state.runtime.defaultSinkActive ? "Active"
-                                                      : "Inactive")
-          : "—";
-  gtk_label_set_text(GTK_LABEL(runtime->ui.defaultSinkLabel),
-                     defaultSink);
-  const auto inputText =
-      inputStatusText(runtime->state, currentUnixMilliseconds());
-  gtk_label_set_text(GTK_LABEL(runtime->ui.inputFrameRateLabel),
-                     inputText.frameRate.c_str());
-  gtk_label_set_text(GTK_LABEL(runtime->ui.lastInputLabel),
-                     inputText.lastReceived.c_str());
-  gtk_label_set_text(GTK_LABEL(runtime->ui.pcmDataRateLabel),
-                     inputText.pcmDataRate.c_str());
-  gtk_label_set_text(GTK_LABEL(runtime->ui.streamFormatLabel),
-                     inputText.streamFormat.c_str());
-  const auto runtimeText = runtimeStatusText(runtime->state);
-  gtk_label_set_text(
-      GTK_LABEL(runtime->ui.dspProcessingTimeLabel),
-      runtimeText.dspProcessingTime.c_str());
-  gtk_label_set_text(GTK_LABEL(runtime->ui.counterLabel),
-                     runtimeText.counters.c_str());
-
-  const auto notice =
-      noticeText(runtime->state, runtime->presetCatalogDiagnostic);
-  gtk_label_set_text(GTK_LABEL(runtime->ui.noticeLabel), notice.c_str());
-  gtk_widget_set_visible(runtime->ui.noticeBox, !notice.empty());
-  gtk_button_set_label(
-      GTK_BUTTON(runtime->ui.applyButton),
-      runtime->state.connection == ControlConnectionState::connected
-          ? "Apply and Save"
-          : "Save for Next Start");
-  gtk_widget_set_sensitive(runtime->ui.applyButton,
-                           !runtime->state.operationPending);
-  gtk_button_set_label(
-      GTK_BUTTON(runtime->ui.bypassButton),
-      runtime->state.connection == ControlConnectionState::connected
-          ? "Bypass and Save"
-          : "Save Bypass");
-  gtk_widget_set_sensitive(runtime->ui.bypassButton,
-                           !runtime->state.operationPending);
-  gtk_widget_set_sensitive(
-      runtime->ui.resetButton,
-      runtime->configurationResetClient != nullptr &&
-          !runtime->configurationResetPending &&
-          !runtime->state.operationPending);
+  const auto summary = connectionSummary(runtime->state);
+  gtk_label_set_text(GTK_LABEL(runtime->ui.connectionSummaryLabel),
+                     summary.c_str());
   updateTrayBackend(runtime->trayBackend,
                     iconStateForApplication(runtime->state),
                     iconPresentation.colorMode,
                     trayTooltip(runtime->state));
 }
 
-static void presentWindow(GtkRuntime *runtime,
-                          guint32 userInteractionTime);
-static void requestQuit(GtkRuntime *runtime);
-static std::string reloadStartupConfig(GtkRuntime *runtime,
-                                       bool resetSelections);
+static void render(GtkRuntime *runtime) {
+  if (runtime == nullptr || runtime->ui.window == nullptr) {
+    return;
+  }
+  renderStatusArtwork(runtime);
+  renderStatusRows(runtime);
+  renderSettingsControls(runtime);
+  renderActionLog(runtime);
+}
+
+static void hideAfterRollback(GtkRuntime *runtime) {
+  runtime->closeAfterRollback = false;
+  runtime->dialogActive = false;
+  runtime->transactionReady = false;
+  gtk_widget_hide(runtime->ui.window);
+  if (runtime->quitAfterRollback) {
+    runtime->quitAfterRollback = false;
+    requestQuit(runtime);
+  }
+}
+
+static void finishRollbackIfReady(GtkRuntime *runtime) {
+  if (runtime->closeAfterRollback && runtime->transactionReady &&
+      settingsTransactionShouldClose(runtime->transaction)) {
+    hideAfterRollback(runtime);
+  }
+}
+
+static void beginRollbackAndClose(GtkRuntime *runtime,
+                                  bool quitWhenComplete) {
+  if (runtime == nullptr || !runtime->dialogActive) {
+    return;
+  }
+  runtime->closeAfterRollback = true;
+  runtime->quitAfterRollback = quitWhenComplete;
+  if (!runtime->transactionReady) {
+    hideAfterRollback(runtime);
+    return;
+  }
+  requestSettingsCancel(runtime->transaction);
+  appendCompletedAction(runtime, ActionLogSeverity::info,
+                        ActionLogCategory::settings, true,
+                        "Rollback requested",
+                        "Restoring the live settings captured when the "
+                        "dialog opened");
+  render(runtime);
+  driveSettings(runtime);
+  finishRollbackIfReady(runtime);
+}
 
 static gboolean onWindowDelete(GtkWidget *, GdkEvent *, gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
-  if (!runtime->quitting &&
-      runtime->trayAvailability ==
-          TrayBackendAvailabilityState::available) {
-    gtk_widget_hide(runtime->ui.window);
-    return TRUE;
+  if (runtime->quitting) {
+    return FALSE;
   }
-  requestQuit(runtime);
+  beginRollbackAndClose(
+      runtime,
+      runtime->trayAvailability !=
+          TrayBackendAvailabilityState::available);
+  return TRUE;
+}
+
+static gboolean onWindowKeyPress(GtkWidget *, GdkEventKey *event,
+                                 gpointer userData) {
+  const auto escape = event->keyval == GDK_KEY_Escape;
+  const auto altF4 = event->keyval == GDK_KEY_F4 &&
+                     (event->state & GDK_MOD1_MASK) != 0;
+  if (!escape && !altF4) {
+    return FALSE;
+  }
+  beginRollbackAndClose(static_cast<GtkRuntime *>(userData), false);
   return TRUE;
 }
 
@@ -566,334 +912,82 @@ static void onWindowDestroy(GtkWidget *, gpointer userData) {
   runtime->ui.window = nullptr;
 }
 
-static void onNoticeDismiss(GtkButton *, gpointer userData) {
-  auto *runtime = static_cast<GtkRuntime *>(userData);
-  clearControlNotice(runtime->state);
-  runtime->presetCatalogSourceDiagnostic.clear();
-  runtime->presetCatalogSavedDiagnostic.clear();
-  runtime->presetCatalogDiagnostic.clear();
+static void onCancelClicked(GtkButton *, gpointer userData) {
+  beginRollbackAndClose(static_cast<GtkRuntime *>(userData), false);
+}
+
+static void onCloseClicked(GtkButton *, gpointer userData) {
+  beginRollbackAndClose(static_cast<GtkRuntime *>(userData), false);
+}
+
+static void editDesiredSettings(
+    GtkRuntime *runtime, const pipetune::StartupConfig &desired) {
+  if (!controlsAreEditable(*runtime)) {
+    return;
+  }
+  editSettingsTransaction(runtime->transaction, desired);
   render(runtime);
+  driveSettings(runtime);
 }
 
-static void scheduleReconnect(GtkRuntime *runtime);
-
-static void onSubscriptionMessage(
-    const pipetune::ControlResponseParseResult &message, void *userData) {
+static void onOutputChoiceClicked(GtkButton *button, gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
-  applyControlResponse(runtime->state, message,
-                       currentMonotonicMilliseconds());
-  render(runtime);
-}
-
-static void onConnectionChanged(bool connected, std::string_view error,
-                                void *userData) {
-  auto *runtime = static_cast<GtkRuntime *>(userData);
-  if (runtime->shuttingDown) {
+  if (runtime->updatingControls || !controlsAreEditable(*runtime)) {
     return;
   }
-  if (connected) {
+  const auto encoded = GPOINTER_TO_SIZE(
+      g_object_get_data(G_OBJECT(button), "pipetune-output-index"));
+  if (encoded == 0 || encoded - 1 >= runtime->outputChoices.size()) {
     return;
   }
-  markControlDisconnected(runtime->state, error);
-  if (runtime->configurationResetPending) {
-    setControlOperationPending(runtime->state, true);
-  }
-  render(runtime);
-  scheduleReconnect(runtime);
-}
-
-static gboolean reconnectControl(gpointer userData) {
-  auto *runtime = static_cast<GtkRuntime *>(userData);
-  runtime->reconnectSource = 0;
-  if (runtime->shuttingDown || runtime->controlClient == nullptr) {
-    return G_SOURCE_REMOVE;
-  }
-  markControlConnecting(runtime->state);
-  render(runtime);
-  startControlSubscription(runtime->controlClient);
-  return G_SOURCE_REMOVE;
-}
-
-static void scheduleReconnect(GtkRuntime *runtime) {
-  if (runtime->shuttingDown || runtime->controlClient == nullptr ||
-      runtime->reconnectSource != 0) {
-    return;
-  }
-  runtime->reconnectSource = g_timeout_add_seconds(
-      kReconnectDelaySeconds, reconnectControl, runtime);
-}
-
-static void reconnectControlImmediately(GtkRuntime *runtime) {
-  if (runtime->controlClient == nullptr || runtime->shuttingDown) {
-    return;
-  }
-  if (runtime->reconnectSource != 0) {
-    g_source_remove(runtime->reconnectSource);
-    runtime->reconnectSource = 0;
-  }
-  stopControlSubscription(runtime->controlClient);
-  markControlConnecting(runtime->state);
-  startControlSubscription(runtime->controlClient);
-}
-
-static void onConfigurationResetCompleted(
-    const ConfigurationResetClientResult &result, void *userData) {
-  auto *runtime = static_cast<GtkRuntime *>(userData);
-  if (runtime->shuttingDown) {
-    return;
-  }
-  runtime->configurationResetPending = false;
-  setControlOperationPending(runtime->state, false);
-
-  const auto reloadError = reloadStartupConfig(runtime, true);
-  reconnectControlImmediately(runtime);
-
-  auto diagnostic =
-      result.success ? result.standardOutput : result.error;
-  if (diagnostic.empty()) {
-    diagnostic =
-        result.success
-            ? std::string{"PipeTune configuration was reset"}
-            : std::string{"PipeTune configuration reset failed"};
-  }
-  if (!reloadError.empty()) {
-    appendNotice(diagnostic,
-                 "Configuration reload failed: " + reloadError);
-  }
-  setControlDiagnostic(runtime->state, diagnostic);
-  render(runtime);
-}
-
-static void startConfigurationReset(GtkRuntime *runtime) {
-  if (runtime->configurationResetClient == nullptr ||
-      runtime->configurationResetPending ||
-      runtime->state.operationPending || runtime->shuttingDown) {
-    return;
-  }
-  clearControlNotice(runtime->state);
-  runtime->configurationResetPending = true;
-  setControlOperationPending(runtime->state, true);
-  render(runtime);
-  if (!resetConfigurationAsync(runtime->configurationResetClient,
-                               onConfigurationResetCompleted, runtime)) {
-    runtime->configurationResetPending = false;
-    setControlOperationPending(runtime->state, false);
-    setControlDiagnostic(
-        runtime->state,
-        "PipeTune configuration reset could not be started");
-    render(runtime);
-  }
-}
-
-static void onConfigurationResetResponse(GtkDialog *dialog,
-                                         gint responseId,
-                                         gpointer userData) {
-  auto *runtime = static_cast<GtkRuntime *>(userData);
-  gtk_widget_destroy(GTK_WIDGET(dialog));
-  if (responseId == GTK_RESPONSE_ACCEPT) {
-    startConfigurationReset(runtime);
-  }
-}
-
-static void onConfigurationResetClicked(GtkButton *,
-                                        gpointer userData) {
-  auto *runtime = static_cast<GtkRuntime *>(userData);
-  if (runtime->configurationResetPending ||
-      runtime->state.operationPending || runtime->shuttingDown) {
-    return;
-  }
-  auto *dialog = gtk_message_dialog_new(
-      GTK_WINDOW(runtime->ui.window),
-      static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL |
-                                  GTK_DIALOG_DESTROY_WITH_PARENT),
-      GTK_MESSAGE_WARNING, GTK_BUTTONS_NONE, "%s",
-      "Reset all PipeTune configuration?");
-  gtk_message_dialog_format_secondary_text(
-      GTK_MESSAGE_DIALOG(dialog), "%s",
-      "This selects Bypass, follows the system-default output, and uses "
-      "Max + Suggest with the Scalar DSP backend and Conservative DSP "
-      "idling. The PipeTune service will restart if it is running.");
-  gtk_dialog_add_button(GTK_DIALOG(dialog), "Cancel",
-                        GTK_RESPONSE_CANCEL);
-  gtk_dialog_add_button(GTK_DIALOG(dialog), "Reset",
-                        GTK_RESPONSE_ACCEPT);
-  gtk_dialog_set_default_response(GTK_DIALOG(dialog),
-                                  GTK_RESPONSE_CANCEL);
-  g_signal_connect(dialog, "response",
-                   G_CALLBACK(onConfigurationResetResponse), runtime);
-  gtk_widget_show_all(dialog);
-}
-
-static void onOutputReply(const ControlClientReply &reply,
-                          void *userData) {
-  auto *runtime = static_cast<GtkRuntime *>(userData);
-  const auto completion = completeOutputOperation(
-      runtime->state, reply,
-      {.configPath = runtime->startupConfigPath,
-       .clearPreference = runtime->pendingOutputClear,
-       .target = runtime->pendingOutputTarget},
-      currentMonotonicMilliseconds());
-  runtime->outputChangePending = false;
-  runtime->pendingOutputClear = false;
-  runtime->pendingOutputTarget.clear();
-  if (completion.reconnectRequired) {
-    scheduleReconnect(runtime);
-  }
-  render(runtime);
-}
-
-static void onOutputChanged(GtkComboBox *combo, gpointer userData) {
-  auto *runtime = static_cast<GtkRuntime *>(userData);
-  if (runtime->updatingOutputCombo || runtime->outputChangePending ||
-      runtime->state.operationPending ||
-      runtime->state.connection != ControlConnectionState::connected ||
-      !runtime->state.hasRuntimeStatus ||
-      runtime->controlClient == nullptr) {
-    return;
-  }
-  const auto selected = gtk_combo_box_get_active(combo);
-  if (selected < 0 ||
-      static_cast<std::size_t>(selected) >=
-          runtime->outputChoices.size()) {
-    return;
-  }
-  const auto &choice =
-      runtime->outputChoices[static_cast<std::size_t>(selected)];
-  if ((choice.clearPreference &&
-       runtime->state.runtime.preferredTarget.empty()) ||
-      (!choice.clearPreference &&
-       choice.target == runtime->state.runtime.preferredTarget)) {
-    return;
-  }
-
-  clearControlNotice(runtime->state);
-  runtime->outputChangePending = true;
-  runtime->pendingOutputClear = choice.clearPreference;
-  runtime->pendingOutputTarget = choice.target;
-  setControlOperationPending(runtime->state, true);
-  render(runtime);
-  if (choice.clearPreference) {
-    clearControlOutputAsync(runtime->controlClient, onOutputReply,
-                            runtime);
-  } else {
-    setControlOutputAsync(runtime->controlClient, choice.target,
-                          onOutputReply, runtime);
-  }
-}
-
-static void updateRateEditDirty(GtkRuntime *runtime) {
-  runtime->rateEditDirty =
-      runtime->editedRatePolicy != displayedRatePolicy(*runtime);
+  const auto &choice = runtime->outputChoices[encoded - 1];
+  auto desired = runtime->transaction.desiredLive;
+  desired.preferredOutputFound = !choice.clearPreference;
+  desired.preferredOutput =
+      choice.clearPreference ? std::string{} : choice.target;
+  gtk_popover_popdown(GTK_POPOVER(runtime->ui.outputPopover));
+  editDesiredSettings(runtime, desired);
 }
 
 static void onRateChanged(GtkComboBox *combo, gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
-  if (runtime->updatingRateControls || runtime->rateChangePending ||
-      runtime->state.operationPending) {
+  if (runtime->updatingControls || !controlsAreEditable(*runtime)) {
     return;
   }
   const auto selected = gtk_combo_box_get_active(combo);
   if (selected < 0 ||
-      static_cast<std::size_t>(selected) >=
-          runtime->rateChoices.size()) {
+      static_cast<std::size_t>(selected) >= runtime->rateChoices.size()) {
     return;
   }
   const auto &choice =
       runtime->rateChoices[static_cast<std::size_t>(selected)];
-  runtime->editedRatePolicy.mode = choice.mode;
-  runtime->editedRatePolicy.fixedRate = choice.fixedRate;
-  updateRateEditDirty(runtime);
-  render(runtime);
+  auto desired = runtime->transaction.desiredLive;
+  desired.ratePolicy.mode = choice.mode;
+  desired.ratePolicy.fixedRate = choice.fixedRate;
+  editDesiredSettings(runtime, desired);
 }
 
 static void onRateEnforcementChanged(GtkComboBox *combo,
                                      gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
-  if (runtime->updatingRateControls || runtime->rateChangePending ||
-      runtime->state.operationPending) {
+  if (runtime->updatingControls || !controlsAreEditable(*runtime)) {
     return;
   }
   const auto selected = gtk_combo_box_get_active(combo);
   if (selected != 0 && selected != 1) {
     return;
   }
-  runtime->editedRatePolicy.enforcement =
+  auto desired = runtime->transaction.desiredLive;
+  desired.ratePolicy.enforcement =
       selected == 1 ? pipetune::SampleRateEnforcement::force
                     : pipetune::SampleRateEnforcement::suggest;
-  updateRateEditDirty(runtime);
-  render(runtime);
-}
-
-static void onRateReply(const ControlClientReply &reply,
-                        void *userData) {
-  auto *runtime = static_cast<GtkRuntime *>(userData);
-  const auto completion = completeRateOperation(
-      runtime->state, reply,
-      {.configPath = runtime->startupConfigPath,
-       .policy = runtime->pendingRatePolicy},
-      currentMonotonicMilliseconds());
-  runtime->rateChangePending = false;
-  if (completion.persistenceApplied) {
-    runtime->startupRatePolicy = runtime->pendingRatePolicy;
-  }
-  runtime->rateEditDirty = !completion.persistenceApplied;
-  if (completion.liveApplied) {
-    runtime->editedRatePolicy =
-        reply.response.status.configuredRatePolicy;
-  }
-  if (completion.reconnectRequired) {
-    scheduleReconnect(runtime);
-  }
-  render(runtime);
-}
-
-static void onRateApplyClicked(GtkButton *, gpointer userData) {
-  auto *runtime = static_cast<GtkRuntime *>(userData);
-  if (!runtime->rateEditDirty || runtime->rateChangePending ||
-      runtime->state.operationPending ||
-      !pipetune::sampleRatePolicyIsValid(runtime->editedRatePolicy)) {
-    return;
-  }
-  clearControlNotice(runtime->state);
-  runtime->pendingRatePolicy = runtime->editedRatePolicy;
-  runtime->rateChangePending = true;
-
-  if (runtime->state.connection !=
-      ControlConnectionState::connected) {
-    const auto completion = persistRateOperationForNextStart(
-        runtime->state,
-        {.configPath = runtime->startupConfigPath,
-         .policy = runtime->pendingRatePolicy});
-    runtime->rateChangePending = false;
-    if (completion.persistenceApplied) {
-      runtime->startupRatePolicy = runtime->pendingRatePolicy;
-      runtime->rateEditDirty = false;
-    }
-    render(runtime);
-    return;
-  }
-
-  setControlOperationPending(runtime->state, true);
-  render(runtime);
-  setControlRateAsync(runtime->controlClient,
-                      runtime->pendingRatePolicy, onRateReply, runtime);
-}
-
-static void updateDspBackendEditDirty(GtkRuntime *runtime) {
-  runtime->dspBackendEditDirty =
-      runtime->editedDspBackend != displayedDspBackend(*runtime) ||
-      (runtime->editedDspBackend ==
-           pipetune::DspBackendKind::simd &&
-       runtime->editedDspSimdVariant !=
-           displayedDspSimdVariant(*runtime));
+  editDesiredSettings(runtime, desired);
 }
 
 static void onDspBackendChanged(GtkComboBox *combo,
                                 gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
-  if (runtime->updatingDspBackendControls ||
-      runtime->dspBackendChangePending ||
-      runtime->state.operationPending) {
+  if (runtime->updatingControls || !controlsAreEditable(*runtime)) {
     return;
   }
   const auto selected = gtk_combo_box_get_active(combo);
@@ -902,344 +996,64 @@ static void onDspBackendChanged(GtkComboBox *combo,
           runtime->dspBackendChoices.size()) {
     return;
   }
-  runtime->editedDspBackend =
-      runtime
-          ->dspBackendChoices[static_cast<std::size_t>(selected)]
-          .kind;
-  runtime->editedDspSimdVariant =
-      runtime
-          ->dspBackendChoices[static_cast<std::size_t>(selected)]
-          .simdVariant;
-  updateDspBackendEditDirty(runtime);
-  render(runtime);
-}
-
-static void onDspBackendReply(const ControlClientReply &reply,
-                              void *userData) {
-  auto *runtime = static_cast<GtkRuntime *>(userData);
-  const auto completion = completeDspBackendOperation(
-      runtime->state, reply,
-      {.configPath = runtime->startupConfigPath,
-       .kind = runtime->pendingDspBackend,
-       .simdVariant = runtime->pendingDspSimdVariant},
-      currentMonotonicMilliseconds());
-  runtime->dspBackendChangePending = false;
-  if (completion.persistenceApplied) {
-    runtime->startupDspBackend = runtime->pendingDspBackend;
-    runtime->startupDspSimdVariant =
-        runtime->pendingDspSimdVariant;
-  }
-  runtime->dspBackendEditDirty = !completion.persistenceApplied;
-  if (completion.liveApplied) {
-    runtime->editedDspBackend =
-        reply.response.status.configuredDspBackend;
-    runtime->editedDspSimdVariant =
-        reply.response.status.configuredDspSimdVariant;
-  }
-  if (completion.reconnectRequired) {
-    scheduleReconnect(runtime);
-  }
-  render(runtime);
-}
-
-static void onDspBackendApplyClicked(GtkButton *,
-                                     gpointer userData) {
-  auto *runtime = static_cast<GtkRuntime *>(userData);
-  if (!runtime->dspBackendEditDirty ||
-      runtime->dspBackendChangePending ||
-      runtime->state.operationPending) {
-    return;
-  }
-  const auto presentation =
-      makeDspBackendSelectionPresentation(
-          runtime->state, runtime->editedDspBackend,
-          runtime->editedDspSimdVariant);
-  const auto connected =
-      runtime->state.connection == ControlConnectionState::connected;
-  if (connected &&
-      (!presentation.sensitive ||
-       !presentation.selectedBackendAvailable)) {
-    return;
-  }
-
-  clearControlNotice(runtime->state);
-  runtime->pendingDspBackend = runtime->editedDspBackend;
-  runtime->pendingDspSimdVariant =
-      runtime->editedDspSimdVariant;
-  runtime->dspBackendChangePending = true;
-  if (!connected) {
-    const auto completion =
-        persistDspBackendOperationForNextStart(
-            runtime->state,
-            {.configPath = runtime->startupConfigPath,
-             .kind = runtime->pendingDspBackend,
-             .simdVariant = runtime->pendingDspSimdVariant});
-    runtime->dspBackendChangePending = false;
-    if (completion.persistenceApplied) {
-      runtime->startupDspBackend = runtime->pendingDspBackend;
-      runtime->startupDspSimdVariant =
-          runtime->pendingDspSimdVariant;
-      runtime->dspBackendEditDirty = false;
-    }
-    render(runtime);
-    return;
-  }
-
-  setControlOperationPending(runtime->state, true);
-  render(runtime);
-  setControlDspBackendAsync(
-      runtime->controlClient, runtime->pendingDspBackend,
-      runtime->pendingDspSimdVariant,
-      onDspBackendReply, runtime);
-}
-
-static void updateDspIdleEditDirty(GtkRuntime *runtime) {
-  runtime->dspIdleEditDirty =
-      runtime->editedDspIdlePolicy !=
-      displayedDspIdlePolicy(*runtime);
+  const auto &choice =
+      runtime->dspBackendChoices[static_cast<std::size_t>(selected)];
+  auto desired = runtime->transaction.desiredLive;
+  desired.dspBackend = choice.kind;
+  desired.dspSimdVariant = choice.simdVariant;
+  editDesiredSettings(runtime, desired);
 }
 
 static void onDspIdlePolicyChanged(GtkComboBox *combo,
                                    gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
-  if (runtime->updatingDspIdleControls ||
-      runtime->dspIdleChangePending ||
-      runtime->state.operationPending) {
+  if (runtime->updatingControls || !controlsAreEditable(*runtime)) {
     return;
   }
   const auto selected = gtk_combo_box_get_active(combo);
   if (selected < 0 ||
-      static_cast<std::size_t>(selected) >=
-          runtime->dspIdleChoices.size()) {
+      static_cast<std::size_t>(selected) >= runtime->dspIdleChoices.size()) {
     return;
   }
-  runtime->editedDspIdlePolicy =
-      runtime->dspIdleChoices[static_cast<std::size_t>(selected)]
-          .policy;
-  updateDspIdleEditDirty(runtime);
-  render(runtime);
+  const auto &choice =
+      runtime->dspIdleChoices[static_cast<std::size_t>(selected)];
+  auto desired = runtime->transaction.desiredLive;
+  desired.dspIdlePolicy = choice.policy;
+  editDesiredSettings(runtime, desired);
 }
 
-static void onDspIdlePolicyReply(
-    const ControlClientReply &reply, void *userData) {
+static void onProcessingActiveChanged(GObject *object, GParamSpec *,
+                                      gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
-  const auto completion = completeDspIdleOperation(
-      runtime->state, reply,
-      {.configPath = runtime->startupConfigPath,
-       .policy = runtime->pendingDspIdlePolicy},
-      currentMonotonicMilliseconds());
-  runtime->dspIdleChangePending = false;
-  if (completion.persistenceApplied) {
-    runtime->startupDspIdlePolicy =
-        runtime->pendingDspIdlePolicy;
-  }
-  runtime->dspIdleEditDirty = !completion.persistenceApplied;
-  if (completion.liveApplied) {
-    runtime->editedDspIdlePolicy =
-        reply.response.status.dspIdlePolicy;
-  }
-  if (completion.reconnectRequired) {
-    scheduleReconnect(runtime);
-  }
-  render(runtime);
-}
-
-static void onDspIdlePolicyApplyClicked(
-    GtkButton *, gpointer userData) {
-  auto *runtime = static_cast<GtkRuntime *>(userData);
-  if (!runtime->dspIdleEditDirty ||
-      runtime->dspIdleChangePending ||
-      runtime->state.operationPending ||
-      pipetune::dspIdlePolicyName(
-          runtime->editedDspIdlePolicy)
-          .empty()) {
+  if (runtime->updatingControls || !controlsAreEditable(*runtime)) {
     return;
   }
-
-  clearControlNotice(runtime->state);
-  runtime->pendingDspIdlePolicy =
-      runtime->editedDspIdlePolicy;
-  runtime->dspIdleChangePending = true;
-  const auto connected =
-      runtime->state.connection == ControlConnectionState::connected;
-  if (!connected) {
-    const auto completion =
-        persistDspIdleOperationForNextStart(
-            runtime->state,
-            {.configPath = runtime->startupConfigPath,
-             .policy = runtime->pendingDspIdlePolicy});
-    runtime->dspIdleChangePending = false;
-    if (completion.persistenceApplied) {
-      runtime->startupDspIdlePolicy =
-          runtime->pendingDspIdlePolicy;
-      runtime->dspIdleEditDirty = false;
+  const auto active =
+      gtk_switch_get_active(GTK_SWITCH(object)) != FALSE;
+  auto desired = runtime->transaction.desiredLive;
+  if (!active) {
+    if (desired.presetFound) {
+      runtime->lastPresetPath = desired.presetPath;
     }
+    desired.presetFound = false;
+    desired.presetPath.clear();
+    editDesiredSettings(runtime, desired);
+    return;
+  }
+  if (runtime->lastPresetPath.empty()) {
+    runtime->updatingControls = true;
+    gtk_switch_set_active(GTK_SWITCH(object), FALSE);
+    runtime->updatingControls = false;
+    appendCompletedAction(
+        runtime, ActionLogSeverity::warning, ActionLogCategory::settings,
+        false, "Preset required",
+        "Choose a preset before enabling DSP processing");
     render(runtime);
     return;
   }
-
-  setControlOperationPending(runtime->state, true);
-  render(runtime);
-  setControlDspIdlePolicyAsync(
-      runtime->controlClient, runtime->pendingDspIdlePolicy,
-      onDspIdlePolicyReply, runtime);
-}
-
-static std::string savePendingPreset(GtkRuntime *runtime) {
-  if (runtime->startupConfigPath.empty()) {
-    return "startup configuration path is unavailable";
-  }
-  const auto error =
-      pipetune::saveStartupPreset(runtime->startupConfigPath,
-                                  runtime->pendingPreset);
-  if (error.empty()) {
-    runtime->startupPreset = runtime->pendingPreset;
-    runtime->hasStartupPreset = true;
-  }
-  return error;
-}
-
-static std::string saveStartupBypass(GtkRuntime *runtime) {
-  if (runtime->startupConfigPath.empty()) {
-    return "startup configuration path is unavailable";
-  }
-  const auto error =
-      pipetune::clearStartupPreset(runtime->startupConfigPath);
-  if (error.empty()) {
-    runtime->startupPreset.clear();
-    runtime->hasStartupPreset = false;
-  }
-  return error;
-}
-
-static void onLoadReply(const ControlClientReply &reply, void *userData) {
-  auto *runtime = static_cast<GtkRuntime *>(userData);
-  setControlOperationPending(runtime->state, false);
-  if (!reply.transportError.empty()) {
-    markControlDisconnected(runtime->state, reply.transportError);
-    scheduleReconnect(runtime);
-    render(runtime);
-    return;
-  }
-  applyControlResponse(runtime->state, reply.response,
-                       currentMonotonicMilliseconds());
-  if (!reply.response.valid || !reply.response.success) {
-    render(runtime);
-    return;
-  }
-
-  const auto saveError = savePendingPreset(runtime);
-  if (!saveError.empty()) {
-    setControlDiagnostic(
-        runtime->state,
-        "Preset was applied, but startup persistence failed: " +
-            saveError);
-  }
-  render(runtime);
-}
-
-static void onApplyClicked(GtkButton *, gpointer userData) {
-  auto *runtime = static_cast<GtkRuntime *>(userData);
-  auto *filename = gtk_file_chooser_get_filename(
-      GTK_FILE_CHOOSER(runtime->ui.presetChooser));
-  if (filename == nullptr) {
-    setControlDiagnostic(runtime->state,
-                         "Select an EffeTune preset first");
-    render(runtime);
-    return;
-  }
-  auto filesystemError = std::error_code{};
-  auto selected =
-      std::filesystem::absolute(filename, filesystemError).lexically_normal();
-  g_free(filename);
-  if (filesystemError) {
-    setControlDiagnostic(runtime->state,
-                         "Cannot resolve selected preset: " +
-                             filesystemError.message());
-    render(runtime);
-    return;
-  }
-  runtime->pendingPreset = std::move(selected);
-  clearControlNotice(runtime->state);
-
-  if (runtime->state.connection !=
-      ControlConnectionState::connected) {
-    const auto error = savePendingPreset(runtime);
-    if (!error.empty()) {
-      setControlDiagnostic(runtime->state, error);
-    }
-    render(runtime);
-    return;
-  }
-
-  setControlOperationPending(runtime->state, true);
-  render(runtime);
-  loadControlPresetAsync(runtime->controlClient, runtime->pendingPreset,
-                         onLoadReply, runtime);
-}
-
-static void onBypassReply(const ControlClientReply &reply,
-                          void *userData) {
-  auto *runtime = static_cast<GtkRuntime *>(userData);
-  setControlOperationPending(runtime->state, false);
-  if (!reply.transportError.empty()) {
-    markControlDisconnected(runtime->state, reply.transportError);
-    scheduleReconnect(runtime);
-    const auto saveError = saveStartupBypass(runtime);
-    if (saveError.empty()) {
-      setControlDiagnostic(
-          runtime->state,
-          "Daemon disconnected; DSP bypass was saved for the next start");
-    } else {
-      setControlDiagnostic(
-          runtime->state,
-          "Daemon disconnected and startup bypass could not be saved: " +
-              saveError);
-    }
-    render(runtime);
-    return;
-  }
-
-  applyControlResponse(runtime->state, reply.response,
-                       currentMonotonicMilliseconds());
-  if (!reply.response.valid || !reply.response.success) {
-    render(runtime);
-    return;
-  }
-  if (reply.response.status.processingMode !=
-          pipetune::ProcessingMode::bypass ||
-      !reply.response.status.activePreset.empty()) {
-    setControlDiagnostic(runtime->state,
-                         "Daemon did not confirm DSP bypass");
-    render(runtime);
-    return;
-  }
-  const auto saveError = saveStartupBypass(runtime);
-  if (!saveError.empty()) {
-    setControlDiagnostic(
-        runtime->state,
-        "DSP bypass was applied, but startup persistence failed: " +
-            saveError);
-  }
-  render(runtime);
-}
-
-static void onBypassClicked(GtkButton *, gpointer userData) {
-  auto *runtime = static_cast<GtkRuntime *>(userData);
-  clearControlNotice(runtime->state);
-  if (runtime->state.connection !=
-      ControlConnectionState::connected) {
-    const auto error = saveStartupBypass(runtime);
-    if (!error.empty()) {
-      setControlDiagnostic(runtime->state, error);
-    }
-    render(runtime);
-    return;
-  }
-
-  setControlOperationPending(runtime->state, true);
-  render(runtime);
-  bypassControlAsync(runtime->controlClient, onBypassReply, runtime);
+  desired.presetFound = true;
+  desired.presetPath = runtime->lastPresetPath;
+  editDesiredSettings(runtime, desired);
 }
 
 static std::string presetChoiceLabel(const PresetChoice &choice) {
@@ -1253,68 +1067,37 @@ static std::string catalogDiagnosticText(
     const std::vector<std::string> &diagnostics,
     std::string_view pathResolutionError) {
   auto text = std::string{};
-  appendNotice(text, pathResolutionError);
+  appendDetail(text, pathResolutionError);
   for (const auto &diagnostic : diagnostics) {
-    appendNotice(text, diagnostic);
+    appendDetail(text, diagnostic);
   }
   return text;
 }
 
-static void updatePresetCatalogDiagnostic(GtkRuntime *runtime) {
-  runtime->presetCatalogDiagnostic =
-      runtime->presetCatalogSourceDiagnostic;
-  appendNotice(runtime->presetCatalogDiagnostic,
-               runtime->presetCatalogSavedDiagnostic);
-}
-
 static void replacePresetChoices(
     GtkRuntime *runtime, std::vector<PresetChoice> choices) {
-  auto preserveChoice = false;
-  auto preservedSource = PresetSource::standard;
-  auto preservedName = std::string{};
-  auto preservedPreset = std::string{};
-  const auto active =
-      gtk_combo_box_get_active(GTK_COMBO_BOX(runtime->ui.presetCombo));
-  if (active > 0 &&
-      static_cast<std::size_t>(active - 1) <
-          runtime->presetChoices.size()) {
-    const auto &choice =
-        runtime->presetChoices[static_cast<std::size_t>(active - 1)];
-    preserveChoice = true;
-    preservedSource = choice.source;
-    preservedName = choice.name;
-    preservedPreset = choice.serializedPreset;
-  }
   runtime->presetChoices = std::move(choices);
-
-  runtime->updatingPresetCombo = true;
+  runtime->updatingControls = true;
   gtk_combo_box_text_remove_all(
       GTK_COMBO_BOX_TEXT(runtime->ui.presetCombo));
   gtk_combo_box_text_append_text(
       GTK_COMBO_BOX_TEXT(runtime->ui.presetCombo),
       "Choose a standard or saved EffeTune preset…");
   auto activeIndex = gint{0};
-  for (auto index = std::size_t{0};
-       index < runtime->presetChoices.size(); ++index) {
+  for (auto index = std::size_t{0}; index < runtime->presetChoices.size();
+       ++index) {
     const auto &choice = runtime->presetChoices[index];
     const auto label = presetChoiceLabel(choice);
     gtk_combo_box_text_append_text(
         GTK_COMBO_BOX_TEXT(runtime->ui.presetCombo), label.c_str());
-    if ((preserveChoice && choice.source == preservedSource &&
-         choice.name == preservedName &&
-         (choice.source == PresetSource::standard ||
-          choice.serializedPreset == preservedPreset)) ||
-        (!preserveChoice && runtime->hasStartupPreset &&
-         choice.source == PresetSource::standard &&
-         choice.path == runtime->startupPreset)) {
+    if (choice.source == PresetSource::standard &&
+        choice.path == runtime->lastPresetPath) {
       activeIndex = static_cast<gint>(index + 1);
     }
   }
   gtk_combo_box_set_active(GTK_COMBO_BOX(runtime->ui.presetCombo),
                            activeIndex);
-  runtime->updatingPresetCombo = false;
-  gtk_widget_set_sensitive(runtime->ui.presetCombo,
-                           !runtime->presetChoices.empty());
+  runtime->updatingControls = false;
 }
 
 static void refreshSavedPresetCatalog(GtkRuntime *runtime) {
@@ -1328,7 +1111,6 @@ static void refreshSavedPresetCatalog(GtkRuntime *runtime) {
   runtime->presetCatalogSavedDiagnostic =
       catalogDiagnosticText(refresh.diagnostics, {});
   replacePresetChoices(runtime, std::move(choices));
-  updatePresetCatalogDiagnostic(runtime);
 }
 
 static void onEffeTunePresetFileChanged(void *userData) {
@@ -1354,28 +1136,42 @@ static void initializePresetCatalog(GtkRuntime *runtime) {
                                : std::string_view(xdgConfigHome),
       home == nullptr ? std::filesystem::path{}
                       : std::filesystem::path(home));
-  appendNotice(runtime->presetCatalogSourceDiagnostic,
-               userPath.error);
-  if (!userPath.error.empty()) {
-    updatePresetCatalogDiagnostic(runtime);
+  appendDetail(runtime->presetCatalogSourceDiagnostic, userPath.error);
+  if (userPath.error.empty()) {
+    runtime->effetuneUserPresetPath = userPath.path;
+    refreshSavedPresetCatalog(runtime);
+    const auto monitor = createEffeTunePresetFileMonitor(
+        runtime->effetuneUserPresetPath,
+        onEffeTunePresetFileChanged, runtime);
+    runtime->presetFileMonitor = monitor.monitor;
+    appendDetail(runtime->presetCatalogSourceDiagnostic, monitor.error);
+  }
+  auto diagnostics = runtime->presetCatalogSourceDiagnostic;
+  appendDetail(diagnostics, runtime->presetCatalogSavedDiagnostic);
+  if (!diagnostics.empty()) {
+    appendCompletedAction(
+        runtime, ActionLogSeverity::warning,
+        ActionLogCategory::application, false,
+        "Some preset sources are unavailable", diagnostics);
+  }
+}
+
+static void selectPresetPath(GtkRuntime *runtime,
+                             const std::filesystem::path &path) {
+  if (path.empty()) {
     return;
   }
-
-  runtime->effetuneUserPresetPath = userPath.path;
-  refreshSavedPresetCatalog(runtime);
-  const auto monitor = createEffeTunePresetFileMonitor(
-      runtime->effetuneUserPresetPath,
-      onEffeTunePresetFileChanged, runtime);
-  runtime->presetFileMonitor = monitor.monitor;
-  appendNotice(runtime->presetCatalogSourceDiagnostic,
-               monitor.error);
-  updatePresetCatalogDiagnostic(runtime);
+  runtime->lastPresetPath = path;
+  auto desired = runtime->transaction.desiredLive;
+  desired.presetFound = true;
+  desired.presetPath = path;
+  editDesiredSettings(runtime, desired);
 }
 
 static void onPresetComboChanged(GtkComboBox *combo,
                                  gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
-  if (runtime->updatingPresetCombo) {
+  if (runtime->updatingControls || !controlsAreEditable(*runtime)) {
     return;
   }
   const auto active = gtk_combo_box_get_active(combo);
@@ -1384,84 +1180,411 @@ static void onPresetComboChanged(GtkComboBox *combo,
           runtime->presetChoices.size()) {
     return;
   }
-  if (runtime->startupConfigPath.empty()) {
-    setControlDiagnostic(
-        runtime->state,
-        "startup configuration path is unavailable");
-    render(runtime);
-    return;
-  }
-
   const auto &choice =
       runtime->presetChoices[static_cast<std::size_t>(active - 1)];
   const auto resolved = resolvePresetChoicePath(
       choice,
       runtime->startupConfigPath.parent_path() / "effetune-presets");
   if (!resolved.error.empty()) {
-    setControlDiagnostic(runtime->state, resolved.error);
+    appendCompletedAction(
+        runtime, ActionLogSeverity::error, ActionLogCategory::settings,
+        false, "Cannot prepare preset", resolved.error);
     render(runtime);
     return;
   }
-
-  runtime->updatingPresetCombo = true;
-  const auto selected = gtk_file_chooser_set_filename(
+  runtime->updatingControls = true;
+  gtk_file_chooser_set_filename(
       GTK_FILE_CHOOSER(runtime->ui.presetChooser),
       resolved.path.c_str());
-  runtime->updatingPresetCombo = false;
-  if (!selected) {
-    setControlDiagnostic(
-        runtime->state,
-        "Cannot select EffeTune preset: " + resolved.path.string());
-    render(runtime);
-    return;
-  }
-  clearControlNotice(runtime->state);
-  render(runtime);
+  runtime->updatingControls = false;
+  selectPresetPath(runtime, resolved.path);
 }
 
 static void onPresetFileSet(GtkFileChooserButton *, gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
-  if (runtime->updatingPresetCombo) {
+  if (runtime->updatingControls || !controlsAreEditable(*runtime)) {
     return;
   }
-  runtime->updatingPresetCombo = true;
+  auto *filename = gtk_file_chooser_get_filename(
+      GTK_FILE_CHOOSER(runtime->ui.presetChooser));
+  if (filename == nullptr) {
+    return;
+  }
+  auto error = std::error_code{};
+  auto path =
+      std::filesystem::absolute(filename, error).lexically_normal();
+  g_free(filename);
+  if (error) {
+    appendCompletedAction(
+        runtime, ActionLogSeverity::error, ActionLogCategory::settings,
+        false, "Cannot resolve preset", error.message());
+    render(runtime);
+    return;
+  }
+  runtime->updatingControls = true;
   gtk_combo_box_set_active(GTK_COMBO_BOX(runtime->ui.presetCombo), 0);
-  runtime->updatingPresetCombo = false;
+  runtime->updatingControls = false;
+  selectPresetPath(runtime, path);
+}
+
+static void onRestoreDefaultsClicked(GtkButton *, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (!controlsAreEditable(*runtime)) {
+    return;
+  }
+  appendCompletedAction(
+      runtime, ActionLogSeverity::info, ActionLogCategory::settings, true,
+      "Defaults selected",
+      "Defaults are being applied live; use Apply to save them");
+  editDesiredSettings(runtime, defaultStartupConfig());
+}
+
+static std::string persistenceTestDiagnostic() {
+#ifdef PIPETUNE_GTK_E2E_ACCESSIBILITY
+  const auto *guardPath =
+      std::getenv("PIPETUNE_GTK_E2E_PERSISTENCE_GUARD");
+  if (guardPath != nullptr && guardPath[0] != '\0') {
+    auto stream = std::ifstream(guardPath);
+    auto value = std::string{};
+    std::getline(stream, value);
+    if (value == "deny") {
+      return "E2E persistence guard rejected the write";
+    }
+  }
+#endif
+  return {};
+}
+
+static void onApplyClicked(GtkButton *, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (!runtime->transactionReady ||
+      !settingsTransactionCanApply(runtime->transaction)) {
+    return;
+  }
+  const auto pending = appendPendingAction(
+      runtime->actionLog, currentUnixMilliseconds(),
+      ActionLogCategory::persistence, "Saving all settings",
+      runtime->startupConfigPath.string());
+  auto error = persistenceTestDiagnostic();
+  if (error.empty()) {
+    error = pipetune::saveStartupConfig(
+        runtime->startupConfigPath, runtime->transaction.desiredLive);
+  }
+  const auto success = error.empty();
+  completeSettingsPersistence(runtime->transaction, success, error);
+  if (success) {
+    runtime->savedConfig = runtime->transaction.saved;
+    completePendingAction(
+        runtime->actionLog, pending, currentUnixMilliseconds(), true,
+        ActionLogSeverity::info, "All settings saved",
+        runtime->startupConfigPath.string());
+  } else {
+    setControlDiagnostic(
+        runtime->state,
+        "Live settings remain active, but persistence failed: " + error);
+    completePendingAction(
+        runtime->actionLog, pending, currentUnixMilliseconds(), false,
+        ActionLogSeverity::error, "Cannot save settings", error);
+    revealActionLog(runtime);
+  }
+  render(runtime);
+}
+
+static void onLogToggleChanged(GtkToggleButton *button,
+                               gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  gtk_revealer_set_reveal_child(
+      GTK_REVEALER(runtime->ui.logRevealer),
+      gtk_toggle_button_get_active(button));
+}
+
+static void onLogFilterChanged(GtkComboBox *combo, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  const auto active = gtk_combo_box_get_active(combo);
+  runtime->logFilter =
+      active == 2 ? ActionLogFilter::errors
+                  : active == 1 ? ActionLogFilter::warnings
+                                : ActionLogFilter::all;
+  renderActionLog(runtime);
+}
+
+static std::string visibleActionLogText(const GtkRuntime &runtime) {
+  const auto entries =
+      filteredActionLogEntries(runtime.actionLog, runtime.logFilter);
+  auto text = std::string{};
+  for (const auto *entry : entries) {
+    if (!text.empty()) {
+      text.push_back('\n');
+    }
+    text += formatActionTime(entry->timestampUnixMilliseconds);
+    text += "  ";
+    text += entry->summary;
+    if (!entry->detail.empty()) {
+      text += " — ";
+      text += entry->detail;
+    }
+  }
+  return text;
+}
+
+static void onLogCopyClicked(GtkButton *, gpointer userData) {
+  const auto *runtime = static_cast<GtkRuntime *>(userData);
+  const auto text = visibleActionLogText(*runtime);
+  auto *clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+  gtk_clipboard_set_text(clipboard, text.c_str(),
+                         static_cast<gint>(text.size()));
+}
+
+static void onLogClearClicked(GtkButton *, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  clearActionLog(runtime->actionLog);
+  renderActionLog(runtime);
+}
+
+static void onSettingsOperationReply(const ControlClientReply &reply,
+                                     void *userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (runtime->shuttingDown || !runtime->transactionReady) {
+    return;
+  }
+  const auto operation = runtime->transaction.inFlight;
+  const auto pendingId = runtime->pendingActionId;
+  runtime->pendingActionId = 0;
+  setControlOperationPending(runtime->state, false);
+  if (!reply.transportError.empty()) {
+    markControlDisconnected(runtime->state, reply.transportError);
+    markSettingsDisconnected(runtime->transaction, reply.transportError);
+    completePendingAction(
+        runtime->actionLog, pendingId, currentUnixMilliseconds(), false,
+        ActionLogSeverity::error, settingsOperationName(operation) + " failed",
+        reply.transportError);
+    revealActionLog(runtime);
+    render(runtime);
+    scheduleReconnect(runtime);
+    return;
+  }
+
+  applyControlResponse(runtime->state, reply.response,
+                       currentMonotonicMilliseconds());
+  const auto success = reply.response.valid && reply.response.success;
+  const auto confirmed =
+      success ? startupConfigFromRuntime(reply.response.status)
+              : runtime->transaction.confirmedLive;
+  const auto diagnostic =
+      success ? std::string{} : controlDiagnostic(reply);
+  completeSettingsOperation(runtime->transaction, success, confirmed,
+                            diagnostic);
+  completePendingAction(
+      runtime->actionLog, pendingId, currentUnixMilliseconds(), success,
+      success ? ActionLogSeverity::info : ActionLogSeverity::error,
+      success ? settingsOperationSuccess(operation)
+              : settingsOperationName(operation) + " failed",
+      diagnostic);
+  if (!success) {
+    revealActionLog(runtime);
+  }
+  render(runtime);
+  if (success) {
+    driveSettings(runtime);
+    finishRollbackIfReady(runtime);
+  }
+}
+
+static void dispatchSettingsOperation(
+    GtkRuntime *runtime, SettingsOperation operation) {
+  const auto &target = runtime->transaction.inFlightTarget;
+  switch (operation) {
+  case SettingsOperation::output:
+    if (target.preferredOutputFound) {
+      setControlOutputAsync(runtime->controlClient, target.preferredOutput,
+                            onSettingsOperationReply, runtime);
+    } else {
+      clearControlOutputAsync(runtime->controlClient,
+                              onSettingsOperationReply, runtime);
+    }
+    return;
+  case SettingsOperation::rate:
+    setControlRateAsync(runtime->controlClient, target.ratePolicy,
+                        onSettingsOperationReply, runtime);
+    return;
+  case SettingsOperation::dspBackend:
+    setControlDspBackendAsync(runtime->controlClient, target.dspBackend,
+                              target.dspSimdVariant,
+                              onSettingsOperationReply, runtime);
+    return;
+  case SettingsOperation::dspIdle:
+    setControlDspIdlePolicyAsync(runtime->controlClient,
+                                 target.dspIdlePolicy,
+                                 onSettingsOperationReply, runtime);
+    return;
+  case SettingsOperation::processing:
+    if (target.presetFound) {
+      loadControlPresetAsync(runtime->controlClient, target.presetPath,
+                             onSettingsOperationReply, runtime);
+    } else {
+      bypassControlAsync(runtime->controlClient, onSettingsOperationReply,
+                         runtime);
+    }
+    return;
+  case SettingsOperation::none:
+    return;
+  }
+}
+
+static void driveSettings(GtkRuntime *runtime) {
+  if (!runtime->transactionReady || runtime->controlClient == nullptr) {
+    return;
+  }
+  finishRollbackIfReady(runtime);
+  if (!runtime->transactionReady) {
+    return;
+  }
+  const auto operation = nextSettingsOperation(runtime->transaction);
+  if (operation == SettingsOperation::none ||
+      !beginSettingsOperation(runtime->transaction, operation)) {
+    render(runtime);
+    finishRollbackIfReady(runtime);
+    return;
+  }
+  runtime->pendingActionId = appendPendingAction(
+      runtime->actionLog, currentUnixMilliseconds(),
+      ActionLogCategory::settings, settingsOperationName(operation), {});
+  setControlOperationPending(runtime->state, true);
+  render(runtime);
+  dispatchSettingsOperation(runtime, operation);
+}
+
+static void beginTransactionFromRuntime(GtkRuntime *runtime) {
+  if (!runtime->dialogActive ||
+      runtime->state.connection != ControlConnectionState::connected ||
+      !runtime->state.hasRuntimeStatus) {
+    return;
+  }
+  const auto live = startupConfigFromRuntime(runtime->state.runtime);
+  runtime->transaction =
+      beginSettingsTransaction(runtime->savedConfig, live, true);
+  runtime->transactionReady = true;
+  if (live.presetFound) {
+    runtime->lastPresetPath = live.presetPath;
+  } else if (runtime->savedConfig.presetFound) {
+    runtime->lastPresetPath = runtime->savedConfig.presetPath;
+  }
+}
+
+static void onSubscriptionMessage(
+    const pipetune::ControlResponseParseResult &message, void *userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  const auto previouslyConnected =
+      runtime->state.connection == ControlConnectionState::connected &&
+      runtime->state.hasRuntimeStatus;
+  applyControlResponse(runtime->state, message,
+                       currentMonotonicMilliseconds());
+  if (!previouslyConnected && runtime->state.hasRuntimeStatus) {
+    appendCompletedAction(runtime, ActionLogSeverity::info,
+                          ActionLogCategory::control, true,
+                          "Connected to PipeTune",
+                          "Live status subscription established");
+  }
+  if (runtime->dialogActive) {
+    const auto live = startupConfigFromRuntime(runtime->state.runtime);
+    if (!runtime->transactionReady) {
+      beginTransactionFromRuntime(runtime);
+    } else if (!runtime->transaction.connected) {
+      reconnectSettingsTransaction(runtime->transaction, live);
+      appendCompletedAction(
+          runtime, ActionLogSeverity::info, ActionLogCategory::control,
+          true, "PipeTune reconnected",
+          "Pending dialog settings will be reapplied");
+    } else {
+      observeSettingsRuntime(runtime->transaction, live);
+      if (runtime->transaction.conflict) {
+        appendCompletedAction(
+            runtime, ActionLogSeverity::warning,
+            ActionLogCategory::settings, false,
+            "Live settings changed externally",
+            runtime->transaction.diagnostic);
+      }
+    }
+  }
+  render(runtime);
+  driveSettings(runtime);
+}
+
+static void onConnectionChanged(bool connected, std::string_view error,
+                                void *userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (runtime->shuttingDown || connected) {
+    return;
+  }
+  markControlDisconnected(runtime->state, error);
+  if (runtime->transactionReady) {
+    markSettingsDisconnected(runtime->transaction, error);
+  }
+  appendCompletedAction(
+      runtime, ActionLogSeverity::warning, ActionLogCategory::control,
+      false, "PipeTune disconnected", error);
+  render(runtime);
+  scheduleReconnect(runtime);
+}
+
+static gboolean reconnectControl(gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  runtime->reconnectSource = 0;
+  if (runtime->shuttingDown || runtime->controlClient == nullptr) {
+    return G_SOURCE_REMOVE;
+  }
+  markControlConnecting(runtime->state);
+  render(runtime);
+  startControlSubscription(runtime->controlClient);
+  return G_SOURCE_REMOVE;
+}
+
+static void scheduleReconnect(GtkRuntime *runtime) {
+  if (runtime->shuttingDown || runtime->controlClient == nullptr ||
+      runtime->reconnectSource != 0) {
+    return;
+  }
+  runtime->reconnectSource = g_timeout_add_seconds(
+      kReconnectDelaySeconds, reconnectControl, runtime);
 }
 
 static void connectMainWindowSignals(GtkRuntime *runtime) {
   g_signal_connect(runtime->ui.window, "delete-event",
                    G_CALLBACK(onWindowDelete), runtime);
+  g_signal_connect(runtime->ui.window, "key-press-event",
+                   G_CALLBACK(onWindowKeyPress), runtime);
   g_signal_connect(runtime->ui.window, "destroy",
                    G_CALLBACK(onWindowDestroy), runtime);
-  g_signal_connect(runtime->ui.outputCombo, "changed",
-                   G_CALLBACK(onOutputChanged), runtime);
+  g_signal_connect(runtime->ui.cancelButton, "clicked",
+                   G_CALLBACK(onCancelClicked), runtime);
+  g_signal_connect(runtime->ui.closeButton, "clicked",
+                   G_CALLBACK(onCloseClicked), runtime);
+  g_signal_connect(runtime->ui.applyButton, "clicked",
+                   G_CALLBACK(onApplyClicked), runtime);
   g_signal_connect(runtime->ui.rateCombo, "changed",
                    G_CALLBACK(onRateChanged), runtime);
   g_signal_connect(runtime->ui.rateEnforcementCombo, "changed",
                    G_CALLBACK(onRateEnforcementChanged), runtime);
-  g_signal_connect(runtime->ui.rateApplyButton, "clicked",
-                   G_CALLBACK(onRateApplyClicked), runtime);
   g_signal_connect(runtime->ui.dspBackendCombo, "changed",
                    G_CALLBACK(onDspBackendChanged), runtime);
-  g_signal_connect(runtime->ui.dspBackendApplyButton, "clicked",
-                   G_CALLBACK(onDspBackendApplyClicked), runtime);
   g_signal_connect(runtime->ui.dspIdlePolicyCombo, "changed",
                    G_CALLBACK(onDspIdlePolicyChanged), runtime);
-  g_signal_connect(runtime->ui.dspIdlePolicyApplyButton, "clicked",
-                   G_CALLBACK(onDspIdlePolicyApplyClicked), runtime);
+  g_signal_connect(runtime->ui.processingEnabledSwitch, "notify::active",
+                   G_CALLBACK(onProcessingActiveChanged), runtime);
   g_signal_connect(runtime->ui.presetCombo, "changed",
                    G_CALLBACK(onPresetComboChanged), runtime);
   g_signal_connect(runtime->ui.presetChooser, "file-set",
                    G_CALLBACK(onPresetFileSet), runtime);
-  g_signal_connect(runtime->ui.applyButton, "clicked",
-                   G_CALLBACK(onApplyClicked), runtime);
-  g_signal_connect(runtime->ui.bypassButton, "clicked",
-                   G_CALLBACK(onBypassClicked), runtime);
-  g_signal_connect(runtime->ui.resetButton, "clicked",
-                   G_CALLBACK(onConfigurationResetClicked), runtime);
-  g_signal_connect(runtime->ui.dismissButton, "clicked",
-                   G_CALLBACK(onNoticeDismiss), runtime);
+  g_signal_connect(runtime->ui.restoreDefaultsButton, "clicked",
+                   G_CALLBACK(onRestoreDefaultsClicked), runtime);
+  g_signal_connect(runtime->ui.logToggleButton, "toggled",
+                   G_CALLBACK(onLogToggleChanged), runtime);
+  g_signal_connect(runtime->ui.logFilterCombo, "changed",
+                   G_CALLBACK(onLogFilterChanged), runtime);
+  g_signal_connect(runtime->ui.logCopyButton, "clicked",
+                   G_CALLBACK(onLogCopyClicked), runtime);
+  g_signal_connect(runtime->ui.logClearButton, "clicked",
+                   G_CALLBACK(onLogClearClicked), runtime);
 }
 
 static void presentWindow(GtkRuntime *runtime,
@@ -1469,11 +1592,15 @@ static void presentWindow(GtkRuntime *runtime,
   if (runtime == nullptr || runtime->ui.window == nullptr) {
     return;
   }
+  runtime->dialogActive = true;
+  runtime->closeAfterRollback = false;
+  runtime->quitAfterRollback = false;
   refreshSavedPresetCatalog(runtime);
+  if (!runtime->transactionReady) {
+    beginTransactionFromRuntime(runtime);
+  }
+  render(runtime);
   presentMainWindow(runtime->ui, userInteractionTime);
-  const auto notice =
-      noticeText(runtime->state, runtime->presetCatalogDiagnostic);
-  gtk_widget_set_visible(runtime->ui.noticeBox, !notice.empty());
 }
 
 static void releaseApplicationHold(GtkRuntime *runtime) {
@@ -1494,58 +1621,9 @@ static void requestQuit(GtkRuntime *runtime) {
 
 static void onTrayAvailabilityChanged(
     GtkRuntime *runtime, TrayBackendAvailabilityState availability) {
-  if (runtime->shuttingDown) {
-    return;
+  if (!runtime->shuttingDown) {
+    runtime->trayAvailability = availability;
   }
-  runtime->trayAvailability = availability;
-}
-
-static std::string reloadStartupConfig(GtkRuntime *runtime,
-                                       bool resetSelections) {
-  if (runtime->startupConfigPath.empty()) {
-    return "startup configuration path is unavailable";
-  }
-  const auto loaded =
-      pipetune::loadStartupConfig(runtime->startupConfigPath);
-  if (!loaded.error.empty()) {
-    return loaded.error;
-  }
-
-  const auto &config = loaded.config;
-  runtime->hasStartupPreset = config.presetFound;
-  runtime->startupPreset = config.presetPath;
-  runtime->startupRatePolicy = config.ratePolicy;
-  runtime->editedRatePolicy = config.ratePolicy;
-  runtime->pendingRatePolicy = config.ratePolicy;
-  runtime->rateEditDirty = false;
-  runtime->startupDspBackend = config.dspBackend;
-  runtime->editedDspBackend = config.dspBackend;
-  runtime->pendingDspBackend = config.dspBackend;
-  runtime->startupDspSimdVariant = config.dspSimdVariant;
-  runtime->editedDspSimdVariant = config.dspSimdVariant;
-  runtime->pendingDspSimdVariant = config.dspSimdVariant;
-  runtime->dspBackendEditDirty = false;
-  runtime->startupDspIdlePolicy = config.dspIdlePolicy;
-  runtime->editedDspIdlePolicy = config.dspIdlePolicy;
-  runtime->pendingDspIdlePolicy = config.dspIdlePolicy;
-  runtime->dspIdleEditDirty = false;
-  runtime->pendingPreset.clear();
-
-  if (resetSelections) {
-    gtk_file_chooser_unselect_all(
-        GTK_FILE_CHOOSER(runtime->ui.presetChooser));
-    runtime->updatingPresetCombo = true;
-    gtk_combo_box_set_active(
-        GTK_COMBO_BOX(runtime->ui.presetCombo), 0);
-    runtime->updatingPresetCombo = false;
-  }
-  if (config.presetFound &&
-      std::filesystem::exists(config.presetPath)) {
-    gtk_file_chooser_set_filename(
-        GTK_FILE_CHOOSER(runtime->ui.presetChooser),
-        config.presetPath.c_str());
-  }
-  return {};
 }
 
 static void initializeStartupConfig(GtkRuntime *runtime) {
@@ -1558,24 +1636,27 @@ static void initializeStartupConfig(GtkRuntime *runtime) {
                       : std::filesystem::path(home));
   if (!resolved.error.empty()) {
     setControlDiagnostic(runtime->state, resolved.error);
+    appendCompletedAction(
+        runtime, ActionLogSeverity::error,
+        ActionLogCategory::persistence, false,
+        "Startup configuration path unavailable", resolved.error);
     return;
   }
   runtime->startupConfigPath = resolved.path;
-  const auto error = reloadStartupConfig(runtime, false);
-  if (!error.empty()) {
-    setControlDiagnostic(runtime->state, error);
+  const auto loaded =
+      pipetune::loadStartupConfig(runtime->startupConfigPath);
+  if (!loaded.error.empty()) {
+    setControlDiagnostic(runtime->state, loaded.error);
+    appendCompletedAction(
+        runtime, ActionLogSeverity::error,
+        ActionLogCategory::persistence, false,
+        "Cannot load startup configuration", loaded.error);
+    return;
   }
-}
-
-static void initializeConfigurationResetClient(GtkRuntime *runtime) {
-  runtime->configurationResetClient =
-      createConfigurationResetClient(kPipeTuneExecutable);
-  if (runtime->configurationResetClient == nullptr) {
-    auto diagnostic = runtime->state.diagnostic;
-    appendNotice(
-        diagnostic,
-        "installed PipeTune executable path is unavailable");
-    setControlDiagnostic(runtime->state, diagnostic);
+  runtime->savedConfig = loaded.config;
+  runtime->startupConfigAvailable = true;
+  if (loaded.config.presetFound) {
+    runtime->lastPresetPath = loaded.config.presetPath;
   }
 }
 
@@ -1583,6 +1664,9 @@ static void initializeControlClient(GtkRuntime *runtime) {
   const auto socket = pipetune::resolveControlSocketPath({});
   if (!socket.error.empty()) {
     markControlDisconnected(runtime->state, socket.error);
+    appendCompletedAction(
+        runtime, ActionLogSeverity::error, ActionLogCategory::control,
+        false, "Control socket unavailable", socket.error);
     return;
   }
   runtime->controlClient = createControlClient(
@@ -1591,6 +1675,9 @@ static void initializeControlClient(GtkRuntime *runtime) {
        .connectionChanged = onConnectionChanged,
        .userData = runtime});
   markControlConnecting(runtime->state);
+  appendCompletedAction(runtime, ActionLogSeverity::info,
+                        ActionLogCategory::control, true,
+                        "Connecting to PipeTune", socket.path.string());
   startControlSubscription(runtime->controlClient);
 }
 
@@ -1602,7 +1689,7 @@ static void onApplicationStartup(GApplication *, gpointer userData) {
   initializeStatusArtwork(runtime);
   connectMainWindowSignals(runtime);
   initializeStartupConfig(runtime);
-  initializeConfigurationResetClient(runtime);
+  initializeStatusRows(runtime);
   initializePresetCatalog(runtime);
   g_application_hold(G_APPLICATION(runtime->application));
   runtime->applicationHeld = true;
@@ -1619,7 +1706,13 @@ static void onApplicationStartup(GApplication *, gpointer userData) {
                   [runtime](std::uint32_t userInteractionTime) {
                     presentWindow(runtime, userInteractionTime);
                   },
-              .quit = [runtime]() { requestQuit(runtime); },
+              .quit = [runtime]() {
+                if (runtime->dialogActive) {
+                  beginRollbackAndClose(runtime, true);
+                } else {
+                  requestQuit(runtime);
+                }
+              },
               .availabilityChanged =
                   [runtime](TrayBackendAvailabilityState availability) {
                     onTrayAvailabilityChanged(runtime, availability);
@@ -1652,10 +1745,13 @@ static gint onApplicationCommandLine(GApplication *,
     return 2;
   }
   if (parsed.options.action == LaunchAction::quit) {
-    requestQuit(runtime);
+    if (runtime->dialogActive) {
+      beginRollbackAndClose(runtime, true);
+    } else {
+      requestQuit(runtime);
+    }
     return 0;
   }
-
   if (!runtime->activationHandled) {
     runtime->activationHandled = true;
     if (!parsed.options.hidden) {
@@ -1680,9 +1776,6 @@ static void onApplicationShutdown(GApplication *, gpointer userData) {
   runtime->presetFileMonitor = nullptr;
   destroyControlClient(runtime->controlClient);
   runtime->controlClient = nullptr;
-  destroyConfigurationResetClient(runtime->configurationResetClient);
-  runtime->configurationResetClient = nullptr;
-  runtime->configurationResetPending = false;
   destroyTrayBackend(runtime->trayBackend);
   runtime->trayBackend = nullptr;
   destroyMainWindowUi(runtime->ui);
@@ -1697,53 +1790,31 @@ static int runApplication(int argc, char **argv) {
       .application = application,
       .state = initialApplicationState(),
       .controlClient = nullptr,
-      .configurationResetClient = nullptr,
-      .configurationResetPending = false,
       .trayBackend = nullptr,
       .trayAvailability = TrayBackendAvailabilityState::pending,
       .startupConfigPath = {},
-      .startupPreset = {},
-      .hasStartupPreset = false,
-      .pendingPreset = {},
+      .savedConfig = defaultStartupConfig(),
+      .startupConfigAvailable = false,
+      .transaction = {},
+      .transactionReady = false,
+      .dialogActive = false,
+      .updatingControls = false,
+      .closeAfterRollback = false,
+      .quitAfterRollback = false,
+      .lastPresetPath = {},
       .presetChoices = {},
       .effetuneUserPresetPath = {},
       .presetFileMonitor = nullptr,
-      .updatingPresetCombo = false,
       .presetCatalogSourceDiagnostic = {},
       .presetCatalogSavedDiagnostic = {},
-      .presetCatalogDiagnostic = {},
       .outputChoices = {},
-      .updatingOutputCombo = false,
-      .outputChangePending = false,
-      .pendingOutputClear = false,
-      .pendingOutputTarget = {},
-      .startupRatePolicy = pipetune::defaultSampleRatePolicy(),
-      .editedRatePolicy = pipetune::defaultSampleRatePolicy(),
-      .pendingRatePolicy = pipetune::defaultSampleRatePolicy(),
       .rateChoices = {},
-      .updatingRateControls = false,
-      .rateEditDirty = false,
-      .rateChangePending = false,
-      .startupDspBackend = pipetune::DspBackendKind::scalar,
-      .editedDspBackend = pipetune::DspBackendKind::scalar,
-      .pendingDspBackend = pipetune::DspBackendKind::scalar,
-      .startupDspSimdVariant =
-          pipetune::DspSimdVariant::automatic,
-      .editedDspSimdVariant =
-          pipetune::DspSimdVariant::automatic,
-      .pendingDspSimdVariant =
-          pipetune::DspSimdVariant::automatic,
       .dspBackendChoices = {},
-      .updatingDspBackendControls = false,
-      .dspBackendEditDirty = false,
-      .dspBackendChangePending = false,
-      .startupDspIdlePolicy = pipetune::defaultDspIdlePolicy(),
-      .editedDspIdlePolicy = pipetune::defaultDspIdlePolicy(),
-      .pendingDspIdlePolicy = pipetune::defaultDspIdlePolicy(),
       .dspIdleChoices = {},
-      .updatingDspIdleControls = false,
-      .dspIdleEditDirty = false,
-      .dspIdleChangePending = false,
+      .statusRows = {},
+      .actionLog = createActionLog(kActionLogCapacity),
+      .logFilter = ActionLogFilter::all,
+      .pendingActionId = 0,
       .reconnectSource = 0,
       .applicationHeld = false,
       .activationHandled = false,

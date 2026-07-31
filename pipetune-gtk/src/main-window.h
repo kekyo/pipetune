@@ -15,78 +15,70 @@ struct MainWindowUi {
   GtkBuilder *builder = nullptr;
   /** Top-level application window. */
   GtkWidget *window = nullptr;
+  /** Header-bar close action routed through transaction rollback. */
+  GtkWidget *closeButton = nullptr;
+  /** Persistent status pane beside every settings page. */
+  GtkWidget *persistentStatusPane = nullptr;
+  /** Settings pane containing the page switcher and stack. */
+  GtkWidget *settingsPane = nullptr;
+  /** Settings page switcher. */
+  GtkWidget *settingsSwitcher = nullptr;
+  /** Settings page stack. */
+  GtkWidget *settingsStack = nullptr;
   /** Connection status image. */
   GtkWidget *statusImage = nullptr;
   /** Semantic status badge overlaid on the artwork. */
   GtkWidget *statusBadge = nullptr;
-  /** Connection status text. */
-  GtkWidget *statusLabel = nullptr;
-  /** Current DSP processing mode text. */
-  GtkWidget *processingModeLabel = nullptr;
-  /** Active preset path text. */
-  GtkWidget *activePresetLabel = nullptr;
-  /** Startup preset path text. */
-  GtkWidget *startupPresetLabel = nullptr;
-  /** Active DSP node count text. */
-  GtkWidget *pluginCountLabel = nullptr;
-  /** User-preferred physical output drop-down. */
-  GtkWidget *outputCombo = nullptr;
+  /** Concise connection summary. */
+  GtkWidget *connectionSummaryLabel = nullptr;
+  /** Dynamic, always-expanded status section list. */
+  GtkWidget *statusList = nullptr;
+  /** Enables preset processing or selects bypass. */
+  GtkWidget *processingEnabledSwitch = nullptr;
+  /** EffeTune standard and saved preset drop-down. */
+  GtkWidget *presetCombo = nullptr;
+  /** EffeTune preset file chooser. */
+  GtkWidget *presetChooser = nullptr;
+  /** Opens the custom output device list. */
+  GtkWidget *outputMenuButton = nullptr;
+  /** Concise selected-output text. */
+  GtkWidget *outputButtonLabel = nullptr;
+  /** Output selection popover. */
+  GtkWidget *outputPopover = nullptr;
+  /** Dynamic output device rows. */
+  GtkWidget *outputList = nullptr;
   /** Max or fixed DSP sample-rate drop-down. */
   GtkWidget *rateCombo = nullptr;
   /** PipeWire graph-rate suggestion or force drop-down. */
   GtkWidget *rateEnforcementCombo = nullptr;
-  /** Applies and persists the edited PCM rate policy. */
-  GtkWidget *rateApplyButton = nullptr;
-  /** Final input/DSP, output, and active physical rates. */
-  GtkWidget *rateStatusLabel = nullptr;
   /** Scalar compatibility or SIMD acceleration backend drop-down. */
   GtkWidget *dspBackendCombo = nullptr;
-  /** Applies and persists the edited native DSP backend. */
-  GtkWidget *dspBackendApplyButton = nullptr;
-  /** Configured, effective, and fallback backend state. */
-  GtkWidget *dspBackendStatusLabel = nullptr;
   /** Conservative or exact-zero DSP idle policy drop-down. */
   GtkWidget *dspIdlePolicyCombo = nullptr;
-  /** Applies and persists the edited DSP idle policy. */
-  GtkWidget *dspIdlePolicyApplyButton = nullptr;
-  /** DSP idle state, counters, and PipeWire graph idle state. */
-  GtkWidget *dspIdleStatusLabel = nullptr;
-  /** Selected output target text. */
-  GtkWidget *targetLabel = nullptr;
-  /** Engine-owned output-selection reason text. */
-  GtkWidget *outputReasonLabel = nullptr;
+  /** Restores the transaction to PipeTune defaults. */
+  GtkWidget *restoreDefaultsButton = nullptr;
   /** PipeTune and EffeTune DSP version text. */
   GtkWidget *versionLabel = nullptr;
-  /** Default sink activity text. */
-  GtkWidget *defaultSinkLabel = nullptr;
-  /** Measured input frame-rate text. */
-  GtkWidget *inputFrameRateLabel = nullptr;
-  /** Latest input receipt text. */
-  GtkWidget *lastInputLabel = nullptr;
-  /** PCM data-rate text. */
-  GtkWidget *pcmDataRateLabel = nullptr;
-  /** Readable PipeWire input stream format text. */
-  GtkWidget *streamFormatLabel = nullptr;
-  /** Average native EffeTune processing time text. */
-  GtkWidget *dspProcessingTimeLabel = nullptr;
-  /** Runtime error counter text. */
-  GtkWidget *counterLabel = nullptr;
-  /** Warning and diagnostic container. */
-  GtkWidget *noticeBox = nullptr;
-  /** Warning and diagnostic text. */
-  GtkWidget *noticeLabel = nullptr;
-  /** EffeTune preset file chooser. */
-  GtkWidget *presetChooser = nullptr;
-  /** EffeTune standard and saved preset drop-down. */
-  GtkWidget *presetCombo = nullptr;
-  /** Apply-and-save action button. */
+  /** Opens or closes the action-log drawer. */
+  GtkWidget *logToggleButton = nullptr;
+  /** Action-log toggle caption. */
+  GtkWidget *logToggleLabel = nullptr;
+  /** Animated action-log drawer. */
+  GtkWidget *logRevealer = nullptr;
+  /** All, warning, or error log filter. */
+  GtkWidget *logFilterCombo = nullptr;
+  /** Copies visible log entries. */
+  GtkWidget *logCopyButton = nullptr;
+  /** Clears retained log entries. */
+  GtkWidget *logClearButton = nullptr;
+  /** Dynamic action history rows. */
+  GtkWidget *logList = nullptr;
+  /** Concise dialog transaction state. */
+  GtkWidget *transactionStateLabel = nullptr;
+  /** Rolls live changes back and hides the dialog. */
+  GtkWidget *cancelButton = nullptr;
+  /** Persists the complete confirmed settings snapshot. */
   GtkWidget *applyButton = nullptr;
-  /** Bypass-and-save action button. */
-  GtkWidget *bypassButton = nullptr;
-  /** Restores all PipeTune startup choices to their defaults. */
-  GtkWidget *resetButton = nullptr;
-  /** Notice dismissal button. */
-  GtkWidget *dismissButton = nullptr;
 };
 
 /**

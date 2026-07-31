@@ -1,6 +1,13 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -18,6 +25,46 @@ interface FakeDaemon {
 }
 
 /**
+ * One JSON control request captured by the deterministic daemon.
+ */
+export interface FakeControlRequest {
+  /** Stable command field from the production control protocol. */
+  readonly command: string;
+  /** Additional command-specific protocol fields. */
+  readonly [key: string]: unknown;
+}
+
+/**
+ * Machine-readable startup configuration loaded by production code.
+ */
+export interface StartupConfigSnapshot {
+  /** Absolute preset path, or null for bypass. */
+  readonly preset: string | null;
+  /** Preferred output node name, or null for the system default. */
+  readonly preferredOutput: string | null;
+  /** Maximum-following or fixed sample-rate mode. */
+  readonly rateMode: string;
+  /** Fixed rate, or zero in maximum mode. */
+  readonly fixedRate: number;
+  /** Suggest or force graph-rate enforcement. */
+  readonly rateEnforcement: string;
+  /** Scalar or SIMD backend. */
+  readonly dspBackend: string;
+  /** Automatic or pinned SIMD variant. */
+  readonly dspSimdVariant: string;
+  /** Conservative or exact DSP idle policy. */
+  readonly dspIdlePolicy: string;
+}
+
+/**
+ * Options for one isolated PipeTune GTK test session.
+ */
+export interface PipeTuneGtkTestOptions {
+  /** Fake-daemon command name to reject, or undefined to accept all commands. */
+  readonly rejectedCommand: string | undefined;
+}
+
+/**
  * Holds one isolated fake daemon and GTK application session.
  */
 export interface PipeTuneGtkTestSession {
@@ -27,6 +74,20 @@ export interface PipeTuneGtkTestSession {
   readonly launcher: GtkAppLauncher;
   /** Isolated filesystem root. */
   readonly root: string;
+  /** Absolute startup configuration path used by the application. */
+  readonly configPath: string;
+  /** Reads all daemon requests captured since the last clear. */
+  readonly readRequests: () => Promise<readonly FakeControlRequest[]>;
+  /** Truncates the deterministic daemon request history. */
+  readonly clearRequests: () => Promise<void>;
+  /** Loads startup settings through the production configuration parser. */
+  readonly inspectConfig: () => Promise<StartupConfigSnapshot>;
+  /** Makes atomic configuration replacement succeed or fail. */
+  readonly setConfigDirectoryWritable: (writable: boolean) => Promise<void>;
+  /** Stops the fake daemon while leaving the GTK application running. */
+  readonly disconnectDaemon: () => Promise<void>;
+  /** Starts a fresh fake daemon from the current persisted configuration. */
+  readonly reconnectDaemon: () => Promise<void>;
   /** Stops all processes and removes the isolated filesystem root. */
   readonly release: () => Promise<void>;
 }
@@ -41,20 +102,33 @@ const requiredEnvironment = (name: string): string => {
 
 const startFakeDaemon = async (
   environment: GtkAppEnvironment,
-  runtimeDirectory: string
+  runtimeDirectory: string,
+  requestLogPath: string,
+  rejectedCommand: string | undefined
 ): Promise<FakeDaemon> => {
   const executable = requiredEnvironment('PIPETUNE_GTK_E2E_DAEMON');
   const child = spawn(executable, [], {
-    env: environment,
+    env: {
+      ...environment,
+      PIPETUNE_E2E_REQUEST_LOG: requestLogPath,
+      PIPETUNE_E2E_REJECT_COMMAND: rejectedCommand,
+    },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   let stderr = '';
+  let spawnError = '';
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', (chunk: string) => {
     stderr += chunk;
   });
+  child.once('error', (error) => {
+    spawnError = error.message;
+  });
   await waitForResult(
     async () => {
+      if (spawnError !== '') {
+        throw new Error(`fake daemon could not start: ${spawnError}`);
+      }
       if (child.exitCode !== null) {
         throw new Error(`fake daemon exited with ${child.exitCode}: ${stderr}`);
       }
@@ -77,21 +151,60 @@ const stopFakeDaemon = async (daemon: FakeDaemon): Promise<void> => {
   await once(daemon.process, 'exit');
 };
 
+const parseRequests = (contents: string): readonly FakeControlRequest[] =>
+  contents
+    .split('\n')
+    .filter((line) => line !== '')
+    .map((line) => JSON.parse(line) as FakeControlRequest);
+
+const inspectStartupConfig = async (
+  configPath: string
+): Promise<StartupConfigSnapshot> => {
+  const executable = requiredEnvironment('PIPETUNE_GTK_E2E_DAEMON');
+  const child = spawn(executable, ['--inspect-config', configPath], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk: string) => {
+    stdout += chunk;
+  });
+  child.stderr.on('data', (chunk: string) => {
+    stderr += chunk;
+  });
+  const [exitCode] = (await once(child, 'exit')) as [number | null];
+  if (exitCode !== 0) {
+    throw new Error(`configuration inspection failed: ${stderr}`);
+  }
+  return JSON.parse(stdout) as StartupConfigSnapshot;
+};
+
 /**
  * Starts one isolated gestament session backed by the deterministic daemon.
  *
+ * @param options Per-session fake-daemon behavior.
  * @returns A connected GTK session with a visible main window.
  */
-export const launchPipeTuneGtk = async (): Promise<PipeTuneGtkTestSession> => {
+export const launchPipeTuneGtk = async (
+  options: PipeTuneGtkTestOptions = { rejectedCommand: undefined }
+): Promise<PipeTuneGtkTestSession> => {
   const root = await mkdtemp(join(tmpdir(), 'pipetune-gtk-e2e-'));
   const runtimeDirectory = join(root, 'runtime');
   const configDirectory = join(root, 'config');
+  const pipeTuneConfigDirectory = join(configDirectory, 'pipetune');
+  const configPath = join(pipeTuneConfigDirectory, 'environment');
+  const requestLogPath = join(root, 'requests.jsonl');
+  const persistenceGuardPath = join(root, 'persistence-guard');
   const homeDirectory = join(root, 'home');
   await mkdir(runtimeDirectory, { mode: 0o700 });
-  await mkdir(join(configDirectory, 'pipetune'), { recursive: true });
+  await mkdir(pipeTuneConfigDirectory, { recursive: true });
   await mkdir(homeDirectory);
+  await writeFile(requestLogPath, '', { mode: 0o600 });
+  await writeFile(persistenceGuardPath, 'allow\n', { mode: 0o600 });
   await writeFile(
-    join(configDirectory, 'pipetune', 'environment'),
+    configPath,
     [
       '# Managed by PipeTune.',
       'PIPETUNE_PRESET="/tmp/e2e.effetune_preset"',
@@ -119,13 +232,19 @@ export const launchPipeTuneGtk = async (): Promise<PipeTuneGtkTestSession> => {
       XDG_RUNTIME_DIR: runtimeDirectory,
       XDG_CONFIG_HOME: configDirectory,
       HOME: homeDirectory,
+      PIPETUNE_GTK_E2E_PERSISTENCE_GUARD: persistenceGuardPath,
     },
   });
   let daemon: FakeDaemon | undefined;
   let app: GtkApp | undefined;
   try {
     const environment = await launcher.environment();
-    daemon = await startFakeDaemon(environment, runtimeDirectory);
+    daemon = await startFakeDaemon(
+      environment,
+      runtimeDirectory,
+      requestLogPath,
+      options.rejectedCommand
+    );
     app = await launcher.launch();
   } catch (error) {
     if (daemon !== undefined) {
@@ -136,14 +255,61 @@ export const launchPipeTuneGtk = async (): Promise<PipeTuneGtkTestSession> => {
     throw error;
   }
 
+  const readRequests = async (): Promise<readonly FakeControlRequest[]> =>
+    parseRequests(await readFile(requestLogPath, 'utf8'));
+  const clearRequests = async (): Promise<void> => {
+    await writeFile(requestLogPath, '', { mode: 0o600 });
+  };
+  const setConfigDirectoryWritable = async (
+    writable: boolean
+  ): Promise<void> => {
+    await writeFile(persistenceGuardPath, writable ? 'allow\n' : 'deny\n', {
+      mode: 0o600,
+    });
+  };
+  const disconnectDaemon = async (): Promise<void> => {
+    if (daemon === undefined) {
+      return;
+    }
+    await stopFakeDaemon(daemon);
+    daemon = undefined;
+  };
+  const reconnectDaemon = async (): Promise<void> => {
+    if (daemon !== undefined) {
+      throw new Error('fake daemon is already running');
+    }
+    const environment = await launcher.environment();
+    daemon = await startFakeDaemon(
+      environment,
+      runtimeDirectory,
+      requestLogPath,
+      options.rejectedCommand
+    );
+  };
   const release = async (): Promise<void> => {
     await launcher.release();
-    await stopFakeDaemon(daemon);
-    const daemonError = daemon.stderr();
+    const activeDaemon = daemon;
+    if (activeDaemon !== undefined) {
+      await stopFakeDaemon(activeDaemon);
+      daemon = undefined;
+    }
+    const daemonError = activeDaemon === undefined ? '' : activeDaemon.stderr();
     await rm(root, { recursive: true, force: true });
     if (daemonError !== '') {
       throw new Error(`fake daemon stderr was not empty: ${daemonError}`);
     }
   };
-  return { app, launcher, root, release };
+  return {
+    app,
+    launcher,
+    root,
+    configPath,
+    readRequests,
+    clearRequests,
+    inspectConfig: async () => inspectStartupConfig(configPath),
+    setConfigDirectoryWritable,
+    disconnectDaemon,
+    reconnectDaemon,
+    release,
+  };
 };

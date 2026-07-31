@@ -15,121 +15,91 @@ static bool check(bool condition, std::string_view message) {
 static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
   return check(GTK_IS_APPLICATION_WINDOW(ui.window),
                "main window type differs") &&
+         check(GTK_IS_BUTTON(ui.closeButton),
+               "close button type differs") &&
+         check(GTK_IS_BOX(ui.persistentStatusPane),
+               "persistent status pane type differs") &&
+         check(GTK_IS_BOX(ui.settingsPane),
+               "settings pane type differs") &&
+         check(GTK_IS_STACK_SWITCHER(ui.settingsSwitcher),
+               "settings switcher type differs") &&
+         check(GTK_IS_STACK(ui.settingsStack),
+               "settings stack type differs") &&
          check(GTK_IS_IMAGE(ui.statusImage),
                "status image type differs") &&
          check(GTK_IS_IMAGE(ui.statusBadge),
                "status badge type differs") &&
-         check(GTK_IS_LABEL(ui.statusLabel),
-               "status label type differs") &&
-         check(GTK_IS_LABEL(ui.processingModeLabel),
-               "processing mode label type differs") &&
-         check(GTK_IS_LABEL(ui.activePresetLabel),
-               "active preset label type differs") &&
-         check(GTK_IS_LABEL(ui.startupPresetLabel),
-               "startup preset label type differs") &&
-         check(GTK_IS_LABEL(ui.pluginCountLabel),
-               "plugin count label type differs") &&
-         check(GTK_IS_COMBO_BOX_TEXT(ui.outputCombo),
-               "output combo-box type differs") &&
+         check(GTK_IS_LABEL(ui.connectionSummaryLabel),
+               "connection summary type differs") &&
+         check(GTK_IS_LIST_BOX(ui.statusList),
+               "status list type differs") &&
+         check(GTK_IS_SWITCH(ui.processingEnabledSwitch),
+               "processing switch type differs") &&
+         check(GTK_IS_COMBO_BOX_TEXT(ui.presetCombo),
+               "preset combo-box type differs") &&
+         check(GTK_IS_FILE_CHOOSER_BUTTON(ui.presetChooser),
+               "preset chooser type differs") &&
+         check(GTK_IS_MENU_BUTTON(ui.outputMenuButton),
+               "output menu button type differs") &&
+         check(GTK_IS_LABEL(ui.outputButtonLabel),
+               "output button label type differs") &&
+         check(GTK_IS_POPOVER(ui.outputPopover),
+               "output popover type differs") &&
+         check(GTK_IS_LIST_BOX(ui.outputList),
+               "output list type differs") &&
          check(GTK_IS_COMBO_BOX_TEXT(ui.rateCombo),
                "rate combo-box type differs") &&
          check(GTK_IS_COMBO_BOX_TEXT(ui.rateEnforcementCombo),
                "rate enforcement combo-box type differs") &&
-         check(GTK_IS_BUTTON(ui.rateApplyButton),
-               "rate apply button type differs") &&
-         check(GTK_IS_LABEL(ui.rateStatusLabel),
-               "rate status label type differs") &&
          check(GTK_IS_COMBO_BOX_TEXT(ui.dspBackendCombo),
                "DSP backend combo-box type differs") &&
-         check(GTK_IS_BUTTON(ui.dspBackendApplyButton),
-               "DSP backend apply button type differs") &&
-         check(GTK_IS_LABEL(ui.dspBackendStatusLabel),
-               "DSP backend status label type differs") &&
          check(GTK_IS_COMBO_BOX_TEXT(ui.dspIdlePolicyCombo),
                "DSP idle policy combo-box type differs") &&
-         check(GTK_IS_BUTTON(ui.dspIdlePolicyApplyButton),
-               "DSP idle policy apply button type differs") &&
-         check(GTK_IS_LABEL(ui.dspIdleStatusLabel),
-               "DSP idle status label type differs") &&
-         check(GTK_IS_LABEL(ui.targetLabel),
-               "target label type differs") &&
-         check(GTK_IS_LABEL(ui.outputReasonLabel),
-               "output reason label type differs") &&
-         check(GTK_IS_LABEL(ui.defaultSinkLabel),
-               "default sink label type differs") &&
-         check(GTK_IS_LABEL(ui.inputFrameRateLabel),
-               "input frame-rate label type differs") &&
-         check(GTK_IS_LABEL(ui.lastInputLabel),
-               "last input label type differs") &&
-         check(GTK_IS_LABEL(ui.pcmDataRateLabel),
-               "PCM data-rate label type differs") &&
-         check(GTK_IS_LABEL(ui.streamFormatLabel),
-               "stream format label type differs") &&
-         check(GTK_IS_LABEL(ui.dspProcessingTimeLabel),
-               "DSP processing-time label type differs") &&
-         check(GTK_IS_LABEL(ui.counterLabel),
-               "counter label type differs") &&
+         check(GTK_IS_BUTTON(ui.restoreDefaultsButton),
+               "restore-defaults button type differs") &&
          check(GTK_IS_LABEL(ui.versionLabel),
                "version label type differs") &&
-         check(GTK_IS_BOX(ui.noticeBox),
-               "notice box type differs") &&
-         check(GTK_IS_LABEL(ui.noticeLabel),
-               "notice label type differs") &&
-         check(GTK_IS_FILE_CHOOSER_BUTTON(ui.presetChooser),
-               "preset chooser type differs") &&
-         check(GTK_IS_COMBO_BOX_TEXT(ui.presetCombo),
-               "EffeTune preset combo-box type differs") &&
+         check(GTK_IS_TOGGLE_BUTTON(ui.logToggleButton),
+               "log toggle type differs") &&
+         check(GTK_IS_REVEALER(ui.logRevealer),
+               "log revealer type differs") &&
+         check(GTK_IS_COMBO_BOX_TEXT(ui.logFilterCombo),
+               "log filter type differs") &&
+         check(GTK_IS_BUTTON(ui.logCopyButton),
+               "log copy button type differs") &&
+         check(GTK_IS_BUTTON(ui.logClearButton),
+               "log clear button type differs") &&
+         check(GTK_IS_LIST_BOX(ui.logList),
+               "log list type differs") &&
+         check(GTK_IS_LABEL(ui.transactionStateLabel),
+               "transaction state type differs") &&
+         check(GTK_IS_BUTTON(ui.cancelButton),
+               "cancel button type differs") &&
          check(GTK_IS_BUTTON(ui.applyButton),
-               "apply button type differs") &&
-         check(GTK_IS_BUTTON(ui.bypassButton),
-               "bypass button type differs") &&
-         check(GTK_IS_BUTTON(ui.resetButton),
-               "configuration reset button type differs") &&
-         check(GTK_IS_BUTTON(ui.dismissButton),
-               "dismiss button type differs");
+               "global apply button type differs");
 }
 
-static bool checkInlineVersion(
-    const pipetune_gtk::MainWindowUi &ui) {
-  auto *outputGrid =
-      gtk_builder_get_object(ui.builder, "outputStatusGrid");
-  if (!check(GTK_IS_GRID(outputGrid),
-             "output status grid type differs")) {
-    return false;
-  }
-  auto *versionTitle =
-      gtk_grid_get_child_at(GTK_GRID(outputGrid), 0, 2);
-  auto *versionValue =
-      gtk_grid_get_child_at(GTK_GRID(outputGrid), 1, 2);
-  return check(GTK_IS_LABEL(versionTitle),
-               "version title type differs") &&
-         check(std::string_view(
-                   gtk_label_get_text(GTK_LABEL(versionTitle))) ==
-                   "Versions",
-               "version title differs") &&
-         check(versionValue == ui.versionLabel,
-               "versions must follow Selection reason") &&
-         check(std::string_view(
-                   gtk_label_get_text(GTK_LABEL(ui.versionLabel))) ==
-                   "PipeTune 1.2.3  •  EffeTune DSP 4.5.6",
-               "inline version text differs");
-}
-
-static bool checkInputStreamFormatTitle(
-    const pipetune_gtk::MainWindowUi &ui) {
-  auto *statusGrid =
-      gtk_builder_get_object(ui.builder, "runtimeStatusGrid");
-  if (!check(GTK_IS_GRID(statusGrid),
-             "runtime status grid type differs")) {
-    return false;
-  }
-  auto *title = gtk_grid_get_child_at(GTK_GRID(statusGrid), 0, 9);
-  return check(GTK_IS_LABEL(title),
-               "input stream format title type differs") &&
-         check(std::string_view(
-                   gtk_label_get_text(GTK_LABEL(title))) ==
-                   "Input stream format",
-               "input stream format title differs");
+static bool checkSettingsPages(const pipetune_gtk::MainWindowUi &ui) {
+  auto *children =
+      gtk_container_get_children(GTK_CONTAINER(ui.settingsStack));
+  const auto count = g_list_length(children);
+  g_list_free(children);
+  return check(count == 5, "settings page count differs") &&
+         check(gtk_stack_get_child_by_name(GTK_STACK(ui.settingsStack),
+                                           "processing") != nullptr,
+               "processing page is missing") &&
+         check(gtk_stack_get_child_by_name(GTK_STACK(ui.settingsStack),
+                                           "output") != nullptr,
+               "output page is missing") &&
+         check(gtk_stack_get_child_by_name(GTK_STACK(ui.settingsStack),
+                                           "rate") != nullptr,
+               "rate page is missing") &&
+         check(gtk_stack_get_child_by_name(GTK_STACK(ui.settingsStack),
+                                           "dsp") != nullptr,
+               "DSP page is missing") &&
+         check(gtk_stack_get_child_by_name(GTK_STACK(ui.settingsStack),
+                                           "advanced") != nullptr,
+               "advanced page is missing");
 }
 
 int main(int argc, char **argv) {
@@ -145,12 +115,13 @@ int main(int argc, char **argv) {
   auto width = int{0};
   auto height = int{0};
   gtk_window_get_default_size(GTK_WINDOW(ui.window), &width, &height);
+  auto minimumWidth = int{0};
+  auto minimumHeight = int{0};
+  gtk_widget_get_size_request(ui.window, &minimumWidth, &minimumHeight);
   auto *headerBar = gtk_builder_get_object(ui.builder, "headerBar");
   const auto valid =
       check(ui.builder != nullptr, "main window builder is unavailable") &&
-      checkWidgetTypes(ui) &&
-      checkInlineVersion(ui) &&
-      checkInputStreamFormatTitle(ui) &&
+      checkWidgetTypes(ui) && checkSettingsPages(ui) &&
       check(gtk_window_get_application(GTK_WINDOW(ui.window)) ==
                 application,
             "main window application differs") &&
@@ -163,62 +134,41 @@ int main(int argc, char **argv) {
       check(std::string_view(gtk_header_bar_get_title(
                 GTK_HEADER_BAR(headerBar))) == "PipeTune",
             "header bar title differs") &&
-      check(width == 680 && height == 720,
+      check(width == 1080 && height == 680,
             "main window default size differs") &&
-      check(gtk_builder_get_object(ui.builder, "refreshButton") == nullptr,
-            "periodically updated status must not expose a refresh button") &&
+      check(minimumWidth == 900 && minimumHeight == 560,
+            "main window minimum size differs") &&
+      check(gtk_stack_switcher_get_stack(
+                GTK_STACK_SWITCHER(ui.settingsSwitcher)) ==
+                GTK_STACK(ui.settingsStack),
+            "settings switcher is not attached to the stack") &&
+      check(gtk_revealer_get_reveal_child(
+                GTK_REVEALER(ui.logRevealer)) == FALSE,
+            "log drawer must start collapsed") &&
       check(std::string_view(
-                gtk_button_get_label(GTK_BUTTON(ui.resetButton))) ==
-                "Reset Configuration…",
-            "configuration reset button label differs") &&
-      check(std::string_view(gtk_button_get_label(
-                GTK_BUTTON(ui.dspBackendApplyButton))) ==
-                "Save for Next Start",
-            "DSP backend apply button label differs") &&
-      check(std::string_view(gtk_button_get_label(
-                GTK_BUTTON(ui.dspIdlePolicyApplyButton))) ==
-                "Save for Next Start",
-            "DSP idle policy apply button label differs") &&
-      check(gtk_widget_get_hexpand(ui.statusLabel) != FALSE,
-            "status label must expand");
-  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ui.outputCombo),
-                                 "System default");
-  gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ui.outputCombo),
-                                 "USB Headphones");
-  gtk_combo_box_set_active(GTK_COMBO_BOX(ui.outputCombo), 1);
-  const auto selectionWorks =
-      check(gtk_combo_box_get_active(GTK_COMBO_BOX(ui.outputCombo)) == 1,
-            "output combo-box selection differs");
-  gtk_combo_box_text_append_text(
-      GTK_COMBO_BOX_TEXT(ui.dspBackendCombo), "Scalar");
-  gtk_combo_box_text_append_text(
-      GTK_COMBO_BOX_TEXT(ui.dspBackendCombo), "SIMD");
-  gtk_combo_box_set_active(GTK_COMBO_BOX(ui.dspBackendCombo), 1);
-  const auto backendSelectionWorks =
-      check(gtk_combo_box_get_active(
-                GTK_COMBO_BOX(ui.dspBackendCombo)) == 1,
-            "DSP backend combo-box selection differs");
-  gtk_combo_box_text_append_text(
-      GTK_COMBO_BOX_TEXT(ui.dspIdlePolicyCombo), "Conservative");
-  gtk_combo_box_text_append_text(
-      GTK_COMBO_BOX_TEXT(ui.dspIdlePolicyCombo), "Exact");
-  gtk_combo_box_set_active(GTK_COMBO_BOX(ui.dspIdlePolicyCombo), 1);
-  const auto idleSelectionWorks =
-      check(gtk_combo_box_get_active(
-                GTK_COMBO_BOX(ui.dspIdlePolicyCombo)) == 1,
-            "DSP idle policy combo-box selection differs");
+                gtk_label_get_text(GTK_LABEL(ui.versionLabel))) ==
+                "PipeTune 1.2.3  •  EffeTune DSP 4.5.6",
+            "version text differs") &&
+      check(gtk_builder_get_object(ui.builder, "rateApplyButton") == nullptr,
+            "per-setting rate Apply button must not exist") &&
+      check(gtk_builder_get_object(ui.builder,
+                                   "dspBackendApplyButton") == nullptr,
+            "per-setting backend Apply button must not exist") &&
+      check(gtk_builder_get_object(ui.builder,
+                                   "dspIdlePolicyApplyButton") == nullptr,
+            "per-setting idle Apply button must not exist");
 
   gtk_widget_hide(ui.window);
   pipetune_gtk::presentMainWindow(ui, 1234);
   const auto presentationWorks =
       check(gtk_widget_get_visible(ui.window) != FALSE,
-            "presenting the main window must make it visible");
+            "presenting the main window must make it visible") &&
+      check(gtk_widget_get_visible(ui.persistentStatusPane) != FALSE,
+            "persistent status pane must be visible") &&
+      check(gtk_widget_get_visible(ui.settingsPane) != FALSE,
+            "settings pane must be visible");
 
   pipetune_gtk::destroyMainWindowUi(ui);
   g_object_unref(application);
-  return valid && selectionWorks && backendSelectionWorks &&
-                 idleSelectionWorks &&
-                 presentationWorks
-             ? 0
-             : 1;
+  return valid && presentationWorks ? 0 : 1;
 }

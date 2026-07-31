@@ -5,5 +5,6 @@
   </gresource>
   <gresource prefix="/net/kekyo/pipetune-gtk/ui">
     <file alias="main-window.ui" compressed="true">resources/main-window.ui</file>
+    <file alias="style.css" compressed="true">resources/style.css</file>
   </gresource>
 </gresources>
