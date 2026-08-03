@@ -18,7 +18,6 @@ static CommandLineOptions defaultOptions() {
           .ratePolicy = defaultSampleRatePolicy(),
           .dspBackend = DspBackendKind::scalar,
           .dspSimdVariant = DspSimdVariant::automatic,
-          .dspIdlePolicy = defaultDspIdlePolicy(),
           .channelCount = 2,
           .checkOnly = false,
           .purge = false,
@@ -402,92 +401,6 @@ static CommandLineParseResult parseDspCommandLine(
   return {.options = std::move(options), .error = {}};
 }
 
-static CommandLineParseResult parseIdleCommandLine(
-    std::span<const std::string_view> arguments) {
-  auto options = defaultOptions();
-  if (arguments.empty()) {
-    return parseError(std::move(options), "idle requires get or set");
-  }
-  const auto operation = arguments.front();
-  if (operation == "get") {
-    options.action = CommandLineAction::idleGet;
-    auto sawSocket = false;
-    for (auto index = std::size_t{1}; index < arguments.size(); ++index) {
-      const auto argument = arguments[index];
-      if (argument == "--json") {
-        if (options.json) {
-          return parseError(std::move(options),
-                            "duplicate option: --json");
-        }
-        options.json = true;
-        continue;
-      }
-      if (argument != "--socket") {
-        return parseError(std::move(options),
-                          "unknown idle get option: " +
-                              std::string(argument));
-      }
-      if (sawSocket) {
-        return parseError(std::move(options),
-                          "duplicate option: --socket");
-      }
-      if (index + 1 >= arguments.size()) {
-        return parseError(std::move(options),
-                          "missing value for --socket");
-      }
-      const auto value = arguments[++index];
-      if (value.empty()) {
-        return parseError(std::move(options),
-                          "--socket must not be empty");
-      }
-      sawSocket = true;
-      options.controlSocketPath = value;
-    }
-    return {.options = std::move(options), .error = {}};
-  }
-  if (operation != "set") {
-    return parseError(std::move(options),
-                      "unknown idle operation: " +
-                          std::string(operation));
-  }
-  options.action = CommandLineAction::idleSet;
-  if (arguments.size() < 2) {
-    return parseError(std::move(options),
-                      "idle set requires conservative or exact");
-  }
-  const auto policy = parseDspIdlePolicyName(arguments[1]);
-  if (!policy.has_value()) {
-    return parseError(std::move(options),
-                      "DSP idle policy must be conservative or exact");
-  }
-  options.dspIdlePolicy = *policy;
-  auto sawSocket = false;
-  for (auto index = std::size_t{2}; index < arguments.size(); ++index) {
-    const auto argument = arguments[index];
-    if (argument != "--socket") {
-      return parseError(std::move(options),
-                        "unknown idle set option: " +
-                            std::string(argument));
-    }
-    if (sawSocket) {
-      return parseError(std::move(options),
-                        "duplicate option: --socket");
-    }
-    if (index + 1 >= arguments.size()) {
-      return parseError(std::move(options),
-                        "missing value for --socket");
-    }
-    const auto value = arguments[++index];
-    if (value.empty()) {
-      return parseError(std::move(options),
-                        "--socket must not be empty");
-    }
-    sawSocket = true;
-    options.controlSocketPath = value;
-  }
-  return {.options = std::move(options), .error = {}};
-}
-
 static CommandLineParseResult parseSetupCommandLine(
     std::span<const std::string_view> arguments) {
   auto options = defaultOptions();
@@ -586,9 +499,6 @@ CommandLineParseResult parseCommandLine(
   if (!arguments.empty() && arguments.front() == "dsp") {
     return parseDspCommandLine(arguments.subspan(1));
   }
-  if (!arguments.empty() && arguments.front() == "idle") {
-    return parseIdleCommandLine(arguments.subspan(1));
-  }
   if (!arguments.empty() && arguments.front() == "config") {
     return parseConfigCommandLine(arguments.subspan(1));
   }
@@ -615,7 +525,6 @@ CommandLineParseResult parseCommandLine(
   auto sawChannels = false;
   auto sawDspBackend = false;
   auto sawDspVariant = false;
-  auto sawDspIdlePolicy = false;
   auto sawCheck = false;
   for (auto index = std::size_t{0}; index < arguments.size(); ++index) {
     const auto argument = arguments[index];
@@ -646,8 +555,7 @@ CommandLineParseResult parseCommandLine(
     if (argument != "--preset" && argument != "--load-preset" &&
         argument != "--socket" && argument != "--target" &&
         argument != "--sink-name" && argument != "--channels" &&
-        argument != "--dsp-backend" && argument != "--dsp-variant" &&
-        argument != "--dsp-idle-policy") {
+        argument != "--dsp-backend" && argument != "--dsp-variant") {
       return parseError(std::move(options),
                         "unknown option: " + std::string(argument));
     }
@@ -740,21 +648,6 @@ CommandLineParseResult parseCommandLine(
       options.dspSimdVariant = *variant;
       continue;
     }
-    if (argument == "--dsp-idle-policy") {
-      if (sawDspIdlePolicy) {
-        return parseError(std::move(options),
-                          "duplicate option: --dsp-idle-policy");
-      }
-      const auto policy = parseDspIdlePolicyName(value);
-      if (!policy.has_value()) {
-        return parseError(
-            std::move(options),
-            "--dsp-idle-policy must be conservative or exact");
-      }
-      sawDspIdlePolicy = true;
-      options.dspIdlePolicy = *policy;
-      continue;
-    }
     if (sawChannels) {
       return parseError(std::move(options), "duplicate option: --channels");
     }
@@ -778,7 +671,7 @@ CommandLineParseResult parseCommandLine(
   }
   if (sawRestoreDefault) {
     if (sawTarget || sawChannels || sawDspBackend || sawDspVariant ||
-        sawDspIdlePolicy || sawCheck || sawSocket) {
+        sawCheck || sawSocket) {
       return parseError(
           std::move(options),
           "only --sink-name may modify --restore-default");
@@ -788,7 +681,7 @@ CommandLineParseResult parseCommandLine(
   }
   if (sawLoadPreset || sawStatus) {
     if (sawTarget || sawSinkName || sawChannels || sawDspBackend ||
-        sawDspVariant || sawDspIdlePolicy || sawCheck) {
+        sawDspVariant || sawCheck) {
       return parseError(
           std::move(options),
           "PipeWire run options cannot be used with control actions");
@@ -827,15 +720,12 @@ std::string_view commandLineUsage() noexcept {
          "  pipetune dsp list [--json] [--socket PATH]\n"
          "  pipetune dsp get [--json] [--socket PATH]\n"
          "  pipetune dsp set scalar|simd [--variant VARIANT] [--socket PATH]\n"
-         "  pipetune idle get [--json] [--socket PATH]\n"
-         "  pipetune idle set conservative|exact [--socket PATH]\n"
          "  pipetune config reset [-y|--yes]\n"
          "  pipetune setup [--preset FILE]\n"
          "  pipetune unsetup [--purge]\n"
          "  pipetune --preset FILE [--target OBJECT] [--sink-name NAME]\n"
          "           [--channels COUNT] [--dsp-backend scalar|simd]\n"
          "           [--dsp-variant VARIANT]\n"
-         "           [--dsp-idle-policy conservative|exact]\n"
          "           [--socket PATH] [--check]\n"
          "  pipetune --load-preset FILE [--socket PATH]\n"
          "  pipetune --status [--socket PATH]\n"
@@ -857,9 +747,7 @@ std::string_view commandLineUsage() noexcept {
          "  dsp list        List scalar and SIMD backend availability.\n"
          "  dsp get         Show configured and effective DSP backends.\n"
          "  dsp set         Select scalar compatibility or SIMD acceleration.\n"
-         "  idle get       Show DSP sleep and PipeWire idle state.\n"
-         "  idle set       Select conservative or exact DSP tail detection.\n"
-         "  config reset    Reset Bypass, output, PCM rate, DSP backend, and idle policy.\n"
+         "  config reset    Reset Bypass, output, PCM rate, and DSP backend.\n"
          "  -y, --yes       Skip the configuration reset confirmation.\n"
          "  --json           Print the complete machine-readable status.\n"
          "  setup            Enable PipeTune for the current user.\n"

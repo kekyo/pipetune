@@ -119,24 +119,12 @@ static bool testRuntimeText() {
   overloaded.dspTiming.nanosecondsPerFrame = 6000.0;
   const auto overloadedRuntime =
       pipetune_gtk::runtimeStatusText(overloaded);
-  auto sleeping = state;
-  sleeping.runtime.dspIdleState = pipetune::DspIdleState::sleeping;
-  const auto sleepingRuntime =
-      pipetune_gtk::runtimeStatusText(sleeping);
-  auto pipeWirePaused = state;
-  pipeWirePaused.runtime.pipeWireIdle = true;
-  const auto pipeWirePausedRuntime =
-      pipetune_gtk::runtimeStatusText(pipeWirePaused);
   return check(runtime.dspProcessingTime ==
                    "1.00 µs/frame  •  Load 20.0%",
                "DSP processing-time text differs") &&
          check(overloadedRuntime.dspProcessingTime ==
                    "6.00 µs/frame  •  Load 120.0%",
                "overloaded DSP processing-time text differs") &&
-         check(sleepingRuntime.dspProcessingTime == "—",
-               "sleeping DSP time must be unavailable") &&
-         check(pipeWirePausedRuntime.dspProcessingTime == "—",
-               "PipeWire-paused DSP time must be unavailable") &&
          check(runtime.counters ==
                    "Overrun 4  •  Underrun 5  •  Processing 6",
                "runtime counter text differs");

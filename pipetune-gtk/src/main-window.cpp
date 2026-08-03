@@ -108,8 +108,6 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
           builder, "rateEnforcementCombo", GTK_TYPE_COMBO_BOX_TEXT),
       .dspBackendCombo = requiredWidget(
           builder, "dspBackendCombo", GTK_TYPE_COMBO_BOX_TEXT),
-      .dspIdlePolicyCombo = requiredWidget(
-          builder, "dspIdlePolicyCombo", GTK_TYPE_COMBO_BOX_TEXT),
       .languageCombo = requiredWidget(
           builder, "languageCombo", GTK_TYPE_COMBO_BOX_TEXT),
       .languageRestartNotice = requiredWidget(

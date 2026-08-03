@@ -88,9 +88,6 @@ static bool testRequests() {
       pipetune::makeSetDspBackendControlRequest(
           pipetune::DspBackendKind::simd,
           pipetune::DspSimdVariant::x86_64_v3));
-  const auto setDspIdlePolicy = pipetune::parseControlRequest(
-      pipetune::makeSetDspIdlePolicyControlRequest(
-          pipetune::DspIdlePolicy::exact));
   return check(setOutput.error.empty(), setOutput.error) &&
          check(setOutput.request.command ==
                    pipetune::ControlCommand::setOutput,
@@ -129,18 +126,11 @@ static bool testRequests() {
                        pipetune::DspBackendKind::simd &&
                    setDspBackend.request.dspSimdVariant ==
                        pipetune::DspSimdVariant::x86_64_v3,
-               "set-dsp-backend request differs") &&
-         check(setDspIdlePolicy.error.empty(),
-               setDspIdlePolicy.error) &&
-         check(setDspIdlePolicy.request.command ==
-                       pipetune::ControlCommand::setDspIdlePolicy &&
-                   setDspIdlePolicy.request.dspIdlePolicy ==
-                       pipetune::DspIdlePolicy::exact,
-               "set-dsp-idle-policy request differs");
+               "set-dsp-backend request differs");
 }
 
 static bool testRejectedRequests() {
-  constexpr auto inputs = std::array<std::string_view, 31>{
+  constexpr auto inputs = std::array<std::string_view, 27>{
       "",
       "[]",
       R"json({"command":"unknown"})json",
@@ -167,11 +157,7 @@ static bool testRejectedRequests() {
       R"json({"command":"set-dsp-backend","backend":"simd","extra":true})json",
       R"json({"command":"set-dsp-backend","backend":"simd","simdVariant":"avx2"})json",
       R"json({"command":"set-dsp-backend","backend":"scalar","simdVariant":"baseline"})json",
-      R"json({"command":"set-dsp-backend","backend":"simd","simdVariant":42})json",
-      R"json({"command":"set-dsp-idle-policy"})json",
-      R"json({"command":"set-dsp-idle-policy","policy":"threshold"})json",
-      R"json({"command":"set-dsp-idle-policy","policy":42})json",
-      R"json({"command":"set-dsp-idle-policy","policy":"exact","extra":true})json"};
+      R"json({"command":"set-dsp-backend","backend":"simd","simdVariant":42})json"};
   for (const auto input : inputs) {
     if (!check(!pipetune::parseControlRequest(input).error.empty(),
                "invalid control request must be rejected")) {
@@ -279,26 +265,16 @@ static bool testSuccessResponse() {
              .available = true,
              .cpuSupported = true,
              .cpuRequirement = "x86-64-v3",
-             .error = {}}},
-       .dspIdlePolicy = pipetune::DspIdlePolicy::exact,
-       .dspIdleState = pipetune::DspIdleState::sleeping,
-       .dspIdleSkippedFrames = 144000,
-       .dspIdleSleepTransitions = 3,
-       .pipeWireIdle = true},
+             .error = {}}}},
       warnings);
   const auto inspection = pipetune::inspectControlResponse(response);
   const auto parsed = pipetune::parseControlResponse(response);
   auto mismatchedPinnedVariant = response;
-  auto invalidIdleState = response;
   if (!check(replaceOnce(
                  mismatchedPinnedVariant,
                  R"json("effectiveDspVariant":"x86-64-v3")json",
                  R"json("effectiveDspVariant":"baseline")json"),
-             "cannot prepare mismatched pinned DSP variant") ||
-      !check(replaceOnce(invalidIdleState,
-                         R"json("dspIdleState":"sleeping")json",
-                         R"json("dspIdleState":"waiting")json"),
-             "cannot prepare invalid DSP idle state")) {
+             "cannot prepare mismatched pinned DSP variant")) {
     return false;
   }
   if (!check(inspection.valid, inspection.error) ||
@@ -378,14 +354,6 @@ static bool testSuccessResponse() {
                  parsed.status.availableDspBackends[0].available &&
                  parsed.status.availableDspBackends[1].available,
              "parsed response DSP backend status differs") ||
-      !check(parsed.status.dspIdlePolicy ==
-                     pipetune::DspIdlePolicy::exact &&
-                 parsed.status.dspIdleState ==
-                     pipetune::DspIdleState::sleeping &&
-                 parsed.status.dspIdleSkippedFrames == 144000 &&
-                 parsed.status.dspIdleSleepTransitions == 3 &&
-                 parsed.status.pipeWireIdle,
-             "parsed response DSP idle status differs") ||
       !check(parsed.warnings.size() == 1 &&
                  parsed.warnings.front().nodeIndex == 3 &&
                  parsed.warnings.front().pluginName == "Future DSP" &&
@@ -484,17 +452,6 @@ static bool testSuccessResponse() {
       yyjson_is_arr(yyjson_obj_get(root, "availableDspVariants")) &&
       yyjson_arr_size(
           yyjson_obj_get(root, "availableDspVariants")) == 3 &&
-      std::string_view(
-          yyjson_get_str(yyjson_obj_get(root, "dspIdlePolicy"))) ==
-          "exact" &&
-      std::string_view(
-          yyjson_get_str(yyjson_obj_get(root, "dspIdleState"))) ==
-          "sleeping" &&
-      yyjson_get_uint(
-          yyjson_obj_get(root, "dspIdleSkippedFrames")) == 144000 &&
-      yyjson_get_uint(
-          yyjson_obj_get(root, "dspIdleSleepTransitions")) == 3 &&
-      yyjson_get_bool(yyjson_obj_get(root, "pipeWireIdle")) &&
       yyjson_is_arr(warningArray) && yyjson_arr_size(warningArray) == 1 &&
       yyjson_get_uint(
           yyjson_obj_get(yyjson_arr_get(warningArray, 0), "nodeIndex")) == 3;
@@ -502,9 +459,7 @@ static bool testSuccessResponse() {
   return check(correct, "success response fields differ") &&
          check(
              !pipetune::parseControlResponse(mismatchedPinnedVariant).valid,
-             "pinned DSP preference must reject a different effective tier") &&
-         check(!pipetune::parseControlResponse(invalidIdleState).valid,
-               "unknown DSP idle states must be rejected");
+             "pinned DSP preference must reject a different effective tier");
 }
 
 static bool testStatusEvent() {
@@ -952,13 +907,37 @@ static bool testErrorResponse() {
                "parsed error diagnostic differs");
 }
 
+static bool testRemovedDspIdleProtocol() {
+  const auto request = pipetune::parseControlRequest(
+      R"json({"command":"set-dsp-idle-policy","policy":"exact"})json");
+  const auto response = pipetune::makeControlSuccessResponse({}, {});
+  auto *document = yyjson_read(response.data(), response.size(), 0);
+  if (!check(document != nullptr,
+             "control response without DSP idle state must be valid JSON")) {
+    return false;
+  }
+  auto *root = yyjson_doc_get_root(document);
+  const auto omitsIdleState =
+      yyjson_obj_get(root, "dspIdlePolicy") == nullptr &&
+      yyjson_obj_get(root, "dspIdleState") == nullptr &&
+      yyjson_obj_get(root, "dspIdleSkippedFrames") == nullptr &&
+      yyjson_obj_get(root, "dspIdleSleepTransitions") == nullptr &&
+      yyjson_obj_get(root, "pipeWireIdle") == nullptr;
+  yyjson_doc_free(document);
+  return check(!request.error.empty(),
+               "removed DSP idle control command must be rejected") &&
+         check(omitsIdleState,
+               "control response must omit removed DSP idle state");
+}
+
 int main() {
   return testRequests() && testRejectedRequests() && testSuccessResponse() &&
                  testStatusEvent() && testBypassStatus() &&
                  testDspBackendFallbackStatus() &&
                  testUnavailableOutputStatus() &&
                  testRejectedOutputStatus() &&
-                 testRejectedInputTelemetry() && testErrorResponse()
+                 testRejectedInputTelemetry() && testErrorResponse() &&
+                 testRemovedDspIdleProtocol()
              ? 0
              : 1;
 }

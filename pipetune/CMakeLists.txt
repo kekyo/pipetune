@@ -181,7 +181,6 @@ add_library(
   src/audio_bridge.cpp
   src/dsp_backend.cpp
   src/dsp_catalog.cpp
-  src/dsp_idle.cpp
   src/dsp_pipeline.cpp
   src/sample_rate.cpp
   src/startup_config.cpp
@@ -228,14 +227,11 @@ add_library(
   src/default_sink_restore.cpp
   src/dsp_backend_command.cpp
   src/dsp_backend_runtime.cpp
-  src/dsp_idle_controller.cpp
   src/dsp_pipeline_slot.cpp
   src/input_telemetry.cpp
-  src/idle_command.cpp
   src/output_command.cpp
   src/output_device_tracker.cpp
   src/pipewire_buffer_io.cpp
-  src/pipewire_idle_epoch.cpp
   src/pipewire_rate_parser.cpp
   src/pipewire_volume_state.cpp
   src/pipewire_pipeline.cpp
@@ -485,20 +481,6 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_sample_rate_tests
     COMMAND pipetune_sample_rate_tests)
-
-  add_executable(
-    pipetune_dsp_idle_tests
-    test/dsp_idle_test.cpp)
-  target_link_libraries(pipetune_dsp_idle_tests PRIVATE pipetune_core)
-  if(MSVC)
-    target_compile_options(pipetune_dsp_idle_tests PRIVATE /W4 /WX)
-  else()
-    target_compile_options(
-      pipetune_dsp_idle_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(
-    NAME pipetune_dsp_idle_tests
-    COMMAND pipetune_dsp_idle_tests)
 
   add_executable(
     pipetune_startup_pipeline_tests
@@ -758,23 +740,6 @@ if(BUILD_TESTING)
     COMMAND pipetune_rate_command_tests)
 
   add_executable(
-    pipetune_idle_command_tests
-    test/idle_command_test.cpp)
-  target_include_directories(pipetune_idle_command_tests PRIVATE src)
-  target_link_libraries(
-    pipetune_idle_command_tests PRIVATE pipetune_pipewire)
-  if(MSVC)
-    target_compile_options(pipetune_idle_command_tests PRIVATE /W4 /WX)
-  else()
-    target_compile_options(
-      pipetune_idle_command_tests PRIVATE
-      -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(
-    NAME pipetune_idle_command_tests
-    COMMAND pipetune_idle_command_tests)
-
-  add_executable(
     pipetune_dsp_backend_command_tests
     test/dsp_backend_command_test.cpp)
   target_include_directories(
@@ -853,43 +818,6 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_pipewire_buffer_io_tests
     COMMAND pipetune_pipewire_buffer_io_tests)
-
-  add_executable(
-    pipetune_pipewire_idle_epoch_tests
-    test/pipewire_idle_epoch_test.cpp)
-  target_include_directories(
-    pipetune_pipewire_idle_epoch_tests PRIVATE src)
-  target_link_libraries(
-    pipetune_pipewire_idle_epoch_tests PRIVATE pipetune_pipewire)
-  if(MSVC)
-    target_compile_options(
-      pipetune_pipewire_idle_epoch_tests PRIVATE /W4 /WX)
-  else()
-    target_compile_options(
-      pipetune_pipewire_idle_epoch_tests PRIVATE
-      -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(
-    NAME pipetune_pipewire_idle_epoch_tests
-    COMMAND pipetune_pipewire_idle_epoch_tests)
-
-  add_executable(
-    pipetune_dsp_idle_controller_tests
-    test/dsp_idle_controller_test.cpp)
-  target_include_directories(pipetune_dsp_idle_controller_tests PRIVATE src)
-  target_link_libraries(
-    pipetune_dsp_idle_controller_tests PRIVATE pipetune_pipewire)
-  if(MSVC)
-    target_compile_options(
-      pipetune_dsp_idle_controller_tests PRIVATE /W4 /WX)
-  else()
-    target_compile_options(
-      pipetune_dsp_idle_controller_tests PRIVATE
-      -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(
-    NAME pipetune_dsp_idle_controller_tests
-    COMMAND pipetune_dsp_idle_controller_tests)
 
   add_executable(
     pipetune_dsp_pipeline_slot_tests

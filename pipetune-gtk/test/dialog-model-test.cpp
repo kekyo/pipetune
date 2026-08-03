@@ -35,7 +35,6 @@ static pipetune::StartupConfig baseConfig() {
       .ratePolicy = pipetune::defaultSampleRatePolicy(),
       .dspBackend = pipetune::DspBackendKind::scalar,
       .dspSimdVariant = pipetune::DspSimdVariant::automatic,
-      .dspIdlePolicy = pipetune::DspIdlePolicy::conservative,
   };
 }
 
@@ -106,22 +105,25 @@ static bool testLiveCoalescingApplyAndCancel() {
   }
 
   desired = transaction.desiredLive;
-  desired.dspIdlePolicy = pipetune::DspIdlePolicy::exact;
+  desired.dspBackend = pipetune::DspBackendKind::simd;
+  desired.dspSimdVariant = pipetune::DspSimdVariant::x86_64_v3;
   pipetune_gtk::editSettingsTransaction(transaction, desired);
   pipetune_gtk::beginSettingsOperation(
-      transaction, pipetune_gtk::SettingsOperation::dspIdle);
+      transaction, pipetune_gtk::SettingsOperation::dspBackend);
   liveConfirmation = transaction.confirmedLive;
-  liveConfirmation.dspIdlePolicy = pipetune::DspIdlePolicy::exact;
+  liveConfirmation.dspBackend = pipetune::DspBackendKind::simd;
+  liveConfirmation.dspSimdVariant =
+      pipetune::DspSimdVariant::x86_64_v3;
   pipetune_gtk::completeSettingsOperation(
       transaction, true, liveConfirmation, {});
   pipetune_gtk::requestSettingsCancel(transaction);
   if (!check(pipetune_gtk::nextSettingsOperation(transaction) ==
-                 pipetune_gtk::SettingsOperation::dspIdle,
+                 pipetune_gtk::SettingsOperation::dspBackend,
              "Cancel must restore the live baseline")) {
     return false;
   }
   pipetune_gtk::beginSettingsOperation(
-      transaction, pipetune_gtk::SettingsOperation::dspIdle);
+      transaction, pipetune_gtk::SettingsOperation::dspBackend);
   pipetune_gtk::completeSettingsOperation(
       transaction, true, transaction.baselineLive, {});
   return check(
@@ -238,7 +240,6 @@ static bool testStructuredStatusModel() {
       pipetune::DspSimdVariant::x86_64_v3;
   state.runtime.effectiveDspVariant =
       pipetune::DspBackendVariant::x86_64_v3;
-  state.runtime.dspIdlePolicy = pipetune::DspIdlePolicy::exact;
   state.runtime.overrunFrames = 1;
   state.runtime.underrunFrames = 2;
   state.runtime.processingErrors = 3;

@@ -184,18 +184,6 @@ void setControlDspBackendAsync(ControlClient *client,
                                ControlClientReplyCallback callback,
                                void *userData);
 
-/**
- * Requests a live DSP idle policy change.
- *
- * @param client Client used for the request.
- * @param policy Conservative tail threshold or exact-zero policy.
- * @param callback Non-null completion callback.
- * @param userData Opaque callback argument.
- */
-void setControlDspIdlePolicyAsync(
-    ControlClient *client, pipetune::DspIdlePolicy policy,
-    ControlClientReplyCallback callback, void *userData);
-
 } // namespace pipetune_gtk
 
 #endif

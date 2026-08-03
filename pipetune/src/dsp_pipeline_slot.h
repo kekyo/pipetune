@@ -57,17 +57,6 @@ public:
                         double timeSeconds) noexcept;
 
   /**
-   * Clears the complete active pipeline's accumulated DSP state.
-   *
-   * This function uses the same hazard protection as process() and performs no
-   * allocation, locking, or object destruction. It must be called by the
-   * single real-time thread that owns process().
-   *
-   * @return True when the selected pipeline was reset.
-   */
-  bool resetActive() noexcept;
-
-  /**
    * Atomically activates a prepared replacement.
    *
    * Superseded objects are reclaimed here when the process callback has
@@ -139,12 +128,7 @@ public:
   /** Returns cumulative native EffeTune processing counters. */
   DspPerformanceCounters performanceCounters() const noexcept;
 
-  /** Returns a counter changed whenever another pipeline becomes active. */
-  std::uint64_t revision() const noexcept;
-
 private:
-  DspPipeline *acquireActive() noexcept;
-  void releaseActive() noexcept;
   void reclaimSuperseded();
 
   std::unique_ptr<DspPipeline> current_;
@@ -152,7 +136,6 @@ private:
   std::vector<std::unique_ptr<DspPipeline>> superseded_;
   std::atomic<DspPipeline *> active_;
   std::atomic<DspPipeline *> hazard_;
-  std::atomic<std::uint64_t> revision_;
   std::atomic<std::uint64_t> processedFrames_;
   std::atomic<std::uint64_t> processingNanoseconds_;
 };

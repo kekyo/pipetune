@@ -60,8 +60,6 @@ static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
                "rate enforcement combo-box type differs") &&
          check(GTK_IS_COMBO_BOX_TEXT(ui.dspBackendCombo),
                "DSP backend combo-box type differs") &&
-         check(GTK_IS_COMBO_BOX_TEXT(ui.dspIdlePolicyCombo),
-               "DSP idle policy combo-box type differs") &&
          check(GTK_IS_COMBO_BOX_TEXT(ui.languageCombo),
                "language combo-box type differs") &&
          check(GTK_IS_LABEL(ui.languageRestartNotice),
@@ -142,13 +140,17 @@ static bool checkLoadMeterHost(const pipetune_gtk::MainWindowUi &ui) {
                "status Load meter must follow the connection summary");
 }
 
+static bool checkRemovedDspIdleWidgets(const pipetune_gtk::MainWindowUi &ui) {
+  return check(
+      gtk_builder_get_object(ui.builder, "dspIdlePolicyCombo") == nullptr,
+      "removed DSP idle policy selector must not be present");
+}
+
 static bool checkJapaneseMeasuredStatusLabels() {
   auto state = pipetune_gtk::initialApplicationState();
   state.connection = pipetune_gtk::ControlConnectionState::connected;
   state.hasRuntimeStatus = true;
   state.runtime.inputSampleRate = 48'000;
-  state.runtime.pipeWireIdle = false;
-  state.runtime.dspIdleState = pipetune::DspIdleState::active;
   state.dspTiming.hasAverage = true;
   state.dspTiming.nanosecondsPerFrame = 100.0;
   const auto sections = pipetune_gtk::buildStatusSections(
@@ -211,7 +213,7 @@ int main(int argc, char **argv) {
   const auto valid =
       check(ui.builder != nullptr, "main window builder is unavailable") &&
       checkWidgetTypes(ui) && checkSettingsPages(ui) &&
-      checkLoadMeterHost(ui) &&
+      checkLoadMeterHost(ui) && checkRemovedDspIdleWidgets(ui) &&
       check(gtk_window_get_application(GTK_WINDOW(ui.window)) ==
                 application,
             "main window application differs") &&
@@ -248,10 +250,7 @@ int main(int argc, char **argv) {
             "per-setting rate Apply button must not exist") &&
       check(gtk_builder_get_object(ui.builder,
                                    "dspBackendApplyButton") == nullptr,
-            "per-setting backend Apply button must not exist") &&
-      check(gtk_builder_get_object(ui.builder,
-                                   "dspIdlePolicyApplyButton") == nullptr,
-            "per-setting idle Apply button must not exist");
+            "per-setting backend Apply button must not exist");
 
   gtk_widget_hide(ui.window);
   pipetune_gtk::presentMainWindow(ui, 1234);

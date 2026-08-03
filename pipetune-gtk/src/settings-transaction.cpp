@@ -12,8 +12,7 @@ static bool configMatches(const pipetune::StartupConfig &left,
          left.preferredOutput == right.preferredOutput &&
          left.ratePolicy == right.ratePolicy &&
          left.dspBackend == right.dspBackend &&
-         left.dspSimdVariant == right.dspSimdVariant &&
-         left.dspIdlePolicy == right.dspIdlePolicy;
+         left.dspSimdVariant == right.dspSimdVariant;
 }
 
 static bool operationMatches(
@@ -31,8 +30,6 @@ static bool operationMatches(
   case SettingsOperation::dspBackend:
     return left.dspBackend == right.dspBackend &&
            left.dspSimdVariant == right.dspSimdVariant;
-  case SettingsOperation::dspIdle:
-    return left.dspIdlePolicy == right.dspIdlePolicy;
   case SettingsOperation::processing:
     return left.presetFound == right.presetFound &&
            left.presetPath == right.presetPath;
@@ -48,8 +45,6 @@ static std::string confirmationDiagnostic(SettingsOperation operation) {
     return "Daemon did not confirm the requested sample-rate policy";
   case SettingsOperation::dspBackend:
     return "Daemon did not confirm the requested DSP backend";
-  case SettingsOperation::dspIdle:
-    return "Daemon did not confirm the requested DSP idle policy";
   case SettingsOperation::processing:
     return "Daemon did not confirm the requested processing mode";
   case SettingsOperation::none:
@@ -110,11 +105,6 @@ nextSettingsOperation(const SettingsTransaction &transaction) {
                         transaction.confirmedLive,
                         transaction.desiredLive)) {
     return SettingsOperation::dspBackend;
-  }
-  if (!operationMatches(SettingsOperation::dspIdle,
-                        transaction.confirmedLive,
-                        transaction.desiredLive)) {
-    return SettingsOperation::dspIdle;
   }
   if (!operationMatches(SettingsOperation::processing,
                         transaction.confirmedLive,
@@ -263,7 +253,6 @@ pipetune::StartupConfig startupConfigFromRuntime(
       .ratePolicy = status.configuredRatePolicy,
       .dspBackend = status.configuredDspBackend,
       .dspSimdVariant = status.configuredDspSimdVariant,
-      .dspIdlePolicy = status.dspIdlePolicy,
   };
 }
 

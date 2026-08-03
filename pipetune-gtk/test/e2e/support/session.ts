@@ -52,8 +52,6 @@ export interface StartupConfigSnapshot {
   readonly dspBackend: string;
   /** Automatic or pinned SIMD variant. */
   readonly dspSimdVariant: string;
-  /** Conservative or exact DSP idle policy. */
-  readonly dspIdlePolicy: string;
 }
 
 /**
@@ -218,7 +216,6 @@ export const launchPipeTuneGtk = async (
       'PIPETUNE_TARGET="alsa_output.usb-long-studio-dac.analog-stereo"',
       'PIPETUNE_DSP_BACKEND=simd',
       'PIPETUNE_DSP_SIMD_VARIANT=x86-64-v3',
-      'PIPETUNE_DSP_IDLE_POLICY=exact',
       'PIPETUNE_RATE=192000',
       'PIPETUNE_RATE_ENFORCEMENT=force',
       '',

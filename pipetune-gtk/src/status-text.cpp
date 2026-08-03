@@ -55,9 +55,7 @@ static std::string fixedDecimal(double value, int precision) {
 
 static std::string dspProcessingTimeText(
     const ApplicationState &state) {
-  if (state.runtime.pipeWireIdle ||
-      state.runtime.dspIdleState == pipetune::DspIdleState::sleeping ||
-      !state.dspTiming.hasAverage ||
+  if (!state.dspTiming.hasAverage ||
       !std::isfinite(state.dspTiming.nanosecondsPerFrame) ||
       state.dspTiming.nanosecondsPerFrame < 0.0) {
     return "—";

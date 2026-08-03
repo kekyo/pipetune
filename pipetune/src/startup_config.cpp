@@ -22,8 +22,6 @@ constexpr auto kDspBackendAssignment =
     std::string_view{"PIPETUNE_DSP_BACKEND="};
 constexpr auto kDspSimdVariantAssignment =
     std::string_view{"PIPETUNE_DSP_SIMD_VARIANT="};
-constexpr auto kDspIdlePolicyAssignment =
-    std::string_view{"PIPETUNE_DSP_IDLE_POLICY="};
 constexpr auto kRateAssignment = std::string_view{"PIPETUNE_RATE="};
 constexpr auto kRateEnforcementAssignment =
     std::string_view{"PIPETUNE_RATE_ENFORCEMENT="};
@@ -211,12 +209,6 @@ std::string saveStartupConfig(const std::filesystem::path &configPath,
   }
   contents += std::string(kDspSimdVariantAssignment) +
               std::string(simdVariantName) + "\n";
-  const auto idlePolicyName = dspIdlePolicyName(config.dspIdlePolicy);
-  if (idlePolicyName.empty()) {
-    return "DSP idle policy is invalid";
-  }
-  contents += std::string(kDspIdlePolicyAssignment) +
-              std::string(idlePolicyName) + "\n";
   if (!sampleRatePolicyIsValid(config.ratePolicy)) {
     return "sample-rate policy is invalid";
   }
@@ -319,7 +311,6 @@ loadStartupConfig(const std::filesystem::path &configPath) {
   auto config = StartupConfig{};
   auto dspBackendFound = false;
   auto dspSimdVariantFound = false;
-  auto dspIdlePolicyFound = false;
   auto rateFound = false;
   auto enforcementFound = false;
   auto offset = std::size_t{0};
@@ -387,18 +378,6 @@ loadStartupConfig(const std::filesystem::path &configPath) {
         }
         config.dspSimdVariant = *parsed;
         dspSimdVariantFound = true;
-      } else if (line.starts_with(kDspIdlePolicyAssignment)) {
-        if (dspIdlePolicyFound) {
-          return fail("startup configuration contains duplicate "
-                      "PIPETUNE_DSP_IDLE_POLICY assignments");
-        }
-        const auto parsed = parseDspIdlePolicyName(
-            line.substr(kDspIdlePolicyAssignment.size()));
-        if (!parsed.has_value()) {
-          return fail("DSP idle policy assignment is invalid");
-        }
-        config.dspIdlePolicy = *parsed;
-        dspIdlePolicyFound = true;
       } else if (line.starts_with(kRateAssignment)) {
         if (rateFound) {
           return fail("startup configuration contains duplicate "
@@ -518,19 +497,6 @@ std::string saveDspBackendSelection(
   return saveStartupConfig(configPath, configured.config);
 }
 
-std::string saveDspIdlePolicy(const std::filesystem::path &configPath,
-                              DspIdlePolicy policy) {
-  if (dspIdlePolicyName(policy).empty()) {
-    return "DSP idle policy is invalid";
-  }
-  auto configured = loadStartupConfig(configPath);
-  if (!configured.error.empty()) {
-    return configured.error;
-  }
-  configured.config.dspIdlePolicy = policy;
-  return saveStartupConfig(configPath, configured.config);
-}
-
 std::string resetStartupConfig(const std::filesystem::path &configPath) {
   return saveStartupConfig(
       configPath,
@@ -540,8 +506,7 @@ std::string resetStartupConfig(const std::filesystem::path &configPath) {
        .preferredOutput = {},
        .ratePolicy = defaultSampleRatePolicy(),
        .dspBackend = DspBackendKind::scalar,
-       .dspSimdVariant = DspSimdVariant::automatic,
-       .dspIdlePolicy = defaultDspIdlePolicy()});
+       .dspSimdVariant = DspSimdVariant::automatic});
 }
 
 } // namespace pipetune

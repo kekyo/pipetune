@@ -118,17 +118,13 @@ static pipetune::ControlResponseParseResult dspStatusEvent(
     std::uint64_t processingNanoseconds,
     std::uint64_t overrunFrames,
     std::uint64_t underrunFrames,
-    std::uint64_t processingErrors,
-    pipetune::DspIdleState idleState,
-    bool pipeWireIdle) {
+    std::uint64_t processingErrors) {
   auto status = statusResponse(true, {}, {}).status;
   status.dspProcessedFrames = processedFrames;
   status.dspProcessingNanoseconds = processingNanoseconds;
   status.overrunFrames = overrunFrames;
   status.underrunFrames = underrunFrames;
   status.processingErrors = processingErrors;
-  status.dspIdleState = idleState;
-  status.pipeWireIdle = pipeWireIdle;
   return pipetune::parseControlResponse(
       pipetune::makeControlStatusEvent(status));
 }
@@ -333,8 +329,7 @@ static bool testPeriodicRuntimeMeasurements() {
   auto state = pipetune_gtk::initialApplicationState();
   pipetune_gtk::applyControlResponse(
       state,
-      dspStatusEvent(48000, 96000000, 1, 2, 3,
-                     pipetune::DspIdleState::active, false),
+      dspStatusEvent(48000, 96000000, 1, 2, 3),
       1000);
   if (!check(state.dspTiming.hasBaseline &&
                  !state.dspTiming.hasAverage,
@@ -344,8 +339,7 @@ static bool testPeriodicRuntimeMeasurements() {
 
   pipetune_gtk::applyControlResponse(
       state,
-      dspStatusEvent(96000, 216000000, 4, 5, 6,
-                     pipetune::DspIdleState::active, false),
+      dspStatusEvent(96000, 216000000, 4, 5, 6),
       2000);
   if (!check(state.dspTiming.hasAverage &&
                  state.dspTiming.nanosecondsPerFrame == 2500.0,
@@ -359,8 +353,7 @@ static bool testPeriodicRuntimeMeasurements() {
 
   pipetune_gtk::applyControlResponse(
       state,
-      dspStatusEvent(96000, 216000000, 4, 5, 6,
-                     pipetune::DspIdleState::active, false),
+      dspStatusEvent(96000, 216000000, 4, 5, 6),
       3000);
   if (!check(!state.dspTiming.hasAverage,
              "an interval without DSP frames must clear the stale average")) {
@@ -369,43 +362,11 @@ static bool testPeriodicRuntimeMeasurements() {
 
   pipetune_gtk::applyControlResponse(
       state,
-      dspStatusEvent(144000, 264000000, 4, 5, 6,
-                     pipetune::DspIdleState::active, false),
+      dspStatusEvent(144000, 264000000, 4, 5, 6),
       4000);
   if (!check(state.dspTiming.hasAverage &&
                  state.dspTiming.nanosecondsPerFrame == 1000.0,
              "DSP timing must resume after an empty interval")) {
-    return false;
-  }
-
-  pipetune_gtk::applyControlResponse(
-      state,
-      dspStatusEvent(144000, 264000000, 4, 5, 6,
-                     pipetune::DspIdleState::active, true),
-      5000);
-  if (!check(!state.dspTiming.hasAverage,
-             "PipeWire pause must clear the stale DSP time average")) {
-    return false;
-  }
-
-  pipetune_gtk::applyControlResponse(
-      state,
-      dspStatusEvent(192000, 312000000, 4, 5, 6,
-                     pipetune::DspIdleState::active, false),
-      6000);
-  if (!check(state.dspTiming.hasAverage &&
-                 state.dspTiming.nanosecondsPerFrame == 1000.0,
-             "DSP timing must resume from the paused counter baseline")) {
-    return false;
-  }
-
-  pipetune_gtk::applyControlResponse(
-      state,
-      dspStatusEvent(192000, 312000000, 4, 5, 6,
-                     pipetune::DspIdleState::sleeping, false),
-      7000);
-  if (!check(!state.dspTiming.hasAverage,
-             "DSP sleep must clear the stale DSP time average")) {
     return false;
   }
 

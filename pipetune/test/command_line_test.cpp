@@ -37,19 +37,16 @@ static bool testRunDefaults() {
          check(result.options.dspSimdVariant ==
                    pipetune::DspSimdVariant::automatic,
                "direct-run SIMD variant must default to automatic") &&
-         check(result.options.dspIdlePolicy ==
-                   pipetune::DspIdlePolicy::conservative,
-               "direct-run DSP idle policy must default to conservative") &&
          check(result.options.channelCount == 2, "default channels differ") &&
          check(!result.options.checkOnly, "normal run must not stop after readiness");
 }
 
 static bool testExplicitOptions() {
-  constexpr auto arguments = std::array<std::string_view, 17>{
+  constexpr auto arguments = std::array<std::string_view, 15>{
       "--check",   "--channels", "8",          "--target",
       "alsa_out", "--sink-name", "studio",     "--socket",
       "/tmp/pipetune.sock", "--dsp-backend", "simd", "--dsp-variant",
-      "x86-64-v4", "--dsp-idle-policy", "exact", "--preset",
+      "x86-64-v4", "--preset",
       "studio.effetune_preset"};
   const auto result = pipetune::parseCommandLine(arguments);
   return check(result.error.empty(), result.error) &&
@@ -64,10 +61,7 @@ static bool testExplicitOptions() {
                "explicit direct-run DSP backend differs") &&
          check(result.options.dspSimdVariant ==
                    pipetune::DspSimdVariant::x86_64_v4,
-               "explicit direct-run SIMD variant differs") &&
-         check(result.options.dspIdlePolicy ==
-                   pipetune::DspIdlePolicy::exact,
-               "explicit direct-run DSP idle policy differs");
+               "explicit direct-run SIMD variant differs");
 }
 
 static bool testControlActions() {
@@ -291,41 +285,6 @@ static bool testDspActions() {
                "dsp set SIMD action differs");
 }
 
-static bool testIdleActions() {
-  constexpr auto get = std::array<std::string_view, 5>{
-      "idle", "get", "--json", "--socket", "/tmp/pipetune.sock"};
-  constexpr auto setConservative =
-      std::array<std::string_view, 3>{"idle", "set", "conservative"};
-  constexpr auto setExact = std::array<std::string_view, 5>{
-      "idle", "set", "exact", "--socket", "/tmp/pipetune.sock"};
-  const auto getResult = pipetune::parseCommandLine(get);
-  const auto conservativeResult =
-      pipetune::parseCommandLine(setConservative);
-  const auto exactResult = pipetune::parseCommandLine(setExact);
-  return check(getResult.error.empty(), getResult.error) &&
-         check(getResult.options.action ==
-                       pipetune::CommandLineAction::idleGet &&
-                   getResult.options.json &&
-                   getResult.options.controlSocketPath ==
-                       "/tmp/pipetune.sock",
-               "idle get action differs") &&
-         check(conservativeResult.error.empty(),
-               conservativeResult.error) &&
-         check(conservativeResult.options.action ==
-                       pipetune::CommandLineAction::idleSet &&
-                   conservativeResult.options.dspIdlePolicy ==
-                       pipetune::DspIdlePolicy::conservative,
-               "idle set conservative action differs") &&
-         check(exactResult.error.empty(), exactResult.error) &&
-         check(exactResult.options.action ==
-                       pipetune::CommandLineAction::idleSet &&
-                   exactResult.options.dspIdlePolicy ==
-                       pipetune::DspIdlePolicy::exact &&
-                   exactResult.options.controlSocketPath ==
-                       "/tmp/pipetune.sock",
-               "idle set exact action differs");
-}
-
 static bool testUserSetupActions() {
   constexpr auto setup = std::array<std::string_view, 1>{"setup"};
   constexpr auto setupPreset = std::array<std::string_view, 3>{
@@ -452,14 +411,6 @@ static bool testInformationalActions() {
                    "[--socket PATH]") !=
                    std::string_view::npos,
                "usage must explain DSP backend selection") &&
-         check(pipetune::commandLineUsage().find(
-                   "pipetune idle get [--json] [--socket PATH]") !=
-                   std::string_view::npos,
-               "usage must explain DSP idle status") &&
-         check(pipetune::commandLineUsage().find(
-                   "pipetune idle set conservative|exact [--socket PATH]") !=
-                   std::string_view::npos,
-               "usage must explain DSP idle policy selection") &&
          check(pipetune::commandLineUsage().find("--rate HZ") ==
                    std::string_view::npos,
                "usage must not advertise legacy direct --rate") &&
@@ -476,8 +427,7 @@ static bool testInformationalActions() {
                    std::string_view::npos,
                "usage must explain configuration reset") &&
          check(pipetune::commandLineUsage().find(
-                   "Reset Bypass, output, PCM rate, DSP backend, and idle "
-                   "policy.") !=
+                   "Reset Bypass, output, PCM rate, and DSP backend.") !=
                    std::string_view::npos,
                "usage must describe every reset selection");
 }
@@ -577,18 +527,6 @@ static bool testRejectedArguments() {
       std::array<std::string_view, 4>{"dsp", "set", "simd", "--json"};
   constexpr auto duplicateDspSocket = std::array<std::string_view, 6>{
       "dsp", "get", "--socket", "/tmp/a", "--socket", "/tmp/b"};
-  constexpr auto idleWithoutAction =
-      std::array<std::string_view, 1>{"idle"};
-  constexpr auto unknownIdleAction =
-      std::array<std::string_view, 2>{"idle", "future"};
-  constexpr auto missingIdlePolicy =
-      std::array<std::string_view, 2>{"idle", "set"};
-  constexpr auto invalidIdlePolicy =
-      std::array<std::string_view, 3>{"idle", "set", "threshold"};
-  constexpr auto idleSetWithJson =
-      std::array<std::string_view, 4>{"idle", "set", "exact", "--json"};
-  constexpr auto duplicateIdleSocket = std::array<std::string_view, 6>{
-      "idle", "get", "--socket", "/tmp/a", "--socket", "/tmp/b"};
   constexpr auto invalidDirectDsp = std::array<std::string_view, 4>{
       "--preset", "x.effetune_preset", "--dsp-backend", "avx2"};
   constexpr auto duplicateDirectDsp = std::array<std::string_view, 6>{
@@ -599,12 +537,6 @@ static bool testRejectedArguments() {
       "--dsp-variant", "baseline"};
   constexpr auto invalidDirectVariant = std::array<std::string_view, 4>{
       "--preset", "x.effetune_preset", "--dsp-variant", "avx2"};
-  constexpr auto invalidDirectIdlePolicy = std::array<std::string_view, 4>{
-      "--preset", "x.effetune_preset", "--dsp-idle-policy", "threshold"};
-  constexpr auto duplicateDirectIdlePolicy =
-      std::array<std::string_view, 6>{
-          "--preset", "x.effetune_preset", "--dsp-idle-policy",
-          "conservative", "--dsp-idle-policy", "exact"};
   constexpr auto configWithoutAction =
       std::array<std::string_view, 1>{"config"};
   constexpr auto unknownConfigAction =
@@ -708,18 +640,6 @@ static bool testRejectedArguments() {
                "dsp set must reject --json") &&
          check(!pipetune::parseCommandLine(duplicateDspSocket).error.empty(),
                "dsp get must reject duplicate sockets") &&
-         check(!pipetune::parseCommandLine(idleWithoutAction).error.empty(),
-               "idle must require a subcommand") &&
-         check(!pipetune::parseCommandLine(unknownIdleAction).error.empty(),
-               "idle must reject unknown subcommands") &&
-         check(!pipetune::parseCommandLine(missingIdlePolicy).error.empty(),
-               "idle set must require a policy") &&
-         check(!pipetune::parseCommandLine(invalidIdlePolicy).error.empty(),
-               "idle set must reject unknown policies") &&
-         check(!pipetune::parseCommandLine(idleSetWithJson).error.empty(),
-               "idle set must reject --json") &&
-         check(!pipetune::parseCommandLine(duplicateIdleSocket).error.empty(),
-               "idle get must reject duplicate sockets") &&
          check(!pipetune::parseCommandLine(invalidDirectDsp).error.empty(),
                "direct run must reject unknown DSP backends") &&
          check(!pipetune::parseCommandLine(duplicateDirectDsp).error.empty(),
@@ -728,13 +648,6 @@ static bool testRejectedArguments() {
                "scalar direct run must reject a SIMD variant") &&
          check(!pipetune::parseCommandLine(invalidDirectVariant).error.empty(),
                "direct run must reject unknown SIMD variants") &&
-         check(
-             !pipetune::parseCommandLine(invalidDirectIdlePolicy).error.empty(),
-             "direct run must reject unknown DSP idle policies") &&
-         check(
-             !pipetune::parseCommandLine(duplicateDirectIdlePolicy)
-                  .error.empty(),
-             "direct run must reject duplicate DSP idle policies") &&
          check(!pipetune::parseCommandLine(configWithoutAction).error.empty(),
                "config must require a subcommand") &&
          check(!pipetune::parseCommandLine(unknownConfigAction).error.empty(),
@@ -745,15 +658,26 @@ static bool testRejectedArguments() {
                "config reset must reject unknown options");
 }
 
+static bool testRemovedDspIdleArguments() {
+  constexpr auto direct = std::array<std::string_view, 4>{
+      "--preset", "x.effetune_preset", "--dsp-idle-policy", "exact"};
+  constexpr auto control =
+      std::array<std::string_view, 2>{"idle", "get"};
+  return check(!pipetune::parseCommandLine(direct).error.empty(),
+               "removed direct DSP idle option must be rejected") &&
+         check(!pipetune::parseCommandLine(control).error.empty(),
+               "removed DSP idle command must be rejected");
+}
+
 int main() {
   const auto passed = testRunDefaults() && testExplicitOptions() &&
                       testControlActions() && testDaemonAction() &&
                       testBypassAction() && testOutputActions() &&
                       testRateActions() && testDspActions() &&
-                      testIdleActions() &&
                       testUserSetupActions() &&
                       testConfigResetAction() &&
                       testDefaultRestorationAction() &&
-                      testInformationalActions() && testRejectedArguments();
+                      testInformationalActions() && testRejectedArguments() &&
+                      testRemovedDspIdleArguments();
   return passed ? 0 : 1;
 }

@@ -2,7 +2,6 @@
 #define PIPETUNE_STARTUP_PIPELINE_H
 
 #include "pipetune/dsp_backend.h"
-#include "pipetune/dsp_idle.h"
 #include "pipetune/dsp_pipeline.h"
 #include "pipetune/sample_rate.h"
 
@@ -39,8 +38,6 @@ struct StartupPipelineResult {
   /** Persisted SIMD dispatch preference. */
   DspSimdVariant configuredDspSimdVariant =
       DspSimdVariant::automatic;
-  /** Persisted DSP idle tail policy. */
-  DspIdlePolicy dspIdlePolicy = DspIdlePolicy::conservative;
   /** Active backend, or no value when the mandatory scalar backend failed. */
   std::optional<DspBackendKind> effectiveDspBackend =
       DspBackendKind::scalar;

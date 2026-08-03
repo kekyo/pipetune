@@ -102,11 +102,6 @@ static void updateDspTiming(
     timing = initialDspTimingState();
     return;
   }
-  if (status.pipeWireIdle ||
-      status.dspIdleState == pipetune::DspIdleState::sleeping) {
-    establishDspTimingBaseline(timing, status);
-    return;
-  }
   if (!timing.hasBaseline ||
       status.dspProcessedFrames < timing.baselineFrames ||
       status.dspProcessingNanoseconds < timing.baselineNanoseconds) {

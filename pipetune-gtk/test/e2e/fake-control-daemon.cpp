@@ -175,11 +175,6 @@ makeStatus(const pipetune::StartupConfig &config) {
             .cpuSupported = true,
             .cpuRequirement = "Arm SVE",
             .error = {}}},
-      .dspIdlePolicy = config.dspIdlePolicy,
-      .dspIdleState = pipetune::DspIdleState::active,
-      .dspIdleSkippedFrames = 192,
-      .dspIdleSleepTransitions = 4,
-      .pipeWireIdle = false,
   };
 }
 
@@ -216,8 +211,6 @@ static std::string commandName(pipetune::ControlCommand command) {
     return "setRate";
   case pipetune::ControlCommand::setDspBackend:
     return "setDspBackend";
-  case pipetune::ControlCommand::setDspIdlePolicy:
-    return "setDspIdlePolicy";
   case pipetune::ControlCommand::subscribe:
     return "subscribe";
   }
@@ -297,9 +290,6 @@ static pipetune::ControlMessageResult handleRequest(
       state.liveConfig.dspBackend = parsed.request.dspBackend;
       state.liveConfig.dspSimdVariant = parsed.request.dspSimdVariant;
       break;
-    case pipetune::ControlCommand::setDspIdlePolicy:
-      state.liveConfig.dspIdlePolicy = parsed.request.dspIdlePolicy;
-      break;
     case pipetune::ControlCommand::status:
     case pipetune::ControlCommand::subscribe:
       break;
@@ -371,8 +361,6 @@ static int inspectConfig(const std::filesystem::path &path) {
       << jsonString(pipetune::dspBackendName(config.dspBackend))
       << ",\"dspSimdVariant\":"
       << jsonString(pipetune::dspSimdVariantName(config.dspSimdVariant))
-      << ",\"dspIdlePolicy\":"
-      << jsonString(pipetune::dspIdlePolicyName(config.dspIdlePolicy))
       << "}\n";
   return 0;
 }

@@ -11,8 +11,7 @@ DspPipelineSlot::DspPipelineSlot(
     std::unique_ptr<DspPipeline> initialPipeline)
     : current_(std::move(initialPipeline)), stagedPrevious_(nullptr),
       superseded_(),
-      active_(current_.get()), hazard_(nullptr), revision_(1),
-      processedFrames_(0),
+      active_(current_.get()), hazard_(nullptr), processedFrames_(0),
       processingNanoseconds_(0) {
   if (current_ == nullptr) {
     throw std::invalid_argument("initial DSP pipeline must not be null");
@@ -25,7 +24,11 @@ ProcessStatus DspPipelineSlot::process(std::span<float> planarSamples,
                                        std::uint32_t channelCount,
                                        std::uint32_t frameCount,
                                        double timeSeconds) noexcept {
-  auto *selected = acquireActive();
+  auto *selected = active_.load(std::memory_order_seq_cst);
+  do {
+    hazard_.store(selected, std::memory_order_seq_cst);
+    selected = active_.load(std::memory_order_seq_cst);
+  } while (hazard_.load(std::memory_order_seq_cst) != selected);
 
   const auto usesNativeDsp = selected->usesNativeDsp();
   const auto startedAt =
@@ -41,15 +44,8 @@ ProcessStatus DspPipelineSlot::process(std::span<float> planarSamples,
         static_cast<std::uint64_t>(elapsed.count()),
         std::memory_order_relaxed);
   }
-  releaseActive();
+  hazard_.store(nullptr, std::memory_order_seq_cst);
   return status;
-}
-
-bool DspPipelineSlot::resetActive() noexcept {
-  auto *selected = acquireActive();
-  const auto reset = selected->reset();
-  releaseActive();
-  return reset;
 }
 
 void DspPipelineSlot::replace(std::unique_ptr<DspPipeline> replacement) {
@@ -80,7 +76,6 @@ void DspPipelineSlot::stageReplacement(
   stagedPrevious_ = std::move(current_);
   current_ = std::move(replacement);
   active_.store(current_.get(), std::memory_order_seq_cst);
-  revision_.fetch_add(1, std::memory_order_release);
 }
 
 void DspPipelineSlot::commitStaged() {
@@ -98,7 +93,6 @@ void DspPipelineSlot::rollbackStaged() {
   auto rejected = std::move(current_);
   current_ = std::move(stagedPrevious_);
   active_.store(current_.get(), std::memory_order_seq_cst);
-  revision_.fetch_add(1, std::memory_order_release);
   superseded_.push_back(std::move(rejected));
   reclaimSuperseded();
 }
@@ -129,23 +123,6 @@ DspPipelineSlot::performanceCounters() const noexcept {
       .processingNanoseconds =
           processingNanoseconds_.load(std::memory_order_relaxed),
   };
-}
-
-std::uint64_t DspPipelineSlot::revision() const noexcept {
-  return revision_.load(std::memory_order_acquire);
-}
-
-DspPipeline *DspPipelineSlot::acquireActive() noexcept {
-  auto *selected = active_.load(std::memory_order_seq_cst);
-  do {
-    hazard_.store(selected, std::memory_order_seq_cst);
-    selected = active_.load(std::memory_order_seq_cst);
-  } while (hazard_.load(std::memory_order_seq_cst) != selected);
-  return selected;
-}
-
-void DspPipelineSlot::releaseActive() noexcept {
-  hazard_.store(nullptr, std::memory_order_seq_cst);
 }
 
 void DspPipelineSlot::reclaimSuperseded() {

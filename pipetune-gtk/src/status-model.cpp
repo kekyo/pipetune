@@ -4,7 +4,6 @@
 #include "status-text.h"
 
 #include "pipetune/dsp_backend.h"
-#include "pipetune/dsp_idle.h"
 #include "pipetune/sample_rate.h"
 
 #include <algorithm>
@@ -173,29 +172,6 @@ static std::string effectiveVariantText(
                       : std::string(name);
 }
 
-static std::string idlePolicyText(pipetune::DspIdlePolicy policy) {
-  const auto name = pipetune::dspIdlePolicyName(policy);
-  if (name == "conservative") {
-    return translate("Conservative");
-  }
-  if (name == "exact") {
-    return translate("Exact");
-  }
-  return translate("Unknown");
-}
-
-static std::string idleStateText(pipetune::DspIdleState state) {
-  const auto name = pipetune::dspIdleStateName(state);
-  if (name == "active") {
-    return translate("Active");
-  }
-  if (name == "sleeping") {
-    return translate("Sleeping");
-  }
-  return name.empty() ? std::string(translate("Unknown"))
-                      : std::string(name);
-}
-
 static std::string selectionReasonText(
     pipetune::ControlOutputSelectionReason reason) {
   switch (reason) {
@@ -247,9 +223,7 @@ static StatusItem outputItem(
 
 static StatusItem dspLoadItem(const ApplicationState &state) {
   if (state.connection != ControlConnectionState::connected ||
-      !state.hasRuntimeStatus || state.runtime.pipeWireIdle ||
-      state.runtime.dspIdleState == pipetune::DspIdleState::sleeping ||
-      !state.dspTiming.hasAverage ||
+      !state.hasRuntimeStatus || !state.dspTiming.hasAverage ||
       !std::isfinite(state.dspTiming.nanosecondsPerFrame) ||
       state.dspTiming.nanosecondsPerFrame < 0.0 ||
       state.runtime.inputSampleRate == 0) {
@@ -269,9 +243,7 @@ static StatusItem dspLoadItem(const ApplicationState &state) {
 
 static StatusItem dspTimeItem(const ApplicationState &state) {
   if (state.connection != ControlConnectionState::connected ||
-      !state.hasRuntimeStatus || state.runtime.pipeWireIdle ||
-      state.runtime.dspIdleState == pipetune::DspIdleState::sleeping ||
-      !state.dspTiming.hasAverage ||
+      !state.hasRuntimeStatus || !state.dspTiming.hasAverage ||
       !std::isfinite(state.dspTiming.nanosecondsPerFrame) ||
       state.dspTiming.nanosecondsPerFrame < 0.0) {
     return textItem("dsp.processing-time", translate("Processing time"),
@@ -372,10 +344,6 @@ std::vector<StatusSection> buildStatusSections(
                   connected && !state.runtime.defaultSinkActive
                       ? StatusSeverity::warning
                       : unavailable),
-              textItem("system.pipewire-idle",
-                       translate("PipeWire idle"),
-                       connected ? yesNo(state.runtime.pipeWireIdle) : "—",
-                       unavailable),
           },
   });
   sections.push_back({
@@ -433,8 +401,6 @@ std::vector<StatusSection> buildStatusSections(
                        backendText(saved.dspBackend)),
               textItem("saved.simd-variant", translate("SIMD variant"),
                        simdVariantText(saved.dspSimdVariant)),
-              textItem("saved.idle-policy", translate("Idle policy"),
-                       idlePolicyText(saved.dspIdlePolicy)),
           },
   });
   sections.push_back({
@@ -561,18 +527,6 @@ std::vector<StatusSection> buildStatusSections(
                   state.runtime.dspBackendFallback
                       ? StatusSeverity::warning
                       : unavailable),
-              textItem(
-                  "dsp.idle-policy", translate("Idle policy"),
-                  connected
-                      ? idlePolicyText(state.runtime.dspIdlePolicy)
-                      : "—",
-                  unavailable),
-              textItem(
-                  "dsp.idle-state", translate("Idle state"),
-                  connected
-                      ? idleStateText(state.runtime.dspIdleState)
-                      : "—",
-                  unavailable),
               dspTimeItem(state),
               dspLoadItem(state),
               textItem(

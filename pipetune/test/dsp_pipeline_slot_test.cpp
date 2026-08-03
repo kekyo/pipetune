@@ -3,7 +3,6 @@
 #include "pipetune/dsp_backend.h"
 #include "pipetune/dsp_pipeline.h"
 
-#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -30,14 +29,6 @@ static std::filesystem::path writeVolumePreset(
   auto stream = std::ofstream(path, std::ios::binary);
   stream << R"json({"pipeline":[{"name":"Volume","enabled":true,"parameters":{"vl":)json"
          << decibels << R"json(},"channel":"A"}]})json";
-  return path;
-}
-
-static std::filesystem::path writeDelayPreset(
-    const std::filesystem::path &directory, std::string_view name) {
-  const auto path = directory / name;
-  auto stream = std::ofstream(path, std::ios::binary);
-  stream << R"json({"pipeline":[{"name":"Delay","enabled":true,"parameters":{"pd":0,"ds":1,"dp":0,"hd":20000,"ld":20,"mx":100,"fb":0,"pp":0},"channel":"A"}]})json";
   return path;
 }
 
@@ -115,61 +106,6 @@ static bool testBypassDoesNotReportDspWork() {
                "bypass must not be counted as EffeTune DSP work");
 }
 
-static bool testResetClearsActivePipelineState(
-    const std::filesystem::path &delayPath) {
-  auto referencePipeline = loadPipeline(delayPath);
-  auto resetPipeline = loadPipeline(delayPath);
-  if (referencePipeline == nullptr || resetPipeline == nullptr) {
-    return false;
-  }
-  auto reference = pipetune::DspPipelineSlot(std::move(referencePipeline));
-  auto reset = pipetune::DspPipelineSlot(std::move(resetPipeline));
-  auto impulse = std::vector<float>(32, 0.0F);
-  impulse[0] = 1.0F;
-  auto resetImpulse = impulse;
-  if (!check(reference.process(impulse, 1, 32, 0.0) ==
-                 pipetune::ProcessStatus::ok,
-             "reference delay impulse processing failed") ||
-      !check(reset.process(resetImpulse, 1, 32, 0.0) ==
-                 pipetune::ProcessStatus::ok,
-             "reset delay impulse processing failed") ||
-      !check(reset.resetActive(), "active DSP reset failed")) {
-    return false;
-  }
-
-  auto referenceTail = std::vector<float>(32, 0.0F);
-  auto resetTail = std::vector<float>(32, 0.0F);
-  if (!check(reference.process(referenceTail, 1, 32, 32.0 / 48000.0) ==
-                 pipetune::ProcessStatus::ok,
-             "reference delay tail processing failed") ||
-      !check(reset.process(resetTail, 1, 32, 32.0 / 48000.0) ==
-                 pipetune::ProcessStatus::ok,
-             "reset delay tail processing failed")) {
-    return false;
-  }
-  const auto referenceHasTail =
-      std::ranges::any_of(referenceTail, [](float sample) {
-        return std::abs(sample) > 1.0e-6F;
-      });
-  const auto resetIsSilent =
-      std::ranges::all_of(resetTail, [](float sample) {
-        return sample == 0.0F;
-      });
-
-  auto bypass = pipetune::createBypassDspPipeline(
-      {.sampleRate = 48000.0F, .maxChannels = 1, .maxFrames = 32});
-  if (!check(bypass.pipeline != nullptr, bypass.error)) {
-    return false;
-  }
-  auto bypassSlot = pipetune::DspPipelineSlot(std::move(bypass.pipeline));
-  return check(referenceHasTail,
-               "unreset delay must retain its pending output") &&
-         check(resetIsSilent,
-               "reset delay must discard its pending output") &&
-         check(bypassSlot.resetActive(),
-               "bypass reset must succeed");
-}
-
 static bool testConcurrentReplacementProducesOnlyCompletePipelines(
     const std::filesystem::path &positivePath,
     const std::filesystem::path &negativePath) {
@@ -228,13 +164,10 @@ static bool testStagedReplacementCanCommitAndRollback(
     return false;
   }
   auto slot = pipetune::DspPipelineSlot(std::move(initial));
-  const auto initialRevision = slot.revision();
   slot.stageReplacement(std::move(replacement));
   auto samples = std::vector<float>{0.25F};
   if (!check(slot.hasStagedReplacement(),
              "staged replacement must retain rollback state") ||
-      !check(slot.revision() > initialRevision,
-             "staging a replacement must advance the pipeline revision") ||
       !check(slot.process(samples, 1, 1, 0.0) ==
                  pipetune::ProcessStatus::ok &&
                  approximately(samples[0],
@@ -244,12 +177,9 @@ static bool testStagedReplacementCanCommitAndRollback(
   }
 
   slot.rollbackStaged();
-  const auto rollbackRevision = slot.revision();
   samples[0] = 0.25F;
   if (!check(!slot.hasStagedReplacement(),
              "rollback must close the transaction") ||
-      !check(rollbackRevision > initialRevision,
-             "rollback must publish another pipeline revision") ||
       !check(slot.process(samples, 1, 1, 0.1) ==
                  pipetune::ProcessStatus::ok &&
                  approximately(samples[0],
@@ -268,9 +198,7 @@ static bool testStagedReplacementCanCommitAndRollback(
   slot.stageReplacement(std::move(rebuilt.pipeline));
   slot.commitStaged();
   return check(!slot.hasStagedReplacement(),
-               "commit must release rollback state") &&
-         check(slot.revision() > rollbackRevision,
-               "new staged pipeline must advance the revision");
+               "commit must release rollback state");
 }
 
 static bool testBackendReplacementPreservesCounters(
@@ -328,12 +256,8 @@ int main() {
       writeVolumePreset(directory, "positive.effetune_preset", 6);
   const auto negative =
       writeVolumePreset(directory, "negative.effetune_preset", -6);
-  const auto delay =
-      writeDelayPreset(directory, "delay.effetune_preset");
-
   const auto passed = testReplacementChangesPcm(positive, negative) &&
                       testBypassDoesNotReportDspWork() &&
-                      testResetClearsActivePipelineState(delay) &&
                       testConcurrentReplacementProducesOnlyCompletePipelines(
                           positive, negative) &&
                       testStagedReplacementCanCommitAndRollback(

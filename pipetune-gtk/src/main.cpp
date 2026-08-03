@@ -2,7 +2,6 @@
 #include "application-state.h"
 #include "control-client.h"
 #include "dsp-backend-selection-model.h"
-#include "dsp-idle-selection-model.h"
 #include "installed-locales.h"
 #include "installed-presets.h"
 #include "launch-options.h"
@@ -98,7 +97,6 @@ struct GtkRuntime {
   std::vector<OutputViewChoice> outputChoices;
   std::vector<SampleRateChoice> rateChoices;
   std::vector<DspBackendChoice> dspBackendChoices;
-  std::vector<DspIdleChoice> dspIdleChoices;
   std::map<std::string, StatusRowWidgets> statusRows;
   StatusLevelMeterWidgets statusLoadMeter;
   ActionLog actionLog;
@@ -143,7 +141,6 @@ static pipetune::StartupConfig defaultStartupConfig() {
       .ratePolicy = pipetune::defaultSampleRatePolicy(),
       .dspBackend = pipetune::DspBackendKind::scalar,
       .dspSimdVariant = pipetune::DspSimdVariant::automatic,
-      .dspIdlePolicy = pipetune::defaultDspIdlePolicy(),
   };
 }
 
@@ -671,8 +668,6 @@ static UiMessage settingsOperationName(SettingsOperation operation) {
     return localizedMessage("Changing sample-rate policy", {});
   case SettingsOperation::dspBackend:
     return localizedMessage("Changing DSP backend", {});
-  case SettingsOperation::dspIdle:
-    return localizedMessage("Changing DSP idle policy", {});
   case SettingsOperation::processing:
     return localizedMessage("Changing processing mode", {});
   case SettingsOperation::none:
@@ -689,8 +684,6 @@ static UiMessage settingsOperationSuccess(SettingsOperation operation) {
     return localizedMessage("Sample-rate policy changed", {});
   case SettingsOperation::dspBackend:
     return localizedMessage("DSP backend changed", {});
-  case SettingsOperation::dspIdle:
-    return localizedMessage("DSP idle policy changed", {});
   case SettingsOperation::processing:
     return localizedMessage("Processing mode changed", {});
   case SettingsOperation::none:
@@ -707,8 +700,6 @@ static UiMessage settingsOperationFailure(SettingsOperation operation) {
     return localizedMessage("Changing sample-rate policy failed", {});
   case SettingsOperation::dspBackend:
     return localizedMessage("Changing DSP backend failed", {});
-  case SettingsOperation::dspIdle:
-    return localizedMessage("Changing DSP idle policy failed", {});
   case SettingsOperation::processing:
     return localizedMessage("Changing processing mode failed", {});
   case SettingsOperation::none:
@@ -814,20 +805,6 @@ static void renderDspControls(GtkRuntime *runtime) {
   gtk_combo_box_set_active(
       GTK_COMBO_BOX(runtime->ui.dspBackendCombo),
       static_cast<gint>(backend.activeIndex));
-
-  const auto idle = makeDspIdleSelectionPresentation(
-      runtime->state, settings.dspIdlePolicy);
-  runtime->dspIdleChoices = idle.choices;
-  gtk_combo_box_text_remove_all(
-      GTK_COMBO_BOX_TEXT(runtime->ui.dspIdlePolicyCombo));
-  for (const auto &choice : runtime->dspIdleChoices) {
-    gtk_combo_box_text_append_text(
-        GTK_COMBO_BOX_TEXT(runtime->ui.dspIdlePolicyCombo),
-        choice.label.c_str());
-  }
-  gtk_combo_box_set_active(
-      GTK_COMBO_BOX(runtime->ui.dspIdlePolicyCombo),
-      static_cast<gint>(idle.activeIndex));
 }
 
 static gint uiLanguageComboIndex(UiLanguage language) noexcept {
@@ -890,7 +867,6 @@ static void renderSettingsControls(GtkRuntime *runtime) {
   gtk_widget_set_sensitive(runtime->ui.rateCombo, editable);
   gtk_widget_set_sensitive(runtime->ui.rateEnforcementCombo, editable);
   gtk_widget_set_sensitive(runtime->ui.dspBackendCombo, editable);
-  gtk_widget_set_sensitive(runtime->ui.dspIdlePolicyCombo, editable);
   gtk_widget_set_sensitive(runtime->ui.restoreDefaultsButton, editable);
   gtk_widget_set_sensitive(
       runtime->ui.applyButton,
@@ -1097,24 +1073,6 @@ static void onDspBackendChanged(GtkComboBox *combo,
   auto desired = runtime->transaction.desiredLive;
   desired.dspBackend = choice.kind;
   desired.dspSimdVariant = choice.simdVariant;
-  editDesiredSettings(runtime, desired);
-}
-
-static void onDspIdlePolicyChanged(GtkComboBox *combo,
-                                   gpointer userData) {
-  auto *runtime = static_cast<GtkRuntime *>(userData);
-  if (runtime->updatingControls || !controlsAreEditable(*runtime)) {
-    return;
-  }
-  const auto selected = gtk_combo_box_get_active(combo);
-  if (selected < 0 ||
-      static_cast<std::size_t>(selected) >= runtime->dspIdleChoices.size()) {
-    return;
-  }
-  const auto &choice =
-      runtime->dspIdleChoices[static_cast<std::size_t>(selected)];
-  auto desired = runtime->transaction.desiredLive;
-  desired.dspIdlePolicy = choice.policy;
   editDesiredSettings(runtime, desired);
 }
 
@@ -1556,11 +1514,6 @@ static void dispatchSettingsOperation(
                               target.dspSimdVariant,
                               onSettingsOperationReply, runtime);
     return;
-  case SettingsOperation::dspIdle:
-    setControlDspIdlePolicyAsync(runtime->controlClient,
-                                 target.dspIdlePolicy,
-                                 onSettingsOperationReply, runtime);
-    return;
   case SettingsOperation::processing:
     if (target.presetFound) {
       loadControlPresetAsync(runtime->controlClient, target.presetPath,
@@ -1715,8 +1668,6 @@ static void connectMainWindowSignals(GtkRuntime *runtime) {
                    G_CALLBACK(onRateEnforcementChanged), runtime);
   g_signal_connect(runtime->ui.dspBackendCombo, "changed",
                    G_CALLBACK(onDspBackendChanged), runtime);
-  g_signal_connect(runtime->ui.dspIdlePolicyCombo, "changed",
-                   G_CALLBACK(onDspIdlePolicyChanged), runtime);
   g_signal_connect(runtime->ui.languageCombo, "changed",
                    G_CALLBACK(onLanguageChanged), runtime);
   g_signal_connect(runtime->ui.processingEnabledSwitch, "notify::active",
@@ -2021,7 +1972,6 @@ static int runApplication(int argc, char **argv) {
       .outputChoices = {},
       .rateChoices = {},
       .dspBackendChoices = {},
-      .dspIdleChoices = {},
       .statusRows = {},
       .statusLoadMeter = {},
       .actionLog = createActionLog(kActionLogCapacity),

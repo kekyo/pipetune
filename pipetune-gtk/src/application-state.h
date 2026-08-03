@@ -86,7 +86,7 @@ struct ApplicationState {
   std::vector<pipetune::ControlWarning> warnings;
   /** Transport, protocol, remote, or persistence diagnostic. */
   std::string diagnostic;
-  /** True while an explicit preset, output, rate, backend, or idle operation runs. */
+  /** True while an explicit preset, output, rate, or backend operation runs. */
   bool operationPending;
   /** Input frame-rate baseline and most recent derived value. */
   InputRateState inputRate;

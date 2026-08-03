@@ -21,8 +21,6 @@ enum class SettingsOperation {
   rate,
   /** Replace the DSP backend and dispatch variant. */
   dspBackend,
-  /** Replace the DSP idle policy. */
-  dspIdle,
   /** Load a preset or enter bypass. */
   processing
 };
@@ -81,7 +79,7 @@ void editSettingsTransaction(
  * Selects the next required live operation in dependency order.
  *
  * @param transaction Transaction to inspect.
- * @return Output, rate, backend, idle, processing, or none.
+ * @return Output, rate, backend, processing, or none.
  */
 SettingsOperation
 nextSettingsOperation(const SettingsTransaction &transaction);
@@ -192,7 +190,7 @@ bool settingsTransactionShouldClose(
  * Converts complete daemon status into the settings transaction value type.
  *
  * @param status Runtime status received from the control socket.
- * @return Live preset, output, rate, backend, and idle choices.
+ * @return Live preset, output, rate, and backend choices.
  */
 pipetune::StartupConfig startupConfigFromRuntime(
     const pipetune::ControlRuntimeStatus &status);

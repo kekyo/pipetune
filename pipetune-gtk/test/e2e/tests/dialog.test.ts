@@ -463,9 +463,6 @@ describe('PipeTune GTK dialog', () => {
     await selectComboItem('dspBackendCombo', 0);
     await waitForCommands(['set-dsp-backend']);
     await waitForLabel('status-dsp-backend', 'Scalar');
-    await selectComboItem('dspIdlePolicyCombo', 0);
-    await waitForCommands(['set-dsp-idle-policy']);
-    await waitForLabel('status-dsp-idle-policy', 'Conservative');
     await selectSettingsPage(0);
     const processing = await getElement('processingEnabledSwitch', 'switch');
     await processing.toggle();
@@ -484,7 +481,6 @@ describe('PipeTune GTK dialog', () => {
       rateEnforcement: 'force',
       dspBackend: 'scalar',
       dspSimdVariant: 'auto',
-      dspIdlePolicy: 'conservative',
     });
     expect(await session.app.getWindowCount()).toBeGreaterThan(0);
     requests = await session.readRequests();
@@ -493,7 +489,6 @@ describe('PipeTune GTK dialog', () => {
         'set-output',
         'set-rate',
         'set-dsp-backend',
-        'set-dsp-idle-policy',
         'bypass',
       ])
     );
@@ -540,14 +535,12 @@ describe('PipeTune GTK dialog', () => {
       'clear-output',
       'set-rate',
       'set-dsp-backend',
-      'set-dsp-idle-policy',
       'bypass',
     ]);
     expect(requests.map((request) => request.command)).toEqual([
       'clear-output',
       'set-rate',
       'set-dsp-backend',
-      'set-dsp-idle-policy',
       'bypass',
     ]);
     expect(await session.inspectConfig()).toEqual(initial);
@@ -572,7 +565,6 @@ describe('PipeTune GTK dialog', () => {
       rateEnforcement: 'suggest',
       dspBackend: 'scalar',
       dspSimdVariant: 'auto',
-      dspIdlePolicy: 'conservative',
     });
   });
 

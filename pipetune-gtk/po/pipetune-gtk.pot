@@ -103,9 +103,6 @@ msgstr ""
 msgid "Action Log ({0})"
 msgstr ""
 
-msgid "Active"
-msgstr ""
-
 msgid "Active output rate"
 msgstr ""
 
@@ -163,12 +160,6 @@ msgstr ""
 msgid "Changing DSP backend failed"
 msgstr ""
 
-msgid "Changing DSP idle policy"
-msgstr ""
-
-msgid "Changing DSP idle policy failed"
-msgstr ""
-
 msgid "Changing output"
 msgstr ""
 
@@ -212,14 +203,6 @@ msgid "Configuration"
 msgstr ""
 
 #, brace-format
-msgid "Configured {0}  •  DSP {1}  •  Skipped {2} frames  •  Sleep transitions {3}  •  PipeWire paused"
-msgstr ""
-
-#, brace-format
-msgid "Configured {0}  •  DSP {1}  •  Skipped {2} frames  •  Sleep transitions {3}  •  PipeWire running"
-msgstr ""
-
-#, brace-format
 msgid "Configured {0}  •  Effective {1}"
 msgstr ""
 
@@ -256,12 +239,6 @@ msgstr ""
 msgid "Connecting…"
 msgstr ""
 
-msgid "Conservative"
-msgstr ""
-
-msgid "Conservative — sleep after exact-zero input and inaudible tails"
-msgstr ""
-
 msgid "Control"
 msgstr ""
 
@@ -295,9 +272,6 @@ msgstr ""
 msgid "Disconnected · settings are read-only"
 msgstr ""
 
-msgid "Draining"
-msgstr ""
-
 msgid "DSP"
 msgstr ""
 
@@ -311,12 +285,6 @@ msgid "DSP backend changed"
 msgstr ""
 
 msgid "DSP Engine"
-msgstr ""
-
-msgid "DSP idle policy changed"
-msgstr ""
-
-msgid "DSP idle state unavailable"
 msgstr ""
 
 msgid "DSP processing load; graph capped at 100%."
@@ -349,12 +317,6 @@ msgstr ""
 msgid "Errors"
 msgstr ""
 
-msgid "Exact"
-msgstr ""
-
-msgid "Exact — require exact-zero input and output"
-msgstr ""
-
 msgid "Finishing rollback…"
 msgstr ""
 
@@ -380,12 +342,6 @@ msgid "Force — request the selected output rate"
 msgstr ""
 
 msgid "idle"
-msgstr ""
-
-msgid "Idle policy"
-msgstr ""
-
-msgid "Idle state"
 msgstr ""
 
 msgid "Input / Rates"
@@ -495,9 +451,6 @@ msgstr ""
 msgid "Overrun frames"
 msgstr ""
 
-msgid "Paused"
-msgstr ""
-
 msgid "PCM data rate"
 msgstr ""
 
@@ -530,9 +483,6 @@ msgid "PipeTune: disconnected"
 msgstr ""
 
 msgid "PipeWire enforcement"
-msgstr ""
-
-msgid "PipeWire idle"
 msgstr ""
 
 msgid "Preference"
@@ -639,9 +589,6 @@ msgid "Settings updated"
 msgstr ""
 
 msgid "SIMD variant"
-msgstr ""
-
-msgid "Sleeping"
 msgstr ""
 
 msgid "Some preset sources are unavailable"

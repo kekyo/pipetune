@@ -106,81 +106,10 @@ static bool testQueuedAudioCanBeDiscardedBeforeChangingOutput() {
                "intentional discard must not be counted as an xrun");
 }
 
-static bool testExactZeroFramesArePreservedAsGaps() {
-  auto ring = pipetune::PlanarAudioRing(2, 5);
-  const auto input = std::vector<float>{
-      0.0F, 2.0F, 0.0F, -0.0F,
-      0.0F, 3.0F, 0.0F, 0.0F};
-  auto output = std::vector<float>(8, -1.0F);
-
-  if (!check(ring.write(input, 4) == 4,
-             "gap-classified input must be accepted")) {
-    return false;
-  }
-  const auto result = ring.readWithGaps(output, 4, false);
-  return check(result.queuedFrames == 4 && result.gapFrames == 3 &&
-                   result.missingFrames == 0,
-               "exact-zero frames must retain gap classification") &&
-         check(output == input, "gap classification must preserve queued PCM");
-}
-
-static bool testSleepingProducerMakesMissingFramesIntentionalGaps() {
-  auto ring = pipetune::PlanarAudioRing(2, 4);
-  auto output = std::vector<float>(10, -1.0F);
-  if (!check(ring.writeGap(3) == 3,
-             "intentional gap frames must be queued")) {
-    return false;
-  }
-
-  const auto result = ring.readWithGaps(output, 5, true);
-  return check(result.queuedFrames == 3 && result.gapFrames == 5 &&
-                   result.missingFrames == 2,
-               "queued and sleeping gaps must cover the complete read") &&
-         check(output == std::vector<float>(10, 0.0F),
-               "every intentional gap must read as neutral PCM") &&
-         check(ring.underrunFrames() == 0,
-               "intentional sleeping gaps must not count as underruns");
-}
-
-static bool testDiscardedGapsDoNotCountAsOverruns() {
-  auto ring = pipetune::PlanarAudioRing(1, 2);
-  return check(ring.writeGap(5) == 2,
-               "gap writes must retain only available frames") &&
-         check(ring.overrunFrames() == 0,
-               "discarded intentional gaps must not count as overruns");
-}
-
-static bool testGapClassificationSurvivesWraparound() {
-  auto ring = pipetune::PlanarAudioRing(1, 4);
-  const auto first = std::vector<float>{1.0F, 0.0F, 2.0F};
-  auto prefix = std::vector<float>(2, -1.0F);
-  const auto second = std::vector<float>{0.0F, 0.0F, 3.0F};
-  auto output = std::vector<float>(4, -1.0F);
-
-  if (!check(ring.write(first, 3) == 3,
-             "initial classified frames must fit") ||
-      !check(ring.readWithGaps(prefix, 2, false).gapFrames == 1,
-             "prefix gap count differs") ||
-      !check(ring.write(second, 3) == 3,
-             "wrapped classified frames must fit")) {
-    return false;
-  }
-  const auto result = ring.readWithGaps(output, 4, false);
-  return check(result.queuedFrames == 4 && result.gapFrames == 2 &&
-                   result.missingFrames == 0,
-               "wrapped gap metadata must follow its audio frames") &&
-         check(output == std::vector<float>({2.0F, 0.0F, 0.0F, 3.0F}),
-               "wrapped classified PCM differs");
-}
-
 int main() {
   const auto passed = testPlanarWraparound() && testUnderrunSilence() &&
                       testOverrunDropsNewestTail() &&
                       testMalformedBufferIsRejected() &&
-                      testQueuedAudioCanBeDiscardedBeforeChangingOutput() &&
-                      testExactZeroFramesArePreservedAsGaps() &&
-                      testSleepingProducerMakesMissingFramesIntentionalGaps() &&
-                      testDiscardedGapsDoNotCountAsOverruns() &&
-                      testGapClassificationSurvivesWraparound();
+                      testQueuedAudioCanBeDiscardedBeforeChangingOutput();
   return passed ? 0 : 1;
 }

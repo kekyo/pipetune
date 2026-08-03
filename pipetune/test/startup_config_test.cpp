@@ -95,8 +95,7 @@ static bool testFullSnapshotRoundTrip(
            .fixedRate = 192000,
            .enforcement = pipetune::SampleRateEnforcement::force},
       .dspBackend = pipetune::DspBackendKind::simd,
-      .dspSimdVariant = pipetune::DspSimdVariant::x86_64_v3,
-      .dspIdlePolicy = pipetune::DspIdlePolicy::exact};
+      .dspSimdVariant = pipetune::DspSimdVariant::x86_64_v3};
   const auto saved = pipetune::saveStartupConfig(configPath, expected);
   const auto loaded = pipetune::loadStartupConfig(configPath);
   if (!check(saved.empty(), saved) ||
@@ -114,8 +113,7 @@ static bool testFullSnapshotRoundTrip(
                      expected.ratePolicy.enforcement,
              "snapshot rate policy did not round-trip") ||
       !check(loaded.config.dspBackend == expected.dspBackend &&
-                 loaded.config.dspSimdVariant == expected.dspSimdVariant &&
-                 loaded.config.dspIdlePolicy == expected.dspIdlePolicy,
+                 loaded.config.dspSimdVariant == expected.dspSimdVariant,
              "snapshot DSP choices did not round-trip")) {
     return false;
   }
@@ -281,35 +279,6 @@ static bool testDspBackendRoundTripPreservesOtherChoices(
                "saving another choice must preserve the SIMD variant");
 }
 
-static bool testDspIdlePolicyRoundTripPreservesOtherChoices(
-    const std::filesystem::path &configPath) {
-  const auto savedPolicy = pipetune::saveDspIdlePolicy(
-      configPath, pipetune::DspIdlePolicy::exact);
-  const auto configured = pipetune::loadStartupConfig(configPath);
-  if (!check(savedPolicy.empty(), savedPolicy) ||
-      !check(configured.error.empty(), configured.error) ||
-      !check(configured.config.dspIdlePolicy ==
-                 pipetune::DspIdlePolicy::exact,
-             "DSP idle policy did not round-trip") ||
-      !check(configured.config.dspBackend ==
-                     pipetune::DspBackendKind::simd &&
-                 configured.config.dspSimdVariant ==
-                     pipetune::DspSimdVariant::x86_64_v3,
-             "saving a DSP idle policy must preserve the DSP backend")) {
-    return false;
-  }
-
-  const auto rejected = pipetune::saveDspIdlePolicy(
-      configPath, static_cast<pipetune::DspIdlePolicy>(99));
-  const auto preserved = pipetune::loadStartupConfig(configPath);
-  return check(!rejected.empty(),
-               "invalid DSP idle policies must be rejected") &&
-         check(preserved.error.empty(), preserved.error) &&
-         check(preserved.config.dspIdlePolicy ==
-                   pipetune::DspIdlePolicy::exact,
-               "a rejected idle policy save must preserve the prior choice");
-}
-
 static bool testAcceptedInputForms(const std::filesystem::path &configPath) {
   writeConfig(configPath,
               "# Existing package configuration\n"
@@ -317,7 +286,6 @@ static bool testAcceptedInputForms(const std::filesystem::path &configPath) {
               "PIPETUNE_TARGET=alsa_output.plain\n"
               "PIPETUNE_DSP_BACKEND=simd\n"
               "PIPETUNE_DSP_SIMD_VARIANT=x86-64-v3\n"
-              "PIPETUNE_DSP_IDLE_POLICY=exact\n"
               "PIPETUNE_RATE=96000\n"
               "PIPETUNE_RATE_ENFORCEMENT=force\n");
   const auto unquoted = pipetune::loadStartupConfig(configPath);
@@ -334,9 +302,6 @@ static bool testAcceptedInputForms(const std::filesystem::path &configPath) {
       !check(unquoted.config.dspSimdVariant ==
                  pipetune::DspSimdVariant::x86_64_v3,
              "unquoted DSP SIMD variant assignments must be readable") ||
-      !check(unquoted.config.dspIdlePolicy ==
-                 pipetune::DspIdlePolicy::exact,
-             "unquoted DSP idle policy assignments must be readable") ||
       !check(unquoted.config.ratePolicy.mode ==
                      pipetune::SampleRateMode::fixed &&
                  unquoted.config.ratePolicy.fixedRate == 96000 &&
@@ -372,8 +337,6 @@ static bool testAcceptedInputForms(const std::filesystem::path &configPath) {
                        pipetune::DspBackendKind::scalar &&
                    absentConfig.config.dspSimdVariant ==
                        pipetune::DspSimdVariant::automatic &&
-                   absentConfig.config.dspIdlePolicy ==
-                       pipetune::DspIdlePolicy::conservative &&
                    absentConfig.config.ratePolicy.mode ==
                        pipetune::SampleRateMode::maximum &&
                    absentConfig.config.ratePolicy.fixedRate == 0 &&
@@ -385,8 +348,6 @@ static bool testAcceptedInputForms(const std::filesystem::path &configPath) {
                        pipetune::DspBackendKind::scalar &&
                    missingConfig.config.dspSimdVariant ==
                        pipetune::DspSimdVariant::automatic &&
-                   missingConfig.config.dspIdlePolicy ==
-                       pipetune::DspIdlePolicy::conservative &&
                    missingConfig.config.ratePolicy.mode ==
                        pipetune::SampleRateMode::maximum &&
                    missingConfig.config.ratePolicy.fixedRate == 0 &&
@@ -448,16 +409,6 @@ static bool testRejectedInputForms(const std::filesystem::path &configPath) {
   const auto unsupportedVariant = pipetune::loadStartupConfig(configPath);
 
   writeConfig(configPath,
-              "PIPETUNE_DSP_IDLE_POLICY=conservative\n"
-              "PIPETUNE_DSP_IDLE_POLICY=exact\n");
-  const auto duplicateIdlePolicy =
-      pipetune::loadStartupConfig(configPath);
-
-  writeConfig(configPath, "PIPETUNE_DSP_IDLE_POLICY=threshold\n");
-  const auto unsupportedIdlePolicy =
-      pipetune::loadStartupConfig(configPath);
-
-  writeConfig(configPath,
               std::string(64 * 1024 + 1, '#'));
   const auto oversized = pipetune::loadStartupPreset(configPath);
 
@@ -487,10 +438,6 @@ static bool testRejectedInputForms(const std::filesystem::path &configPath) {
                "duplicate DSP SIMD variants must be rejected") &&
          check(!unsupportedVariant.error.empty(),
                "unsupported DSP SIMD variants must be rejected") &&
-         check(!duplicateIdlePolicy.error.empty(),
-               "duplicate DSP idle policies must be rejected") &&
-         check(!unsupportedIdlePolicy.error.empty(),
-               "unsupported DSP idle policies must be rejected") &&
          check(!oversized.error.empty(),
                "startup configurations larger than 64 KiB must be rejected") &&
          check(!rejectedEmptyTarget.empty(),
@@ -509,7 +456,6 @@ int main() {
       testPreferredOutputRoundTripPreservesPreset(configPath) &&
       testRatePolicyRoundTripPreservesOtherChoices(configPath) &&
       testDspBackendRoundTripPreservesOtherChoices(configPath) &&
-      testDspIdlePolicyRoundTripPreservesOtherChoices(configPath) &&
       testAcceptedInputForms(configPath) && testRejectedInputForms(configPath);
   std::filesystem::remove_all(directory);
   return passed ? 0 : 1;
