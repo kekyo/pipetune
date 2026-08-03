@@ -4,6 +4,9 @@ Linuxのデスクトップセッションの音声に、EffeTuneで構築したD
 
 ![PipeTune](./images/pipetune-120.png)
 
+[![Project Status: Active – The project has reached a stable, usable state and is being actively developed.](https://www.repostatus.org/badges/latest/active.svg)](https://www.repostatus.org/#active)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 ----
 
 [(English language is here)](./README.md)

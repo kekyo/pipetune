@@ -4,7 +4,10 @@ Applies an EffeTune DSP preset to all audio in one Linux desktop session.
 
 ![PipeTune](./images/pipetune-120.png)
 
-----
+[![Project Status: Active – The project has reached a stable, usable state and is being actively developed.](https://www.repostatus.org/badges/latest/active.svg)](https://www.repostatus.org/#active)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+---
 
 [(Japanese language is here/日本語はこちら)](./README_ja.md)
 
