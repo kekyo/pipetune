@@ -263,51 +263,6 @@ fails, with the concrete effective tier and reason shown in status.
 The effect depends strongly on the preset and the kinds of DSP operations it
 uses.
 
-## Reducing idle DSP work
-
-PipeTune combines PipeWire graph idling, preservation of PipeWire EMPTY/GAP
-information, and DSP sleep based on monitoring exact-zero input.
-
-When an application that is not producing any sound continues to send a
-zero-PCM stream, DSP computation otherwise continues and keeps consuming CPU.
-Applications that send zero PCM while inactive are common. Even a single such
-process in a user session can keep PipeTune's DSP computation running,
-increasing system temperatures and contributing to battery drain.
-
-PipeTune monitors the input PCM stream. Once the configured zero-PCM idle
-condition is satisfied, it stops DSP computation and waits until nonzero PCM
-data is detected again.
-
-The PipeTune settings window's DSP page provides an **Idle policy** selector,
-while the persistent status pane displays its runtime state, skipped-frame and
-sleep-transition counters, and PipeWire idle state:
-
-- **Conservative** (default): after five seconds of exact-zero input, sleep
-  once the final DSP output has remained at or below -150 dBFS for one second;
-  and
-- **Exact**: use the same input interval, then sleep after confirming one
-  second of mathematically exact-zero DSP output.
-
-The same operations are available from the CLI:
-
-```sh
-pipetune idle get
-pipetune idle get --json
-pipetune idle set conservative
-pipetune idle set exact
-```
-
-Any nonzero input wakes DSP processing in the same callback block. Before
-sleeping, PipeTune performs a real-time-safe reset of every active EffeTune
-kernel so stale delay, feedback, and telemetry state cannot leak into the next
-sound. Exact mode avoids truncating any nonzero tail, but effects that generate
-noise or never converge to exact zero may remain active.
-
-When both PipeWire streams pause, PipeTune clears already queued audio and
-flushes both stream queues. The DSP is reset by the first resumed capture
-callback, and playback emits GAP if it resumes before fresh capture data, so
-PCM from the previous playback interval is not replayed.
-
 ## Resetting PipeTune configuration
 
 The PipeTune settings window's Advanced page provides **Restore Defaults**. It
@@ -315,9 +270,8 @@ previews these choices live without saving them:
 
 - DSP **Bypass**;
 - the physical **System default** output;
-- PCM rate **Max** with **Suggest**;
-- native DSP backend **Scalar**, with SIMD preference **Auto**; and
-- DSP idle policy **Conservative**.
+- PCM rate **Max** with **Suggest**; and
+- native DSP backend **Scalar**, with SIMD preference **Auto**.
 
 Click **Apply** to persist the defaults, or **Cancel** to restore the prior
 live configuration. This GTK action does not restart the service. The CLI

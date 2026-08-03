@@ -25,9 +25,9 @@ unrelated values into one line. Its always-expanded sections are:
 
 Together they display the daemon connection and virtual-sink state, live and
 saved processing choices, routing decisions, input format and rates, DSP
-backend and idle state, processing time and load, error counters, and
-diagnostics. Long values are ellipsized in the row and remain available in a
-tooltip. **Load** is a horizontal level meter below the connection summary,
+backend, processing time and load, error counters, and diagnostics. Long values
+are ellipsized in the row and remain available in a tooltip. **Load** is a
+horizontal level meter below the connection summary,
 outside the scrolling status rows. Its left edge matches the heading and
 summary labels so it clears the status icon. It grows with the status pane from
 150 to 280 pixels and overlays the existing percentage text at the right edge.
@@ -54,9 +54,8 @@ dependency order:
 
 1. output;
 2. sample-rate policy;
-3. DSP backend;
-4. DSP idle policy; and
-5. processing mode or preset.
+3. DSP backend; and
+4. processing mode or preset.
 
 The global **Apply** button becomes available only after the daemon has
 confirmed every requested live change. It atomically writes the complete
@@ -123,7 +122,7 @@ The **Preset file** chooser remains available for any standalone
 processing or pass-through bypass. Both the preset selection and the switch
 participate in the dialog-wide live preview and persistence transaction.
 
-## DSP backend and idle policy
+## DSP backend
 
 The DSP page's **Native backend** drop-down selects **Scalar**,
 **SIMD (Auto)**, or an applicable baseline, x86-64-v3, x86-64-v4, or Arm64
@@ -133,20 +132,6 @@ concrete effective tier, startup fallback, and validation diagnostics. A live
 backend change rebuilds and atomically replaces the active preset pipeline.
 DSP histories reset during replacement, and a discontinuity or brief silence
 is allowed.
-
-The **Idle policy** drop-down selects **Conservative** or **Exact**.
-Conservative is the default and permits sleep after five seconds of exact-zero
-input plus one second of final DSP output at or below -150 dBFS. Exact uses the
-same input interval but requires the final output to remain mathematically zero
-for one second.
-
-The status pane shows the configured policy, effective DSP state, cumulative
-skipped frames, sleep transitions, and whether the PipeWire graph is idle.
-Any nonzero input wakes DSP processing in the same callback block. PipeTune
-resets the active EffeTune engine through its real-time-safe reset API before
-sleeping. See the
-[DSP and PipeWire idling notes](../pipetune/docs/dsp-idle.md) for EMPTY/GAP
-propagation and the complete state machine.
 
 ## Output and sample rate
 
@@ -190,32 +175,28 @@ absence follows the physical system default. `PIPETUNE_RATE` stores `max` or
 one of the five fixed rates, and `PIPETUNE_RATE_ENFORCEMENT` stores `suggest`
 or `force`. `PIPETUNE_DSP_BACKEND` stores `scalar` or `simd`, and
 `PIPETUNE_DSP_SIMD_VARIANT` stores `auto`, `baseline`, `x86-64-v3`,
-`x86-64-v4`, or `sve`. `PIPETUNE_DSP_IDLE_POLICY` stores `conservative` or
-`exact`. Missing rate assignments use Max-and-suggest, a missing backend
-assignment uses Scalar, a missing SIMD variant uses Auto, and a missing idle
-assignment uses Conservative. Apply replaces this file atomically while
-retaining restrictive directory and file permissions.
+`x86-64-v4`, or `sve`. Missing rate assignments use Max-and-suggest, a missing
+backend assignment uses Scalar, and a missing SIMD variant uses Auto. Apply
+replaces this file atomically while retaining restrictive directory and file
+permissions.
 
 The Advanced page's **Restore Defaults** selects bypass, System default,
-Max with Suggest, Scalar with an Auto SIMD preference, and Conservative DSP
-idling. It does not restart the service and does not write the environment
-file until Apply succeeds.
+Max with Suggest, and Scalar with an Auto SIMD preference. It does not restart
+the service and does not write the environment file until Apply succeeds.
 
 ## Status subscription
 
 The GUI uses the daemon's same-user Unix control socket. It receives an initial
 status event and later daemon publications over a persistent asynchronous GIO
 connection. The daemon publishes runtime counters and cumulative native
-EffeTune processing time, DSP idle counters/state, and PipeWire graph-idle
-state once per second. The GUI derives the displayed per-frame average between
-publications. It compares that average with the frame duration derived from
-the negotiated input sample rate and displays the ratio as **Load**; 100% is
-the theoretical real-time deadline, and values above 100% remain visible.
-While PipeWire is paused, the DSP controller is sleeping, or the latest active
-interval contains no DSP frames, **EffeTune DSP time** displays `—` rather
-than retaining an earlier load measurement. It does not poll for status; a
-short retry timer is used only to reconnect after the socket becomes
-unavailable.
+EffeTune processing time once per second. The GUI derives the displayed
+per-frame average between publications. It compares that average with the
+frame duration derived from the negotiated input sample rate and displays the
+ratio as **Load**; 100% is the theoretical real-time deadline, and values above
+100% remain visible. When the latest interval contains no DSP frames,
+**EffeTune DSP time** displays `—` rather than retaining an earlier load
+measurement. It does not poll for status; a short retry timer is used only to
+reconnect after the socket becomes unavailable.
 
 ## System tray compatibility
 
