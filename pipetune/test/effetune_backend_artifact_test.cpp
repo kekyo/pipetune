@@ -1,5 +1,7 @@
 #include <effetune/abi.h>
 
+#include "effetune_backend_abi.h"
+
 #include <dlfcn.h>
 
 #if defined(__aarch64__)
@@ -19,6 +21,8 @@
 #include <vector>
 
 static int failures = 0;
+
+static_assert(EFFETUNE_DSP_ABI_VERSION == 1u);
 
 static void check(bool condition, const char *message) {
   if (!condition) {
@@ -77,7 +81,7 @@ static BackendApi loadBackend(const std::filesystem::path &path) {
   api.buildFlags =
       loadFunction<decltype(api.buildFlags)>(api.handle, "et_build_flags");
   api.backendVariant = loadFunction<decltype(api.backendVariant)>(
-      api.handle, "et_backend_variant");
+      api.handle, "pipetune_effetune_backend_variant");
   api.kernelCount =
       loadFunction<decltype(api.kernelCount)>(api.handle, "et_kernel_count");
   api.kernelName =
@@ -187,7 +191,7 @@ static void checkAllAbiSymbols(void *handle) {
   static constexpr std::array names = {
       "et_abi_version",
       "et_build_flags",
-      "et_backend_variant",
+      "pipetune_effetune_backend_variant",
       "et_kernel_count",
       "et_kernel_name",
       "et_kernel_params_hash",
@@ -231,37 +235,43 @@ static void checkAllAbiSymbols(void *handle) {
     dlerror();
     void *address = dlsym(handle, name);
     check(dlerror() == nullptr && address != nullptr,
-          "every EffeTune ABI v2 symbol must be exported");
+          "every required backend ABI symbol must be exported");
   }
+
+  dlerror();
+  void *legacyVariant = dlsym(handle, "et_backend_variant");
+  const char *legacyVariantError = dlerror();
+  check(legacyVariantError != nullptr && legacyVariant == nullptr,
+        "the backend must not extend the official EffeTune ABI");
 }
 
 static std::uint32_t expectedVariant(const std::filesystem::path &path) {
   const auto filename = path.filename().string();
   if (filename == "libeffetune-dsp-scalar.so") {
-    return ET_BACKEND_VARIANT_SCALAR;
+    return PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR;
   }
   if (filename == "libeffetune-dsp-simd.so") {
-    return ET_BACKEND_VARIANT_SIMD_BASELINE;
+    return PIPETUNE_EFFETUNE_BACKEND_VARIANT_SIMD_BASELINE;
   }
   if (filename == "libeffetune-dsp-simd-x86-64-v3.so") {
-    return ET_BACKEND_VARIANT_X86_64_V3;
+    return PIPETUNE_EFFETUNE_BACKEND_VARIANT_X86_64_V3;
   }
   if (filename == "libeffetune-dsp-simd-x86-64-v4.so") {
-    return ET_BACKEND_VARIANT_X86_64_V4;
+    return PIPETUNE_EFFETUNE_BACKEND_VARIANT_X86_64_V4;
   }
   if (filename == "libeffetune-dsp-simd-arm64-sve.so") {
-    return ET_BACKEND_VARIANT_ARM64_SVE;
+    return PIPETUNE_EFFETUNE_BACKEND_VARIANT_ARM64_SVE;
   }
   check(false, "backend filename must identify a supported variant");
-  return ET_BACKEND_VARIANT_SCALAR;
+  return PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR;
 }
 
 static bool cpuSupports(std::uint32_t variant) {
-  if (variant == ET_BACKEND_VARIANT_SCALAR ||
-      variant == ET_BACKEND_VARIANT_SIMD_BASELINE) {
+  if (variant == PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR ||
+      variant == PIPETUNE_EFFETUNE_BACKEND_VARIANT_SIMD_BASELINE) {
     return true;
   }
-  if (variant == ET_BACKEND_VARIANT_X86_64_V3) {
+  if (variant == PIPETUNE_EFFETUNE_BACKEND_VARIANT_X86_64_V3) {
 #if defined(__x86_64__) || defined(__i386__)
     __builtin_cpu_init();
     return __builtin_cpu_supports("x86-64-v3") != 0;
@@ -269,7 +279,7 @@ static bool cpuSupports(std::uint32_t variant) {
     return false;
 #endif
   }
-  if (variant == ET_BACKEND_VARIANT_X86_64_V4) {
+  if (variant == PIPETUNE_EFFETUNE_BACKEND_VARIANT_X86_64_V4) {
 #if defined(__x86_64__)
     __builtin_cpu_init();
     return __builtin_cpu_supports("x86-64-v4") != 0;
@@ -277,7 +287,7 @@ static bool cpuSupports(std::uint32_t variant) {
     return false;
 #endif
   }
-  if (variant == ET_BACKEND_VARIANT_ARM64_SVE) {
+  if (variant == PIPETUNE_EFFETUNE_BACKEND_VARIANT_ARM64_SVE) {
 #if defined(__aarch64__)
     return (getauxval(AT_HWCAP) & HWCAP_SVE) != 0u;
 #else
@@ -304,7 +314,9 @@ int main(int argc, char **argv) {
     }
     loaded.emplace_back(variant, loadBackend(path));
   }
-  check(!loaded.empty() && loaded.front().first == ET_BACKEND_VARIANT_SCALAR,
+  check(!loaded.empty() &&
+            loaded.front().first ==
+                PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
         "the scalar backend must be loaded first");
   if (!loaded.empty()) {
     auto &scalar = loaded.front().second;
@@ -312,10 +324,11 @@ int main(int argc, char **argv) {
     if (scalar.handle != nullptr && scalar.abiVersion != nullptr &&
         scalar.buildFlags != nullptr && scalar.backendVariant != nullptr) {
       check(scalar.abiVersion() == EFFETUNE_DSP_ABI_VERSION,
-            "scalar backend ABI version must match");
+            "scalar backend must use the official EffeTune v2.2 ABI");
       check((scalar.buildFlags() & ET_BUILD_SIMD) == 0u,
             "scalar backend must clear ET_BUILD_SIMD");
-      check(scalar.backendVariant() == ET_BACKEND_VARIANT_SCALAR,
+      check(scalar.backendVariant() ==
+                PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
             "scalar backend must report its concrete variant");
       checkAllAbiSymbols(scalar.handle);
       const auto scalarSpectrum = renderImpulseSpectrum(scalar);
@@ -328,7 +341,7 @@ int main(int argc, char **argv) {
           continue;
         }
         check(simd.abiVersion() == EFFETUNE_DSP_ABI_VERSION,
-              "SIMD backend ABI version must match");
+              "SIMD backend must use the official EffeTune v2.2 ABI");
         check((simd.buildFlags() & ET_BUILD_SIMD) != 0u,
               "SIMD backend must set ET_BUILD_SIMD");
         check(simd.backendVariant() == expected,

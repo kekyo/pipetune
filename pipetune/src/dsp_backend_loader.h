@@ -4,6 +4,7 @@
 #include "pipetune/dsp_backend.h"
 
 #include "dsp_catalog.h"
+#include "effetune_backend_abi.h"
 
 #include <effetune/abi.h>
 
@@ -15,7 +16,7 @@ namespace pipetune {
 struct DspBackendApi {
   decltype(&et_abi_version) abiVersion = nullptr;
   decltype(&et_build_flags) buildFlags = nullptr;
-  decltype(&et_backend_variant) backendVariant = nullptr;
+  decltype(&pipetune_effetune_backend_variant) backendVariant = nullptr;
   decltype(&et_kernel_count) kernelCount = nullptr;
   decltype(&et_kernel_name) kernelName = nullptr;
   decltype(&et_kernel_params_hash) kernelParamsHash = nullptr;

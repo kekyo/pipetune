@@ -161,17 +161,17 @@ static std::vector<DspBackendVariant> nativeSimdVariants() {
 static std::uint32_t abiVariant(DspBackendVariant variant) {
   switch (variant) {
   case DspBackendVariant::scalar:
-    return ET_BACKEND_VARIANT_SCALAR;
+    return PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR;
   case DspBackendVariant::simdBaseline:
-    return ET_BACKEND_VARIANT_SIMD_BASELINE;
+    return PIPETUNE_EFFETUNE_BACKEND_VARIANT_SIMD_BASELINE;
   case DspBackendVariant::x86_64_v3:
-    return ET_BACKEND_VARIANT_X86_64_V3;
+    return PIPETUNE_EFFETUNE_BACKEND_VARIANT_X86_64_V3;
   case DspBackendVariant::x86_64_v4:
-    return ET_BACKEND_VARIANT_X86_64_V4;
+    return PIPETUNE_EFFETUNE_BACKEND_VARIANT_X86_64_V4;
   case DspBackendVariant::arm64Sve:
-    return ET_BACKEND_VARIANT_ARM64_SVE;
+    return PIPETUNE_EFFETUNE_BACKEND_VARIANT_ARM64_SVE;
   }
-  return ET_BACKEND_VARIANT_SCALAR;
+  return PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR;
 }
 
 static std::string backendFilename(DspBackendVariant variant) {
@@ -509,8 +509,8 @@ loadDspBackendFromPath(DspBackendVariant variant,
         "DSP backend build flags do not match the requested " +
             std::string(dspBackendName(kind)) + " variant");
   }
-  if (!loadSymbol(handle.get(), "et_backend_variant", api.backendVariant,
-                  symbolError)) {
+  if (!loadSymbol(handle.get(), "pipetune_effetune_backend_variant",
+                  api.backendVariant, symbolError)) {
     return loadError(variant, libraryPath, context.cpuSupported, requirement,
                      std::move(symbolError));
   }

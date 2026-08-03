@@ -138,38 +138,14 @@ add_custom_command(
   VERBATIM)
 
 set(ET_SIMD OFF CACHE BOOL "Match EffeTune's native scalar DSP configuration" FORCE)
-set(
-  ET_BUILD_NATIVE_SHARED_BACKENDS
-  ON
-  CACHE BOOL
-  "Build PipeTune's loadable EffeTune DSP backends"
-  FORCE)
-set(
-  ET_NATIVE_BACKEND_OUTPUT_DIRECTORY
-  "${CMAKE_BINARY_DIR}"
-  CACHE PATH
-  "Place loadable EffeTune DSP backends next to PipeTune"
-  FORCE)
 add_subdirectory(
   "${PIPETUNE_EFFETUNE_DIR}/dsp"
   "${CMAKE_CURRENT_BINARY_DIR}/effetune-dsp")
-set(
-  PIPETUNE_DSP_BACKEND_TARGETS
-  effetune_dsp_scalar_shared
-  effetune_dsp_simd_shared)
-foreach(
-  PIPETUNE_OPTIONAL_DSP_BACKEND_TARGET
-  IN ITEMS
-    effetune_dsp_x86_64_v3_shared
-    effetune_dsp_x86_64_v4_shared
-    effetune_dsp_arm64_sve_shared)
-  if(TARGET "${PIPETUNE_OPTIONAL_DSP_BACKEND_TARGET}")
-    list(
-      APPEND
-      PIPETUNE_DSP_BACKEND_TARGETS
-      "${PIPETUNE_OPTIONAL_DSP_BACKEND_TARGET}")
-  endif()
-endforeach()
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/EffeTuneNativeBackends.cmake")
+pipetune_add_effetune_native_backends(
+  "${PIPETUNE_EFFETUNE_DIR}/dsp"
+  "${CMAKE_BINARY_DIR}"
+  PIPETUNE_DSP_BACKEND_TARGETS)
 
 add_library(yyjson STATIC "${PIPETUNE_YYJSON_DIR}/src/yyjson.c")
 target_include_directories(yyjson PUBLIC "${PIPETUNE_YYJSON_DIR}/src")
@@ -353,7 +329,9 @@ if(BUILD_TESTING)
     test/dsp_backend_fixture.c)
   target_include_directories(
     pipetune_dsp_backend_wrong_abi_fixture
-    PRIVATE "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+    PRIVATE
+      src
+      "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
   target_compile_definitions(
     pipetune_dsp_backend_wrong_abi_fixture
     PRIVATE PIPETUNE_FIXTURE_WRONG_ABI=1)
@@ -363,7 +341,9 @@ if(BUILD_TESTING)
     test/dsp_backend_fixture.c)
   target_include_directories(
     pipetune_dsp_backend_missing_symbol_fixture
-    PRIVATE "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+    PRIVATE
+      src
+      "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
 
   add_executable(
     pipetune_dsp_backend_tests
@@ -389,10 +369,17 @@ if(BUILD_TESTING)
     NAME pipetune_dsp_backend_tests
     COMMAND
       pipetune_dsp_backend_tests
-      "$<TARGET_FILE:effetune_dsp_scalar_shared>"
-      "$<TARGET_FILE:effetune_dsp_simd_shared>"
+      "$<TARGET_FILE:pipetune_effetune_dsp_scalar_shared>"
+      "$<TARGET_FILE:pipetune_effetune_dsp_simd_shared>"
       "$<TARGET_FILE:pipetune_dsp_backend_wrong_abi_fixture>"
       "$<TARGET_FILE:pipetune_dsp_backend_missing_symbol_fixture>")
+
+  add_test(
+    NAME pipetune_native_dsp_architecture_tests
+    COMMAND
+      "${CMAKE_COMMAND}"
+      -P
+      "${CMAKE_CURRENT_SOURCE_DIR}/test/native_dsp_architecture_test.cmake")
 
   find_program(PIPETUNE_NM_EXECUTABLE nm REQUIRED)
   find_program(PIPETUNE_READELF_EXECUTABLE readelf REQUIRED)
@@ -410,7 +397,9 @@ if(BUILD_TESTING)
     test/effetune_backend_artifact_test.cpp)
   target_include_directories(
     pipetune_effetune_backend_artifact_tests
-    PRIVATE "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+    PRIVATE
+      src
+      "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
   target_link_libraries(
     pipetune_effetune_backend_artifact_tests PRIVATE "${CMAKE_DL_LIBS}")
   add_dependencies(
@@ -445,7 +434,7 @@ if(BUILD_TESTING)
   add_executable(pipetune_bootstrap_tests test/bootstrap_test.cpp)
   target_link_libraries(
     pipetune_bootstrap_tests
-    PRIVATE pipetune_core effetune_pffft_scalar)
+    PRIVATE pipetune_core pipetune_effetune_pffft_scalar)
   if(MSVC)
     target_compile_options(pipetune_bootstrap_tests PRIVATE /W4 /WX)
   else()
