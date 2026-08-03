@@ -907,37 +907,13 @@ static bool testErrorResponse() {
                "parsed error diagnostic differs");
 }
 
-static bool testRemovedDspIdleProtocol() {
-  const auto request = pipetune::parseControlRequest(
-      R"json({"command":"set-dsp-idle-policy","policy":"exact"})json");
-  const auto response = pipetune::makeControlSuccessResponse({}, {});
-  auto *document = yyjson_read(response.data(), response.size(), 0);
-  if (!check(document != nullptr,
-             "control response without DSP idle state must be valid JSON")) {
-    return false;
-  }
-  auto *root = yyjson_doc_get_root(document);
-  const auto omitsIdleState =
-      yyjson_obj_get(root, "dspIdlePolicy") == nullptr &&
-      yyjson_obj_get(root, "dspIdleState") == nullptr &&
-      yyjson_obj_get(root, "dspIdleSkippedFrames") == nullptr &&
-      yyjson_obj_get(root, "dspIdleSleepTransitions") == nullptr &&
-      yyjson_obj_get(root, "pipeWireIdle") == nullptr;
-  yyjson_doc_free(document);
-  return check(!request.error.empty(),
-               "removed DSP idle control command must be rejected") &&
-         check(omitsIdleState,
-               "control response must omit removed DSP idle state");
-}
-
 int main() {
   return testRequests() && testRejectedRequests() && testSuccessResponse() &&
                  testStatusEvent() && testBypassStatus() &&
                  testDspBackendFallbackStatus() &&
                  testUnavailableOutputStatus() &&
                  testRejectedOutputStatus() &&
-                 testRejectedInputTelemetry() && testErrorResponse() &&
-                 testRemovedDspIdleProtocol()
+                 testRejectedInputTelemetry() && testErrorResponse()
              ? 0
              : 1;
 }

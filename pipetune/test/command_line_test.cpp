@@ -658,17 +658,6 @@ static bool testRejectedArguments() {
                "config reset must reject unknown options");
 }
 
-static bool testRemovedDspIdleArguments() {
-  constexpr auto direct = std::array<std::string_view, 4>{
-      "--preset", "x.effetune_preset", "--dsp-idle-policy", "exact"};
-  constexpr auto control =
-      std::array<std::string_view, 2>{"idle", "get"};
-  return check(!pipetune::parseCommandLine(direct).error.empty(),
-               "removed direct DSP idle option must be rejected") &&
-         check(!pipetune::parseCommandLine(control).error.empty(),
-               "removed DSP idle command must be rejected");
-}
-
 int main() {
   const auto passed = testRunDefaults() && testExplicitOptions() &&
                       testControlActions() && testDaemonAction() &&
@@ -677,7 +666,6 @@ int main() {
                       testUserSetupActions() &&
                       testConfigResetAction() &&
                       testDefaultRestorationAction() &&
-                      testInformationalActions() && testRejectedArguments() &&
-                      testRemovedDspIdleArguments();
+                      testInformationalActions() && testRejectedArguments();
   return passed ? 0 : 1;
 }

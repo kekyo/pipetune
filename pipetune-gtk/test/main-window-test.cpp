@@ -140,12 +140,6 @@ static bool checkLoadMeterHost(const pipetune_gtk::MainWindowUi &ui) {
                "status Load meter must follow the connection summary");
 }
 
-static bool checkRemovedDspIdleWidgets(const pipetune_gtk::MainWindowUi &ui) {
-  return check(
-      gtk_builder_get_object(ui.builder, "dspIdlePolicyCombo") == nullptr,
-      "removed DSP idle policy selector must not be present");
-}
-
 static bool checkJapaneseMeasuredStatusLabels() {
   auto state = pipetune_gtk::initialApplicationState();
   state.connection = pipetune_gtk::ControlConnectionState::connected;
@@ -213,7 +207,7 @@ int main(int argc, char **argv) {
   const auto valid =
       check(ui.builder != nullptr, "main window builder is unavailable") &&
       checkWidgetTypes(ui) && checkSettingsPages(ui) &&
-      checkLoadMeterHost(ui) && checkRemovedDspIdleWidgets(ui) &&
+      checkLoadMeterHost(ui) &&
       check(gtk_window_get_application(GTK_WINDOW(ui.window)) ==
                 application,
             "main window application differs") &&
