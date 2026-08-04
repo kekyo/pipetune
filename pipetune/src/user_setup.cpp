@@ -276,6 +276,11 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
             .warnings = {},
             .error = "setup process runner is unavailable"};
   }
+  if (request.integrationProbe == nullptr) {
+    return {.success = false,
+            .warnings = {},
+            .error = "setup PipeWire integration probe is unavailable"};
+  }
 
   auto warnings = std::vector<std::string>{};
   if (request.presetSpecified) {
@@ -372,6 +377,12 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
   if (!processSucceeded(wirePlumberReload)) {
     return failSetup(processFailure("cannot reload WirePlumber policy",
                                     wirePlumberReload));
+  }
+
+  const auto integrationError =
+      request.integrationProbe(request.integrationProbeUserData);
+  if (!integrationError.empty()) {
+    return failSetup(integrationError);
   }
 
   serviceMutationStarted = true;

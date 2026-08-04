@@ -207,6 +207,7 @@ add_library(
   src/pipewire_rate_parser.cpp
   src/process_runner.cpp
   src/rate_command.cpp
+  src/setup_pipewire.cpp
   src/transparent_filter_service.cpp
   src/transparent_filter_output.cpp
   src/user_setup.cpp)
@@ -257,6 +258,28 @@ set(
   CACHE PATH
   "Installation directory for systemd user units")
 set(
+  PIPETUNE_WIREPLUMBER_CONFIG_DIR
+  "/usr/share/wireplumber"
+  CACHE PATH
+  "Absolute WirePlumber configuration directory")
+if(NOT IS_ABSOLUTE "${PIPETUNE_WIREPLUMBER_CONFIG_DIR}")
+  message(
+    FATAL_ERROR
+    "PIPETUNE_WIREPLUMBER_CONFIG_DIR must be absolute: "
+    "${PIPETUNE_WIREPLUMBER_CONFIG_DIR}")
+endif()
+set(
+  PIPETUNE_WIREPLUMBER_DATA_DIR
+  "/usr/share/wireplumber"
+  CACHE PATH
+  "Absolute WirePlumber data directory")
+if(NOT IS_ABSOLUTE "${PIPETUNE_WIREPLUMBER_DATA_DIR}")
+  message(
+    FATAL_ERROR
+    "PIPETUNE_WIREPLUMBER_DATA_DIR must be absolute: "
+    "${PIPETUNE_WIREPLUMBER_DATA_DIR}")
+endif()
+set(
   PIPETUNE_INSTALLED_EXECUTABLE
   "${CMAKE_INSTALL_FULL_BINDIR}/pipetune")
 configure_file(
@@ -292,15 +315,16 @@ install(
   DESTINATION "${PIPETUNE_DOCUMENTATION_DIR}")
 install(
   FILES wireplumber/policy.lua.d/85-pipetune.lua
-  DESTINATION "${CMAKE_INSTALL_DATADIR}/wireplumber/policy.lua.d")
+  DESTINATION "${PIPETUNE_WIREPLUMBER_CONFIG_DIR}/policy.lua.d")
 install(
   FILES wireplumber/wireplumber.conf.d/90-pipetune.conf
-  DESTINATION "${CMAKE_INSTALL_DATADIR}/wireplumber/wireplumber.conf.d")
+  DESTINATION "${PIPETUNE_WIREPLUMBER_CONFIG_DIR}/wireplumber.conf.d")
 install(
-  FILES
-    wireplumber/scripts/pipetune/policy-0.4.lua
-    wireplumber/scripts/pipetune/policy-0.5.lua
-  DESTINATION "${CMAKE_INSTALL_DATADIR}/wireplumber/scripts/pipetune")
+  FILES wireplumber/scripts/pipetune/policy-0.4.lua
+  DESTINATION "${PIPETUNE_WIREPLUMBER_CONFIG_DIR}/scripts/pipetune")
+install(
+  FILES wireplumber/scripts/pipetune/policy-0.5.lua
+  DESTINATION "${PIPETUNE_WIREPLUMBER_DATA_DIR}/scripts/pipetune")
 
 if(BUILD_TESTING)
   set(PIPETUNE_DSP_BACKEND_COPY_COMMANDS)
@@ -566,6 +590,22 @@ if(BUILD_TESTING)
     pipetune_transparent_filter_service_tests
     PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 20)
 
+  add_executable(
+    pipetune_setup_pipewire_probe
+    test/setup_pipewire_probe.cpp)
+  target_include_directories(
+    pipetune_setup_pipewire_probe PRIVATE src)
+  target_link_libraries(
+    pipetune_setup_pipewire_probe PRIVATE pipetune_pipewire)
+  if(MSVC)
+    target_compile_options(
+      pipetune_setup_pipewire_probe PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_setup_pipewire_probe PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+
   add_test(
     NAME pipetune_wireplumber_policy_integration
     COMMAND
@@ -574,7 +614,8 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/wireplumber/policy.lua.d/85-pipetune.lua"
       "${CMAKE_CURRENT_SOURCE_DIR}/wireplumber/scripts/pipetune/policy-0.4.lua"
       "${CMAKE_CURRENT_SOURCE_DIR}/wireplumber/wireplumber.conf.d/90-pipetune.conf"
-      "${CMAKE_CURRENT_SOURCE_DIR}/wireplumber/scripts/pipetune/policy-0.5.lua")
+      "${CMAKE_CURRENT_SOURCE_DIR}/wireplumber/scripts/pipetune/policy-0.5.lua"
+      $<TARGET_FILE:pipetune_setup_pipewire_probe>)
   set_tests_properties(
     pipetune_wireplumber_policy_integration
     PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
@@ -899,6 +940,8 @@ if(BUILD_TESTING)
       ${PIPETUNE_SYSTEMD_USER_UNIT_DIR}
       ${CMAKE_INSTALL_LIBDIR}
       ${CMAKE_INSTALL_DATADIR}
+      ${PIPETUNE_WIREPLUMBER_CONFIG_DIR}
+      ${PIPETUNE_WIREPLUMBER_DATA_DIR}
       ${PIPETUNE_DOCUMENTATION_DIR}
       ${CMAKE_CURRENT_BINARY_DIR}/pipetune.test.service)
 

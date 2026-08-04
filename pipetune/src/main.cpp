@@ -12,6 +12,7 @@
 #include "pipetune/version.h"
 #include "process_runner.h"
 #include "rate_command.h"
+#include "setup_pipewire.h"
 #include "startup_pipeline.h"
 #include "user_setup.h"
 
@@ -56,6 +57,10 @@ static pipetune::ProcessResult runUserManagementProcess(
     std::span<const std::string> arguments,
     pipetune::ProcessWaitMode mode, void *) {
   return pipetune::runProcess(executable, arguments, mode);
+}
+
+static std::string prepareUserSetupPipeWireIntegration(void *) {
+  return pipetune::prepareSetupPipeWireIntegration().error;
 }
 
 static int runConfigResetCommand(
@@ -142,7 +147,9 @@ static int runSetupCommand(
        .presetPath = std::move(presetPath),
        .paths = paths.paths,
        .processRunner = runUserManagementProcess,
-       .processUserData = nullptr});
+       .processUserData = nullptr,
+       .integrationProbe = prepareUserSetupPipeWireIntegration,
+       .integrationProbeUserData = nullptr});
   printUserManagementWarnings(result.warnings);
   if (!result.success) {
     std::cerr << "pipetune: " << result.error << '\n';

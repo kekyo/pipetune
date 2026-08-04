@@ -212,6 +212,10 @@ PipeTune never writes `default.audio.sink` or
 The systemd user service may restart the daemon after failure without changing
 the user's selected physical output or volume.
 
+As a one-time migration, `pipetune setup` removes either default metadata key
+only when its JSON `name` is exactly the retired `pipetune_sink` virtual
+device. Physical and otherwise unknown selections are never changed.
+
 ## Local control protocol
 
 The default endpoint is `$XDG_RUNTIME_DIR/pipetune/control.sock`. Its directory
@@ -268,7 +272,9 @@ that all output filters together occupied one logical CPU for the complete
 interval; the text can exceed 100% while the meter itself remains capped.
 
 `setup` first asks systemd to `try-restart` WirePlumber so a running desktop
-session loads newly installed policy files, then starts PipeTune. `setup` and
-`unsetup` manage the user unit and GTK autostart with direct argument vectors
-and no shell. Unsetup only stops PipeTune; it cannot and need not restore an
-output because PipeTune never owns that selection.
+session loads newly installed policy files. It then waits for the compatible
+version-1 policy handshake, performs the narrowly scoped legacy-default
+migration, and only then starts PipeTune. `setup` and `unsetup` manage the user
+unit and GTK autostart with direct argument vectors and no shell. Unsetup only
+stops PipeTune; it cannot and need not restore an output because PipeTune never
+owns that selection.

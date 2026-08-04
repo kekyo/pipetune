@@ -29,6 +29,8 @@ const [
   systemdUserUnitDirectory,
   libraryDirectory,
   dataDirectory,
+  wirePlumberConfigDirectory,
+  wirePlumberDataDirectory,
   documentationDirectory,
   testService,
 ] = process.argv.slice(2);
@@ -41,12 +43,16 @@ if (
   !systemdUserUnitDirectory ||
   !libraryDirectory ||
   !dataDirectory ||
+  !wirePlumberConfigDirectory ||
+  !wirePlumberDataDirectory ||
   !documentationDirectory ||
   !testService
 ) {
   fail("install layout test arguments are incomplete");
 } else {
-  const stagingDirectory = mkdtempSync(join(tmpdir(), "pipetune-install-test-"));
+  const stagingDirectory = mkdtempSync(
+    join(tmpdir(), "pipetune-install-test-"),
+  );
   const installPath = (directory, fileName) => {
     const destination = directory.startsWith("/")
       ? directory
@@ -62,29 +68,26 @@ if (
       fail("staged PipeTune installation failed", installed);
     } else {
       const executable = installPath(binaryDirectory, "pipetune");
-      const service = installPath(
-        systemdUserUnitDirectory,
-        "pipetune.service",
-      );
+      const service = installPath(systemdUserUnitDirectory, "pipetune.service");
       const environmentExample = installPath(
         documentationDirectory,
         "environment.example",
       );
       const wirePlumberFiles = [
         installPath(
-          join(dataDirectory, "wireplumber", "policy.lua.d"),
+          join(wirePlumberConfigDirectory, "policy.lua.d"),
           "85-pipetune.lua",
         ),
         installPath(
-          join(dataDirectory, "wireplumber", "wireplumber.conf.d"),
+          join(wirePlumberConfigDirectory, "wireplumber.conf.d"),
           "90-pipetune.conf",
         ),
         installPath(
-          join(dataDirectory, "wireplumber", "scripts", "pipetune"),
+          join(wirePlumberConfigDirectory, "scripts", "pipetune"),
           "policy-0.4.lua",
         ),
         installPath(
-          join(dataDirectory, "wireplumber", "scripts", "pipetune"),
+          join(wirePlumberDataDirectory, "scripts", "pipetune"),
           "policy-0.5.lua",
         ),
       ];
@@ -137,8 +140,7 @@ if (
       }
 
       if (process.exitCode !== 1) {
-        const serviceLines = readFileSync(service, "utf8")
-          .split(/\r?\n/u);
+        const serviceLines = readFileSync(service, "utf8").split(/\r?\n/u);
         const environmentFiles = serviceLines.filter((line) =>
           line.startsWith("EnvironmentFile="),
         );
@@ -150,11 +152,7 @@ if (
             "PipeTune user service must let the daemon parse its configuration",
           );
         }
-        if (
-          !execStart?.endsWith(
-            " daemon --config %E/pipetune/environment",
-          )
-        ) {
+        if (!execStart?.endsWith(" daemon --config %E/pipetune/environment")) {
           fail("PipeTune user service does not launch the daemon subcommand");
         }
 
@@ -167,13 +165,7 @@ if (
 
         const verified = spawnSync(
           systemdAnalyze,
-          [
-            "--user",
-            "--man=no",
-            "--generators=no",
-            "verify",
-            testService,
-          ],
+          ["--user", "--man=no", "--generators=no", "verify", testService],
           { encoding: "utf8" },
         );
         if (verified.status !== 0) {

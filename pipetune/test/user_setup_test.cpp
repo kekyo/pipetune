@@ -3,6 +3,7 @@
 #include "autostart_override.h"
 #include "pipetune/startup_config.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -22,6 +23,11 @@ struct Invocation {
 struct FakeProcessRunner {
   std::vector<pipetune::ProcessResult> results;
   std::vector<Invocation> invocations;
+};
+
+struct FakeIntegrationProbe {
+  std::size_t calls = 0;
+  std::string error;
 };
 
 static bool check(bool condition, std::string_view message) {
@@ -46,6 +52,12 @@ static pipetune::ProcessResult fakeRunProcess(
     return runner.results[index];
   }
   return {.started = true, .exitCode = 0, .error = {}};
+}
+
+static std::string fakeIntegrationProbe(void *userData) {
+  auto &probe = *static_cast<FakeIntegrationProbe *>(userData);
+  ++probe.calls;
+  return probe.error;
 }
 
 static pipetune::UserManagementPaths makePaths(
@@ -129,13 +141,16 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
                   processResult(0), processResult(0), processResult(0),
                   processResult(0), processResult(0)},
       .invocations = {}};
+  auto integration = FakeIntegrationProbe{};
   const auto result = pipetune::executeUserSetup(
       {.effectiveUserId = 1000,
        .presetSpecified = false,
        .presetPath = {},
        .paths = paths,
        .processRunner = fakeRunProcess,
-       .processUserData = &runner});
+       .processUserData = &runner,
+       .integrationProbe = fakeIntegrationProbe,
+       .integrationProbeUserData = &integration});
   const auto loaded = pipetune::loadStartupPreset(paths.configPath);
   return check(result.success, result.error) &&
          check(loaded.error.empty() && loaded.found &&
@@ -146,6 +161,8 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
                "setup must restore a backed-up custom autostart override") &&
          check(runner.invocations.size() == 8,
                "setup process invocation count differs") &&
+         check(integration.calls == 1,
+               "setup must verify the WirePlumber policy handshake") &&
          check(invocationMatches(
                    runner.invocations[2], "/test/systemctl",
                    {"--user", "daemon-reload"},
@@ -186,13 +203,16 @@ static bool testExplicitPresetAndValidation(
                   processResult(0), processResult(0), processResult(0),
                   processResult(0), processResult(0)},
       .invocations = {}};
+  auto integration = FakeIntegrationProbe{};
   const auto configured = pipetune::executeUserSetup(
       {.effectiveUserId = 1000,
        .presetSpecified = true,
        .presetPath = preset,
        .paths = paths,
        .processRunner = fakeRunProcess,
-       .processUserData = &runner});
+       .processUserData = &runner,
+       .integrationProbe = fakeIntegrationProbe,
+       .integrationProbeUserData = &integration});
   const auto loaded = pipetune::loadStartupPreset(paths.configPath);
   if (!check(configured.success, configured.error) ||
       !check(loaded.error.empty() && loaded.found &&
@@ -203,13 +223,16 @@ static bool testExplicitPresetAndValidation(
 
   auto invalidRunner =
       FakeProcessRunner{.results = {}, .invocations = {}};
+  auto invalidIntegration = FakeIntegrationProbe{};
   const auto invalid = pipetune::executeUserSetup(
       {.effectiveUserId = 1000,
        .presetSpecified = true,
        .presetPath = directory / "missing.effetune_preset",
        .paths = makePaths(directory / "invalid"),
        .processRunner = fakeRunProcess,
-       .processUserData = &invalidRunner});
+       .processUserData = &invalidRunner,
+       .integrationProbe = fakeIntegrationProbe,
+       .integrationProbeUserData = &invalidIntegration});
   return check(!invalid.success,
                "an invalid explicit preset must fail setup") &&
          check(invalidRunner.invocations.empty(),
@@ -223,13 +246,16 @@ static bool testWirePlumberPolicyReloadFailure(
       .results = {processResult(1), processResult(1), processResult(0),
                   processResult(1)},
       .invocations = {}};
+  auto integration = FakeIntegrationProbe{};
   const auto result = pipetune::executeUserSetup(
       {.effectiveUserId = 1000,
        .presetSpecified = false,
        .presetPath = {},
        .paths = paths,
        .processRunner = fakeRunProcess,
-       .processUserData = &runner});
+       .processUserData = &runner,
+       .integrationProbe = fakeIntegrationProbe,
+       .integrationProbeUserData = &integration});
   return check(!result.success,
                "WirePlumber policy reload failure must fail setup") &&
          check(result.error ==
@@ -242,6 +268,40 @@ static bool testWirePlumberPolicyReloadFailure(
                    {"--user", "try-restart", "wireplumber.service"},
                    pipetune::ProcessWaitMode::wait),
                "WirePlumber policy reload invocation differs");
+}
+
+static bool testWirePlumberPolicyHandshakeFailure(
+    const std::filesystem::path &directory) {
+  const auto paths = makePaths(directory / "wireplumber-handshake");
+  auto runner = FakeProcessRunner{
+      .results = {processResult(1), processResult(1), processResult(0),
+                  processResult(0), processResult(0), processResult(0),
+                  processResult(0), processResult(0), processResult(0)},
+      .invocations = {}};
+  auto integration = FakeIntegrationProbe{
+      .calls = 0,
+      .error = "WirePlumber PipeTune policy handshake is unavailable"};
+  const auto result = pipetune::executeUserSetup(
+      {.effectiveUserId = 1000,
+       .presetSpecified = false,
+       .presetPath = {},
+       .paths = paths,
+       .processRunner = fakeRunProcess,
+       .processUserData = &runner,
+       .integrationProbe = fakeIntegrationProbe,
+       .integrationProbeUserData = &integration});
+  return check(!result.success,
+               "a missing policy handshake must fail setup") &&
+         check(result.error == integration.error,
+               "policy handshake failure diagnostic differs") &&
+         check(integration.calls == 1,
+               "setup integration probe invocation differs") &&
+         check(std::none_of(
+                   runner.invocations.begin(), runner.invocations.end(),
+                   [](const auto &invocation) {
+                     return invocation.executable == "/test/pipetune-gtk";
+                   }),
+               "failed policy verification must not launch GTK");
 }
 
 static bool testSetupRollback(const std::filesystem::path &directory) {
@@ -257,13 +317,16 @@ static bool testSetupRollback(const std::filesystem::path &directory) {
                   processResult(0), processResult(0), processResult(1),
                   processResult(0), processResult(0)},
       .invocations = {}};
+  auto integration = FakeIntegrationProbe{};
   const auto result = pipetune::executeUserSetup(
       {.effectiveUserId = 1000,
        .presetSpecified = true,
        .presetPath = newPreset,
        .paths = paths,
        .processRunner = fakeRunProcess,
-       .processUserData = &runner});
+       .processUserData = &runner,
+       .integrationProbe = fakeIntegrationProbe,
+       .integrationProbeUserData = &integration});
   const auto restored = pipetune::loadStartupPreset(paths.configPath);
   return check(!result.success,
                "failed service restart must fail setup") &&
@@ -355,13 +418,16 @@ static bool testUnsetupStopFailurePreservesConfiguration(
 static bool testRootRejection(const std::filesystem::path &directory) {
   auto runner =
       FakeProcessRunner{.results = {}, .invocations = {}};
+  auto integration = FakeIntegrationProbe{};
   const auto result = pipetune::executeUserSetup(
       {.effectiveUserId = 0,
        .presetSpecified = false,
        .presetPath = {},
        .paths = makePaths(directory / "root"),
        .processRunner = fakeRunProcess,
-       .processUserData = &runner});
+       .processUserData = &runner,
+       .integrationProbe = fakeIntegrationProbe,
+       .integrationProbeUserData = &integration});
   return check(!result.success,
                "setup must reject the root user") &&
          check(runner.invocations.empty(),
@@ -378,6 +444,7 @@ int main() {
       testSetupPreservesConfigurationAndRestoresAutostart(directory) &&
       testExplicitPresetAndValidation(directory) &&
       testWirePlumberPolicyReloadFailure(directory) &&
+      testWirePlumberPolicyHandshakeFailure(directory) &&
       testSetupRollback(directory) &&
       testUnsetupAndPurge(directory) &&
       testUnsetupStopFailurePreservesConfiguration(directory) &&

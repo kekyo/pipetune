@@ -52,6 +52,8 @@ try {
   const invocationRecord = join(temporaryRoot, "cmake-invocations.txt");
   const buildDirectory = join(temporaryRoot, "release");
   const prefix = "/manual-prefix";
+  const wirePlumberConfigDirectory = "/wireplumber-config";
+  const wirePlumberDataDirectory = "/wireplumber-data";
   mkdirSync(binDirectory);
   const fakeCmake = join(binDirectory, "cmake");
   writeFileSync(
@@ -72,6 +74,8 @@ printf '%s\\n' "$@" >>"$PIPETUNE_TEST_CMAKE_INVOCATIONS"
         target,
         `BUILD_DIR=${buildDirectory}`,
         `PREFIX=${prefix}`,
+        `WIREPLUMBER_CONFIG_DIR=${wirePlumberConfigDirectory}`,
+        `WIREPLUMBER_DATA_DIR=${wirePlumberDataDirectory}`,
         "BUILD_TYPE=Release",
       ],
       {
@@ -112,6 +116,8 @@ printf '%s\\n' "$@" >>"$PIPETUNE_TEST_CMAKE_INVOCATIONS"
         buildDirectory,
         "-DCMAKE_BUILD_TYPE=Release",
         `-DCMAKE_INSTALL_PREFIX=${prefix}`,
+        `-DPIPETUNE_WIREPLUMBER_CONFIG_DIR=${wirePlumberConfigDirectory}`,
+        `-DPIPETUNE_WIREPLUMBER_DATA_DIR=${wirePlumberDataDirectory}`,
         "-DBUILD_TESTING=OFF",
       ],
       ["--build", buildDirectory, "--parallel"],

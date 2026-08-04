@@ -64,6 +64,17 @@ using ProcessRunner = ProcessResult (*)(
     void *userData);
 
 /**
+ * Verifies that PipeWire and WirePlumber are ready for transparent filtering.
+ *
+ * Implementations may also migrate PipeTune-owned state left by an older
+ * installation.
+ *
+ * @param userData Opaque probe argument.
+ * @return Empty on success, otherwise a readiness or migration diagnostic.
+ */
+using UserSetupIntegrationProbe = std::string (*)(void *userData);
+
+/**
  * Describes one setup request.
  */
 struct UserSetupRequest {
@@ -79,6 +90,10 @@ struct UserSetupRequest {
   ProcessRunner processRunner;
   /** Opaque process runner argument. */
   void *processUserData;
+  /** Non-null PipeWire and WirePlumber integration probe. */
+  UserSetupIntegrationProbe integrationProbe;
+  /** Opaque integration probe argument. */
+  void *integrationProbeUserData;
 };
 
 /**

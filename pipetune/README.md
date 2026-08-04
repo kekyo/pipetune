@@ -364,8 +364,25 @@ sudo make install PREFIX=/usr
 ```
 
 For a user-writable prefix, `make build-install PREFIX=...` retains the
-combined configure, build, and install workflow. Do not run `build-install`
-with `sudo`.
+combined configure, build, and install workflow. WirePlumber 0.4 does not
+search `/usr/local/share`, so policy files use `/usr/share/wireplumber`
+independently of `PREFIX` by default. A fully user-writable dual-version
+install must pass WirePlumber's separate per-user configuration and data
+directories explicitly, for example:
+
+```sh
+make build-install PREFIX="$HOME/.local" \
+  WIREPLUMBER_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/wireplumber" \
+  WIREPLUMBER_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/wireplumber"
+```
+
+Do not run `build-install` with `sudo`.
+
+When upgrading a source installation that placed these policies below
+`/usr/local/share/wireplumber`, run `sudo make uninstall` before reconfiguring
+the release build. This uses the previous install manifest to remove the old
+fragments before `make` and `sudo make install` write the corrected layout.
+Run `pipetune unsetup` first when the user service is still configured.
 
 Files recorded by the most recent installation can be removed with:
 
@@ -403,14 +420,19 @@ Setup performs the following operations:
   existing startup selection when omitted;
 - reloads the newly installed policy by try-restarting WirePlumber when it is
   already active;
+- requires the version-1 WirePlumber 0.4 or 0.5 policy handshake before
+  enabling PipeTune, and removes only obsolete default metadata that still
+  selects the retired `pipetune_sink` virtual device;
 - reloads, enables, and restarts `pipetune.service`, then verifies it is
   active;
 - removes a PipeTune-managed GTK autostart mask and safely restores any custom
   override that was backed up by `unsetup`; and
 - launches `pipetune-gtk --hidden`.
 
-If a required service operation or GTK launch fails, setup reports the failure
-and attempts to restore the previous startup configuration and service state.
+If policy discovery, a required service operation, or GTK launch fails, setup
+reports the failure and attempts to restore the previous startup configuration
+and service state. A missing handshake therefore cannot leave a seemingly
+successful installation whose audio still follows the direct route.
 Unmanaged or orphaned autostart files are preserved and reported as warnings.
 
 The daemon and GTK application share one optional startup configuration:
