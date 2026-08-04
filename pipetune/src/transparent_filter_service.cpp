@@ -28,6 +28,7 @@
 #include <cerrno>
 #include <charconv>
 #include <climits>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -153,6 +154,13 @@ struct FilterServiceRuntime {
   spa_source *interruptSource;
   spa_source *terminateSource;
   std::unique_ptr<ControlServer> controlServer;
+  spa_source *controlRequestSource;
+  std::mutex controlRequestMutex;
+  std::condition_variable controlRequestCondition;
+  std::optional<ControlRequest> pendingControlRequest;
+  std::string controlRequestResponse;
+  bool controlRequestCompleted;
+  bool controlShuttingDown;
   std::mutex controlStatusMutex;
   std::optional<ControlRuntimeStatus> controlStatusSnapshot;
   std::unordered_map<std::uint32_t, std::unique_ptr<PhysicalOutputNode>>
@@ -197,7 +205,11 @@ struct FilterServiceRuntime {
         policyMetadataEvents{}, coreListener{}, registryListener{},
         policyMetadataListener{}, timeoutSource(nullptr),
         interruptSource(nullptr), terminateSource(nullptr),
-        controlServer(nullptr), controlStatusMutex(),
+        controlServer(nullptr), controlRequestSource(nullptr),
+        controlRequestMutex(), controlRequestCondition(),
+        pendingControlRequest(std::nullopt), controlRequestResponse(),
+        controlRequestCompleted(false), controlShuttingDown(false),
+        controlStatusMutex(),
         controlStatusSnapshot(std::nullopt), physicalNodes(), filters(),
         retiredOverrunFrames(0), retiredUnderrunFrames(0),
         retiredProcessingErrors(0), enumerationSequence(0),
@@ -371,12 +383,16 @@ static TransparentFilterOutputCandidate mergeCandidateProperties(
   return updated;
 }
 
+static void cancelFilterControlRequest(FilterServiceRuntime &runtime,
+                                       std::string_view error);
+
 static void failFilterService(FilterServiceRuntime &runtime,
                               std::string error) {
   if (!runtime.error.empty()) {
     return;
   }
   runtime.error = std::move(error);
+  cancelFilterControlRequest(runtime, runtime.error);
   if (runtime.mainLoop != nullptr) {
     pw_main_loop_quit(runtime.mainLoop);
   }
@@ -397,6 +413,8 @@ static void publishFilterEnabled(OutputFilterRuntime &runtime);
 static void maybeCompleteFilterServiceReadiness(FilterServiceRuntime &runtime);
 static void reconcileOutputFilters(FilterServiceRuntime &runtime);
 static void refreshControlStatusSnapshot(FilterServiceRuntime &runtime);
+static std::optional<ControlRuntimeStatus> filterControlStatusSnapshot(
+    FilterServiceRuntime &runtime);
 
 static void refreshPolicyReady(FilterServiceRuntime &runtime) {
   const auto ready = runtime.policyMetadata != nullptr &&
@@ -1023,6 +1041,110 @@ static std::unique_ptr<OutputFilterRuntime> createOutputFilter(
   return runtime;
 }
 
+struct PreparedFilterPipelineReplacement {
+  OutputFilterRuntime *runtime;
+  std::unique_ptr<DspPipeline> pipeline;
+  std::uint32_t latencyFrames;
+};
+
+struct FilterPipelineReplacementPreparation {
+  std::vector<PreparedFilterPipelineReplacement> replacements;
+  std::string error;
+};
+
+static PipelineBuildOptions filterRecipeBuildOptions(
+    const FilterServiceRuntime &runtime) noexcept {
+  return {.sampleRate = 48000.0F,
+          .maxChannels = 8,
+          .maxFrames = runtime.options.maxFrames};
+}
+
+static FilterPipelineReplacementPreparation prepareFilterReplacements(
+    FilterServiceRuntime &runtime, const DspPipeline &recipe) {
+  auto replacements =
+      std::vector<PreparedFilterPipelineReplacement>{};
+  replacements.reserve(runtime.filters.size());
+  for (auto &[id, filter] : runtime.filters) {
+    static_cast<void>(id);
+    if (filter->pipeline == nullptr) {
+      continue;
+    }
+    auto rebuilt = rebuildDspPipeline(
+        recipe,
+        {.sampleRate =
+             static_cast<float>(filter->output.rates.dspSampleRate),
+         .maxChannels = filter->output.channelCount,
+         .maxFrames = runtime.options.maxFrames});
+    if (rebuilt.pipeline == nullptr) {
+      return {
+          .replacements = {},
+          .error = "cannot rebuild DSP for " + filter->output.nodeName +
+                   ": " + rebuilt.error};
+    }
+    const auto latencyFrames = rebuilt.pipeline->latencyFrames();
+    replacements.push_back(
+        {.runtime = filter.get(),
+         .pipeline = std::move(rebuilt.pipeline),
+         .latencyFrames = latencyFrames});
+  }
+  return {.replacements = std::move(replacements), .error = {}};
+}
+
+static std::string updateFilterProcessLatency(
+    OutputFilterRuntime &runtime, std::uint32_t latencyFrames) {
+  if (runtime.captureStream == nullptr) {
+    return {};
+  }
+  auto storage = std::array<std::uint8_t, 256>{};
+  auto builder = spa_pod_builder{};
+  spa_pod_builder_init(&builder, storage.data(), storage.size());
+  auto latency = spa_process_latency_info{
+      .quantum = 0.0F, .rate = latencyFrames, .ns = 0};
+  const spa_pod *parameters[] = {spa_process_latency_build(
+      &builder, SPA_PARAM_ProcessLatency, &latency)};
+  const auto result =
+      pw_stream_update_params(runtime.captureStream, parameters, 1);
+  return result < 0
+             ? filterSystemError(
+                   "cannot update PipeWire filter process latency", result)
+             : std::string{};
+}
+
+static std::string applyFilterReplacements(
+    std::vector<PreparedFilterPipelineReplacement> &replacements) {
+  // Every output is prepared before this point. Staging retains the previous
+  // pipelines so a ProcessLatency failure can restore the complete set.
+  for (auto &replacement : replacements) {
+    replacement.runtime->pipeline->stageReplacement(
+        std::move(replacement.pipeline));
+  }
+  auto updatedLatencies = std::size_t{0};
+  for (auto index = std::size_t{0}; index < replacements.size(); ++index) {
+    auto &replacement = replacements[index];
+    const auto error = updateFilterProcessLatency(
+        *replacement.runtime, replacement.latencyFrames);
+    if (!error.empty()) {
+      for (auto rollback = replacements.rbegin();
+           rollback != replacements.rend(); ++rollback) {
+        rollback->runtime->pipeline->rollbackStaged();
+      }
+      for (auto restore = std::size_t{0};
+           restore < updatedLatencies; ++restore) {
+        static_cast<void>(updateFilterProcessLatency(
+            *replacements[restore].runtime,
+            replacements[restore].runtime->latencyFrames));
+      }
+      return error;
+    }
+    ++updatedLatencies;
+  }
+  for (auto &replacement : replacements) {
+    replacement.runtime->pipeline->commitStaged();
+    replacement.runtime->latencyFrames = replacement.latencyFrames;
+  }
+  return {};
+}
+
 struct OutputFilterStateSnapshot {
   PipeWireFilterOutputState state;
   std::string error;
@@ -1584,6 +1706,8 @@ static void filterCoreError(void *data, std::uint32_t id, int, int result,
 static void filterServiceInterrupted(void *data, int) {
   auto &runtime = *static_cast<FilterServiceRuntime *>(data);
   runtime.completed = true;
+  cancelFilterControlRequest(runtime,
+                             "transparent-filter service was interrupted");
   pw_main_loop_quit(runtime.mainLoop);
 }
 
@@ -1602,6 +1726,275 @@ static void filterServiceReadinessTimedOut(void *data, std::uint64_t) {
     }
   }
   maybeCompleteFilterServiceReadiness(runtime);
+}
+
+struct FilterControlOperationResult {
+  std::vector<ControlWarning> warnings;
+  std::string error;
+};
+
+static std::vector<ControlWarning> filterControlWarnings(
+    const std::vector<PipelineWarning> &warnings) {
+  auto result = std::vector<ControlWarning>{};
+  result.reserve(warnings.size());
+  for (const auto &warning : warnings) {
+    result.push_back({.nodeIndex = warning.nodeIndex,
+                      .pluginName = warning.pluginName,
+                      .reason = warning.reason});
+  }
+  return result;
+}
+
+static const DspBackendLoadResult *activeFilterBackend(
+    const FilterServiceRuntime &runtime) noexcept {
+  if (!runtime.dspBackendState.effectiveVariant.has_value()) {
+    return nullptr;
+  }
+  return runtime.dspBackendState.backends.find(
+      *runtime.dspBackendState.effectiveVariant);
+}
+
+static FilterControlOperationResult loadFilterPreset(
+    FilterServiceRuntime &runtime, const std::filesystem::path &path) {
+  const auto *backend = activeFilterBackend(runtime);
+  if (backend == nullptr || backend->backend == nullptr) {
+    return {.warnings = {},
+            .error = "cannot load a preset without a usable scalar DSP "
+                     "backend"};
+  }
+  auto loaded = loadDspPipeline(
+      path, filterRecipeBuildOptions(runtime), backend->backend);
+  if (loaded.pipeline == nullptr) {
+    return {.warnings = {}, .error = std::move(loaded.error)};
+  }
+  auto prepared = prepareFilterReplacements(runtime, *loaded.pipeline);
+  if (!prepared.error.empty()) {
+    return {.warnings = {}, .error = std::move(prepared.error)};
+  }
+  const auto applyError = applyFilterReplacements(prepared.replacements);
+  if (!applyError.empty()) {
+    return {.warnings = {}, .error = applyError};
+  }
+  runtime.recipe = std::move(loaded.pipeline);
+  runtime.processingMode = ProcessingMode::preset;
+  runtime.activePreset = path.string();
+  runtime.configurationError.clear();
+  return {.warnings = filterControlWarnings(loaded.warnings), .error = {}};
+}
+
+static FilterControlOperationResult bypassFilterDsp(
+    FilterServiceRuntime &runtime) {
+  auto bypass = createBypassDspPipeline(filterRecipeBuildOptions(runtime));
+  if (bypass.pipeline == nullptr) {
+    return {.warnings = {}, .error = std::move(bypass.error)};
+  }
+  auto prepared = prepareFilterReplacements(runtime, *bypass.pipeline);
+  if (!prepared.error.empty()) {
+    return {.warnings = {}, .error = std::move(prepared.error)};
+  }
+  const auto applyError = applyFilterReplacements(prepared.replacements);
+  if (!applyError.empty()) {
+    return {.warnings = {}, .error = applyError};
+  }
+  runtime.recipe = std::move(bypass.pipeline);
+  runtime.processingMode = ProcessingMode::bypass;
+  runtime.activePreset.clear();
+  runtime.configurationError.clear();
+  return {.warnings = {}, .error = {}};
+}
+
+static FilterControlOperationResult changeFilterRatePolicy(
+    FilterServiceRuntime &runtime, const SampleRatePolicy &policy) {
+  if (!sampleRatePolicyIsValid(policy)) {
+    return {.warnings = {}, .error = "sample-rate policy is invalid"};
+  }
+  const auto changed = runtime.outputTracker.setRatePolicy(policy);
+  runtime.options.ratePolicy = policy;
+  if (changed && runtime.enumerationReady) {
+    reconcileOutputFilters(runtime);
+  }
+  return {.warnings = {}, .error = {}};
+}
+
+static void applyFilterBackendSelection(
+    DspBackendRuntimeState &state,
+    const DspBackendSelection &selection) {
+  state.configuredBackend = selection.configuredBackend;
+  state.configuredSimdVariant = selection.configuredSimdVariant;
+  state.effectiveBackend =
+      selection.effectiveBackend == nullptr
+          ? std::optional<DspBackendKind>{}
+          : std::optional<DspBackendKind>{
+                selection.effectiveBackend->kind()};
+  state.effectiveVariant = selection.effectiveVariant;
+  state.fallback = selection.fallback;
+  state.error = selection.error;
+}
+
+static FilterControlOperationResult changeFilterDspBackend(
+    FilterServiceRuntime &runtime, DspBackendKind requestedBackend,
+    DspSimdVariant requestedVariant) {
+  const auto selected = selectDspBackend(
+      requestedBackend, requestedVariant,
+      runtime.dspBackendState.backends);
+  if (selected.effectiveBackend == nullptr) {
+    return {.warnings = {}, .error = selected.error};
+  }
+  if (selected.effectiveBackend->kind() != requestedBackend) {
+    return {
+        .warnings = {},
+        .error = selected.error.empty()
+                     ? std::string(dspBackendName(requestedBackend)) +
+                           " DSP backend is unavailable"
+                     : selected.error};
+  }
+  if (runtime.dspBackendState.effectiveVariant ==
+      selected.effectiveVariant) {
+    applyFilterBackendSelection(runtime.dspBackendState, selected);
+    return {.warnings = {}, .error = {}};
+  }
+  if (runtime.processingMode == ProcessingMode::bypass) {
+    applyFilterBackendSelection(runtime.dspBackendState, selected);
+    return {.warnings = {}, .error = {}};
+  }
+
+  auto rebuilt = rebuildDspPipeline(
+      *runtime.recipe, filterRecipeBuildOptions(runtime),
+      selected.effectiveBackend);
+  if (rebuilt.pipeline == nullptr) {
+    return {.warnings = {}, .error = std::move(rebuilt.error)};
+  }
+  auto prepared = prepareFilterReplacements(runtime, *rebuilt.pipeline);
+  if (!prepared.error.empty()) {
+    return {.warnings = {}, .error = std::move(prepared.error)};
+  }
+  const auto applyError = applyFilterReplacements(prepared.replacements);
+  if (!applyError.empty()) {
+    return {.warnings = {}, .error = applyError};
+  }
+  runtime.recipe = std::move(rebuilt.pipeline);
+  applyFilterBackendSelection(runtime.dspBackendState, selected);
+  return {.warnings = filterControlWarnings(rebuilt.warnings), .error = {}};
+}
+
+static FilterControlOperationResult applyFilterControlRequest(
+    FilterServiceRuntime &runtime, const ControlRequest &request) {
+  switch (request.command) {
+  case ControlCommand::loadPreset:
+    return loadFilterPreset(runtime, request.presetPath);
+  case ControlCommand::bypass:
+    return bypassFilterDsp(runtime);
+  case ControlCommand::setRate:
+    return changeFilterRatePolicy(runtime, request.ratePolicy);
+  case ControlCommand::setDspBackend:
+    return changeFilterDspBackend(runtime, request.dspBackend,
+                                  request.dspSimdVariant);
+  case ControlCommand::setOutput:
+  case ControlCommand::clearOutput:
+    return {.warnings = {},
+            .error = "physical output routing is controlled by PipeWire"};
+  case ControlCommand::status:
+  case ControlCommand::subscribe:
+    return {.warnings = {}, .error = {}};
+  }
+  return {.warnings = {}, .error = "control operation is invalid"};
+}
+
+static void completeFilterControlRequest(FilterServiceRuntime &runtime,
+                                         std::string response) {
+  {
+    auto lock = std::scoped_lock(runtime.controlRequestMutex);
+    if (!runtime.pendingControlRequest.has_value() ||
+        runtime.controlRequestCompleted) {
+      return;
+    }
+    runtime.controlRequestResponse = std::move(response);
+    runtime.controlRequestCompleted = true;
+  }
+  runtime.controlRequestCondition.notify_all();
+}
+
+static void cancelFilterControlRequest(FilterServiceRuntime &runtime,
+                                       std::string_view error) {
+  {
+    auto lock = std::scoped_lock(runtime.controlRequestMutex);
+    runtime.controlShuttingDown = true;
+    if (!runtime.pendingControlRequest.has_value() ||
+        runtime.controlRequestCompleted) {
+      return;
+    }
+    runtime.controlRequestResponse = makeControlErrorResponse(error);
+    runtime.controlRequestCompleted = true;
+  }
+  runtime.controlRequestCondition.notify_all();
+}
+
+static void filterControlRequestSignaled(void *data, std::uint64_t) {
+  auto &runtime = *static_cast<FilterServiceRuntime *>(data);
+  auto request = std::optional<ControlRequest>{};
+  {
+    auto lock = std::scoped_lock(runtime.controlRequestMutex);
+    if (!runtime.pendingControlRequest.has_value() ||
+        runtime.controlRequestCompleted) {
+      return;
+    }
+    request = runtime.pendingControlRequest;
+  }
+
+  try {
+    auto operation = applyFilterControlRequest(runtime, *request);
+    if (!operation.error.empty()) {
+      completeFilterControlRequest(
+          runtime, makeControlErrorResponse(operation.error));
+      return;
+    }
+    refreshControlStatusSnapshot(runtime);
+    const auto status = filterControlStatusSnapshot(runtime);
+    completeFilterControlRequest(
+        runtime,
+        status.has_value()
+            ? makeControlSuccessResponse(*status, operation.warnings)
+            : makeControlErrorResponse(
+                  "transparent-filter status is not available"));
+  } catch (const std::exception &error) {
+    completeFilterControlRequest(
+        runtime, makeControlErrorResponse(
+                     std::string("cannot apply control operation: ") +
+                     error.what()));
+  }
+}
+
+static std::string requestFilterControlChange(
+    FilterServiceRuntime &runtime, const ControlRequest &request) {
+  // The control server owns this waiting thread. PipeWire objects and the
+  // output map remain confined to the main-loop event callback.
+  auto lock = std::unique_lock<std::mutex>(runtime.controlRequestMutex);
+  if (runtime.controlShuttingDown) {
+    return makeControlErrorResponse(
+        "transparent-filter service is shutting down");
+  }
+  if (runtime.pendingControlRequest.has_value()) {
+    return makeControlErrorResponse(
+        "another transparent-filter control operation is pending");
+  }
+  runtime.pendingControlRequest = request;
+  runtime.controlRequestResponse.clear();
+  runtime.controlRequestCompleted = false;
+  const auto signalResult = pw_loop_signal_event(
+      pw_main_loop_get_loop(runtime.mainLoop),
+      runtime.controlRequestSource);
+  if (signalResult < 0) {
+    runtime.pendingControlRequest.reset();
+    return makeControlErrorResponse(filterSystemError(
+        "cannot schedule transparent-filter control operation",
+        signalResult));
+  }
+  runtime.controlRequestCondition.wait(
+      lock, [&runtime] { return runtime.controlRequestCompleted; });
+  auto response = std::move(runtime.controlRequestResponse);
+  runtime.pendingControlRequest.reset();
+  runtime.controlRequestCompleted = false;
+  return response;
 }
 
 static std::optional<ControlRuntimeStatus> filterControlStatusSnapshot(
@@ -1641,8 +2034,7 @@ static ControlMessageResult handleFilterControlRequest(
   }
   if (request.request.command != ControlCommand::status) {
     return closeFilterControlResponse(
-        makeControlErrorResponse(
-            "this transparent-filter control operation is not implemented"),
+        requestFilterControlChange(runtime, request.request),
         false);
   }
   const auto status = filterControlStatusSnapshot(runtime);
@@ -1686,6 +2078,13 @@ static bool createFilterServiceLoop(FilterServiceRuntime &runtime) {
     return false;
   }
   auto *loop = pw_main_loop_get_loop(runtime.mainLoop);
+  runtime.controlRequestSource =
+      pw_loop_add_event(loop, filterControlRequestSignaled, &runtime);
+  if (runtime.controlRequestSource == nullptr) {
+    runtime.error = filterSystemError(
+        "cannot create transparent-filter control event", -errno);
+    return false;
+  }
   if (runtime.mode == PipeWireRunMode::untilReady) {
     runtime.timeoutSource = pw_loop_add_timer(
         loop, filterServiceReadinessTimedOut, &runtime);
@@ -1767,6 +2166,8 @@ static bool createFilterServiceLoop(FilterServiceRuntime &runtime) {
 }
 
 static void destroyFilterService(FilterServiceRuntime &runtime) {
+  cancelFilterControlRequest(
+      runtime, "transparent-filter service is shutting down");
   runtime.controlServer.reset();
   for (auto &[id, filter] : runtime.filters) {
     static_cast<void>(id);
@@ -1807,6 +2208,10 @@ static void destroyFilterService(FilterServiceRuntime &runtime) {
     }
     if (runtime.terminateSource != nullptr) {
       pw_loop_destroy_source(loop, runtime.terminateSource);
+    }
+    if (runtime.controlRequestSource != nullptr) {
+      pw_loop_destroy_source(loop, runtime.controlRequestSource);
+      runtime.controlRequestSource = nullptr;
     }
     pw_main_loop_destroy(runtime.mainLoop);
     runtime.mainLoop = nullptr;

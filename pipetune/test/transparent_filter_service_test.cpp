@@ -5,13 +5,17 @@
 
 #include <yyjson.h>
 
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <array>
+#include <cerrno>
+#include <csignal>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -329,6 +333,203 @@ static bool validateControlStatus(const ReadyInspection &inspection) {
   return true;
 }
 
+static void reportChildReady(void *userData) {
+  const auto descriptor = *static_cast<int *>(userData);
+  constexpr auto marker = char{'R'};
+  auto result = ssize_t{-1};
+  do {
+    result = write(descriptor, &marker, 1);
+  } while (result < 0 && errno == EINTR);
+}
+
+static bool stopServiceChild(pid_t child) {
+  if (kill(child, SIGTERM) != 0) {
+    return check(false, "cannot signal transparent-filter service child");
+  }
+  auto status = 0;
+  auto waited = pid_t{-1};
+  do {
+    waited = waitpid(child, &status, 0);
+  } while (waited < 0 && errno == EINTR);
+  return check(waited == child && WIFEXITED(status) &&
+                   WEXITSTATUS(status) == 0,
+               "transparent-filter service child must stop orderly");
+}
+
+static bool responseHasPerOutputRate(
+    const pipetune::ControlResponseParseResult &response,
+    const pipetune::SampleRatePolicy &policy) {
+  if (!response.valid || !response.success ||
+      response.status.configuredRatePolicy != policy) {
+    return false;
+  }
+  for (const auto &output : response.status.filterOutputs) {
+    if (output.channelCount != 0 &&
+        output.dspSampleRate != policy.fixedRate) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool testLiveControl() {
+  const auto processId = std::to_string(getpid());
+  const auto directory = std::filesystem::temp_directory_path() /
+                         ("pipetune-filter-live-" + processId);
+  std::filesystem::create_directories(directory);
+  const auto presetPath = directory / "live.effetune_preset";
+  {
+    auto preset = std::ofstream(presetPath, std::ios::binary);
+    preset << R"json({"pipeline":[
+      {"name":"Volume","enabled":true,"parameters":{"vl":-6},"channel":"A"}
+    ]})json";
+  }
+  const auto socketPath = directory / "control.sock";
+  auto backends = pipetune::discoverDspBackends();
+  auto source = pipetune::createBypassDspPipeline(
+      {.sampleRate = 48000.0F, .maxChannels = 8, .maxFrames = 8192});
+  auto descriptors = std::array<int, 2>{-1, -1};
+  if (!check(source.pipeline != nullptr, source.error) ||
+      !check(backends.scalar.backend != nullptr, backends.scalar.error) ||
+      !check(pipe(descriptors.data()) == 0,
+             "cannot create transparent-filter readiness pipe")) {
+    std::filesystem::remove_all(directory);
+    return false;
+  }
+
+  const auto child = fork();
+  if (child < 0) {
+    close(descriptors[0]);
+    close(descriptors[1]);
+    std::filesystem::remove_all(directory);
+    return check(false, "cannot fork transparent-filter service test");
+  }
+  if (child == 0) {
+    close(descriptors[0]);
+    const auto result = pipetune::runPipeWireFilterService(
+        std::move(source.pipeline),
+        {.initialPresetPath = {},
+         .initialConfigurationError = {},
+         .controlSocketPath = socketPath,
+         .ratePolicy = pipetune::defaultSampleRatePolicy(),
+         .maxFrames = 8192,
+         .ringCapacityFrames = 16384,
+         .readyCallback = reportChildReady,
+         .readyUserData = &descriptors[1],
+         .dspBackends = std::move(backends),
+         .configuredDspBackend = pipetune::DspBackendKind::scalar,
+         .configuredDspSimdVariant =
+             pipetune::DspSimdVariant::automatic},
+        pipetune::PipeWireRunMode::untilInterrupted);
+    if (!result.success) {
+      std::cerr << result.error << '\n';
+    }
+    close(descriptors[1]);
+    _exit(result.success ? 0 : 1);
+  }
+
+  close(descriptors[1]);
+  auto marker = char{0};
+  auto readResult = ssize_t{-1};
+  do {
+    readResult = read(descriptors[0], &marker, 1);
+  } while (readResult < 0 && errno == EINTR);
+  close(descriptors[0]);
+  if (!check(readResult == 1 && marker == 'R',
+             "transparent-filter child did not report readiness")) {
+    static_cast<void>(stopServiceChild(child));
+    std::filesystem::remove_all(directory);
+    return false;
+  }
+
+  const auto load = pipetune::exchangeControlMessage(
+      socketPath, pipetune::makeLoadPresetControlRequest(presetPath));
+  const auto loaded = pipetune::parseControlResponse(load.response);
+  if (!check(load.error.empty(), load.error) ||
+      !check(loaded.valid, loaded.error) ||
+      !check(loaded.success &&
+                 loaded.status.processingMode ==
+                     pipetune::ProcessingMode::preset &&
+                 loaded.status.activePreset == presetPath.string() &&
+                 loaded.status.activePluginCount == 1,
+             "live preset must replace every output pipeline")) {
+    static_cast<void>(stopServiceChild(child));
+    std::filesystem::remove_all(directory);
+    return false;
+  }
+
+  const auto ratePolicy = pipetune::SampleRatePolicy{
+      .mode = pipetune::SampleRateMode::fixed,
+      .fixedRate = 96000,
+      .enforcement = pipetune::SampleRateEnforcement::suggest};
+  const auto rate = pipetune::exchangeControlMessage(
+      socketPath, pipetune::makeSetRateControlRequest(ratePolicy));
+  const auto changedRate = pipetune::parseControlResponse(rate.response);
+  if (!check(rate.error.empty(), rate.error) ||
+      !check(responseHasPerOutputRate(changedRate, ratePolicy),
+             "live rate policy must be resolved for every output")) {
+    static_cast<void>(stopServiceChild(child));
+    std::filesystem::remove_all(directory);
+    return false;
+  }
+
+  if (backends.simd.backend != nullptr) {
+    const auto backend = pipetune::exchangeControlMessage(
+        socketPath, pipetune::makeSetDspBackendControlRequest(
+                        pipetune::DspBackendKind::simd));
+    const auto changedBackend =
+        pipetune::parseControlResponse(backend.response);
+    if (!check(backend.error.empty(), backend.error) ||
+        !check(changedBackend.valid, changedBackend.error) ||
+        !check(changedBackend.success &&
+                   changedBackend.status.configuredDspBackend ==
+                       pipetune::DspBackendKind::simd &&
+                   changedBackend.status.effectiveDspBackend ==
+                       pipetune::DspBackendKind::simd,
+               "live backend must replace every preset pipeline")) {
+      static_cast<void>(stopServiceChild(child));
+      std::filesystem::remove_all(directory);
+      return false;
+    }
+  }
+
+  const auto missing = pipetune::exchangeControlMessage(
+      socketPath,
+      pipetune::makeLoadPresetControlRequest(directory /
+                                             "missing.effetune_preset"));
+  const auto afterFailure = pipetune::exchangeControlMessage(
+      socketPath, pipetune::makeStatusControlRequest());
+  const auto retained =
+      pipetune::parseControlResponse(afterFailure.response);
+  if (!check(missing.error.empty(), missing.error) ||
+      !check(!pipetune::inspectControlResponse(missing.response).success,
+             "missing live preset must be rejected") ||
+      !check(afterFailure.error.empty(), afterFailure.error) ||
+      !check(retained.valid && retained.success &&
+                 retained.status.activePreset == presetPath.string(),
+             "failed live preset must retain every previous pipeline")) {
+    static_cast<void>(stopServiceChild(child));
+    std::filesystem::remove_all(directory);
+    return false;
+  }
+
+  const auto bypass = pipetune::exchangeControlMessage(
+      socketPath, pipetune::makeBypassControlRequest());
+  const auto bypassed = pipetune::parseControlResponse(bypass.response);
+  const auto bypassValid =
+      check(bypass.error.empty(), bypass.error) &&
+      check(bypassed.valid, bypassed.error) &&
+      check(bypassed.success &&
+                bypassed.status.processingMode ==
+                    pipetune::ProcessingMode::bypass &&
+                bypassed.status.activePreset.empty() &&
+                bypassed.status.activePluginCount == 0,
+            "live bypass must replace every output pipeline");
+  const auto stopped = stopServiceChild(child);
+  std::filesystem::remove_all(directory);
+  return bypassValid && stopped;
+}
+
 int main() {
   if (!pipeWireSessionIsAvailable() || dumpPipeWireGraph() == std::nullopt) {
     std::cout << "PipeWire session or pw-dump is unavailable; skipping "
@@ -368,7 +569,7 @@ int main() {
     }
   }
   return check(result.success, result.error) && graphValid && statusesValid &&
-                 controlValid
+                 controlValid && testLiveControl()
              ? 0
              : 1;
 }
