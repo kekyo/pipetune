@@ -410,6 +410,17 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
         processFailure("pipetune.service did not become active", active));
   }
 
+  // A running GApplication keeps executing the binary and resources that
+  // originally created its primary instance. Stop it before launching the
+  // newly installed GTK binary so package upgrades cannot retain an old UI.
+  const auto stopGtk = invokeProcess(
+      request.processRunner, request.processUserData,
+      request.paths.gtkExecutable, {"--quit"}, ProcessWaitMode::wait);
+  if (!processSucceeded(stopGtk)) {
+    return failSetup(processFailure(
+        "cannot stop the existing pipetune-gtk instance", stopGtk));
+  }
+
   auto autostart = restoreGtkAutostart(
       request.paths.autostartPath, request.paths.autostartBackupPath);
   for (auto &warning : autostart.warnings) {

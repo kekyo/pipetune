@@ -282,7 +282,9 @@ interval; the text can exceed 100% while the meter itself remains capped.
 `setup` first asks systemd to `try-restart` WirePlumber so a running desktop
 session loads newly installed policy files. It then waits for the compatible
 version-1 policy handshake, performs the narrowly scoped legacy-default
-migration, and only then starts PipeTune. `setup` and `unsetup` manage the user
-unit and GTK autostart with direct argument vectors and no shell. Unsetup only
-stops PipeTune; it cannot and need not restore an output because PipeTune never
-owns that selection.
+migration, and only then starts PipeTune. After the service is active, setup
+stops any resident GTK primary instance before launching the installed binary;
+an upgrade therefore cannot keep serving an older UI and protocol client from
+memory. `setup` and `unsetup` manage the user unit and GTK autostart with direct
+argument vectors and no shell. Unsetup only stops PipeTune; it cannot and need
+not restore an output because PipeTune never owns that selection.

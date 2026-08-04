@@ -159,7 +159,7 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
          check(readFile(paths.autostartPath) == customOverride &&
                    !std::filesystem::exists(paths.autostartBackupPath),
                "setup must restore a backed-up custom autostart override") &&
-         check(runner.invocations.size() == 8,
+         check(runner.invocations.size() == 9,
                "setup process invocation count differs") &&
          check(integration.calls == 1,
                "setup must verify the WirePlumber policy handshake") &&
@@ -190,8 +190,12 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
                "setup active verification differs") &&
          check(invocationMatches(
                    runner.invocations[7], "/test/pipetune-gtk",
+                   {"--quit"}, pipetune::ProcessWaitMode::wait),
+               "setup must stop an already running GTK instance") &&
+         check(invocationMatches(
+                   runner.invocations[8], "/test/pipetune-gtk",
                    {"--hidden"}, pipetune::ProcessWaitMode::detached),
-               "setup must finish by launching GTK hidden");
+               "setup must launch the installed GTK after stopping the old instance");
 }
 
 static bool testExplicitPresetAndValidation(

@@ -429,7 +429,8 @@ Setup performs the following operations:
   active;
 - removes a PipeTune-managed GTK autostart mask and safely restores any custom
   override that was backed up by `unsetup`; and
-- launches `pipetune-gtk --hidden`.
+- stops any resident GTK primary instance left from an older installation,
+  then launches the installed `pipetune-gtk --hidden`.
 
 If policy discovery, a required service operation, or GTK launch fails, setup
 reports the failure and attempts to restore the previous startup configuration
