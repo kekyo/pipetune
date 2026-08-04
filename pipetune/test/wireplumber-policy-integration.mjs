@@ -10,13 +10,18 @@ const [
   policy05Config,
   policy05Script,
   setupPipeWireProbe,
+  transparentFilterServiceTest,
 ] = process.argv.slice(2);
 
 const commandExists = (command) =>
   spawnSync("sh", ["-c", `command -v ${command}`], { stdio: "ignore" })
     .status === 0;
 
-if (!["pipewire", "wireplumber", "pw-metadata"].every(commandExists)) {
+if (
+  !["pipewire", "wireplumber", "pw-cat", "pw-dump", "pw-metadata"].every(
+    commandExists,
+  )
+) {
   console.log(
     "PipeWire or WirePlumber test tools are unavailable; skipping policy integration test",
   );
@@ -50,7 +55,11 @@ const temporaryRoot = await fs.mkdtemp(
 const runtimeDirectory = path.join(temporaryRoot, "runtime");
 const configDirectory = path.join(temporaryRoot, "config");
 const dataDirectory = path.join(temporaryRoot, "data");
+const stateDirectory = path.join(temporaryRoot, "state");
+const cacheDirectory = path.join(temporaryRoot, "cache");
 await fs.mkdir(runtimeDirectory, { mode: 0o700 });
+await fs.mkdir(stateDirectory, { mode: 0o700 });
+await fs.mkdir(cacheDirectory, { mode: 0o700 });
 
 const policyDestination = (root, relativeDestination) =>
   path.join(root, "wireplumber", relativeDestination);
@@ -96,6 +105,21 @@ if (minorVersion === 4) {
   );
   await writePolicy(
     configDirectory,
+    "main.lua.d/60-pipetune-test-disable-monitors.lua",
+    `alsa_monitor.enabled = false
+v4l2_monitor.enabled = false
+libcamera_monitor.enabled = false
+`,
+  );
+  await writePolicy(
+    configDirectory,
+    "bluetooth.lua.d/60-pipetune-test-disable-monitors.lua",
+    `bluez_monitor.enabled = false
+bluez_midi_monitor.enabled = false
+`,
+  );
+  await writePolicy(
+    configDirectory,
     "main.lua.d/86-pipetune-test-blocker.lua",
     `load_script("pipetune/test-main-blocker-0.4.lua")
 `,
@@ -106,6 +130,18 @@ if (minorVersion === 4) {
     `Script.async_activation = true
 
 local activation_finished = false
+local filter_id = nil
+local policy_metadata = nil
+pipetune_test_policy_metadata_om = ObjectManager {
+  Interest {
+    type = "metadata",
+    Constraint { "metadata.name", "=", "pipetune-policy" },
+  }
+}
+pipetune_test_policy_metadata_om:connect("object-added", function(_, metadata)
+  policy_metadata = metadata
+end)
+pipetune_test_policy_metadata_om:activate()
 pipetune_test_main_blocker_metadata = ImplMetadata("pipetune-test-main-blocker")
 pipetune_test_main_blocker_metadata:activate(Features.ALL, function(metadata, error)
   if error then
@@ -113,8 +149,78 @@ pipetune_test_main_blocker_metadata:activate(Features.ALL, function(metadata, er
         "failed to activate PipeTune main blocker metadata: " .. tostring(error))
     return
   end
+  pipetune_test_filter_main = LocalNode("adapter", {
+    ["factory.name"] = "support.null-audio-sink",
+    ["node.name"] = "pipetune.test.filter",
+    ["node.description"] = "PipeTune policy integration filter",
+    ["media.class"] = "Audio/Sink",
+    ["audio.rate"] = 48000,
+    ["audio.channels"] = 2,
+    ["audio.position"] = "FL,FR",
+    ["node.virtual"] = "true",
+    ["node.link-group"] = "pipetune.test.filter.group",
+    ["filter.smart"] = "true",
+    ["filter.smart.name"] = "pipetune.test.filter",
+    ["filter.smart.disabled"] = "true",
+    ["pipetune.filter"] = "true",
+    ["pipetune.target.node"] = "pipetune.test.physical",
+  })
+  pipetune_test_filter_main:activate(Feature.Proxy.BOUND, function(node, node_error)
+    if node_error then
+      Script:finish_activation_with_error(
+          "failed to activate PipeTune test filter: " .. tostring(node_error))
+      return
+    end
+    filter_id = node["bound-id"]
+    metadata:set(0, "filter.id", "Spa:Int", tostring(filter_id))
+    metadata:set(0, "state", "Spa:String", "waiting")
+  end)
   metadata:connect("changed", function(_, subject, key, _, value)
-    if activation_finished or subject ~= 0 or key ~= "release" or
+    if subject ~= 0 then
+      return
+    end
+    if key == "enable" and tostring(value) == "true" then
+      if policy_metadata == nil or filter_id == nil then
+        metadata:set(0, "state", "Spa:String", "enable-error")
+      else
+        policy_metadata:set(filter_id, "filter.enabled", "Spa:String", "true")
+        metadata:set(0, "state", "Spa:String", "enable-forwarded")
+      end
+      return
+    end
+    if key == "create-physical" and tostring(value) == "true" and
+        pipetune_test_physical == nil then
+      pipetune_test_physical = LocalNode("adapter", {
+        ["factory.name"] = "support.null-audio-sink",
+        ["node.name"] = "physical_sink",
+        ["node.description"] = "PipeTune policy integration output",
+        ["media.class"] = "Audio/Sink",
+        ["audio.rate"] = 48000,
+        ["audio.channels"] = 2,
+        ["audio.position"] = "FL,FR",
+        ["device.api"] = "alsa",
+        ["device.id"] = 1,
+        ["priority.session"] = 1000,
+      })
+      pipetune_test_physical:activate(Feature.Proxy.BOUND, function(_, physical_error)
+        if physical_error then
+          metadata:set(0, "state", "Spa:String", "physical-error")
+          Log.warning("failed to activate PipeTune test output: " ..
+              tostring(physical_error))
+          return
+        end
+        metadata:set(0, "state", "Spa:String", "physical-ready")
+      end)
+      return
+    end
+    if key == "destroy" and tostring(value) == "true" and
+        pipetune_test_filter_main ~= nil then
+      pipetune_test_filter_main:deactivate(Features.ALL)
+      pipetune_test_filter_main = nil
+      metadata:set(0, "state", "Spa:String", "destroyed")
+      return
+    end
+    if activation_finished or key ~= "release" or
         tostring(value) ~= "true" then
       return
     end
@@ -122,7 +228,6 @@ pipetune_test_main_blocker_metadata:activate(Features.ALL, function(metadata, er
     metadata:set(0, "state", "Spa:String", "released")
     Script:finish_activation()
   end)
-  metadata:set(0, "state", "Spa:String", "waiting")
 end)
 `,
   );
@@ -167,7 +272,26 @@ pipetune_test_default_metadata:activate(Features.ALL, function(metadata, error)
         "failed to activate PipeTune test default metadata: " .. tostring(error))
     return
   end
-  Script:finish_activation()
+  pipetune_test_physical = LocalNode("adapter", {
+    ["factory.name"] = "support.null-audio-sink",
+    ["node.name"] = "physical_sink",
+    ["node.description"] = "PipeTune policy integration output",
+    ["media.class"] = "Audio/Sink",
+    ["audio.rate"] = 48000,
+    ["audio.channels"] = 2,
+    ["audio.position"] = "FL,FR",
+    ["device.api"] = "alsa",
+    ["device.id"] = 1,
+    ["priority.session"] = 1000,
+  })
+  pipetune_test_physical:activate(Feature.Proxy.BOUND, function(_, node_error)
+    if node_error then
+      Script:finish_activation_with_error(
+          "failed to activate PipeTune test output: " .. tostring(node_error))
+      return
+    end
+    Script:finish_activation()
+  end)
 end)
 `,
   );
@@ -179,15 +303,17 @@ const environment = {
   PIPEWIRE_RUNTIME_DIR: runtimeDirectory,
   XDG_CONFIG_HOME: configDirectory,
   XDG_DATA_HOME: dataDirectory,
+  XDG_STATE_HOME: stateDirectory,
+  XDG_CACHE_HOME: cacheDirectory,
   WIREPLUMBER_DEBUG: "2",
 };
 delete environment.PIPEWIRE_REMOTE;
 
 const children = [];
-const start = (command, commandArguments) => {
+const start = (command, commandArguments, pipeInput = false) => {
   const child = spawn(command, commandArguments, {
     env: environment,
-    stdio: ["ignore", "ignore", "pipe"],
+    stdio: [pipeInput ? "pipe" : "ignore", "ignore", "pipe"],
   });
   children.push(child);
   return child;
@@ -208,6 +334,12 @@ const stopChildren = async () => {
     child.kill("SIGTERM");
     await new Promise((resolve) => child.once("exit", resolve));
   }
+};
+
+const stopChild = async (child) => {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill("SIGTERM");
+  await new Promise((resolve) => child.once("exit", resolve));
 };
 
 try {
@@ -262,7 +394,11 @@ try {
         { env: environment, encoding: "utf8" },
       );
       blockerMetadataOutput = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
-      return result.status === 0 && blockerMetadataOutput.includes("waiting");
+      return (
+        result.status === 0 &&
+        blockerMetadataOutput.includes("waiting") &&
+        blockerMetadataOutput.includes("filter.id")
+      );
     }, 5000);
     assert.equal(
       blockerWaiting,
@@ -278,6 +414,137 @@ try {
       released.status,
       0,
       `${released.stdout ?? ""}\n${released.stderr ?? ""}`,
+    );
+
+    const filterIdMatch = blockerMetadataOutput.match(
+      /filter\.id[^\n]*value:'(\d+)'/u,
+    );
+    assert.notEqual(
+      filterIdMatch,
+      null,
+      `PipeTune test filter id was not published: ${blockerMetadataOutput}`,
+    );
+    const filterId = filterIdMatch[1];
+    const filterPlayback = start(
+      "pw-cat",
+      [
+        "--playback",
+        "--target",
+        "0",
+        "--rate",
+        "48000",
+        "--channels",
+        "2",
+        "--format",
+        "f32",
+        "-P",
+        '{ node.name = "pipetune.test.filter.output" node.link-group = "pipetune.test.filter.group" pipetune.filter.stream = true node.passive = true }',
+        "-",
+      ],
+      true,
+    );
+    let filterPlaybackDiagnostic = "";
+    filterPlayback.stderr.on("data", (chunk) => {
+      filterPlaybackDiagnostic += chunk;
+    });
+    const enabled = spawnSync(
+      "pw-metadata",
+      [
+        "-n",
+        "pipetune-test-main-blocker",
+        "0",
+        "enable",
+        "true",
+        "Spa:Bool",
+      ],
+      { env: environment, encoding: "utf8" },
+    );
+    assert.equal(
+      enabled.status,
+      0,
+      `${enabled.stdout ?? ""}\n${enabled.stderr ?? ""}`,
+    );
+    let filterStateOutput = "";
+    const filterActivated = await waitFor(() => {
+      const result = spawnSync(
+        "pw-metadata",
+        ["-n", "pipetune-policy", filterId, "filter.state"],
+        { env: environment, encoding: "utf8" },
+      );
+      filterStateOutput = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+      return result.status === 0 && filterStateOutput.includes("active");
+    }, 5000);
+    assert.equal(
+      filterActivated,
+      true,
+      `WirePlumber 0.4 did not activate a negotiated PipeTune filter: ${filterStateOutput}\n${filterPlaybackDiagnostic}\n${wireplumberDiagnostic}`,
+    );
+    const destroyed = spawnSync(
+      "pw-metadata",
+      [
+        "-n",
+        "pipetune-test-main-blocker",
+        "0",
+        "destroy",
+        "true",
+        "Spa:Bool",
+      ],
+      { env: environment, encoding: "utf8" },
+    );
+    assert.equal(
+      destroyed.status,
+      0,
+      `${destroyed.stdout ?? ""}\n${destroyed.stderr ?? ""}`,
+    );
+    await stopChild(filterPlayback);
+    const filterRemoved = await waitFor(() => {
+      const result = spawnSync("pw-dump", [], {
+        env: environment,
+        encoding: "utf8",
+      });
+      return (
+        result.status === 0 &&
+        !`${result.stdout ?? ""}`.includes('"pipetune.test.filter"')
+      );
+    }, 5000);
+    assert.equal(
+      filterRemoved,
+      true,
+      `PipeTune ordering-test filter was not removed: ${wireplumberDiagnostic}`,
+    );
+    const physicalCreated = spawnSync(
+      "pw-metadata",
+      [
+        "-n",
+        "pipetune-test-main-blocker",
+        "0",
+        "create-physical",
+        "true",
+        "Spa:Bool",
+      ],
+      { env: environment, encoding: "utf8" },
+    );
+    assert.equal(
+      physicalCreated.status,
+      0,
+      `${physicalCreated.stdout ?? ""}\n${physicalCreated.stderr ?? ""}`,
+    );
+    let physicalMetadataOutput = "";
+    const physicalReady = await waitFor(() => {
+      const result = spawnSync(
+        "pw-metadata",
+        ["-n", "pipetune-test-main-blocker"],
+        { env: environment, encoding: "utf8" },
+      );
+      physicalMetadataOutput = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+      return (
+        result.status === 0 && physicalMetadataOutput.includes("physical-ready")
+      );
+    }, 5000);
+    assert.equal(
+      physicalReady,
+      true,
+      `PipeTune test output was not created: ${physicalMetadataOutput}\n${wireplumberDiagnostic}`,
     );
   }
   const policyMetadataList = spawnSync("pw-metadata", ["-l"], {
@@ -394,6 +661,17 @@ try {
   const preservedOutput = `${preservedDefault.stdout ?? ""}\n${preservedDefault.stderr ?? ""}`;
   assert.equal(preservedDefault.status, 0, preservedOutput);
   assert.match(preservedOutput, /physical_sink/);
+
+  const serviceTest = spawnSync(
+    transparentFilterServiceTest,
+    ["--require-active-policy"],
+    { env: environment, encoding: "utf8", timeout: 30000 },
+  );
+  assert.equal(
+    serviceTest.status,
+    0,
+    `transparent-filter service did not route audio through the worktree policy:\n${serviceTest.stdout ?? ""}\n${serviceTest.stderr ?? ""}\n${wireplumberDiagnostic}`,
+  );
 } finally {
   await stopChildren();
   await fs.rm(temporaryRoot, { recursive: true, force: true });

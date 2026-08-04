@@ -591,7 +591,7 @@ if(BUILD_TESTING)
     COMMAND pipetune_transparent_filter_service_tests)
   set_tests_properties(
     pipetune_transparent_filter_service_tests
-    PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 20)
+    PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 35)
 
   add_executable(
     pipetune_setup_pipewire_probe
@@ -618,10 +618,11 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/wireplumber/scripts/pipetune/policy-0.4.lua"
       "${CMAKE_CURRENT_SOURCE_DIR}/wireplumber/wireplumber.conf.d/90-pipetune.conf"
       "${CMAKE_CURRENT_SOURCE_DIR}/wireplumber/scripts/pipetune/policy-0.5.lua"
-      $<TARGET_FILE:pipetune_setup_pipewire_probe>)
+      $<TARGET_FILE:pipetune_setup_pipewire_probe>
+      $<TARGET_FILE:pipetune_transparent_filter_service_tests>)
   set_tests_properties(
     pipetune_wireplumber_policy_integration
-    PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+    PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
 
   add_executable(
     pipetune_command_line_tests

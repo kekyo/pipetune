@@ -8,6 +8,9 @@ end
 
 Script.async_activation = true
 
+-- Keep long-lived policy proxies rooted after component activation finishes.
+pipetune_policy_runtime = {}
+
 local policy_metadata = nil
 local filters_metadata = nil
 local hidden_nodes = {}
@@ -198,6 +201,9 @@ local filters_metadata_om = ObjectManager {
     Constraint { "metadata.name", "=", "filters" },
   }
 }
+pipetune_policy_runtime.clients = clients_om
+pipetune_policy_runtime.nodes = nodes_om
+pipetune_policy_runtime.filters_metadata = filters_metadata_om
 
 clients_om:connect("object-added", function(_, client)
   for node_id, owner_id in pairs(hidden_nodes) do
@@ -236,6 +242,7 @@ nodes_om:activate()
 filters_metadata_om:activate()
 
 policy_metadata = ImplMetadata("pipetune-policy")
+pipetune_policy_runtime.policy_metadata = policy_metadata
 policy_metadata:activate(Features.ALL, function(metadata, error)
   if error then
     Script:finish_activation_with_error(

@@ -106,7 +106,11 @@ script observes output streams, explicit `target.object`/`target.node`
 metadata, and the current default output. For each target with a ready PipeTune
 filter, it builds the same ordered chain by temporarily changing stream target
 metadata. It remembers the original target and restores it whenever the filter
-is disabled or removed.
+is disabled or removed. PipeTune's runtime `filter.enabled` command takes
+precedence over the main node's static fail-open `filter.smart.disabled`
+property. Metadata changes made by the policy are tracked until WirePlumber
+reports their asynchronous update, so they are not mistaken for a user's later
+output selection.
 
 Both variants deny ordinary clients access to PipeTune's main and playback
 nodes while retaining access for WirePlumber and the owning PipeTune client.
@@ -242,8 +246,8 @@ resampling fallback, latency, and counters.
 
 The subscriber server uses an `eventfd` wakeup and bounded, coalescing output
 per client. Slow subscribers cannot accumulate an unbounded history. Socket
-work and once-per-second telemetry publication remain outside real-time
-callbacks.
+work, once-per-second counter snapshot refresh, and telemetry publication
+remain outside real-time callbacks.
 
 ## Managed configuration and GTK
 

@@ -1,12 +1,17 @@
 -- PipeTune transparent-filter compatibility policy for WirePlumber 0.4.
 
+-- WirePlumber 0.4 scripts keep long-lived proxy objects in their global
+-- environment. Root the policy objects likewise so Lua collection cannot
+-- detach graph and metadata callbacks after this script finishes loading.
+pipetune_policy_runtime = {}
+
 local policy_metadata = nil
 local default_metadata = nil
-local update_in_progress = false
 local rescan_pending = false
 local managed_targets = {}
 local hidden_nodes = {}
 local nodes_by_id = {}
+local pending_metadata_updates = {}
 
 local function parse_bool(value)
   return value ~= nil and
@@ -34,14 +39,39 @@ local function metadata_type(value)
   return tonumber(value) ~= nil and "Spa:Id" or "Spa:String"
 end
 
+local function remember_metadata_update(subject, key, value)
+  local subject_updates = pending_metadata_updates[subject]
+  if subject_updates == nil then
+    subject_updates = {}
+    pending_metadata_updates[subject] = subject_updates
+  end
+  subject_updates[key] = {
+    present = value ~= nil,
+    value = value ~= nil and tostring(value) or "",
+  }
+end
+
+local function consume_metadata_update(subject, key, value)
+  local subject_updates = pending_metadata_updates[subject]
+  local expected = subject_updates ~= nil and subject_updates[key] or nil
+  if expected == nil then
+    return false
+  end
+  subject_updates[key] = nil
+  if next(subject_updates) == nil then
+    pending_metadata_updates[subject] = nil
+  end
+  return expected.present == (value ~= nil) and
+      (not expected.present or expected.value == tostring(value))
+end
+
 local function set_metadata(metadata, subject, key, value)
-  update_in_progress = true
+  remember_metadata_update(subject, key, value)
   if value == nil then
     metadata:set(subject, key, nil, nil)
   else
     metadata:set(subject, key, metadata_type(value), tostring(value))
   end
-  update_in_progress = false
 end
 
 local function find_node_by_value(value, use_object_serial)
@@ -146,16 +176,11 @@ local function filter_name(node)
 end
 
 local function filter_is_enabled(node)
-  if parse_bool(node.properties["filter.smart.disabled"]) then
-    return false
+  if is_pipetune_filter(node) then
+    return policy_metadata ~= nil and
+        parse_bool(policy_metadata:find(node["bound-id"], "filter.enabled"))
   end
-  if not is_pipetune_filter(node) then
-    return true
-  end
-  if policy_metadata == nil then
-    return false
-  end
-  return parse_bool(policy_metadata:find(node["bound-id"], "filter.enabled"))
+  return not parse_bool(node.properties["filter.smart.disabled"])
 end
 
 local function playback_for_filter(main_node)
@@ -382,6 +407,9 @@ local default_metadata_om = ObjectManager {
     Constraint { "metadata.name", "=", "default" },
   }
 }
+pipetune_policy_runtime.clients = clients_om
+pipetune_policy_runtime.nodes = nodes_om
+pipetune_policy_runtime.default_metadata = default_metadata_om
 
 clients_om:connect("object-added", function(_, client)
   for node_id, owner_id in pairs(hidden_nodes) do
@@ -414,7 +442,7 @@ end)
 default_metadata_om:connect("object-added", function(_, metadata)
   default_metadata = metadata
   metadata:connect("changed", function(_, subject, key, _, value)
-    if update_in_progress then
+    if consume_metadata_update(subject, key, value) then
       return
     end
     local managed = managed_targets[subject]
@@ -434,6 +462,7 @@ nodes_om:activate()
 default_metadata_om:activate()
 
 policy_metadata = ImplMetadata("pipetune-policy")
+pipetune_policy_runtime.policy_metadata = policy_metadata
 policy_metadata:activate(Features.ALL, function(metadata, error)
   if error then
     Log.warning("failed to activate PipeTune policy metadata: " .. tostring(error))

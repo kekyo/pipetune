@@ -5,10 +5,13 @@
 
 #include <yyjson.h>
 
+#include <poll.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
+#include <chrono>
 #include <cerrno>
 #include <csignal>
 #include <cmath>
@@ -20,6 +23,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -325,8 +329,9 @@ static bool validateControlStatus(const ReadyInspection &inspection) {
                "v2 status target must be a physical output") ||
         !check(output.state == pipetune::ControlFilterState::active ||
                    output.state ==
-                       pipetune::ControlFilterState::bypassed,
-               "ready output must be active or fail-open bypassed")) {
+                       pipetune::ControlFilterState::bypassed ||
+                   output.state == pipetune::ControlFilterState::waiting,
+               "ready output must report its current policy state")) {
       return false;
     }
   }
@@ -347,13 +352,191 @@ static bool stopServiceChild(pid_t child) {
     return check(false, "cannot signal transparent-filter service child");
   }
   auto status = 0;
-  auto waited = pid_t{-1};
-  do {
-    waited = waitpid(child, &status, 0);
-  } while (waited < 0 && errno == EINTR);
+  auto waited = pid_t{0};
+  const auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::seconds(5);
+  while (waited == 0 && std::chrono::steady_clock::now() < deadline) {
+    waited = waitpid(child, &status, WNOHANG);
+    if (waited < 0 && errno == EINTR) {
+      waited = 0;
+    }
+    if (waited == 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+  if (waited == 0) {
+    static_cast<void>(kill(child, SIGKILL));
+    do {
+      waited = waitpid(child, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+    return check(false,
+                 "transparent-filter service child did not stop in time");
+  }
   return check(waited == child && WIFEXITED(status) &&
                    WEXITSTATUS(status) == 0,
                "transparent-filter service child must stop orderly");
+}
+
+static pid_t startCommand(
+    const std::vector<std::string> &arguments,
+    const std::filesystem::path &standardInput = {}) {
+  if (arguments.empty()) {
+    return -1;
+  }
+  const auto child = fork();
+  if (child < 0) {
+    return -1;
+  }
+  if (child == 0) {
+    if (!standardInput.empty() &&
+        std::freopen(standardInput.c_str(), "rb", stdin) == nullptr) {
+      _exit(126);
+    }
+    auto values = std::vector<char *>();
+    values.reserve(arguments.size() + 1);
+    for (const auto &argument : arguments) {
+      values.push_back(const_cast<char *>(argument.c_str()));
+    }
+    values.push_back(nullptr);
+    execvp(values.front(), values.data());
+    _exit(127);
+  }
+  return child;
+}
+
+static bool stopCommand(pid_t child) {
+  auto status = 0;
+  auto waited = waitpid(child, &status, WNOHANG);
+  if (waited == child) {
+    return true;
+  }
+  if (waited < 0 && errno != EINTR) {
+    return false;
+  }
+  if (kill(child, SIGTERM) != 0 && errno != ESRCH) {
+    return false;
+  }
+  const auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::seconds(2);
+  do {
+    waited = waitpid(child, &status, WNOHANG);
+    if (waited == child) {
+      return true;
+    }
+    if (waited < 0 && errno != EINTR) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  } while (std::chrono::steady_clock::now() < deadline);
+  static_cast<void>(kill(child, SIGKILL));
+  do {
+    waited = waitpid(child, &status, 0);
+  } while (waited < 0 && errno == EINTR);
+  return false;
+}
+
+static std::optional<pipetune::ControlRuntimeStatus> readControlStatus(
+    const std::filesystem::path &socketPath) {
+  const auto exchange = pipetune::exchangeControlMessage(
+      socketPath, pipetune::makeStatusControlRequest());
+  if (!exchange.error.empty()) {
+    return std::nullopt;
+  }
+  const auto parsed = pipetune::parseControlResponse(exchange.response);
+  if (!parsed.valid || !parsed.success) {
+    return std::nullopt;
+  }
+  return parsed.status;
+}
+
+template <typename Predicate>
+static std::optional<pipetune::ControlRuntimeStatus> waitForControlStatus(
+    const std::filesystem::path &socketPath, Predicate predicate,
+    std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  do {
+    auto status = readControlStatus(socketPath);
+    if (status.has_value() && predicate(*status)) {
+      return status;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  } while (std::chrono::steady_clock::now() < deadline);
+  return std::nullopt;
+}
+
+static bool writeSilentAudio(const std::filesystem::path &path,
+                             std::uint32_t channels,
+                             std::uint32_t frames) {
+  auto stream = std::ofstream(path, std::ios::binary);
+  auto zeros = std::array<float, 4096>{};
+  auto samples = static_cast<std::uint64_t>(channels) * frames;
+  while (samples != 0 && stream) {
+    const auto count = static_cast<std::size_t>(
+        std::min<std::uint64_t>(samples, zeros.size()));
+    stream.write(reinterpret_cast<const char *>(zeros.data()),
+                 static_cast<std::streamsize>(count * sizeof(float)));
+    samples -= count;
+  }
+  return stream.good();
+}
+
+static bool exerciseAudioAndPolicyStatus(
+    const std::filesystem::path &socketPath,
+    const std::filesystem::path &directory, bool requireActivePolicy) {
+  const auto active = waitForControlStatus(
+      socketPath,
+      [](const auto &status) {
+        return std::any_of(
+            status.filterOutputs.begin(), status.filterOutputs.end(),
+            [](const auto &output) {
+              return output.state == pipetune::ControlFilterState::active &&
+                     output.channelCount != 0;
+            });
+      },
+      std::chrono::seconds(5));
+  if (!active.has_value()) {
+    if (requireActivePolicy) {
+      return check(false,
+                   "WirePlumber did not confirm an active output filter");
+    }
+    std::cout << "The host WirePlumber policy is not the worktree version; "
+                 "skipping its live routing probe\n";
+    return true;
+  }
+  const auto selected = std::find_if(
+      active->filterOutputs.begin(), active->filterOutputs.end(),
+      [](const auto &output) {
+        return output.state == pipetune::ControlFilterState::active &&
+               output.channelCount != 0;
+      });
+  if (selected == active->filterOutputs.end()) {
+    return false;
+  }
+  const auto baselineProcessedFrames = active->dspProcessedFrames;
+
+  const auto audioPath = directory / "silent.f32";
+  if (!check(writeSilentAudio(audioPath, selected->channelCount, 96'000),
+             "cannot create silent routing probe")) {
+    return false;
+  }
+  const auto playback = startCommand(
+      {"pw-cat", "--playback", "--target", selected->targetNodeName,
+       "--rate", "48000", "--channels",
+       std::to_string(selected->channelCount), "--format", "f32", "-"},
+      audioPath);
+  if (!check(playback > 0, "cannot start the silent routing probe")) {
+    return false;
+  }
+  const auto processed = waitForControlStatus(
+      socketPath,
+      [baselineProcessedFrames](const auto &status) {
+        return status.dspProcessedFrames > baselineProcessedFrames;
+      },
+      std::chrono::seconds(4));
+  const auto playbackStopped = stopCommand(playback);
+  return check(processed.has_value(),
+               "routed playback did not advance DSP telemetry") &&
+         check(playbackStopped, "cannot stop the silent routing probe");
 }
 
 static bool responseHasPerOutputRate(
@@ -372,7 +555,7 @@ static bool responseHasPerOutputRate(
   return true;
 }
 
-static bool testLiveControl() {
+static bool testLiveControl(bool requireActivePolicy) {
   const auto processId = std::to_string(getpid());
   const auto directory = std::filesystem::temp_directory_path() /
                          ("pipetune-filter-live-" + processId);
@@ -431,9 +614,16 @@ static bool testLiveControl() {
   close(descriptors[1]);
   auto marker = char{0};
   auto readResult = ssize_t{-1};
+  auto readyPoll = pollfd{.fd = descriptors[0], .events = POLLIN, .revents = 0};
+  auto pollResult = int{-1};
   do {
-    readResult = read(descriptors[0], &marker, 1);
-  } while (readResult < 0 && errno == EINTR);
+    pollResult = poll(&readyPoll, 1, 10'000);
+  } while (pollResult < 0 && errno == EINTR);
+  if (pollResult > 0 && (readyPoll.revents & POLLIN) != 0) {
+    do {
+      readResult = read(descriptors[0], &marker, 1);
+    } while (readResult < 0 && errno == EINTR);
+  }
   close(descriptors[0]);
   if (!check(readResult == 1 && marker == 'R',
              "transparent-filter child did not report readiness")) {
@@ -453,6 +643,14 @@ static bool testLiveControl() {
                  loaded.status.activePreset == presetPath.string() &&
                  loaded.status.activePluginCount == 1,
              "live preset must replace every output pipeline")) {
+    static_cast<void>(stopServiceChild(child));
+    std::filesystem::remove_all(directory);
+    return false;
+  }
+
+  const auto routed = exerciseAudioAndPolicyStatus(
+      socketPath, directory, requireActivePolicy);
+  if (!routed) {
     static_cast<void>(stopServiceChild(child));
     std::filesystem::remove_all(directory);
     return false;
@@ -530,11 +728,25 @@ static bool testLiveControl() {
   return bypassValid && stopped;
 }
 
-int main() {
+int main(int argumentCount, char **arguments) {
+  const auto requireActivePolicy =
+      argumentCount == 2 &&
+      std::string_view(arguments[1]) == "--require-active-policy";
+  if (argumentCount != 1 && !requireActivePolicy) {
+    std::cerr << "Usage: pipetune_transparent_filter_service_tests "
+                 "[--require-active-policy]\n";
+    return 1;
+  }
   if (!pipeWireSessionIsAvailable() || dumpPipeWireGraph() == std::nullopt) {
     std::cout << "PipeWire session or pw-dump is unavailable; skipping "
                  "filter service integration test\n";
     return 77;
+  }
+  // The worktree policy intentionally hides internal filter nodes from the
+  // pw-dump client. Its isolated-path test therefore uses only the public
+  // control protocol and an audio stream that must advance DSP counters.
+  if (requireActivePolicy) {
+    return testLiveControl(true) ? 0 : 1;
   }
 
   auto source = pipetune::createBypassDspPipeline(
@@ -569,7 +781,7 @@ int main() {
     }
   }
   return check(result.success, result.error) && graphValid && statusesValid &&
-                 controlValid && testLiveControl()
+                 controlValid && testLiveControl(requireActivePolicy)
              ? 0
              : 1;
 }

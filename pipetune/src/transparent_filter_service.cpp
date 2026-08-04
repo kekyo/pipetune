@@ -51,6 +51,7 @@ namespace pipetune {
 
 constexpr auto kFilterSampleBytes = std::uint32_t{sizeof(float)};
 constexpr auto kFilterReadinessTimeoutSeconds = std::time_t{10};
+constexpr auto kFilterTelemetryIntervalSeconds = std::time_t{1};
 
 struct FilterServiceRuntime;
 struct OutputFilterRuntime;
@@ -99,6 +100,7 @@ struct OutputFilterRuntime {
   bool failed;
   bool enabledPublished;
   std::uint32_t mainNodeId;
+  std::string policyState;
   std::string error;
 
   OutputFilterRuntime(FilterServiceRuntime &owner,
@@ -127,7 +129,7 @@ struct OutputFilterRuntime {
         playbackListenerInstalled(false), captureReady(false),
         playbackReady(false), captureFormatReady(false),
         playbackFormatReady(false), failed(false), enabledPublished(false),
-        mainNodeId(PW_ID_ANY), error() {}
+        mainNodeId(PW_ID_ANY), policyState(), error() {}
 };
 
 struct FilterServiceRuntime {
@@ -151,6 +153,7 @@ struct FilterServiceRuntime {
   spa_hook registryListener;
   spa_hook policyMetadataListener;
   spa_source *timeoutSource;
+  spa_source *telemetrySource;
   spa_source *interruptSource;
   spa_source *terminateSource;
   std::unique_ptr<ControlServer> controlServer;
@@ -204,6 +207,7 @@ struct FilterServiceRuntime {
         policyMetadata(nullptr), coreEvents{}, registryEvents{},
         policyMetadataEvents{}, coreListener{}, registryListener{},
         policyMetadataListener{}, timeoutSource(nullptr),
+        telemetrySource(nullptr),
         interruptSource(nullptr), terminateSource(nullptr),
         controlServer(nullptr), controlRequestSource(nullptr),
         controlRequestMutex(), controlRequestCondition(),
@@ -412,7 +416,8 @@ static bool outputFilterReady(const OutputFilterRuntime &runtime) noexcept {
 static void publishFilterEnabled(OutputFilterRuntime &runtime);
 static void maybeCompleteFilterServiceReadiness(FilterServiceRuntime &runtime);
 static void reconcileOutputFilters(FilterServiceRuntime &runtime);
-static void refreshControlStatusSnapshot(FilterServiceRuntime &runtime);
+static void refreshControlStatusSnapshot(FilterServiceRuntime &runtime,
+                                         bool publish = true);
 static std::optional<ControlRuntimeStatus> filterControlStatusSnapshot(
     FilterServiceRuntime &runtime);
 
@@ -437,7 +442,22 @@ static int policyMetadataProperty(void *data, std::uint32_t subject,
                                   const char *key, const char *,
                                   const char *value) {
   auto &runtime = *static_cast<FilterServiceRuntime *>(data);
-  if (subject != 0 || key == nullptr) {
+  if (key == nullptr) {
+    return 0;
+  }
+  if (subject != 0) {
+    if (std::string_view(key) != "filter.state") {
+      return 0;
+    }
+    for (auto &[id, filter] : runtime.filters) {
+      static_cast<void>(id);
+      if (filter->mainNodeId == subject) {
+        filter->policyState =
+            value == nullptr ? std::string{} : std::string(value);
+        refreshControlStatusSnapshot(runtime);
+        break;
+      }
+    }
     return 0;
   }
   auto *destination = static_cast<std::string *>(nullptr);
@@ -926,6 +946,11 @@ static void publishFilterEnabled(OutputFilterRuntime &runtime) {
   }
   runtime.mainNodeId = nodeId;
   const auto enabled = service.policyReady && outputFilterReady(runtime);
+  if (enabled && !runtime.enabledPublished) {
+    runtime.policyState = "waiting";
+  } else if (!enabled) {
+    runtime.policyState = "bypassed";
+  }
   const auto result = pw_metadata_set_property(
       service.policyMetadata, nodeId, "filter.enabled", "Spa:String",
       enabled ? "true" : "false");
@@ -944,6 +969,8 @@ static void destroyFilterStreams(OutputFilterRuntime &runtime) {
         runtime.service->policyMetadata, runtime.mainNodeId,
         "filter.enabled", "Spa:String", "false"));
   }
+  runtime.enabledPublished = false;
+  runtime.policyState = "bypassed";
   if (runtime.playbackStream != nullptr) {
     if (runtime.playbackListenerInstalled) {
       spa_hook_remove(&runtime.playbackListener);
@@ -1177,8 +1204,29 @@ static OutputFilterStateSnapshot outputFilterState(
         .error = "WirePlumber PipeTune policy handshake is unavailable",
         .latencyFrames = filter.latencyFrames};
   }
-  return {.state = PipeWireFilterOutputState::active,
-          .error = {},
+  if (filter.policyState == "active") {
+    return {.state = PipeWireFilterOutputState::active,
+            .error = {},
+            .latencyFrames = filter.latencyFrames};
+  }
+  if (filter.policyState == "bypassed") {
+    return {.state = PipeWireFilterOutputState::bypassed,
+            .error = "WirePlumber left this output on its direct route",
+            .latencyFrames = filter.latencyFrames};
+  }
+  if (filter.policyState == "conflict") {
+    return {.state = PipeWireFilterOutputState::error,
+            .error = "WirePlumber rejected the output filter chain",
+            .latencyFrames = filter.latencyFrames};
+  }
+  if (filter.policyState.empty() || filter.policyState == "waiting") {
+    return {.state = PipeWireFilterOutputState::waiting,
+            .error = {},
+            .latencyFrames = filter.latencyFrames};
+  }
+  return {.state = PipeWireFilterOutputState::error,
+          .error = "WirePlumber reported an unknown output filter state: " +
+                   filter.policyState,
           .latencyFrames = filter.latencyFrames};
 }
 
@@ -1367,13 +1415,21 @@ static ControlRuntimeStatus buildFilterControlStatus(
       .availableDspVariants = std::move(availableVariants)};
 }
 
-static void refreshControlStatusSnapshot(FilterServiceRuntime &runtime) {
+static void refreshControlStatusSnapshot(FilterServiceRuntime &runtime,
+                                         bool publish) {
   auto status = buildFilterControlStatus(runtime);
   {
     auto lock = std::scoped_lock(runtime.controlStatusMutex);
     runtime.controlStatusSnapshot = std::move(status);
   }
-  publishControlStatus(runtime.controlServer.get());
+  if (publish) {
+    publishControlStatus(runtime.controlServer.get());
+  }
+}
+
+static void filterTelemetryElapsed(void *data, std::uint64_t) {
+  auto &runtime = *static_cast<FilterServiceRuntime *>(data);
+  refreshControlStatusSnapshot(runtime, false);
 }
 
 static void maybeCompleteFilterServiceReadiness(FilterServiceRuntime &runtime) {
@@ -2065,6 +2121,25 @@ static bool createFilterServiceLoop(FilterServiceRuntime &runtime) {
         "cannot create transparent-filter control event", -errno);
     return false;
   }
+  runtime.telemetrySource =
+      pw_loop_add_timer(loop, filterTelemetryElapsed, &runtime);
+  if (runtime.telemetrySource == nullptr) {
+    runtime.error = filterSystemError(
+        "cannot create transparent-filter telemetry timer", -errno);
+    return false;
+  }
+  auto telemetryDelay = timespec{
+      .tv_sec = kFilterTelemetryIntervalSeconds, .tv_nsec = 0};
+  auto telemetryInterval = telemetryDelay;
+  const auto telemetryTimerResult = pw_loop_update_timer(
+      loop, runtime.telemetrySource, &telemetryDelay, &telemetryInterval,
+      false);
+  if (telemetryTimerResult < 0) {
+    runtime.error = filterSystemError(
+        "cannot arm transparent-filter telemetry timer",
+        telemetryTimerResult);
+    return false;
+  }
   if (runtime.mode == PipeWireRunMode::untilReady) {
     runtime.timeoutSource = pw_loop_add_timer(
         loop, filterServiceReadinessTimedOut, &runtime);
@@ -2182,6 +2257,9 @@ static void destroyFilterService(FilterServiceRuntime &runtime) {
     auto *loop = pw_main_loop_get_loop(runtime.mainLoop);
     if (runtime.timeoutSource != nullptr) {
       pw_loop_destroy_source(loop, runtime.timeoutSource);
+    }
+    if (runtime.telemetrySource != nullptr) {
+      pw_loop_destroy_source(loop, runtime.telemetrySource);
     }
     if (runtime.interruptSource != nullptr) {
       pw_loop_destroy_source(loop, runtime.interruptSource);
