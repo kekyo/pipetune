@@ -34,7 +34,6 @@ constexpr auto kJsonWriteFlags =
 static ControlRequestParseResult requestError(std::string message) {
   return {.request = {.command = ControlCommand::status,
                       .presetPath = {},
-                      .outputTarget = {},
                       .ratePolicy = defaultSampleRatePolicy()},
           .error = std::move(message)};
 }
@@ -110,7 +109,6 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
     }
     return {.request = {.command = ControlCommand::status,
                         .presetPath = {},
-                        .outputTarget = {},
                         .ratePolicy = defaultSampleRatePolicy()},
             .error = {}};
   }
@@ -121,18 +119,6 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
     }
     return {.request = {.command = ControlCommand::bypass,
                         .presetPath = {},
-                        .outputTarget = {},
-                        .ratePolicy = defaultSampleRatePolicy()},
-            .error = {}};
-  }
-  if (command == "clear-output") {
-    if (yyjson_obj_size(root) != 2) {
-      return requestError(
-          "clear-output request accepts only protocolVersion and command");
-    }
-    return {.request = {.command = ControlCommand::clearOutput,
-                        .presetPath = {},
-                        .outputTarget = {},
                         .ratePolicy = defaultSampleRatePolicy()},
             .error = {}};
   }
@@ -143,32 +129,6 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
     }
     return {.request = {.command = ControlCommand::subscribe,
                         .presetPath = {},
-                        .outputTarget = {},
-                        .ratePolicy = defaultSampleRatePolicy()},
-            .error = {}};
-  }
-  if (command == "set-output") {
-    if (yyjson_obj_size(root) != 3) {
-      return requestError(
-          "set-output request requires only protocolVersion, command, and "
-          "target");
-    }
-    auto *targetValue = yyjson_obj_get(root, "target");
-    if (!yyjson_is_str(targetValue) || yyjson_get_len(targetValue) == 0) {
-      return requestError(
-          "set-output request target must be a non-empty string");
-    }
-    auto target =
-        std::string(yyjson_get_str(targetValue), yyjson_get_len(targetValue));
-    if (target.find('\0') != std::string::npos ||
-        target.find('\n') != std::string::npos ||
-        target.find('\r') != std::string::npos) {
-      return requestError(
-          "set-output request target must be a single line without NUL");
-    }
-    return {.request = {.command = ControlCommand::setOutput,
-                        .presetPath = {},
-                        .outputTarget = std::move(target),
                         .ratePolicy = defaultSampleRatePolicy()},
             .error = {}};
   }
@@ -217,7 +177,6 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
     }
     return {.request = {.command = ControlCommand::setRate,
                         .presetPath = {},
-                        .outputTarget = {},
                         .ratePolicy = policy},
             .error = {}};
   }
@@ -251,7 +210,6 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
     }
     return {.request = {.command = ControlCommand::setDspBackend,
                         .presetPath = {},
-                        .outputTarget = {},
                         .ratePolicy = defaultSampleRatePolicy(),
                         .dspBackend = *backend,
                         .dspSimdVariant = *simdVariant},
@@ -275,7 +233,6 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
   }
   return {.request = {.command = ControlCommand::loadPreset,
                       .presetPath = std::move(preset),
-                      .outputTarget = {},
                       .ratePolicy = defaultSampleRatePolicy()},
           .error = {}};
 }
@@ -290,24 +247,6 @@ std::string makeSubscribeControlRequest() {
 
 std::string makeBypassControlRequest() {
   return R"json({"protocolVersion":2,"command":"bypass"})json";
-}
-
-std::string makeSetOutputControlRequest(std::string_view nodeName) {
-  yyjson_mut_val *root = nullptr;
-  auto document = createObjectDocument(root);
-  if (document == nullptr ||
-      !yyjson_mut_obj_add_uint(document.get(), root, "protocolVersion",
-                               kControlProtocolVersion) ||
-      !yyjson_mut_obj_add_str(document.get(), root, "command",
-                              "set-output") ||
-      !addString(document.get(), root, "target", nodeName)) {
-    return {};
-  }
-  return writeDocument(document.get());
-}
-
-std::string makeClearOutputControlRequest() {
-  return R"json({"protocolVersion":2,"command":"clear-output"})json";
 }
 
 std::string makeSetRateControlRequest(const SampleRatePolicy &policy) {
@@ -378,21 +317,6 @@ makeLoadPresetControlRequest(const std::filesystem::path &presetPath) {
     return {};
   }
   return writeDocument(document.get());
-}
-
-static const char *outputSelectionReasonName(
-    ControlOutputSelectionReason reason) noexcept {
-  switch (reason) {
-  case ControlOutputSelectionReason::unavailable:
-    return "unavailable";
-  case ControlOutputSelectionReason::systemDefault:
-    return "system-default";
-  case ControlOutputSelectionReason::preferred:
-    return "preferred";
-  case ControlOutputSelectionReason::fallback:
-    return "fallback";
-  }
-  return nullptr;
 }
 
 static const char *filterStateName(ControlFilterState state) noexcept {
@@ -468,67 +392,6 @@ static bool filterOutputStatusesAreConsistent(
     }
   }
   return true;
-}
-
-static bool outputStatusIsConsistent(
-    const ControlRuntimeStatus &status) noexcept {
-  const auto reason =
-      outputSelectionReasonName(status.outputSelectionReason);
-  if (reason == nullptr) {
-    return false;
-  }
-  switch (status.outputSelectionReason) {
-  case ControlOutputSelectionReason::unavailable:
-    if (!status.selectedTarget.empty() ||
-        !status.availableOutputs.empty()) {
-      return false;
-    }
-    break;
-  case ControlOutputSelectionReason::systemDefault:
-    if (!status.preferredTarget.empty() ||
-        status.selectedTarget.empty()) {
-      return false;
-    }
-    break;
-  case ControlOutputSelectionReason::preferred:
-    if (status.preferredTarget.empty() ||
-        status.preferredTarget != status.selectedTarget) {
-      return false;
-    }
-    break;
-  case ControlOutputSelectionReason::fallback:
-    if (status.preferredTarget.empty() ||
-        status.selectedTarget.empty() ||
-        status.preferredTarget == status.selectedTarget) {
-      return false;
-    }
-    break;
-  }
-
-  auto selectedCount = std::size_t{0};
-  auto systemDefaultCount = std::size_t{0};
-  for (auto index = std::size_t{0}; index < status.availableOutputs.size();
-       ++index) {
-    const auto &output = status.availableOutputs[index];
-    if (output.name.empty() || output.description.empty() ||
-        output.selected != (output.name == status.selectedTarget) ||
-        output.preferred !=
-            (!status.preferredTarget.empty() &&
-             output.name == status.preferredTarget) ||
-        !sampleRateCapabilitiesAreNormalized(
-            output.sampleRateCapabilities)) {
-      return false;
-    }
-    selectedCount += output.selected ? 1U : 0U;
-    systemDefaultCount += output.systemDefault ? 1U : 0U;
-    for (auto earlier = std::size_t{0}; earlier < index; ++earlier) {
-      if (status.availableOutputs[earlier].name == output.name) {
-        return false;
-      }
-    }
-  }
-  return systemDefaultCount <= 1 &&
-         selectedCount == (status.selectedTarget.empty() ? 0U : 1U);
 }
 
 static bool dspBackendStatusIsConsistent(
@@ -625,17 +488,11 @@ static std::string makeControlStatusMessage(
     const ControlRuntimeStatus &status,
     std::span<const ControlWarning> warnings, bool statusEvent) {
   if ((status.processingMode == ProcessingMode::preset &&
-       status.activePreset.empty()) ||
+      status.activePreset.empty()) ||
       (status.processingMode == ProcessingMode::bypass &&
        !status.activePreset.empty()) ||
-      !outputStatusIsConsistent(status) ||
       !filterOutputStatusesAreConsistent(status) ||
       !sampleRatePolicyIsValid(status.configuredRatePolicy) ||
-      (status.dspSampleRate != 0 &&
-       !isSelectableSampleRate(status.dspSampleRate)) ||
-      (status.activeOutputSampleRate != 0 &&
-       status.selectedOutputSampleRate == 0) ||
-      status.rateError.find('\0') != std::string::npos ||
       !dspBackendStatusIsConsistent(status)) {
     return makeControlErrorResponse("cannot encode inconsistent control status");
   }
@@ -660,15 +517,6 @@ static std::string makeControlStatusMessage(
                                status.activePluginCount) ||
       !addNullableString(document.get(), root, "policyBackend",
                          status.policyBackend) ||
-      !addNullableString(document.get(), root, "preferredTarget",
-                         status.preferredTarget) ||
-      !addNullableString(document.get(), root, "selectedTarget",
-                         status.selectedTarget) ||
-      !yyjson_mut_obj_add_str(
-          document.get(), root, "outputSelectionReason",
-          outputSelectionReasonName(status.outputSelectionReason)) ||
-      !yyjson_mut_obj_add_bool(document.get(), root, "defaultSinkActive",
-                               status.defaultSinkActive) ||
       !yyjson_mut_obj_add_uint(document.get(), root, "overrunFrames",
                                status.overrunFrames) ||
       !yyjson_mut_obj_add_uint(document.get(), root, "underrunFrames",
@@ -680,17 +528,6 @@ static std::string makeControlStatusMessage(
       !yyjson_mut_obj_add_uint(
           document.get(), root, "dspProcessingNanoseconds",
           status.dspProcessingNanoseconds) ||
-      !addNullableString(document.get(), root, "inputSampleFormat",
-                         status.inputSampleFormat) ||
-      !yyjson_mut_obj_add_uint(document.get(), root, "inputSampleRate",
-                               status.inputSampleRate) ||
-      !yyjson_mut_obj_add_uint(document.get(), root, "inputChannelCount",
-                               status.inputChannelCount) ||
-      !yyjson_mut_obj_add_uint(document.get(), root, "inputFramesReceived",
-                               status.inputFramesReceived) ||
-      !yyjson_mut_obj_add_uint(
-          document.get(), root, "inputLastReceivedUnixMilliseconds",
-          status.inputLastReceivedUnixMilliseconds) ||
       !addString(document.get(), root, "rateMode",
                  sampleRateModeName(status.configuredRatePolicy.mode)) ||
       (status.configuredRatePolicy.mode == SampleRateMode::maximum
@@ -703,20 +540,6 @@ static std::string makeControlStatusMessage(
           document.get(), root, "rateEnforcement",
           sampleRateEnforcementName(
               status.configuredRatePolicy.enforcement)) ||
-      !yyjson_mut_obj_add_uint(document.get(), root, "dspSampleRate",
-                               status.dspSampleRate) ||
-      !yyjson_mut_obj_add_uint(
-          document.get(), root, "selectedOutputSampleRate",
-          status.selectedOutputSampleRate) ||
-      !yyjson_mut_obj_add_uint(
-          document.get(), root, "activeOutputSampleRate",
-          status.activeOutputSampleRate) ||
-      !yyjson_mut_obj_add_bool(document.get(), root, "rateTransitioning",
-                               status.rateTransitioning) ||
-      !yyjson_mut_obj_add_bool(document.get(), root, "rateFallback",
-                               status.rateFallback) ||
-      !addNullableString(document.get(), root, "rateError",
-                         status.rateError) ||
       !addString(document.get(), root, "configuredDspBackend",
                  dspBackendName(status.configuredDspBackend)) ||
       !addString(document.get(), root, "configuredDspSimdVariant",
@@ -779,52 +602,6 @@ static std::string makeControlStatusMessage(
         !addNullableString(document.get(), item, "error",
                            variant.error)) {
       return makeControlErrorResponse("cannot encode control response");
-    }
-  }
-
-  auto *outputArray =
-      yyjson_mut_obj_add_arr(document.get(), root, "availableOutputs");
-  if (outputArray == nullptr) {
-    return makeControlErrorResponse("cannot encode control response");
-  }
-  for (const auto &output : status.availableOutputs) {
-    auto *item = yyjson_mut_obj(document.get());
-    if (item == nullptr || !yyjson_mut_arr_append(outputArray, item) ||
-        !addString(document.get(), item, "name", output.name) ||
-        !addString(document.get(), item, "description",
-                   output.description) ||
-        !yyjson_mut_obj_add_bool(document.get(), item, "systemDefault",
-                                 output.systemDefault) ||
-        !yyjson_mut_obj_add_bool(document.get(), item, "preferred",
-                                 output.preferred) ||
-        !yyjson_mut_obj_add_bool(document.get(), item, "selected",
-                                 output.selected) ||
-        !yyjson_mut_obj_add_bool(
-            document.get(), item, "sampleRateCapabilitiesKnown",
-            output.sampleRateCapabilities.known)) {
-      return makeControlErrorResponse("cannot encode control response");
-    }
-    auto *constraintArray = yyjson_mut_obj_add_arr(
-        document.get(), item, "sampleRateConstraints");
-    if (constraintArray == nullptr) {
-      return makeControlErrorResponse("cannot encode control response");
-    }
-    for (const auto &constraint :
-         output.sampleRateCapabilities.constraints) {
-      const auto *kind = sampleRateConstraintKindName(constraint.kind);
-      auto *constraintObject = yyjson_mut_obj(document.get());
-      if (kind == nullptr || constraintObject == nullptr ||
-          !yyjson_mut_arr_append(constraintArray, constraintObject) ||
-          !yyjson_mut_obj_add_str(document.get(), constraintObject, "kind",
-                                  kind) ||
-          !yyjson_mut_obj_add_uint(document.get(), constraintObject,
-                                   "minimum", constraint.minimum) ||
-          !yyjson_mut_obj_add_uint(document.get(), constraintObject,
-                                   "maximum", constraint.maximum) ||
-          !yyjson_mut_obj_add_uint(document.get(), constraintObject, "step",
-                                   constraint.step)) {
-        return makeControlErrorResponse("cannot encode control response");
-      }
     }
   }
 
@@ -956,22 +733,11 @@ static ControlResponseParseResult responseError(std::string error) {
                      .activePreset = {},
                      .configurationError = {},
                      .activePluginCount = 0,
-                     .preferredTarget = {},
-                     .selectedTarget = {},
-                     .outputSelectionReason =
-                         ControlOutputSelectionReason::unavailable,
-                     .availableOutputs = {},
-                     .defaultSinkActive = false,
                      .overrunFrames = 0,
                      .underrunFrames = 0,
                      .processingErrors = 0,
                      .dspProcessedFrames = 0,
-                     .dspProcessingNanoseconds = 0,
-                     .inputSampleFormat = {},
-                     .inputSampleRate = 0,
-                     .inputChannelCount = 0,
-                     .inputFramesReceived = 0,
-                     .inputLastReceivedUnixMilliseconds = 0},
+                     .dspProcessingNanoseconds = 0},
           .warnings = {},
           .error = std::move(error)};
 }
@@ -1133,33 +899,6 @@ static bool readSampleRatePolicy(yyjson_val *object,
   return sampleRatePolicyIsValid(policy);
 }
 
-static bool readOutputSelectionReason(
-    yyjson_val *object, ControlOutputSelectionReason &reason) {
-  auto *field = yyjson_obj_get(object, "outputSelectionReason");
-  if (!yyjson_is_str(field)) {
-    return false;
-  }
-  const auto value =
-      std::string_view(yyjson_get_str(field), yyjson_get_len(field));
-  if (value == "unavailable") {
-    reason = ControlOutputSelectionReason::unavailable;
-    return true;
-  }
-  if (value == "system-default") {
-    reason = ControlOutputSelectionReason::systemDefault;
-    return true;
-  }
-  if (value == "preferred") {
-    reason = ControlOutputSelectionReason::preferred;
-    return true;
-  }
-  if (value == "fallback") {
-    reason = ControlOutputSelectionReason::fallback;
-    return true;
-  }
-  return false;
-}
-
 static bool readBooleanField(yyjson_val *object, const char *key,
                              bool &value) {
   auto *field = yyjson_obj_get(object, key);
@@ -1222,42 +961,6 @@ static bool readSampleRateCapabilities(
     capabilities.constraints.push_back(constraint);
   }
   return sampleRateCapabilitiesAreNormalized(capabilities);
-}
-
-static bool readAvailableOutputs(
-    yyjson_val *object, std::vector<ControlOutputDevice> &outputs) {
-  auto *array = yyjson_obj_get(object, "availableOutputs");
-  if (!yyjson_is_arr(array)) {
-    return false;
-  }
-  outputs.clear();
-  outputs.reserve(yyjson_arr_size(array));
-  for (auto index = std::size_t{0}; index < yyjson_arr_size(array);
-       ++index) {
-    auto *item = yyjson_arr_get(array, index);
-    auto output = ControlOutputDevice{
-        .name = {},
-        .description = {},
-        .systemDefault = false,
-        .preferred = false,
-        .selected = false,
-    };
-    if (!yyjson_is_obj(item) ||
-        !readStringField(item, "name", output.name) ||
-        !readStringField(item, "description", output.description) ||
-        !readBooleanField(item, "systemDefault",
-                          output.systemDefault) ||
-        !readBooleanField(item, "preferred", output.preferred) ||
-        !readBooleanField(item, "selected", output.selected) ||
-        !readSampleRateCapabilities(item,
-                                    output.sampleRateCapabilities) ||
-        output.name.find('\0') != std::string::npos ||
-        output.description.find('\0') != std::string::npos) {
-      return false;
-    }
-    outputs.push_back(std::move(output));
-  }
-  return true;
 }
 
 static bool readAvailableDspBackends(
@@ -1493,22 +1196,11 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
                        .activePreset = {},
                        .configurationError = {},
                        .activePluginCount = 0,
-                       .preferredTarget = {},
-                       .selectedTarget = {},
-                       .outputSelectionReason =
-                           ControlOutputSelectionReason::unavailable,
-                       .availableOutputs = {},
-                       .defaultSinkActive = false,
                        .overrunFrames = 0,
                        .underrunFrames = 0,
                        .processingErrors = 0,
                        .dspProcessedFrames = 0,
-                       .dspProcessingNanoseconds = 0,
-                       .inputSampleFormat = {},
-                       .inputSampleRate = 0,
-                       .inputChannelCount = 0,
-                       .inputFramesReceived = 0,
-                       .inputLastReceivedUnixMilliseconds = 0},
+                       .dspProcessingNanoseconds = 0},
             .warnings = {},
             .error = std::move(error)};
   }
@@ -1520,24 +1212,12 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       .activePluginCount = 0,
       .policyBackend = {},
       .filterOutputs = {},
-      .preferredTarget = {},
-      .selectedTarget = {},
-      .outputSelectionReason =
-          ControlOutputSelectionReason::unavailable,
-      .availableOutputs = {},
-      .defaultSinkActive = false,
       .overrunFrames = 0,
       .underrunFrames = 0,
       .processingErrors = 0,
       .dspProcessedFrames = 0,
       .dspProcessingNanoseconds = 0,
-      .inputSampleFormat = {},
-      .inputSampleRate = 0,
-      .inputChannelCount = 0,
-      .inputFramesReceived = 0,
-      .inputLastReceivedUnixMilliseconds = 0,
   };
-  auto *defaultSinkActive = yyjson_obj_get(root, "defaultSinkActive");
   if (!readProcessingMode(root, status.processingMode) ||
       !readNullableStringField(root, "preset", status.activePreset) ||
       !readNullableStringField(root, "configurationError",
@@ -1547,13 +1227,6 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       !readNullableStringField(root, "policyBackend",
                                status.policyBackend) ||
       !readFilterOutputs(root, status.filterOutputs) ||
-      !readNullableStringField(root, "preferredTarget",
-                               status.preferredTarget) ||
-      !readNullableStringField(root, "selectedTarget",
-                               status.selectedTarget) ||
-      !readOutputSelectionReason(root, status.outputSelectionReason) ||
-      !readAvailableOutputs(root, status.availableOutputs) ||
-      !yyjson_is_bool(defaultSinkActive) ||
       !readCounterField(root, "overrunFrames", status.overrunFrames) ||
       !readCounterField(root, "underrunFrames", status.underrunFrames) ||
       !readCounterField(root, "processingErrors",
@@ -1562,26 +1235,7 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
                         status.dspProcessedFrames) ||
       !readCounterField(root, "dspProcessingNanoseconds",
                         status.dspProcessingNanoseconds) ||
-      !readNullableStringField(root, "inputSampleFormat",
-                               status.inputSampleFormat) ||
-      !readUint32Field(root, "inputSampleRate", status.inputSampleRate) ||
-      !readUint32Field(root, "inputChannelCount",
-                       status.inputChannelCount) ||
-      !readCounterField(root, "inputFramesReceived",
-                        status.inputFramesReceived) ||
-      !readCounterField(root, "inputLastReceivedUnixMilliseconds",
-                        status.inputLastReceivedUnixMilliseconds) ||
       !readSampleRatePolicy(root, status.configuredRatePolicy) ||
-      !readUint32Field(root, "dspSampleRate", status.dspSampleRate) ||
-      !readUint32Field(root, "selectedOutputSampleRate",
-                       status.selectedOutputSampleRate) ||
-      !readUint32Field(root, "activeOutputSampleRate",
-                       status.activeOutputSampleRate) ||
-      !readBooleanField(root, "rateTransitioning",
-                        status.rateTransitioning) ||
-      !readBooleanField(root, "rateFallback", status.rateFallback) ||
-      !readNullableStringField(root, "rateError",
-                               status.rateError) ||
       !readDspBackendKindField(root, "configuredDspBackend",
                                status.configuredDspBackend) ||
       !readDspSimdVariantField(root, "configuredDspSimdVariant",
@@ -1602,27 +1256,11 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
        status.activePreset.empty()) ||
       (status.processingMode == ProcessingMode::bypass &&
        !status.activePreset.empty()) ||
-      !outputStatusIsConsistent(status) ||
       !filterOutputStatusesAreConsistent(status) ||
-      (status.dspSampleRate != 0 &&
-       !isSelectableSampleRate(status.dspSampleRate)) ||
-      (status.activeOutputSampleRate != 0 &&
-       status.selectedOutputSampleRate == 0) ||
-      status.rateError.find('\0') != std::string::npos ||
       !dspBackendStatusIsConsistent(status)) {
     return responseError(
         "successful control response has inconsistent status");
   }
-  const auto hasInputFormat = !status.inputSampleFormat.empty();
-  if (hasInputFormat !=
-          (status.inputSampleRate != 0 && status.inputChannelCount != 0) ||
-      (status.inputFramesReceived == 0) !=
-          (status.inputLastReceivedUnixMilliseconds == 0)) {
-    return responseError(
-        "successful control response has inconsistent input telemetry");
-  }
-  status.defaultSinkActive = yyjson_get_bool(defaultSinkActive);
-
   auto *warningArray = yyjson_obj_get(root, "warnings");
   if (!yyjson_is_arr(warningArray)) {
     return responseError(

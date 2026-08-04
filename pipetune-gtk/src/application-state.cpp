@@ -1,111 +1,50 @@
 #include "application-state.h"
 
+#include <algorithm>
+
 namespace pipetune_gtk {
-
-constexpr auto kMinimumInputRateIntervalMilliseconds = std::int64_t{500};
-
-static InputRateState initialInputRateState() {
-  return {
-      .hasBaseline = false,
-      .baselineFrames = 0,
-      .baselineMonotonicMilliseconds = 0,
-      .baselineSampleFormat = {},
-      .baselineSampleRate = 0,
-      .baselineChannelCount = 0,
-      .hasRate = false,
-      .framesPerSecond = 0.0,
-  };
-}
 
 static DspTimingState initialDspTimingState() {
   return {
       .hasBaseline = false,
       .baselineFrames = 0,
       .baselineNanoseconds = 0,
+      .baselineMonotonicMilliseconds = 0,
       .hasAverage = false,
       .nanosecondsPerFrame = 0.0,
+      .loadPercent = 0.0,
   };
-}
-
-static bool inputFormatMatches(const InputRateState &inputRate,
-                               const pipetune::ControlRuntimeStatus &status) {
-  return inputRate.baselineSampleFormat == status.inputSampleFormat &&
-         inputRate.baselineSampleRate == status.inputSampleRate &&
-         inputRate.baselineChannelCount == status.inputChannelCount;
-}
-
-static void establishInputRateBaseline(
-    InputRateState &inputRate,
-    const pipetune::ControlRuntimeStatus &status,
-    std::int64_t receivedAtMonotonicMilliseconds) {
-  inputRate.hasBaseline = true;
-  inputRate.baselineFrames = status.inputFramesReceived;
-  inputRate.baselineMonotonicMilliseconds =
-      receivedAtMonotonicMilliseconds;
-  inputRate.baselineSampleFormat = status.inputSampleFormat;
-  inputRate.baselineSampleRate = status.inputSampleRate;
-  inputRate.baselineChannelCount = status.inputChannelCount;
-  inputRate.hasRate = false;
-  inputRate.framesPerSecond = 0.0;
-}
-
-static void updateInputRate(
-    InputRateState &inputRate,
-    const pipetune::ControlRuntimeStatus &status,
-    std::int64_t receivedAtMonotonicMilliseconds) {
-  if (status.inputSampleFormat.empty()) {
-    inputRate = initialInputRateState();
-    return;
-  }
-  if (!inputRate.hasBaseline ||
-      !inputFormatMatches(inputRate, status) ||
-      status.inputFramesReceived < inputRate.baselineFrames ||
-      receivedAtMonotonicMilliseconds <
-          inputRate.baselineMonotonicMilliseconds) {
-    establishInputRateBaseline(inputRate, status,
-                               receivedAtMonotonicMilliseconds);
-    return;
-  }
-
-  const auto elapsedMilliseconds =
-      receivedAtMonotonicMilliseconds -
-      inputRate.baselineMonotonicMilliseconds;
-  if (elapsedMilliseconds <
-      kMinimumInputRateIntervalMilliseconds) {
-    return;
-  }
-  const auto frames =
-      status.inputFramesReceived - inputRate.baselineFrames;
-  inputRate.framesPerSecond =
-      static_cast<double>(frames) * 1000.0 /
-      static_cast<double>(elapsedMilliseconds);
-  inputRate.hasRate = true;
-  inputRate.baselineFrames = status.inputFramesReceived;
-  inputRate.baselineMonotonicMilliseconds =
-      receivedAtMonotonicMilliseconds;
 }
 
 static void establishDspTimingBaseline(
     DspTimingState &timing,
-    const pipetune::ControlRuntimeStatus &status) {
+    const pipetune::ControlRuntimeStatus &status,
+    std::int64_t receivedAtMonotonicMilliseconds) {
   timing.hasBaseline = true;
   timing.baselineFrames = status.dspProcessedFrames;
   timing.baselineNanoseconds = status.dspProcessingNanoseconds;
+  timing.baselineMonotonicMilliseconds =
+      receivedAtMonotonicMilliseconds;
   timing.hasAverage = false;
   timing.nanosecondsPerFrame = 0.0;
+  timing.loadPercent = 0.0;
 }
 
 static void updateDspTiming(
     DspTimingState &timing,
-    const pipetune::ControlRuntimeStatus &status) {
+    const pipetune::ControlRuntimeStatus &status,
+    std::int64_t receivedAtMonotonicMilliseconds) {
   if (status.processingMode != pipetune::ProcessingMode::preset) {
     timing = initialDspTimingState();
     return;
   }
   if (!timing.hasBaseline ||
       status.dspProcessedFrames < timing.baselineFrames ||
-      status.dspProcessingNanoseconds < timing.baselineNanoseconds) {
-    establishDspTimingBaseline(timing, status);
+      status.dspProcessingNanoseconds < timing.baselineNanoseconds ||
+      receivedAtMonotonicMilliseconds <=
+          timing.baselineMonotonicMilliseconds) {
+    establishDspTimingBaseline(
+        timing, status, receivedAtMonotonicMilliseconds);
     return;
   }
 
@@ -113,17 +52,26 @@ static void updateDspTiming(
       status.dspProcessedFrames - timing.baselineFrames;
   const auto processingNanoseconds =
       status.dspProcessingNanoseconds - timing.baselineNanoseconds;
+  const auto elapsedMilliseconds =
+      receivedAtMonotonicMilliseconds -
+      timing.baselineMonotonicMilliseconds;
   if (processedFrames != 0) {
     timing.nanosecondsPerFrame =
         static_cast<double>(processingNanoseconds) /
         static_cast<double>(processedFrames);
     timing.hasAverage = true;
+    timing.loadPercent =
+        static_cast<double>(processingNanoseconds) /
+        (static_cast<double>(elapsedMilliseconds) * 1'000'000.0) * 100.0;
   } else {
     timing.hasAverage = false;
     timing.nanosecondsPerFrame = 0.0;
+    timing.loadPercent = 0.0;
   }
   timing.baselineFrames = status.dspProcessedFrames;
   timing.baselineNanoseconds = status.dspProcessingNanoseconds;
+  timing.baselineMonotonicMilliseconds =
+      receivedAtMonotonicMilliseconds;
 }
 
 ApplicationState initialApplicationState() {
@@ -136,34 +84,16 @@ ApplicationState initialApplicationState() {
               .activePreset = {},
               .configurationError = {},
               .activePluginCount = 0,
-              .preferredTarget = {},
-              .selectedTarget = {},
-              .outputSelectionReason =
-                  pipetune::ControlOutputSelectionReason::unavailable,
-              .availableOutputs = {},
-              .defaultSinkActive = false,
               .overrunFrames = 0,
               .underrunFrames = 0,
               .processingErrors = 0,
               .dspProcessedFrames = 0,
               .dspProcessingNanoseconds = 0,
-              .inputSampleFormat = {},
-              .inputSampleRate = 0,
-              .inputChannelCount = 0,
-              .inputFramesReceived = 0,
-              .inputLastReceivedUnixMilliseconds = 0,
               .configuredRatePolicy = pipetune::defaultSampleRatePolicy(),
-              .dspSampleRate = 0,
-              .selectedOutputSampleRate = 0,
-              .activeOutputSampleRate = 0,
-              .rateTransitioning = false,
-              .rateFallback = false,
-              .rateError = {},
           },
       .warnings = {},
       .diagnostic = {},
       .operationPending = false,
-      .inputRate = initialInputRateState(),
       .dspTiming = initialDspTimingState(),
   };
 }
@@ -172,7 +102,6 @@ void markControlConnecting(ApplicationState &state) {
   state.connection = ControlConnectionState::connecting;
   state.hasRuntimeStatus = false;
   state.diagnostic.clear();
-  state.inputRate = initialInputRateState();
   state.dspTiming = initialDspTimingState();
 }
 
@@ -192,9 +121,8 @@ void applyControlResponse(
 
   state.hasRuntimeStatus = true;
   state.runtime = response.status;
-  updateInputRate(state.inputRate, response.status,
+  updateDspTiming(state.dspTiming, response.status,
                   receivedAtMonotonicMilliseconds);
-  updateDspTiming(state.dspTiming, response.status);
   if (response.kind == pipetune::ControlResponseKind::response) {
     state.warnings = response.warnings;
     state.diagnostic.clear();
@@ -206,7 +134,6 @@ void markControlDisconnected(ApplicationState &state,
   state.connection = ControlConnectionState::disconnected;
   state.operationPending = false;
   state.diagnostic = diagnostic;
-  state.inputRate = initialInputRateState();
   state.dspTiming = initialDspTimingState();
 }
 
@@ -238,12 +165,15 @@ TrayVisualState trayVisualState(const ApplicationState &state) {
   if (!state.hasRuntimeStatus || !state.diagnostic.empty() ||
       !state.warnings.empty() ||
       !state.runtime.configurationError.empty() ||
-      !state.runtime.rateError.empty() ||
-      state.runtime.rateTransitioning ||
       state.runtime.dspBackendFallback ||
       !state.runtime.dspBackendError.empty() ||
-      !state.runtime.defaultSinkActive ||
-      state.runtime.selectedTarget.empty() ||
+      state.runtime.filterOutputs.empty() ||
+      std::any_of(state.runtime.filterOutputs.begin(),
+                  state.runtime.filterOutputs.end(),
+                  [](const auto &output) {
+                    return output.state !=
+                           pipetune::ControlFilterState::active;
+                  }) ||
       state.runtime.overrunFrames != 0 ||
       state.runtime.underrunFrames != 0 ||
       state.runtime.processingErrors != 0) {

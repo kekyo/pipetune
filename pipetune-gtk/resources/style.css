@@ -25,14 +25,12 @@
 
 .settings-list,
 .status-list,
-.output-list,
 .log-list {
   background-color: transparent;
 }
 
 .settings-list row,
 .status-list row,
-.output-list row,
 .log-list row {
   border-bottom: 1px solid alpha(@theme_fg_color, 0.08);
 }
@@ -126,21 +124,9 @@ levelbar.status-level-meter.status-level-hue-10 trough block.filled {
   background-color: alpha(@theme_bg_color, 0.72);
 }
 
-.output-row {
-  padding: 10px 14px;
-}
-
-.device-name,
 .log-detail {
   color: alpha(@theme_fg_color, 0.62);
   font-size: 0.9em;
-}
-
-.badge {
-  padding: 2px 7px;
-  border-radius: 9px;
-  background-color: alpha(@theme_fg_color, 0.1);
-  font-size: 0.82em;
 }
 
 #logToggleButton {

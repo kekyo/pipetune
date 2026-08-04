@@ -24,11 +24,6 @@ struct FakeProcessRunner {
   std::vector<Invocation> invocations;
 };
 
-struct FakeRestore {
-  std::size_t calls;
-  bool success;
-};
-
 static bool check(bool condition, std::string_view message) {
   if (!condition) {
     std::cerr << message << '\n';
@@ -51,17 +46,6 @@ static pipetune::ProcessResult fakeRunProcess(
     return runner.results[index];
   }
   return {.started = true, .exitCode = 0, .error = {}};
-}
-
-static pipetune::DefaultSinkRestoreResult
-fakeRestoreDefaultSink(std::string, void *userData) {
-  auto &restore = *static_cast<FakeRestore *>(userData);
-  ++restore.calls;
-  return {.success = restore.success,
-          .selectedTarget =
-              restore.success ? "alsa_output.test" : std::string{},
-          .error = restore.success ? std::string{}
-                                   : std::string("restore failed")};
 }
 
 static pipetune::UserManagementPaths makePaths(
@@ -143,7 +127,7 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
   auto runner = FakeProcessRunner{
       .results = {processResult(1), processResult(1), processResult(0),
                   processResult(0), processResult(0), processResult(0),
-                  processResult(0)},
+                  processResult(0), processResult(0)},
       .invocations = {}};
   const auto result = pipetune::executeUserSetup(
       {.effectiveUserId = 1000,
@@ -160,7 +144,7 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
          check(readFile(paths.autostartPath) == customOverride &&
                    !std::filesystem::exists(paths.autostartBackupPath),
                "setup must restore a backed-up custom autostart override") &&
-         check(runner.invocations.size() == 7,
+         check(runner.invocations.size() == 8,
                "setup process invocation count differs") &&
          check(invocationMatches(
                    runner.invocations[2], "/test/systemctl",
@@ -169,21 +153,26 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
                "setup must reload the user manager first") &&
          check(invocationMatches(
                    runner.invocations[3], "/test/systemctl",
+                   {"--user", "try-restart", "wireplumber.service"},
+                   pipetune::ProcessWaitMode::wait),
+               "setup must reload the installed WirePlumber policy") &&
+         check(invocationMatches(
+                   runner.invocations[4], "/test/systemctl",
                    {"--user", "enable", "pipetune.service"},
                    pipetune::ProcessWaitMode::wait),
                "setup enable invocation differs") &&
          check(invocationMatches(
-                   runner.invocations[4], "/test/systemctl",
+                   runner.invocations[5], "/test/systemctl",
                    {"--user", "restart", "pipetune.service"},
                    pipetune::ProcessWaitMode::wait),
                "setup restart invocation differs") &&
          check(invocationMatches(
-                   runner.invocations[5], "/test/systemctl",
+                   runner.invocations[6], "/test/systemctl",
                    {"--user", "is-active", "--quiet", "pipetune.service"},
                    pipetune::ProcessWaitMode::wait),
                "setup active verification differs") &&
          check(invocationMatches(
-                   runner.invocations[6], "/test/pipetune-gtk",
+                   runner.invocations[7], "/test/pipetune-gtk",
                    {"--hidden"}, pipetune::ProcessWaitMode::detached),
                "setup must finish by launching GTK hidden");
 }
@@ -195,7 +184,7 @@ static bool testExplicitPresetAndValidation(
   auto runner = FakeProcessRunner{
       .results = {processResult(1), processResult(1), processResult(0),
                   processResult(0), processResult(0), processResult(0),
-                  processResult(0)},
+                  processResult(0), processResult(0)},
       .invocations = {}};
   const auto configured = pipetune::executeUserSetup(
       {.effectiveUserId = 1000,
@@ -227,6 +216,34 @@ static bool testExplicitPresetAndValidation(
                "invalid explicit preset must fail before external changes");
 }
 
+static bool testWirePlumberPolicyReloadFailure(
+    const std::filesystem::path &directory) {
+  const auto paths = makePaths(directory / "wireplumber-reload");
+  auto runner = FakeProcessRunner{
+      .results = {processResult(1), processResult(1), processResult(0),
+                  processResult(1)},
+      .invocations = {}};
+  const auto result = pipetune::executeUserSetup(
+      {.effectiveUserId = 1000,
+       .presetSpecified = false,
+       .presetPath = {},
+       .paths = paths,
+       .processRunner = fakeRunProcess,
+       .processUserData = &runner});
+  return check(!result.success,
+               "WirePlumber policy reload failure must fail setup") &&
+         check(result.error ==
+                   "cannot reload WirePlumber policy exited with status 1",
+               "WirePlumber policy reload diagnostic differs") &&
+         check(runner.invocations.size() == 4,
+               "failed WirePlumber reload must stop setup") &&
+         check(invocationMatches(
+                   runner.invocations[3], "/test/systemctl",
+                   {"--user", "try-restart", "wireplumber.service"},
+                   pipetune::ProcessWaitMode::wait),
+               "WirePlumber policy reload invocation differs");
+}
+
 static bool testSetupRollback(const std::filesystem::path &directory) {
   const auto paths = makePaths(directory / "rollback");
   const auto oldPreset = writePreset(directory, "old.effetune_preset");
@@ -237,8 +254,8 @@ static bool testSetupRollback(const std::filesystem::path &directory) {
   }
   auto runner = FakeProcessRunner{
       .results = {processResult(0), processResult(0), processResult(0),
-                  processResult(0), processResult(1), processResult(0),
-                  processResult(0)},
+                  processResult(0), processResult(0), processResult(1),
+                  processResult(0), processResult(0)},
       .invocations = {}};
   const auto result = pipetune::executeUserSetup(
       {.effectiveUserId = 1000,
@@ -253,14 +270,19 @@ static bool testSetupRollback(const std::filesystem::path &directory) {
          check(restored.error.empty() && restored.found &&
                    restored.presetPath == oldPreset,
                "failed setup must restore the previous configuration") &&
-         check(runner.invocations.size() == 7,
+         check(runner.invocations.size() == 8,
                "setup rollback invocation count differs") &&
          check(invocationMatches(
-                   runner.invocations[5], "/test/systemctl",
+                   runner.invocations[3], "/test/systemctl",
+                   {"--user", "try-restart", "wireplumber.service"},
+                   pipetune::ProcessWaitMode::wait),
+               "setup must reload WirePlumber before starting PipeTune") &&
+         check(invocationMatches(
+                   runner.invocations[6], "/test/systemctl",
                    {"--user", "enable", "pipetune.service"},
                    pipetune::ProcessWaitMode::wait) &&
                    invocationMatches(
-                       runner.invocations[6], "/test/systemctl",
+                       runner.invocations[7], "/test/systemctl",
                        {"--user", "restart", "pipetune.service"},
                        pipetune::ProcessWaitMode::wait),
                "setup rollback must restore enabled and active state");
@@ -278,15 +300,12 @@ static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
   auto runner =
       FakeProcessRunner{.results = {processResult(0), processResult(0)},
                         .invocations = {}};
-  auto restore = FakeRestore{.calls = 0, .success = true};
   const auto result = pipetune::executeUserUnsetup(
       {.effectiveUserId = 1000,
        .purge = true,
        .paths = paths,
        .processRunner = fakeRunProcess,
-       .processUserData = &runner,
-       .restoreDefaultSink = fakeRestoreDefaultSink,
-       .restoreUserData = &restore});
+       .processUserData = &runner});
   return check(result.success, result.error) &&
          check(runner.invocations.size() == 2,
                "unsetup process invocation count differs") &&
@@ -299,8 +318,6 @@ static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
                    {"--user", "disable", "--now", "pipetune.service"},
                    pipetune::ProcessWaitMode::wait),
                "unsetup service stop invocation differs") &&
-         check(restore.calls == 1,
-               "unsetup must restore a physical default sink") &&
          check(pipetune::isPipeTuneManagedAutostartMask(
                    paths.autostartPath) &&
                    std::filesystem::exists(paths.autostartBackupPath),
@@ -320,21 +337,16 @@ static bool testUnsetupStopFailurePreservesConfiguration(
   auto runner =
       FakeProcessRunner{.results = {processResult(0), processResult(1)},
                         .invocations = {}};
-  auto restore = FakeRestore{.calls = 0, .success = true};
   const auto result = pipetune::executeUserUnsetup(
       {.effectiveUserId = 1000,
        .purge = true,
        .paths = paths,
        .processRunner = fakeRunProcess,
-       .processUserData = &runner,
-       .restoreDefaultSink = fakeRestoreDefaultSink,
-       .restoreUserData = &restore});
+       .processUserData = &runner});
   return check(!result.success,
                "service stop failure must fail unsetup") &&
          check(std::filesystem::exists(paths.configPath),
                "service stop failure must prevent configuration purge") &&
-         check(restore.calls == 0,
-               "service stop failure must not run sink restoration") &&
          check(pipetune::isPipeTuneManagedAutostartMask(
                    paths.autostartPath),
                "failed unsetup must retain its autostart mask");
@@ -365,6 +377,7 @@ int main() {
   const auto passed =
       testSetupPreservesConfigurationAndRestoresAutostart(directory) &&
       testExplicitPresetAndValidation(directory) &&
+      testWirePlumberPolicyReloadFailure(directory) &&
       testSetupRollback(directory) &&
       testUnsetupAndPurge(directory) &&
       testUnsetupStopFailurePreservesConfiguration(directory) &&

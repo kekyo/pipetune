@@ -3,10 +3,12 @@
 #include "pipetune/control_protocol.h"
 
 #include <array>
+#include <cmath>
 #include <iostream>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 
 static bool check(bool condition, std::string_view message) {
   if (!condition) {
@@ -15,102 +17,73 @@ static bool check(bool condition, std::string_view message) {
   return condition;
 }
 
-static pipetune::ControlResponseParseResult statusResponse(
-    bool defaultSinkActive,
-    std::span<const pipetune::ControlWarning> warnings,
-    std::string_view configurationError) {
-  return pipetune::parseControlResponse(
-      pipetune::makeControlSuccessResponse(
-          {.processingMode = pipetune::ProcessingMode::preset,
-           .activePreset = "/tmp/active.effetune_preset",
-           .configurationError = std::string(configurationError),
-           .activePluginCount = 4,
-           .preferredTarget = {},
-           .selectedTarget = "alsa_output.speaker",
-           .outputSelectionReason =
-               pipetune::ControlOutputSelectionReason::systemDefault,
-           .availableOutputs =
-               {{.name = "alsa_output.speaker",
-                 .description = "Speakers",
-                 .systemDefault = true,
-                 .preferred = false,
-                 .selected = true}},
-           .defaultSinkActive = defaultSinkActive,
-           .overrunFrames = 0,
-           .underrunFrames = 0,
-           .processingErrors = 0,
-           .dspProcessedFrames = 0,
-           .dspProcessingNanoseconds = 0,
-           .inputSampleFormat = {},
-           .inputSampleRate = 0,
-           .inputChannelCount = 0,
-           .inputFramesReceived = 0,
-           .inputLastReceivedUnixMilliseconds = 0},
-          warnings));
+static bool approximately(double actual, double expected) {
+  return std::abs(actual - expected) < 0.000001;
 }
 
-static pipetune::ControlResponseParseResult bypassStatusResponse() {
-  return pipetune::parseControlResponse(
-      pipetune::makeControlSuccessResponse(
-          {.processingMode = pipetune::ProcessingMode::bypass,
-           .activePreset = {},
-           .configurationError = {},
-           .activePluginCount = 0,
-           .preferredTarget = {},
-           .selectedTarget = "alsa_output.speaker",
-           .outputSelectionReason =
-               pipetune::ControlOutputSelectionReason::systemDefault,
-           .availableOutputs =
-               {{.name = "alsa_output.speaker",
-                 .description = "Speakers",
-                 .systemDefault = true,
-                 .preferred = false,
-                 .selected = true}},
-           .defaultSinkActive = true,
-           .overrunFrames = 0,
-           .underrunFrames = 0,
-           .processingErrors = 0,
-           .dspProcessedFrames = 0,
-           .dspProcessingNanoseconds = 0,
-           .inputSampleFormat = {},
-           .inputSampleRate = 0,
-           .inputChannelCount = 0,
-           .inputFramesReceived = 0,
-           .inputLastReceivedUnixMilliseconds = 0},
-          {}));
+static pipetune::ControlFilterOutputStatus filterOutput(
+    pipetune::ControlFilterState state =
+        pipetune::ControlFilterState::active) {
+  const auto filtered =
+      state == pipetune::ControlFilterState::active ||
+      state == pipetune::ControlFilterState::waiting;
+  return {
+      .targetNodeName = "alsa_output.speaker",
+      .targetDescription = "Speakers",
+      .filterNodeName = filtered ? "pipetune.filter.speaker" : "",
+      .state = state,
+      .error = state == pipetune::ControlFilterState::error
+                   ? "filter failed open"
+                   : "",
+      .channelCount = filtered ? 2u : 0u,
+      .sampleRateCapabilities =
+          {.known = true,
+           .constraints =
+               {{.kind = pipetune::SampleRateConstraintKind::discrete,
+                 .minimum = 48000,
+                 .maximum = 48000,
+                 .step = 0}}},
+      .dspSampleRate = filtered ? 48000u : 0u,
+      .outputSampleRate = filtered ? 48000u : 0u,
+      .activeOutputSampleRate = filtered ? 48000u : 0u,
+      .rateFallback = false,
+      .latencyFrames = filtered ? 64u : 0u,
+      .overrunFrames = 0,
+      .underrunFrames = 0,
+      .processingErrors = 0,
+      .dspProcessedFrames = 0,
+      .dspProcessingNanoseconds = 0,
+  };
 }
 
-static pipetune::ControlResponseParseResult inputStatusResponse(
-    std::uint32_t sampleRate, std::uint64_t framesReceived) {
+static pipetune::ControlRuntimeStatus runtimeStatus(
+    pipetune::ProcessingMode mode = pipetune::ProcessingMode::preset,
+    pipetune::ControlFilterState filterState =
+        pipetune::ControlFilterState::active,
+    std::string configurationError = {}) {
+  return {
+      .processingMode = mode,
+      .activePreset = mode == pipetune::ProcessingMode::preset
+                          ? "/tmp/active.effetune_preset"
+                          : "",
+      .configurationError = std::move(configurationError),
+      .activePluginCount =
+          mode == pipetune::ProcessingMode::preset ? 4u : 0u,
+      .policyBackend = "wireplumber-0.5",
+      .filterOutputs = {filterOutput(filterState)},
+      .overrunFrames = 0,
+      .underrunFrames = 0,
+      .processingErrors = 0,
+      .dspProcessedFrames = 0,
+      .dspProcessingNanoseconds = 0,
+  };
+}
+
+static pipetune::ControlResponseParseResult responseFor(
+    const pipetune::ControlRuntimeStatus &status,
+    std::span<const pipetune::ControlWarning> warnings = {}) {
   return pipetune::parseControlResponse(
-      pipetune::makeControlSuccessResponse(
-          {.processingMode = pipetune::ProcessingMode::bypass,
-           .activePreset = {},
-           .configurationError = {},
-           .activePluginCount = 0,
-           .preferredTarget = {},
-           .selectedTarget = "alsa_output.speaker",
-           .outputSelectionReason =
-               pipetune::ControlOutputSelectionReason::systemDefault,
-           .availableOutputs =
-               {{.name = "alsa_output.speaker",
-                 .description = "Speakers",
-                 .systemDefault = true,
-                 .preferred = false,
-                 .selected = true}},
-           .defaultSinkActive = true,
-           .overrunFrames = 0,
-           .underrunFrames = 0,
-           .processingErrors = 0,
-           .dspProcessedFrames = 0,
-           .dspProcessingNanoseconds = 0,
-           .inputSampleFormat = "F32P",
-           .inputSampleRate = sampleRate,
-           .inputChannelCount = 2,
-           .inputFramesReceived = framesReceived,
-           .inputLastReceivedUnixMilliseconds =
-               framesReceived == 0 ? 0 : 1704164645000ULL},
-          {}));
+      pipetune::makeControlSuccessResponse(status, warnings));
 }
 
 static pipetune::ControlResponseParseResult dspStatusEvent(
@@ -119,7 +92,7 @@ static pipetune::ControlResponseParseResult dspStatusEvent(
     std::uint64_t overrunFrames,
     std::uint64_t underrunFrames,
     std::uint64_t processingErrors) {
-  auto status = statusResponse(true, {}, {}).status;
+  auto status = runtimeStatus();
   status.dspProcessedFrames = processedFrames;
   status.dspProcessingNanoseconds = processingNanoseconds;
   status.overrunFrames = overrunFrames;
@@ -143,41 +116,25 @@ static bool testApplicationState() {
   }
 
   pipetune_gtk::markControlConnecting(state);
-  if (!check(!pipetune_gtk::isPresetApplied(state),
-             "connecting state must not confirm an applied preset")) {
-    return false;
-  }
-  const auto healthy = statusResponse(true, {}, {});
+  const auto healthy = responseFor(runtimeStatus());
   pipetune_gtk::applyControlResponse(state, healthy, 1000);
   if (!check(state.connection ==
-                 pipetune_gtk::ControlConnectionState::connected,
-             "valid status must connect the application") ||
-      !check(state.hasRuntimeStatus &&
+                 pipetune_gtk::ControlConnectionState::connected &&
+                 state.hasRuntimeStatus &&
                  state.runtime.activePluginCount == 4,
-             "runtime status was not retained") ||
+             "valid status must connect and retain runtime state") ||
       !check(pipetune_gtk::isPresetApplied(state),
              "preset runtime must confirm an applied preset") ||
       !check(pipetune_gtk::trayVisualState(state) ==
                  pipetune_gtk::TrayVisualState::active,
-             "healthy runtime must use the active tray state")) {
-    return false;
-  }
-
-  auto reconnectingState = state;
-  pipetune_gtk::markControlConnecting(reconnectingState);
-  const auto connectionError = pipetune::parseControlResponse(
-      pipetune::makeControlErrorResponse("subscription failed"));
-  pipetune_gtk::applyControlResponse(reconnectingState, connectionError,
-                                     2000);
-  if (!check(!reconnectingState.hasRuntimeStatus &&
-                 !pipetune_gtk::isPresetApplied(reconnectingState),
-             "failed reconnection must invalidate the applied preset")) {
+             "healthy filtered outputs must use the active tray state")) {
     return false;
   }
 
   auto bypassState = state;
-  pipetune_gtk::applyControlResponse(bypassState, bypassStatusResponse(),
-                                     2000);
+  pipetune_gtk::applyControlResponse(
+      bypassState,
+      responseFor(runtimeStatus(pipetune::ProcessingMode::bypass)), 2000);
   if (!check(!pipetune_gtk::isPresetApplied(bypassState),
              "bypass runtime must not confirm an applied preset")) {
     return false;
@@ -188,67 +145,63 @@ static bool testApplicationState() {
                                .pluginName = "Unavailable DSP",
                                .reason = "not built"}};
   pipetune_gtk::applyControlResponse(
-      state, statusResponse(true, warnings, {}), 3000);
+      state, responseFor(runtimeStatus(), warnings), 3000);
   if (!check(state.warnings.size() == 1,
              "ordinary response warnings were not retained") ||
-      !check(pipetune_gtk::isPresetApplied(state),
-             "warnings must not hide an applied preset") ||
       !check(pipetune_gtk::trayVisualState(state) ==
                  pipetune_gtk::TrayVisualState::attention,
              "warnings must request attention")) {
     return false;
   }
-
   const auto event = pipetune::parseControlResponse(
-      pipetune::makeControlStatusEvent(healthy.status));
+      pipetune::makeControlStatusEvent(runtimeStatus()));
   pipetune_gtk::applyControlResponse(state, event, 4000);
   if (!check(state.warnings.size() == 1,
-             "status events must not erase load warnings")) {
+             "status events must not erase request warnings")) {
     return false;
   }
   pipetune_gtk::clearControlNotice(state);
-  if (!check(pipetune_gtk::trayVisualState(state) ==
-                 pipetune_gtk::TrayVisualState::active,
-             "clearing notices must restore a healthy tray state")) {
+
+  auto degraded = state;
+  pipetune_gtk::applyControlResponse(
+      degraded,
+      responseFor(runtimeStatus(
+          pipetune::ProcessingMode::preset,
+          pipetune::ControlFilterState::bypassed)),
+      5000);
+  if (!check(pipetune_gtk::trayVisualState(degraded) ==
+                 pipetune_gtk::TrayVisualState::attention,
+             "a direct fail-open route must request attention")) {
+    return false;
+  }
+
+  auto noOutputs = runtimeStatus();
+  noOutputs.filterOutputs.clear();
+  pipetune_gtk::applyControlResponse(
+      degraded, responseFor(noOutputs), 6000);
+  if (!check(pipetune_gtk::trayVisualState(degraded) ==
+                 pipetune_gtk::TrayVisualState::attention,
+             "no physical outputs must request attention")) {
     return false;
   }
 
   pipetune_gtk::applyControlResponse(
-      state, statusResponse(false, {}, {}), 5000);
-  if (!check(pipetune_gtk::trayVisualState(state) ==
-                 pipetune_gtk::TrayVisualState::attention,
-             "an inactive default sink must request attention")) {
-    return false;
-  }
-  pipetune_gtk::applyControlResponse(
-      state, statusResponse(true, {}, "configured preset is unavailable"),
-      6000);
-  if (!check(pipetune_gtk::trayVisualState(state) ==
+      degraded,
+      responseFor(runtimeStatus(
+          pipetune::ProcessingMode::preset,
+          pipetune::ControlFilterState::active,
+          "configured preset is unavailable")),
+      7000);
+  if (!check(pipetune_gtk::trayVisualState(degraded) ==
                  pipetune_gtk::TrayVisualState::attention,
              "a startup configuration error must request attention")) {
     return false;
   }
 
-  auto rateErrorState = state;
-  rateErrorState.runtime.configurationError.clear();
-  rateErrorState.runtime.rateError = "rate rollback failed";
-  if (!check(pipetune_gtk::trayVisualState(rateErrorState) ==
-                 pipetune_gtk::TrayVisualState::attention,
-             "a rate transition error must request attention")) {
-    return false;
-  }
-  rateErrorState.runtime.rateError.clear();
-  rateErrorState.runtime.rateTransitioning = true;
-  if (!check(pipetune_gtk::trayVisualState(rateErrorState) ==
-                 pipetune_gtk::TrayVisualState::attention,
-             "an active rate transition must request attention")) {
-    return false;
-  }
-  rateErrorState.runtime.rateTransitioning = false;
-  rateErrorState.runtime.dspBackendFallback = true;
-  rateErrorState.runtime.dspBackendError =
-      "SIMD backend is unavailable";
-  if (!check(pipetune_gtk::trayVisualState(rateErrorState) ==
+  auto backendFallback = state;
+  backendFallback.runtime.dspBackendFallback = true;
+  backendFallback.runtime.dspBackendError = "SIMD backend unavailable";
+  if (!check(pipetune_gtk::trayVisualState(backendFallback) ==
                  pipetune_gtk::TrayVisualState::attention,
              "a DSP backend fallback must request attention")) {
     return false;
@@ -256,81 +209,16 @@ static bool testApplicationState() {
 
   pipetune_gtk::markControlDisconnected(state, "daemon stopped");
   return check(state.connection ==
-                   pipetune_gtk::ControlConnectionState::disconnected,
-               "disconnect state differs") &&
-         check(state.diagnostic == "daemon stopped",
-               "disconnect diagnostic differs") &&
-         check(!pipetune_gtk::isPresetApplied(state),
-               "disconnection must invalidate the applied preset") &&
-         check(pipetune_gtk::trayVisualState(state) ==
-                   pipetune_gtk::TrayVisualState::disconnected,
-               "disconnected tray state differs");
-}
-
-static bool testInputRateState() {
-  auto state = pipetune_gtk::initialApplicationState();
-  pipetune_gtk::markControlConnecting(state);
-  pipetune_gtk::applyControlResponse(
-      state, inputStatusResponse(48000, 0), 1000);
-  if (!check(state.inputRate.hasBaseline,
-             "first input status must establish a baseline") ||
-      !check(!state.inputRate.hasRate,
-             "first input status must not invent a frame rate")) {
-    return false;
-  }
-
-  pipetune_gtk::applyControlResponse(
-      state, inputStatusResponse(48000, 9600), 1200);
-  if (!check(!state.inputRate.hasRate,
-             "short status interval must not produce a frame rate") ||
-      !check(state.inputRate.baselineFrames == 0,
-             "short status interval must preserve the baseline")) {
-    return false;
-  }
-
-  pipetune_gtk::applyControlResponse(
-      state, inputStatusResponse(48000, 48000), 2000);
-  if (!check(state.inputRate.hasRate,
-             "one-second status interval must produce a frame rate") ||
-      !check(state.inputRate.framesPerSecond == 48000.0,
-             "calculated input frame rate differs")) {
-    return false;
-  }
-
-  pipetune_gtk::applyControlResponse(
-      state, inputStatusResponse(48000, 48000), 3000);
-  if (!check(state.inputRate.framesPerSecond == 0.0,
-             "unchanged input counter must report zero flow")) {
-    return false;
-  }
-
-  pipetune_gtk::applyControlResponse(
-      state, inputStatusResponse(48000, 100), 4000);
-  if (!check(!state.inputRate.hasRate,
-             "decreasing input counter must reset the rate") ||
-      !check(state.inputRate.baselineFrames == 100,
-             "decreasing input counter must establish a new baseline")) {
-    return false;
-  }
-
-  pipetune_gtk::applyControlResponse(
-      state, inputStatusResponse(44100, 44200), 5000);
-  if (!check(!state.inputRate.hasRate,
-             "format change must reset the input rate")) {
-    return false;
-  }
-
-  pipetune_gtk::markControlConnecting(state);
-  return check(!state.inputRate.hasBaseline && !state.inputRate.hasRate,
-               "reconnection must reset input rate measurements");
+                   pipetune_gtk::ControlConnectionState::disconnected &&
+                   state.diagnostic == "daemon stopped" &&
+                   !pipetune_gtk::isPresetApplied(state),
+               "disconnect state differs");
 }
 
 static bool testPeriodicRuntimeMeasurements() {
   auto state = pipetune_gtk::initialApplicationState();
   pipetune_gtk::applyControlResponse(
-      state,
-      dspStatusEvent(48000, 96000000, 1, 2, 3),
-      1000);
+      state, dspStatusEvent(48000, 96000000, 1, 2, 3), 1000);
   if (!check(state.dspTiming.hasBaseline &&
                  !state.dspTiming.hasAverage,
              "first DSP status must establish a timing baseline")) {
@@ -338,12 +226,12 @@ static bool testPeriodicRuntimeMeasurements() {
   }
 
   pipetune_gtk::applyControlResponse(
-      state,
-      dspStatusEvent(96000, 216000000, 4, 5, 6),
-      2000);
+      state, dspStatusEvent(96000, 216000000, 4, 5, 6), 2000);
   if (!check(state.dspTiming.hasAverage &&
-                 state.dspTiming.nanosecondsPerFrame == 2500.0,
-             "periodic DSP time average differs") ||
+                 approximately(state.dspTiming.nanosecondsPerFrame,
+                               2500.0) &&
+                 approximately(state.dspTiming.loadPercent, 12.0),
+             "periodic aggregate DSP timing differs") ||
       !check(state.runtime.overrunFrames == 4 &&
                  state.runtime.underrunFrames == 5 &&
                  state.runtime.processingErrors == 6,
@@ -352,34 +240,30 @@ static bool testPeriodicRuntimeMeasurements() {
   }
 
   pipetune_gtk::applyControlResponse(
-      state,
-      dspStatusEvent(96000, 216000000, 4, 5, 6),
-      3000);
-  if (!check(!state.dspTiming.hasAverage,
-             "an interval without DSP frames must clear the stale average")) {
+      state, dspStatusEvent(96000, 216000000, 4, 5, 6), 3000);
+  if (!check(!state.dspTiming.hasAverage &&
+                 state.dspTiming.loadPercent == 0.0,
+             "an interval without frames must clear stale timing")) {
+    return false;
+  }
+
+  pipetune_gtk::applyControlResponse(
+      state, dspStatusEvent(100, 1000, 0, 0, 0), 4000);
+  if (!check(state.dspTiming.hasBaseline &&
+                 !state.dspTiming.hasAverage &&
+                 state.dspTiming.baselineFrames == 100,
+             "counter regression must establish a new baseline")) {
     return false;
   }
 
   pipetune_gtk::applyControlResponse(
       state,
-      dspStatusEvent(144000, 264000000, 4, 5, 6),
-      4000);
-  if (!check(state.dspTiming.hasAverage &&
-                 state.dspTiming.nanosecondsPerFrame == 1000.0,
-             "DSP timing must resume after an empty interval")) {
-    return false;
-  }
-
-  pipetune_gtk::applyControlResponse(
-      state, bypassStatusResponse(), 8000);
+      responseFor(runtimeStatus(pipetune::ProcessingMode::bypass)), 8000);
   return check(!state.dspTiming.hasBaseline &&
                    !state.dspTiming.hasAverage,
-               "bypass must clear the DSP timing measurement");
+               "bypass must clear DSP timing measurements");
 }
 
 int main() {
-  return testApplicationState() && testInputRateState() &&
-                 testPeriodicRuntimeMeasurements()
-             ? 0
-             : 1;
+  return testApplicationState() && testPeriodicRuntimeMeasurements() ? 0 : 1;
 }

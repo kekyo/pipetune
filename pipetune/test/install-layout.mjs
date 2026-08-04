@@ -28,6 +28,7 @@ const [
   binaryDirectory,
   systemdUserUnitDirectory,
   libraryDirectory,
+  dataDirectory,
   documentationDirectory,
   testService,
 ] = process.argv.slice(2);
@@ -39,6 +40,7 @@ if (
   !binaryDirectory ||
   !systemdUserUnitDirectory ||
   !libraryDirectory ||
+  !dataDirectory ||
   !documentationDirectory ||
   !testService
 ) {
@@ -68,6 +70,24 @@ if (
         documentationDirectory,
         "environment.example",
       );
+      const wirePlumberFiles = [
+        installPath(
+          join(dataDirectory, "wireplumber", "policy.lua.d"),
+          "85-pipetune.lua",
+        ),
+        installPath(
+          join(dataDirectory, "wireplumber", "wireplumber.conf.d"),
+          "90-pipetune.conf",
+        ),
+        installPath(
+          join(dataDirectory, "wireplumber", "scripts", "pipetune"),
+          "policy-0.4.lua",
+        ),
+        installPath(
+          join(dataDirectory, "wireplumber", "scripts", "pipetune"),
+          "policy-0.5.lua",
+        ),
+      ];
       const scalarDspBackend = installPath(
         join(libraryDirectory, "pipetune"),
         "libeffetune-dsp-scalar.so",
@@ -100,6 +120,9 @@ if (
         accessSync(executable, constants.X_OK);
         accessSync(service, constants.R_OK);
         accessSync(environmentExample, constants.R_OK);
+        for (const policyFile of wirePlumberFiles) {
+          accessSync(policyFile, constants.R_OK);
+        }
         accessSync(scalarDspBackend, constants.R_OK);
         accessSync(simdDspBackend, constants.R_OK);
         for (const backend of architectureDspBackends ?? []) {

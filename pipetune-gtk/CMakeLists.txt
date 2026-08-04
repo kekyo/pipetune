@@ -158,15 +158,12 @@ add_library(
   src/dsp-backend-operation.cpp
   src/dsp-backend-selection-model.cpp
   src/localization.cpp
-  src/output-operation.cpp
-  src/output-selection-model.cpp
   src/rate-operation.cpp
   src/rate-selection-model.cpp
   src/settings-transaction.cpp
   src/preset-catalog.cpp
   src/preset-file-monitor.cpp
   src/status-model.cpp
-  src/status-text.cpp
   src/ui-language.cpp
   src/ui-message.cpp)
 target_include_directories(pipetune_gtk_core PUBLIC src)
@@ -464,40 +461,6 @@ if(BUILD_TESTING)
     COMMAND pipetune_gtk_dialog_model_tests)
 
   add_executable(
-    pipetune_gtk_output_selection_model_tests
-    test/output-selection-model-test.cpp)
-  target_link_libraries(
-    pipetune_gtk_output_selection_model_tests PRIVATE pipetune_gtk_core)
-  if(MSVC)
-    target_compile_options(
-      pipetune_gtk_output_selection_model_tests PRIVATE /W4 /WX)
-  else()
-    target_compile_options(
-      pipetune_gtk_output_selection_model_tests PRIVATE
-      -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(
-    NAME pipetune_gtk_output_selection_model_tests
-    COMMAND pipetune_gtk_output_selection_model_tests)
-
-  add_executable(
-    pipetune_gtk_output_operation_tests
-    test/output-operation-test.cpp)
-  target_link_libraries(
-    pipetune_gtk_output_operation_tests PRIVATE pipetune_gtk_core)
-  if(MSVC)
-    target_compile_options(
-      pipetune_gtk_output_operation_tests PRIVATE /W4 /WX)
-  else()
-    target_compile_options(
-      pipetune_gtk_output_operation_tests PRIVATE
-      -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(
-    NAME pipetune_gtk_output_operation_tests
-    COMMAND pipetune_gtk_output_operation_tests)
-
-  add_executable(
     pipetune_gtk_rate_selection_model_tests
     test/rate-selection-model-test.cpp)
   target_link_libraries(
@@ -588,22 +551,6 @@ if(BUILD_TESTING)
     COMMAND
       pipetune_gtk_preset_catalog_tests
       "${PIPETUNE_GTK_EFFETUNE_PRESET_SOURCE_DIR}")
-
-  add_executable(
-    pipetune_gtk_status_text_tests
-    test/status-text-test.cpp)
-  target_link_libraries(
-    pipetune_gtk_status_text_tests PRIVATE pipetune_gtk_core)
-  if(MSVC)
-    target_compile_options(pipetune_gtk_status_text_tests PRIVATE /W4 /WX)
-  else()
-    target_compile_options(
-      pipetune_gtk_status_text_tests PRIVATE
-      -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(
-    NAME pipetune_gtk_status_text_tests
-    COMMAND pipetune_gtk_status_text_tests)
 
   add_executable(
     pipetune_gtk_control_client_tests

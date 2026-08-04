@@ -59,9 +59,6 @@ static bool defaultsWereStored(
          check(!loaded.config.presetFound &&
                    loaded.config.presetPath.empty(),
                "reset configuration must select startup bypass") &&
-         check(!loaded.config.preferredOutputFound &&
-                   loaded.config.preferredOutput.empty(),
-               "reset configuration must follow the system output") &&
          check(loaded.config.ratePolicy ==
                    pipetune::defaultSampleRatePolicy(),
                "reset configuration must select Max and suggest") &&

@@ -134,29 +134,6 @@ void bypassControlAsync(ControlClient *client,
                         void *userData);
 
 /**
- * Requests an explicit preferred physical output.
- *
- * @param client Client used for the request.
- * @param target Non-empty PipeWire node.name interpreted by the daemon.
- * @param callback Non-null completion callback.
- * @param userData Opaque callback argument.
- */
-void setControlOutputAsync(ControlClient *client, std::string_view target,
-                           ControlClientReplyCallback callback,
-                           void *userData);
-
-/**
- * Requests system-default output mode.
- *
- * @param client Client used for the request.
- * @param callback Non-null completion callback.
- * @param userData Opaque callback argument.
- */
-void clearControlOutputAsync(ControlClient *client,
-                             ControlClientReplyCallback callback,
-                             void *userData);
-
-/**
  * Requests a live PCM sample-rate policy change.
  *
  * @param client Client used for the request.

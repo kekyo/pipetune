@@ -12,13 +12,9 @@ static CommandLineOptions defaultOptions() {
           .presetPath = {},
           .configPath = {},
           .controlSocketPath = {},
-          .outputTarget = {},
-          .targetObject = {},
-          .sinkName = "pipetune_sink",
           .ratePolicy = defaultSampleRatePolicy(),
           .dspBackend = DspBackendKind::scalar,
           .dspSimdVariant = DspSimdVariant::automatic,
-          .channelCount = 2,
           .checkOnly = false,
           .purge = false,
           .assumeYes = false,
@@ -94,92 +90,6 @@ static CommandLineParseResult parseBypassCommandLine(
     }
     sawSocket = true;
     options.controlSocketPath = value;
-  }
-  return {.options = std::move(options), .error = {}};
-}
-
-static CommandLineParseResult parseOutputCommandLine(
-    std::span<const std::string_view> arguments) {
-  auto options = defaultOptions();
-  if (arguments.empty()) {
-    return parseError(std::move(options),
-                      "output requires list, get, set, clear, or select");
-  }
-  const auto operation = arguments.front();
-  if (operation == "list") {
-    options.action = CommandLineAction::outputList;
-  } else if (operation == "get") {
-    options.action = CommandLineAction::outputGet;
-  } else if (operation == "set") {
-    options.action = CommandLineAction::outputSet;
-  } else if (operation == "clear") {
-    options.action = CommandLineAction::outputClear;
-  } else if (operation == "select") {
-    options.action = CommandLineAction::outputSelect;
-  } else {
-    return parseError(std::move(options),
-                      "unknown output operation: " +
-                          std::string(operation));
-  }
-
-  auto sawSocket = false;
-  auto sawTarget = false;
-  for (auto index = std::size_t{1}; index < arguments.size(); ++index) {
-    const auto argument = arguments[index];
-    if (argument == "--json") {
-      if (options.action != CommandLineAction::outputList &&
-          options.action != CommandLineAction::outputGet) {
-        return parseError(
-            std::move(options),
-            "--json is supported only by output list and output get");
-      }
-      if (options.json) {
-        return parseError(std::move(options), "duplicate option: --json");
-      }
-      options.json = true;
-      continue;
-    }
-    if (argument == "--socket") {
-      if (sawSocket) {
-        return parseError(std::move(options),
-                          "duplicate option: --socket");
-      }
-      if (index + 1 >= arguments.size()) {
-        return parseError(std::move(options),
-                          "missing value for --socket");
-      }
-      const auto value = arguments[++index];
-      if (value.empty()) {
-        return parseError(std::move(options),
-                          "--socket must not be empty");
-      }
-      sawSocket = true;
-      options.controlSocketPath = value;
-      continue;
-    }
-    if (options.action != CommandLineAction::outputSet) {
-      return parseError(std::move(options),
-                        "unknown output option: " +
-                            std::string(argument));
-    }
-    if (sawTarget) {
-      return parseError(std::move(options),
-                        "output set accepts exactly one target");
-    }
-    if (argument.empty() ||
-        argument.find('\n') != std::string_view::npos ||
-        argument.find('\r') != std::string_view::npos ||
-        argument.find('\0') != std::string_view::npos) {
-      return parseError(
-          std::move(options),
-          "output target must be a non-empty single line without NUL");
-    }
-    sawTarget = true;
-    options.outputTarget = argument;
-  }
-  if (options.action == CommandLineAction::outputSet && !sawTarget) {
-    return parseError(std::move(options),
-                      "output set requires a target");
   }
   return {.options = std::move(options), .error = {}};
 }
@@ -490,9 +400,6 @@ CommandLineParseResult parseCommandLine(
   if (!arguments.empty() && arguments.front() == "bypass") {
     return parseBypassCommandLine(arguments.subspan(1));
   }
-  if (!arguments.empty() && arguments.front() == "output") {
-    return parseOutputCommandLine(arguments.subspan(1));
-  }
   if (!arguments.empty() && arguments.front() == "rate") {
     return parseRateCommandLine(arguments.subspan(1));
   }
@@ -518,11 +425,7 @@ CommandLineParseResult parseCommandLine(
   auto sawPreset = false;
   auto sawLoadPreset = false;
   auto sawStatus = false;
-  auto sawRestoreDefault = false;
   auto sawSocket = false;
-  auto sawTarget = false;
-  auto sawSinkName = false;
-  auto sawChannels = false;
   auto sawDspBackend = false;
   auto sawDspVariant = false;
   auto sawCheck = false;
@@ -535,14 +438,6 @@ CommandLineParseResult parseCommandLine(
       sawStatus = true;
       continue;
     }
-    if (argument == "--restore-default") {
-      if (sawRestoreDefault) {
-        return parseError(std::move(options),
-                          "duplicate option: --restore-default");
-      }
-      sawRestoreDefault = true;
-      continue;
-    }
     if (argument == "--check") {
       if (sawCheck) {
         return parseError(std::move(options), "duplicate option: --check");
@@ -553,9 +448,8 @@ CommandLineParseResult parseCommandLine(
     }
 
     if (argument != "--preset" && argument != "--load-preset" &&
-        argument != "--socket" && argument != "--target" &&
-        argument != "--sink-name" && argument != "--channels" &&
-        argument != "--dsp-backend" && argument != "--dsp-variant") {
+        argument != "--socket" && argument != "--dsp-backend" &&
+        argument != "--dsp-variant") {
       return parseError(std::move(options),
                         "unknown option: " + std::string(argument));
     }
@@ -600,25 +494,6 @@ CommandLineParseResult parseCommandLine(
       options.controlSocketPath = std::string(value);
       continue;
     }
-    if (argument == "--target") {
-      if (sawTarget) {
-        return parseError(std::move(options), "duplicate option: --target");
-      }
-      sawTarget = true;
-      options.targetObject = value;
-      continue;
-    }
-    if (argument == "--sink-name") {
-      if (sawSinkName) {
-        return parseError(std::move(options), "duplicate option: --sink-name");
-      }
-      if (value.empty()) {
-        return parseError(std::move(options), "--sink-name must not be empty");
-      }
-      sawSinkName = true;
-      options.sinkName = value;
-      continue;
-    }
     if (argument == "--dsp-backend") {
       if (sawDspBackend) {
         return parseError(std::move(options),
@@ -648,40 +523,18 @@ CommandLineParseResult parseCommandLine(
       options.dspSimdVariant = *variant;
       continue;
     }
-    if (sawChannels) {
-      return parseError(std::move(options), "duplicate option: --channels");
-    }
-    auto channels = std::uint32_t{0};
-    if (!parseUnsigned(value, channels) || channels == 0 || channels > 8) {
-      return parseError(std::move(options),
-                        "--channels must be an integer from 1 through 8");
-    }
-    sawChannels = true;
-    options.channelCount = channels;
   }
 
   const auto actionCount = static_cast<unsigned>(sawPreset) +
                            static_cast<unsigned>(sawLoadPreset) +
-                           static_cast<unsigned>(sawStatus) +
-                           static_cast<unsigned>(sawRestoreDefault);
+                           static_cast<unsigned>(sawStatus);
   if (actionCount > 1) {
     return parseError(
         std::move(options),
         "top-level action options are mutually exclusive");
   }
-  if (sawRestoreDefault) {
-    if (sawTarget || sawChannels || sawDspBackend || sawDspVariant ||
-        sawCheck || sawSocket) {
-      return parseError(
-          std::move(options),
-          "only --sink-name may modify --restore-default");
-    }
-    options.action = CommandLineAction::restoreDefault;
-    return {.options = std::move(options), .error = {}};
-  }
   if (sawLoadPreset || sawStatus) {
-    if (sawTarget || sawSinkName || sawChannels || sawDspBackend ||
-        sawDspVariant || sawCheck) {
+    if (sawDspBackend || sawDspVariant || sawCheck) {
       return parseError(
           std::move(options),
           "PipeWire run options cannot be used with control actions");
@@ -709,11 +562,6 @@ std::string_view commandLineUsage() noexcept {
   return "Usage:\n"
          "  pipetune daemon [--config PATH]\n"
          "  pipetune bypass [--socket PATH]\n"
-         "  pipetune output list [--json] [--socket PATH]\n"
-         "  pipetune output get [--json] [--socket PATH]\n"
-         "  pipetune output set TARGET [--socket PATH]\n"
-         "  pipetune output clear [--socket PATH]\n"
-         "  pipetune output select [--socket PATH]\n"
          "  pipetune rate get [--json] [--socket PATH]\n"
          "  pipetune rate list [--json] [--socket PATH]\n"
          "  pipetune rate set RATE ENFORCEMENT [--socket PATH]\n"
@@ -723,31 +571,24 @@ std::string_view commandLineUsage() noexcept {
          "  pipetune config reset [-y|--yes]\n"
          "  pipetune setup [--preset FILE]\n"
          "  pipetune unsetup [--purge]\n"
-         "  pipetune --preset FILE [--target OBJECT] [--sink-name NAME]\n"
-         "           [--channels COUNT] [--dsp-backend scalar|simd]\n"
+         "  pipetune --preset FILE [--dsp-backend scalar|simd]\n"
          "           [--dsp-variant VARIANT]\n"
          "           [--socket PATH] [--check]\n"
          "  pipetune --load-preset FILE [--socket PATH]\n"
          "  pipetune --status [--socket PATH]\n"
-         "  pipetune --restore-default [--sink-name NAME]\n"
          "  pipetune --version\n"
          "  pipetune --help\n"
          "\n"
          "Options:\n"
          "  --config PATH    Read daemon startup configuration from PATH.\n"
          "  bypass           Disable DSP live and for future daemon starts.\n"
-         "  output list      List physical outputs reported by the daemon.\n"
-         "  output get       Show the preferred and effective output.\n"
-         "  output set       Prefer a PipeWire output by its node.name.\n"
-         "  output clear     Follow the system-default physical output.\n"
-         "  output select    Choose an output from an interactive terminal.\n"
          "  rate get        Show configured and effective PCM rates.\n"
          "  rate list       List output-supported PCM rates.\n"
          "  rate set        Select max or a fixed rate and suggest or force.\n"
          "  dsp list        List scalar and SIMD backend availability.\n"
          "  dsp get         Show configured and effective DSP backends.\n"
          "  dsp set         Select scalar compatibility or SIMD acceleration.\n"
-         "  config reset    Reset Bypass, output, PCM rate, and DSP backend.\n"
+         "  config reset    Reset Bypass, PCM rate, and DSP backend.\n"
          "  -y, --yes       Skip the configuration reset confirmation.\n"
          "  --json           Print the complete machine-readable status.\n"
          "  setup            Enable PipeTune for the current user.\n"
@@ -757,14 +598,7 @@ std::string_view commandLineUsage() noexcept {
          "  --load-preset FILE\n"
          "                    Replace the preset in a running PipeTune process.\n"
          "  --status          Print the running PipeTune process status as JSON.\n"
-         "  --restore-default\n"
-         "                    Restore an available physical PipeWire sink.\n"
          "  --socket PATH     Use this control socket instead of the XDG default.\n"
-         "  --target OBJECT   Send processed audio to this PipeWire sink.\n"
-         "                    The current default sink is used when omitted.\n"
-         "  --sink-name NAME  Publish this virtual sink name (default: "
-         "pipetune_sink).\n"
-         "  --channels COUNT  Use 1 through 8 planar channels (default: 2).\n"
          "  --dsp-backend BACKEND\n"
          "                    Use scalar or simd for this direct run.\n"
          "  --dsp-variant VARIANT\n"

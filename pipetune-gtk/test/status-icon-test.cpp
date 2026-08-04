@@ -20,8 +20,25 @@ static pipetune_gtk::ApplicationState connectedState(
       mode == pipetune::ProcessingMode::preset
           ? "/tmp/active.effetune_preset"
           : "";
-  state.runtime.selectedTarget = "alsa_output.speaker";
-  state.runtime.defaultSinkActive = true;
+  state.runtime.filterOutputs = {{
+      .targetNodeName = "alsa_output.speaker",
+      .targetDescription = "Speakers",
+      .filterNodeName = "pipetune.filter.speaker",
+      .state = pipetune::ControlFilterState::active,
+      .error = {},
+      .channelCount = 2,
+      .sampleRateCapabilities = {},
+      .dspSampleRate = 48000,
+      .outputSampleRate = 48000,
+      .activeOutputSampleRate = 48000,
+      .rateFallback = false,
+      .latencyFrames = 64,
+      .overrunFrames = 0,
+      .underrunFrames = 0,
+      .processingErrors = 0,
+      .dspProcessedFrames = 0,
+      .dspProcessingNanoseconds = 0,
+  }};
   return state;
 }
 
@@ -71,7 +88,8 @@ int main() {
     return 1;
   }
 
-  presetState.runtime.defaultSinkActive = false;
+  presetState.runtime.filterOutputs[0].state =
+      pipetune::ControlFilterState::bypassed;
   const auto attention =
       pipetune_gtk::statusIconPresentation(presetState);
   const auto valid =

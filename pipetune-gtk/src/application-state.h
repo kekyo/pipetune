@@ -35,28 +35,6 @@ enum class TrayVisualState {
 };
 
 /**
- * Stores the GUI's input frame-rate measurement state.
- */
-struct InputRateState {
-  /** True after a compatible cumulative-frame baseline was received. */
-  bool hasBaseline;
-  /** Cumulative frame count at the current measurement baseline. */
-  std::uint64_t baselineFrames;
-  /** Monotonic time of the current measurement baseline in milliseconds. */
-  std::int64_t baselineMonotonicMilliseconds;
-  /** Sample format associated with the current measurement baseline. */
-  std::string baselineSampleFormat;
-  /** Sample rate associated with the current measurement baseline. */
-  std::uint32_t baselineSampleRate;
-  /** Channel count associated with the current measurement baseline. */
-  std::uint32_t baselineChannelCount;
-  /** True after at least one sufficiently long interval was measured. */
-  bool hasRate;
-  /** Most recently measured input frames per second. */
-  double framesPerSecond;
-};
-
-/**
  * Stores the latest interval average for native EffeTune processing.
  */
 struct DspTimingState {
@@ -66,10 +44,14 @@ struct DspTimingState {
   std::uint64_t baselineFrames;
   /** Cumulative processing nanoseconds at the current baseline. */
   std::uint64_t baselineNanoseconds;
+  /** Monotonic time of the current measurement baseline in milliseconds. */
+  std::int64_t baselineMonotonicMilliseconds;
   /** True when the latest active interval contained DSP frames. */
   bool hasAverage;
   /** Latest active-interval DSP processing nanoseconds per frame. */
   double nanosecondsPerFrame;
+  /** Aggregate DSP CPU time as a percentage of one logical processor. */
+  double loadPercent;
 };
 
 /**
@@ -86,10 +68,8 @@ struct ApplicationState {
   std::vector<pipetune::ControlWarning> warnings;
   /** Transport, protocol, remote, or persistence diagnostic. */
   std::string diagnostic;
-  /** True while an explicit preset, output, rate, or backend operation runs. */
+  /** True while an explicit preset, rate, or backend operation runs. */
   bool operationPending;
-  /** Input frame-rate baseline and most recent derived value. */
-  InputRateState inputRate;
   /** Native DSP timing baseline and most recent interval average. */
   DspTimingState dspTiming;
 };

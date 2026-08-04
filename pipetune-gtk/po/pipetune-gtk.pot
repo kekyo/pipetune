@@ -12,15 +12,7 @@ msgid "{0}  •  Fallback"
 msgstr ""
 
 #, brace-format
-msgid "{0}  •  Load —"
-msgstr ""
-
-#, brace-format
-msgid "{0}  •  Load {1}%"
-msgstr ""
-
-#, brace-format
-msgid "{0}  •  PipeWire resampling"
+msgid "{0} — an output requires PipeWire resampling"
 msgstr ""
 
 #, brace-format
@@ -40,11 +32,7 @@ msgid "{0} — support unknown"
 msgstr ""
 
 #, brace-format
-msgid "{0} — supported"
-msgstr ""
-
-#, brace-format
-msgid "{0} — system default"
+msgid "{0} — supported by all outputs"
 msgstr ""
 
 #, brace-format
@@ -52,48 +40,11 @@ msgid "{0} — unavailable"
 msgstr ""
 
 #, brace-format
-msgid "{0} — unsupported; PipeWire will resample"
-msgstr ""
-
-#, brace-format
-msgid "{0} · {1} kHz · {2}"
-msgstr ""
-
-#, brace-format
 msgid "{0} ({1})"
 msgstr ""
 
 #, brace-format
-msgid "{0} channel"
-msgid_plural "{0} channels"
-msgstr[0] ""
-msgstr[1] ""
-
-#, brace-format
-msgid "{0} frames/s"
-msgstr ""
-
-#, brace-format
-msgid "{0} h ago"
-msgstr ""
-
-#, brace-format
-msgid "{0} min ago"
-msgstr ""
-
-#, brace-format
-msgid "{0} ms ago"
-msgstr ""
-
-#, brace-format
-msgid "{0} s ago"
-msgstr ""
-
-#, brace-format
 msgid "{0}; CPU: {1}"
-msgstr ""
-
-msgid "32-bit floating-point PCM (planar)"
 msgstr ""
 
 msgid "Action Log"
@@ -103,13 +54,19 @@ msgstr ""
 msgid "Action Log ({0})"
 msgstr ""
 
-msgid "Active output rate"
+msgid "active"
+msgstr ""
+
+msgid "Active"
 msgstr ""
 
 msgid "Active plugins"
 msgstr ""
 
 msgid "Advanced"
+msgstr ""
+
+msgid "Aggregate DSP CPU time; graph capped at 100%."
 msgstr ""
 
 msgid "All"
@@ -128,6 +85,9 @@ msgid "Baseline"
 msgstr ""
 
 msgid "Bypass"
+msgstr ""
+
+msgid "bypassed"
 msgstr ""
 
 msgid "Cancel"
@@ -160,12 +120,6 @@ msgstr ""
 msgid "Changing DSP backend failed"
 msgstr ""
 
-msgid "Changing output"
-msgstr ""
-
-msgid "Changing output failed"
-msgstr ""
-
 msgid "Changing processing mode"
 msgstr ""
 
@@ -187,7 +141,7 @@ msgstr ""
 msgid "Choose an EffeTune preset"
 msgstr ""
 
-msgid "Choose bypass, system default output, Max + Suggest, Scalar, and Conservative."
+msgid "Choose bypass, Max + Suggest, and Scalar with Auto SIMD."
 msgstr ""
 
 msgid "Choose the language used by PipeTune GTK."
@@ -213,12 +167,6 @@ msgid "Configured SIMD"
 msgstr ""
 
 msgid "Connected"
-msgstr ""
-
-msgid "Connected · changing sample rate"
-msgstr ""
-
-msgid "Connected · virtual sink inactive"
 msgstr ""
 
 msgid "Connected and monitoring"
@@ -254,16 +202,16 @@ msgstr ""
 msgid "Custom preset file"
 msgstr ""
 
-msgid "Default"
-msgstr ""
-
 msgid "Defaults are being applied live; use Apply to save them"
 msgstr ""
 
 msgid "Defaults selected"
 msgstr ""
 
-msgid "Device"
+msgid "Direct route"
+msgstr ""
+
+msgid "Direct routes"
 msgstr ""
 
 msgid "Disconnected"
@@ -273,6 +221,10 @@ msgid "Disconnected · settings are read-only"
 msgstr ""
 
 msgid "DSP"
+msgstr ""
+
+#, brace-format
+msgid "DSP {0} → Output {1} → Physical {2}"
 msgstr ""
 
 msgid "DSP / Performance"
@@ -285,12 +237,6 @@ msgid "DSP backend changed"
 msgstr ""
 
 msgid "DSP Engine"
-msgstr ""
-
-msgid "DSP processing load; graph capped at 100%."
-msgstr ""
-
-msgid "DSP rate"
 msgstr ""
 
 msgid "DSP sample rate"
@@ -314,7 +260,16 @@ msgstr ""
 msgid "English"
 msgstr ""
 
+msgid "error"
+msgstr ""
+
+msgid "Error"
+msgstr ""
+
 msgid "Errors"
+msgstr ""
+
+msgid "Filtered"
 msgstr ""
 
 msgid "Finishing rollback…"
@@ -326,47 +281,19 @@ msgstr ""
 msgid "Fixed rate"
 msgstr ""
 
-msgid "Follow PipeWire's current default"
-msgstr ""
-
-msgid "Follow PipeWire's current default output"
-msgstr ""
-
-msgid "Following the system default"
-msgstr ""
-
 msgid "Force"
 msgstr ""
 
-msgid "Force — request the selected output rate"
+msgid "Force — request each output's resolved rate"
 msgstr ""
 
 msgid "idle"
-msgstr ""
-
-msgid "Input / Rates"
-msgstr ""
-
-msgid "Input channels"
-msgstr ""
-
-msgid "Input format"
-msgstr ""
-
-msgid "Input sample rate"
-msgstr ""
-
-#, brace-format
-msgid "Input/DSP {0}  •  Output {1}  •  Physical {2}"
 msgstr ""
 
 msgid "Language"
 msgstr ""
 
 msgid "Language preference saved"
-msgstr ""
-
-msgid "Last input"
 msgstr ""
 
 msgid "Live Configuration"
@@ -402,31 +329,16 @@ msgstr ""
 msgid "Load"
 msgstr ""
 
-msgid "Long PipeWire node names are available in the device tooltip."
-msgstr ""
-
-msgid "Max — highest supported rate"
+msgid "Max — highest supported rate per output"
 msgstr ""
 
 msgid "Maximum"
 msgstr ""
 
-msgid "Measured frame rate"
-msgstr ""
-
 msgid "Native backend"
 msgstr ""
 
-msgid "Never"
-msgstr ""
-
-msgid "No"
-msgstr ""
-
-msgid "No audio output is available"
-msgstr ""
-
-msgid "No output available"
+msgid "No physical outputs"
 msgstr ""
 
 msgid "None"
@@ -435,26 +347,25 @@ msgstr ""
 msgid "Open PipeTune"
 msgstr ""
 
-msgid "Output"
+msgid "Output filters"
 msgstr ""
 
-msgid "Output changed"
-msgstr ""
-
-msgid "Output Routing"
-msgstr ""
-
-#, brace-format
-msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
+msgid "Outputs"
 msgstr ""
 
 msgid "Overrun frames"
 msgstr ""
 
-msgid "PCM data rate"
+msgid "Pending dialog settings will be reapplied"
 msgstr ""
 
-msgid "Pending dialog settings will be reapplied"
+msgid "Per-output rates"
+msgstr ""
+
+msgid "Physical Output Filters"
+msgstr ""
+
+msgid "Physical outputs"
 msgstr ""
 
 msgid "PipeTune disconnected"
@@ -485,16 +396,7 @@ msgstr ""
 msgid "PipeWire enforcement"
 msgstr ""
 
-msgid "Preference"
-msgstr ""
-
-msgid "Preferred output"
-msgstr ""
-
-msgid "Preferred output is unavailable — using the system default fallback"
-msgstr ""
-
-msgid "Preferred physical output"
+msgid "PipeWire resampling"
 msgstr ""
 
 msgid "Preset"
@@ -536,6 +438,9 @@ msgstr ""
 msgid "Rates unavailable"
 msgstr ""
 
+msgid "resampling"
+msgstr ""
+
 msgid "Restart PipeTune GTK to use the selected language."
 msgstr ""
 
@@ -554,10 +459,10 @@ msgstr ""
 msgid "Rollback requested"
 msgstr ""
 
-msgid "Routing"
+msgid "Sample Rate"
 msgstr ""
 
-msgid "Sample Rate"
+msgid "Sample Rates"
 msgstr ""
 
 msgid "Sample-rate policy changed"
@@ -574,15 +479,6 @@ msgid "Saving all settings"
 msgstr ""
 
 msgid "Scalar"
-msgstr ""
-
-msgid "Selected output"
-msgstr ""
-
-msgid "Selected output rate"
-msgstr ""
-
-msgid "Selection reason"
 msgstr ""
 
 msgid "Settings updated"
@@ -607,17 +503,10 @@ msgstr ""
 msgid "Suggest — let PipeWire choose"
 msgstr ""
 
-#, brace-format
-msgid "Switching — {0}"
-msgstr ""
-
 msgid "System"
 msgstr ""
 
 msgid "System default"
-msgstr ""
-
-msgid "System-default fallback"
 msgstr ""
 
 msgid "Turn off to pass audio through without an EffeTune preset."
@@ -629,13 +518,6 @@ msgstr ""
 msgid "Unavailable"
 msgstr ""
 
-#, brace-format
-msgid "Unavailable — {0}"
-msgstr ""
-
-msgid "Unavailable output"
-msgstr ""
-
 msgid "Underrun frames"
 msgstr ""
 
@@ -645,22 +527,19 @@ msgstr ""
 msgid "Unknown"
 msgstr ""
 
-msgid "Unknown sample format"
-msgstr ""
-
 msgid "Updating settings"
 msgstr ""
 
 msgid "Updating settings failed"
 msgstr ""
 
-msgid "Using the preferred output"
-msgstr ""
-
 msgid "Versions"
 msgstr ""
 
-msgid "Virtual sink active"
+msgid "waiting"
+msgstr ""
+
+msgid "Waiting"
 msgstr ""
 
 msgid "Waiting for live PipeTune state…"
@@ -669,5 +548,5 @@ msgstr ""
 msgid "Warnings"
 msgstr ""
 
-msgid "Yes"
+msgid "WirePlumber policy"
 msgstr ""

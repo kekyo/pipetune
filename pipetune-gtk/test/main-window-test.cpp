@@ -46,14 +46,6 @@ static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
                "preset combo-box type differs") &&
          check(GTK_IS_FILE_CHOOSER_BUTTON(ui.presetChooser),
                "preset chooser type differs") &&
-         check(GTK_IS_MENU_BUTTON(ui.outputMenuButton),
-               "output menu button type differs") &&
-         check(GTK_IS_LABEL(ui.outputButtonLabel),
-               "output button label type differs") &&
-         check(GTK_IS_POPOVER(ui.outputPopover),
-               "output popover type differs") &&
-         check(GTK_IS_LIST_BOX(ui.outputList),
-               "output list type differs") &&
          check(GTK_IS_COMBO_BOX_TEXT(ui.rateCombo),
                "rate combo-box type differs") &&
          check(GTK_IS_COMBO_BOX_TEXT(ui.rateEnforcementCombo),
@@ -93,13 +85,13 @@ static bool checkSettingsPages(const pipetune_gtk::MainWindowUi &ui) {
       gtk_container_get_children(GTK_CONTAINER(ui.settingsStack));
   const auto count = g_list_length(children);
   g_list_free(children);
-  return check(count == 5, "settings page count differs") &&
+  return check(count == 4, "settings page count differs") &&
          check(gtk_stack_get_child_by_name(GTK_STACK(ui.settingsStack),
                                            "processing") != nullptr,
                "processing page is missing") &&
          check(gtk_stack_get_child_by_name(GTK_STACK(ui.settingsStack),
-                                           "output") != nullptr,
-               "output page is missing") &&
+                                           "output") == nullptr,
+               "output routing page must not be exposed") &&
          check(gtk_stack_get_child_by_name(GTK_STACK(ui.settingsStack),
                                            "rate") != nullptr,
                "rate page is missing") &&
@@ -144,9 +136,9 @@ static bool checkJapaneseMeasuredStatusLabels() {
   auto state = pipetune_gtk::initialApplicationState();
   state.connection = pipetune_gtk::ControlConnectionState::connected;
   state.hasRuntimeStatus = true;
-  state.runtime.inputSampleRate = 48'000;
   state.dspTiming.hasAverage = true;
   state.dspTiming.nanosecondsPerFrame = 100.0;
+  state.dspTiming.loadPercent = 1.0;
   const auto sections = pipetune_gtk::buildStatusSections(
       state, pipetune::StartupConfig{}, 0);
   for (const auto &section : sections) {

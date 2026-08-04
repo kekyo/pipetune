@@ -5,6 +5,7 @@
 #include "pipetune/control_protocol.h"
 #include "pipetune/startup_config.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -29,20 +30,23 @@ static pipetune::SampleRatePolicy fixedPolicy(
 
 static pipetune::ControlRuntimeStatus rateStatus(
     const pipetune::SampleRatePolicy &policy) {
+  const auto dspRate =
+      policy.mode == pipetune::SampleRateMode::maximum
+          ? 96000u
+          : policy.fixedRate;
+  const auto outputRate = std::min(dspRate, 96000u);
   return {.processingMode = pipetune::ProcessingMode::bypass,
           .activePreset = {},
           .configurationError = {},
           .activePluginCount = 0,
-          .preferredTarget = {},
-          .selectedTarget = "alsa_output.usb",
-          .outputSelectionReason =
-              pipetune::ControlOutputSelectionReason::systemDefault,
-          .availableOutputs =
-              {{.name = "alsa_output.usb",
-                .description = "USB Audio",
-                .systemDefault = true,
-                .preferred = false,
-                .selected = true,
+          .policyBackend = "wireplumber-0.5",
+          .filterOutputs =
+              {{.targetNodeName = "alsa_output.usb",
+                .targetDescription = "USB Audio",
+                .filterNodeName = "pipetune.filter.usb",
+                .state = pipetune::ControlFilterState::active,
+                .error = {},
+                .channelCount = 2,
                 .sampleRateCapabilities =
                     {.known = true,
                      .constraints =
@@ -50,30 +54,41 @@ static pipetune::ControlRuntimeStatus rateStatus(
                                pipetune::SampleRateConstraintKind::discrete,
                            .minimum = 96000,
                            .maximum = 96000,
-                           .step = 0}}}}},
-          .defaultSinkActive = true,
+                           .step = 0}}},
+                .dspSampleRate = dspRate,
+                .outputSampleRate = outputRate,
+                .activeOutputSampleRate = outputRate,
+                .rateFallback = outputRate != dspRate,
+                .latencyFrames = 64,
+                .overrunFrames = 0,
+                .underrunFrames = 0,
+                .processingErrors = 0,
+                .dspProcessedFrames = 0,
+                .dspProcessingNanoseconds = 0},
+               {.targetNodeName = "alsa_output.hdmi",
+                .targetDescription = "HDMI",
+                .filterNodeName = "pipetune.filter.hdmi",
+                .state = pipetune::ControlFilterState::active,
+                .error = {},
+                .channelCount = 8,
+                .sampleRateCapabilities = {},
+                .dspSampleRate = dspRate,
+                .outputSampleRate = outputRate,
+                .activeOutputSampleRate = outputRate,
+                .rateFallback = outputRate != dspRate,
+                .latencyFrames = 64,
+                .overrunFrames = 0,
+                .underrunFrames = 0,
+                .processingErrors = 0,
+                .dspProcessedFrames = 0,
+                .dspProcessingNanoseconds = 0}},
           .overrunFrames = 0,
           .underrunFrames = 0,
           .processingErrors = 0,
           .dspProcessedFrames = 0,
           .dspProcessingNanoseconds = 0,
-          .inputSampleFormat = {},
-          .inputSampleRate = 0,
-          .inputChannelCount = 0,
-          .inputFramesReceived = 0,
-          .inputLastReceivedUnixMilliseconds = 0,
           .configuredRatePolicy = policy,
-          .dspSampleRate =
-              policy.mode == pipetune::SampleRateMode::maximum
-                  ? 96000u
-                  : policy.fixedRate,
-          .selectedOutputSampleRate = 96000,
-          .activeOutputSampleRate = 0,
-          .rateTransitioning = false,
-          .rateFallback =
-              policy.mode == pipetune::SampleRateMode::fixed &&
-              policy.fixedRate != 96000,
-          .rateError = {}};
+  };
 }
 
 static pipetune_gtk::ApplicationState pendingState() {
@@ -132,13 +147,13 @@ static bool testRejectedAndUnconfirmedReplies(
 
   auto unconfirmedState = pendingState();
   auto reply = successfulReply(requested);
-  reply.response.status.rateTransitioning = true;
+  reply.response.status.filterOutputs[1].dspSampleRate = 96000;
   const auto unconfirmed = pipetune_gtk::completeRateOperation(
       unconfirmedState, reply,
       {.configPath = configPath, .policy = requested}, 2000);
   return check(!unconfirmed.liveApplied &&
                    !unconfirmed.persistenceApplied,
-               "transitioning reply must not confirm a live rate") &&
+               "one unconfirmed output must reject a live rate") &&
          check(unconfirmedState.diagnostic.find("did not confirm") !=
                    std::string::npos,
                "unconfirmed live rate must explain the failure") &&
@@ -157,7 +172,9 @@ static bool testSuccessfulAndOfflineChanges(
                  !result.reconnectRequired,
              "successful GTK rate operation phases differ") ||
       !check(state.runtime.configuredRatePolicy == requested &&
-                 state.runtime.dspSampleRate == 192000 &&
+                 state.runtime.filterOutputs.size() == 2 &&
+                 state.runtime.filterOutputs[0].dspSampleRate == 192000 &&
+                 state.runtime.filterOutputs[1].dspSampleRate == 192000 &&
                  !state.operationPending,
              "successful GTK rate operation state differs") ||
       !configHasPolicy(configPath, requested)) {

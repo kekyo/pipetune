@@ -4,6 +4,7 @@
 #include "pipetune/control_socket.h"
 #include "pipetune/startup_config.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -37,41 +38,37 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
       .activePreset = {},
       .configurationError = {},
       .activePluginCount = 0,
-      .preferredTarget = {},
-      .selectedTarget = "alsa_output.usb_dac",
-      .outputSelectionReason =
-          pipetune::ControlOutputSelectionReason::systemDefault,
-      .availableOutputs =
-          {{.name = "alsa_output.usb_dac",
-            .description = "USB DAC",
-            .systemDefault = true,
-            .preferred = false,
-            .selected = true,
+      .policyBackend = "wireplumber-0.5",
+      .filterOutputs =
+          {{.targetNodeName = "alsa_output.usb_dac",
+            .targetDescription = "USB DAC",
+            .filterNodeName = "pipetune.filter.usb_dac",
+            .state = pipetune::ControlFilterState::active,
+            .error = {},
+            .channelCount = 2,
             .sampleRateCapabilities =
                 {.known = true,
                  .constraints =
                      {{.kind = pipetune::SampleRateConstraintKind::range,
                        .minimum = 44100,
                        .maximum = 96000,
-                       .step = 0}}}}},
-      .defaultSinkActive = true,
+                       .step = 0}}},
+            .dspSampleRate = dspRate,
+            .outputSampleRate = outputRate,
+            .activeOutputSampleRate = outputRate,
+            .rateFallback = outputRate != dspRate,
+            .latencyFrames = 64,
+            .overrunFrames = 0,
+            .underrunFrames = 0,
+            .processingErrors = 0,
+            .dspProcessedFrames = 0,
+            .dspProcessingNanoseconds = 0}},
       .overrunFrames = 0,
       .underrunFrames = 0,
       .processingErrors = 0,
       .dspProcessedFrames = 0,
       .dspProcessingNanoseconds = 0,
-      .inputSampleFormat = "F32P",
-      .inputSampleRate = dspRate,
-      .inputChannelCount = 2,
-      .inputFramesReceived = 0,
-      .inputLastReceivedUnixMilliseconds = 0,
       .configuredRatePolicy = state.policy,
-      .dspSampleRate = dspRate,
-      .selectedOutputSampleRate = outputRate,
-      .activeOutputSampleRate = outputRate,
-      .rateTransitioning = false,
-      .rateFallback = outputRate != dspRate,
-      .rateError = {},
   };
 }
 
@@ -193,9 +190,10 @@ static bool testSuccessfulAndPartialChanges(
                  changed.persistenceApplied,
              changed.error) ||
       !check(changed.status.configuredRatePolicy == requested &&
-                 changed.status.dspSampleRate == 192000 &&
-                 changed.status.selectedOutputSampleRate == 96000 &&
-                 changed.status.rateFallback,
+                 changed.status.filterOutputs.size() == 1 &&
+                 changed.status.filterOutputs[0].dspSampleRate == 192000 &&
+                 changed.status.filterOutputs[0].outputSampleRate == 96000 &&
+                 changed.status.filterOutputs[0].rateFallback,
              "live daemon confirmation differs") ||
       !configHasPolicy(configPath, requested)) {
     return false;

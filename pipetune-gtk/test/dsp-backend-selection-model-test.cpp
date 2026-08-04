@@ -189,20 +189,11 @@ static bool testUnavailableAndDisconnectedState() {
                "disconnected live backend controls must be disabled");
 }
 
-static bool testTransitionAndPendingState() {
+static bool testPendingState() {
   auto state = connectedState();
-  state.runtime.rateTransitioning = true;
-  auto presentation =
-      pipetune_gtk::makeDspBackendSelectionPresentation(
-          state, pipetune::DspBackendKind::simd,
-          pipetune::DspSimdVariant::automatic);
-  if (!check(!presentation.sensitive,
-             "PCM rate transition must disable backend switching")) {
-    return false;
-  }
-  state.runtime.rateTransitioning = false;
   state.operationPending = true;
-  presentation = pipetune_gtk::makeDspBackendSelectionPresentation(
+  const auto presentation =
+      pipetune_gtk::makeDspBackendSelectionPresentation(
       state, pipetune::DspBackendKind::simd,
       pipetune::DspSimdVariant::automatic);
   return check(!presentation.sensitive,
@@ -213,7 +204,7 @@ int main() {
   return testAvailableBackends() &&
                  testFallbackAndUnavailableBackend() &&
                  testUnavailableAndDisconnectedState() &&
-                 testTransitionAndPendingState()
+                 testPendingState()
              ? 0
              : 1;
 }

@@ -55,7 +55,7 @@ struct SampleRateCapabilities {
  * Selects how PipeTune determines its DSP sample rate.
  */
 enum class SampleRateMode {
-  /** Follow the highest selectable rate supported by the selected output. */
+  /** Follow the highest selectable rate supported by each physical output. */
   maximum,
   /** Use one explicitly selected DSP sample rate. */
   fixed
@@ -191,7 +191,7 @@ bool sampleRateCapabilitiesSupport(
     std::uint32_t sampleRate) noexcept;
 
 /**
- * Resolves a user policy against one selected output's capabilities.
+ * Resolves a user policy against one physical output's capabilities.
  *
  * Max mode retains the current rates while capabilities are unknown. Fixed
  * mode always selects its requested DSP rate and uses the same output hint
@@ -199,7 +199,7 @@ bool sampleRateCapabilitiesSupport(
  * output uses the greatest supported rate not above it, or the device minimum.
  *
  * @param policy Valid Max/fixed user choice.
- * @param capabilities Selected output capabilities.
+ * @param capabilities Physical output capabilities.
  * @param currentDspSampleRate Current DSP rate, or zero for the 48 kHz initial
  * fallback.
  * @param currentOutputSampleRate Current graph hint, or zero for the 48 kHz

@@ -3,6 +3,7 @@
 #include "pipetune/control_socket.h"
 #include "pipetune/startup_config.h"
 
+#include <algorithm>
 #include <iomanip>
 #include <sstream>
 #include <string>
@@ -47,6 +48,18 @@ static PersistentRateResult rateChangeError(std::string error) {
           .error = std::move(error)};
 }
 
+static bool outputConfirmsRatePolicy(
+    const ControlFilterOutputStatus &output,
+    const SampleRatePolicy &policy) {
+  if (output.state == ControlFilterState::bypassed ||
+      output.state == ControlFilterState::error) {
+    return true;
+  }
+  return output.dspSampleRate != 0 && output.outputSampleRate != 0 &&
+         (policy.mode != SampleRateMode::fixed ||
+          output.dspSampleRate == policy.fixedRate);
+}
+
 PersistentRateResult
 executeSetSampleRatePolicy(const PersistentRateOptions &options,
                            const SampleRatePolicy &policy) {
@@ -76,11 +89,14 @@ executeSetSampleRatePolicy(const PersistentRateOptions &options,
       return rateChangeError(
           "daemon returned an unexpected rate status event");
     }
-    if (response.status.configuredRatePolicy != policy ||
-        response.status.rateTransitioning ||
-        response.status.dspSampleRate == 0 ||
-        (policy.mode == SampleRateMode::fixed &&
-         response.status.dspSampleRate != policy.fixedRate)) {
+    const auto confirmed =
+        response.status.configuredRatePolicy == policy &&
+        std::all_of(response.status.filterOutputs.begin(),
+                    response.status.filterOutputs.end(),
+                    [&policy](const auto &output) {
+                      return outputConfirmsRatePolicy(output, policy);
+                    });
+    if (!confirmed) {
       return rateChangeError(
           "daemon did not confirm the requested sample-rate policy");
     }
@@ -126,6 +142,20 @@ static std::string formatRate(std::uint32_t rate) {
   return formatted.str();
 }
 
+static std::string_view filterStateText(ControlFilterState state) {
+  switch (state) {
+  case ControlFilterState::waiting:
+    return "waiting";
+  case ControlFilterState::active:
+    return "active";
+  case ControlFilterState::bypassed:
+    return "direct route";
+  case ControlFilterState::error:
+    return "error";
+  }
+  return "unknown";
+}
+
 std::string formatSampleRateStatus(
     const ControlRuntimeStatus &status) {
   auto formatted = std::ostringstream{};
@@ -138,18 +168,27 @@ std::string formatSampleRateStatus(
   formatted << " ("
             << sampleRateEnforcementName(
                    status.configuredRatePolicy.enforcement)
-            << ")\n"
-            << "DSP/input rate: " << formatRate(status.dspSampleRate) << '\n'
-            << "Selected output rate: "
-            << formatRate(status.selectedOutputSampleRate) << '\n'
-            << "Active physical rate: "
-            << formatRate(status.activeOutputSampleRate) << '\n'
-            << "Output fallback: "
-            << (status.rateFallback ? "yes" : "no") << '\n'
-            << "Transition: "
-            << (status.rateTransitioning ? "in progress" : "idle") << '\n';
-  if (!status.rateError.empty()) {
-    formatted << "Last rate error: " << status.rateError << '\n';
+            << ")\n";
+  if (status.filterOutputs.empty()) {
+    formatted << "No physical outputs are currently available.\n";
+    return formatted.str();
+  }
+  for (const auto &output : status.filterOutputs) {
+    const auto &label = output.targetDescription.empty()
+                            ? output.targetNodeName
+                            : output.targetDescription;
+    formatted << label << " (" << output.targetNodeName << ")\n"
+              << "  Filter: " << filterStateText(output.state) << '\n'
+              << "  DSP rate: " << formatRate(output.dspSampleRate) << '\n'
+              << "  PipeWire request: "
+              << formatRate(output.outputSampleRate) << '\n'
+              << "  Active physical rate: "
+              << formatRate(output.activeOutputSampleRate) << '\n'
+              << "  Resampling fallback: "
+              << (output.rateFallback ? "yes" : "no") << '\n';
+    if (!output.error.empty()) {
+      formatted << "  Diagnostic: " << output.error << '\n';
+    }
   }
   return formatted.str();
 }
@@ -157,16 +196,15 @@ std::string formatSampleRateStatus(
 std::string formatSampleRateCapabilities(
     const ControlRuntimeStatus &status) {
   auto formatted = std::ostringstream{};
-  if (status.availableOutputs.empty()) {
+  if (status.filterOutputs.empty()) {
     formatted << "No audio output devices are currently available.\n";
     return formatted.str();
   }
-  for (const auto &output : status.availableOutputs) {
-    formatted << output.description << " (" << output.name << ')';
-    if (output.selected) {
-      formatted << " [selected]";
-    }
-    formatted << '\n';
+  for (const auto &output : status.filterOutputs) {
+    const auto &label = output.targetDescription.empty()
+                            ? output.targetNodeName
+                            : output.targetDescription;
+    formatted << label << " (" << output.targetNodeName << ")\n";
     for (const auto rate : selectableSampleRates()) {
       formatted << "  " << formatRate(rate) << ": ";
       if (!output.sampleRateCapabilities.known) {

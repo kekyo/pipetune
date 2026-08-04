@@ -1,7 +1,7 @@
 #include "pipetune/dsp_pipeline.h"
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
-#include "pipetune/pipewire_pipeline.h"
+#include "pipetune/transparent_filter_service.h"
 
 #include <yyjson.h>
 

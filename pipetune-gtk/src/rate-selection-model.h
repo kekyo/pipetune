@@ -13,16 +13,16 @@
 namespace pipetune_gtk {
 
 /**
- * Identifies what is known about one fixed rate on the selected output.
+ * Identifies what is known about one fixed rate across physical outputs.
  */
 enum class DeviceRateSupport {
   /** The row is not a fixed sample rate. */
   notApplicable,
-  /** PipeWire has not supplied usable output capabilities. */
+  /** PipeWire has not supplied all usable output capabilities. */
   unknown,
-  /** The selected output accepts the fixed sample rate. */
+  /** Every reported output accepts the fixed sample rate. */
   supported,
-  /** The selected output requires PipeWire resampling. */
+  /** At least one output requires PipeWire resampling. */
   unsupported
 };
 
@@ -36,7 +36,7 @@ struct SampleRateChoice {
   std::uint32_t fixedRate;
   /** Human-readable row label including device support. */
   std::string label;
-  /** Selected-device support represented by the row. */
+  /** Aggregate physical-output support represented by the row. */
   DeviceRateSupport support;
 };
 
@@ -50,7 +50,7 @@ struct RateSelectionPresentation {
   std::size_t activeRateIndex;
   /** Suggest row 0 or Force row 1. */
   std::size_t activeEnforcementIndex;
-  /** Final daemon-selected R, H, active physical rate, and fallback. */
+  /** Final output-specific DSP, graph, and active physical rates. */
   std::string effectiveRates;
   /** True when connected controls may be edited. */
   bool sensitive;
@@ -59,7 +59,7 @@ struct RateSelectionPresentation {
 /**
  * Maps daemon capabilities and final rates into a passive GTK presentation.
  *
- * Device support comes exclusively from the selected output reported by the
+ * Device support is aggregated across every physical output reported by the
  * daemon. This function does not resolve or choose DSP or graph rates.
  *
  * @param state Current application and daemon state.

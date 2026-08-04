@@ -25,7 +25,7 @@ const auto testDeferredTranslation =
           pipetune_gtk::ActionLogCategory::persistence,
           pipetune_gtk::ActionLogState::failure,
           pipetune_gtk::localizedMessage(
-              "Unavailable — {0}", {"gtk.conf"}),
+              "{0} — unavailable", {"gtk.conf"}),
           pipetune_gtk::technicalMessage(
               "/tmp/gtk.conf: permission denied"));
 
@@ -44,7 +44,7 @@ const auto testDeferredTranslation =
           pipetune_gtk::formatUiMessage(log.entries.front().detail);
       pipetune_gtk::restoreUiLocalizationEnvironment(original);
 
-      return check(englishSummary == "Unavailable — gtk.conf",
+      return check(englishSummary == "gtk.conf — unavailable",
                    "English message formatting differs") &&
              check(japaneseSummary == "gtk.conf — 利用不可",
                    "the retained message must translate during rendering") &&
@@ -53,7 +53,7 @@ const auto testDeferredTranslation =
                        japaneseDetail == englishDetail,
                    "technical detail must remain untranslated") &&
              check(log.entries.front().summary.messageId ==
-                       "Unavailable — {0}",
+                       "{0} — unavailable",
                    "the log must retain the semantic English msgid");
     };
 
@@ -66,11 +66,11 @@ const auto testPendingCompletion = [] {
   const auto completed = pipetune_gtk::completePendingAction(
       log, id, 2000, false, pipetune_gtk::ActionLogSeverity::error,
       pipetune_gtk::localizedMessage(
-          "Unavailable — {0}", {"settings"}),
+          "{0} — unavailable", {"settings"}),
       pipetune_gtk::technicalMessage("disk full"));
   return check(completed, "a retained pending action must complete") &&
          check(log.entries.front().summary.messageId ==
-                   "Unavailable — {0}",
+                   "{0} — unavailable",
                "completion must replace the semantic summary") &&
          check(log.entries.front().detail.messageId == "disk full",
                "completion must replace the technical detail");

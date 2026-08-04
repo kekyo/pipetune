@@ -17,16 +17,8 @@ msgid "{0}  •  Fallback"
 msgstr "{0}  •  フォールバック"
 
 #, brace-format
-msgid "{0}  •  Load —"
-msgstr "{0}  •  負荷 —"
-
-#, brace-format
-msgid "{0}  •  Load {1}%"
-msgstr "{0}  •  負荷 {1}%"
-
-#, brace-format
-msgid "{0}  •  PipeWire resampling"
-msgstr "{0}  •  PipeWire リサンプリング"
+msgid "{0} — an output requires PipeWire resampling"
+msgstr "{0} — PipeWireリサンプリングが必要な出力があります"
 
 #, brace-format
 msgid "{0} — availability not reported"
@@ -45,60 +37,20 @@ msgid "{0} — support unknown"
 msgstr "{0} — 対応状況不明"
 
 #, brace-format
-msgid "{0} — supported"
-msgstr "{0} — 対応"
-
-#, brace-format
-msgid "{0} — system default"
-msgstr "{0} — システム既定"
+msgid "{0} — supported by all outputs"
+msgstr "{0} — すべての出力で対応"
 
 #, brace-format
 msgid "{0} — unavailable"
 msgstr "{0} — 利用不可"
 
 #, brace-format
-msgid "{0} — unsupported; PipeWire will resample"
-msgstr "{0} — 非対応（PipeWire がリサンプリング）"
-
-#, brace-format
-msgid "{0} · {1} kHz · {2}"
-msgstr "{0} · {1} kHz · {2}"
-
-#, brace-format
 msgid "{0} ({1})"
 msgstr "{0}（{1}）"
 
 #, brace-format
-msgid "{0} channel"
-msgid_plural "{0} channels"
-msgstr[0] "{0} チャンネル"
-
-#, brace-format
-msgid "{0} frames/s"
-msgstr "{0} フレーム/秒"
-
-#, brace-format
-msgid "{0} h ago"
-msgstr "{0} 時間前"
-
-#, brace-format
-msgid "{0} min ago"
-msgstr "{0} 分前"
-
-#, brace-format
-msgid "{0} ms ago"
-msgstr "{0} ミリ秒前"
-
-#, brace-format
-msgid "{0} s ago"
-msgstr "{0} 秒前"
-
-#, brace-format
 msgid "{0}; CPU: {1}"
 msgstr "{0}、CPU: {1}"
-
-msgid "32-bit floating-point PCM (planar)"
-msgstr "32ビット浮動小数点 PCM（プレーナー）"
 
 msgid "Action Log"
 msgstr "操作ログ"
@@ -107,14 +59,20 @@ msgstr "操作ログ"
 msgid "Action Log ({0})"
 msgstr "操作ログ（{0}）"
 
-msgid "Active output rate"
-msgstr "稼働中の出力レート"
+msgid "active"
+msgstr "有効"
+
+msgid "Active"
+msgstr "有効"
 
 msgid "Active plugins"
 msgstr "有効なプラグイン"
 
 msgid "Advanced"
 msgstr "詳細"
+
+msgid "Aggregate DSP CPU time; graph capped at 100%."
+msgstr "DSPの合計CPU時間。グラフの上限は100%です。"
 
 msgid "All"
 msgstr "すべて"
@@ -132,6 +90,9 @@ msgid "Baseline"
 msgstr "ベースライン"
 
 msgid "Bypass"
+msgstr "バイパス"
+
+msgid "bypassed"
 msgstr "バイパス"
 
 msgid "Cancel"
@@ -164,12 +125,6 @@ msgstr "DSPバックエンドを変更中"
 msgid "Changing DSP backend failed"
 msgstr "DSPバックエンドの変更に失敗しました"
 
-msgid "Changing output"
-msgstr "出力を変更中"
-
-msgid "Changing output failed"
-msgstr "出力の変更に失敗しました"
-
 msgid "Changing processing mode"
 msgstr "処理モードを変更中"
 
@@ -191,8 +146,8 @@ msgstr "標準または保存済みのEffeTuneプリセットを選択…"
 msgid "Choose an EffeTune preset"
 msgstr "EffeTuneプリセットを選択"
 
-msgid "Choose bypass, system default output, Max + Suggest, Scalar, and Conservative."
-msgstr "バイパス、システム既定の出力、最大＋提案、スカラー、保守的を選択します。"
+msgid "Choose bypass, Max + Suggest, and Scalar with Auto SIMD."
+msgstr "バイパス、Max + Suggest、Auto SIMD設定のScalarを選択します。"
 
 msgid "Choose the language used by PipeTune GTK."
 msgstr "PipeTune GTKで使用する言語を選択します。"
@@ -218,12 +173,6 @@ msgstr "設定済みSIMD"
 
 msgid "Connected"
 msgstr "接続済み"
-
-msgid "Connected · changing sample rate"
-msgstr "接続済み · サンプルレートを変更中"
-
-msgid "Connected · virtual sink inactive"
-msgstr "接続済み · 仮想シンクは非アクティブ"
 
 msgid "Connected and monitoring"
 msgstr "接続して監視中"
@@ -258,17 +207,17 @@ msgstr "コピー"
 msgid "Custom preset file"
 msgstr "カスタムプリセットファイル"
 
-msgid "Default"
-msgstr "既定"
-
 msgid "Defaults are being applied live; use Apply to save them"
 msgstr "既定値をライブ適用中です。保存するには「適用」を使用してください"
 
 msgid "Defaults selected"
 msgstr "既定値を選択しました"
 
-msgid "Device"
-msgstr "デバイス"
+msgid "Direct route"
+msgstr "直接経路"
+
+msgid "Direct routes"
+msgstr "直接経路"
 
 msgid "Disconnected"
 msgstr "未接続"
@@ -278,6 +227,10 @@ msgstr "未接続 · 設定は読み取り専用です"
 
 msgid "DSP"
 msgstr "DSP"
+
+#, brace-format
+msgid "DSP {0} → Output {1} → Physical {2}"
+msgstr "DSP {0} → 出力 {1} → 物理 {2}"
 
 msgid "DSP / Performance"
 msgstr "DSP / パフォーマンス"
@@ -290,12 +243,6 @@ msgstr "DSPバックエンドを変更しました"
 
 msgid "DSP Engine"
 msgstr "DSPエンジン"
-
-msgid "DSP processing load; graph capped at 100%."
-msgstr "DSP処理負荷（グラフの上限は100%）。"
-
-msgid "DSP rate"
-msgstr "DSPレート"
 
 msgid "DSP sample rate"
 msgstr "DSPサンプルレート"
@@ -318,8 +265,17 @@ msgstr "DSP処理を有効にする"
 msgid "English"
 msgstr "English"
 
+msgid "error"
+msgstr "エラー"
+
+msgid "Error"
+msgstr "エラー"
+
 msgid "Errors"
 msgstr "エラー"
+
+msgid "Filtered"
+msgstr "フィルター適用"
 
 msgid "Finishing rollback…"
 msgstr "ロールバックを完了中…"
@@ -330,48 +286,20 @@ msgstr "固定"
 msgid "Fixed rate"
 msgstr "固定レート"
 
-msgid "Follow PipeWire's current default"
-msgstr "PipeWireの現在の既定値に従う"
-
-msgid "Follow PipeWire's current default output"
-msgstr "PipeWireの現在の既定出力に従う"
-
-msgid "Following the system default"
-msgstr "システム既定に追従中"
-
 msgid "Force"
 msgstr "強制"
 
-msgid "Force — request the selected output rate"
-msgstr "強制 — 選択した出力レートを要求"
+msgid "Force — request each output's resolved rate"
+msgstr "Force — 各出力で解決したレートを要求"
 
 msgid "idle"
 msgstr "アイドル"
-
-msgid "Input / Rates"
-msgstr "入力 / レート"
-
-msgid "Input channels"
-msgstr "入力チャンネル"
-
-msgid "Input format"
-msgstr "入力フォーマット"
-
-msgid "Input sample rate"
-msgstr "入力サンプルレート"
-
-#, brace-format
-msgid "Input/DSP {0}  •  Output {1}  •  Physical {2}"
-msgstr "入力/DSP {0}  •  出力 {1}  •  物理 {2}"
 
 msgid "Language"
 msgstr "言語"
 
 msgid "Language preference saved"
 msgstr "言語設定を保存しました"
-
-msgid "Last input"
-msgstr "最終入力"
 
 msgid "Live Configuration"
 msgstr "ライブ設定"
@@ -406,32 +334,17 @@ msgstr "ライブ状態の購読を開始しました"
 msgid "Load"
 msgstr "負荷"
 
-msgid "Long PipeWire node names are available in the device tooltip."
-msgstr "長いPipeWireノード名はデバイスのツールチップで確認できます。"
-
-msgid "Max — highest supported rate"
-msgstr "最大 — 対応する最高レート"
+msgid "Max — highest supported rate per output"
+msgstr "Max — 出力ごとに対応する最高レート"
 
 msgid "Maximum"
 msgstr "最大"
 
-msgid "Measured frame rate"
-msgstr "実測フレームレート"
-
 msgid "Native backend"
 msgstr "ネイティブバックエンド"
 
-msgid "Never"
-msgstr "なし"
-
-msgid "No"
-msgstr "いいえ"
-
-msgid "No audio output is available"
-msgstr "利用可能なオーディオ出力がありません"
-
-msgid "No output available"
-msgstr "利用可能な出力なし"
+msgid "No physical outputs"
+msgstr "物理出力なし"
 
 msgid "None"
 msgstr "なし"
@@ -439,27 +352,26 @@ msgstr "なし"
 msgid "Open PipeTune"
 msgstr "PipeTuneを開く"
 
-msgid "Output"
+msgid "Output filters"
+msgstr "出力フィルター"
+
+msgid "Outputs"
 msgstr "出力"
-
-msgid "Output changed"
-msgstr "出力を変更しました"
-
-msgid "Output Routing"
-msgstr "出力ルーティング"
-
-#, brace-format
-msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
-msgstr "オーバーラン {0}  •  アンダーラン {1}  •  処理 {2}"
 
 msgid "Overrun frames"
 msgstr "オーバーランフレーム"
 
-msgid "PCM data rate"
-msgstr "PCMデータレート"
-
 msgid "Pending dialog settings will be reapplied"
 msgstr "保留中のダイアログ設定を再適用します"
+
+msgid "Per-output rates"
+msgstr "出力ごとのレート"
+
+msgid "Physical Output Filters"
+msgstr "物理出力フィルター"
+
+msgid "Physical outputs"
+msgstr "物理出力"
 
 msgid "PipeTune disconnected"
 msgstr "PipeTuneから切断されました"
@@ -489,17 +401,8 @@ msgstr "PipeTune: 未接続"
 msgid "PipeWire enforcement"
 msgstr "PipeWire強制方式"
 
-msgid "Preference"
-msgstr "優先設定"
-
-msgid "Preferred output"
-msgstr "優先出力"
-
-msgid "Preferred output is unavailable — using the system default fallback"
-msgstr "優先出力を利用できないため、システム既定へフォールバックしています"
-
-msgid "Preferred physical output"
-msgstr "優先する物理出力"
+msgid "PipeWire resampling"
+msgstr "PipeWireリサンプリング"
 
 msgid "Preset"
 msgstr "プリセット"
@@ -540,6 +443,9 @@ msgstr "レートモード"
 msgid "Rates unavailable"
 msgstr "レートを取得できません"
 
+msgid "resampling"
+msgstr "リサンプリング"
+
 msgid "Restart PipeTune GTK to use the selected language."
 msgstr "選択した言語を使用するにはPipeTune GTKを再起動してください。"
 
@@ -558,10 +464,10 @@ msgstr "以前のライブ設定を復元中…"
 msgid "Rollback requested"
 msgstr "ロールバックを要求しました"
 
-msgid "Routing"
-msgstr "ルーティング"
-
 msgid "Sample Rate"
+msgstr "サンプルレート"
+
+msgid "Sample Rates"
 msgstr "サンプルレート"
 
 msgid "Sample-rate policy changed"
@@ -579,15 +485,6 @@ msgstr "すべての設定を保存中"
 
 msgid "Scalar"
 msgstr "スカラー"
-
-msgid "Selected output"
-msgstr "選択中の出力"
-
-msgid "Selected output rate"
-msgstr "選択中の出力レート"
-
-msgid "Selection reason"
-msgstr "選択理由"
 
 msgid "Settings updated"
 msgstr "設定を更新しました"
@@ -611,18 +508,11 @@ msgstr "提案"
 msgid "Suggest — let PipeWire choose"
 msgstr "提案 — PipeWireに選択を任せる"
 
-#, brace-format
-msgid "Switching — {0}"
-msgstr "切り替え中 — {0}"
-
 msgid "System"
 msgstr "システム"
 
 msgid "System default"
 msgstr "システム設定"
-
-msgid "System-default fallback"
-msgstr "システム既定へのフォールバック"
 
 msgid "Turn off to pass audio through without an EffeTune preset."
 msgstr "オフにするとEffeTuneプリセットを使用せず音声をそのまま通します。"
@@ -633,13 +523,6 @@ msgstr "利用不可"
 msgid "Unavailable"
 msgstr "利用不可"
 
-#, brace-format
-msgid "Unavailable — {0}"
-msgstr "{0} — 利用不可"
-
-msgid "Unavailable output"
-msgstr "利用できない出力"
-
 msgid "Underrun frames"
 msgstr "アンダーランフレーム"
 
@@ -649,23 +532,20 @@ msgstr "不明"
 msgid "Unknown"
 msgstr "不明"
 
-msgid "Unknown sample format"
-msgstr "不明なサンプルフォーマット"
-
 msgid "Updating settings"
 msgstr "設定を更新中"
 
 msgid "Updating settings failed"
 msgstr "設定の更新に失敗しました"
 
-msgid "Using the preferred output"
-msgstr "優先出力を使用中"
-
 msgid "Versions"
 msgstr "バージョン"
 
-msgid "Virtual sink active"
-msgstr "仮想シンク有効"
+msgid "waiting"
+msgstr "待機中"
+
+msgid "Waiting"
+msgstr "待機中"
 
 msgid "Waiting for live PipeTune state…"
 msgstr "PipeTuneのライブ状態を待機中…"
@@ -673,5 +553,5 @@ msgstr "PipeTuneのライブ状態を待機中…"
 msgid "Warnings"
 msgstr "警告"
 
-msgid "Yes"
-msgstr "はい"
+msgid "WirePlumber policy"
+msgstr "WirePlumberポリシー"

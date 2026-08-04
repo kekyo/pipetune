@@ -2,7 +2,6 @@
 #include "pipetune/control_socket.h"
 #include "pipetune/startup_config.h"
 
-#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -53,48 +52,32 @@ effectiveVariant(const pipetune::StartupConfig &config) {
                    pipetune::DspBackendVariant::x86_64_v4);
 }
 
+static pipetune::ControlFilterOutputStatus makeFilterOutput(
+    std::string nodeName, std::string description, std::string filterName,
+    std::uint32_t channelCount, std::uint32_t sampleRate) {
+  return {
+      .targetNodeName = std::move(nodeName),
+      .targetDescription = std::move(description),
+      .filterNodeName = std::move(filterName),
+      .state = pipetune::ControlFilterState::active,
+      .error = {},
+      .channelCount = channelCount,
+      .sampleRateCapabilities = sampleRateCapabilities(),
+      .dspSampleRate = sampleRate,
+      .outputSampleRate = sampleRate,
+      .activeOutputSampleRate = sampleRate,
+      .rateFallback = false,
+      .latencyFrames = 128,
+      .overrunFrames = 0,
+      .underrunFrames = 0,
+      .processingErrors = 0,
+      .dspProcessedFrames = 128000,
+      .dspProcessingNanoseconds = 200000000,
+  };
+}
+
 static pipetune::ControlRuntimeStatus
 makeStatus(const pipetune::StartupConfig &config) {
-  constexpr std::string_view defaultOutput =
-      "alsa_output.usb-long-studio-dac.analog-stereo";
-  const auto outputNames = std::vector<std::pair<std::string, std::string>>{
-      {std::string(defaultOutput), "Studio DAC"},
-      {"alsa_output.pci-0000_0b_00.4.hdmi-stereo-extra-long",
-       "Studio DAC"},
-      {"alsa_output.bluetooth-living-room-speaker.a2dp-sink",
-       "Living Room Speaker"},
-  };
-  auto selectedOutput = std::string(defaultOutput);
-  auto selectionReason =
-      pipetune::ControlOutputSelectionReason::systemDefault;
-  if (config.preferredOutputFound) {
-    const auto preferred = std::find_if(
-        outputNames.begin(), outputNames.end(),
-        [&config](const auto &output) {
-          return output.first == config.preferredOutput;
-        });
-    if (preferred == outputNames.end()) {
-      selectionReason = pipetune::ControlOutputSelectionReason::fallback;
-    } else {
-      selectedOutput = preferred->first;
-      selectionReason = pipetune::ControlOutputSelectionReason::preferred;
-    }
-  }
-
-  auto outputs = std::vector<pipetune::ControlOutputDevice>{};
-  outputs.reserve(outputNames.size());
-  for (const auto &[name, description] : outputNames) {
-    outputs.push_back(
-        {.name = name,
-         .description = description,
-         .systemDefault = name == defaultOutput,
-         .preferred =
-             config.preferredOutputFound &&
-             name == config.preferredOutput,
-         .selected = name == selectedOutput,
-         .sampleRateCapabilities = sampleRateCapabilities()});
-  }
-
   const auto dspRate =
       config.ratePolicy.mode == pipetune::SampleRateMode::maximum
           ? 384000u
@@ -108,30 +91,26 @@ makeStatus(const pipetune::StartupConfig &config) {
           config.presetFound ? config.presetPath.string() : std::string{},
       .configurationError = {},
       .activePluginCount = config.presetFound ? 5u : 0u,
-      .preferredTarget = config.preferredOutputFound
-                             ? config.preferredOutput
-                             : std::string{},
-      .selectedTarget = selectedOutput,
-      .outputSelectionReason = selectionReason,
-      .availableOutputs = std::move(outputs),
-      .defaultSinkActive = true,
+      .policyBackend = "wireplumber-0.5",
+      .filterOutputs =
+          {makeFilterOutput(
+               "alsa_output.usb-long-studio-dac.analog-stereo",
+               "Studio DAC", "pipetune.filter.usb-studio-dac", 2,
+               dspRate),
+           makeFilterOutput(
+               "alsa_output.pci-0000_0b_00.4.hdmi-stereo-extra-long",
+               "Studio Display", "pipetune.filter.hdmi-display", 8,
+               dspRate),
+           makeFilterOutput(
+               "alsa_output.bluetooth-living-room-speaker.a2dp-sink",
+               "Living Room Speaker", "pipetune.filter.bluetooth", 2,
+               dspRate)},
       .overrunFrames = 2,
       .underrunFrames = 3,
       .processingErrors = 1,
       .dspProcessedFrames = 384000,
       .dspProcessingNanoseconds = 600000000,
-      .inputSampleFormat = "F32P",
-      .inputSampleRate = dspRate,
-      .inputChannelCount = 2,
-      .inputFramesReceived = 768000,
-      .inputLastReceivedUnixMilliseconds = 1720000000123,
       .configuredRatePolicy = config.ratePolicy,
-      .dspSampleRate = dspRate,
-      .selectedOutputSampleRate = dspRate,
-      .activeOutputSampleRate = dspRate,
-      .rateTransitioning = false,
-      .rateFallback = false,
-      .rateError = {},
       .configuredDspBackend = config.dspBackend,
       .configuredDspSimdVariant = config.dspSimdVariant,
       .effectiveDspBackend = config.dspBackend,
@@ -182,8 +161,14 @@ static pipetune::ControlRuntimeStatus snapshotStatus(
     FakeDaemonState &state) {
   auto lock = std::scoped_lock(state.mutex);
   auto status = makeStatus(state.liveConfig);
+  const auto framesPerInterval =
+      status.filterOutputs.empty()
+          ? std::uint64_t{0}
+          : static_cast<std::uint64_t>(
+                status.filterOutputs.front().dspSampleRate) *
+                status.filterOutputs.size();
   status.dspProcessedFrames +=
-      state.dspTelemetrySequence * status.inputSampleRate;
+      state.dspTelemetrySequence * framesPerInterval;
   status.dspProcessingNanoseconds +=
       state.dspTelemetrySequence * std::uint64_t{600000000};
   ++state.dspTelemetrySequence;
@@ -203,10 +188,6 @@ static std::string commandName(pipetune::ControlCommand command) {
     return "loadPreset";
   case pipetune::ControlCommand::bypass:
     return "bypass";
-  case pipetune::ControlCommand::setOutput:
-    return "setOutput";
-  case pipetune::ControlCommand::clearOutput:
-    return "clearOutput";
   case pipetune::ControlCommand::setRate:
     return "setRate";
   case pipetune::ControlCommand::setDspBackend:
@@ -275,14 +256,6 @@ static pipetune::ControlMessageResult handleRequest(
       state.liveConfig.presetFound = false;
       state.liveConfig.presetPath.clear();
       break;
-    case pipetune::ControlCommand::setOutput:
-      state.liveConfig.preferredOutputFound = true;
-      state.liveConfig.preferredOutput = parsed.request.outputTarget;
-      break;
-    case pipetune::ControlCommand::clearOutput:
-      state.liveConfig.preferredOutputFound = false;
-      state.liveConfig.preferredOutput.clear();
-      break;
     case pipetune::ControlCommand::setRate:
       state.liveConfig.ratePolicy = parsed.request.ratePolicy;
       break;
@@ -347,10 +320,6 @@ static int inspectConfig(const std::filesystem::path &path) {
       << "{\"preset\":"
       << (config.presetFound ? jsonString(config.presetPath.string())
                              : "null")
-      << ",\"preferredOutput\":"
-      << (config.preferredOutputFound
-              ? jsonString(config.preferredOutput)
-              : "null")
       << ",\"rateMode\":"
       << jsonString(pipetune::sampleRateModeName(config.ratePolicy.mode))
       << ",\"fixedRate\":" << config.ratePolicy.fixedRate
@@ -396,8 +365,7 @@ int main(int argc, char **argv) {
       .mutex = {},
       .liveConfig = loaded.config,
       .requestLogPath = environmentValue("PIPETUNE_E2E_REQUEST_LOG"),
-      .rejectedCommand =
-          environmentValue("PIPETUNE_E2E_REJECT_COMMAND"),
+      .rejectedCommand = environmentValue("PIPETUNE_E2E_REJECT_COMMAND"),
       .dspTelemetrySequence = 0,
   };
   auto started = pipetune::startControlServer(

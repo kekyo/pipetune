@@ -7,7 +7,6 @@
 #include "launch-options.h"
 #include "localization.h"
 #include "main-window.h"
-#include "output-selection-model.h"
 #include "preset-catalog.h"
 #include "preset-file-monitor.h"
 #include "rate-selection-model.h"
@@ -56,16 +55,6 @@ struct StatusRowWidgets {
   GtkWidget *text;
 };
 
-struct OutputViewChoice {
-  bool clearPreference;
-  std::string target;
-  std::string primary;
-  std::string secondary;
-  std::string badge;
-  std::string tooltip;
-  bool unavailable;
-};
-
 struct GtkRuntime {
   GtkApplication *application;
   ApplicationState state;
@@ -94,7 +83,6 @@ struct GtkRuntime {
   EffeTunePresetFileMonitor *presetFileMonitor;
   std::string presetCatalogSourceDiagnostic;
   std::string presetCatalogSavedDiagnostic;
-  std::vector<OutputViewChoice> outputChoices;
   std::vector<SampleRateChoice> rateChoices;
   std::vector<DspBackendChoice> dspBackendChoices;
   std::map<std::string, StatusRowWidgets> statusRows;
@@ -136,8 +124,6 @@ static pipetune::StartupConfig defaultStartupConfig() {
   return {
       .presetFound = false,
       .presetPath = {},
-      .preferredOutputFound = false,
-      .preferredOutput = {},
       .ratePolicy = pipetune::defaultSampleRatePolicy(),
       .dspBackend = pipetune::DspBackendKind::scalar,
       .dspSimdVariant = pipetune::DspSimdVariant::automatic,
@@ -187,12 +173,6 @@ static std::string connectionSummary(const ApplicationState &state) {
     return translate("Control service unavailable");
   case ControlConnectionState::connected:
     break;
-  }
-  if (state.hasRuntimeStatus && state.runtime.rateTransitioning) {
-    return translate("Connected · changing sample rate");
-  }
-  if (state.hasRuntimeStatus && !state.runtime.defaultSinkActive) {
-    return translate("Connected · virtual sink inactive");
   }
   return translate("Connected and monitoring");
 }
@@ -391,173 +371,12 @@ static void renderStatusRows(GtkRuntime *runtime) {
   }
 }
 
-static const pipetune::ControlOutputDevice *findOutputDevice(
-    const ApplicationState &state, std::string_view target) {
-  for (const auto &device : state.runtime.availableOutputs) {
-    if (device.name == target) {
-      return &device;
-    }
-  }
-  return nullptr;
-}
-
-static std::string connectorHint(std::string_view target) {
-  if (target.find("usb") != std::string_view::npos) {
-    return "USB";
-  }
-  if (target.find("hdmi") != std::string_view::npos) {
-    return "HDMI";
-  }
-  if (target.find("bluetooth") != std::string_view::npos ||
-      target.find("bluez") != std::string_view::npos) {
-    return "Bluetooth";
-  }
-  return translate("Device");
-}
-
-static std::vector<OutputViewChoice> buildOutputChoices(
-    const GtkRuntime &runtime) {
-  auto choices = std::vector<OutputViewChoice>{{
-      .clearPreference = true,
-      .target = {},
-      .primary = translate("System default"),
-      .secondary = translate("Follow PipeWire's current default"),
-      .badge = translate("Default"),
-      .tooltip = translate("Follow PipeWire's current default output"),
-      .unavailable = false,
-  }};
-  auto descriptionCounts = std::map<std::string, std::size_t>{};
-  for (const auto &device : runtime.state.runtime.availableOutputs) {
-    ++descriptionCounts[device.description];
-  }
-  for (const auto &device : runtime.state.runtime.availableOutputs) {
-    auto primary =
-        device.description.empty() ? device.name : device.description;
-    if (!device.description.empty() &&
-        descriptionCounts[device.description] > 1) {
-      primary += " — " + connectorHint(device.name);
-    }
-    auto badge = std::string{};
-    if (device.systemDefault) {
-      badge = translate("Default");
-    }
-    auto tooltip = primary + "\n" + device.name;
-    choices.push_back({
-        .clearPreference = false,
-        .target = device.name,
-        .primary = std::move(primary),
-        .secondary = device.name,
-        .badge = std::move(badge),
-        .tooltip = std::move(tooltip),
-        .unavailable = false,
-    });
-  }
-  const auto &desired = runtime.transactionReady
-                            ? runtime.transaction.desiredLive
-                            : runtime.savedConfig;
-  if (desired.preferredOutputFound &&
-      findOutputDevice(runtime.state, desired.preferredOutput) == nullptr) {
-    choices.push_back({
-        .clearPreference = false,
-        .target = desired.preferredOutput,
-        .primary = translate("Unavailable output"),
-        .secondary = desired.preferredOutput,
-        .badge = translate("Unavailable"),
-        .tooltip = desired.preferredOutput,
-        .unavailable = true,
-    });
-  }
-  return choices;
-}
-
-static std::size_t selectedOutputIndex(const GtkRuntime &runtime) {
-  const auto &desired = runtime.transactionReady
-                            ? runtime.transaction.desiredLive
-                            : runtime.savedConfig;
-  if (!desired.preferredOutputFound) {
-    return 0;
-  }
-  for (auto index = std::size_t{0}; index < runtime.outputChoices.size();
-       ++index) {
-    if (runtime.outputChoices[index].target == desired.preferredOutput) {
-      return index;
-    }
-  }
-  return 0;
-}
-
 static void clearContainer(GtkWidget *container) {
   auto *children = gtk_container_get_children(GTK_CONTAINER(container));
   for (auto *child = children; child != nullptr; child = child->next) {
     gtk_widget_destroy(GTK_WIDGET(child->data));
   }
   g_list_free(children);
-}
-
-static void onOutputChoiceClicked(GtkButton *button, gpointer userData);
-
-static GtkWidget *createOutputChoiceButton(
-    const OutputViewChoice &choice, std::size_t index,
-    GtkRuntime *runtime) {
-  auto *button = gtk_button_new();
-  gtk_button_set_relief(GTK_BUTTON(button), GTK_RELIEF_NONE);
-  gtk_widget_set_hexpand(button, TRUE);
-  gtk_widget_set_tooltip_text(button, choice.tooltip.c_str());
-  addStyleClass(button, "output-row");
-  auto *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-  auto *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
-  gtk_widget_set_hexpand(text, TRUE);
-  auto *primary = gtk_label_new(choice.primary.c_str());
-  gtk_label_set_xalign(GTK_LABEL(primary), 0.0F);
-  gtk_label_set_ellipsize(GTK_LABEL(primary), PANGO_ELLIPSIZE_END);
-  auto *secondary = gtk_label_new(choice.secondary.c_str());
-  gtk_label_set_xalign(GTK_LABEL(secondary), 0.0F);
-  gtk_label_set_ellipsize(GTK_LABEL(secondary), PANGO_ELLIPSIZE_MIDDLE);
-  gtk_label_set_max_width_chars(GTK_LABEL(secondary), 48);
-  addStyleClass(secondary, "device-name");
-  gtk_box_pack_start(GTK_BOX(text), primary, FALSE, TRUE, 0);
-  gtk_box_pack_start(GTK_BOX(text), secondary, FALSE, TRUE, 0);
-  gtk_box_pack_start(GTK_BOX(box), text, TRUE, TRUE, 0);
-  if (!choice.badge.empty()) {
-    auto *badge = gtk_label_new(choice.badge.c_str());
-    gtk_widget_set_valign(badge, GTK_ALIGN_CENTER);
-    addStyleClass(badge, "badge");
-    if (choice.unavailable) {
-      addStyleClass(badge, "status-warning");
-    }
-    gtk_box_pack_end(GTK_BOX(box), badge, FALSE, FALSE, 0);
-  }
-  gtk_container_add(GTK_CONTAINER(button), box);
-  g_object_set_data(G_OBJECT(button), "pipetune-output-index",
-                    GSIZE_TO_POINTER(index + 1));
-  g_signal_connect(button, "clicked", G_CALLBACK(onOutputChoiceClicked),
-                   runtime);
-  assignDynamicAccessibleId(
-      button, "outputChoice" + std::to_string(index));
-  return button;
-}
-
-static void renderOutputChoices(GtkRuntime *runtime) {
-  runtime->outputChoices = buildOutputChoices(*runtime);
-  clearContainer(runtime->ui.outputList);
-  for (auto index = std::size_t{0}; index < runtime->outputChoices.size();
-       ++index) {
-    auto *button = createOutputChoiceButton(
-        runtime->outputChoices[index], index, runtime);
-    gtk_list_box_insert(GTK_LIST_BOX(runtime->ui.outputList), button, -1);
-  }
-  gtk_widget_show_all(runtime->ui.outputList);
-  const auto index = selectedOutputIndex(*runtime);
-  const auto &choice = runtime->outputChoices[index];
-  gtk_label_set_text(GTK_LABEL(runtime->ui.outputButtonLabel),
-                     choice.primary.c_str());
-  gtk_widget_set_tooltip_text(runtime->ui.outputMenuButton,
-                              choice.tooltip.c_str());
-  auto *accessible =
-      gtk_widget_get_accessible(runtime->ui.outputMenuButton);
-  if (accessible != nullptr) {
-    atk_object_set_name(accessible, choice.primary.c_str());
-  }
 }
 
 static std::string formatActionTime(std::uint64_t unixMilliseconds) {
@@ -662,8 +481,6 @@ static void appendCompletedAction(
 
 static UiMessage settingsOperationName(SettingsOperation operation) {
   switch (operation) {
-  case SettingsOperation::output:
-    return localizedMessage("Changing output", {});
   case SettingsOperation::rate:
     return localizedMessage("Changing sample-rate policy", {});
   case SettingsOperation::dspBackend:
@@ -678,8 +495,6 @@ static UiMessage settingsOperationName(SettingsOperation operation) {
 
 static UiMessage settingsOperationSuccess(SettingsOperation operation) {
   switch (operation) {
-  case SettingsOperation::output:
-    return localizedMessage("Output changed", {});
   case SettingsOperation::rate:
     return localizedMessage("Sample-rate policy changed", {});
   case SettingsOperation::dspBackend:
@@ -694,8 +509,6 @@ static UiMessage settingsOperationSuccess(SettingsOperation operation) {
 
 static UiMessage settingsOperationFailure(SettingsOperation operation) {
   switch (operation) {
-  case SettingsOperation::output:
-    return localizedMessage("Changing output failed", {});
   case SettingsOperation::rate:
     return localizedMessage("Changing sample-rate policy failed", {});
   case SettingsOperation::dspBackend:
@@ -782,7 +595,7 @@ static void renderRateControls(GtkRuntime *runtime) {
       translate("Suggest — let PipeWire choose"));
   gtk_combo_box_text_append_text(
       GTK_COMBO_BOX_TEXT(runtime->ui.rateEnforcementCombo),
-      translate("Force — request the selected output rate"));
+      translate("Force — request each output's resolved rate"));
   gtk_combo_box_set_active(
       GTK_COMBO_BOX(runtime->ui.rateEnforcementCombo),
       static_cast<gint>(presentation.activeEnforcementIndex));
@@ -853,7 +666,6 @@ static void renderLanguageControl(GtkRuntime *runtime) {
 static void renderSettingsControls(GtkRuntime *runtime) {
   runtime->updatingControls = true;
   renderPresetControls(runtime);
-  renderOutputChoices(runtime);
   renderRateControls(runtime);
   renderDspControls(runtime);
   renderLanguageControl(runtime);
@@ -863,7 +675,6 @@ static void renderSettingsControls(GtkRuntime *runtime) {
   gtk_widget_set_sensitive(runtime->ui.presetCombo, editable &&
                               !runtime->presetChoices.empty());
   gtk_widget_set_sensitive(runtime->ui.presetChooser, editable);
-  gtk_widget_set_sensitive(runtime->ui.outputMenuButton, editable);
   gtk_widget_set_sensitive(runtime->ui.rateCombo, editable);
   gtk_widget_set_sensitive(runtime->ui.rateEnforcementCombo, editable);
   gtk_widget_set_sensitive(runtime->ui.dspBackendCombo, editable);
@@ -1000,25 +811,6 @@ static void editDesiredSettings(
   editSettingsTransaction(runtime->transaction, desired);
   render(runtime);
   driveSettings(runtime);
-}
-
-static void onOutputChoiceClicked(GtkButton *button, gpointer userData) {
-  auto *runtime = static_cast<GtkRuntime *>(userData);
-  if (runtime->updatingControls || !controlsAreEditable(*runtime)) {
-    return;
-  }
-  const auto encoded = GPOINTER_TO_SIZE(
-      g_object_get_data(G_OBJECT(button), "pipetune-output-index"));
-  if (encoded == 0 || encoded - 1 >= runtime->outputChoices.size()) {
-    return;
-  }
-  const auto &choice = runtime->outputChoices[encoded - 1];
-  auto desired = runtime->transaction.desiredLive;
-  desired.preferredOutputFound = !choice.clearPreference;
-  desired.preferredOutput =
-      choice.clearPreference ? std::string{} : choice.target;
-  gtk_popover_popdown(GTK_POPOVER(runtime->ui.outputPopover));
-  editDesiredSettings(runtime, desired);
 }
 
 static void onRateChanged(GtkComboBox *combo, gpointer userData) {
@@ -1496,15 +1288,6 @@ static void dispatchSettingsOperation(
     GtkRuntime *runtime, SettingsOperation operation) {
   const auto &target = runtime->transaction.inFlightTarget;
   switch (operation) {
-  case SettingsOperation::output:
-    if (target.preferredOutputFound) {
-      setControlOutputAsync(runtime->controlClient, target.preferredOutput,
-                            onSettingsOperationReply, runtime);
-    } else {
-      clearControlOutputAsync(runtime->controlClient,
-                              onSettingsOperationReply, runtime);
-    }
-    return;
   case SettingsOperation::rate:
     setControlRateAsync(runtime->controlClient, target.ratePolicy,
                         onSettingsOperationReply, runtime);
@@ -1969,7 +1752,6 @@ static int runApplication(int argc, char **argv) {
       .presetFileMonitor = nullptr,
       .presetCatalogSourceDiagnostic = {},
       .presetCatalogSavedDiagnostic = {},
-      .outputChoices = {},
       .rateChoices = {},
       .dspBackendChoices = {},
       .statusRows = {},

@@ -273,8 +273,7 @@ makeDspBackendSelectionPresentation(
       .selectedBackendAvailable = selectedAvailable,
       .sensitive =
           state.connection == ControlConnectionState::connected &&
-          state.hasRuntimeStatus && !state.operationPending &&
-          !state.runtime.rateTransitioning,
+          state.hasRuntimeStatus && !state.operationPending,
   };
 }
 

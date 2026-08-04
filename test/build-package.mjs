@@ -115,6 +115,9 @@ const createPackageStage = (
     "usr/lib/systemd/user",
     "usr/share/applications",
     "usr/share/icons/hicolor/scalable/apps",
+    "usr/share/wireplumber/policy.lua.d",
+    "usr/share/wireplumber/wireplumber.conf.d",
+    "usr/share/wireplumber/scripts/pipetune",
     "usr/share/doc/pipetune",
   ];
   if (includeAutostart) {
@@ -166,6 +169,14 @@ Description: PipeWire system-wide DSP and GTK control application
     join(stageRoot, "usr/share/icons/hicolor/scalable/apps/pipetune.svg"),
     "<svg xmlns=\"http://www.w3.org/2000/svg\"/>\n",
   );
+  for (const policyPath of [
+    "usr/share/wireplumber/policy.lua.d/85-pipetune.lua",
+    "usr/share/wireplumber/wireplumber.conf.d/90-pipetune.conf",
+    "usr/share/wireplumber/scripts/pipetune/policy-0.4.lua",
+    "usr/share/wireplumber/scripts/pipetune/policy-0.5.lua",
+  ]) {
+    writeFileSync(join(stageRoot, policyPath), "-- PipeTune policy\n");
+  }
   for (const documentName of [
     "README.md",
     "README.daemon.md",

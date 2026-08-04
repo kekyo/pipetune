@@ -2,14 +2,12 @@
 
 #include "bypass_command.h"
 #include "config_reset_command.h"
-#include "default_sink_restore.h"
 #include "dsp_backend_command.h"
 #include "installed_tools.h"
-#include "output_command.h"
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
 #include "pipetune/dsp_pipeline.h"
-#include "pipetune/pipewire_pipeline.h"
+#include "pipetune/transparent_filter_service.h"
 #include "pipetune/startup_config.h"
 #include "pipetune/version.h"
 #include "process_runner.h"
@@ -64,8 +62,8 @@ static int runConfigResetCommand(
     const pipetune::CommandLineOptions &options) {
   if (!options.assumeYes) {
     std::cout
-        << "Reset PipeTune configuration to Bypass, system-default output, "
-           "Max + Suggest, and scalar DSP? [y/N] "
+        << "Reset PipeTune configuration to Bypass, Max + Suggest, and "
+           "scalar DSP? [y/N] "
         << std::flush;
     auto response = std::string{};
     if (!std::getline(std::cin, response) ||
@@ -90,15 +88,9 @@ static int runConfigResetCommand(
     std::cerr << "pipetune: " << result.error << '\n';
     return 1;
   }
-  std::cout << "PipeTune configuration was reset to Bypass, system-default "
-               "output, Max + Suggest, and scalar DSP.\n";
+  std::cout << "PipeTune configuration was reset to Bypass, Max + Suggest, "
+               "and scalar DSP.\n";
   return 0;
-}
-
-static pipetune::DefaultSinkRestoreResult restoreUserDefaultSink(
-    std::string excludedNodeName, void *) {
-  return pipetune::restorePipeWireDefaultSink(
-      std::move(excludedNodeName));
 }
 
 static pipetune::UserManagementPathResult
@@ -176,9 +168,7 @@ static int runUnsetupCommand(
        .purge = options.purge,
        .paths = paths.paths,
        .processRunner = runUserManagementProcess,
-       .processUserData = nullptr,
-       .restoreDefaultSink = restoreUserDefaultSink,
-       .restoreUserData = nullptr});
+       .processUserData = nullptr});
   printUserManagementWarnings(result.warnings);
   if (!result.success) {
     std::cerr << "pipetune: " << result.error << '\n';
@@ -340,87 +330,6 @@ static int runPersistentBypass(
   return 0;
 }
 
-static bool isOutputCommand(pipetune::CommandLineAction action) {
-  return action == pipetune::CommandLineAction::outputList ||
-         action == pipetune::CommandLineAction::outputGet ||
-         action == pipetune::CommandLineAction::outputSet ||
-         action == pipetune::CommandLineAction::outputClear ||
-         action == pipetune::CommandLineAction::outputSelect;
-}
-
-static int runOutputCommand(
-    const pipetune::CommandLineOptions &options) {
-  const auto socket =
-      pipetune::resolveControlSocketPath(options.controlSocketPath);
-  if (!socket.error.empty()) {
-    std::cerr << "pipetune: " << socket.error << '\n';
-    return 1;
-  }
-
-  if (options.action == pipetune::CommandLineAction::outputList ||
-      options.action == pipetune::CommandLineAction::outputGet) {
-    const auto queried = pipetune::queryOutputStatus(socket.path);
-    if (!queried.success) {
-      std::cerr << "pipetune: " << queried.error << '\n';
-      return 1;
-    }
-    if (options.json) {
-      std::cout << queried.json << '\n';
-    } else if (options.action ==
-               pipetune::CommandLineAction::outputList) {
-      std::cout << pipetune::formatOutputDeviceList(queried.status);
-    } else {
-      std::cout << pipetune::formatOutputSelection(queried.status);
-    }
-    return 0;
-  }
-
-  auto selectedTarget = options.outputTarget;
-  auto clearPreference =
-      options.action == pipetune::CommandLineAction::outputClear;
-  if (options.action == pipetune::CommandLineAction::outputSelect) {
-    if (!isatty(STDIN_FILENO)) {
-      std::cerr
-          << "pipetune: output select requires an interactive terminal\n";
-      return 1;
-    }
-    const auto queried = pipetune::queryOutputStatus(socket.path);
-    if (!queried.success) {
-      std::cerr << "pipetune: " << queried.error << '\n';
-      return 1;
-    }
-    const auto choice = pipetune::promptForOutputSelection(
-        queried.status, std::cin, std::cout);
-    if (!choice.success) {
-      std::cerr << "pipetune: " << choice.error << '\n';
-      return 1;
-    }
-    clearPreference = choice.clearPreference;
-    selectedTarget = choice.target;
-  }
-
-  const auto config = resolveUserStartupConfigPath();
-  if (!config.error.empty()) {
-    std::cerr << "pipetune: " << config.error << '\n';
-    return 1;
-  }
-  const auto change =
-      clearPreference
-          ? pipetune::executeClearPreferredOutput(
-                {.configPath = config.path, .socketPath = socket.path})
-          : pipetune::executeSetPreferredOutput(
-                {.configPath = config.path, .socketPath = socket.path},
-                selectedTarget);
-  if (!change.success) {
-    std::cerr << "pipetune: " << change.error << '\n';
-    return 1;
-  }
-  std::cout << (clearPreference ? "Output preference cleared.\n"
-                                : "Output preference saved.\n")
-            << pipetune::formatOutputSelection(change.status);
-  return 0;
-}
-
 static bool isRateCommand(pipetune::CommandLineAction action) {
   return action == pipetune::CommandLineAction::rateGet ||
          action == pipetune::CommandLineAction::rateList ||
@@ -564,9 +473,6 @@ int main(int argc, char **argv) {
   if (parsed.options.action == pipetune::CommandLineAction::bypass) {
     return runPersistentBypass(parsed.options);
   }
-  if (isOutputCommand(parsed.options.action)) {
-    return runOutputCommand(parsed.options);
-  }
   if (isRateCommand(parsed.options.action)) {
     return runRateCommand(parsed.options);
   }
@@ -582,18 +488,6 @@ int main(int argc, char **argv) {
   }
   if (parsed.options.action == pipetune::CommandLineAction::unsetup) {
     return runUnsetupCommand(parsed.options);
-  }
-  if (parsed.options.action ==
-      pipetune::CommandLineAction::restoreDefault) {
-    const auto restored =
-        pipetune::restorePipeWireDefaultSink(parsed.options.sinkName);
-    if (!restored.success) {
-      std::cerr << "pipetune: " << restored.error << '\n';
-      return 1;
-    }
-    std::cout << "Restored PipeWire default sink: "
-              << restored.selectedTarget << '\n';
-    return 0;
   }
   if (parsed.options.action == pipetune::CommandLineAction::loadPreset ||
       parsed.options.action == pipetune::CommandLineAction::status) {

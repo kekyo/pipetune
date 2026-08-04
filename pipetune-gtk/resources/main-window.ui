@@ -307,105 +307,6 @@
                         <property name="hscrollbar-policy">never</property>
                         <property name="vscrollbar-policy">automatic</property>
                         <child>
-                          <object class="GtkListBox" id="outputSettingsList">
-                            <property name="selection-mode">none</property>
-                            <property name="margin-start">22</property>
-                            <property name="margin-end">22</property>
-                            <property name="margin-bottom">22</property>
-                            <style>
-                              <class name="settings-list"/>
-                            </style>
-                            <child>
-                              <object class="GtkListBoxRow">
-                                <property name="selectable">False</property>
-                                <property name="activatable">False</property>
-                                <child>
-                                  <object class="GtkLabel">
-                                    <property name="label" translatable="yes">Output Routing</property>
-                                    <property name="xalign">0</property>
-                                    <style>
-                                      <class name="section-heading"/>
-                                    </style>
-                                  </object>
-                                </child>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkListBoxRow">
-                                <property name="selectable">False</property>
-                                <property name="activatable">False</property>
-                                <child>
-                                  <object class="GtkBox">
-                                    <property name="orientation">vertical</property>
-                                    <property name="spacing">8</property>
-                                    <property name="margin">14</property>
-                                    <child>
-                                      <object class="GtkLabel">
-                                        <property name="label" translatable="yes">Preferred physical output</property>
-                                        <property name="xalign">0</property>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkMenuButton" id="outputMenuButton">
-                                        <property name="hexpand">True</property>
-                                        <property name="popover">outputPopover</property>
-                                        <child>
-                                          <object class="GtkBox">
-                                            <property name="orientation">horizontal</property>
-                                            <property name="spacing">8</property>
-                                            <child>
-                                              <object class="GtkLabel" id="outputButtonLabel">
-                                                <property name="label" translatable="yes">System default</property>
-                                                <property name="xalign">0</property>
-                                                <property name="ellipsize">end</property>
-                                                <property name="hexpand">True</property>
-                                              </object>
-                                              <packing>
-                                                <property name="expand">True</property>
-                                                <property name="fill">True</property>
-                                              </packing>
-                                            </child>
-                                            <child>
-                                              <object class="GtkImage">
-                                                <property name="icon-name">pan-down-symbolic</property>
-                                              </object>
-                                              <packing>
-                                                <property name="expand">False</property>
-                                                <property name="fill">False</property>
-                                              </packing>
-                                            </child>
-                                          </object>
-                                        </child>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkLabel">
-                                        <property name="label" translatable="yes">Long PipeWire node names are available in the device tooltip.</property>
-                                        <property name="xalign">0</property>
-                                        <property name="max-width-chars">30</property>
-                                        <property name="wrap">True</property>
-                                        <style>
-                                          <class name="dim-label"/>
-                                        </style>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                      </object>
-                      <packing>
-                        <property name="name">output</property>
-                        <property name="title" translatable="yes">Output</property>
-                      </packing>
-                    </child>
-                    <child>
-                      <object class="GtkScrolledWindow">
-                        <property name="hscrollbar-policy">never</property>
-                        <property name="vscrollbar-policy">automatic</property>
-                        <child>
                           <object class="GtkListBox" id="rateSettingsList">
                             <property name="selection-mode">none</property>
                             <property name="margin-start">22</property>
@@ -660,7 +561,7 @@
                                         </child>
                                         <child>
                                           <object class="GtkLabel">
-                                            <property name="label" translatable="yes">Choose bypass, system default output, Max + Suggest, Scalar, and Conservative.</property>
+                                            <property name="label" translatable="yes">Choose bypass, Max + Suggest, and Scalar with Auto SIMD.</property>
                                             <property name="xalign">0</property>
                                             <property name="max-width-chars">30</property>
                                             <property name="wrap">True</property>
@@ -912,28 +813,6 @@
             <property name="expand">False</property>
             <property name="fill">True</property>
           </packing>
-        </child>
-      </object>
-    </child>
-  </object>
-  <object class="GtkPopover" id="outputPopover">
-    <property name="position">bottom</property>
-    <child>
-      <object class="GtkScrolledWindow">
-        <property name="visible">True</property>
-        <property name="width-request">460</property>
-        <property name="min-content-height">160</property>
-        <property name="max-content-height">360</property>
-        <property name="propagate-natural-height">True</property>
-        <property name="hscrollbar-policy">never</property>
-        <property name="vscrollbar-policy">automatic</property>
-        <child>
-          <object class="GtkListBox" id="outputList">
-            <property name="selection-mode">none</property>
-            <style>
-              <class name="output-list"/>
-            </style>
-          </object>
         </child>
       </object>
     </child>

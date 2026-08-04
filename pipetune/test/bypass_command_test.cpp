@@ -36,27 +36,13 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
                              : std::string("/tmp/active.effetune_preset"),
           .configurationError = {},
           .activePluginCount = state.bypassed ? 0u : 1u,
-          .preferredTarget = {},
-          .selectedTarget = "alsa_output.test",
-          .outputSelectionReason =
-              pipetune::ControlOutputSelectionReason::systemDefault,
-          .availableOutputs =
-              {{.name = "alsa_output.test",
-                .description = "Test Output",
-                .systemDefault = true,
-                .preferred = false,
-                .selected = true}},
-          .defaultSinkActive = true,
+          .policyBackend = "wireplumber-0.5",
+          .filterOutputs = {},
           .overrunFrames = 0,
           .underrunFrames = 0,
           .processingErrors = 0,
           .dspProcessedFrames = 0,
-          .dspProcessingNanoseconds = 0,
-          .inputSampleFormat = {},
-          .inputSampleRate = 0,
-          .inputChannelCount = 0,
-          .inputFramesReceived = 0,
-          .inputLastReceivedUnixMilliseconds = 0};
+          .dspProcessingNanoseconds = 0};
 }
 
 static std::string provideStatus(void *userData) {

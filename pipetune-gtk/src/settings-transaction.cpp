@@ -8,8 +8,6 @@ static bool configMatches(const pipetune::StartupConfig &left,
                           const pipetune::StartupConfig &right) {
   return left.presetFound == right.presetFound &&
          left.presetPath == right.presetPath &&
-         left.preferredOutputFound == right.preferredOutputFound &&
-         left.preferredOutput == right.preferredOutput &&
          left.ratePolicy == right.ratePolicy &&
          left.dspBackend == right.dspBackend &&
          left.dspSimdVariant == right.dspSimdVariant;
@@ -22,9 +20,6 @@ static bool operationMatches(
   switch (operation) {
   case SettingsOperation::none:
     return true;
-  case SettingsOperation::output:
-    return left.preferredOutputFound == right.preferredOutputFound &&
-           left.preferredOutput == right.preferredOutput;
   case SettingsOperation::rate:
     return left.ratePolicy == right.ratePolicy;
   case SettingsOperation::dspBackend:
@@ -39,8 +34,6 @@ static bool operationMatches(
 
 static std::string confirmationDiagnostic(SettingsOperation operation) {
   switch (operation) {
-  case SettingsOperation::output:
-    return "Daemon did not confirm the requested output";
   case SettingsOperation::rate:
     return "Daemon did not confirm the requested sample-rate policy";
   case SettingsOperation::dspBackend:
@@ -90,11 +83,6 @@ nextSettingsOperation(const SettingsTransaction &transaction) {
       transaction.inFlight != SettingsOperation::none ||
       transaction.conflict || transaction.liveChangeFailed) {
     return SettingsOperation::none;
-  }
-  if (!operationMatches(SettingsOperation::output,
-                        transaction.confirmedLive,
-                        transaction.desiredLive)) {
-    return SettingsOperation::output;
   }
   if (!operationMatches(SettingsOperation::rate,
                         transaction.confirmedLive,
@@ -248,8 +236,6 @@ pipetune::StartupConfig startupConfigFromRuntime(
       .presetPath =
           presetFound ? std::filesystem::path(status.activePreset)
                       : std::filesystem::path{},
-      .preferredOutputFound = !status.preferredTarget.empty(),
-      .preferredOutput = status.preferredTarget,
       .ratePolicy = status.configuredRatePolicy,
       .dspBackend = status.configuredDspBackend,
       .dspSimdVariant = status.configuredDspSimdVariant,

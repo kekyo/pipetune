@@ -2,6 +2,7 @@
 
 #include "pipetune/startup_config.h"
 
+#include <algorithm>
 #include <string>
 
 namespace pipetune_gtk {
@@ -18,14 +19,20 @@ static std::string persistRatePolicy(
 static bool confirmsRatePolicy(
     const pipetune::ControlRuntimeStatus &status,
     const pipetune::SampleRatePolicy &policy) {
-  if (status.configuredRatePolicy != policy ||
-      status.rateTransitioning || !status.rateError.empty() ||
-      status.dspSampleRate == 0 ||
-      status.selectedOutputSampleRate == 0) {
-    return false;
-  }
-  return policy.mode != pipetune::SampleRateMode::fixed ||
-         status.dspSampleRate == policy.fixedRate;
+  return status.configuredRatePolicy == policy &&
+         std::all_of(
+             status.filterOutputs.begin(), status.filterOutputs.end(),
+             [&policy](const auto &output) {
+               if (output.state ==
+                       pipetune::ControlFilterState::bypassed ||
+                   output.state == pipetune::ControlFilterState::error) {
+                 return true;
+               }
+               return output.dspSampleRate != 0 &&
+                      output.outputSampleRate != 0 &&
+                      (policy.mode != pipetune::SampleRateMode::fixed ||
+                       output.dspSampleRate == policy.fixedRate);
+             });
 }
 
 RateOperationCompletion persistRateOperationForNextStart(

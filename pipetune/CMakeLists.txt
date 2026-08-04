@@ -200,17 +200,11 @@ add_library(
   src/bypass_command.cpp
   src/command_line.cpp
   src/config_reset_command.cpp
-  src/default_sink_restore.cpp
   src/dsp_backend_command.cpp
   src/dsp_backend_runtime.cpp
   src/dsp_pipeline_slot.cpp
-  src/input_telemetry.cpp
-  src/output_command.cpp
-  src/output_device_tracker.cpp
   src/pipewire_buffer_io.cpp
   src/pipewire_rate_parser.cpp
-  src/pipewire_volume_state.cpp
-  src/pipewire_pipeline.cpp
   src/process_runner.cpp
   src/rate_command.cpp
   src/transparent_filter_service.cpp
@@ -530,41 +524,6 @@ if(BUILD_TESTING)
     COMMAND pipetune_audio_bridge_tests)
 
   add_executable(
-    pipetune_input_telemetry_tests
-    test/input_telemetry_test.cpp)
-  target_include_directories(pipetune_input_telemetry_tests PRIVATE src)
-  target_link_libraries(
-    pipetune_input_telemetry_tests PRIVATE pipetune_pipewire)
-  if(MSVC)
-    target_compile_options(pipetune_input_telemetry_tests PRIVATE /W4 /WX)
-  else()
-    target_compile_options(
-      pipetune_input_telemetry_tests PRIVATE
-      -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(
-    NAME pipetune_input_telemetry_tests
-    COMMAND pipetune_input_telemetry_tests)
-
-  add_executable(
-    pipetune_pipewire_pipeline_tests
-    test/pipewire_pipeline_test.cpp)
-  target_include_directories(pipetune_pipewire_pipeline_tests PRIVATE src)
-  target_link_libraries(
-    pipetune_pipewire_pipeline_tests PRIVATE pipetune_pipewire)
-  if(MSVC)
-    target_compile_options(pipetune_pipewire_pipeline_tests PRIVATE /W4 /WX)
-  else()
-    target_compile_options(
-      pipetune_pipewire_pipeline_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(
-    NAME pipetune_pipewire_pipeline_tests
-    COMMAND pipetune_pipewire_pipeline_tests)
-  set_tests_properties(
-    pipetune_pipewire_pipeline_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 20)
-
-  add_executable(
     pipetune_transparent_filter_output_tests
     test/transparent_filter_output_test.cpp)
   target_include_directories(
@@ -621,28 +580,6 @@ if(BUILD_TESTING)
     PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
 
   add_executable(
-    pipetune_pipewire_volume_routing_tests
-    test/pipewire_volume_routing_test.cpp)
-  target_include_directories(
-    pipetune_pipewire_volume_routing_tests PRIVATE src)
-  target_link_libraries(
-    pipetune_pipewire_volume_routing_tests PRIVATE pipetune_pipewire)
-  if(MSVC)
-    target_compile_options(
-      pipetune_pipewire_volume_routing_tests PRIVATE /W4 /WX)
-  else()
-    target_compile_options(
-      pipetune_pipewire_volume_routing_tests PRIVATE
-      -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(
-    NAME pipetune_pipewire_volume_routing_tests
-    COMMAND pipetune_pipewire_volume_routing_tests)
-  set_tests_properties(
-    pipetune_pipewire_volume_routing_tests
-    PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
-
-  add_executable(
     pipetune_command_line_tests
     test/command_line_test.cpp)
   target_include_directories(pipetune_command_line_tests PRIVATE src)
@@ -696,24 +633,6 @@ if(BUILD_TESTING)
     COMMAND pipetune_bypass_command_tests)
 
   add_executable(
-    pipetune_output_command_tests
-    test/output_command_test.cpp)
-  target_include_directories(pipetune_output_command_tests PRIVATE src)
-  target_link_libraries(
-    pipetune_output_command_tests
-    PRIVATE pipetune_pipewire Threads::Threads)
-  if(MSVC)
-    target_compile_options(pipetune_output_command_tests PRIVATE /W4 /WX)
-  else()
-    target_compile_options(
-      pipetune_output_command_tests PRIVATE
-      -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(
-    NAME pipetune_output_command_tests
-    COMMAND pipetune_output_command_tests)
-
-  add_executable(
     pipetune_process_runner_tests
     test/process_runner_test.cpp)
   target_include_directories(pipetune_process_runner_tests PRIVATE src)
@@ -762,23 +681,6 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_user_setup_tests
     COMMAND pipetune_user_setup_tests)
-
-  add_executable(
-    pipetune_output_device_tracker_tests
-    test/output_device_tracker_test.cpp)
-  target_include_directories(pipetune_output_device_tracker_tests PRIVATE src)
-  target_link_libraries(
-    pipetune_output_device_tracker_tests PRIVATE pipetune_pipewire)
-  if(MSVC)
-    target_compile_options(pipetune_output_device_tracker_tests PRIVATE /W4 /WX)
-  else()
-    target_compile_options(
-      pipetune_output_device_tracker_tests PRIVATE
-      -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(
-    NAME pipetune_output_device_tracker_tests
-    COMMAND pipetune_output_device_tracker_tests)
 
   add_executable(
     pipetune_rate_command_tests
@@ -836,26 +738,6 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_pipewire_rate_parser_tests
     COMMAND pipetune_pipewire_rate_parser_tests)
-
-  add_executable(
-    pipetune_pipewire_volume_state_tests
-    test/pipewire_volume_state_test.cpp)
-  target_include_directories(
-    pipetune_pipewire_volume_state_tests PRIVATE src)
-  target_link_libraries(
-    pipetune_pipewire_volume_state_tests
-    PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE)
-  if(MSVC)
-    target_compile_options(
-      pipetune_pipewire_volume_state_tests PRIVATE /W4 /WX)
-  else()
-    target_compile_options(
-      pipetune_pipewire_volume_state_tests PRIVATE
-      -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(
-    NAME pipetune_pipewire_volume_state_tests
-    COMMAND pipetune_pipewire_volume_state_tests)
 
   add_executable(
     pipetune_pipewire_buffer_io_tests
@@ -966,26 +848,6 @@ if(BUILD_TESTING)
     COMMAND pipetune_control_socket_tests)
 
   add_executable(
-    pipetune_default_sink_restore_tests
-    test/default_sink_restore_test.cpp)
-  target_include_directories(pipetune_default_sink_restore_tests PRIVATE src)
-  target_link_libraries(
-    pipetune_default_sink_restore_tests PRIVATE pipetune_pipewire)
-  if(MSVC)
-    target_compile_options(pipetune_default_sink_restore_tests PRIVATE /W4 /WX)
-  else()
-    target_compile_options(
-      pipetune_default_sink_restore_tests PRIVATE
-      -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(
-    NAME pipetune_default_sink_restore_tests
-    COMMAND pipetune_default_sink_restore_tests)
-  set_tests_properties(
-    pipetune_default_sink_restore_tests
-    PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 10)
-
-  add_executable(
     pipetune_param_packer_runner
     test/param_packer_runner.cpp)
   target_include_directories(pipetune_param_packer_runner PRIVATE src)
@@ -1036,6 +898,7 @@ if(BUILD_TESTING)
       ${CMAKE_INSTALL_BINDIR}
       ${PIPETUNE_SYSTEMD_USER_UNIT_DIR}
       ${CMAKE_INSTALL_LIBDIR}
+      ${CMAKE_INSTALL_DATADIR}
       ${PIPETUNE_DOCUMENTATION_DIR}
       ${CMAKE_CURRENT_BINARY_DIR}/pipetune.test.service)
 

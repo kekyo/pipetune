@@ -1,4 +1,4 @@
-#include "pipetune/pipewire_pipeline.h"
+#include "pipetune/transparent_filter_service.h"
 
 #include "audio_bridge.h"
 #include "dsp_backend_runtime.h"
@@ -1350,28 +1350,12 @@ static ControlRuntimeStatus buildFilterControlStatus(
       .activePluginCount = runtime.recipe->activePluginCount(),
       .policyBackend = runtime.policyBackend,
       .filterOutputs = std::move(filterOutputs),
-      .preferredTarget = {},
-      .selectedTarget = {},
-      .outputSelectionReason = ControlOutputSelectionReason::unavailable,
-      .availableOutputs = {},
-      .defaultSinkActive = false,
       .overrunFrames = overrunFrames,
       .underrunFrames = underrunFrames,
       .processingErrors = processingErrors,
       .dspProcessedFrames = dspProcessedFrames,
       .dspProcessingNanoseconds = dspProcessingNanoseconds,
-      .inputSampleFormat = {},
-      .inputSampleRate = 0,
-      .inputChannelCount = 0,
-      .inputFramesReceived = 0,
-      .inputLastReceivedUnixMilliseconds = 0,
       .configuredRatePolicy = runtime.options.ratePolicy,
-      .dspSampleRate = 0,
-      .selectedOutputSampleRate = 0,
-      .activeOutputSampleRate = 0,
-      .rateTransitioning = false,
-      .rateFallback = false,
-      .rateError = {},
       .configuredDspBackend = runtime.dspBackendState.configuredBackend,
       .configuredDspSimdVariant =
           runtime.dspBackendState.configuredSimdVariant,
@@ -1889,10 +1873,6 @@ static FilterControlOperationResult applyFilterControlRequest(
   case ControlCommand::setDspBackend:
     return changeFilterDspBackend(runtime, request.dspBackend,
                                   request.dspSimdVariant);
-  case ControlCommand::setOutput:
-  case ControlCommand::clearOutput:
-    return {.warnings = {},
-            .error = "physical output routing is controlled by PipeWire"};
   case ControlCommand::status:
   case ControlCommand::subscribe:
     return {.warnings = {}, .error = {}};

@@ -3,9 +3,11 @@
 
 #include "pipetune/sample_rate.h"
 
+#include <cstdint>
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <utility>
 
 static bool check(bool condition, std::string_view message) {
   if (!condition) {
@@ -14,44 +16,67 @@ static bool check(bool condition, std::string_view message) {
   return condition;
 }
 
+static pipetune::ControlFilterOutputStatus output(
+    std::string name, std::string description,
+    pipetune::SampleRateCapabilities capabilities,
+    std::uint32_t dspRate, std::uint32_t outputRate,
+    std::uint32_t activeRate, bool fallback) {
+  return {
+      .targetNodeName = std::move(name),
+      .targetDescription = std::move(description),
+      .filterNodeName = "pipetune.filter.test",
+      .state = pipetune::ControlFilterState::active,
+      .error = {},
+      .channelCount = 2,
+      .sampleRateCapabilities = std::move(capabilities),
+      .dspSampleRate = dspRate,
+      .outputSampleRate = outputRate,
+      .activeOutputSampleRate = activeRate,
+      .rateFallback = fallback,
+      .latencyFrames = 64,
+      .overrunFrames = 0,
+      .underrunFrames = 0,
+      .processingErrors = 0,
+      .dspProcessedFrames = 0,
+      .dspProcessingNanoseconds = 0,
+  };
+}
+
 static pipetune_gtk::ApplicationState connectedState() {
   auto state = pipetune_gtk::initialApplicationState();
   state.connection = pipetune_gtk::ControlConnectionState::connected;
   state.hasRuntimeStatus = true;
-  state.runtime.selectedTarget = "alsa_output.usb";
-  state.runtime.availableOutputs = {
-      {.name = "alsa_output.usb",
-       .description = "USB Audio",
-       .systemDefault = true,
-       .preferred = false,
-       .selected = true,
-       .sampleRateCapabilities =
-           {.known = true,
-            .constraints =
-                {{.kind = pipetune::SampleRateConstraintKind::discrete,
-                  .minimum = 44100,
-                  .maximum = 44100,
-                  .step = 0},
-                 {.kind = pipetune::SampleRateConstraintKind::discrete,
-                  .minimum = 48000,
-                  .maximum = 48000,
-                  .step = 0},
-                 {.kind = pipetune::SampleRateConstraintKind::discrete,
-                  .minimum = 96000,
-                  .maximum = 96000,
-                  .step = 0}}}}};
+  const auto usbCapabilities = pipetune::SampleRateCapabilities{
+      .known = true,
+      .constraints =
+          {{.kind = pipetune::SampleRateConstraintKind::range,
+            .minimum = 44100,
+            .maximum = 96000,
+            .step = 0}}};
+  const auto hdmiCapabilities = pipetune::SampleRateCapabilities{
+      .known = true,
+      .constraints =
+          {{.kind = pipetune::SampleRateConstraintKind::discrete,
+            .minimum = 48000,
+            .maximum = 48000,
+            .step = 0},
+           {.kind = pipetune::SampleRateConstraintKind::discrete,
+            .minimum = 96000,
+            .maximum = 96000,
+            .step = 0}}};
+  state.runtime.filterOutputs =
+      {output("alsa_output.usb", "USB Audio", usbCapabilities, 192000,
+              96000, 48000, true),
+       output("alsa_output.hdmi", "HDMI", hdmiCapabilities, 192000,
+              96000, 96000, true)};
   state.runtime.configuredRatePolicy = {
       .mode = pipetune::SampleRateMode::fixed,
       .fixedRate = 192000,
       .enforcement = pipetune::SampleRateEnforcement::suggest};
-  state.runtime.dspSampleRate = 192000;
-  state.runtime.selectedOutputSampleRate = 96000;
-  state.runtime.activeOutputSampleRate = 48000;
-  state.runtime.rateFallback = true;
   return state;
 }
 
-static bool testKnownCapabilitiesAndEffectiveRates() {
+static bool testAggregateCapabilitiesAndEffectiveRates() {
   const auto state = connectedState();
   const auto presentation =
       pipetune_gtk::makeRateSelectionPresentation(
@@ -59,72 +84,78 @@ static bool testKnownCapabilitiesAndEffectiveRates() {
   return check(presentation.choices.size() == 6,
                "rate choices must contain Max plus five fixed rates") &&
          check(presentation.choices[0].label ==
-                   "Max — highest supported rate",
+                   "Max — highest supported rate per output",
                "Max rate choice label differs") &&
-         check(presentation.choices[1].label ==
-                   "44.1 kHz — supported",
-               "supported fixed-rate label differs") &&
-         check(presentation.choices[3].label ==
-                   "96 kHz — supported",
-               "supported high-rate label differs") &&
-         check(presentation.choices[4].label ==
-                   "192 kHz — unsupported; PipeWire will resample",
-               "unsupported fixed-rate label differs") &&
-         check(presentation.choices[5].label ==
-                   "384 kHz — unsupported; PipeWire will resample",
-               "unsupported maximum fixed-rate label differs") &&
-         check(presentation.activeRateIndex == 4,
-               "configured fixed-rate row differs") &&
-         check(presentation.activeEnforcementIndex == 0,
-               "suggest enforcement row differs") &&
-         check(presentation.effectiveRates ==
-                   "Input/DSP 192 kHz  •  Output 96 kHz  •  "
-                   "Physical 48 kHz  •  PipeWire resampling",
-               "effective rate summary differs") &&
+         check(presentation.choices[1].support ==
+                       pipetune_gtk::DeviceRateSupport::unsupported &&
+                   presentation.choices[1].label ==
+                       "44.1 kHz — an output requires PipeWire resampling",
+               "partial fixed-rate support must be explicit") &&
+         check(presentation.choices[2].support ==
+                       pipetune_gtk::DeviceRateSupport::supported &&
+                   presentation.choices[2].label ==
+                       "48 kHz — supported by all outputs",
+               "all-output support must be explicit") &&
+         check(presentation.activeRateIndex == 4 &&
+                   presentation.activeEnforcementIndex == 0,
+               "configured fixed-rate selection differs") &&
+         check(presentation.effectiveRates.find(
+                   "USB Audio: DSP 192 kHz → Output 96 kHz → Physical 48 kHz") !=
+                   std::string::npos &&
+                   presentation.effectiveRates.find(
+                       "HDMI: DSP 192 kHz → Output 96 kHz → Physical 96 kHz") !=
+                       std::string::npos &&
+                   presentation.effectiveRates.find(
+                       "PipeWire resampling") != std::string::npos,
+               "per-output effective rates differ") &&
          check(presentation.sensitive,
                "healthy connected rate controls must be enabled");
 }
 
-static bool testUnknownCapabilitiesAndTransition() {
+static bool testUnknownCapabilitiesAndPendingState() {
   auto state = connectedState();
-  state.runtime.availableOutputs[0].sampleRateCapabilities = {};
-  state.runtime.rateTransitioning = true;
+  state.runtime.filterOutputs[1].sampleRateCapabilities = {};
   const auto edited = pipetune::SampleRatePolicy{
       .mode = pipetune::SampleRateMode::fixed,
       .fixedRate = 384000,
       .enforcement = pipetune::SampleRateEnforcement::force};
-  const auto presentation =
+  auto presentation =
       pipetune_gtk::makeRateSelectionPresentation(state, edited);
-  return check(presentation.choices[5].label ==
-                   "384 kHz — support unknown",
-               "unknown device support must be explicit") &&
-         check(presentation.activeRateIndex == 5 &&
-                   presentation.activeEnforcementIndex == 1,
-               "edited force policy selection differs") &&
-         check(!presentation.sensitive,
-               "automatic rate transition must disable rate controls") &&
-         check(presentation.effectiveRates.starts_with("Switching — "),
-               "transitioning rate summary must be explicit");
+  if (!check(presentation.choices[2].support ==
+                     pipetune_gtk::DeviceRateSupport::unknown &&
+                 presentation.choices[2].label ==
+                     "48 kHz — support unknown",
+             "unknown output support must be explicit") ||
+      !check(presentation.activeRateIndex == 5 &&
+                 presentation.activeEnforcementIndex == 1,
+             "edited force policy selection differs")) {
+    return false;
+  }
+  state.operationPending = true;
+  presentation =
+      pipetune_gtk::makeRateSelectionPresentation(state, edited);
+  return check(!presentation.sensitive,
+               "a pending operation must disable rate controls");
 }
 
 static bool testDisconnectedPresentation() {
   auto state = connectedState();
   pipetune_gtk::markControlDisconnected(state, "daemon stopped");
   state.hasRuntimeStatus = false;
-  const auto policy = pipetune::defaultSampleRatePolicy();
   const auto presentation =
-      pipetune_gtk::makeRateSelectionPresentation(state, policy);
+      pipetune_gtk::makeRateSelectionPresentation(
+          state, pipetune::defaultSampleRatePolicy());
   return check(presentation.activeRateIndex == 0,
                "offline default rate choice must be Max") &&
          check(presentation.effectiveRates == "Rates unavailable",
                "offline effective rate summary differs") &&
          check(!presentation.sensitive,
-               "disconnected live rate controls must be disabled");
+               "disconnected rate controls must be disabled");
 }
 
 int main() {
-  return testKnownCapabilitiesAndEffectiveRates() &&
-                 testUnknownCapabilitiesAndTransition() &&
+  return testAggregateCapabilitiesAndEffectiveRates() &&
+                 testUnknownCapabilitiesAndPendingState() &&
                  testDisconnectedPresentation()
              ? 0
              : 1;

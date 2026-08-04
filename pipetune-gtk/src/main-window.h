@@ -44,14 +44,6 @@ struct MainWindowUi {
   GtkWidget *presetCombo = nullptr;
   /** EffeTune preset file chooser. */
   GtkWidget *presetChooser = nullptr;
-  /** Opens the custom output device list. */
-  GtkWidget *outputMenuButton = nullptr;
-  /** Concise selected-output text. */
-  GtkWidget *outputButtonLabel = nullptr;
-  /** Output selection popover. */
-  GtkWidget *outputPopover = nullptr;
-  /** Dynamic output device rows. */
-  GtkWidget *outputList = nullptr;
   /** Max or fixed DSP sample-rate drop-down. */
   GtkWidget *rateCombo = nullptr;
   /** PipeWire graph-rate suggestion or force drop-down. */

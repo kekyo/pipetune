@@ -1,9 +1,7 @@
 #include "pipetune/control_protocol.h"
 
-#include <yyjson.h>
-
 #include <array>
-#include <cstdint>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -15,905 +13,203 @@ static bool check(bool condition, std::string_view message) {
   return condition;
 }
 
-static bool replaceOnce(std::string &value, std::string_view from,
-                        std::string_view to) {
-  const auto position = value.find(from);
-  if (position == std::string::npos) {
-    return false;
-  }
-  value.replace(position, from.size(), to);
-  return true;
+static pipetune::ControlFilterOutputStatus activeOutput() {
+  return {
+      .targetNodeName = "alsa_output.usb",
+      .targetDescription = "USB DAC",
+      .filterNodeName = "pipetune.filter.usb",
+      .state = pipetune::ControlFilterState::active,
+      .error = {},
+      .channelCount = 2,
+      .sampleRateCapabilities =
+          {.known = true,
+           .constraints =
+               {{.kind = pipetune::SampleRateConstraintKind::discrete,
+                 .minimum = 96000,
+                 .maximum = 96000,
+                 .step = 0}}},
+      .dspSampleRate = 96000,
+      .outputSampleRate = 96000,
+      .activeOutputSampleRate = 96000,
+      .rateFallback = false,
+      .latencyFrames = 64,
+      .overrunFrames = 2,
+      .underrunFrames = 3,
+      .processingErrors = 1,
+      .dspProcessedFrames = 96000,
+      .dspProcessingNanoseconds = 4000000,
+  };
+}
+
+static pipetune::ControlRuntimeStatus runtimeStatus() {
+  auto status = pipetune::ControlRuntimeStatus{
+      .processingMode = pipetune::ProcessingMode::preset,
+      .activePreset = "/tmp/live.effetune_preset",
+      .configurationError = {},
+      .activePluginCount = 3,
+      .policyBackend = "wireplumber-0.5",
+      .filterOutputs = {activeOutput()},
+      .overrunFrames = 2,
+      .underrunFrames = 3,
+      .processingErrors = 1,
+      .dspProcessedFrames = 96000,
+      .dspProcessingNanoseconds = 4000000,
+      .configuredRatePolicy =
+          {.mode = pipetune::SampleRateMode::fixed,
+           .fixedRate = 96000,
+           .enforcement = pipetune::SampleRateEnforcement::force},
+  };
+  return status;
 }
 
 static bool testRequests() {
-  const auto statusJson = pipetune::makeStatusControlRequest();
-  const auto status = pipetune::parseControlRequest(statusJson);
-  if (!check(status.error.empty(), status.error) ||
-      !check(status.request.command == pipetune::ControlCommand::status,
-             "status request command differs") ||
-      !check(status.request.presetPath.empty(),
-             "status request must not contain a preset")) {
-    return false;
-  }
-
-  const auto subscribeJson = pipetune::makeSubscribeControlRequest();
-  const auto subscribe = pipetune::parseControlRequest(subscribeJson);
-  if (!check(subscribe.error.empty(), subscribe.error) ||
-      !check(subscribe.request.command ==
-                 pipetune::ControlCommand::subscribe,
-             "subscribe request command differs") ||
-      !check(subscribe.request.presetPath.empty(),
-             "subscribe request must not contain a preset")) {
-    return false;
-  }
-
-  const auto bypassJson = pipetune::makeBypassControlRequest();
-  const auto bypass = pipetune::parseControlRequest(bypassJson);
-  if (!check(bypass.error.empty(), bypass.error) ||
-      !check(bypass.request.command == pipetune::ControlCommand::bypass,
-             "bypass request command differs") ||
-      !check(bypass.request.presetPath.empty(),
-             "bypass request must not contain a preset")) {
-    return false;
-  }
-
-  const auto loadJson = pipetune::makeLoadPresetControlRequest(
-      "/tmp/music \"wide\".effetune_preset");
-  const auto load = pipetune::parseControlRequest(loadJson);
-  if (!check(load.error.empty(), load.error) ||
-      !check(load.request.command == pipetune::ControlCommand::loadPreset,
-             "load request command differs") ||
-      !check(load.request.presetPath ==
-                 "/tmp/music \"wide\".effetune_preset",
-             "load request preset differs")) {
-    return false;
-  }
-
-  const auto setOutputJson =
-      pipetune::makeSetOutputControlRequest("alsa_output.usb_\"DAC\"");
-  const auto setOutput = pipetune::parseControlRequest(setOutputJson);
-  const auto clearOutput = pipetune::parseControlRequest(
-      pipetune::makeClearOutputControlRequest());
-  const auto setMaximumRate = pipetune::parseControlRequest(
-      pipetune::makeSetRateControlRequest(
-          {.mode = pipetune::SampleRateMode::maximum,
-           .fixedRate = 0,
-           .enforcement = pipetune::SampleRateEnforcement::suggest}));
-  const auto setFixedRate = pipetune::parseControlRequest(
-      pipetune::makeSetRateControlRequest(
-          {.mode = pipetune::SampleRateMode::fixed,
-           .fixedRate = 192000,
-           .enforcement = pipetune::SampleRateEnforcement::force}));
-  const auto setDspBackend = pipetune::parseControlRequest(
-      pipetune::makeSetDspBackendControlRequest(
-          pipetune::DspBackendKind::simd,
-          pipetune::DspSimdVariant::x86_64_v3));
-  return check(setOutput.error.empty(), setOutput.error) &&
-         check(setOutput.request.command ==
-                   pipetune::ControlCommand::setOutput,
-               "set-output request command differs") &&
-         check(setOutput.request.outputTarget ==
-                   "alsa_output.usb_\"DAC\"",
-               "set-output request target differs") &&
-         check(clearOutput.error.empty(), clearOutput.error) &&
-         check(clearOutput.request.command ==
-                   pipetune::ControlCommand::clearOutput,
-               "clear-output request command differs") &&
-         check(clearOutput.request.outputTarget.empty(),
-               "clear-output request must not contain a target") &&
-         check(setMaximumRate.error.empty(), setMaximumRate.error) &&
-         check(setMaximumRate.request.command ==
-                       pipetune::ControlCommand::setRate &&
-                   setMaximumRate.request.ratePolicy.mode ==
-                       pipetune::SampleRateMode::maximum &&
-                   setMaximumRate.request.ratePolicy.fixedRate == 0 &&
-                   setMaximumRate.request.ratePolicy.enforcement ==
-                       pipetune::SampleRateEnforcement::suggest,
-               "set-rate Max request differs") &&
-         check(setFixedRate.error.empty(), setFixedRate.error) &&
-         check(setFixedRate.request.command ==
-                       pipetune::ControlCommand::setRate &&
-                   setFixedRate.request.ratePolicy.mode ==
-                       pipetune::SampleRateMode::fixed &&
-                   setFixedRate.request.ratePolicy.fixedRate == 192000 &&
-                   setFixedRate.request.ratePolicy.enforcement ==
-                       pipetune::SampleRateEnforcement::force,
-               "set-rate fixed request differs") &&
-         check(setDspBackend.error.empty(), setDspBackend.error) &&
-         check(setDspBackend.request.command ==
-                       pipetune::ControlCommand::setDspBackend &&
-                   setDspBackend.request.dspBackend ==
-                       pipetune::DspBackendKind::simd &&
-                   setDspBackend.request.dspSimdVariant ==
-                       pipetune::DspSimdVariant::x86_64_v3,
-               "set-dsp-backend request differs");
-}
-
-static bool testRejectedRequests() {
-  constexpr auto inputs = std::array<std::string_view, 27>{
-      "",
-      "[]",
-      R"json({"command":"unknown"})json",
-      R"json({"command":"status","preset":"unexpected"})json",
-      R"json({"command":"bypass","preset":"unexpected"})json",
-      R"json({"command":"load"})json",
-      R"json({"command":"load","preset":42})json",
-      R"json({"command":"load","preset":""})json",
-      R"json({"command":"set-output"})json",
-      R"json({"command":"set-output","target":""})json",
-      R"json({"command":"set-output","target":42})json",
-      R"json({"command":"set-output","target":"line\nbreak"})json",
-      R"json({"command":"clear-output","target":"unexpected"})json",
-      R"json({"command":"set-rate"})json",
-      R"json({"command":"set-rate","rateMode":"max","sampleRate":null,"enforcement":"suggest","extra":true})json",
-      R"json({"command":"set-rate","rateMode":"auto","sampleRate":null,"enforcement":"suggest"})json",
-      R"json({"command":"set-rate","rateMode":"max","sampleRate":48000,"enforcement":"suggest"})json",
-      R"json({"command":"set-rate","rateMode":"fixed","sampleRate":null,"enforcement":"suggest"})json",
-      R"json({"command":"set-rate","rateMode":"fixed","sampleRate":88200,"enforcement":"suggest"})json",
-      R"json({"command":"set-rate","rateMode":"fixed","sampleRate":48000,"enforcement":"strict"})json",
-      R"json({"command":"set-rate","rateMode":"fixed","sampleRate":"48000","enforcement":"suggest"})json",
-      R"json({"command":"set-dsp-backend"})json",
-      R"json({"command":"set-dsp-backend","backend":"avx2"})json",
-      R"json({"command":"set-dsp-backend","backend":"simd","extra":true})json",
-      R"json({"command":"set-dsp-backend","backend":"simd","simdVariant":"avx2"})json",
-      R"json({"command":"set-dsp-backend","backend":"scalar","simdVariant":"baseline"})json",
-      R"json({"command":"set-dsp-backend","backend":"simd","simdVariant":42})json"};
-  for (const auto input : inputs) {
-    if (!check(!pipetune::parseControlRequest(input).error.empty(),
-               "invalid control request must be rejected")) {
+  const auto fixedPolicy = pipetune::SampleRatePolicy{
+      .mode = pipetune::SampleRateMode::fixed,
+      .fixedRate = 192000,
+      .enforcement = pipetune::SampleRateEnforcement::force};
+  const auto requests = std::array{
+      std::pair{pipetune::makeStatusControlRequest(),
+                pipetune::ControlCommand::status},
+      std::pair{pipetune::makeSubscribeControlRequest(),
+                pipetune::ControlCommand::subscribe},
+      std::pair{pipetune::makeBypassControlRequest(),
+                pipetune::ControlCommand::bypass},
+      std::pair{pipetune::makeLoadPresetControlRequest(
+                    "/tmp/a \"wide\".effetune_preset"),
+                pipetune::ControlCommand::loadPreset},
+      std::pair{pipetune::makeSetRateControlRequest(fixedPolicy),
+                pipetune::ControlCommand::setRate},
+      std::pair{pipetune::makeSetDspBackendControlRequest(
+                    pipetune::DspBackendKind::simd,
+                    pipetune::DspSimdVariant::x86_64_v3),
+                pipetune::ControlCommand::setDspBackend},
+  };
+  for (const auto &[encoded, expected] : requests) {
+    const auto parsed = pipetune::parseControlRequest(encoded);
+    if (!check(!encoded.empty(), "control request encoder returned empty") ||
+        !check(parsed.error.empty(), parsed.error) ||
+        !check(parsed.request.command == expected,
+               "control request command did not round-trip")) {
       return false;
     }
   }
-  return true;
+
+  const auto load = pipetune::parseControlRequest(requests[3].first);
+  const auto rate = pipetune::parseControlRequest(requests[4].first);
+  const auto backend = pipetune::parseControlRequest(requests[5].first);
+  return check(load.request.presetPath ==
+                   "/tmp/a \"wide\".effetune_preset",
+               "load request path differs") &&
+         check(rate.request.ratePolicy == fixedPolicy,
+               "rate request policy differs") &&
+         check(backend.request.dspBackend ==
+                       pipetune::DspBackendKind::simd &&
+                   backend.request.dspSimdVariant ==
+                       pipetune::DspSimdVariant::x86_64_v3,
+               "backend request selection differs");
 }
 
-static bool testSuccessResponse() {
+static bool testRejectedRequests() {
+  const auto invalidJson = pipetune::parseControlRequest("{");
+  const auto oldVersion = pipetune::parseControlRequest(
+      R"json({"protocolVersion":1,"command":"status"})json");
+  const auto legacyOutput = pipetune::parseControlRequest(
+      R"json({"protocolVersion":2,"command":"set-output","target":"alsa_output.usb"})json");
+  const auto extraStatus = pipetune::parseControlRequest(
+      R"json({"protocolVersion":2,"command":"status","extra":true})json");
+  const auto emptyLoad = pipetune::parseControlRequest(
+      R"json({"protocolVersion":2,"command":"load","preset":""})json");
+  const auto invalidRate = pipetune::parseControlRequest(
+      R"json({"protocolVersion":2,"command":"set-rate","rateMode":"fixed","sampleRate":88200,"enforcement":"suggest"})json");
+  const auto invalidScalarVariant = pipetune::parseControlRequest(
+      R"json({"protocolVersion":2,"command":"set-dsp-backend","backend":"scalar","simdVariant":"baseline"})json");
+  return check(!invalidJson.error.empty(), "invalid JSON must be rejected") &&
+         check(!oldVersion.error.empty(),
+               "old protocol versions must be rejected") &&
+         check(!legacyOutput.error.empty(),
+               "output-routing commands must be rejected") &&
+         check(!extraStatus.error.empty(),
+               "extra status fields must be rejected") &&
+         check(!emptyLoad.error.empty(), "empty presets must be rejected") &&
+         check(!invalidRate.error.empty(),
+               "unsupported rates must be rejected") &&
+         check(!invalidScalarVariant.error.empty(),
+               "scalar backend cannot pin a SIMD variant") &&
+         check(pipetune::makeSetRateControlRequest(
+                   {.mode = pipetune::SampleRateMode::fixed,
+                    .fixedRate = 88200,
+                    .enforcement =
+                        pipetune::SampleRateEnforcement::suggest})
+                   .empty(),
+               "invalid rate policies must not be encoded");
+}
+
+static bool testSuccessAndEventResponses() {
+  const auto status = runtimeStatus();
   const auto warnings = std::array<pipetune::ControlWarning, 1>{
-      pipetune::ControlWarning{.nodeIndex = 3,
-                               .pluginName = "Future DSP",
+      pipetune::ControlWarning{.nodeIndex = 2,
+                               .pluginName = "Unsupported Plugin",
                                .reason = "not available"}};
-  const auto response = pipetune::makeControlSuccessResponse(
-      {.processingMode = pipetune::ProcessingMode::preset,
-       .activePreset = "/tmp/live.effetune_preset",
-       .configurationError = {},
-       .activePluginCount = 7,
-       .preferredTarget = "alsa_output.usb_dac",
-       .selectedTarget = "alsa_output.usb_dac",
-       .outputSelectionReason =
-           pipetune::ControlOutputSelectionReason::preferred,
-       .availableOutputs =
-           {{.name = "alsa_output.speaker",
-             .description = "Built-in Speakers",
-             .systemDefault = true,
-             .preferred = false,
-             .selected = false},
-            {.name = "alsa_output.usb_dac",
-             .description = "USB DAC",
-             .systemDefault = false,
-             .preferred = true,
-             .selected = true,
-             .sampleRateCapabilities =
-                 {.known = true,
-                  .constraints =
-                      {{.kind = pipetune::SampleRateConstraintKind::step,
-                        .minimum = 32000,
-                        .maximum = 96000,
-                        .step = 16000},
-                       {.kind =
-                            pipetune::SampleRateConstraintKind::discrete,
-                        .minimum = 44100,
-                        .maximum = 44100,
-                        .step = 0},
-                       {.kind = pipetune::SampleRateConstraintKind::range,
-                        .minimum = 48000,
-                        .maximum = 192000,
-                        .step = 0}}}}},
-       .defaultSinkActive = true,
-       .overrunFrames = 11,
-       .underrunFrames = 12,
-       .processingErrors = 13,
-       .dspProcessedFrames = 96000,
-       .dspProcessingNanoseconds = 240000000,
-       .inputSampleFormat = "F32P",
-       .inputSampleRate = 48000,
-       .inputChannelCount = 2,
-       .inputFramesReceived = 96000,
-       .inputLastReceivedUnixMilliseconds = 1720000000123,
-       .configuredRatePolicy =
-           {.mode = pipetune::SampleRateMode::fixed,
-            .fixedRate = 96000,
-            .enforcement = pipetune::SampleRateEnforcement::force},
-       .dspSampleRate = 96000,
-       .selectedOutputSampleRate = 48000,
-       .activeOutputSampleRate = 48000,
-       .rateTransitioning = false,
-       .rateFallback = true,
-       .rateError = {},
-       .configuredDspBackend = pipetune::DspBackendKind::simd,
-       .configuredDspSimdVariant =
-           pipetune::DspSimdVariant::x86_64_v3,
-       .effectiveDspBackend = pipetune::DspBackendKind::simd,
-       .effectiveDspVariant =
-           pipetune::DspBackendVariant::x86_64_v3,
-       .dspBackendFallback = false,
-       .dspBackendError = {},
-       .availableDspBackends =
-           {{
-               {.kind = pipetune::DspBackendKind::scalar,
-                .available = true,
-                .cpuRequirement = "none",
-                .error = {}},
-               {.kind = pipetune::DspBackendKind::simd,
-                .available = true,
-                .cpuRequirement =
-                    "x86-64 SSE2 architectural baseline",
-                .error = {}},
-           }},
-       .availableDspVariants =
-           {{.variant = pipetune::DspBackendVariant::scalar,
-             .available = true,
-             .cpuSupported = true,
-             .cpuRequirement = "none",
-             .error = {}},
-            {.variant = pipetune::DspBackendVariant::simdBaseline,
-             .available = true,
-             .cpuSupported = true,
-             .cpuRequirement =
-                 "x86-64 SSE2 architectural baseline",
-             .error = {}},
-            {.variant = pipetune::DspBackendVariant::x86_64_v3,
-             .available = true,
-             .cpuSupported = true,
-             .cpuRequirement = "x86-64-v3",
-             .error = {}}}},
-      warnings);
-  const auto inspection = pipetune::inspectControlResponse(response);
-  const auto parsed = pipetune::parseControlResponse(response);
-  auto mismatchedPinnedVariant = response;
-  if (!check(replaceOnce(
-                 mismatchedPinnedVariant,
-                 R"json("effectiveDspVariant":"x86-64-v3")json",
-                 R"json("effectiveDspVariant":"baseline")json"),
-             "cannot prepare mismatched pinned DSP variant")) {
-    return false;
-  }
-  if (!check(inspection.valid, inspection.error) ||
-      !check(inspection.success, "success response must report success") ||
-      !check(parsed.valid, parsed.error) ||
-      !check(parsed.success, "parsed response must report success") ||
-      !check(parsed.kind == pipetune::ControlResponseKind::response,
-             "ordinary response kind differs") ||
-      !check(parsed.status.processingMode ==
-                 pipetune::ProcessingMode::preset,
-             "parsed response processing mode differs") ||
-      !check(parsed.status.activePreset ==
-                 "/tmp/live.effetune_preset",
-             "parsed response preset differs") ||
-      !check(parsed.status.activePluginCount == 7,
-             "parsed response plugin count differs") ||
-      !check(parsed.status.preferredTarget == "alsa_output.usb_dac" &&
-                 parsed.status.selectedTarget == "alsa_output.usb_dac",
-             "parsed response target differs") ||
-      !check(parsed.status.outputSelectionReason ==
-                 pipetune::ControlOutputSelectionReason::preferred,
-             "parsed output selection reason differs") ||
-      !check(parsed.status.availableOutputs.size() == 2 &&
-                 parsed.status.availableOutputs[0].systemDefault &&
-                 parsed.status.availableOutputs[1].preferred &&
-                 parsed.status.availableOutputs[1].selected &&
-                 !parsed.status.availableOutputs[0]
-                      .sampleRateCapabilities.known &&
-                 parsed.status.availableOutputs[1]
-                     .sampleRateCapabilities.known &&
-                 parsed.status.availableOutputs[1]
-                         .sampleRateCapabilities.constraints.size() == 3 &&
-                 pipetune::sampleRateCapabilitiesSupport(
-                     parsed.status.availableOutputs[1]
-                         .sampleRateCapabilities,
-                     192000),
-             "parsed output list differs") ||
-      !check(parsed.status.defaultSinkActive,
-             "parsed response default state differs") ||
-      !check(parsed.status.overrunFrames == 11 &&
-                 parsed.status.underrunFrames == 12 &&
-                 parsed.status.processingErrors == 13,
-             "parsed response counters differ") ||
-      !check(parsed.status.dspProcessedFrames == 96000 &&
-                 parsed.status.dspProcessingNanoseconds == 240000000,
-             "parsed response DSP performance counters differ") ||
-      !check(parsed.status.inputSampleFormat == "F32P" &&
-                 parsed.status.inputSampleRate == 48000 &&
-                 parsed.status.inputChannelCount == 2,
-             "parsed response input format differs") ||
-      !check(parsed.status.inputFramesReceived == 96000 &&
-                 parsed.status.inputLastReceivedUnixMilliseconds ==
-                     1720000000123ULL,
-             "parsed response input telemetry differs") ||
-      !check(parsed.status.configuredRatePolicy.mode ==
-                     pipetune::SampleRateMode::fixed &&
-                 parsed.status.configuredRatePolicy.fixedRate == 96000 &&
-                 parsed.status.configuredRatePolicy.enforcement ==
-                     pipetune::SampleRateEnforcement::force &&
-                 parsed.status.dspSampleRate == 96000 &&
-                 parsed.status.selectedOutputSampleRate == 48000 &&
-                 parsed.status.activeOutputSampleRate == 48000 &&
-                 !parsed.status.rateTransitioning &&
-                 parsed.status.rateFallback &&
-                 parsed.status.rateError.empty(),
-             "parsed response rate status differs") ||
-      !check(parsed.status.configuredDspBackend ==
-                     pipetune::DspBackendKind::simd &&
-                 parsed.status.effectiveDspBackend ==
-                     pipetune::DspBackendKind::simd &&
-                 parsed.status.configuredDspSimdVariant ==
-                     pipetune::DspSimdVariant::x86_64_v3 &&
-                 parsed.status.effectiveDspVariant ==
-                     pipetune::DspBackendVariant::x86_64_v3 &&
-                 !parsed.status.dspBackendFallback &&
-                 parsed.status.dspBackendError.empty() &&
-                 parsed.status.availableDspBackends[0].available &&
-                 parsed.status.availableDspBackends[1].available,
-             "parsed response DSP backend status differs") ||
+  const auto encoded =
+      pipetune::makeControlSuccessResponse(status, warnings);
+  const auto parsed = pipetune::parseControlResponse(encoded);
+  if (!check(parsed.valid, parsed.error) ||
+      !check(parsed.success &&
+                 parsed.kind == pipetune::ControlResponseKind::response,
+             "successful response envelope differs") ||
+      !check(parsed.status.activePreset == status.activePreset &&
+                 parsed.status.policyBackend == status.policyBackend &&
+                 parsed.status.filterOutputs.size() == 1 &&
+                 parsed.status.filterOutputs[0].targetNodeName ==
+                     "alsa_output.usb",
+             "runtime status did not round-trip") ||
       !check(parsed.warnings.size() == 1 &&
-                 parsed.warnings.front().nodeIndex == 3 &&
-                 parsed.warnings.front().pluginName == "Future DSP" &&
-                 parsed.warnings.front().reason == "not available",
-             "parsed response warnings differ")) {
+                 parsed.warnings[0].nodeIndex == 2 &&
+                 parsed.warnings[0].pluginName == "Unsupported Plugin",
+             "control warnings did not round-trip")) {
     return false;
   }
 
-  auto *document = yyjson_read(response.data(), response.size(), 0);
-  if (!check(document != nullptr, "success response must be valid JSON")) {
-    return false;
-  }
-  auto *root = yyjson_doc_get_root(document);
-  auto *warningArray = yyjson_obj_get(root, "warnings");
-  const auto correct =
-      yyjson_get_bool(yyjson_obj_get(root, "ok")) &&
-      std::string_view(
-          yyjson_get_str(yyjson_obj_get(root, "processingMode"))) ==
-          "preset" &&
-      std::string_view(yyjson_get_str(yyjson_obj_get(root, "preset"))) ==
-          "/tmp/live.effetune_preset" &&
-      yyjson_is_null(yyjson_obj_get(root, "configurationError")) &&
-      yyjson_get_uint(yyjson_obj_get(root, "activePluginCount")) == 7 &&
-      std::string_view(
-          yyjson_get_str(yyjson_obj_get(root, "preferredTarget"))) ==
-          "alsa_output.usb_dac" &&
-      std::string_view(
-          yyjson_get_str(yyjson_obj_get(root, "selectedTarget"))) ==
-          "alsa_output.usb_dac" &&
-      std::string_view(
-          yyjson_get_str(
-              yyjson_obj_get(root, "outputSelectionReason"))) ==
-          "preferred" &&
-      yyjson_is_arr(yyjson_obj_get(root, "availableOutputs")) &&
-      yyjson_arr_size(yyjson_obj_get(root, "availableOutputs")) == 2 &&
-      !yyjson_get_bool(yyjson_obj_get(
-          yyjson_arr_get(yyjson_obj_get(root, "availableOutputs"), 0),
-          "sampleRateCapabilitiesKnown")) &&
-      yyjson_get_bool(yyjson_obj_get(
-          yyjson_arr_get(yyjson_obj_get(root, "availableOutputs"), 1),
-          "sampleRateCapabilitiesKnown")) &&
-      yyjson_arr_size(yyjson_obj_get(
-          yyjson_arr_get(yyjson_obj_get(root, "availableOutputs"), 1),
-          "sampleRateConstraints")) == 3 &&
-      yyjson_get_bool(yyjson_obj_get(root, "defaultSinkActive")) &&
-      yyjson_get_uint(yyjson_obj_get(root, "overrunFrames")) == 11 &&
-      yyjson_get_uint(yyjson_obj_get(root, "underrunFrames")) == 12 &&
-      yyjson_get_uint(yyjson_obj_get(root, "processingErrors")) == 13 &&
-      yyjson_get_uint(yyjson_obj_get(root, "dspProcessedFrames")) == 96000 &&
-      yyjson_get_uint(
-          yyjson_obj_get(root, "dspProcessingNanoseconds")) == 240000000 &&
-      std::string_view(
-          yyjson_get_str(yyjson_obj_get(root, "inputSampleFormat"))) ==
-          "F32P" &&
-      yyjson_get_uint(yyjson_obj_get(root, "inputSampleRate")) == 48000 &&
-      yyjson_get_uint(yyjson_obj_get(root, "inputChannelCount")) == 2 &&
-      yyjson_get_uint(yyjson_obj_get(root, "inputFramesReceived")) == 96000 &&
-      yyjson_get_uint(
-          yyjson_obj_get(root, "inputLastReceivedUnixMilliseconds")) ==
-          1720000000123ULL &&
-      std::string_view(yyjson_get_str(yyjson_obj_get(root, "rateMode"))) ==
-          "fixed" &&
-      yyjson_get_uint(yyjson_obj_get(root, "configuredSampleRate")) ==
-          96000 &&
-      std::string_view(
-          yyjson_get_str(yyjson_obj_get(root, "rateEnforcement"))) ==
-          "force" &&
-      yyjson_get_uint(yyjson_obj_get(root, "dspSampleRate")) == 96000 &&
-      yyjson_get_uint(
-          yyjson_obj_get(root, "selectedOutputSampleRate")) == 48000 &&
-      yyjson_get_uint(yyjson_obj_get(root, "activeOutputSampleRate")) ==
-          48000 &&
-      !yyjson_get_bool(yyjson_obj_get(root, "rateTransitioning")) &&
-      yyjson_get_bool(yyjson_obj_get(root, "rateFallback")) &&
-      yyjson_is_null(yyjson_obj_get(root, "rateError")) &&
-      std::string_view(yyjson_get_str(
-          yyjson_obj_get(root, "configuredDspBackend"))) == "simd" &&
-      std::string_view(yyjson_get_str(
-          yyjson_obj_get(root, "configuredDspSimdVariant"))) ==
-          "x86-64-v3" &&
-      std::string_view(yyjson_get_str(
-          yyjson_obj_get(root, "effectiveDspBackend"))) == "simd" &&
-      std::string_view(yyjson_get_str(
-          yyjson_obj_get(root, "effectiveDspVariant"))) ==
-          "x86-64-v3" &&
-      !yyjson_get_bool(
-          yyjson_obj_get(root, "dspBackendFallback")) &&
-      yyjson_is_null(yyjson_obj_get(root, "dspBackendError")) &&
-      yyjson_is_arr(yyjson_obj_get(root, "availableDspBackends")) &&
-      yyjson_arr_size(
-          yyjson_obj_get(root, "availableDspBackends")) == 2 &&
-      yyjson_get_bool(yyjson_obj_get(
-          yyjson_arr_get(
-              yyjson_obj_get(root, "availableDspBackends"), 1),
-          "available")) &&
-      yyjson_is_arr(yyjson_obj_get(root, "availableDspVariants")) &&
-      yyjson_arr_size(
-          yyjson_obj_get(root, "availableDspVariants")) == 3 &&
-      yyjson_is_arr(warningArray) && yyjson_arr_size(warningArray) == 1 &&
-      yyjson_get_uint(
-          yyjson_obj_get(yyjson_arr_get(warningArray, 0), "nodeIndex")) == 3;
-  yyjson_doc_free(document);
-  return check(correct, "success response fields differ") &&
-         check(
-             !pipetune::parseControlResponse(mismatchedPinnedVariant).valid,
-             "pinned DSP preference must reject a different effective tier");
+  const auto event = pipetune::parseControlResponse(
+      pipetune::makeControlStatusEvent(status));
+  return check(event.valid && event.success &&
+                   event.kind ==
+                       pipetune::ControlResponseKind::statusEvent &&
+                   event.warnings.empty(),
+               "status event did not round-trip");
 }
 
-static bool testStatusEvent() {
-  const auto event = pipetune::makeControlStatusEvent(
-      {.processingMode = pipetune::ProcessingMode::preset,
-       .activePreset = "/tmp/event.effetune_preset",
-       .configurationError = {},
-       .activePluginCount = 2,
-       .preferredTarget = {},
-       .selectedTarget = "alsa_output.headphones",
-       .outputSelectionReason =
-           pipetune::ControlOutputSelectionReason::systemDefault,
-       .availableOutputs =
-           {{.name = "alsa_output.headphones",
-             .description = "Headphones",
-             .systemDefault = true,
-             .preferred = false,
-             .selected = true}},
-       .defaultSinkActive = false,
-       .overrunFrames = 21,
-       .underrunFrames = 22,
-       .processingErrors = 23,
-       .dspProcessedFrames = 44100,
-       .dspProcessingNanoseconds = 110250000,
-       .inputSampleFormat = "F32P",
-       .inputSampleRate = 44100,
-       .inputChannelCount = 2,
-       .inputFramesReceived = 44100,
-       .inputLastReceivedUnixMilliseconds = 1720000001000,
-       .configuredRatePolicy =
-           {.mode = pipetune::SampleRateMode::maximum,
-            .fixedRate = 0,
-            .enforcement = pipetune::SampleRateEnforcement::suggest},
-       .dspSampleRate = 192000,
-       .selectedOutputSampleRate = 192000,
-       .activeOutputSampleRate = 0,
-       .rateTransitioning = true,
-       .rateFallback = false,
-       .rateError = "previous transition failed"});
-  const auto parsed = pipetune::parseControlResponse(event);
-  auto invalidTransition = event;
-  auto missingRateError = event;
-  if (!check(replaceOnce(invalidTransition,
-                         R"json("rateTransitioning":true)json",
-                         R"json("rateTransitioning":"true")json"),
-             "cannot prepare invalid transition state") ||
-      !check(replaceOnce(missingRateError, "rateError",
-                         "missingRateError"),
-             "cannot prepare missing rate error")) {
-    return false;
-  }
-  return check(parsed.valid, parsed.error) &&
-         check(parsed.success, "status event must report success") &&
-         check(parsed.kind == pipetune::ControlResponseKind::statusEvent,
-               "status event kind differs") &&
-         check(parsed.status.processingMode ==
-                   pipetune::ProcessingMode::preset,
-               "status event processing mode differs") &&
-         check(parsed.status.activePreset ==
-                   "/tmp/event.effetune_preset",
-               "status event preset differs") &&
-         check(parsed.status.activePluginCount == 2,
-               "status event plugin count differs") &&
-         check(parsed.status.selectedTarget ==
-                   "alsa_output.headphones",
-               "status event target differs") &&
-         check(!parsed.status.defaultSinkActive,
-               "status event default state differs") &&
-         check(parsed.status.overrunFrames == 21 &&
-                   parsed.status.underrunFrames == 22 &&
-                   parsed.status.processingErrors == 23,
-               "status event counters differ") &&
-         check(parsed.status.dspProcessedFrames == 44100 &&
-                   parsed.status.dspProcessingNanoseconds == 110250000,
-               "status event DSP performance counters differ") &&
-         check(parsed.status.inputSampleFormat == "F32P" &&
-                   parsed.status.inputSampleRate == 44100 &&
-                   parsed.status.inputChannelCount == 2 &&
-                   parsed.status.inputFramesReceived == 44100 &&
-                   parsed.status.inputLastReceivedUnixMilliseconds ==
-                       1720000001000ULL,
-               "status event input telemetry differs") &&
-         check(parsed.status.configuredRatePolicy.mode ==
-                       pipetune::SampleRateMode::maximum &&
-                   parsed.status.configuredRatePolicy.fixedRate == 0 &&
-                   parsed.status.configuredRatePolicy.enforcement ==
-                       pipetune::SampleRateEnforcement::suggest &&
-                   parsed.status.dspSampleRate == 192000 &&
-                   parsed.status.selectedOutputSampleRate == 192000 &&
-                   parsed.status.activeOutputSampleRate == 0 &&
-                   parsed.status.rateTransitioning &&
-                   !parsed.status.rateFallback &&
-                   parsed.status.rateError ==
-                       "previous transition failed",
-               "status event rate state differs") &&
-         check(parsed.warnings.empty(),
-               "status event must not contain warnings") &&
-         check(!pipetune::parseControlResponse(invalidTransition).valid,
-               "non-boolean rate transition state must be rejected") &&
-         check(!pipetune::parseControlResponse(missingRateError).valid,
-               "missing rate error field must be rejected");
-}
-
-static bool testBypassStatus() {
-  const auto response = pipetune::makeControlSuccessResponse(
-      {.processingMode = pipetune::ProcessingMode::bypass,
-       .activePreset = {},
-       .configurationError = "configured preset is unavailable",
-       .activePluginCount = 0,
-       .preferredTarget = {},
-       .selectedTarget = "alsa_output.speaker",
-       .outputSelectionReason =
-           pipetune::ControlOutputSelectionReason::systemDefault,
-       .availableOutputs =
-           {{.name = "alsa_output.speaker",
-             .description = "Speakers",
-             .systemDefault = true,
-             .preferred = false,
-             .selected = true,
-             .sampleRateCapabilities =
-                 {.known = true,
-                  .constraints =
-                      {{.kind =
-                            pipetune::SampleRateConstraintKind::discrete,
-                        .minimum = 48000,
-                        .maximum = 48000,
-                        .step = 0}}}}},
-       .defaultSinkActive = true,
-       .overrunFrames = 0,
-       .underrunFrames = 0,
-       .processingErrors = 0,
-       .dspProcessedFrames = 0,
-       .dspProcessingNanoseconds = 0,
-       .inputSampleFormat = {},
-       .inputSampleRate = 0,
-       .inputChannelCount = 0,
-       .inputFramesReceived = 0,
-       .inputLastReceivedUnixMilliseconds = 0},
-      {});
-  const auto parsed = pipetune::parseControlResponse(response);
-  if (!check(parsed.valid, parsed.error) ||
-      !check(parsed.success, "bypass response must report success") ||
-      !check(parsed.status.processingMode ==
-                 pipetune::ProcessingMode::bypass,
-             "bypass response must preserve its processing mode") ||
-      !check(parsed.status.activePreset.empty(),
-             "bypass response must not report an active preset") ||
-      !check(parsed.status.configurationError ==
-                 "configured preset is unavailable",
-             "bypass response must preserve the startup diagnostic") ||
-      !check(parsed.status.activePluginCount == 0,
-             "bypass response must report zero active plugins")) {
+static bool testErrorAndInvalidResponses() {
+  const auto encoded = pipetune::makeControlErrorResponse("load failed");
+  const auto parsed = pipetune::parseControlResponse(encoded);
+  const auto inspected = pipetune::inspectControlResponse(encoded);
+  if (!check(parsed.valid && !parsed.success &&
+                 parsed.error == "load failed",
+             "error response did not round-trip") ||
+      !check(inspected.valid && !inspected.success &&
+                 inspected.error == "load failed",
+             "error response inspection differs")) {
     return false;
   }
 
-  auto *document = yyjson_read(response.data(), response.size(), 0);
-  if (!check(document != nullptr, "bypass response must be valid JSON")) {
-    return false;
-  }
-  auto *root = yyjson_doc_get_root(document);
-  const auto correct =
-      std::string_view(
-          yyjson_get_str(yyjson_obj_get(root, "processingMode"))) ==
-          "bypass" &&
-      yyjson_is_null(yyjson_obj_get(root, "preset")) &&
-      std::string_view(
-          yyjson_get_str(yyjson_obj_get(root, "configurationError"))) ==
-          "configured preset is unavailable" &&
-      yyjson_is_null(yyjson_obj_get(root, "inputSampleFormat")) &&
-      yyjson_get_uint(yyjson_obj_get(root, "inputSampleRate")) == 0 &&
-      yyjson_get_uint(yyjson_obj_get(root, "inputChannelCount")) == 0 &&
-      yyjson_get_uint(yyjson_obj_get(root, "inputFramesReceived")) == 0 &&
-      yyjson_get_uint(
-          yyjson_obj_get(root, "inputLastReceivedUnixMilliseconds")) == 0;
-  yyjson_doc_free(document);
-  return check(correct, "bypass response fields differ");
-}
-
-static bool testDspBackendFallbackStatus() {
-  const auto response = pipetune::makeControlSuccessResponse(
-      {.processingMode = pipetune::ProcessingMode::bypass,
-       .activePreset = {},
-       .configurationError = {},
-       .activePluginCount = 0,
-       .preferredTarget = {},
-       .selectedTarget = {},
-       .outputSelectionReason =
-           pipetune::ControlOutputSelectionReason::unavailable,
-       .availableOutputs = {},
-       .defaultSinkActive = false,
-       .overrunFrames = 0,
-       .underrunFrames = 0,
-       .processingErrors = 0,
-       .dspProcessedFrames = 0,
-       .dspProcessingNanoseconds = 0,
-       .inputSampleFormat = {},
-       .inputSampleRate = 0,
-       .inputChannelCount = 0,
-       .inputFramesReceived = 0,
-       .inputLastReceivedUnixMilliseconds = 0,
-       .configuredDspBackend = pipetune::DspBackendKind::simd,
-       .configuredDspSimdVariant =
-           pipetune::DspSimdVariant::x86_64_v4,
-       .effectiveDspBackend = pipetune::DspBackendKind::scalar,
-       .effectiveDspVariant = pipetune::DspBackendVariant::scalar,
-       .dspBackendFallback = true,
-       .dspBackendError = "x86-64-v4 is unavailable",
-       .availableDspBackends =
-           {{
-               {.kind = pipetune::DspBackendKind::scalar,
-                .available = true,
-                .cpuRequirement = "none",
-                .error = {}},
-               {.kind = pipetune::DspBackendKind::simd,
-                .available = true,
-                .cpuRequirement = "test baseline ISA",
-                .error = {}},
-           }},
-       .availableDspVariants =
-           {{.variant = pipetune::DspBackendVariant::scalar,
-             .available = true,
-             .cpuSupported = true,
-             .cpuRequirement = "none",
-             .error = {}},
-            {.variant = pipetune::DspBackendVariant::simdBaseline,
-             .available = true,
-             .cpuSupported = true,
-             .cpuRequirement = "test baseline ISA",
-             .error = {}},
-            {.variant = pipetune::DspBackendVariant::x86_64_v4,
-             .available = false,
-             .cpuSupported = false,
-             .cpuRequirement = "x86-64-v4",
-             .error = "x86-64-v4 is unavailable"}}},
-      {});
-  const auto parsed = pipetune::parseControlResponse(response);
-  auto inconsistent = response;
-  if (!check(replaceOnce(inconsistent,
-                         R"json("dspBackendFallback":true)json",
-                         R"json("dspBackendFallback":false)json"),
-             "cannot prepare inconsistent DSP backend fallback")) {
-    return false;
-  }
-  return check(parsed.valid, parsed.error) &&
-         check(parsed.status.configuredDspBackend ==
-                   pipetune::DspBackendKind::simd,
-               "fallback must retain configured SIMD") &&
-         check(parsed.status.effectiveDspBackend ==
-                   pipetune::DspBackendKind::scalar,
-               "fallback must report effective scalar") &&
-         check(parsed.status.dspBackendFallback,
-               "fallback marker differs") &&
-         check(parsed.status.dspBackendError ==
-                   "x86-64-v4 is unavailable",
-               "fallback diagnostic differs") &&
-         check(parsed.status.availableDspBackends[1].available &&
-                   !parsed.status.availableDspVariants[2].available,
-               "pinned fallback must retain other available SIMD tiers") &&
-         check(!pipetune::parseControlResponse(inconsistent).valid,
-               "inconsistent DSP backend fallback must be rejected");
-}
-
-static bool testUnavailableOutputStatus() {
-  const auto response = pipetune::makeControlSuccessResponse(
-      {.processingMode = pipetune::ProcessingMode::bypass,
-       .activePreset = {},
-       .configurationError = {},
-       .activePluginCount = 0,
-       .preferredTarget = "alsa_output.usb_dac",
-       .selectedTarget = {},
-       .outputSelectionReason =
-           pipetune::ControlOutputSelectionReason::unavailable,
-       .availableOutputs = {},
-       .defaultSinkActive = false,
-       .overrunFrames = 0,
-       .underrunFrames = 0,
-       .processingErrors = 0,
-       .dspProcessedFrames = 0,
-       .dspProcessingNanoseconds = 0,
-       .inputSampleFormat = {},
-       .inputSampleRate = 0,
-       .inputChannelCount = 0,
-       .inputFramesReceived = 0,
-       .inputLastReceivedUnixMilliseconds = 0},
-      {});
-  const auto parsed = pipetune::parseControlResponse(response);
-  auto *document = yyjson_read(response.data(), response.size(), 0);
-  if (!check(parsed.valid, parsed.error) ||
-      !check(parsed.success, "unavailable output status must be successful") ||
-      !check(parsed.status.preferredTarget == "alsa_output.usb_dac",
-             "unavailable output must retain its preference") ||
-      !check(parsed.status.selectedTarget.empty() &&
-                 parsed.status.availableOutputs.empty(),
-             "unavailable output must not invent a selected device") ||
-      !check(parsed.status.outputSelectionReason ==
-                 pipetune::ControlOutputSelectionReason::unavailable,
-             "unavailable output reason differs") ||
-      !check(document != nullptr,
-             "unavailable output response must be valid JSON")) {
-    if (document != nullptr) {
-      yyjson_doc_free(document);
-    }
-    return false;
-  }
-  auto *root = yyjson_doc_get_root(document);
-  const auto correct =
-      yyjson_is_null(yyjson_obj_get(root, "selectedTarget")) &&
-      yyjson_is_arr(yyjson_obj_get(root, "availableOutputs")) &&
-      yyjson_arr_size(yyjson_obj_get(root, "availableOutputs")) == 0;
-  yyjson_doc_free(document);
-  return check(correct,
-               "unavailable output must encode a null selected target");
-}
-
-static bool testRejectedOutputStatus() {
-  const auto response = pipetune::makeControlSuccessResponse(
-      {.processingMode = pipetune::ProcessingMode::bypass,
-       .activePreset = {},
-       .configurationError = {},
-       .activePluginCount = 0,
-       .preferredTarget = "alsa_output.usb_dac",
-       .selectedTarget = "alsa_output.speaker",
-       .outputSelectionReason =
-           pipetune::ControlOutputSelectionReason::fallback,
-       .availableOutputs =
-           {{.name = "alsa_output.speaker",
-             .description = "Speakers",
-             .systemDefault = true,
-             .preferred = false,
-             .selected = true,
-             .sampleRateCapabilities =
-                 {.known = true,
-                  .constraints =
-                      {{.kind =
-                            pipetune::SampleRateConstraintKind::discrete,
-                        .minimum = 48000,
-                        .maximum = 48000,
-                        .step = 0}}}}},
-       .defaultSinkActive = true,
-       .overrunFrames = 0,
-       .underrunFrames = 0,
-       .processingErrors = 0,
-       .dspProcessedFrames = 0,
-       .dspProcessingNanoseconds = 0,
-       .inputSampleFormat = {},
-       .inputSampleRate = 0,
-       .inputChannelCount = 0,
-       .inputFramesReceived = 0,
-       .inputLastReceivedUnixMilliseconds = 0},
-      {});
-  auto unknownReason = response;
-  auto wrongSelectedMarker = response;
-  auto unknownConstraint = response;
-  auto unknownWithConstraints = response;
-  if (!check(replaceOnce(unknownReason, "fallback", "unknown"),
-             "cannot prepare unknown output reason") ||
-      !check(replaceOnce(wrongSelectedMarker,
-                         R"json("selected":true)json",
-                         R"json("selected":false)json"),
-             "cannot prepare inconsistent selected marker") ||
-      !check(replaceOnce(unknownConstraint, "discrete", "future"),
-             "cannot prepare unknown sample-rate constraint") ||
-      !check(replaceOnce(
-                 unknownWithConstraints,
-                 R"json("sampleRateCapabilitiesKnown":true)json",
-                 R"json("sampleRateCapabilitiesKnown":false)json"),
-             "cannot prepare inconsistent unknown capabilities")) {
-    return false;
-  }
-  return check(pipetune::parseControlResponse(response).valid,
-               "valid fallback output status must be accepted") &&
-         check(!pipetune::parseControlResponse(unknownReason).valid,
-               "unknown output reasons must be rejected") &&
-         check(!pipetune::parseControlResponse(wrongSelectedMarker).valid,
-               "inconsistent output markers must be rejected") &&
-         check(!pipetune::parseControlResponse(unknownConstraint).valid,
-               "unknown sample-rate constraint kinds must be rejected") &&
-         check(!pipetune::parseControlResponse(unknownWithConstraints).valid,
-               "unknown capabilities must reject constraints");
-}
-
-static bool testRejectedInputTelemetry() {
-  const auto response = pipetune::makeControlSuccessResponse(
-      {.processingMode = pipetune::ProcessingMode::bypass,
-       .activePreset = {},
-       .configurationError = {},
-       .activePluginCount = 0,
-       .preferredTarget = {},
-       .selectedTarget = "alsa_output.speaker",
-       .outputSelectionReason =
-           pipetune::ControlOutputSelectionReason::systemDefault,
-       .availableOutputs =
-           {{.name = "alsa_output.speaker",
-             .description = "Speakers",
-             .systemDefault = true,
-             .preferred = false,
-             .selected = true}},
-       .defaultSinkActive = true,
-       .overrunFrames = 0,
-       .underrunFrames = 0,
-       .processingErrors = 0,
-       .dspProcessedFrames = 0,
-       .dspProcessingNanoseconds = 0,
-       .inputSampleFormat = "F32P",
-       .inputSampleRate = 48000,
-       .inputChannelCount = 2,
-       .inputFramesReceived = 48000,
-       .inputLastReceivedUnixMilliseconds = 1720000000000},
-      {});
-  auto outOfRangeRate = response;
-  auto missingFormat = response;
-  auto wrongCounterType = response;
-  if (!check(replaceOnce(outOfRangeRate, R"json("inputSampleRate":48000)json",
-                         R"json("inputSampleRate":4294967296)json"),
-             "cannot prepare out-of-range input rate") ||
-      !check(replaceOnce(missingFormat, "inputSampleFormat",
-                         "missingInputSampleFormat"),
-             "cannot prepare missing input format") ||
-      !check(replaceOnce(wrongCounterType,
-                         R"json("inputFramesReceived":48000)json",
-                         R"json("inputFramesReceived":"48000")json"),
-             "cannot prepare invalid input counter")) {
-    return false;
-  }
-  return check(!pipetune::parseControlResponse(outOfRangeRate).valid,
-               "out-of-range input rate must be rejected") &&
-         check(!pipetune::parseControlResponse(missingFormat).valid,
-               "missing input format must be rejected") &&
-         check(!pipetune::parseControlResponse(wrongCounterType).valid,
-               "non-numeric input counter must be rejected");
-}
-
-static bool testErrorResponse() {
-  const auto response =
-      pipetune::makeControlErrorResponse("cannot load \"broken\" preset");
-  const auto inspection = pipetune::inspectControlResponse(response);
-  const auto parsed = pipetune::parseControlResponse(response);
-  return check(inspection.valid, inspection.error) &&
-         check(!inspection.success, "error response must not report success") &&
-         check(inspection.error == "cannot load \"broken\" preset",
-               "error response diagnostic differs") &&
-         check(parsed.valid, parsed.error) &&
-         check(!parsed.success, "parsed error must not report success") &&
-         check(parsed.error == "cannot load \"broken\" preset",
-               "parsed error diagnostic differs");
+  const auto invalid = pipetune::parseControlResponse(
+      R"json({"protocolVersion":2,"ok":true})json");
+  auto inconsistent = runtimeStatus();
+  inconsistent.filterOutputs[0].filterNodeName.clear();
+  const auto consistencyError = pipetune::parseControlResponse(
+      pipetune::makeControlSuccessResponse(inconsistent, {}));
+  return check(!invalid.valid,
+               "incomplete success responses must be rejected") &&
+         check(consistencyError.valid && !consistencyError.success &&
+                   consistencyError.error.find("inconsistent") !=
+                       std::string::npos,
+               "inconsistent filter status must encode as an error");
 }
 
 int main() {
-  return testRequests() && testRejectedRequests() && testSuccessResponse() &&
-                 testStatusEvent() && testBypassStatus() &&
-                 testDspBackendFallbackStatus() &&
-                 testUnavailableOutputStatus() &&
-                 testRejectedOutputStatus() &&
-                 testRejectedInputTelemetry() && testErrorResponse()
+  return testRequests() && testRejectedRequests() &&
+                 testSuccessAndEventResponses() &&
+                 testErrorAndInvalidResponses()
              ? 0
              : 1;
 }

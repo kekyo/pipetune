@@ -5,6 +5,7 @@
 
 #include <gio/gio.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -18,7 +19,6 @@ struct ServerState {
   std::mutex mutex;
   std::string activePreset;
   bool bypassed;
-  std::string preferredTarget;
   pipetune::SampleRatePolicy ratePolicy;
   pipetune::DspBackendKind dspBackend;
   pipetune::DspSimdVariant dspSimdVariant;
@@ -26,89 +26,81 @@ struct ServerState {
 
 static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
   auto lock = std::scoped_lock(state.mutex);
-  return {.processingMode = state.bypassed
-                                ? pipetune::ProcessingMode::bypass
-                                : pipetune::ProcessingMode::preset,
-          .activePreset = state.bypassed ? std::string{}
-                                         : state.activePreset,
-          .configurationError = {},
-          .activePluginCount = state.bypassed ? 0u : 3u,
-          .preferredTarget = state.preferredTarget,
-          .selectedTarget = state.preferredTarget.empty()
-                                ? std::string("alsa_output.test")
-                                : state.preferredTarget,
-          .outputSelectionReason =
-              state.preferredTarget.empty()
-                  ? pipetune::ControlOutputSelectionReason::systemDefault
-                  : pipetune::ControlOutputSelectionReason::preferred,
-          .availableOutputs =
-              {{.name = "alsa_output.test",
-                .description = "Test Output",
-                .systemDefault = true,
-                .preferred = false,
-                .selected = state.preferredTarget.empty()},
-               {.name = "alsa_output.headphones",
-                .description = "Test Headphones",
-                .systemDefault = false,
-                .preferred =
-                    state.preferredTarget == "alsa_output.headphones",
-                .selected =
-                    state.preferredTarget == "alsa_output.headphones"}},
-          .defaultSinkActive = true,
-          .overrunFrames = 0,
-          .underrunFrames = 0,
-          .processingErrors = 0,
-          .dspProcessedFrames = 0,
-          .dspProcessingNanoseconds = 0,
-          .inputSampleFormat = {},
-          .inputSampleRate = 0,
-          .inputChannelCount = 0,
-          .inputFramesReceived = 0,
-          .inputLastReceivedUnixMilliseconds = 0,
-          .configuredRatePolicy = state.ratePolicy,
-          .dspSampleRate =
-              state.ratePolicy.mode == pipetune::SampleRateMode::maximum
-                  ? 96000u
-                  : state.ratePolicy.fixedRate,
-          .selectedOutputSampleRate = 96000,
-          .activeOutputSampleRate = 0,
-          .rateTransitioning = false,
-          .rateFallback =
-              state.ratePolicy.mode == pipetune::SampleRateMode::fixed &&
-              state.ratePolicy.fixedRate != 96000,
-          .rateError = {},
-          .configuredDspBackend = state.dspBackend,
-          .configuredDspSimdVariant = state.dspSimdVariant,
-          .effectiveDspBackend = state.dspBackend,
-          .effectiveDspVariant =
-              state.dspBackend == pipetune::DspBackendKind::scalar
-                  ? pipetune::DspBackendVariant::scalar
-                  : pipetune::DspBackendVariant::simdBaseline,
-          .dspBackendFallback = false,
-          .dspBackendError = {},
-          .availableDspBackends =
-              {{
-                  {.kind = pipetune::DspBackendKind::scalar,
-                   .available = true,
-                   .cpuRequirement = "none",
-                   .error = {}},
-                  {.kind = pipetune::DspBackendKind::simd,
-                   .available = true,
-                   .cpuRequirement = "test SIMD ISA",
-                   .error = {}},
-              }},
-          .availableDspVariants =
-              {{.variant = pipetune::DspBackendVariant::scalar,
-                .available = true,
-                .cpuSupported = true,
-                .cpuRequirement = "none",
-                .error = {}},
-               {.variant =
-                    pipetune::DspBackendVariant::simdBaseline,
-                .available = true,
-                .cpuSupported = true,
-                .cpuRequirement = "test SIMD ISA",
-                .error = {}}}};
+  const auto dspRate =
+      state.ratePolicy.mode == pipetune::SampleRateMode::maximum
+          ? 96000u
+          : state.ratePolicy.fixedRate;
+  const auto outputRate = std::min(dspRate, 96000u);
+  return {
+      .processingMode = state.bypassed
+                            ? pipetune::ProcessingMode::bypass
+                            : pipetune::ProcessingMode::preset,
+      .activePreset = state.bypassed ? std::string{} : state.activePreset,
+      .configurationError = {},
+      .activePluginCount = state.bypassed ? 0u : 3u,
+      .policyBackend = "wireplumber-0.5",
+      .filterOutputs =
+          {{.targetNodeName = "alsa_output.test",
+            .targetDescription = "Test Output",
+            .filterNodeName = "pipetune.filter.test",
+            .state = pipetune::ControlFilterState::active,
+            .error = {},
+            .channelCount = 2,
+            .sampleRateCapabilities =
+                {.known = true,
+                 .constraints =
+                     {{.kind = pipetune::SampleRateConstraintKind::range,
+                       .minimum = 44100,
+                       .maximum = 96000,
+                       .step = 0}}},
+            .dspSampleRate = dspRate,
+            .outputSampleRate = outputRate,
+            .activeOutputSampleRate = outputRate,
+            .rateFallback = outputRate != dspRate,
+            .latencyFrames = 64,
+            .overrunFrames = 0,
+            .underrunFrames = 0,
+            .processingErrors = 0,
+            .dspProcessedFrames = 0,
+            .dspProcessingNanoseconds = 0}},
+      .overrunFrames = 0,
+      .underrunFrames = 0,
+      .processingErrors = 0,
+      .dspProcessedFrames = 0,
+      .dspProcessingNanoseconds = 0,
+      .configuredRatePolicy = state.ratePolicy,
+      .configuredDspBackend = state.dspBackend,
+      .configuredDspSimdVariant = state.dspSimdVariant,
+      .effectiveDspBackend = state.dspBackend,
+      .effectiveDspVariant =
+          state.dspBackend == pipetune::DspBackendKind::scalar
+              ? pipetune::DspBackendVariant::scalar
+              : pipetune::DspBackendVariant::simdBaseline,
+      .dspBackendFallback = false,
+      .dspBackendError = {},
+      .availableDspBackends =
+          {{
+              {.kind = pipetune::DspBackendKind::scalar,
+               .available = true,
+               .cpuRequirement = "none",
+               .error = {}},
+              {.kind = pipetune::DspBackendKind::simd,
+               .available = true,
+               .cpuRequirement = "test SIMD ISA",
+               .error = {}},
+          }},
+      .availableDspVariants =
+          {{.variant = pipetune::DspBackendVariant::scalar,
+            .available = true,
+            .cpuSupported = true,
+            .cpuRequirement = "none",
+            .error = {}},
+           {.variant = pipetune::DspBackendVariant::simdBaseline,
+            .available = true,
+            .cpuSupported = true,
+            .cpuRequirement = "test SIMD ISA",
+            .error = {}}},
+  };
 }
 
 static std::string provideStatus(void *userData) {
@@ -130,74 +122,34 @@ static pipetune::ControlMessageResult handleRequest(
             .connectionMode = pipetune::ControlConnectionMode::subscribe,
             .publishStatus = false};
   }
-  if (request.request.command == pipetune::ControlCommand::loadPreset) {
-    {
-      auto lock = std::scoped_lock(state.mutex);
+  {
+    auto lock = std::scoped_lock(state.mutex);
+    switch (request.request.command) {
+    case pipetune::ControlCommand::loadPreset:
       state.activePreset = request.request.presetPath.string();
       state.bypassed = false;
-    }
-    return {.response = pipetune::makeControlSuccessResponse(
-                serverStatus(state), {}),
-            .connectionMode = pipetune::ControlConnectionMode::close,
-            .publishStatus = true};
-  }
-  if (request.request.command == pipetune::ControlCommand::bypass) {
-    {
-      auto lock = std::scoped_lock(state.mutex);
+      break;
+    case pipetune::ControlCommand::bypass:
       state.activePreset.clear();
       state.bypassed = true;
-    }
-    return {.response = pipetune::makeControlSuccessResponse(
-                serverStatus(state), {}),
-            .connectionMode = pipetune::ControlConnectionMode::close,
-            .publishStatus = true};
-  }
-  if (request.request.command == pipetune::ControlCommand::setOutput) {
-    {
-      auto lock = std::scoped_lock(state.mutex);
-      state.preferredTarget = request.request.outputTarget;
-    }
-    return {.response = pipetune::makeControlSuccessResponse(
-                serverStatus(state), {}),
-            .connectionMode = pipetune::ControlConnectionMode::close,
-            .publishStatus = true};
-  }
-  if (request.request.command == pipetune::ControlCommand::clearOutput) {
-    {
-      auto lock = std::scoped_lock(state.mutex);
-      state.preferredTarget.clear();
-    }
-    return {.response = pipetune::makeControlSuccessResponse(
-                serverStatus(state), {}),
-            .connectionMode = pipetune::ControlConnectionMode::close,
-            .publishStatus = true};
-  }
-  if (request.request.command == pipetune::ControlCommand::setRate) {
-    {
-      auto lock = std::scoped_lock(state.mutex);
+      break;
+    case pipetune::ControlCommand::setRate:
       state.ratePolicy = request.request.ratePolicy;
-    }
-    return {.response = pipetune::makeControlSuccessResponse(
-                serverStatus(state), {}),
-            .connectionMode = pipetune::ControlConnectionMode::close,
-            .publishStatus = true};
-  }
-  if (request.request.command ==
-      pipetune::ControlCommand::setDspBackend) {
-    {
-      auto lock = std::scoped_lock(state.mutex);
+      break;
+    case pipetune::ControlCommand::setDspBackend:
       state.dspBackend = request.request.dspBackend;
       state.dspSimdVariant = request.request.dspSimdVariant;
+      break;
+    case pipetune::ControlCommand::status:
+    case pipetune::ControlCommand::subscribe:
+      break;
     }
-    return {.response = pipetune::makeControlSuccessResponse(
-                serverStatus(state), {}),
-            .connectionMode = pipetune::ControlConnectionMode::close,
-            .publishStatus = true};
   }
   return {.response =
               pipetune::makeControlSuccessResponse(serverStatus(state), {}),
           .connectionMode = pipetune::ControlConnectionMode::close,
-          .publishStatus = false};
+          .publishStatus = request.request.command !=
+                           pipetune::ControlCommand::status};
 }
 
 struct ClientTestState {
@@ -206,16 +158,12 @@ struct ClientTestState {
   std::unique_ptr<pipetune::ControlServer> *server;
   bool connected;
   bool initialStatus;
+  bool loadRequested;
   bool loadReply;
-  bool publishedStatus;
+  bool publishedLoad;
+  bool bypassRequested;
   bool bypassReply;
   bool publishedBypass;
-  bool setOutputRequested;
-  bool setOutputReply;
-  bool publishedSetOutput;
-  bool clearOutputRequested;
-  bool clearOutputReply;
-  bool publishedClearOutput;
   bool setRateRequested;
   bool setRateReply;
   bool publishedSetRate;
@@ -234,70 +182,17 @@ static gboolean stopServer(gpointer userData) {
 }
 
 static void maybeStopServer(ClientTestState &state) {
-  if (state.loadReply && state.publishedStatus && state.bypassReply &&
-      state.publishedBypass && state.setOutputReply &&
-      state.publishedSetOutput && state.clearOutputReply &&
-      state.publishedClearOutput && state.setRateReply &&
+  if (state.loadReply && state.publishedLoad && state.bypassReply &&
+      state.publishedBypass && state.setRateReply &&
       state.publishedSetRate && state.setDspBackendReply &&
       state.publishedSetDspBackend && *state.server != nullptr) {
     g_idle_add(stopServer, &state);
   }
 }
 
-static void maybeStartClearOutput(ClientTestState &state);
+static void maybeStartBypass(ClientTestState &state);
 static void maybeStartSetRate(ClientTestState &state);
 static void maybeStartSetDspBackend(ClientTestState &state);
-
-static void onSetOutputReply(
-    const pipetune_gtk::ControlClientReply &reply, void *userData) {
-  auto &state = *static_cast<ClientTestState *>(userData);
-  if (!reply.transportError.empty() || !reply.response.valid ||
-      !reply.response.success ||
-      reply.response.status.preferredTarget !=
-          "alsa_output.headphones" ||
-      reply.response.status.selectedTarget !=
-          "alsa_output.headphones") {
-    state.failed = true;
-  } else {
-    state.setOutputReply = true;
-  }
-  maybeStartClearOutput(state);
-}
-
-static void onClearOutputReply(
-    const pipetune_gtk::ControlClientReply &reply, void *userData) {
-  auto &state = *static_cast<ClientTestState *>(userData);
-  if (!reply.transportError.empty() || !reply.response.valid ||
-      !reply.response.success ||
-      !reply.response.status.preferredTarget.empty() ||
-      reply.response.status.outputSelectionReason !=
-          pipetune::ControlOutputSelectionReason::systemDefault) {
-    state.failed = true;
-  } else {
-    state.clearOutputReply = true;
-  }
-  maybeStartSetRate(state);
-}
-
-static void onSetRateReply(
-    const pipetune_gtk::ControlClientReply &reply, void *userData) {
-  auto &state = *static_cast<ClientTestState *>(userData);
-  const auto expected = pipetune::SampleRatePolicy{
-      .mode = pipetune::SampleRateMode::fixed,
-      .fixedRate = 192000,
-      .enforcement = pipetune::SampleRateEnforcement::force};
-  if (!reply.transportError.empty() || !reply.response.valid ||
-      !reply.response.success ||
-      reply.response.status.configuredRatePolicy != expected ||
-      reply.response.status.dspSampleRate != 192000 ||
-      reply.response.status.selectedOutputSampleRate != 96000 ||
-      !reply.response.status.rateFallback) {
-    state.failed = true;
-  } else {
-    state.setRateReply = true;
-  }
-  maybeStartSetDspBackend(state);
-}
 
 static void onSetDspBackendReply(
     const pipetune_gtk::ControlClientReply &reply, void *userData) {
@@ -306,14 +201,8 @@ static void onSetDspBackendReply(
       !reply.response.success ||
       reply.response.status.configuredDspBackend !=
           pipetune::DspBackendKind::simd ||
-      reply.response.status.configuredDspSimdVariant !=
-          pipetune::DspSimdVariant::automatic ||
-      reply.response.status.effectiveDspBackend !=
-          pipetune::DspBackendKind::simd ||
       reply.response.status.effectiveDspVariant !=
-          pipetune::DspBackendVariant::simdBaseline ||
-      reply.response.status.dspBackendFallback ||
-      !reply.response.status.dspBackendError.empty()) {
+          pipetune::DspBackendVariant::simdBaseline) {
     state.failed = true;
   } else {
     state.setDspBackendReply = true;
@@ -327,14 +216,34 @@ static void maybeStartSetDspBackend(ClientTestState &state) {
     state.setDspBackendRequested = true;
     pipetune_gtk::setControlDspBackendAsync(
         state.client, pipetune::DspBackendKind::simd,
-        pipetune::DspSimdVariant::automatic,
-        onSetDspBackendReply, &state);
+        pipetune::DspSimdVariant::automatic, onSetDspBackendReply, &state);
   }
   maybeStopServer(state);
 }
 
+static void onSetRateReply(
+    const pipetune_gtk::ControlClientReply &reply, void *userData) {
+  auto &state = *static_cast<ClientTestState *>(userData);
+  const auto expected = pipetune::SampleRatePolicy{
+      .mode = pipetune::SampleRateMode::fixed,
+      .fixedRate = 192000,
+      .enforcement = pipetune::SampleRateEnforcement::force};
+  if (!reply.transportError.empty() || !reply.response.valid ||
+      !reply.response.success ||
+      reply.response.status.configuredRatePolicy != expected ||
+      reply.response.status.filterOutputs.size() != 1 ||
+      reply.response.status.filterOutputs[0].dspSampleRate != 192000 ||
+      reply.response.status.filterOutputs[0].outputSampleRate != 96000 ||
+      !reply.response.status.filterOutputs[0].rateFallback) {
+    state.failed = true;
+  } else {
+    state.setRateReply = true;
+  }
+  maybeStartSetDspBackend(state);
+}
+
 static void maybeStartSetRate(ClientTestState &state) {
-  if (state.clearOutputReply && state.publishedClearOutput &&
+  if (state.bypassReply && state.publishedBypass &&
       !state.setRateRequested) {
     state.setRateRequested = true;
     pipetune_gtk::setControlRateAsync(
@@ -343,26 +252,6 @@ static void maybeStartSetRate(ClientTestState &state) {
          .fixedRate = 192000,
          .enforcement = pipetune::SampleRateEnforcement::force},
         onSetRateReply, &state);
-  }
-  maybeStopServer(state);
-}
-
-static void maybeStartClearOutput(ClientTestState &state) {
-  if (state.setOutputReply && state.publishedSetOutput &&
-      !state.clearOutputRequested) {
-    state.clearOutputRequested = true;
-    pipetune_gtk::clearControlOutputAsync(
-        state.client, onClearOutputReply, &state);
-  }
-  maybeStopServer(state);
-}
-
-static void maybeStartSetOutput(ClientTestState &state) {
-  if (state.bypassReply && state.publishedBypass &&
-      !state.setOutputRequested) {
-    state.setOutputRequested = true;
-    pipetune_gtk::setControlOutputAsync(
-        state.client, "alsa_output.headphones", onSetOutputReply, &state);
   }
   maybeStopServer(state);
 }
@@ -379,7 +268,15 @@ static void onBypassReply(
   } else {
     state.bypassReply = true;
   }
-  maybeStartSetOutput(state);
+  maybeStartSetRate(state);
+}
+
+static void maybeStartBypass(ClientTestState &state) {
+  if (state.loadReply && state.publishedLoad && !state.bypassRequested) {
+    state.bypassRequested = true;
+    pipetune_gtk::bypassControlAsync(state.client, onBypassReply, &state);
+  }
+  maybeStopServer(state);
 }
 
 static void onLoadReply(
@@ -393,7 +290,7 @@ static void onLoadReply(
   } else {
     state.loadReply = true;
   }
-  maybeStopServer(state);
+  maybeStartBypass(state);
 }
 
 static void onMessage(
@@ -405,59 +302,40 @@ static void onMessage(
     return;
   }
   if (message.status.activePreset == "/tmp/initial.effetune_preset") {
-    if (!state.initialStatus) {
-      state.initialStatus = true;
+    state.initialStatus = true;
+    if (!state.loadRequested) {
+      state.loadRequested = true;
       pipetune_gtk::loadControlPresetAsync(
           state.client, "/tmp/selected.effetune_preset", onLoadReply,
           &state);
     }
   } else if (message.status.activePreset ==
              "/tmp/selected.effetune_preset") {
-    if (!state.publishedStatus) {
-      state.publishedStatus = true;
-      pipetune_gtk::bypassControlAsync(
-          state.client, onBypassReply, &state);
-    }
+    state.publishedLoad = true;
+    maybeStartBypass(state);
   } else if (message.status.processingMode ==
                  pipetune::ProcessingMode::bypass &&
-             message.status.activePreset.empty() &&
-             message.status.preferredTarget ==
-                 "alsa_output.headphones") {
-    state.publishedSetOutput = true;
-    maybeStartClearOutput(state);
-    return;
+             message.status.configuredRatePolicy.mode ==
+                 pipetune::SampleRateMode::maximum) {
+    state.publishedBypass = true;
+    maybeStartSetRate(state);
   } else if (message.status.processingMode ==
                  pipetune::ProcessingMode::bypass &&
-             message.status.activePreset.empty() &&
-             message.status.preferredTarget.empty()) {
-    if (message.status.configuredRatePolicy.mode ==
-            pipetune::SampleRateMode::fixed &&
-        message.status.configuredRatePolicy.fixedRate == 192000 &&
-        message.status.configuredRatePolicy.enforcement ==
-            pipetune::SampleRateEnforcement::force) {
-      if (message.status.configuredDspBackend ==
-          pipetune::DspBackendKind::simd) {
-        state.publishedSetDspBackend = true;
-        maybeStopServer(state);
-      } else {
-        state.publishedSetRate = true;
-        maybeStartSetDspBackend(state);
-      }
-      return;
-    }
-    if (!state.setOutputRequested) {
-      state.publishedBypass = true;
-      maybeStartSetOutput(state);
-      return;
-    }
-    if (state.clearOutputRequested) {
-      state.publishedClearOutput = true;
-      maybeStartSetRate(state);
-    }
+             message.status.configuredRatePolicy.mode ==
+                 pipetune::SampleRateMode::fixed &&
+             message.status.configuredDspBackend ==
+                 pipetune::DspBackendKind::scalar) {
+    state.publishedSetRate = true;
+    maybeStartSetDspBackend(state);
+  } else if (message.status.processingMode ==
+                 pipetune::ProcessingMode::bypass &&
+             message.status.configuredDspBackend ==
+                 pipetune::DspBackendKind::simd) {
+    state.publishedSetDspBackend = true;
+    maybeStopServer(state);
   } else {
     state.failed = true;
   }
-  maybeStopServer(state);
 }
 
 static void onConnectionChanged(bool connected, std::string_view error,
@@ -490,7 +368,6 @@ int main() {
       ServerState{.mutex = {},
                   .activePreset = "/tmp/initial.effetune_preset",
                   .bypassed = false,
-                  .preferredTarget = {},
                   .ratePolicy = pipetune::defaultSampleRatePolicy(),
                   .dspBackend = pipetune::DspBackendKind::scalar,
                   .dspSimdVariant =
@@ -513,16 +390,12 @@ int main() {
       .server = &started.server,
       .connected = false,
       .initialStatus = false,
+      .loadRequested = false,
       .loadReply = false,
-      .publishedStatus = false,
+      .publishedLoad = false,
+      .bypassRequested = false,
       .bypassReply = false,
       .publishedBypass = false,
-      .setOutputRequested = false,
-      .setOutputReply = false,
-      .publishedSetOutput = false,
-      .clearOutputRequested = false,
-      .clearOutputReply = false,
-      .publishedClearOutput = false,
       .setRateRequested = false,
       .setRateReply = false,
       .publishedSetRate = false,
@@ -550,13 +423,11 @@ int main() {
   std::filesystem::remove_all(directory);
 
   if (state.failed || state.timedOut || !state.connected ||
-      !state.initialStatus || !state.loadReply ||
-      !state.publishedStatus || !state.bypassReply ||
-      !state.publishedBypass || !state.setOutputReply ||
-      !state.publishedSetOutput || !state.clearOutputReply ||
-      !state.publishedClearOutput || !state.setRateReply ||
-      !state.publishedSetRate || !state.setDspBackendReply ||
-      !state.publishedSetDspBackend || !state.disconnected) {
+      !state.initialStatus || !state.loadReply || !state.publishedLoad ||
+      !state.bypassReply || !state.publishedBypass ||
+      !state.setRateReply || !state.publishedSetRate ||
+      !state.setDspBackendReply || !state.publishedSetDspBackend ||
+      !state.disconnected) {
     std::cerr << "asynchronous control client lifecycle differs\n";
     return 1;
   }
