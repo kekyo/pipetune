@@ -71,17 +71,59 @@ if (minorVersion === 4) {
   await copyPolicy(
     configDirectory,
     policy04Loader,
+    "main.lua.d/85-pipetune.lua",
+  );
+  await writePolicy(
+    configDirectory,
     "policy.lua.d/85-pipetune.lua",
+    `-- The obsolete loader path is empty after a PipeTune upgrade.
+`,
   );
   await copyPolicy(
     configDirectory,
     policy04Script,
     "scripts/pipetune/policy-0.4.lua",
   );
+  await copyPolicy(
+    configDirectory,
+    policy05Config,
+    "wireplumber.conf.d/90-pipetune.conf",
+  );
+  await copyPolicy(
+    configDirectory,
+    policy05Script,
+    "scripts/pipetune/policy-0.5.lua",
+  );
   await writePolicy(
     configDirectory,
-    "policy.lua.d/86-pipetune-test-default.lua",
-    `load_module("metadata")
+    "main.lua.d/86-pipetune-test-blocker.lua",
+    `load_script("pipetune/test-main-blocker-0.4.lua")
+`,
+  );
+  await writePolicy(
+    configDirectory,
+    "scripts/pipetune/test-main-blocker-0.4.lua",
+    `Script.async_activation = true
+
+local activation_finished = false
+pipetune_test_main_blocker_metadata = ImplMetadata("pipetune-test-main-blocker")
+pipetune_test_main_blocker_metadata:activate(Features.ALL, function(metadata, error)
+  if error then
+    Script:finish_activation_with_error(
+        "failed to activate PipeTune main blocker metadata: " .. tostring(error))
+    return
+  end
+  metadata:connect("changed", function(_, subject, key, _, value)
+    if activation_finished or subject ~= 0 or key ~= "release" or
+        tostring(value) ~= "true" then
+      return
+    end
+    activation_finished = true
+    metadata:set(0, "state", "Spa:String", "released")
+    Script:finish_activation()
+  end)
+  metadata:set(0, "state", "Spa:String", "waiting")
+end)
 `,
   );
 } else {
@@ -188,9 +230,7 @@ try {
   );
 
   const wireplumberArguments =
-    minorVersion === 4
-      ? ["--config-file", "policy.conf"]
-      : ["--profile", "policy"];
+    minorVersion === 4 ? [] : ["--profile", "policy"];
   const wireplumber = start("wireplumber", wireplumberArguments);
   let wireplumberDiagnostic = "";
   wireplumber.stderr.on("data", (chunk) => {
@@ -213,6 +253,44 @@ try {
   );
   assert.match(metadataOutput, /protocol\.version[^\n]*1/);
   assert.match(metadataOutput, new RegExp(`wireplumber-0\\.${minorVersion}`));
+  if (minorVersion === 4) {
+    let blockerMetadataOutput = "";
+    const blockerWaiting = await waitFor(() => {
+      const result = spawnSync(
+        "pw-metadata",
+        ["-n", "pipetune-test-main-blocker"],
+        { env: environment, encoding: "utf8" },
+      );
+      blockerMetadataOutput = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+      return result.status === 0 && blockerMetadataOutput.includes("waiting");
+    }, 5000);
+    assert.equal(
+      blockerWaiting,
+      true,
+      `WirePlumber main activation was not held for the ordering test: ${blockerMetadataOutput}\n${wireplumberDiagnostic}`,
+    );
+    const released = spawnSync(
+      "pw-metadata",
+      ["-n", "pipetune-test-main-blocker", "0", "release", "true", "Spa:Bool"],
+      { env: environment, encoding: "utf8" },
+    );
+    assert.equal(
+      released.status,
+      0,
+      `${released.stdout ?? ""}\n${released.stderr ?? ""}`,
+    );
+  }
+  const policyMetadataList = spawnSync("pw-metadata", ["-l"], {
+    env: environment,
+    encoding: "utf8",
+  });
+  const policyMetadataListOutput = `${policyMetadataList.stdout ?? ""}\n${policyMetadataList.stderr ?? ""}`;
+  assert.equal(policyMetadataList.status, 0, policyMetadataListOutput);
+  assert.equal(
+    policyMetadataListOutput.match(/Found "pipetune-policy"/gu)?.length ?? 0,
+    1,
+    `WirePlumber published duplicate PipeTune policy metadata:\n${policyMetadataListOutput}\n${wireplumberDiagnostic}`,
+  );
 
   const configuredDefaultKey = "default.configured.audio.sink";
   const effectiveDefaultKey = "default.audio.sink";

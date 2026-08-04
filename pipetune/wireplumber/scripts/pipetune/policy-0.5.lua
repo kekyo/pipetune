@@ -1,5 +1,11 @@
 -- PipeTune Smart Filters integration for WirePlumber 0.5 and later.
 
+-- WirePlumber 0.4 also merges wireplumber.conf.d fragments, but it does not
+-- provide the profile feature API introduced for the 0.5 component model.
+if type(Core.test_feature) ~= "function" then
+  return
+end
+
 Script.async_activation = true
 
 local policy_metadata = nil

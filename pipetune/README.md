@@ -294,7 +294,9 @@ entries, icon, configuration example, documentation, and license notices.
 The same package installs the WirePlumber 0.4 policy loader, the WirePlumber
 0.5 component configuration, and both Lua implementations below
 `/usr/share/wireplumber`; no installation-time version probe selects or copies
-a different PipeTune binary.
+a different PipeTune binary. WirePlumber 0.4 also reads the 0.5 component
+fragment from its main configuration, so `policy-0.5.lua` detects the absence
+of the 0.5 profile feature API and exits before publishing or routing anything.
 
 The supported package matrix is:
 

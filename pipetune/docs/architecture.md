@@ -63,17 +63,21 @@ physical sink gain is applied once after DSP.
 The same package installs these four files:
 
 ```text
-/usr/share/wireplumber/policy.lua.d/85-pipetune.lua
+/usr/share/wireplumber/main.lua.d/85-pipetune.lua
 /usr/share/wireplumber/wireplumber.conf.d/90-pipetune.conf
 /usr/share/wireplumber/scripts/pipetune/policy-0.4.lua
 /usr/share/wireplumber/scripts/pipetune/policy-0.5.lua
 ```
 
-WirePlumber 0.4 loads `policy.lua.d` and therefore starts `policy-0.4.lua`.
-WirePlumber 0.5 loads `wireplumber.conf.d` and therefore starts
-`policy-0.5.lua`. An OS upgrade naturally selects the new policy the next time
-WirePlumber starts; the PipeTune executable and environment file remain the
-same.
+WirePlumber 0.4 loads `main.lua.d` and starts `policy-0.4.lua` alongside its
+device-monitor components. This publishes the setup handshake without waiting
+for every ALSA device to activate. Its main configuration also merges
+`wireplumber.conf.d`, so the 0.5 component script guards itself with the
+0.5-only profile feature API and exits without publishing policy state on 0.4.
+WirePlumber 0.5 no longer loads the 0.4 Lua configuration fragments and starts
+`policy-0.5.lua` from its component configuration. An OS upgrade naturally
+selects the new policy the next time WirePlumber starts; the PipeTune
+executable and environment file remain the same.
 
 Both policies publish a `pipetune-policy` metadata object with:
 

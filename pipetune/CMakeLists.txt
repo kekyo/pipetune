@@ -314,8 +314,11 @@ install(
   FILES docs/dsp-backends.md
   DESTINATION "${PIPETUNE_DOCUMENTATION_DIR}")
 install(
-  FILES wireplumber/policy.lua.d/85-pipetune.lua
-  DESTINATION "${PIPETUNE_WIREPLUMBER_CONFIG_DIR}/policy.lua.d")
+  FILES wireplumber/main.lua.d/85-pipetune.lua
+  DESTINATION "${PIPETUNE_WIREPLUMBER_CONFIG_DIR}/main.lua.d")
+install(
+  CODE
+    "file(REMOVE \"\$ENV{DESTDIR}${PIPETUNE_WIREPLUMBER_CONFIG_DIR}/policy.lua.d/85-pipetune.lua\")")
 install(
   FILES wireplumber/wireplumber.conf.d/90-pipetune.conf
   DESTINATION "${PIPETUNE_WIREPLUMBER_CONFIG_DIR}/wireplumber.conf.d")
@@ -611,7 +614,7 @@ if(BUILD_TESTING)
     COMMAND
       "${PIPETUNE_NODE_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/test/wireplumber-policy-integration.mjs"
-      "${CMAKE_CURRENT_SOURCE_DIR}/wireplumber/policy.lua.d/85-pipetune.lua"
+      "${CMAKE_CURRENT_SOURCE_DIR}/wireplumber/main.lua.d/85-pipetune.lua"
       "${CMAKE_CURRENT_SOURCE_DIR}/wireplumber/scripts/pipetune/policy-0.4.lua"
       "${CMAKE_CURRENT_SOURCE_DIR}/wireplumber/wireplumber.conf.d/90-pipetune.conf"
       "${CMAKE_CURRENT_SOURCE_DIR}/wireplumber/scripts/pipetune/policy-0.5.lua"

@@ -1,12 +1,15 @@
 import {
   constants,
   accessSync,
+  existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const fail = (message, command) => {
@@ -59,7 +62,13 @@ if (
       : join(installPrefix, directory);
     return join(stagingDirectory, destination.replace(/^\/+/, ""), fileName);
   };
+  const obsoletePolicyLoader = installPath(
+    join(wirePlumberConfigDirectory, "policy.lua.d"),
+    "85-pipetune.lua",
+  );
   try {
+    mkdirSync(dirname(obsoletePolicyLoader), { recursive: true });
+    writeFileSync(obsoletePolicyLoader, "obsolete PipeTune policy loader\n");
     const installed = spawnSync(cmake, ["--install", buildDirectory], {
       encoding: "utf8",
       env: { ...process.env, DESTDIR: stagingDirectory },
@@ -75,7 +84,7 @@ if (
       );
       const wirePlumberFiles = [
         installPath(
-          join(wirePlumberConfigDirectory, "policy.lua.d"),
+          join(wirePlumberConfigDirectory, "main.lua.d"),
           "85-pipetune.lua",
         ),
         installPath(
@@ -125,6 +134,9 @@ if (
         accessSync(environmentExample, constants.R_OK);
         for (const policyFile of wirePlumberFiles) {
           accessSync(policyFile, constants.R_OK);
+        }
+        if (existsSync(obsoletePolicyLoader)) {
+          throw new Error("obsolete policy.lua.d loader was not removed");
         }
         accessSync(scalarDspBackend, constants.R_OK);
         accessSync(simdDspBackend, constants.R_OK);

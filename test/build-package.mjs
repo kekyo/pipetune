@@ -115,7 +115,7 @@ const createPackageStage = (
     "usr/lib/systemd/user",
     "usr/share/applications",
     "usr/share/icons/hicolor/scalable/apps",
-    "usr/share/wireplumber/policy.lua.d",
+    "usr/share/wireplumber/main.lua.d",
     "usr/share/wireplumber/wireplumber.conf.d",
     "usr/share/wireplumber/scripts/pipetune",
     "usr/share/doc/pipetune",
@@ -144,10 +144,7 @@ Description: PipeWire system-wide DSP and GTK control application
   if (includeDspBackends) {
     for (const backend of dspBackendsForArchitecture(debianArchitecture)) {
       if (backend !== omittedDspBackend) {
-        copyFileSync(
-          "/bin/true",
-          join(stageRoot, "usr/lib/pipetune", backend),
-        );
+        copyFileSync("/bin/true", join(stageRoot, "usr/lib/pipetune", backend));
       }
     }
   }
@@ -167,10 +164,10 @@ Description: PipeWire system-wide DSP and GTK control application
   }
   writeFileSync(
     join(stageRoot, "usr/share/icons/hicolor/scalable/apps/pipetune.svg"),
-    "<svg xmlns=\"http://www.w3.org/2000/svg\"/>\n",
+    '<svg xmlns="http://www.w3.org/2000/svg"/>\n',
   );
   for (const policyPath of [
-    "usr/share/wireplumber/policy.lua.d/85-pipetune.lua",
+    "usr/share/wireplumber/main.lua.d/85-pipetune.lua",
     "usr/share/wireplumber/wireplumber.conf.d/90-pipetune.conf",
     "usr/share/wireplumber/scripts/pipetune/policy-0.4.lua",
     "usr/share/wireplumber/scripts/pipetune/policy-0.5.lua",
@@ -302,10 +299,7 @@ container_image_for_target debian trixie riscv64
       "24.04",
       "26.04",
       "13",
-      join(
-        projectRoot,
-        "artifacts/deb/pipetune-1.2.3-ubuntu-24.04-amd64.deb",
-      ),
+      join(projectRoot, "artifacts/deb/pipetune-1.2.3-ubuntu-24.04-amd64.deb"),
       "localhost/pipetune-pack-deb-debian-bookworm-x86_64:latest",
       "docker.io/library/debian:trixie",
       "",
@@ -377,8 +371,7 @@ exit 0
       PIPETUNE_PACKAGE_MAINTAINER: "PipeTune test <test@localhost>",
       PIPETUNE_PACKAGE_NAME: "pipetune",
       PIPETUNE_PACKAGE_VERSION: "1.2.3-test",
-      PIPETUNE_TEST_CONTAINER_CMAKE_INVOCATION:
-        containerCmakeInvocation,
+      PIPETUNE_TEST_CONTAINER_CMAKE_INVOCATION: containerCmakeInvocation,
       PIPETUNE_WORK_DIR: join(temporaryRoot, "container-work"),
     },
   );
@@ -560,10 +553,7 @@ cp "$containerfile" "$PIPETUNE_TEST_PREREQ_RECORDS.containerfile"
     "localhost/pipetune-pack-deb-debian-bookworm-x86_64:latest",
     "prerequisite build used the wrong image tag",
   );
-  const containerfile = readFileSync(
-    `${prereqRecords}.containerfile`,
-    "utf8",
-  );
+  const containerfile = readFileSync(`${prereqRecords}.containerfile`, "utf8");
   for (const dependency of [
     "libgtk-3-dev",
     "libpipewire-0.3-dev",
@@ -602,9 +592,7 @@ printf '%s\\n' "$@" >"$PIPETUNE_TEST_WRAPPER_CAPTURE"
   );
   assertSuccess(wrapper, "all-target wrapper failed");
   assertEqual(
-    ["--target", "all", "--jobs", "3", "--arch", "amd64", ""].join(
-      "\n",
-    ),
+    ["--target", "all", "--jobs", "3", "--arch", "amd64", ""].join("\n"),
     readFileSync(wrapperCapture, "utf8"),
     "all-target wrapper did not preserve arguments",
   );
@@ -688,11 +676,7 @@ printf '%s\\n' "$@" >"$PIPETUNE_TEST_WRAPPER_CAPTURE"
   const unexpectedDspBackend = "libeffetune-dsp-simd-unexpected.so";
   copyFileSync(
     "/bin/true",
-    join(
-      unexpectedDspBackendStage,
-      "usr/lib/pipetune",
-      unexpectedDspBackend,
-    ),
+    join(unexpectedDspBackendStage, "usr/lib/pipetune", unexpectedDspBackend),
   );
   for (const [stage, output] of [
     [goodStage, goodPackage],
@@ -754,12 +738,9 @@ exit 74
     "installed package validation did not reach dpkg",
   );
   assertEqual(
-    [
-      "--path-include=/usr/share/doc/pipetune/*",
-      "-i",
-      goodPackage,
-      "",
-    ].join("\n"),
+    ["--path-include=/usr/share/doc/pipetune/*", "-i", goodPackage, ""].join(
+      "\n",
+    ),
     readFileSync(dpkgInstallInvocation, "utf8"),
     "installed package validation did not restore package documentation excluded by minimal images",
   );

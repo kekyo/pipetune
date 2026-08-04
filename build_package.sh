@@ -550,7 +550,7 @@ validate_deb_package() {
 		usr/share/applications/net.kekyo.pipetune-gtk.desktop \
 		etc/xdg/autostart/net.kekyo.pipetune-gtk.desktop \
 		usr/share/icons/hicolor/scalable/apps/pipetune.svg \
-		usr/share/wireplumber/policy.lua.d/85-pipetune.lua \
+		usr/share/wireplumber/main.lua.d/85-pipetune.lua \
 		usr/share/wireplumber/wireplumber.conf.d/90-pipetune.conf \
 		usr/share/wireplumber/scripts/pipetune/policy-0.4.lua \
 		usr/share/wireplumber/scripts/pipetune/policy-0.5.lua \
