@@ -294,6 +294,17 @@ install(
 install(
   FILES docs/dsp-backends.md
   DESTINATION "${PIPETUNE_DOCUMENTATION_DIR}")
+install(
+  FILES wireplumber/policy.lua.d/85-pipetune.lua
+  DESTINATION "${CMAKE_INSTALL_DATADIR}/wireplumber/policy.lua.d")
+install(
+  FILES wireplumber/wireplumber.conf.d/90-pipetune.conf
+  DESTINATION "${CMAKE_INSTALL_DATADIR}/wireplumber/wireplumber.conf.d")
+install(
+  FILES
+    wireplumber/scripts/pipetune/policy-0.4.lua
+    wireplumber/scripts/pipetune/policy-0.5.lua
+  DESTINATION "${CMAKE_INSTALL_DATADIR}/wireplumber/scripts/pipetune")
 
 if(BUILD_TESTING)
   set(PIPETUNE_DSP_BACKEND_COPY_COMMANDS)
@@ -550,6 +561,19 @@ if(BUILD_TESTING)
     COMMAND pipetune_pipewire_pipeline_tests)
   set_tests_properties(
     pipetune_pipewire_pipeline_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 20)
+
+  add_test(
+    NAME pipetune_wireplumber_policy_integration
+    COMMAND
+      "${PIPETUNE_NODE_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/test/wireplumber-policy-integration.mjs"
+      "${CMAKE_CURRENT_SOURCE_DIR}/wireplumber/policy.lua.d/85-pipetune.lua"
+      "${CMAKE_CURRENT_SOURCE_DIR}/wireplumber/scripts/pipetune/policy-0.4.lua"
+      "${CMAKE_CURRENT_SOURCE_DIR}/wireplumber/wireplumber.conf.d/90-pipetune.conf"
+      "${CMAKE_CURRENT_SOURCE_DIR}/wireplumber/scripts/pipetune/policy-0.5.lua")
+  set_tests_properties(
+    pipetune_wireplumber_policy_integration
+    PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
 
   add_executable(
     pipetune_pipewire_volume_routing_tests
