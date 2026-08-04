@@ -16,6 +16,9 @@
 
 namespace pipetune {
 
+/** Current local control protocol version. */
+inline constexpr auto kControlProtocolVersion = std::uint32_t{2};
+
 /**
  * Identifies one local control request.
  */
@@ -138,6 +141,56 @@ struct ControlDspVariantAvailability {
   std::string error;
 };
 
+/** Identifies how one physical output is handled by PipeTune. */
+enum class ControlFilterState {
+  /** The per-output streams are still negotiating. */
+  waiting,
+  /** WirePlumber routes this output through its ready PipeTune filter. */
+  active,
+  /** The physical output remains on WirePlumber's direct route. */
+  bypassed,
+  /** The output-specific PipeTune runtime failed open. */
+  error
+};
+
+/** Describes one physical output and its independent filter runtime. */
+struct ControlFilterOutputStatus {
+  /** Physical sink node.name that remains visible to the desktop. */
+  std::string targetNodeName;
+  /** User-facing physical sink description. */
+  std::string targetDescription;
+  /** Hidden PipeTune node.name, or empty when no filter was created. */
+  std::string filterNodeName;
+  /** Current target-specific filter state. */
+  ControlFilterState state;
+  /** Output-specific fail-open diagnostic, or empty. */
+  std::string error;
+  /** Exact number of processed channels, or zero for a direct route. */
+  std::uint32_t channelCount;
+  /** Enumerated rate support of this physical sink. */
+  SampleRateCapabilities sampleRateCapabilities;
+  /** EffeTune processing rate for this output, or zero. */
+  std::uint32_t dspSampleRate;
+  /** PipeWire graph-rate hint for this output, or zero. */
+  std::uint32_t outputSampleRate;
+  /** Active physical output rate, or zero while idle. */
+  std::uint32_t activeOutputSampleRate;
+  /** True when outputSampleRate is a device-compatible fallback. */
+  bool rateFallback;
+  /** Native DSP latency published to PipeWire, in frames. */
+  std::uint32_t latencyFrames;
+  /** Captured frames discarded because this output bridge was full. */
+  std::uint64_t overrunFrames;
+  /** Playback frames replaced by silence because this bridge was empty. */
+  std::uint64_t underrunFrames;
+  /** DSP blocks passed through after output-specific processing errors. */
+  std::uint64_t processingErrors;
+  /** Frames processed by this output's native EffeTune pipeline. */
+  std::uint64_t dspProcessedFrames;
+  /** Nanoseconds spent in this output's native EffeTune pipeline. */
+  std::uint64_t dspProcessingNanoseconds;
+};
+
 /**
  * Describes the current daemon state returned over the control socket.
  */
@@ -150,6 +203,10 @@ struct ControlRuntimeStatus {
   std::string configurationError;
   /** Number of enabled native DSP nodes. */
   std::size_t activePluginCount;
+  /** WirePlumber compatibility backend, or empty without a handshake. */
+  std::string policyBackend = {};
+  /** Independently filtered or directly routed physical outputs. */
+  std::vector<ControlFilterOutputStatus> filterOutputs = {};
   /** User-preferred PipeWire node.name, or empty for system-default mode. */
   std::string preferredTarget;
   /** Current physical PipeWire output node name, or empty while unavailable. */

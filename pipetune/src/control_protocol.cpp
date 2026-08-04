@@ -91,6 +91,11 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
   if (!yyjson_is_obj(root)) {
     return requestError("control request root must be an object");
   }
+  auto *versionValue = yyjson_obj_get(root, "protocolVersion");
+  if (!yyjson_is_uint(versionValue) ||
+      yyjson_get_uint(versionValue) != kControlProtocolVersion) {
+    return requestError("control request protocol version is unsupported");
+  }
   auto *commandValue = yyjson_obj_get(root, "command");
   if (!yyjson_is_str(commandValue)) {
     return requestError("control request command must be a string");
@@ -99,8 +104,9 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
       std::string_view(yyjson_get_str(commandValue),
                        yyjson_get_len(commandValue));
   if (command == "status") {
-    if (yyjson_obj_size(root) != 1) {
-      return requestError("status request accepts only the command field");
+    if (yyjson_obj_size(root) != 2) {
+      return requestError(
+          "status request accepts only protocolVersion and command");
     }
     return {.request = {.command = ControlCommand::status,
                         .presetPath = {},
@@ -109,8 +115,9 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
             .error = {}};
   }
   if (command == "bypass") {
-    if (yyjson_obj_size(root) != 1) {
-      return requestError("bypass request accepts only the command field");
+    if (yyjson_obj_size(root) != 2) {
+      return requestError(
+          "bypass request accepts only protocolVersion and command");
     }
     return {.request = {.command = ControlCommand::bypass,
                         .presetPath = {},
@@ -119,9 +126,9 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
             .error = {}};
   }
   if (command == "clear-output") {
-    if (yyjson_obj_size(root) != 1) {
+    if (yyjson_obj_size(root) != 2) {
       return requestError(
-          "clear-output request accepts only the command field");
+          "clear-output request accepts only protocolVersion and command");
     }
     return {.request = {.command = ControlCommand::clearOutput,
                         .presetPath = {},
@@ -130,8 +137,9 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
             .error = {}};
   }
   if (command == "subscribe") {
-    if (yyjson_obj_size(root) != 1) {
-      return requestError("subscribe request accepts only the command field");
+    if (yyjson_obj_size(root) != 2) {
+      return requestError(
+          "subscribe request accepts only protocolVersion and command");
     }
     return {.request = {.command = ControlCommand::subscribe,
                         .presetPath = {},
@@ -140,9 +148,10 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
             .error = {}};
   }
   if (command == "set-output") {
-    if (yyjson_obj_size(root) != 2) {
+    if (yyjson_obj_size(root) != 3) {
       return requestError(
-          "set-output request requires only command and target fields");
+          "set-output request requires only protocolVersion, command, and "
+          "target");
     }
     auto *targetValue = yyjson_obj_get(root, "target");
     if (!yyjson_is_str(targetValue) || yyjson_get_len(targetValue) == 0) {
@@ -164,10 +173,10 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
             .error = {}};
   }
   if (command == "set-rate") {
-    if (yyjson_obj_size(root) != 4) {
+    if (yyjson_obj_size(root) != 5) {
       return requestError(
-          "set-rate request requires only command, rateMode, sampleRate, "
-          "and enforcement fields");
+          "set-rate request requires only protocolVersion, command, "
+          "rateMode, sampleRate, and enforcement fields");
     }
     auto *modeValue = yyjson_obj_get(root, "rateMode");
     auto *rateValue = yyjson_obj_get(root, "sampleRate");
@@ -213,10 +222,10 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
             .error = {}};
   }
   if (command == "set-dsp-backend") {
-    if (yyjson_obj_size(root) != 3) {
+    if (yyjson_obj_size(root) != 4) {
       return requestError(
-          "set-dsp-backend request requires only command, backend, and "
-          "simdVariant fields");
+          "set-dsp-backend request requires only protocolVersion, command, "
+          "backend, and simdVariant fields");
     }
     auto *backendValue = yyjson_obj_get(root, "backend");
     auto *variantValue = yyjson_obj_get(root, "simdVariant");
@@ -251,9 +260,9 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
   if (command != "load") {
     return requestError("unsupported control command");
   }
-  if (yyjson_obj_size(root) != 2) {
+  if (yyjson_obj_size(root) != 3) {
     return requestError(
-        "load request requires only command and preset fields");
+        "load request requires only protocolVersion, command, and preset");
   }
   auto *presetValue = yyjson_obj_get(root, "preset");
   if (!yyjson_is_str(presetValue) || yyjson_get_len(presetValue) == 0) {
@@ -272,21 +281,23 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
 }
 
 std::string makeStatusControlRequest() {
-  return R"json({"command":"status"})json";
+  return R"json({"protocolVersion":2,"command":"status"})json";
 }
 
 std::string makeSubscribeControlRequest() {
-  return R"json({"command":"subscribe"})json";
+  return R"json({"protocolVersion":2,"command":"subscribe"})json";
 }
 
 std::string makeBypassControlRequest() {
-  return R"json({"command":"bypass"})json";
+  return R"json({"protocolVersion":2,"command":"bypass"})json";
 }
 
 std::string makeSetOutputControlRequest(std::string_view nodeName) {
   yyjson_mut_val *root = nullptr;
   auto document = createObjectDocument(root);
   if (document == nullptr ||
+      !yyjson_mut_obj_add_uint(document.get(), root, "protocolVersion",
+                               kControlProtocolVersion) ||
       !yyjson_mut_obj_add_str(document.get(), root, "command",
                               "set-output") ||
       !addString(document.get(), root, "target", nodeName)) {
@@ -296,7 +307,7 @@ std::string makeSetOutputControlRequest(std::string_view nodeName) {
 }
 
 std::string makeClearOutputControlRequest() {
-  return R"json({"command":"clear-output"})json";
+  return R"json({"protocolVersion":2,"command":"clear-output"})json";
 }
 
 std::string makeSetRateControlRequest(const SampleRatePolicy &policy) {
@@ -306,6 +317,8 @@ std::string makeSetRateControlRequest(const SampleRatePolicy &policy) {
   yyjson_mut_val *root = nullptr;
   auto document = createObjectDocument(root);
   if (document == nullptr ||
+      !yyjson_mut_obj_add_uint(document.get(), root, "protocolVersion",
+                               kControlProtocolVersion) ||
       !yyjson_mut_obj_add_str(document.get(), root, "command", "set-rate") ||
       !addString(document.get(), root, "rateMode",
                  sampleRateModeName(policy.mode)) ||
@@ -339,6 +352,8 @@ makeSetDspBackendControlRequest(DspBackendKind kind,
   yyjson_mut_val *root = nullptr;
   auto document = createObjectDocument(root);
   if (document == nullptr ||
+      !yyjson_mut_obj_add_uint(document.get(), root, "protocolVersion",
+                               kControlProtocolVersion) ||
       !yyjson_mut_obj_add_str(document.get(), root, "command",
                               "set-dsp-backend") ||
       !addString(document.get(), root, "backend",
@@ -356,6 +371,8 @@ makeLoadPresetControlRequest(const std::filesystem::path &presetPath) {
   auto document = createObjectDocument(root);
   const auto path = presetPath.string();
   if (document == nullptr ||
+      !yyjson_mut_obj_add_uint(document.get(), root, "protocolVersion",
+                               kControlProtocolVersion) ||
       !yyjson_mut_obj_add_str(document.get(), root, "command", "load") ||
       !addString(document.get(), root, "preset", path)) {
     return {};
@@ -378,6 +395,20 @@ static const char *outputSelectionReasonName(
   return nullptr;
 }
 
+static const char *filterStateName(ControlFilterState state) noexcept {
+  switch (state) {
+  case ControlFilterState::waiting:
+    return "waiting";
+  case ControlFilterState::active:
+    return "active";
+  case ControlFilterState::bypassed:
+    return "bypassed";
+  case ControlFilterState::error:
+    return "error";
+  }
+  return nullptr;
+}
+
 static const char *sampleRateConstraintKindName(
     SampleRateConstraintKind kind) noexcept {
   switch (kind) {
@@ -396,6 +427,47 @@ static bool sampleRateCapabilitiesAreNormalized(
   auto normalized = capabilities;
   return normalizeSampleRateCapabilities(normalized) &&
          normalized == capabilities;
+}
+
+static bool filterOutputStatusesAreConsistent(
+    const ControlRuntimeStatus &status) noexcept {
+  if (status.policyBackend.find('\0') != std::string::npos) {
+    return false;
+  }
+  for (auto index = std::size_t{0}; index < status.filterOutputs.size();
+       ++index) {
+    const auto &output = status.filterOutputs[index];
+    if (output.targetNodeName.empty() ||
+        output.targetNodeName.find('\0') != std::string::npos ||
+        output.targetDescription.find('\0') != std::string::npos ||
+        output.filterNodeName.find('\0') != std::string::npos ||
+        output.error.find('\0') != std::string::npos ||
+        filterStateName(output.state) == nullptr ||
+        output.channelCount > 8 ||
+        !sampleRateCapabilitiesAreNormalized(
+            output.sampleRateCapabilities) ||
+        (output.dspSampleRate != 0 &&
+         !isSelectableSampleRate(output.dspSampleRate)) ||
+        (output.outputSampleRate != 0 &&
+         !isSelectableSampleRate(output.outputSampleRate)) ||
+        (output.activeOutputSampleRate != 0 &&
+         output.outputSampleRate == 0) ||
+        ((output.state == ControlFilterState::waiting ||
+          output.state == ControlFilterState::active) &&
+         (output.filterNodeName.empty() || output.channelCount == 0 ||
+          output.dspSampleRate == 0 || output.outputSampleRate == 0)) ||
+        (output.state == ControlFilterState::error &&
+         output.error.empty())) {
+      return false;
+    }
+    for (auto earlier = std::size_t{0}; earlier < index; ++earlier) {
+      if (status.filterOutputs[earlier].targetNodeName ==
+          output.targetNodeName) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 static bool outputStatusIsConsistent(
@@ -557,6 +629,7 @@ static std::string makeControlStatusMessage(
       (status.processingMode == ProcessingMode::bypass &&
        !status.activePreset.empty()) ||
       !outputStatusIsConsistent(status) ||
+      !filterOutputStatusesAreConsistent(status) ||
       !sampleRatePolicyIsValid(status.configuredRatePolicy) ||
       (status.dspSampleRate != 0 &&
        !isSelectableSampleRate(status.dspSampleRate)) ||
@@ -572,6 +645,8 @@ static std::string makeControlStatusMessage(
   const auto processingMode =
       status.processingMode == ProcessingMode::bypass ? "bypass" : "preset";
   if (document == nullptr ||
+      !yyjson_mut_obj_add_uint(document.get(), root, "protocolVersion",
+                               kControlProtocolVersion) ||
       !yyjson_mut_obj_add_bool(document.get(), root, "ok", true) ||
       (statusEvent &&
        !yyjson_mut_obj_add_str(document.get(), root, "event", "status")) ||
@@ -583,6 +658,8 @@ static std::string makeControlStatusMessage(
                          status.configurationError) ||
       !yyjson_mut_obj_add_uint(document.get(), root, "activePluginCount",
                                status.activePluginCount) ||
+      !addNullableString(document.get(), root, "policyBackend",
+                         status.policyBackend) ||
       !addNullableString(document.get(), root, "preferredTarget",
                          status.preferredTarget) ||
       !addNullableString(document.get(), root, "selectedTarget",
@@ -751,6 +828,77 @@ static std::string makeControlStatusMessage(
     }
   }
 
+  auto *filterOutputArray =
+      yyjson_mut_obj_add_arr(document.get(), root, "filterOutputs");
+  if (filterOutputArray == nullptr) {
+    return makeControlErrorResponse("cannot encode control response");
+  }
+  for (const auto &output : status.filterOutputs) {
+    auto *item = yyjson_mut_obj(document.get());
+    const auto *state = filterStateName(output.state);
+    if (state == nullptr || item == nullptr ||
+        !yyjson_mut_arr_append(filterOutputArray, item) ||
+        !addString(document.get(), item, "targetNodeName",
+                   output.targetNodeName) ||
+        !addString(document.get(), item, "targetDescription",
+                   output.targetDescription) ||
+        !addNullableString(document.get(), item, "filterNodeName",
+                           output.filterNodeName) ||
+        !yyjson_mut_obj_add_str(document.get(), item, "state", state) ||
+        !addNullableString(document.get(), item, "error", output.error) ||
+        !yyjson_mut_obj_add_uint(document.get(), item, "channelCount",
+                                 output.channelCount) ||
+        !yyjson_mut_obj_add_bool(
+            document.get(), item, "sampleRateCapabilitiesKnown",
+            output.sampleRateCapabilities.known) ||
+        !yyjson_mut_obj_add_uint(document.get(), item, "dspSampleRate",
+                                 output.dspSampleRate) ||
+        !yyjson_mut_obj_add_uint(document.get(), item, "outputSampleRate",
+                                 output.outputSampleRate) ||
+        !yyjson_mut_obj_add_uint(document.get(), item,
+                                 "activeOutputSampleRate",
+                                 output.activeOutputSampleRate) ||
+        !yyjson_mut_obj_add_bool(document.get(), item, "rateFallback",
+                                 output.rateFallback) ||
+        !yyjson_mut_obj_add_uint(document.get(), item, "latencyFrames",
+                                 output.latencyFrames) ||
+        !yyjson_mut_obj_add_uint(document.get(), item, "overrunFrames",
+                                 output.overrunFrames) ||
+        !yyjson_mut_obj_add_uint(document.get(), item, "underrunFrames",
+                                 output.underrunFrames) ||
+        !yyjson_mut_obj_add_uint(document.get(), item, "processingErrors",
+                                 output.processingErrors) ||
+        !yyjson_mut_obj_add_uint(document.get(), item, "dspProcessedFrames",
+                                 output.dspProcessedFrames) ||
+        !yyjson_mut_obj_add_uint(document.get(), item,
+                                 "dspProcessingNanoseconds",
+                                 output.dspProcessingNanoseconds)) {
+      return makeControlErrorResponse("cannot encode control response");
+    }
+    auto *constraintArray = yyjson_mut_obj_add_arr(
+        document.get(), item, "sampleRateConstraints");
+    if (constraintArray == nullptr) {
+      return makeControlErrorResponse("cannot encode control response");
+    }
+    for (const auto &constraint :
+         output.sampleRateCapabilities.constraints) {
+      const auto *kind = sampleRateConstraintKindName(constraint.kind);
+      auto *constraintObject = yyjson_mut_obj(document.get());
+      if (kind == nullptr || constraintObject == nullptr ||
+          !yyjson_mut_arr_append(constraintArray, constraintObject) ||
+          !yyjson_mut_obj_add_str(document.get(), constraintObject, "kind",
+                                  kind) ||
+          !yyjson_mut_obj_add_uint(document.get(), constraintObject,
+                                   "minimum", constraint.minimum) ||
+          !yyjson_mut_obj_add_uint(document.get(), constraintObject,
+                                   "maximum", constraint.maximum) ||
+          !yyjson_mut_obj_add_uint(document.get(), constraintObject, "step",
+                                   constraint.step)) {
+        return makeControlErrorResponse("cannot encode control response");
+      }
+    }
+  }
+
   auto *warningArray =
       yyjson_mut_obj_add_arr(document.get(), root, "warnings");
   if (warningArray == nullptr) {
@@ -788,13 +936,15 @@ std::string makeControlErrorResponse(std::string_view error) {
   yyjson_mut_val *root = nullptr;
   auto document = createObjectDocument(root);
   if (document == nullptr ||
+      !yyjson_mut_obj_add_uint(document.get(), root, "protocolVersion",
+                               kControlProtocolVersion) ||
       !yyjson_mut_obj_add_bool(document.get(), root, "ok", false) ||
       !addString(document.get(), root, "error", error)) {
-    return R"json({"ok":false,"error":"cannot encode control response"})json";
+    return R"json({"protocolVersion":2,"ok":false,"error":"cannot encode control response"})json";
   }
   const auto encoded = writeDocument(document.get());
   return encoded.empty()
-             ? R"json({"ok":false,"error":"cannot encode control response"})json"
+             ? R"json({"protocolVersion":2,"ok":false,"error":"cannot encode control response"})json"
              : encoded;
 }
 
@@ -1207,6 +1357,96 @@ static bool readUint32Field(yyjson_val *object, const char *key,
   return true;
 }
 
+static bool readControlFilterState(yyjson_val *object,
+                                   ControlFilterState &state) {
+  auto *field = yyjson_obj_get(object, "state");
+  if (!yyjson_is_str(field)) {
+    return false;
+  }
+  const auto value =
+      std::string_view(yyjson_get_str(field), yyjson_get_len(field));
+  if (value == "waiting") {
+    state = ControlFilterState::waiting;
+    return true;
+  }
+  if (value == "active") {
+    state = ControlFilterState::active;
+    return true;
+  }
+  if (value == "bypassed") {
+    state = ControlFilterState::bypassed;
+    return true;
+  }
+  if (value == "error") {
+    state = ControlFilterState::error;
+    return true;
+  }
+  return false;
+}
+
+static bool readFilterOutputs(
+    yyjson_val *object, std::vector<ControlFilterOutputStatus> &outputs) {
+  auto *array = yyjson_obj_get(object, "filterOutputs");
+  if (!yyjson_is_arr(array)) {
+    return false;
+  }
+  outputs.clear();
+  outputs.reserve(yyjson_arr_size(array));
+  for (auto index = std::size_t{0}; index < yyjson_arr_size(array);
+       ++index) {
+    auto *item = yyjson_arr_get(array, index);
+    auto output = ControlFilterOutputStatus{
+        .targetNodeName = {},
+        .targetDescription = {},
+        .filterNodeName = {},
+        .state = ControlFilterState::waiting,
+        .error = {},
+        .channelCount = 0,
+        .sampleRateCapabilities = {},
+        .dspSampleRate = 0,
+        .outputSampleRate = 0,
+        .activeOutputSampleRate = 0,
+        .rateFallback = false,
+        .latencyFrames = 0,
+        .overrunFrames = 0,
+        .underrunFrames = 0,
+        .processingErrors = 0,
+        .dspProcessedFrames = 0,
+        .dspProcessingNanoseconds = 0,
+    };
+    if (!yyjson_is_obj(item) || yyjson_obj_size(item) != 18 ||
+        !readStringField(item, "targetNodeName", output.targetNodeName) ||
+        !readStringField(item, "targetDescription",
+                         output.targetDescription) ||
+        !readNullableStringField(item, "filterNodeName",
+                                 output.filterNodeName) ||
+        !readControlFilterState(item, output.state) ||
+        !readNullableStringField(item, "error", output.error) ||
+        !readUint32Field(item, "channelCount", output.channelCount) ||
+        !readSampleRateCapabilities(item,
+                                    output.sampleRateCapabilities) ||
+        !readUint32Field(item, "dspSampleRate", output.dspSampleRate) ||
+        !readUint32Field(item, "outputSampleRate",
+                         output.outputSampleRate) ||
+        !readUint32Field(item, "activeOutputSampleRate",
+                         output.activeOutputSampleRate) ||
+        !readBooleanField(item, "rateFallback", output.rateFallback) ||
+        !readUint32Field(item, "latencyFrames", output.latencyFrames) ||
+        !readCounterField(item, "overrunFrames", output.overrunFrames) ||
+        !readCounterField(item, "underrunFrames", output.underrunFrames) ||
+        !readCounterField(item, "processingErrors",
+                          output.processingErrors) ||
+        !readCounterField(item, "dspProcessedFrames",
+                          output.dspProcessedFrames) ||
+        !readCounterField(item, "dspProcessingNanoseconds",
+                          output.dspProcessingNanoseconds)) {
+      return false;
+    }
+    outputs.push_back(std::move(output));
+  }
+  return true;
+}
+
 ControlResponseParseResult parseControlResponse(std::string_view json) {
   auto document =
       JsonDocument(yyjson_read(json.data(), json.size(), YYJSON_READ_NOFLAG));
@@ -1216,6 +1456,11 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
   auto *root = yyjson_doc_get_root(document.get());
   if (!yyjson_is_obj(root)) {
     return responseError("control response root must be an object");
+  }
+  auto *version = yyjson_obj_get(root, "protocolVersion");
+  if (!yyjson_is_uint(version) ||
+      yyjson_get_uint(version) != kControlProtocolVersion) {
+    return responseError("control response protocol version is unsupported");
   }
   auto *ok = yyjson_obj_get(root, "ok");
   if (!yyjson_is_bool(ok)) {
@@ -1273,6 +1518,8 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       .activePreset = {},
       .configurationError = {},
       .activePluginCount = 0,
+      .policyBackend = {},
+      .filterOutputs = {},
       .preferredTarget = {},
       .selectedTarget = {},
       .outputSelectionReason =
@@ -1297,6 +1544,9 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
                                status.configurationError) ||
       !readSizeField(root, "activePluginCount",
                      status.activePluginCount) ||
+      !readNullableStringField(root, "policyBackend",
+                               status.policyBackend) ||
+      !readFilterOutputs(root, status.filterOutputs) ||
       !readNullableStringField(root, "preferredTarget",
                                status.preferredTarget) ||
       !readNullableStringField(root, "selectedTarget",
@@ -1353,6 +1603,7 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       (status.processingMode == ProcessingMode::bypass &&
        !status.activePreset.empty()) ||
       !outputStatusIsConsistent(status) ||
+      !filterOutputStatusesAreConsistent(status) ||
       (status.dspSampleRate != 0 &&
        !isSelectableSampleRate(status.dspSampleRate)) ||
       (status.activeOutputSampleRate != 0 &&

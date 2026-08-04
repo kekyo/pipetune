@@ -933,6 +933,23 @@ if(BUILD_TESTING)
     COMMAND pipetune_control_protocol_tests)
 
   add_executable(
+    pipetune_control_protocol_v2_tests
+    test/control_protocol_v2_test.cpp)
+  target_link_libraries(
+    pipetune_control_protocol_v2_tests PRIVATE pipetune_control)
+  if(MSVC)
+    target_compile_options(
+      pipetune_control_protocol_v2_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_control_protocol_v2_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_control_protocol_v2_tests
+    COMMAND pipetune_control_protocol_v2_tests)
+
+  add_executable(
     pipetune_control_socket_tests
     test/control_socket_test.cpp)
   target_link_libraries(
