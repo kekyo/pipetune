@@ -32,7 +32,8 @@ if(PIPETUNE_GTK_MSGFMT_EXECUTABLE)
     COMMAND
       "${PIPETUNE_GTK_MSGFMT_EXECUTABLE}"
       --check
-      --output-file="${PIPETUNE_GTK_JAPANESE_CATALOG}"
+      -o
+      "${PIPETUNE_GTK_JAPANESE_CATALOG}"
       "${PIPETUNE_GTK_PO_FILE}"
     DEPENDS "${PIPETUNE_GTK_PO_FILE}"
     VERBATIM)
@@ -417,6 +418,18 @@ if(BUILD_TESTING)
       ${PIPETUNE_GTK_NODE_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-translations.mjs
       ${CMAKE_CURRENT_SOURCE_DIR})
+  if(PIPETUNE_GTK_MSGFMT_EXECUTABLE)
+    add_test(
+      NAME pipetune_gtk_msgfmt_build
+      COMMAND
+        "${PIPETUNE_GTK_NODE_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/msgfmt-build.mjs"
+        "${CMAKE_COMMAND}"
+        "${CMAKE_SOURCE_DIR}"
+        "${PIPETUNE_GTK_MSGFMT_EXECUTABLE}")
+    set_tests_properties(
+      pipetune_gtk_msgfmt_build PROPERTIES TIMEOUT 30)
+  endif()
 
   add_executable(
     pipetune_gtk_state_config_tests
