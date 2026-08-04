@@ -574,6 +574,8 @@ if(BUILD_TESTING)
   add_executable(
     pipetune_gtk_configuration_reset_helper
     test/configuration-reset-helper.cpp)
+  target_link_libraries(
+    pipetune_gtk_configuration_reset_helper PRIVATE pipetune_core)
   if(MSVC)
     target_compile_options(
       pipetune_gtk_configuration_reset_helper PRIVATE /W4 /WX)
@@ -717,6 +719,7 @@ if(BUILD_TESTING)
       "${CMAKE_COMMAND}" -E env
       "PIPETUNE_GTK_BINARY=$<TARGET_FILE:pipetune-gtk>"
       "PIPETUNE_GTK_E2E_DAEMON=$<TARGET_FILE:pipetune_gtk_e2e_daemon>"
+      "PIPETUNE_GTK_E2E_RESET_HELPER=$<TARGET_FILE:pipetune_gtk_configuration_reset_helper>"
       "${PIPETUNE_GTK_NPM}" test)
   set_tests_properties(
     pipetune_gtk_gestament_e2e PROPERTIES

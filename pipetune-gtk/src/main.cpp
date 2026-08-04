@@ -1,9 +1,11 @@
 #include "action-log.h"
 #include "application-state.h"
+#include "configuration-reset-client.h"
 #include "control-client.h"
 #include "dsp-backend-selection-model.h"
 #include "installed-locales.h"
 #include "installed-presets.h"
+#include "installed-tools.h"
 #include "launch-options.h"
 #include "localization.h"
 #include "main-window.h"
@@ -59,6 +61,7 @@ struct GtkRuntime {
   GtkApplication *application;
   ApplicationState state;
   ControlClient *controlClient;
+  ConfigurationResetClient *configurationResetClient;
   TrayBackendState *trayBackend;
   TrayBackendAvailabilityState trayAvailability;
   std::filesystem::path startupConfigPath;
@@ -90,7 +93,9 @@ struct GtkRuntime {
   ActionLog actionLog;
   ActionLogFilter logFilter;
   std::uint64_t pendingActionId;
+  std::uint64_t configurationResetActionId;
   guint reconnectSource;
+  bool configurationResetPending;
   bool applicationHeld;
   bool activationHandled;
   bool shuttingDown;
@@ -128,6 +133,17 @@ static pipetune::StartupConfig defaultStartupConfig() {
       .dspBackend = pipetune::DspBackendKind::scalar,
       .dspSimdVariant = pipetune::DspSimdVariant::automatic,
   };
+}
+
+static std::filesystem::path configurationResetExecutable() {
+#ifdef PIPETUNE_GTK_E2E_ACCESSIBILITY
+  const auto *overrideExecutable =
+      std::getenv("PIPETUNE_GTK_E2E_RESET_EXECUTABLE");
+  if (overrideExecutable != nullptr && overrideExecutable[0] != '\0') {
+    return overrideExecutable;
+  }
+#endif
+  return kPipeTuneExecutable;
 }
 
 static void appendDetail(std::string &text, std::string_view detail) {
@@ -678,7 +694,8 @@ static void renderSettingsControls(GtkRuntime *runtime) {
   gtk_widget_set_sensitive(runtime->ui.rateCombo, editable);
   gtk_widget_set_sensitive(runtime->ui.rateEnforcementCombo, editable);
   gtk_widget_set_sensitive(runtime->ui.dspBackendCombo, editable);
-  gtk_widget_set_sensitive(runtime->ui.restoreDefaultsButton, editable);
+  gtk_widget_set_sensitive(runtime->ui.restoreDefaultsButton,
+                           !runtime->shuttingDown);
   gtk_widget_set_sensitive(
       runtime->ui.applyButton,
       runtime->transactionReady &&
@@ -1117,9 +1134,96 @@ static void onPresetFileSet(GtkFileChooserButton *, gpointer userData) {
   selectPresetPath(runtime, path);
 }
 
+static void reconnectAfterConfigurationReset(GtkRuntime *runtime) {
+  runtime->transaction = {};
+  runtime->transactionReady = false;
+  if (runtime->reconnectSource != 0) {
+    g_source_remove(runtime->reconnectSource);
+    runtime->reconnectSource = 0;
+  }
+  if (runtime->controlClient == nullptr) {
+    return;
+  }
+  stopControlSubscription(runtime->controlClient);
+  markControlConnecting(runtime->state);
+  startControlSubscription(runtime->controlClient);
+}
+
+static void onConfigurationResetCompleted(
+    const ConfigurationResetClientResult &result, void *userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  runtime->configurationResetPending = false;
+  const auto actionId = runtime->configurationResetActionId;
+  runtime->configurationResetActionId = 0;
+
+  auto error = result.error;
+  auto loaded = pipetune::StartupConfigLoadResult{};
+  if (result.success) {
+    loaded = pipetune::loadStartupConfig(runtime->startupConfigPath);
+    error = loaded.error;
+  }
+  if (!result.success || !error.empty()) {
+    setControlDiagnostic(runtime->state, error);
+    completePendingAction(
+        runtime->actionLog, actionId, currentUnixMilliseconds(), false,
+        ActionLogSeverity::error,
+        localizedMessage("Cannot restore default configuration", {}),
+        technicalMessage(error));
+    revealActionLog(runtime);
+    render(runtime);
+    return;
+  }
+
+  runtime->savedConfig = loaded.config;
+  runtime->startupConfigAvailable = true;
+  runtime->lastPresetPath =
+      loaded.config.presetFound ? loaded.config.presetPath
+                                : std::filesystem::path{};
+  clearControlNotice(runtime->state);
+  setControlOperationPending(runtime->state, false);
+  reconnectAfterConfigurationReset(runtime);
+  completePendingAction(
+      runtime->actionLog, actionId, currentUnixMilliseconds(), true,
+      ActionLogSeverity::info,
+      localizedMessage("Default configuration restored", {}),
+      technicalMessage(result.standardOutput.empty()
+                           ? runtime->startupConfigPath.string()
+                           : result.standardOutput));
+  render(runtime);
+}
+
+static void startConfigurationReset(GtkRuntime *runtime) {
+  if (runtime->configurationResetPending) {
+    return;
+  }
+  runtime->configurationResetPending = true;
+  runtime->configurationResetActionId = appendPendingAction(
+      runtime->actionLog, currentUnixMilliseconds(),
+      ActionLogCategory::persistence,
+      localizedMessage("Restoring default configuration", {}),
+      technicalMessage(runtime->startupConfigPath.string()));
+  if (!resetConfigurationAsync(runtime->configurationResetClient,
+                               onConfigurationResetCompleted, runtime)) {
+    runtime->configurationResetPending = false;
+    const auto actionId = runtime->configurationResetActionId;
+    runtime->configurationResetActionId = 0;
+    const auto error =
+        std::string{"PipeTune configuration reset client is unavailable"};
+    setControlDiagnostic(runtime->state, error);
+    completePendingAction(
+        runtime->actionLog, actionId, currentUnixMilliseconds(), false,
+        ActionLogSeverity::error,
+        localizedMessage("Cannot restore default configuration", {}),
+        technicalMessage(error));
+    revealActionLog(runtime);
+  }
+  render(runtime);
+}
+
 static void onRestoreDefaultsClicked(GtkButton *, gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
   if (!controlsAreEditable(*runtime)) {
+    startConfigurationReset(runtime);
     return;
   }
   appendCompletedAction(
@@ -1691,6 +1795,8 @@ static void onApplicationShutdown(GApplication *, gpointer userData) {
   }
   destroyEffeTunePresetFileMonitor(runtime->presetFileMonitor);
   runtime->presetFileMonitor = nullptr;
+  destroyConfigurationResetClient(runtime->configurationResetClient);
+  runtime->configurationResetClient = nullptr;
   destroyControlClient(runtime->controlClient);
   runtime->controlClient = nullptr;
   destroyTrayBackend(runtime->trayBackend);
@@ -1728,6 +1834,8 @@ static int runApplication(int argc, char **argv) {
       .application = application,
       .state = initialApplicationState(),
       .controlClient = nullptr,
+      .configurationResetClient = createConfigurationResetClient(
+          configurationResetExecutable()),
       .trayBackend = nullptr,
       .trayAvailability = TrayBackendAvailabilityState::pending,
       .startupConfigPath = {},
@@ -1759,7 +1867,9 @@ static int runApplication(int argc, char **argv) {
       .actionLog = createActionLog(kActionLogCapacity),
       .logFilter = ActionLogFilter::all,
       .pendingActionId = 0,
+      .configurationResetActionId = 0,
       .reconnectSource = 0,
+      .configurationResetPending = false,
       .applicationHeld = false,
       .activationHandled = false,
       .shuttingDown = false,

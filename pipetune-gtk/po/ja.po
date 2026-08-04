@@ -110,6 +110,9 @@ msgstr "プリセットを準備できません"
 msgid "Cannot resolve preset"
 msgstr "プリセットを解決できません"
 
+msgid "Cannot restore default configuration"
+msgstr "既定の設定を復元できません"
+
 msgid "Cannot save language preference"
 msgstr "言語設定を保存できません"
 
@@ -206,6 +209,9 @@ msgstr "コピー"
 
 msgid "Custom preset file"
 msgstr "カスタムプリセットファイル"
+
+msgid "Default configuration restored"
+msgstr "既定の設定を復元しました"
 
 msgid "Defaults are being applied live; use Apply to save them"
 msgstr "既定値をライブ適用中です。保存するには「適用」を使用してください"
@@ -454,6 +460,9 @@ msgstr "既定値に戻す"
 
 msgid "Restore Defaults"
 msgstr "既定値に戻す"
+
+msgid "Restoring default configuration"
+msgstr "既定の設定を復元しています"
 
 msgid "Restoring the live settings captured when the dialog opened"
 msgstr "ダイアログを開いた時点のライブ設定を復元しています"

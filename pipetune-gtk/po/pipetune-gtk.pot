@@ -105,6 +105,9 @@ msgstr ""
 msgid "Cannot resolve preset"
 msgstr ""
 
+msgid "Cannot restore default configuration"
+msgstr ""
+
 msgid "Cannot save language preference"
 msgstr ""
 
@@ -200,6 +203,9 @@ msgid "Copy"
 msgstr ""
 
 msgid "Custom preset file"
+msgstr ""
+
+msgid "Default configuration restored"
 msgstr ""
 
 msgid "Defaults are being applied live; use Apply to save them"
@@ -448,6 +454,9 @@ msgid "Restore defaults"
 msgstr ""
 
 msgid "Restore Defaults"
+msgstr ""
+
+msgid "Restoring default configuration"
 msgstr ""
 
 msgid "Restoring the live settings captured when the dialog opened"

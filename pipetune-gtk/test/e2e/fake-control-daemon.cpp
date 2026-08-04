@@ -18,6 +18,7 @@
 struct FakeDaemonState {
   std::mutex mutex;
   pipetune::StartupConfig liveConfig;
+  std::string configurationError;
   std::filesystem::path requestLogPath;
   std::string rejectedCommand;
   std::uint64_t dspTelemetrySequence;
@@ -77,7 +78,8 @@ static pipetune::ControlFilterOutputStatus makeFilterOutput(
 }
 
 static pipetune::ControlRuntimeStatus
-makeStatus(const pipetune::StartupConfig &config) {
+makeStatus(const pipetune::StartupConfig &config,
+           std::string_view configurationError) {
   const auto dspRate =
       config.ratePolicy.mode == pipetune::SampleRateMode::maximum
           ? 384000u
@@ -89,7 +91,7 @@ makeStatus(const pipetune::StartupConfig &config) {
                             : pipetune::ProcessingMode::bypass,
       .activePreset =
           config.presetFound ? config.presetPath.string() : std::string{},
-      .configurationError = {},
+      .configurationError = std::string(configurationError),
       .activePluginCount = config.presetFound ? 5u : 0u,
       .policyBackend = "wireplumber-0.5",
       .filterOutputs =
@@ -160,7 +162,7 @@ makeStatus(const pipetune::StartupConfig &config) {
 static pipetune::ControlRuntimeStatus snapshotStatus(
     FakeDaemonState &state) {
   auto lock = std::scoped_lock(state.mutex);
-  auto status = makeStatus(state.liveConfig);
+  auto status = makeStatus(state.liveConfig, state.configurationError);
   const auto framesPerInterval =
       status.filterOutputs.empty()
           ? std::uint64_t{0}
@@ -356,14 +358,11 @@ int main(int argc, char **argv) {
     return 1;
   }
   const auto loaded = pipetune::loadStartupConfig(configPath.path);
-  if (!loaded.error.empty()) {
-    std::cerr << loaded.error << '\n';
-    return 1;
-  }
 
   auto state = FakeDaemonState{
       .mutex = {},
       .liveConfig = loaded.config,
+      .configurationError = loaded.error,
       .requestLogPath = environmentValue("PIPETUNE_E2E_REQUEST_LOG"),
       .rejectedCommand = environmentValue("PIPETUNE_E2E_REJECT_COMMAND"),
       .dspTelemetrySequence = 0,

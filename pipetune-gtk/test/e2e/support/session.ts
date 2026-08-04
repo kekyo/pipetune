@@ -58,6 +58,8 @@ export interface StartupConfigSnapshot {
 export interface PipeTuneGtkTestOptions {
   /** Fake-daemon command name to reject, or undefined to accept all commands. */
   readonly rejectedCommand: string | undefined;
+  /** Whether the initial startup environment must be intentionally invalid. */
+  readonly invalidStartupConfig?: boolean;
 }
 
 /**
@@ -206,19 +208,18 @@ export const launchPipeTuneGtk = async (
   await mkdir(homeDirectory);
   await writeFile(requestLogPath, '', { mode: 0o600 });
   await writeFile(persistenceGuardPath, 'allow\n', { mode: 0o600 });
-  await writeFile(
-    configPath,
-    [
-      '# Managed by PipeTune.',
-      'PIPETUNE_PRESET="/tmp/e2e-preset-with-an-extraordinarily-long-descriptive-name.effetune_preset"',
-      'PIPETUNE_DSP_BACKEND=simd',
-      'PIPETUNE_DSP_SIMD_VARIANT=x86-64-v3',
-      'PIPETUNE_RATE=192000',
-      'PIPETUNE_RATE_ENFORCEMENT=force',
-      '',
-    ].join('\n'),
-    { mode: 0o600 }
-  );
+  const initialConfig = options.invalidStartupConfig
+    ? 'PIPETUNE_UNKNOWN=invalid\n'
+    : [
+        '# Managed by PipeTune.',
+        'PIPETUNE_PRESET="/tmp/e2e-preset-with-an-extraordinarily-long-descriptive-name.effetune_preset"',
+        'PIPETUNE_DSP_BACKEND=simd',
+        'PIPETUNE_DSP_SIMD_VARIANT=x86-64-v3',
+        'PIPETUNE_RATE=192000',
+        'PIPETUNE_RATE_ENFORCEMENT=force',
+        '',
+      ].join('\n');
+  await writeFile(configPath, initialConfig, { mode: 0o600 });
 
   const launcher = createGtkAppLauncher({
     appPath: requiredEnvironment('PIPETUNE_GTK_BINARY'),
@@ -234,6 +235,10 @@ export const launchPipeTuneGtk = async (
       XDG_CONFIG_HOME: configDirectory,
       HOME: homeDirectory,
       PIPETUNE_GTK_E2E_PERSISTENCE_GUARD: persistenceGuardPath,
+      PIPETUNE_GTK_E2E_RESET_EXECUTABLE: requiredEnvironment(
+        'PIPETUNE_GTK_E2E_RESET_HELPER'
+      ),
+      PIPETUNE_GTK_RESET_HELPER_CONFIG: configPath,
     },
   });
   let daemon: FakeDaemon | undefined;

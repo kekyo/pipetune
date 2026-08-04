@@ -60,7 +60,10 @@ configuration captured when the window opened, or the latest successfully
 applied baseline, and hide the window only after the daemon confirms the
 rollback. The startup configuration is not modified. **Restore Defaults** on
 the Advanced page follows the same rules: defaults are previewed live and
-remain unsaved until the global Apply button is used.
+remain unsaved until the global Apply button is used. The button remains
+available when the startup environment cannot be parsed or the daemon is
+disconnected; in that recovery state it runs the non-interactive CLI reset,
+reloads the repaired configuration, and reconnects to the daemon.
 
 Settings become read-only while the daemon is disconnected. If the connection
 drops during a transaction, the desired live state is retained and reapplied
@@ -173,8 +176,11 @@ replaces this file atomically while retaining restrictive directory and file
 permissions.
 
 The Advanced page's **Restore Defaults** selects bypass, Max with Suggest, and
-Scalar with an Auto SIMD preference. It does not restart
-the service and does not write the environment file until Apply succeeds.
+Scalar with an Auto SIMD preference. With a valid connected configuration it
+does not restart the service and does not write the environment file until
+Apply succeeds. If the environment is invalid or live editing is unavailable,
+the same always-enabled button immediately replaces the environment through
+`pipetune config reset --yes`; an active service is restarted by that command.
 
 ## Status subscription
 

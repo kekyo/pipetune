@@ -260,9 +260,11 @@ previews these choices live without saving them:
 - native DSP backend **Scalar**, with SIMD preference **Auto**.
 
 Click **Apply** to persist the defaults, or **Cancel** to restore the prior
-live configuration. This GTK action does not restart the service. The CLI
-reset below remains available for immediate configuration replacement and
-service restart:
+live configuration. With a valid connected configuration this GTK action does
+not restart the service. The button remains clickable when the environment
+file is invalid or live editing is unavailable; in that recovery state it
+uses the same immediate configuration replacement and service restart as the
+CLI below:
 
 ```sh
 pipetune config reset

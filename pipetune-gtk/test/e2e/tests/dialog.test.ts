@@ -523,6 +523,44 @@ describe('PipeTune GTK dialog', () => {
     });
   });
 
+  it('restores a malformed startup environment from the always-available defaults button', async () => {
+    session = await launchPipeTuneGtk({
+      rejectedCommand: undefined,
+      invalidStartupConfig: true,
+    });
+    await waitForLabel('status-system-connection', 'Connected');
+    await selectSettingsPage(3);
+    const restore = await getElement('restoreDefaultsButton', 'button');
+    await toPass(
+      async () => {
+        expect((await restore.info()).states).toContain('sensitive');
+      },
+      {
+        timeoutMs: 10_000,
+        message: 'Restore defaults was disabled by a malformed environment.',
+      }
+    );
+    await restore.click();
+    await waitForResult(
+      async () => {
+        const config = await session?.inspectConfig();
+        expect(config).toEqual({
+          preset: null,
+          rateMode: 'max',
+          fixedRate: 0,
+          rateEnforcement: 'suggest',
+          dspBackend: 'scalar',
+          dspSimdVariant: 'auto',
+        });
+        return true;
+      },
+      {
+        timeoutMs: 10_000,
+        message: 'Restore defaults did not replace the malformed environment.',
+      }
+    );
+  });
+
   it('saves the UI language independently and applies it after restart', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();

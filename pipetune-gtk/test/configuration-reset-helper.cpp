@@ -1,4 +1,7 @@
+#include "pipetune/startup_config.h"
+
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <string_view>
 
@@ -12,6 +15,16 @@ int main(int argc, char **argv) {
   if (std::getenv("PIPETUNE_GTK_RESET_HELPER_FAIL") != nullptr) {
     std::cerr << "simulated partial reset failure\n";
     return 7;
+  }
+  const auto *configPath =
+      std::getenv("PIPETUNE_GTK_RESET_HELPER_CONFIG");
+  if (configPath != nullptr && configPath[0] != '\0') {
+    const auto error = pipetune::saveStartupConfig(
+        std::filesystem::path(configPath), pipetune::StartupConfig{});
+    if (!error.empty()) {
+      std::cerr << error << '\n';
+      return 1;
+    }
   }
   std::cout << "configuration reset helper succeeded\n";
   return 0;
