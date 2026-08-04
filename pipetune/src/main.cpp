@@ -247,7 +247,7 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
   auto prepared = pipetune::prepareStartupPipeline(
       configPath,
       {.sampleRate = static_cast<float>(kInitialSampleRate),
-       .maxChannels = 2,
+       .maxChannels = 8,
        .maxFrames = kMaximumProcessFrames});
   if (prepared.pipeline == nullptr) {
     std::cerr << "pipetune: " << prepared.error << '\n';
@@ -279,21 +279,14 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
     std::cerr << "pipetune: " << socket.error << '\n';
     return 1;
   }
-  const auto result = pipetune::runPipeWirePipeline(
+  const auto result = pipetune::runPipeWireFilterService(
       std::move(prepared.pipeline),
-      {.sinkName = "pipetune_sink",
-       .sinkDescription = "PipeTune Processed Audio",
-       .targetObject = prepared.preferredOutput,
-       .initialPresetPath = prepared.activePresetPath,
+      {.initialPresetPath = prepared.activePresetPath,
        .initialConfigurationError = prepared.configurationError,
        .controlSocketPath = socket.path,
-       .dspSampleRate = kInitialSampleRate,
-       .outputSampleRate = kInitialSampleRate,
        .ratePolicy = prepared.ratePolicy,
-       .channelCount = 2,
        .maxFrames = kMaximumProcessFrames,
        .ringCapacityFrames = kRingCapacityFrames,
-       .manageDefaultSink = true,
        .readyCallback = nullptr,
        .readyUserData = nullptr,
        .dspBackends = std::move(prepared.dspBackends),
@@ -630,7 +623,7 @@ int main(int argc, char **argv) {
   auto loaded = pipetune::loadDspPipeline(
       presetPath,
       {.sampleRate = static_cast<float>(kInitialSampleRate),
-       .maxChannels = parsed.options.channelCount,
+       .maxChannels = 8,
        .maxFrames = kMaximumProcessFrames},
       selected.effectiveBackend);
   if (loaded.pipeline == nullptr) {
@@ -656,21 +649,14 @@ int main(int argc, char **argv) {
     }
     controlSocket = resolved.path;
   }
-  const auto result = pipetune::runPipeWirePipeline(
+  const auto result = pipetune::runPipeWireFilterService(
       std::move(loaded.pipeline),
-      {.sinkName = parsed.options.sinkName,
-       .sinkDescription = "PipeTune Processed Audio",
-       .targetObject = parsed.options.targetObject,
-       .initialPresetPath = presetPath,
+      {.initialPresetPath = presetPath,
        .initialConfigurationError = {},
        .controlSocketPath = controlSocket,
-       .dspSampleRate = kInitialSampleRate,
-       .outputSampleRate = kInitialSampleRate,
        .ratePolicy = parsed.options.ratePolicy,
-       .channelCount = parsed.options.channelCount,
        .maxFrames = kMaximumProcessFrames,
        .ringCapacityFrames = kRingCapacityFrames,
-       .manageDefaultSink = !parsed.options.checkOnly,
        .readyCallback = nullptr,
        .readyUserData = nullptr,
        .dspBackends = std::move(backends),
@@ -683,7 +669,8 @@ int main(int argc, char **argv) {
     return 1;
   }
   if (parsed.options.checkOnly) {
-    std::cout << "PipeWire pipeline is ready: " << parsed.options.sinkName << '\n';
+    std::cout << "PipeWire transparent filters are ready for "
+              << result.outputs.size() << " outputs\n";
   }
   if (result.overrunFrames != 0 || result.underrunFrames != 0 ||
       result.processingErrors != 0) {
