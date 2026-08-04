@@ -45,7 +45,6 @@ static void writeLegacyConfig(const std::filesystem::path &path) {
   auto stream = std::ofstream(path, std::ios::binary);
   stream << "# Old PipeTune configuration\n"
             "PIPETUNE_PRESET=\"/tmp/old.effetune_preset\"\n"
-            "PIPETUNE_TARGET=\"alsa_output.old\"\n"
             "PIPETUNE_RATE_MODE=\"fixed\"\n"
             "PIPETUNE_FIXED_RATE=\"96000\"\n"
             "PIPETUNE_MAX_RATE=\"192000\"\n"

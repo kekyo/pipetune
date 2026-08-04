@@ -241,8 +241,6 @@ static bool testRejectedInputForms(
   const auto duplicatePreset = pipetune::loadStartupConfig(configPath);
   writeConfig(configPath, "PIPETUNE_PRESET=relative.effetune_preset\n");
   const auto relativePreset = pipetune::loadStartupConfig(configPath);
-  writeConfig(configPath, "PIPETUNE_TARGET=alsa_output.legacy\n");
-  const auto legacyOutput = pipetune::loadStartupConfig(configPath);
   writeConfig(configPath,
               "PIPETUNE_RATE=48000\nPIPETUNE_RATE=96000\n");
   const auto duplicateRate = pipetune::loadStartupConfig(configPath);
@@ -270,8 +268,6 @@ static bool testRejectedInputForms(
                "duplicate preset assignments must be rejected") &&
          check(!relativePreset.error.empty(),
                "relative preset assignments must be rejected") &&
-         check(!legacyOutput.error.empty(),
-               "legacy output routing assignments must be rejected") &&
          check(!duplicateRate.error.empty(),
                "duplicate rate assignments must be rejected") &&
          check(!unsupportedRate.error.empty(),

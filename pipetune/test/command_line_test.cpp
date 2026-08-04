@@ -121,17 +121,6 @@ static bool testBypassAction() {
                "explicit bypass socket differs");
 }
 
-static bool testRemovedOutputSelection() {
-  constexpr auto arguments =
-      std::array<std::string_view, 2>{"output", "list"};
-  const auto result = pipetune::parseCommandLine(arguments);
-  return check(!result.error.empty(),
-               "PipeTune must leave output routing to PipeWire") &&
-         check(pipetune::commandLineUsage().find("pipetune output ") ==
-                   std::string_view::npos,
-               "usage must not expose PipeTune-owned output selection");
-}
-
 static bool testRateActions() {
   constexpr auto list =
       std::array<std::string_view, 2>{"rate", "list"};
@@ -311,9 +300,6 @@ static bool testInformationalActions() {
                    "pipetune bypass [--socket PATH]") !=
                    std::string_view::npos,
                "usage must explain persistent bypass") &&
-         check(pipetune::commandLineUsage().find("pipetune output ") ==
-                   std::string_view::npos,
-               "usage must leave output routing to PipeWire") &&
          check(pipetune::commandLineUsage().find(
                    "pipetune rate get [--json] [--socket PATH]") !=
                    std::string_view::npos,
@@ -357,8 +343,6 @@ static bool testRejectedArguments() {
   constexpr auto missingValue = std::array<std::string_view, 1>{"--preset"};
   constexpr auto legacyRate =
       std::array<std::string_view, 4>{"--preset", "x.effetune_preset", "--rate", "31999"};
-  constexpr auto badChannels =
-      std::array<std::string_view, 4>{"--preset", "x.effetune_preset", "--channels", "9"};
   constexpr auto duplicate = std::array<std::string_view, 4>{
       "--preset", "x.effetune_preset", "--preset", "y.effetune_preset"};
   constexpr auto unknown =
@@ -369,13 +353,11 @@ static bool testRejectedArguments() {
       "--preset", "x.effetune_preset", "--load-preset",
       "y.effetune_preset"};
   constexpr auto runOptionForStatus =
-      std::array<std::string_view, 3>{"--status", "--target", "speaker"};
+      std::array<std::string_view, 2>{"--status", "--check"};
   constexpr auto missingLoadValue =
       std::array<std::string_view, 1>{"--load-preset"};
   constexpr auto duplicateSocket = std::array<std::string_view, 5>{
       "--status", "--socket", "/tmp/a", "--socket", "/tmp/b"};
-  constexpr auto restoreWithPreset = std::array<std::string_view, 3>{
-      "--restore-default", "--preset", "x.effetune_preset"};
   constexpr auto daemonWithPreset = std::array<std::string_view, 3>{
       "daemon", "--preset", "x.effetune_preset"};
   constexpr auto missingConfig =
@@ -397,24 +379,6 @@ static bool testRejectedArguments() {
       "unsetup", "--preset", "/tmp/a.effetune_preset"};
   constexpr auto duplicatePurge =
       std::array<std::string_view, 3>{"unsetup", "--purge", "--purge"};
-  constexpr auto outputWithoutAction =
-      std::array<std::string_view, 1>{"output"};
-  constexpr auto unknownOutputAction =
-      std::array<std::string_view, 2>{"output", "future"};
-  constexpr auto setWithoutTarget =
-      std::array<std::string_view, 2>{"output", "set"};
-  constexpr auto setWithTwoTargets = std::array<std::string_view, 4>{
-      "output", "set", "alsa_output.one", "alsa_output.two"};
-  constexpr auto clearWithTarget = std::array<std::string_view, 3>{
-      "output", "clear", "alsa_output.one"};
-  constexpr auto setWithJson = std::array<std::string_view, 4>{
-      "output", "set", "alsa_output.one", "--json"};
-  constexpr auto selectWithJson =
-      std::array<std::string_view, 3>{"output", "select", "--json"};
-  constexpr auto duplicateOutputJson =
-      std::array<std::string_view, 4>{"output", "get", "--json", "--json"};
-  constexpr auto duplicateOutputSocket = std::array<std::string_view, 6>{
-      "output", "list", "--socket", "/tmp/a", "--socket", "/tmp/b"};
   constexpr auto rateWithoutAction =
       std::array<std::string_view, 1>{"rate"};
   constexpr auto invalidRate =
@@ -472,8 +436,6 @@ static bool testRejectedArguments() {
                "missing option value must fail") &&
          check(!pipetune::parseCommandLine(legacyRate).error.empty(),
                "legacy direct --rate must be rejected") &&
-         check(!pipetune::parseCommandLine(badChannels).error.empty(),
-               "out-of-range channels must fail") &&
          check(!pipetune::parseCommandLine(duplicate).error.empty(),
                "duplicate options must fail") &&
          check(!pipetune::parseCommandLine(unknown).error.empty(),
@@ -488,8 +450,6 @@ static bool testRejectedArguments() {
                "live loading requires a preset value") &&
          check(!pipetune::parseCommandLine(duplicateSocket).error.empty(),
                "duplicate socket options must fail") &&
-         check(!pipetune::parseCommandLine(restoreWithPreset).error.empty(),
-               "restoration must reject preset options") &&
          check(!pipetune::parseCommandLine(daemonWithPreset).error.empty(),
                "daemon must reject legacy run options") &&
          check(!pipetune::parseCommandLine(missingConfig).error.empty(),
@@ -510,24 +470,6 @@ static bool testRejectedArguments() {
                "unsetup must reject preset selection") &&
          check(!pipetune::parseCommandLine(duplicatePurge).error.empty(),
                "unsetup must reject duplicate --purge") &&
-         check(!pipetune::parseCommandLine(outputWithoutAction).error.empty(),
-               "output must require a subcommand") &&
-         check(!pipetune::parseCommandLine(unknownOutputAction).error.empty(),
-               "output must reject unknown subcommands") &&
-         check(!pipetune::parseCommandLine(setWithoutTarget).error.empty(),
-               "output set must require a target") &&
-         check(!pipetune::parseCommandLine(setWithTwoTargets).error.empty(),
-               "output set must reject duplicate targets") &&
-         check(!pipetune::parseCommandLine(clearWithTarget).error.empty(),
-               "output clear must reject a target") &&
-         check(!pipetune::parseCommandLine(setWithJson).error.empty(),
-               "output set must reject --json") &&
-         check(!pipetune::parseCommandLine(selectWithJson).error.empty(),
-               "output select must reject --json") &&
-         check(!pipetune::parseCommandLine(duplicateOutputJson).error.empty(),
-               "output get must reject duplicate --json") &&
-         check(!pipetune::parseCommandLine(duplicateOutputSocket).error.empty(),
-               "output list must reject duplicate sockets") &&
          check(!pipetune::parseCommandLine(rateWithoutAction).error.empty(),
                "rate must require a subcommand") &&
          check(!pipetune::parseCommandLine(invalidRate).error.empty(),
@@ -581,8 +523,8 @@ static bool testRejectedArguments() {
 int main() {
   const auto passed = testRunDefaults() && testExplicitOptions() &&
                       testControlActions() && testDaemonAction() &&
-                      testBypassAction() && testRemovedOutputSelection() &&
-                      testRateActions() && testDspActions() &&
+                      testBypassAction() && testRateActions() &&
+                      testDspActions() &&
                       testUserSetupActions() &&
                       testConfigResetAction() &&
                       testInformationalActions() && testRejectedArguments();

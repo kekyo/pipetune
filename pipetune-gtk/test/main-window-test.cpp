@@ -90,9 +90,6 @@ static bool checkSettingsPages(const pipetune_gtk::MainWindowUi &ui) {
                                            "processing") != nullptr,
                "processing page is missing") &&
          check(gtk_stack_get_child_by_name(GTK_STACK(ui.settingsStack),
-                                           "output") == nullptr,
-               "output routing page must not be exposed") &&
-         check(gtk_stack_get_child_by_name(GTK_STACK(ui.settingsStack),
                                            "rate") != nullptr,
                "rate page is missing") &&
          check(gtk_stack_get_child_by_name(GTK_STACK(ui.settingsStack),

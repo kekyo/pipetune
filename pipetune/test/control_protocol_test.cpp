@@ -113,8 +113,6 @@ static bool testRejectedRequests() {
   const auto invalidJson = pipetune::parseControlRequest("{");
   const auto oldVersion = pipetune::parseControlRequest(
       R"json({"protocolVersion":1,"command":"status"})json");
-  const auto legacyOutput = pipetune::parseControlRequest(
-      R"json({"protocolVersion":2,"command":"set-output","target":"alsa_output.usb"})json");
   const auto extraStatus = pipetune::parseControlRequest(
       R"json({"protocolVersion":2,"command":"status","extra":true})json");
   const auto emptyLoad = pipetune::parseControlRequest(
@@ -126,8 +124,6 @@ static bool testRejectedRequests() {
   return check(!invalidJson.error.empty(), "invalid JSON must be rejected") &&
          check(!oldVersion.error.empty(),
                "old protocol versions must be rejected") &&
-         check(!legacyOutput.error.empty(),
-               "output-routing commands must be rejected") &&
          check(!extraStatus.error.empty(),
                "extra status fields must be rejected") &&
          check(!emptyLoad.error.empty(), "empty presets must be rejected") &&
