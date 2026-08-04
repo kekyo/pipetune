@@ -213,6 +213,8 @@ add_library(
   src/pipewire_pipeline.cpp
   src/process_runner.cpp
   src/rate_command.cpp
+  src/transparent_filter_service.cpp
+  src/transparent_filter_output.cpp
   src/user_setup.cpp)
 target_include_directories(pipetune_pipewire PUBLIC include PRIVATE src)
 target_link_libraries(
@@ -561,6 +563,49 @@ if(BUILD_TESTING)
     COMMAND pipetune_pipewire_pipeline_tests)
   set_tests_properties(
     pipetune_pipewire_pipeline_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 20)
+
+  add_executable(
+    pipetune_transparent_filter_output_tests
+    test/transparent_filter_output_test.cpp)
+  target_include_directories(
+    pipetune_transparent_filter_output_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_transparent_filter_output_tests
+    PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE)
+  if(MSVC)
+    target_compile_options(
+      pipetune_transparent_filter_output_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_transparent_filter_output_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_transparent_filter_output_tests
+    COMMAND pipetune_transparent_filter_output_tests)
+
+  add_executable(
+    pipetune_transparent_filter_service_tests
+    test/transparent_filter_service_test.cpp)
+  target_include_directories(
+    pipetune_transparent_filter_service_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_transparent_filter_service_tests
+    PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE)
+  if(MSVC)
+    target_compile_options(
+      pipetune_transparent_filter_service_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_transparent_filter_service_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_transparent_filter_service_tests
+    COMMAND pipetune_transparent_filter_service_tests)
+  set_tests_properties(
+    pipetune_transparent_filter_service_tests
+    PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 20)
 
   add_test(
     NAME pipetune_wireplumber_policy_integration
