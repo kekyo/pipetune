@@ -1,7 +1,11 @@
 #include "pipetune/dsp_pipeline.h"
+#include "pipetune/control_protocol.h"
+#include "pipetune/control_socket.h"
 #include "pipetune/pipewire_pipeline.h"
 
 #include <yyjson.h>
+
+#include <unistd.h>
 
 #include <array>
 #include <cmath>
@@ -25,6 +29,9 @@ struct ReadyInspection {
   bool inspected = false;
   std::string error;
   std::vector<GraphNode> graph;
+  std::filesystem::path controlSocketPath;
+  std::string controlResponse;
+  std::string controlError;
 };
 
 static bool check(bool condition, std::string_view message) {
@@ -146,6 +153,10 @@ static void inspectReadyGraph(void *userData) {
     return;
   }
   inspection.graph = parseGraph(*dump, inspection.error);
+  const auto exchange = pipetune::exchangeControlMessage(
+      inspection.controlSocketPath, pipetune::makeStatusControlRequest());
+  inspection.controlResponse = exchange.response;
+  inspection.controlError = exchange.error;
 }
 
 static bool propertyIs(const GraphNode &node, std::string_view key,
@@ -290,6 +301,34 @@ static bool validateOutputStatuses(
   return true;
 }
 
+static bool validateControlStatus(const ReadyInspection &inspection) {
+  if (!check(inspection.controlError.empty(), inspection.controlError)) {
+    return false;
+  }
+  const auto response =
+      pipetune::parseControlResponse(inspection.controlResponse);
+  if (!check(response.valid, response.error) ||
+      !check(response.success, "filter control status must succeed")) {
+    return false;
+  }
+  const auto physical = physicalOutputs(inspection.graph);
+  if (!check(response.status.filterOutputs.size() == physical.size(),
+             "v2 status must report every physical output")) {
+    return false;
+  }
+  for (const auto &output : response.status.filterOutputs) {
+    if (!check(physical.contains(output.targetNodeName),
+               "v2 status target must be a physical output") ||
+        !check(output.state == pipetune::ControlFilterState::active ||
+                   output.state ==
+                       pipetune::ControlFilterState::bypassed,
+               "ready output must be active or fail-open bypassed")) {
+      return false;
+    }
+  }
+  return true;
+}
+
 int main() {
   if (!pipeWireSessionIsAvailable() || dumpPipeWireGraph() == std::nullopt) {
     std::cout << "PipeWire session or pw-dump is unavailable; skipping "
@@ -303,11 +342,14 @@ int main() {
     return 1;
   }
   auto inspection = ReadyInspection{};
+  inspection.controlSocketPath =
+      std::filesystem::temp_directory_path() /
+      ("pipetune-filter-control-" + std::to_string(getpid()) + ".sock");
   const auto result = pipetune::runPipeWireFilterService(
       std::move(source.pipeline),
       {.initialPresetPath = {},
        .initialConfigurationError = {},
-       .controlSocketPath = {},
+       .controlSocketPath = inspection.controlSocketPath,
        .ratePolicy = pipetune::defaultSampleRatePolicy(),
        .maxFrames = 8192,
        .ringCapacityFrames = 16384,
@@ -316,7 +358,8 @@ int main() {
       pipetune::PipeWireRunMode::untilReady);
   const auto graphValid = validateFilterPairs(inspection);
   const auto statusesValid = validateOutputStatuses(inspection, result);
-  if (!graphValid || !statusesValid) {
+  const auto controlValid = validateControlStatus(inspection);
+  if (!graphValid || !statusesValid || !controlValid) {
     std::cerr << "service reported " << result.outputs.size()
               << " output runtimes\n";
     for (const auto &output : result.outputs) {
@@ -324,7 +367,8 @@ int main() {
                 << output.targetNodeName << ": " << output.error << '\n';
     }
   }
-  return check(result.success, result.error) && graphValid && statusesValid
+  return check(result.success, result.error) && graphValid && statusesValid &&
+                 controlValid
              ? 0
              : 1;
 }

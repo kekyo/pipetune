@@ -98,6 +98,13 @@ static bool testPerOutputRatesAndTracking() {
   auto tracker = pipetune::TransparentFilterOutputTracker(
       pipetune::defaultSampleRatePolicy());
   auto incomplete = makePhysicalOutput(6, "alsa_output.incomplete", 0, {});
+  incomplete.sampleRateCapabilities = {
+      .known = true,
+      .constraints = {{.kind = pipetune::SampleRateConstraintKind::discrete,
+                       .minimum = 44100,
+                       .maximum = 44100,
+                       .step = 0}}};
+  incomplete.activeSampleRate = 44100;
   if (!check(tracker.update(incomplete),
              "an unsupported output must change the tracker") ||
       !check(tracker.rejectedOutputs().size() == 1 &&
@@ -105,7 +112,11 @@ static bool testPerOutputRatesAndTracking() {
                  tracker.rejectedOutputs()[0].rejection ==
                      pipetune::TransparentFilterOutputRejection::unsupportedLayout &&
                  !tracker.rejectedOutputs()[0].error.empty(),
-             "an unsupported output must retain its direct-routing reason")) {
+             "an unsupported output must retain its direct-routing reason") ||
+      !check(tracker.rejectedOutputs()[0].sampleRateCapabilities ==
+                     incomplete.sampleRateCapabilities &&
+                 tracker.rejectedOutputs()[0].activeSampleRate == 44100,
+             "a direct-routed output must retain its observed rate facts")) {
     return false;
   }
   incomplete.channelCount = 2;
@@ -129,6 +140,11 @@ static bool testPerOutputRatesAndTracking() {
                  tracker.outputs()[1].id == 8 &&
                  tracker.outputs()[1].rates.dspSampleRate == 192000,
              "maximum rate must be resolved independently per output") ||
+      !check(tracker.outputs()[0].sampleRateCapabilities ==
+                     stereo.sampleRateCapabilities &&
+                 tracker.outputs()[1].sampleRateCapabilities ==
+                     surround.sampleRateCapabilities,
+             "eligible outputs must retain independently enumerated rates") ||
       !check(!tracker.update(stereo),
              "an unchanged output must not restart its runtime")) {
     return false;

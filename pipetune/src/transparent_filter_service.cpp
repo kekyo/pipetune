@@ -1,9 +1,14 @@
 #include "pipetune/pipewire_pipeline.h"
 
 #include "audio_bridge.h"
+#include "dsp_backend_runtime.h"
+#include "dsp_pipeline_slot.h"
 #include "pipewire_buffer_io.h"
 #include "pipewire_rate_parser.h"
 #include "transparent_filter_output.h"
+
+#include "pipetune/control_protocol.h"
+#include "pipetune/control_socket.h"
 
 #include <pipewire/extensions/metadata.h>
 #include <pipewire/node.h>
@@ -29,6 +34,7 @@
 #include <exception>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -68,7 +74,8 @@ struct PhysicalOutputNode {
 struct OutputFilterRuntime {
   FilterServiceRuntime *service;
   TransparentFilterOutput output;
-  std::unique_ptr<DspPipeline> pipeline;
+  std::uint32_t latencyFrames;
+  std::unique_ptr<DspPipelineSlot> pipeline;
   PlanarAudioRing ring;
   std::vector<float> captureScratch;
   std::vector<float> playbackScratch;
@@ -98,7 +105,13 @@ struct OutputFilterRuntime {
                       std::unique_ptr<DspPipeline> preparedPipeline,
                       const PipeWireFilterServiceOptions &options)
       : service(&owner), output(std::move(runtimeOutput)),
-        pipeline(std::move(preparedPipeline)),
+        latencyFrames(preparedPipeline == nullptr
+                          ? 0
+                          : preparedPipeline->latencyFrames()),
+        pipeline(preparedPipeline == nullptr
+                     ? nullptr
+                     : std::make_unique<DspPipelineSlot>(
+                           std::move(preparedPipeline))),
         ring(output.channelCount, options.ringCapacityFrames),
         captureScratch(static_cast<std::size_t>(output.channelCount) *
                            options.maxFrames,
@@ -120,6 +133,10 @@ struct FilterServiceRuntime {
   std::unique_ptr<DspPipeline> recipe;
   PipeWireFilterServiceOptions options;
   PipeWireRunMode mode;
+  DspBackendRuntimeState dspBackendState;
+  ProcessingMode processingMode;
+  std::string activePreset;
+  std::string configurationError;
   TransparentFilterOutputTracker outputTracker;
   pw_main_loop *mainLoop;
   pw_context *context;
@@ -135,6 +152,9 @@ struct FilterServiceRuntime {
   spa_source *timeoutSource;
   spa_source *interruptSource;
   spa_source *terminateSource;
+  std::unique_ptr<ControlServer> controlServer;
+  std::mutex controlStatusMutex;
+  std::optional<ControlRuntimeStatus> controlStatusSnapshot;
   std::unordered_map<std::uint32_t, std::unique_ptr<PhysicalOutputNode>>
       physicalNodes;
   std::unordered_map<std::uint32_t, std::unique_ptr<OutputFilterRuntime>>
@@ -160,13 +180,26 @@ struct FilterServiceRuntime {
       const PipeWireFilterServiceOptions &runtimeOptions,
       PipeWireRunMode runtimeMode)
       : recipe(std::move(source)), options(runtimeOptions), mode(runtimeMode),
+        dspBackendState(makeDspBackendRuntimeState(
+            runtimeOptions.dspBackends,
+            runtimeOptions.configuredDspBackend,
+            runtimeOptions.configuredDspSimdVariant)),
+        processingMode(recipe->backendKind().has_value()
+                           ? ProcessingMode::preset
+                           : ProcessingMode::bypass),
+        activePreset(processingMode == ProcessingMode::preset
+                         ? runtimeOptions.initialPresetPath.string()
+                         : std::string{}),
+        configurationError(runtimeOptions.initialConfigurationError),
         outputTracker(runtimeOptions.ratePolicy), mainLoop(nullptr),
         context(nullptr), core(nullptr), registry(nullptr),
         policyMetadata(nullptr), coreEvents{}, registryEvents{},
         policyMetadataEvents{}, coreListener{}, registryListener{},
         policyMetadataListener{}, timeoutSource(nullptr),
-        interruptSource(nullptr), terminateSource(nullptr), physicalNodes(),
-        filters(), retiredOverrunFrames(0), retiredUnderrunFrames(0),
+        interruptSource(nullptr), terminateSource(nullptr),
+        controlServer(nullptr), controlStatusMutex(),
+        controlStatusSnapshot(std::nullopt), physicalNodes(), filters(),
+        retiredOverrunFrames(0), retiredUnderrunFrames(0),
         retiredProcessingErrors(0), enumerationSequence(0),
         policyMetadataId(PW_ID_ANY), initialBindingsSynchronized(false),
         enumerationReady(false), reconcilingOutputs(false),
@@ -363,6 +396,7 @@ static bool outputFilterReady(const OutputFilterRuntime &runtime) noexcept {
 static void publishFilterEnabled(OutputFilterRuntime &runtime);
 static void maybeCompleteFilterServiceReadiness(FilterServiceRuntime &runtime);
 static void reconcileOutputFilters(FilterServiceRuntime &runtime);
+static void refreshControlStatusSnapshot(FilterServiceRuntime &runtime);
 
 static void refreshPolicyReady(FilterServiceRuntime &runtime) {
   const auto ready = runtime.policyMetadata != nullptr &&
@@ -378,6 +412,7 @@ static void refreshPolicyReady(FilterServiceRuntime &runtime) {
     static_cast<void>(id);
     publishFilterEnabled(*filter);
   }
+  refreshControlStatusSnapshot(runtime);
 }
 
 static int policyMetadataProperty(void *data, std::uint32_t subject,
@@ -837,8 +872,7 @@ static std::string connectFilterStream(OutputFilterRuntime &runtime,
   auto format = makeFilterRawFormat(runtime);
   auto latency = spa_process_latency_info{
       .quantum = 0.0F,
-      .rate = runtime.pipeline == nullptr ? 0
-                                          : runtime.pipeline->latencyFrames(),
+      .rate = runtime.latencyFrames,
       .ns = 0};
   const spa_pod *parameters[2] = {
       spa_format_audio_raw_build(&builder, SPA_PARAM_EnumFormat, &format),
@@ -989,7 +1023,255 @@ static std::unique_ptr<OutputFilterRuntime> createOutputFilter(
   return runtime;
 }
 
+struct OutputFilterStateSnapshot {
+  PipeWireFilterOutputState state;
+  std::string error;
+  std::uint32_t latencyFrames;
+};
+
+static OutputFilterStateSnapshot outputFilterState(
+    const FilterServiceRuntime &runtime,
+    const TransparentFilterOutput &output) {
+  const auto found = runtime.filters.find(output.id);
+  if (found == runtime.filters.end()) {
+    return {.state = PipeWireFilterOutputState::bypassed,
+            .error = "output filter is not running",
+            .latencyFrames = 0};
+  }
+  const auto &filter = *found->second;
+  if (filter.failed) {
+    return {.state = PipeWireFilterOutputState::error,
+            .error = filter.error,
+            .latencyFrames = filter.latencyFrames};
+  }
+  if (!outputFilterReady(filter)) {
+    return {.state = PipeWireFilterOutputState::waiting,
+            .error = {},
+            .latencyFrames = filter.latencyFrames};
+  }
+  if (!runtime.policyReady || !filter.enabledPublished) {
+    return {
+        .state = PipeWireFilterOutputState::bypassed,
+        .error = "WirePlumber PipeTune policy handshake is unavailable",
+        .latencyFrames = filter.latencyFrames};
+  }
+  return {.state = PipeWireFilterOutputState::active,
+          .error = {},
+          .latencyFrames = filter.latencyFrames};
+}
+
+static PipeWireFilterOutputState rejectedOutputState(
+    const TransparentFilterRejectedOutput &output) noexcept {
+  return output.rejection ==
+                     TransparentFilterOutputRejection::unsupportedLayout ||
+                 output.rejection ==
+                     TransparentFilterOutputRejection::invalidRatePolicy
+             ? PipeWireFilterOutputState::error
+             : PipeWireFilterOutputState::bypassed;
+}
+
+static ControlFilterState controlFilterState(
+    PipeWireFilterOutputState state) noexcept {
+  switch (state) {
+  case PipeWireFilterOutputState::waiting:
+    return ControlFilterState::waiting;
+  case PipeWireFilterOutputState::active:
+    return ControlFilterState::active;
+  case PipeWireFilterOutputState::bypassed:
+    return ControlFilterState::bypassed;
+  case PipeWireFilterOutputState::error:
+    return ControlFilterState::error;
+  }
+  return ControlFilterState::error;
+}
+
+static ControlDspBackendAvailability filterControlBackendAvailability(
+    DspBackendKind kind, const DspBackendLoadResult &result) {
+  auto cpuRequirement = result.cpuRequirement;
+  if (cpuRequirement.empty()) {
+    cpuRequirement =
+        kind == DspBackendKind::scalar ? "none" : "unknown";
+  }
+  auto error = result.error;
+  if (result.backend == nullptr && error.empty()) {
+    error = std::string(dspBackendName(kind)) +
+            " DSP backend is unavailable";
+  }
+  return {.kind = kind,
+          .available = result.backend != nullptr,
+          .cpuRequirement = std::move(cpuRequirement),
+          .error = std::move(error)};
+}
+
+static ControlDspVariantAvailability filterControlVariantAvailability(
+    const DspBackendLoadResult &result) {
+  auto cpuRequirement = result.cpuRequirement;
+  if (cpuRequirement.empty()) {
+    cpuRequirement = result.variant == DspBackendVariant::scalar
+                         ? "none"
+                         : "unknown";
+  }
+  auto error = result.error;
+  if (result.backend == nullptr && error.empty()) {
+    error = "DSP variant " +
+            std::string(dspBackendVariantName(result.variant)) +
+            " is unavailable";
+  }
+  return {.variant = result.variant,
+          .available = result.backend != nullptr,
+          .cpuSupported = result.cpuSupported,
+          .cpuRequirement = std::move(cpuRequirement),
+          .error = std::move(error)};
+}
+
+static ControlRuntimeStatus buildFilterControlStatus(
+    const FilterServiceRuntime &runtime) {
+  auto filterOutputs = std::vector<ControlFilterOutputStatus>{};
+  filterOutputs.reserve(runtime.outputTracker.outputs().size() +
+                        runtime.outputTracker.rejectedOutputs().size());
+  auto overrunFrames = runtime.retiredOverrunFrames;
+  auto underrunFrames = runtime.retiredUnderrunFrames;
+  auto processingErrors = runtime.retiredProcessingErrors;
+  auto dspProcessedFrames = std::uint64_t{0};
+  auto dspProcessingNanoseconds = std::uint64_t{0};
+
+  for (const auto &output : runtime.outputTracker.outputs()) {
+    const auto status = outputFilterState(runtime, output);
+    const auto found = runtime.filters.find(output.id);
+    auto outputOverruns = std::uint64_t{0};
+    auto outputUnderruns = std::uint64_t{0};
+    auto outputProcessingErrors = std::uint64_t{0};
+    auto performance = DspPerformanceCounters{};
+    if (found != runtime.filters.end()) {
+      outputOverruns = found->second->ring.overrunFrames();
+      outputUnderruns = found->second->ring.underrunFrames();
+      outputProcessingErrors =
+          found->second->processingErrors.load(std::memory_order_relaxed);
+      if (found->second->pipeline != nullptr) {
+        performance = found->second->pipeline->performanceCounters();
+      }
+      overrunFrames += outputOverruns;
+      underrunFrames += outputUnderruns;
+      processingErrors += outputProcessingErrors;
+      dspProcessedFrames += performance.processedFrames;
+      dspProcessingNanoseconds += performance.processingNanoseconds;
+    }
+    filterOutputs.push_back(
+        {.targetNodeName = output.nodeName,
+         .targetDescription = output.description,
+         .filterNodeName = output.filterNodeName,
+         .state = controlFilterState(status.state),
+         .error = status.error,
+         .channelCount = output.channelCount,
+         .sampleRateCapabilities = output.sampleRateCapabilities,
+         .dspSampleRate = output.rates.dspSampleRate,
+         .outputSampleRate = output.rates.outputSampleRate,
+         .activeOutputSampleRate = output.activeSampleRate,
+         .rateFallback = output.rates.fallback,
+         .latencyFrames = status.latencyFrames,
+         .overrunFrames = outputOverruns,
+         .underrunFrames = outputUnderruns,
+         .processingErrors = outputProcessingErrors,
+         .dspProcessedFrames = performance.processedFrames,
+         .dspProcessingNanoseconds =
+             performance.processingNanoseconds});
+  }
+  for (const auto &output : runtime.outputTracker.rejectedOutputs()) {
+    if (output.nodeName.empty()) {
+      continue;
+    }
+    const auto state = rejectedOutputState(output);
+    filterOutputs.push_back(
+        {.targetNodeName = output.nodeName,
+         .targetDescription = output.description,
+         .filterNodeName = {},
+         .state = controlFilterState(state),
+         .error = output.error,
+         .channelCount = 0,
+         .sampleRateCapabilities = output.sampleRateCapabilities,
+         .dspSampleRate = 0,
+         .outputSampleRate = 0,
+         .activeOutputSampleRate = 0,
+         .rateFallback = false,
+         .latencyFrames = 0,
+         .overrunFrames = 0,
+         .underrunFrames = 0,
+         .processingErrors = 0,
+         .dspProcessedFrames = 0,
+         .dspProcessingNanoseconds = 0});
+  }
+
+  auto availableBackends =
+      std::array<ControlDspBackendAvailability, 2>{
+          filterControlBackendAvailability(
+              DspBackendKind::scalar,
+              runtime.dspBackendState.backends.scalar),
+          filterControlBackendAvailability(
+              DspBackendKind::simd,
+              runtime.dspBackendState.backends.simd)};
+  auto availableVariants =
+      std::vector<ControlDspVariantAvailability>{};
+  availableVariants.reserve(
+      runtime.dspBackendState.backends.simdVariants.size() + 1u);
+  availableVariants.push_back(filterControlVariantAvailability(
+      runtime.dspBackendState.backends.scalar));
+  for (const auto &variant :
+       runtime.dspBackendState.backends.simdVariants) {
+    availableVariants.push_back(
+        filterControlVariantAvailability(variant));
+  }
+
+  return {
+      .processingMode = runtime.processingMode,
+      .activePreset = runtime.activePreset,
+      .configurationError = runtime.configurationError,
+      .activePluginCount = runtime.recipe->activePluginCount(),
+      .policyBackend = runtime.policyBackend,
+      .filterOutputs = std::move(filterOutputs),
+      .preferredTarget = {},
+      .selectedTarget = {},
+      .outputSelectionReason = ControlOutputSelectionReason::unavailable,
+      .availableOutputs = {},
+      .defaultSinkActive = false,
+      .overrunFrames = overrunFrames,
+      .underrunFrames = underrunFrames,
+      .processingErrors = processingErrors,
+      .dspProcessedFrames = dspProcessedFrames,
+      .dspProcessingNanoseconds = dspProcessingNanoseconds,
+      .inputSampleFormat = {},
+      .inputSampleRate = 0,
+      .inputChannelCount = 0,
+      .inputFramesReceived = 0,
+      .inputLastReceivedUnixMilliseconds = 0,
+      .configuredRatePolicy = runtime.options.ratePolicy,
+      .dspSampleRate = 0,
+      .selectedOutputSampleRate = 0,
+      .activeOutputSampleRate = 0,
+      .rateTransitioning = false,
+      .rateFallback = false,
+      .rateError = {},
+      .configuredDspBackend = runtime.dspBackendState.configuredBackend,
+      .configuredDspSimdVariant =
+          runtime.dspBackendState.configuredSimdVariant,
+      .effectiveDspBackend = runtime.dspBackendState.effectiveBackend,
+      .effectiveDspVariant = runtime.dspBackendState.effectiveVariant,
+      .dspBackendFallback = runtime.dspBackendState.fallback,
+      .dspBackendError = runtime.dspBackendState.error,
+      .availableDspBackends = std::move(availableBackends),
+      .availableDspVariants = std::move(availableVariants)};
+}
+
+static void refreshControlStatusSnapshot(FilterServiceRuntime &runtime) {
+  auto status = buildFilterControlStatus(runtime);
+  {
+    auto lock = std::scoped_lock(runtime.controlStatusMutex);
+    runtime.controlStatusSnapshot = std::move(status);
+  }
+  publishControlStatus(runtime.controlServer.get());
+}
+
 static void maybeCompleteFilterServiceReadiness(FilterServiceRuntime &runtime) {
+  refreshControlStatusSnapshot(runtime);
   if (!runtime.enumerationReady || runtime.reconcilingOutputs ||
       runtime.readyNotified || !runtime.error.empty()) {
     return;
@@ -1322,6 +1604,80 @@ static void filterServiceReadinessTimedOut(void *data, std::uint64_t) {
   maybeCompleteFilterServiceReadiness(runtime);
 }
 
+static std::optional<ControlRuntimeStatus> filterControlStatusSnapshot(
+    FilterServiceRuntime &runtime) {
+  auto lock = std::scoped_lock(runtime.controlStatusMutex);
+  return runtime.controlStatusSnapshot;
+}
+
+static ControlMessageResult closeFilterControlResponse(
+    std::string response, bool publishStatus) {
+  return {.response = std::move(response),
+          .connectionMode = ControlConnectionMode::close,
+          .publishStatus = publishStatus};
+}
+
+static std::string provideFilterControlStatus(void *userData) {
+  auto &runtime = *static_cast<FilterServiceRuntime *>(userData);
+  const auto status = filterControlStatusSnapshot(runtime);
+  return status.has_value()
+             ? makeControlStatusEvent(*status)
+             : makeControlErrorResponse(
+                   "transparent-filter status is not available");
+}
+
+static ControlMessageResult handleFilterControlRequest(
+    std::string_view message, void *userData) {
+  auto &runtime = *static_cast<FilterServiceRuntime *>(userData);
+  const auto request = parseControlRequest(message);
+  if (!request.error.empty()) {
+    return closeFilterControlResponse(
+        makeControlErrorResponse(request.error), false);
+  }
+  if (request.request.command == ControlCommand::subscribe) {
+    return {.response = provideFilterControlStatus(&runtime),
+            .connectionMode = ControlConnectionMode::subscribe,
+            .publishStatus = false};
+  }
+  if (request.request.command != ControlCommand::status) {
+    return closeFilterControlResponse(
+        makeControlErrorResponse(
+            "this transparent-filter control operation is not implemented"),
+        false);
+  }
+  const auto status = filterControlStatusSnapshot(runtime);
+  if (!status.has_value()) {
+    return closeFilterControlResponse(
+        makeControlErrorResponse(
+            "transparent-filter status is not available"),
+        false);
+  }
+  return closeFilterControlResponse(
+      makeControlSuccessResponse(
+          *status, std::span<const ControlWarning>{}),
+      false);
+}
+
+static bool createFilterControlServer(FilterServiceRuntime &runtime) {
+  refreshControlStatusSnapshot(runtime);
+  if (runtime.options.controlSocketPath.empty()) {
+    return true;
+  }
+  const auto options = ControlServerOptions{
+      .handler = handleFilterControlRequest,
+      .statusProvider = provideFilterControlStatus,
+      .userData = &runtime};
+  auto started =
+      startControlServer(runtime.options.controlSocketPath, options);
+  if (started.server == nullptr) {
+    runtime.error =
+        "cannot start PipeTune control server: " + started.error;
+    return false;
+  }
+  runtime.controlServer = std::move(started.server);
+  return true;
+}
+
 static bool createFilterServiceLoop(FilterServiceRuntime &runtime) {
   runtime.mainLoop = pw_main_loop_new(nullptr);
   if (runtime.mainLoop == nullptr) {
@@ -1407,10 +1763,11 @@ static bool createFilterServiceLoop(FilterServiceRuntime &runtime) {
         runtime.enumerationSequence);
     return false;
   }
-  return true;
+  return createFilterControlServer(runtime);
 }
 
 static void destroyFilterService(FilterServiceRuntime &runtime) {
+  runtime.controlServer.reset();
   for (auto &[id, filter] : runtime.filters) {
     static_cast<void>(id);
     retireOutputFilter(runtime, *filter);
@@ -1462,51 +1819,23 @@ filterServiceStatuses(const FilterServiceRuntime &runtime) {
   statuses.reserve(runtime.outputTracker.outputs().size() +
                    runtime.outputTracker.rejectedOutputs().size());
   for (const auto &output : runtime.outputTracker.outputs()) {
-    const auto found = runtime.filters.find(output.id);
-    auto state = PipeWireFilterOutputState::waiting;
-    auto error = std::string{};
-    auto latencyFrames = std::uint32_t{0};
-    if (found == runtime.filters.end()) {
-      state = PipeWireFilterOutputState::bypassed;
-      error = "output filter is not running";
-    } else if (found->second->failed) {
-      state = PipeWireFilterOutputState::error;
-      error = found->second->error;
-    } else {
-      if (found->second->pipeline != nullptr) {
-        latencyFrames = found->second->pipeline->latencyFrames();
-      }
-      if (outputFilterReady(*found->second)) {
-        if (runtime.policyReady && found->second->enabledPublished) {
-          state = PipeWireFilterOutputState::active;
-        } else {
-          state = PipeWireFilterOutputState::bypassed;
-          error = "WirePlumber PipeTune policy handshake is unavailable";
-        }
-      }
-    }
+    auto state = outputFilterState(runtime, output);
     statuses.push_back(
         {.targetNodeName = output.nodeName,
          .targetDescription = output.description,
          .filterNodeName = output.filterNodeName,
-         .state = state,
-         .error = std::move(error),
+         .state = state.state,
+         .error = std::move(state.error),
          .channelCount = output.channelCount,
          .dspSampleRate = output.rates.dspSampleRate,
          .outputSampleRate = output.rates.outputSampleRate,
-         .latencyFrames = latencyFrames});
+         .latencyFrames = state.latencyFrames});
   }
   for (const auto &rejected : runtime.outputTracker.rejectedOutputs()) {
-    const auto state =
-        rejected.rejection == TransparentFilterOutputRejection::unsupportedLayout ||
-                rejected.rejection ==
-                    TransparentFilterOutputRejection::invalidRatePolicy
-            ? PipeWireFilterOutputState::error
-            : PipeWireFilterOutputState::bypassed;
     statuses.push_back({.targetNodeName = rejected.nodeName,
                         .targetDescription = rejected.description,
                         .filterNodeName = {},
-                        .state = state,
+                        .state = rejectedOutputState(rejected),
                         .error = rejected.error,
                         .channelCount = 0,
                         .dspSampleRate = 0,

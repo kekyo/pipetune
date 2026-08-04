@@ -101,6 +101,7 @@ TransparentFilterOutputEvaluation evaluateTransparentFilterOutput(
           .filterLinkGroup = filterNodeName + ".link-group",
           .channelCount = candidate.channelCount,
           .channelPositions = candidate.channelPositions,
+          .sampleRateCapabilities = candidate.sampleRateCapabilities,
           .rates = *rates,
           .activeSampleRate = candidate.activeSampleRate},
       .rejection = TransparentFilterOutputRejection::none,
@@ -167,6 +168,9 @@ void TransparentFilterOutputTracker::rebuildOutputs() {
       rejected.push_back({.id = candidate.id,
                           .nodeName = candidate.nodeName,
                           .description = candidate.description,
+                          .sampleRateCapabilities =
+                              candidate.sampleRateCapabilities,
+                          .activeSampleRate = candidate.activeSampleRate,
                           .rejection = evaluated.rejection,
                           .error = std::move(evaluated.error)});
     }

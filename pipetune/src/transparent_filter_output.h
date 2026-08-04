@@ -90,6 +90,8 @@ struct TransparentFilterOutput {
   std::uint32_t channelCount;
   /** Exact SPA channel positions copied from the physical sink. */
   std::vector<std::uint32_t> channelPositions;
+  /** Enumerated sample-rate capabilities copied from the physical sink. */
+  SampleRateCapabilities sampleRateCapabilities;
   /** DSP and playback rates resolved only for this physical output. */
   ResolvedSampleRates rates;
   /** Active physical rate observed from PipeWire, or zero. */
@@ -117,6 +119,10 @@ struct TransparentFilterRejectedOutput {
   std::string nodeName;
   /** User-facing sink description. */
   std::string description;
+  /** Enumerated sink sample-rate capabilities, when available. */
+  SampleRateCapabilities sampleRateCapabilities;
+  /** Active sink rate observed from PipeWire, or zero. */
+  std::uint32_t activeSampleRate;
   /** Machine-readable direct-routing reason. */
   TransparentFilterOutputRejection rejection;
   /** Human-readable direct-routing diagnostic. */
