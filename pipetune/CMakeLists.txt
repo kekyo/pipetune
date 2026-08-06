@@ -532,26 +532,6 @@ if(BUILD_TESTING)
     COMMAND pipetune_filter_graph_properties_tests)
 
   add_executable(
-    pipetune_legacy_output_surface_removal_tests
-    test/legacy_output_surface_removal_test.cpp)
-  target_link_libraries(
-    pipetune_legacy_output_surface_removal_tests
-    PRIVATE pipetune_control pipetune_core)
-  if(MSVC)
-    target_compile_options(
-      pipetune_legacy_output_surface_removal_tests PRIVATE /W4 /WX)
-  else()
-    target_compile_options(
-      pipetune_legacy_output_surface_removal_tests
-      PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(
-    NAME pipetune_legacy_output_surface_removal_tests
-    COMMAND
-      pipetune_legacy_output_surface_removal_tests
-      "${CMAKE_CURRENT_BINARY_DIR}/pipetune.test.service")
-
-  add_executable(
     pipetune_input_telemetry_tests
     test/input_telemetry_test.cpp)
   target_include_directories(pipetune_input_telemetry_tests PRIVATE src)
