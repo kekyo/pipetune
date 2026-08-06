@@ -198,6 +198,33 @@ static bool testPersistenceFailure(
                "GTK partial rate success must be explicit");
 }
 
+static bool testNegotiatedFallback(
+    const std::filesystem::path &configPath) {
+  const auto requested =
+      fixedPolicy(192000, pipetune::SampleRateEnforcement::force);
+  auto fallbackStatus = rateStatus(requested);
+  fallbackStatus.dspSampleRate = 48000;
+  fallbackStatus.graphSampleRate = 48000;
+  fallbackStatus.rateError =
+      "PipeWire negotiated 48000 Hz instead of the forced 192000 Hz";
+  auto state = pendingState();
+  const auto result = pipetune_gtk::completeRateOperation(
+      state,
+      {.response = pipetune::parseControlResponse(
+           pipetune::makeControlSuccessResponse(fallbackStatus, {})),
+       .transportError = {}},
+      {.configPath = configPath, .policy = requested}, 6000);
+  return check(result.liveApplied && result.persistenceApplied &&
+                   !result.reconnectRequired,
+               "GTK must retain control after a negotiated rate fallback") &&
+         check(state.connection ==
+                   pipetune_gtk::ControlConnectionState::connected &&
+                   state.runtime.dspSampleRate == 48000 &&
+                   !state.runtime.rateError.empty(),
+               "GTK must expose the effective rate and fallback diagnostic") &&
+         configHasPolicy(configPath, requested);
+}
+
 int main() {
   const auto directory =
       std::filesystem::temp_directory_path() /
@@ -209,7 +236,8 @@ int main() {
       testRejectedAndUnconfirmedReplies(configPath) &&
       testSuccessfulAndOfflineChanges(configPath) &&
       testDisconnectPersistsForNextStart(configPath) &&
-      testPersistenceFailure(directory);
+      testPersistenceFailure(directory) &&
+      testNegotiatedFallback(configPath);
   std::filesystem::remove_all(directory);
   return passed ? 0 : 1;
 }

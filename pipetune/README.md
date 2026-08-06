@@ -193,9 +193,11 @@ startup policy. If the daemon is unavailable, the command instead saves the
 policy for the next start. **Suggest** supplies `node.rate` as a PipeWire
 preference. **Force** also supplies `node.force-rate=0`, which asks PipeWire to
 use the denominator of `node.rate` while PipeTune's playback node is active.
+If PipeWire cannot apply the request, PipeTune stays connected and continues
+DSP at the negotiated graph rate. An unapplied Force request is shown as a
+rate diagnostic.
 Neither operation rewrites PipeWire's global clock configuration. Automatic
 leaves both filter nodes negotiable and rebuilds EffeTune at the resolved graph
-rate. Fixed mode constrains both filter nodes and EffeTune to the requested
 rate.
 
 Inspect and select the native DSP backend with:

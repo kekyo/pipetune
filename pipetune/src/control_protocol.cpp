@@ -404,11 +404,11 @@ static std::string makeControlStatusMessage(
        !status.activePreset.empty()) ||
       !sampleRatePolicyIsValid(status.configuredRatePolicy) ||
       (status.configuredRatePolicy.mode == SampleRateMode::fixed &&
-       ((!status.rateTransitioning && status.dspSampleRate != 0 &&
-         status.dspSampleRate != status.configuredRatePolicy.fixedRate) ||
-        (status.graphSampleRate != 0 &&
-         status.graphSampleRate !=
-             status.configuredRatePolicy.fixedRate))) ||
+       status.configuredRatePolicy.enforcement ==
+           SampleRateEnforcement::force &&
+       !status.rateTransitioning && status.dspSampleRate != 0 &&
+       status.dspSampleRate != status.configuredRatePolicy.fixedRate &&
+       status.rateError.empty()) ||
       (status.graphSampleRate != 0 &&
        status.graphSampleRate != status.dspSampleRate) ||
       status.rateError.find('\0') != std::string::npos ||
@@ -999,11 +999,11 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
        !status.activePreset.empty()) ||
       !sampleRatePolicyIsValid(status.configuredRatePolicy) ||
       (status.configuredRatePolicy.mode == SampleRateMode::fixed &&
-       ((!status.rateTransitioning && status.dspSampleRate != 0 &&
-         status.dspSampleRate != status.configuredRatePolicy.fixedRate) ||
-        (status.graphSampleRate != 0 &&
-         status.graphSampleRate !=
-             status.configuredRatePolicy.fixedRate))) ||
+       status.configuredRatePolicy.enforcement ==
+           SampleRateEnforcement::force &&
+       !status.rateTransitioning && status.dspSampleRate != 0 &&
+       status.dspSampleRate != status.configuredRatePolicy.fixedRate &&
+       status.rateError.empty()) ||
       (status.graphSampleRate != 0 &&
        status.graphSampleRate != status.dspSampleRate) ||
       status.rateError.find('\0') != std::string::npos ||

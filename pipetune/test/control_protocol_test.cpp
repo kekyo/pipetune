@@ -570,6 +570,45 @@ static bool testDspBackendFallbackStatus() {
                "inconsistent DSP backend fallback must be rejected");
 }
 
+static bool testFixedRateFallbackStatus() {
+  constexpr auto diagnostic =
+      "PipeWire negotiated 48000 Hz instead of the forced 192000 Hz";
+  const auto response = pipetune::makeControlSuccessResponse(
+      {.processingMode = pipetune::ProcessingMode::bypass,
+       .activePreset = {},
+       .configurationError = {},
+       .activePluginCount = 0,
+       .overrunFrames = 0,
+       .underrunFrames = 0,
+       .processingErrors = 0,
+       .dspProcessedFrames = 0,
+       .dspProcessingNanoseconds = 0,
+       .inputSampleFormat = "F32P",
+       .inputSampleRate = 48000,
+       .inputChannelCount = 2,
+       .inputFramesReceived = 0,
+       .inputLastReceivedUnixMilliseconds = 0,
+       .configuredRatePolicy =
+           {.mode = pipetune::SampleRateMode::fixed,
+            .fixedRate = 192000,
+            .enforcement = pipetune::SampleRateEnforcement::force},
+       .dspSampleRate = 48000,
+       .graphSampleRate = 48000,
+       .rateTransitioning = false,
+       .rateError = diagnostic},
+      {});
+  const auto parsed = pipetune::parseControlResponse(response);
+  return check(parsed.valid, parsed.error) &&
+         check(parsed.success,
+               "a negotiated fixed-rate fallback must remain connected") &&
+         check(parsed.status.configuredRatePolicy.fixedRate == 192000 &&
+                   parsed.status.dspSampleRate == 48000 &&
+                   parsed.status.graphSampleRate == 48000,
+               "fixed-rate fallback must expose requested and effective rates") &&
+         check(parsed.status.rateError == diagnostic,
+               "fixed-rate fallback diagnostic differs");
+}
+
 static bool testRejectedInputTelemetry() {
   const auto response = pipetune::makeControlSuccessResponse(
       {.processingMode = pipetune::ProcessingMode::bypass,
@@ -629,6 +668,7 @@ int main() {
   return testRequests() && testRejectedRequests() && testSuccessResponse() &&
                  testStatusEvent() && testBypassStatus() &&
                  testDspBackendFallbackStatus() &&
+                 testFixedRateFallbackStatus() &&
                  testRejectedInputTelemetry() && testErrorResponse()
              ? 0
              : 1;

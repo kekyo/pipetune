@@ -79,8 +79,9 @@ executeSetSampleRatePolicy(const PersistentRateOptions &options,
     if (response.status.configuredRatePolicy != policy ||
         response.status.rateTransitioning ||
         response.status.dspSampleRate == 0 ||
-        (policy.mode == SampleRateMode::fixed &&
-         response.status.dspSampleRate != policy.fixedRate)) {
+        response.status.graphSampleRate == 0 ||
+        response.status.dspSampleRate !=
+            response.status.graphSampleRate) {
       return rateChangeError(
           "daemon did not confirm the requested sample-rate policy");
     }

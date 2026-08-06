@@ -195,6 +195,9 @@ the EffeTune engine. Runtime status shows the active DSP and graph rates.
 Suggest sets `node.rate` as a preference; PipeWire may negotiate another graph
 rate. Force additionally asks PipeWire to hold the fixed rate while the filter
 output is active. Neither mode changes PipeWire's global clock configuration.
+If PipeWire cannot apply the request, PipeTune stays connected and runs DSP at
+the negotiated graph rate. An unapplied Force request appears as a rate
+diagnostic.
 
 The same information and controls are available from the CLI:
 

@@ -325,7 +325,6 @@ static void finishReadinessCheck(PipeWireRuntime &runtime) {
     auto lock = std::scoped_lock(runtime.rateStateMutex);
     if (runtime.rateTransitioning) {
       runtime.rateTransitioning = false;
-      runtime.rateError.clear();
       completedRateChange = true;
     }
   }
@@ -499,11 +498,6 @@ static bool applyNegotiatedGraphRate(PipeWireRuntime &runtime,
     auto lock = std::scoped_lock(runtime.rateStateMutex);
     policy = runtime.configuredRatePolicy;
   }
-  if (policy.mode == SampleRateMode::fixed &&
-      negotiatedRate != policy.fixedRate) {
-    failRuntime(runtime, "PipeWire did not apply the fixed graph rate");
-    return false;
-  }
 
   const auto graphRate =
       runtime.graphSampleRate.load(std::memory_order_acquire);
@@ -539,6 +533,18 @@ static bool applyNegotiatedGraphRate(PipeWireRuntime &runtime,
   }
   runtime.graphSampleRate.store(negotiatedRate,
                                 std::memory_order_release);
+  auto rateError = std::string{};
+  if (policy.mode == SampleRateMode::fixed &&
+      policy.enforcement == SampleRateEnforcement::force &&
+      negotiatedRate != policy.fixedRate) {
+    rateError = "PipeWire negotiated " + std::to_string(negotiatedRate) +
+                " Hz instead of the forced " +
+                std::to_string(policy.fixedRate) + " Hz";
+  }
+  {
+    auto lock = std::scoped_lock(runtime.rateStateMutex);
+    runtime.rateError = std::move(rateError);
+  }
   return true;
 }
 
