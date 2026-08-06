@@ -33,6 +33,8 @@ struct SetupPipeWireRuntime {
   pw_registry *registry;
   pw_metadata *policyMetadata;
   pw_metadata *defaultMetadata;
+  std::uint32_t policyMetadataId;
+  std::uint32_t defaultMetadataId;
   pw_core_events coreEvents;
   pw_registry_events registryEvents;
   pw_metadata_events policyEvents;
@@ -187,8 +189,22 @@ static int setupDefaultProperty(void *data, std::uint32_t subject,
   return 0;
 }
 
+static void unbindSetupMetadata(pw_metadata *&metadata, spa_hook &listener,
+                                bool &listenerInstalled) noexcept {
+  if (metadata == nullptr) {
+    return;
+  }
+  if (listenerInstalled) {
+    spa_hook_remove(&listener);
+    listenerInstalled = false;
+  }
+  pw_proxy_destroy(reinterpret_cast<pw_proxy *>(metadata));
+  metadata = nullptr;
+}
+
 static void bindSetupMetadata(SetupPipeWireRuntime &runtime,
                               pw_metadata **destination,
+                              std::uint32_t &destinationId,
                               spa_hook &listener,
                               bool &listenerInstalled,
                               pw_metadata_events &events,
@@ -214,6 +230,7 @@ static void bindSetupMetadata(SetupPipeWireRuntime &runtime,
     *destination = nullptr;
     return;
   }
+  destinationId = id;
   listenerInstalled = true;
   static_cast<void>(requestSetupPipeWireSync(
       runtime, "cannot synchronize setup metadata"));
@@ -232,16 +249,39 @@ static void setupRegistryGlobal(void *data, std::uint32_t id,
       setupDictionaryString(properties, PW_KEY_METADATA_NAME);
   if (name == kPolicyMetadataName) {
     bindSetupMetadata(runtime, &runtime.policyMetadata,
+                      runtime.policyMetadataId,
                       runtime.policyListener,
                       runtime.policyListenerInstalled,
                       runtime.policyEvents, setupPolicyProperty, id,
                       version);
   } else if (name == kDefaultMetadataName) {
     bindSetupMetadata(runtime, &runtime.defaultMetadata,
+                      runtime.defaultMetadataId,
                       runtime.defaultListener,
                       runtime.defaultListenerInstalled,
                       runtime.defaultEvents, setupDefaultProperty, id,
                       version);
+  }
+}
+
+static void setupRegistryGlobalRemoved(void *data, std::uint32_t id) {
+  auto &runtime = *static_cast<SetupPipeWireRuntime *>(data);
+  // A WirePlumber restart can replace metadata after this client has bound to
+  // the previous global. Release that binding so the replacement global event
+  // can install a fresh listener.
+  if (id == runtime.policyMetadataId) {
+    unbindSetupMetadata(runtime.policyMetadata, runtime.policyListener,
+                        runtime.policyListenerInstalled);
+    runtime.policyMetadataId = PW_ID_ANY;
+    runtime.policyProtocol.clear();
+    runtime.policyBackend.clear();
+    runtime.policyState.clear();
+  }
+  if (id == runtime.defaultMetadataId) {
+    unbindSetupMetadata(runtime.defaultMetadata, runtime.defaultListener,
+                        runtime.defaultListenerInstalled);
+    runtime.defaultMetadataId = PW_ID_ANY;
+    runtime.legacyClearRequested = false;
   }
 }
 
@@ -358,6 +398,7 @@ static bool createSetupPipeWireRuntime(SetupPipeWireRuntime &runtime) {
   }
   runtime.registryEvents.version = PW_VERSION_REGISTRY_EVENTS;
   runtime.registryEvents.global = setupRegistryGlobal;
+  runtime.registryEvents.global_remove = setupRegistryGlobalRemoved;
   const auto registryListenerResult = pw_registry_add_listener(
       runtime.registry, &runtime.registryListener, &runtime.registryEvents,
       &runtime);
@@ -375,22 +416,14 @@ static bool createSetupPipeWireRuntime(SetupPipeWireRuntime &runtime) {
 static void destroySetupPipeWireRuntime(
     SetupPipeWireRuntime &runtime) noexcept {
   if (runtime.policyMetadata != nullptr) {
-    if (runtime.policyListenerInstalled) {
-      spa_hook_remove(&runtime.policyListener);
-      runtime.policyListenerInstalled = false;
-    }
-    pw_proxy_destroy(
-        reinterpret_cast<pw_proxy *>(runtime.policyMetadata));
-    runtime.policyMetadata = nullptr;
+    unbindSetupMetadata(runtime.policyMetadata, runtime.policyListener,
+                        runtime.policyListenerInstalled);
+    runtime.policyMetadataId = PW_ID_ANY;
   }
   if (runtime.defaultMetadata != nullptr) {
-    if (runtime.defaultListenerInstalled) {
-      spa_hook_remove(&runtime.defaultListener);
-      runtime.defaultListenerInstalled = false;
-    }
-    pw_proxy_destroy(
-        reinterpret_cast<pw_proxy *>(runtime.defaultMetadata));
-    runtime.defaultMetadata = nullptr;
+    unbindSetupMetadata(runtime.defaultMetadata, runtime.defaultListener,
+                        runtime.defaultListenerInstalled);
+    runtime.defaultMetadataId = PW_ID_ANY;
   }
   if (runtime.registry != nullptr) {
     if (runtime.registryListenerInstalled) {
@@ -432,6 +465,8 @@ SetupPipeWireIntegrationResult prepareSetupPipeWireIntegration() {
       .registry = nullptr,
       .policyMetadata = nullptr,
       .defaultMetadata = nullptr,
+      .policyMetadataId = PW_ID_ANY,
+      .defaultMetadataId = PW_ID_ANY,
       .coreEvents = {},
       .registryEvents = {},
       .policyEvents = {},

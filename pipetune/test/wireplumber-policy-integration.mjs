@@ -363,11 +363,15 @@ try {
 
   const wireplumberArguments =
     minorVersion === 4 ? [] : ["--profile", "policy"];
-  const wireplumber = start("wireplumber", wireplumberArguments);
   let wireplumberDiagnostic = "";
-  wireplumber.stderr.on("data", (chunk) => {
-    wireplumberDiagnostic += chunk;
-  });
+  const startWirePlumber = () => {
+    const child = start("wireplumber", wireplumberArguments);
+    child.stderr.on("data", (chunk) => {
+      wireplumberDiagnostic += chunk;
+    });
+    return child;
+  };
+  let wireplumber = startWirePlumber();
 
   let metadataOutput = "";
   const metadataReady = await waitFor(() => {
@@ -671,6 +675,72 @@ try {
     serviceTest.status,
     0,
     `transparent-filter service did not route audio through the worktree policy:\n${serviceTest.stdout ?? ""}\n${serviceTest.stderr ?? ""}\n${wireplumberDiagnostic}`,
+  );
+
+  for (const key of ["protocol.version", "policy.backend", "policy.state"]) {
+    const deleted = spawnSync(
+      "pw-metadata",
+      ["-n", "pipetune-policy", "-d", "0", key],
+      { env: environment, encoding: "utf8" },
+    );
+    assert.equal(
+      deleted.status,
+      0,
+      `${deleted.stdout ?? ""}\n${deleted.stderr ?? ""}`,
+    );
+  }
+
+  const setupProbe = spawn(setupPipeWireProbe, [], {
+    env: environment,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  children.push(setupProbe);
+  let setupProbeOutput = "";
+  let setupProbeDiagnostic = "";
+  setupProbe.stdout.on("data", (chunk) => {
+    setupProbeOutput += chunk;
+  });
+  setupProbe.stderr.on("data", (chunk) => {
+    setupProbeDiagnostic += chunk;
+  });
+  const setupProbeClientPattern = new RegExp(
+    `"application\\.process\\.id":\\s*"?${setupProbe.pid}"?`,
+  );
+  const setupProbeConnected = await waitFor(() => {
+    const result = spawnSync("pw-dump", [], {
+      env: environment,
+      encoding: "utf8",
+    });
+    return (
+      result.status === 0 &&
+      setupProbeClientPattern.test(`${result.stdout ?? ""}`)
+    );
+  }, 5000);
+  assert.equal(
+    setupProbeConnected,
+    true,
+    `setup probe did not connect to the old policy metadata: ${setupProbeDiagnostic}\n${wireplumberDiagnostic}`,
+  );
+
+  await stopChild(wireplumber);
+  wireplumber = startWirePlumber();
+  const setupProbeCompleted = await waitFor(
+    () => setupProbe.exitCode !== null || setupProbe.signalCode !== null,
+    15000,
+  );
+  assert.equal(
+    setupProbeCompleted,
+    true,
+    `setup probe did not finish after WirePlumber replaced its policy metadata: ${setupProbeDiagnostic}\n${wireplumberDiagnostic}`,
+  );
+  assert.equal(
+    setupProbe.exitCode,
+    0,
+    `setup probe did not follow the replacement policy metadata: ${setupProbeDiagnostic}\n${wireplumberDiagnostic}`,
+  );
+  assert.match(
+    setupProbeOutput,
+    new RegExp(`policyBackend=wireplumber-0\\.${minorVersion}`),
   );
 } finally {
   await stopChildren();
