@@ -88,8 +88,6 @@ static bool testFullSnapshotRoundTrip(
   const auto expected = pipetune::StartupConfig{
       .presetFound = true,
       .presetPath = "/tmp/snapshot.effetune_preset",
-      .preferredOutputFound = true,
-      .preferredOutput = "alsa_output.snapshot",
       .ratePolicy =
           {.mode = pipetune::SampleRateMode::fixed,
            .fixedRate = 192000,
@@ -103,9 +101,6 @@ static bool testFullSnapshotRoundTrip(
       !check(loaded.config.presetFound &&
                  loaded.config.presetPath == expected.presetPath,
              "snapshot preset did not round-trip") ||
-      !check(loaded.config.preferredOutputFound &&
-                 loaded.config.preferredOutput == expected.preferredOutput,
-             "snapshot output did not round-trip") ||
       !check(loaded.config.ratePolicy.mode == expected.ratePolicy.mode &&
                  loaded.config.ratePolicy.fixedRate ==
                      expected.ratePolicy.fixedRate &&
@@ -119,76 +114,22 @@ static bool testFullSnapshotRoundTrip(
   }
 
   auto invalid = expected;
-  invalid.preferredOutput.clear();
+  invalid.presetPath = "relative.effetune_preset";
   const auto rejected = pipetune::saveStartupConfig(configPath, invalid);
   const auto preserved = pipetune::loadStartupConfig(configPath);
   return check(!rejected.empty(),
                "an invalid full snapshot must be rejected") &&
          check(preserved.error.empty(), preserved.error) &&
-         check(preserved.config.preferredOutput ==
-                   expected.preferredOutput,
+         check(preserved.config.presetPath == expected.presetPath,
                "a rejected snapshot must preserve the prior configuration");
-}
-
-static bool testPreferredOutputRoundTripPreservesPreset(
-    const std::filesystem::path &configPath) {
-  const auto presetPath =
-      std::filesystem::path("/tmp/preserved.effetune_preset");
-  const auto target = std::string("alsa_output.usb-\"DAC\"\\stereo");
-  const auto savedPreset =
-      pipetune::saveStartupPreset(configPath, presetPath);
-  const auto savedTarget =
-      pipetune::savePreferredOutput(configPath, target);
-  const auto configured = pipetune::loadStartupConfig(configPath);
-  if (!check(savedPreset.empty(), savedPreset) ||
-      !check(savedTarget.empty(), savedTarget) ||
-      !check(configured.error.empty(), configured.error) ||
-      !check(configured.config.presetFound &&
-                 configured.config.presetPath == presetPath,
-             "saving an output must preserve the startup preset") ||
-      !check(configured.config.preferredOutputFound &&
-                 configured.config.preferredOutput == target,
-             "preferred output did not round-trip")) {
-    return false;
-  }
-
-  const auto clearedPreset = pipetune::clearStartupPreset(configPath);
-  const auto outputOnly = pipetune::loadStartupConfig(configPath);
-  if (!check(clearedPreset.empty(), clearedPreset) ||
-      !check(outputOnly.error.empty(), outputOnly.error) ||
-      !check(!outputOnly.config.presetFound,
-             "clearing a preset must remove only its assignment") ||
-      !check(outputOnly.config.preferredOutputFound &&
-                 outputOnly.config.preferredOutput == target,
-             "clearing a preset must preserve the preferred output")) {
-    return false;
-  }
-
-  const auto restoredPreset =
-      pipetune::saveStartupPreset(configPath, presetPath);
-  const auto clearedTarget =
-      pipetune::clearPreferredOutput(configPath);
-  const auto presetOnly = pipetune::loadStartupConfig(configPath);
-  return check(restoredPreset.empty(), restoredPreset) &&
-         check(clearedTarget.empty(), clearedTarget) &&
-         check(presetOnly.error.empty(), presetOnly.error) &&
-         check(presetOnly.config.presetFound &&
-                   presetOnly.config.presetPath == presetPath,
-               "clearing an output must preserve the startup preset") &&
-         check(!presetOnly.config.preferredOutputFound &&
-                   presetOnly.config.preferredOutput.empty(),
-               "clearing an output must remove its assignment");
 }
 
 static bool testRatePolicyRoundTripPreservesOtherChoices(
     const std::filesystem::path &configPath) {
   const auto presetPath =
       std::filesystem::path("/tmp/rate-preserved.effetune_preset");
-  const auto target = std::string("alsa_output.rate_dac");
   const auto savedPreset =
       pipetune::saveStartupPreset(configPath, presetPath);
-  const auto savedTarget =
-      pipetune::savePreferredOutput(configPath, target);
   const auto savedRate = pipetune::saveSampleRatePolicy(
       configPath,
       {.mode = pipetune::SampleRateMode::fixed,
@@ -196,15 +137,11 @@ static bool testRatePolicyRoundTripPreservesOtherChoices(
        .enforcement = pipetune::SampleRateEnforcement::force});
   const auto configured = pipetune::loadStartupConfig(configPath);
   if (!check(savedPreset.empty(), savedPreset) ||
-      !check(savedTarget.empty(), savedTarget) ||
       !check(savedRate.empty(), savedRate) ||
       !check(configured.error.empty(), configured.error) ||
       !check(configured.config.presetFound &&
                  configured.config.presetPath == presetPath,
              "saving a rate must preserve the startup preset") ||
-      !check(configured.config.preferredOutputFound &&
-                 configured.config.preferredOutput == target,
-             "saving a rate must preserve the preferred output") ||
       !check(configured.config.ratePolicy.mode ==
                      pipetune::SampleRateMode::fixed &&
                  configured.config.ratePolicy.fixedRate == 384000 &&
@@ -237,14 +174,11 @@ static bool testDspBackendRoundTripPreservesOtherChoices(
       std::filesystem::path("/tmp/backend-preserved.effetune_preset");
   const auto savedPreset =
       pipetune::saveStartupPreset(configPath, presetPath);
-  const auto savedTarget =
-      pipetune::savePreferredOutput(configPath, "alsa_output.backend_dac");
   const auto savedBackend = pipetune::saveDspBackendSelection(
       configPath, pipetune::DspBackendKind::simd,
       pipetune::DspSimdVariant::x86_64_v3);
   const auto configured = pipetune::loadStartupConfig(configPath);
   if (!check(savedPreset.empty(), savedPreset) ||
-      !check(savedTarget.empty(), savedTarget) ||
       !check(savedBackend.empty(), savedBackend) ||
       !check(configured.error.empty(), configured.error) ||
       !check(configured.config.dspBackend ==
@@ -255,11 +189,7 @@ static bool testDspBackendRoundTripPreservesOtherChoices(
              "DSP SIMD variant did not round-trip") ||
       !check(configured.config.presetFound &&
                  configured.config.presetPath == presetPath,
-             "saving a DSP backend must preserve the startup preset") ||
-      !check(configured.config.preferredOutputFound &&
-                 configured.config.preferredOutput ==
-                     "alsa_output.backend_dac",
-             "saving a DSP backend must preserve the preferred output")) {
+             "saving a DSP backend must preserve the startup preset")) {
     return false;
   }
 
@@ -283,7 +213,6 @@ static bool testAcceptedInputForms(const std::filesystem::path &configPath) {
   writeConfig(configPath,
               "# Existing package configuration\n"
               "PIPETUNE_PRESET=/tmp/plain.effetune_preset\n"
-              "PIPETUNE_TARGET=alsa_output.plain\n"
               "PIPETUNE_DSP_BACKEND=simd\n"
               "PIPETUNE_DSP_SIMD_VARIANT=x86-64-v3\n"
               "PIPETUNE_RATE=96000\n"
@@ -293,9 +222,6 @@ static bool testAcceptedInputForms(const std::filesystem::path &configPath) {
                  unquoted.config.presetPath ==
                      "/tmp/plain.effetune_preset",
              "existing unquoted preset assignments must remain readable") ||
-      !check(unquoted.config.preferredOutputFound &&
-                 unquoted.config.preferredOutput == "alsa_output.plain",
-             "unquoted output assignments must be readable") ||
       !check(unquoted.config.dspBackend ==
                  pipetune::DspBackendKind::simd,
              "unquoted DSP backend assignments must be readable") ||
@@ -371,11 +297,6 @@ static bool testRejectedInputForms(const std::filesystem::path &configPath) {
   const auto malformed = pipetune::loadStartupPreset(configPath);
 
   writeConfig(configPath,
-              "PIPETUNE_TARGET=alsa_output.one\n"
-              "PIPETUNE_TARGET=alsa_output.two\n");
-  const auto duplicateTarget = pipetune::loadStartupConfig(configPath);
-
-  writeConfig(configPath,
               "PIPETUNE_RATE=48000\n"
               "PIPETUNE_RATE=96000\n"
               "PIPETUNE_RATE_ENFORCEMENT=suggest\n");
@@ -412,18 +333,12 @@ static bool testRejectedInputForms(const std::filesystem::path &configPath) {
               std::string(64 * 1024 + 1, '#'));
   const auto oversized = pipetune::loadStartupPreset(configPath);
 
-  writeConfig(configPath, "# Managed by PipeTune.\n");
-  const auto rejectedEmptyTarget =
-      pipetune::savePreferredOutput(configPath, "");
-
   return check(!duplicate.error.empty(),
                "duplicate preset assignments must be rejected") &&
          check(!relative.error.empty(),
                "relative preset assignments must be rejected") &&
          check(!malformed.error.empty(),
                "malformed quoted assignments must be rejected") &&
-         check(!duplicateTarget.error.empty(),
-               "duplicate output assignments must be rejected") &&
          check(!duplicateRate.error.empty(),
                "duplicate rate assignments must be rejected") &&
          check(!unsupportedRate.error.empty(),
@@ -439,9 +354,7 @@ static bool testRejectedInputForms(const std::filesystem::path &configPath) {
          check(!unsupportedVariant.error.empty(),
                "unsupported DSP SIMD variants must be rejected") &&
          check(!oversized.error.empty(),
-               "startup configurations larger than 64 KiB must be rejected") &&
-         check(!rejectedEmptyTarget.empty(),
-               "empty preferred output names must be rejected");
+               "startup configurations larger than 64 KiB must be rejected");
 }
 
 int main() {
@@ -453,7 +366,6 @@ int main() {
   const auto passed =
       testPathResolution() && testPrivateRoundTrip(configPath) &&
       testFullSnapshotRoundTrip(configPath) &&
-      testPreferredOutputRoundTripPreservesPreset(configPath) &&
       testRatePolicyRoundTripPreservesOtherChoices(configPath) &&
       testDspBackendRoundTripPreservesOtherChoices(configPath) &&
       testAcceptedInputForms(configPath) && testRejectedInputForms(configPath);

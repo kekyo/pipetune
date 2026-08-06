@@ -34,7 +34,6 @@ constexpr auto kJsonWriteFlags =
 static ControlRequestParseResult requestError(std::string message) {
   return {.request = {.command = ControlCommand::status,
                       .presetPath = {},
-                      .outputTarget = {},
                       .ratePolicy = defaultSampleRatePolicy()},
           .error = std::move(message)};
 }
@@ -104,7 +103,6 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
     }
     return {.request = {.command = ControlCommand::status,
                         .presetPath = {},
-                        .outputTarget = {},
                         .ratePolicy = defaultSampleRatePolicy()},
             .error = {}};
   }
@@ -114,18 +112,6 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
     }
     return {.request = {.command = ControlCommand::bypass,
                         .presetPath = {},
-                        .outputTarget = {},
-                        .ratePolicy = defaultSampleRatePolicy()},
-            .error = {}};
-  }
-  if (command == "clear-output") {
-    if (yyjson_obj_size(root) != 1) {
-      return requestError(
-          "clear-output request accepts only the command field");
-    }
-    return {.request = {.command = ControlCommand::clearOutput,
-                        .presetPath = {},
-                        .outputTarget = {},
                         .ratePolicy = defaultSampleRatePolicy()},
             .error = {}};
   }
@@ -135,31 +121,6 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
     }
     return {.request = {.command = ControlCommand::subscribe,
                         .presetPath = {},
-                        .outputTarget = {},
-                        .ratePolicy = defaultSampleRatePolicy()},
-            .error = {}};
-  }
-  if (command == "set-output") {
-    if (yyjson_obj_size(root) != 2) {
-      return requestError(
-          "set-output request requires only command and target fields");
-    }
-    auto *targetValue = yyjson_obj_get(root, "target");
-    if (!yyjson_is_str(targetValue) || yyjson_get_len(targetValue) == 0) {
-      return requestError(
-          "set-output request target must be a non-empty string");
-    }
-    auto target =
-        std::string(yyjson_get_str(targetValue), yyjson_get_len(targetValue));
-    if (target.find('\0') != std::string::npos ||
-        target.find('\n') != std::string::npos ||
-        target.find('\r') != std::string::npos) {
-      return requestError(
-          "set-output request target must be a single line without NUL");
-    }
-    return {.request = {.command = ControlCommand::setOutput,
-                        .presetPath = {},
-                        .outputTarget = std::move(target),
                         .ratePolicy = defaultSampleRatePolicy()},
             .error = {}};
   }
@@ -208,7 +169,6 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
     }
     return {.request = {.command = ControlCommand::setRate,
                         .presetPath = {},
-                        .outputTarget = {},
                         .ratePolicy = policy},
             .error = {}};
   }
@@ -242,7 +202,6 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
     }
     return {.request = {.command = ControlCommand::setDspBackend,
                         .presetPath = {},
-                        .outputTarget = {},
                         .ratePolicy = defaultSampleRatePolicy(),
                         .dspBackend = *backend,
                         .dspSimdVariant = *simdVariant},
@@ -266,7 +225,6 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
   }
   return {.request = {.command = ControlCommand::loadPreset,
                       .presetPath = std::move(preset),
-                      .outputTarget = {},
                       .ratePolicy = defaultSampleRatePolicy()},
           .error = {}};
 }
@@ -281,22 +239,6 @@ std::string makeSubscribeControlRequest() {
 
 std::string makeBypassControlRequest() {
   return R"json({"command":"bypass"})json";
-}
-
-std::string makeSetOutputControlRequest(std::string_view nodeName) {
-  yyjson_mut_val *root = nullptr;
-  auto document = createObjectDocument(root);
-  if (document == nullptr ||
-      !yyjson_mut_obj_add_str(document.get(), root, "command",
-                              "set-output") ||
-      !addString(document.get(), root, "target", nodeName)) {
-    return {};
-  }
-  return writeDocument(document.get());
-}
-
-std::string makeClearOutputControlRequest() {
-  return R"json({"command":"clear-output"})json";
 }
 
 std::string makeSetRateControlRequest(const SampleRatePolicy &policy) {
@@ -361,102 +303,6 @@ makeLoadPresetControlRequest(const std::filesystem::path &presetPath) {
     return {};
   }
   return writeDocument(document.get());
-}
-
-static const char *outputSelectionReasonName(
-    ControlOutputSelectionReason reason) noexcept {
-  switch (reason) {
-  case ControlOutputSelectionReason::unavailable:
-    return "unavailable";
-  case ControlOutputSelectionReason::systemDefault:
-    return "system-default";
-  case ControlOutputSelectionReason::preferred:
-    return "preferred";
-  case ControlOutputSelectionReason::fallback:
-    return "fallback";
-  }
-  return nullptr;
-}
-
-static const char *sampleRateConstraintKindName(
-    SampleRateConstraintKind kind) noexcept {
-  switch (kind) {
-  case SampleRateConstraintKind::discrete:
-    return "discrete";
-  case SampleRateConstraintKind::range:
-    return "range";
-  case SampleRateConstraintKind::step:
-    return "step";
-  }
-  return nullptr;
-}
-
-static bool sampleRateCapabilitiesAreNormalized(
-    const SampleRateCapabilities &capabilities) {
-  auto normalized = capabilities;
-  return normalizeSampleRateCapabilities(normalized) &&
-         normalized == capabilities;
-}
-
-static bool outputStatusIsConsistent(
-    const ControlRuntimeStatus &status) noexcept {
-  const auto reason =
-      outputSelectionReasonName(status.outputSelectionReason);
-  if (reason == nullptr) {
-    return false;
-  }
-  switch (status.outputSelectionReason) {
-  case ControlOutputSelectionReason::unavailable:
-    if (!status.selectedTarget.empty() ||
-        !status.availableOutputs.empty()) {
-      return false;
-    }
-    break;
-  case ControlOutputSelectionReason::systemDefault:
-    if (!status.preferredTarget.empty() ||
-        status.selectedTarget.empty()) {
-      return false;
-    }
-    break;
-  case ControlOutputSelectionReason::preferred:
-    if (status.preferredTarget.empty() ||
-        status.preferredTarget != status.selectedTarget) {
-      return false;
-    }
-    break;
-  case ControlOutputSelectionReason::fallback:
-    if (status.preferredTarget.empty() ||
-        status.selectedTarget.empty() ||
-        status.preferredTarget == status.selectedTarget) {
-      return false;
-    }
-    break;
-  }
-
-  auto selectedCount = std::size_t{0};
-  auto systemDefaultCount = std::size_t{0};
-  for (auto index = std::size_t{0}; index < status.availableOutputs.size();
-       ++index) {
-    const auto &output = status.availableOutputs[index];
-    if (output.name.empty() || output.description.empty() ||
-        output.selected != (output.name == status.selectedTarget) ||
-        output.preferred !=
-            (!status.preferredTarget.empty() &&
-             output.name == status.preferredTarget) ||
-        !sampleRateCapabilitiesAreNormalized(
-            output.sampleRateCapabilities)) {
-      return false;
-    }
-    selectedCount += output.selected ? 1U : 0U;
-    systemDefaultCount += output.systemDefault ? 1U : 0U;
-    for (auto earlier = std::size_t{0}; earlier < index; ++earlier) {
-      if (status.availableOutputs[earlier].name == output.name) {
-        return false;
-      }
-    }
-  }
-  return systemDefaultCount <= 1 &&
-         selectedCount == (status.selectedTarget.empty() ? 0U : 1U);
 }
 
 static bool dspBackendStatusIsConsistent(
@@ -556,7 +402,6 @@ static std::string makeControlStatusMessage(
        status.activePreset.empty()) ||
       (status.processingMode == ProcessingMode::bypass &&
        !status.activePreset.empty()) ||
-      !outputStatusIsConsistent(status) ||
       !sampleRatePolicyIsValid(status.configuredRatePolicy) ||
       (status.configuredRatePolicy.mode == SampleRateMode::fixed &&
        ((!status.rateTransitioning && status.dspSampleRate != 0 &&
@@ -587,15 +432,6 @@ static std::string makeControlStatusMessage(
                          status.configurationError) ||
       !yyjson_mut_obj_add_uint(document.get(), root, "activePluginCount",
                                status.activePluginCount) ||
-      !addNullableString(document.get(), root, "preferredTarget",
-                         status.preferredTarget) ||
-      !addNullableString(document.get(), root, "selectedTarget",
-                         status.selectedTarget) ||
-      !yyjson_mut_obj_add_str(
-          document.get(), root, "outputSelectionReason",
-          outputSelectionReasonName(status.outputSelectionReason)) ||
-      !yyjson_mut_obj_add_bool(document.get(), root, "defaultSinkActive",
-                               status.defaultSinkActive) ||
       !yyjson_mut_obj_add_uint(document.get(), root, "overrunFrames",
                                status.overrunFrames) ||
       !yyjson_mut_obj_add_uint(document.get(), root, "underrunFrames",
@@ -703,52 +539,6 @@ static std::string makeControlStatusMessage(
     }
   }
 
-  auto *outputArray =
-      yyjson_mut_obj_add_arr(document.get(), root, "availableOutputs");
-  if (outputArray == nullptr) {
-    return makeControlErrorResponse("cannot encode control response");
-  }
-  for (const auto &output : status.availableOutputs) {
-    auto *item = yyjson_mut_obj(document.get());
-    if (item == nullptr || !yyjson_mut_arr_append(outputArray, item) ||
-        !addString(document.get(), item, "name", output.name) ||
-        !addString(document.get(), item, "description",
-                   output.description) ||
-        !yyjson_mut_obj_add_bool(document.get(), item, "systemDefault",
-                                 output.systemDefault) ||
-        !yyjson_mut_obj_add_bool(document.get(), item, "preferred",
-                                 output.preferred) ||
-        !yyjson_mut_obj_add_bool(document.get(), item, "selected",
-                                 output.selected) ||
-        !yyjson_mut_obj_add_bool(
-            document.get(), item, "sampleRateCapabilitiesKnown",
-            output.sampleRateCapabilities.known)) {
-      return makeControlErrorResponse("cannot encode control response");
-    }
-    auto *constraintArray = yyjson_mut_obj_add_arr(
-        document.get(), item, "sampleRateConstraints");
-    if (constraintArray == nullptr) {
-      return makeControlErrorResponse("cannot encode control response");
-    }
-    for (const auto &constraint :
-         output.sampleRateCapabilities.constraints) {
-      const auto *kind = sampleRateConstraintKindName(constraint.kind);
-      auto *constraintObject = yyjson_mut_obj(document.get());
-      if (kind == nullptr || constraintObject == nullptr ||
-          !yyjson_mut_arr_append(constraintArray, constraintObject) ||
-          !yyjson_mut_obj_add_str(document.get(), constraintObject, "kind",
-                                  kind) ||
-          !yyjson_mut_obj_add_uint(document.get(), constraintObject,
-                                   "minimum", constraint.minimum) ||
-          !yyjson_mut_obj_add_uint(document.get(), constraintObject,
-                                   "maximum", constraint.maximum) ||
-          !yyjson_mut_obj_add_uint(document.get(), constraintObject, "step",
-                                   constraint.step)) {
-        return makeControlErrorResponse("cannot encode control response");
-      }
-    }
-  }
-
   auto *warningArray =
       yyjson_mut_obj_add_arr(document.get(), root, "warnings");
   if (warningArray == nullptr) {
@@ -804,12 +594,6 @@ static ControlResponseParseResult responseError(std::string error) {
                      .activePreset = {},
                      .configurationError = {},
                      .activePluginCount = 0,
-                     .preferredTarget = {},
-                     .selectedTarget = {},
-                     .outputSelectionReason =
-                         ControlOutputSelectionReason::unavailable,
-                     .availableOutputs = {},
-                     .defaultSinkActive = false,
                      .overrunFrames = 0,
                      .underrunFrames = 0,
                      .processingErrors = 0,
@@ -981,33 +765,6 @@ static bool readSampleRatePolicy(yyjson_val *object,
   return sampleRatePolicyIsValid(policy);
 }
 
-static bool readOutputSelectionReason(
-    yyjson_val *object, ControlOutputSelectionReason &reason) {
-  auto *field = yyjson_obj_get(object, "outputSelectionReason");
-  if (!yyjson_is_str(field)) {
-    return false;
-  }
-  const auto value =
-      std::string_view(yyjson_get_str(field), yyjson_get_len(field));
-  if (value == "unavailable") {
-    reason = ControlOutputSelectionReason::unavailable;
-    return true;
-  }
-  if (value == "system-default") {
-    reason = ControlOutputSelectionReason::systemDefault;
-    return true;
-  }
-  if (value == "preferred") {
-    reason = ControlOutputSelectionReason::preferred;
-    return true;
-  }
-  if (value == "fallback") {
-    reason = ControlOutputSelectionReason::fallback;
-    return true;
-  }
-  return false;
-}
-
 static bool readBooleanField(yyjson_val *object, const char *key,
                              bool &value) {
   auto *field = yyjson_obj_get(object, key);
@@ -1020,93 +777,6 @@ static bool readBooleanField(yyjson_val *object, const char *key,
 
 static bool readUint32Field(yyjson_val *object, const char *key,
                             std::uint32_t &value);
-
-static bool readSampleRateConstraintKind(
-    yyjson_val *object, SampleRateConstraintKind &kind) {
-  auto *field = yyjson_obj_get(object, "kind");
-  if (!yyjson_is_str(field)) {
-    return false;
-  }
-  const auto value =
-      std::string_view(yyjson_get_str(field), yyjson_get_len(field));
-  if (value == "discrete") {
-    kind = SampleRateConstraintKind::discrete;
-    return true;
-  }
-  if (value == "range") {
-    kind = SampleRateConstraintKind::range;
-    return true;
-  }
-  if (value == "step") {
-    kind = SampleRateConstraintKind::step;
-    return true;
-  }
-  return false;
-}
-
-static bool readSampleRateCapabilities(
-    yyjson_val *object, SampleRateCapabilities &capabilities) {
-  if (!readBooleanField(object, "sampleRateCapabilitiesKnown",
-                        capabilities.known)) {
-    return false;
-  }
-  auto *array = yyjson_obj_get(object, "sampleRateConstraints");
-  if (!yyjson_is_arr(array)) {
-    return false;
-  }
-  capabilities.constraints.clear();
-  capabilities.constraints.reserve(yyjson_arr_size(array));
-  for (auto index = std::size_t{0}; index < yyjson_arr_size(array);
-       ++index) {
-    auto *item = yyjson_arr_get(array, index);
-    auto constraint = SampleRateConstraint{};
-    if (!yyjson_is_obj(item) || yyjson_obj_size(item) != 4 ||
-        !readSampleRateConstraintKind(item, constraint.kind) ||
-        !readUint32Field(item, "minimum", constraint.minimum) ||
-        !readUint32Field(item, "maximum", constraint.maximum) ||
-        !readUint32Field(item, "step", constraint.step)) {
-      return false;
-    }
-    capabilities.constraints.push_back(constraint);
-  }
-  return sampleRateCapabilitiesAreNormalized(capabilities);
-}
-
-static bool readAvailableOutputs(
-    yyjson_val *object, std::vector<ControlOutputDevice> &outputs) {
-  auto *array = yyjson_obj_get(object, "availableOutputs");
-  if (!yyjson_is_arr(array)) {
-    return false;
-  }
-  outputs.clear();
-  outputs.reserve(yyjson_arr_size(array));
-  for (auto index = std::size_t{0}; index < yyjson_arr_size(array);
-       ++index) {
-    auto *item = yyjson_arr_get(array, index);
-    auto output = ControlOutputDevice{
-        .name = {},
-        .description = {},
-        .systemDefault = false,
-        .preferred = false,
-        .selected = false,
-    };
-    if (!yyjson_is_obj(item) ||
-        !readStringField(item, "name", output.name) ||
-        !readStringField(item, "description", output.description) ||
-        !readBooleanField(item, "systemDefault",
-                          output.systemDefault) ||
-        !readBooleanField(item, "preferred", output.preferred) ||
-        !readBooleanField(item, "selected", output.selected) ||
-        !readSampleRateCapabilities(item,
-                                    output.sampleRateCapabilities) ||
-        output.name.find('\0') != std::string::npos ||
-        output.description.find('\0') != std::string::npos) {
-      return false;
-    }
-    outputs.push_back(std::move(output));
-  }
-  return true;
-}
 
 static bool readAvailableDspBackends(
     yyjson_val *object,
@@ -1246,12 +916,6 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
                        .activePreset = {},
                        .configurationError = {},
                        .activePluginCount = 0,
-                       .preferredTarget = {},
-                       .selectedTarget = {},
-                       .outputSelectionReason =
-                           ControlOutputSelectionReason::unavailable,
-                       .availableOutputs = {},
-                       .defaultSinkActive = false,
                        .overrunFrames = 0,
                        .underrunFrames = 0,
                        .processingErrors = 0,
@@ -1271,12 +935,6 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       .activePreset = {},
       .configurationError = {},
       .activePluginCount = 0,
-      .preferredTarget = {},
-      .selectedTarget = {},
-      .outputSelectionReason =
-          ControlOutputSelectionReason::unavailable,
-      .availableOutputs = {},
-      .defaultSinkActive = false,
       .overrunFrames = 0,
       .underrunFrames = 0,
       .processingErrors = 0,
@@ -1288,20 +946,12 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       .inputFramesReceived = 0,
       .inputLastReceivedUnixMilliseconds = 0,
   };
-  auto *defaultSinkActive = yyjson_obj_get(root, "defaultSinkActive");
   if (!readProcessingMode(root, status.processingMode) ||
       !readNullableStringField(root, "preset", status.activePreset) ||
       !readNullableStringField(root, "configurationError",
                                status.configurationError) ||
       !readSizeField(root, "activePluginCount",
                      status.activePluginCount) ||
-      !readNullableStringField(root, "preferredTarget",
-                               status.preferredTarget) ||
-      !readNullableStringField(root, "selectedTarget",
-                               status.selectedTarget) ||
-      !readOutputSelectionReason(root, status.outputSelectionReason) ||
-      !readAvailableOutputs(root, status.availableOutputs) ||
-      !yyjson_is_bool(defaultSinkActive) ||
       !readCounterField(root, "overrunFrames", status.overrunFrames) ||
       !readCounterField(root, "underrunFrames", status.underrunFrames) ||
       !readCounterField(root, "processingErrors",
@@ -1347,7 +997,6 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
        status.activePreset.empty()) ||
       (status.processingMode == ProcessingMode::bypass &&
        !status.activePreset.empty()) ||
-      !outputStatusIsConsistent(status) ||
       !sampleRatePolicyIsValid(status.configuredRatePolicy) ||
       (status.configuredRatePolicy.mode == SampleRateMode::fixed &&
        ((!status.rateTransitioning && status.dspSampleRate != 0 &&
@@ -1370,8 +1019,6 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
     return responseError(
         "successful control response has inconsistent input telemetry");
   }
-  status.defaultSinkActive = yyjson_get_bool(defaultSinkActive);
-
   auto *warningArray = yyjson_obj_get(root, "warnings");
   if (!yyjson_is_arr(warningArray)) {
     return responseError(

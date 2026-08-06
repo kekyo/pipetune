@@ -18,7 +18,6 @@ struct ServerState {
   std::mutex mutex;
   std::string activePreset;
   bool bypassed;
-  std::string preferredTarget;
   pipetune::SampleRatePolicy ratePolicy;
   pipetune::DspBackendKind dspBackend;
   pipetune::DspSimdVariant dspSimdVariant;
@@ -33,28 +32,6 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
                                          : state.activePreset,
           .configurationError = {},
           .activePluginCount = state.bypassed ? 0u : 3u,
-          .preferredTarget = state.preferredTarget,
-          .selectedTarget = state.preferredTarget.empty()
-                                ? std::string("alsa_output.test")
-                                : state.preferredTarget,
-          .outputSelectionReason =
-              state.preferredTarget.empty()
-                  ? pipetune::ControlOutputSelectionReason::systemDefault
-                  : pipetune::ControlOutputSelectionReason::preferred,
-          .availableOutputs =
-              {{.name = "alsa_output.test",
-                .description = "Test Output",
-                .systemDefault = true,
-                .preferred = false,
-                .selected = state.preferredTarget.empty()},
-               {.name = "alsa_output.headphones",
-                .description = "Test Headphones",
-                .systemDefault = false,
-                .preferred =
-                    state.preferredTarget == "alsa_output.headphones",
-                .selected =
-                    state.preferredTarget == "alsa_output.headphones"}},
-          .defaultSinkActive = true,
           .overrunFrames = 0,
           .underrunFrames = 0,
           .processingErrors = 0,
@@ -151,26 +128,6 @@ static pipetune::ControlMessageResult handleRequest(
             .connectionMode = pipetune::ControlConnectionMode::close,
             .publishStatus = true};
   }
-  if (request.request.command == pipetune::ControlCommand::setOutput) {
-    {
-      auto lock = std::scoped_lock(state.mutex);
-      state.preferredTarget = request.request.outputTarget;
-    }
-    return {.response = pipetune::makeControlSuccessResponse(
-                serverStatus(state), {}),
-            .connectionMode = pipetune::ControlConnectionMode::close,
-            .publishStatus = true};
-  }
-  if (request.request.command == pipetune::ControlCommand::clearOutput) {
-    {
-      auto lock = std::scoped_lock(state.mutex);
-      state.preferredTarget.clear();
-    }
-    return {.response = pipetune::makeControlSuccessResponse(
-                serverStatus(state), {}),
-            .connectionMode = pipetune::ControlConnectionMode::close,
-            .publishStatus = true};
-  }
   if (request.request.command == pipetune::ControlCommand::setRate) {
     {
       auto lock = std::scoped_lock(state.mutex);
@@ -209,12 +166,6 @@ struct ClientTestState {
   bool publishedStatus;
   bool bypassReply;
   bool publishedBypass;
-  bool setOutputRequested;
-  bool setOutputReply;
-  bool publishedSetOutput;
-  bool clearOutputRequested;
-  bool clearOutputReply;
-  bool publishedClearOutput;
   bool setRateRequested;
   bool setRateReply;
   bool publishedSetRate;
@@ -234,49 +185,15 @@ static gboolean stopServer(gpointer userData) {
 
 static void maybeStopServer(ClientTestState &state) {
   if (state.loadReply && state.publishedStatus && state.bypassReply &&
-      state.publishedBypass && state.setOutputReply &&
-      state.publishedSetOutput && state.clearOutputReply &&
-      state.publishedClearOutput && state.setRateReply &&
+      state.publishedBypass && state.setRateReply &&
       state.publishedSetRate && state.setDspBackendReply &&
       state.publishedSetDspBackend && *state.server != nullptr) {
     g_idle_add(stopServer, &state);
   }
 }
 
-static void maybeStartClearOutput(ClientTestState &state);
 static void maybeStartSetRate(ClientTestState &state);
 static void maybeStartSetDspBackend(ClientTestState &state);
-
-static void onSetOutputReply(
-    const pipetune_gtk::ControlClientReply &reply, void *userData) {
-  auto &state = *static_cast<ClientTestState *>(userData);
-  if (!reply.transportError.empty() || !reply.response.valid ||
-      !reply.response.success ||
-      reply.response.status.preferredTarget !=
-          "alsa_output.headphones" ||
-      reply.response.status.selectedTarget !=
-          "alsa_output.headphones") {
-    state.failed = true;
-  } else {
-    state.setOutputReply = true;
-  }
-  maybeStartClearOutput(state);
-}
-
-static void onClearOutputReply(
-    const pipetune_gtk::ControlClientReply &reply, void *userData) {
-  auto &state = *static_cast<ClientTestState *>(userData);
-  if (!reply.transportError.empty() || !reply.response.valid ||
-      !reply.response.success ||
-      !reply.response.status.preferredTarget.empty() ||
-      reply.response.status.outputSelectionReason !=
-          pipetune::ControlOutputSelectionReason::systemDefault) {
-    state.failed = true;
-  } else {
-    state.clearOutputReply = true;
-  }
-  maybeStartSetRate(state);
-}
 
 static void onSetRateReply(
     const pipetune_gtk::ControlClientReply &reply, void *userData) {
@@ -332,7 +249,7 @@ static void maybeStartSetDspBackend(ClientTestState &state) {
 }
 
 static void maybeStartSetRate(ClientTestState &state) {
-  if (state.clearOutputReply && state.publishedClearOutput &&
+  if (state.bypassReply && state.publishedBypass &&
       !state.setRateRequested) {
     state.setRateRequested = true;
     pipetune_gtk::setControlRateAsync(
@@ -341,26 +258,6 @@ static void maybeStartSetRate(ClientTestState &state) {
          .fixedRate = 192000,
          .enforcement = pipetune::SampleRateEnforcement::force},
         onSetRateReply, &state);
-  }
-  maybeStopServer(state);
-}
-
-static void maybeStartClearOutput(ClientTestState &state) {
-  if (state.setOutputReply && state.publishedSetOutput &&
-      !state.clearOutputRequested) {
-    state.clearOutputRequested = true;
-    pipetune_gtk::clearControlOutputAsync(
-        state.client, onClearOutputReply, &state);
-  }
-  maybeStopServer(state);
-}
-
-static void maybeStartSetOutput(ClientTestState &state) {
-  if (state.bypassReply && state.publishedBypass &&
-      !state.setOutputRequested) {
-    state.setOutputRequested = true;
-    pipetune_gtk::setControlOutputAsync(
-        state.client, "alsa_output.headphones", onSetOutputReply, &state);
   }
   maybeStopServer(state);
 }
@@ -377,7 +274,7 @@ static void onBypassReply(
   } else {
     state.bypassReply = true;
   }
-  maybeStartSetOutput(state);
+  maybeStartSetRate(state);
 }
 
 static void onLoadReply(
@@ -418,16 +315,7 @@ static void onMessage(
     }
   } else if (message.status.processingMode ==
                  pipetune::ProcessingMode::bypass &&
-             message.status.activePreset.empty() &&
-             message.status.preferredTarget ==
-                 "alsa_output.headphones") {
-    state.publishedSetOutput = true;
-    maybeStartClearOutput(state);
-    return;
-  } else if (message.status.processingMode ==
-                 pipetune::ProcessingMode::bypass &&
-             message.status.activePreset.empty() &&
-             message.status.preferredTarget.empty()) {
+             message.status.activePreset.empty()) {
     if (message.status.configuredRatePolicy.mode ==
             pipetune::SampleRateMode::fixed &&
         message.status.configuredRatePolicy.fixedRate == 192000 &&
@@ -443,14 +331,10 @@ static void onMessage(
       }
       return;
     }
-    if (!state.setOutputRequested) {
+    if (!state.setRateRequested) {
       state.publishedBypass = true;
-      maybeStartSetOutput(state);
-      return;
-    }
-    if (state.clearOutputRequested) {
-      state.publishedClearOutput = true;
       maybeStartSetRate(state);
+      return;
     }
   } else {
     state.failed = true;
@@ -488,7 +372,6 @@ int main() {
       ServerState{.mutex = {},
                   .activePreset = "/tmp/initial.effetune_preset",
                   .bypassed = false,
-                  .preferredTarget = {},
                   .ratePolicy = pipetune::defaultSampleRatePolicy(),
                   .dspBackend = pipetune::DspBackendKind::scalar,
                   .dspSimdVariant =
@@ -515,12 +398,6 @@ int main() {
       .publishedStatus = false,
       .bypassReply = false,
       .publishedBypass = false,
-      .setOutputRequested = false,
-      .setOutputReply = false,
-      .publishedSetOutput = false,
-      .clearOutputRequested = false,
-      .clearOutputReply = false,
-      .publishedClearOutput = false,
       .setRateRequested = false,
       .setRateReply = false,
       .publishedSetRate = false,
@@ -550,9 +427,7 @@ int main() {
   if (state.failed || state.timedOut || !state.connected ||
       !state.initialStatus || !state.loadReply ||
       !state.publishedStatus || !state.bypassReply ||
-      !state.publishedBypass || !state.setOutputReply ||
-      !state.publishedSetOutput || !state.clearOutputReply ||
-      !state.publishedClearOutput || !state.setRateReply ||
+      !state.publishedBypass || !state.setRateReply ||
       !state.publishedSetRate || !state.setDspBackendReply ||
       !state.publishedSetDspBackend || !state.disconnected) {
     std::cerr << "asynchronous control client lifecycle differs\n";

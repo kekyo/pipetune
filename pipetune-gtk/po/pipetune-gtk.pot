@@ -32,10 +32,6 @@ msgid "{0} — available"
 msgstr ""
 
 #, brace-format
-msgid "{0} — system default"
-msgstr ""
-
-#, brace-format
 msgid "{0} — unavailable"
 msgstr ""
 
@@ -144,12 +140,6 @@ msgstr ""
 msgid "Changing DSP backend failed"
 msgstr ""
 
-msgid "Changing output"
-msgstr ""
-
-msgid "Changing output failed"
-msgstr ""
-
 msgid "Changing processing mode"
 msgstr ""
 
@@ -202,9 +192,6 @@ msgstr ""
 msgid "Connected · changing sample rate"
 msgstr ""
 
-msgid "Connected · virtual sink inactive"
-msgstr ""
-
 msgid "Connected and monitoring"
 msgstr ""
 
@@ -238,16 +225,10 @@ msgstr ""
 msgid "Custom preset file"
 msgstr ""
 
-msgid "Default"
-msgstr ""
-
 msgid "Defaults are being applied live; use Apply to save them"
 msgstr ""
 
 msgid "Defaults selected"
-msgstr ""
-
-msgid "Device"
 msgstr ""
 
 msgid "Disconnected"
@@ -314,15 +295,6 @@ msgstr ""
 msgid "Fixed rate"
 msgstr ""
 
-msgid "Follow PipeWire's current default"
-msgstr ""
-
-msgid "Follow PipeWire's current default output"
-msgstr ""
-
-msgid "Following the system default"
-msgstr ""
-
 msgid "Force"
 msgstr ""
 
@@ -383,9 +355,6 @@ msgstr ""
 msgid "Load"
 msgstr ""
 
-msgid "Long PipeWire node names are available in the device tooltip."
-msgstr ""
-
 msgid "Measured frame rate"
 msgstr ""
 
@@ -395,28 +364,10 @@ msgstr ""
 msgid "Never"
 msgstr ""
 
-msgid "No"
-msgstr ""
-
-msgid "No audio output is available"
-msgstr ""
-
-msgid "No output available"
-msgstr ""
-
 msgid "None"
 msgstr ""
 
 msgid "Open PipeTune"
-msgstr ""
-
-msgid "Output"
-msgstr ""
-
-msgid "Output changed"
-msgstr ""
-
-msgid "Output Routing"
 msgstr ""
 
 #, brace-format
@@ -461,18 +412,6 @@ msgid "PipeWire enforcement"
 msgstr ""
 
 msgid "PipeWire graph rate"
-msgstr ""
-
-msgid "Preference"
-msgstr ""
-
-msgid "Preferred output"
-msgstr ""
-
-msgid "Preferred output is unavailable — using the system default fallback"
-msgstr ""
-
-msgid "Preferred physical output"
 msgstr ""
 
 msgid "Preset"
@@ -532,9 +471,6 @@ msgstr ""
 msgid "Rollback requested"
 msgstr ""
 
-msgid "Routing"
-msgstr ""
-
 msgid "Sample Rate"
 msgstr ""
 
@@ -552,12 +488,6 @@ msgid "Saving all settings"
 msgstr ""
 
 msgid "Scalar"
-msgstr ""
-
-msgid "Selected output"
-msgstr ""
-
-msgid "Selection reason"
 msgstr ""
 
 msgid "Settings updated"
@@ -592,9 +522,6 @@ msgstr ""
 msgid "System default"
 msgstr ""
 
-msgid "System-default fallback"
-msgstr ""
-
 msgid "Turn off to pass audio through without an EffeTune preset."
 msgstr ""
 
@@ -602,13 +529,6 @@ msgid "unavailable"
 msgstr ""
 
 msgid "Unavailable"
-msgstr ""
-
-#, brace-format
-msgid "Unavailable — {0}"
-msgstr ""
-
-msgid "Unavailable output"
 msgstr ""
 
 msgid "Underrun frames"
@@ -629,20 +549,11 @@ msgstr ""
 msgid "Updating settings failed"
 msgstr ""
 
-msgid "Using the preferred output"
-msgstr ""
-
 msgid "Versions"
-msgstr ""
-
-msgid "Virtual sink active"
 msgstr ""
 
 msgid "Waiting for live PipeTune state…"
 msgstr ""
 
 msgid "Warnings"
-msgstr ""
-
-msgid "Yes"
 msgstr ""

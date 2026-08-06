@@ -2,7 +2,6 @@
 
 #include "bypass_command.h"
 #include "config_reset_command.h"
-#include "default_sink_restore.h"
 #include "dsp_backend_command.h"
 #include "installed_tools.h"
 #include "pipetune/control_protocol.h"
@@ -94,12 +93,6 @@ static int runConfigResetCommand(
   return 0;
 }
 
-static pipetune::DefaultSinkRestoreResult restoreUserDefaultSink(
-    std::string excludedNodeName, void *) {
-  return pipetune::restorePipeWireDefaultSink(
-      std::move(excludedNodeName));
-}
-
 static pipetune::UserManagementPathResult
 resolveInstalledUserManagementPaths() {
   const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
@@ -175,9 +168,7 @@ static int runUnsetupCommand(
        .purge = options.purge,
        .paths = paths.paths,
        .processRunner = runUserManagementProcess,
-       .processUserData = nullptr,
-       .restoreDefaultSink = restoreUserDefaultSink,
-       .restoreUserData = nullptr});
+       .processUserData = nullptr});
   printUserManagementWarnings(result.warnings);
   if (!result.success) {
     std::cerr << "pipetune: " << result.error << '\n';

@@ -3,7 +3,6 @@
 
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
-#include "default_sink_restore.h"
 
 #include <yyjson.h>
 
@@ -257,94 +256,7 @@ static bool testOrderlySignalShutdown(
              "SIGTERM must stop the PipeWire pipeline orderly")) {
     return false;
   }
-  const auto restored = pipetune::restorePipeWireDefaultSink(
-      "pipetune_signal_test_" + std::string(processId));
-  return check(restored.success, restored.error) &&
-         check(restored.selectedTarget !=
-                   "pipetune_signal_test_" + std::string(processId),
-               "orderly shutdown must leave a physical default sink");
-}
-
-static bool testCrashRecovery(
-    std::unique_ptr<pipetune::DspPipeline> pipeline,
-    std::string_view processId,
-    const std::filesystem::path &initialPresetPath) {
-  auto descriptors = std::array<int, 2>{-1, -1};
-  if (!check(pipe(descriptors.data()) == 0,
-             "cannot create readiness pipe for crash test")) {
-    return false;
-  }
-
-  const auto sinkName =
-      "pipetune_crash_test_" + std::string(processId);
-  const auto child = fork();
-  if (child < 0) {
-    close(descriptors[0]);
-    close(descriptors[1]);
-    return check(false, "cannot fork PipeWire crash test");
-  }
-  if (child == 0) {
-    close(descriptors[0]);
-    const auto result = pipetune::runPipeWirePipeline(
-        std::move(pipeline),
-        {.filterName = sinkName,
-         .filterDescription = "PipeTune crash integration test",
-         .initialPresetPath = initialPresetPath,
-         .initialConfigurationError = {},
-         .controlSocketPath = {},
-         .dspSampleRate = 48000,
-         .ratePolicy =
-             {.mode = pipetune::SampleRateMode::fixed,
-              .fixedRate = 48000,
-              .enforcement =
-                  pipetune::SampleRateEnforcement::suggest},
-         .channelCount = 2,
-         .maxFrames = 8192,
-         .ringCapacityFrames = 16384,
-         .readyCallback = reportReadyToParent,
-         .readyUserData = &descriptors[1]},
-        pipetune::PipeWireRunMode::untilInterrupted);
-    if (!result.success) {
-      std::cerr << result.error << '\n';
-    }
-    close(descriptors[1]);
-    _exit(result.success ? 0 : 1);
-  }
-
-  close(descriptors[1]);
-  auto marker = char{0};
-  auto readResult = ssize_t{-1};
-  do {
-    readResult = read(descriptors[0], &marker, 1);
-  } while (readResult < 0 && errno == EINTR);
-  close(descriptors[0]);
-  if (readResult != 1 || marker != 'R') {
-    auto childStatus = 0;
-    waitpid(child, &childStatus, 0);
-    return check(false, "crash-test pipeline did not report readiness");
-  }
-
-  if (kill(child, SIGKILL) != 0) {
-    auto childStatus = 0;
-    waitpid(child, &childStatus, 0);
-    return check(false, "cannot kill child PipeWire pipeline");
-  }
-  auto childStatus = 0;
-  auto waitResult = pid_t{-1};
-  do {
-    waitResult = waitpid(child, &childStatus, 0);
-  } while (waitResult < 0 && errno == EINTR);
-  if (!check(waitResult == child && WIFSIGNALED(childStatus) &&
-                 WTERMSIG(childStatus) == SIGKILL,
-             "crash-test child must terminate by SIGKILL")) {
-    return false;
-  }
-
-  const auto restored =
-      pipetune::restorePipeWireDefaultSink(sinkName);
-  return check(restored.success, restored.error) &&
-         check(restored.selectedTarget != sinkName,
-               "crash recovery must select a physical default sink");
+  return true;
 }
 
 int main() {
@@ -383,16 +295,6 @@ int main() {
   if (!testOrderlySignalShutdown(
           std::move(signalPipeline.pipeline), processId, presetPath,
           replacementPresetPath, socketPath)) {
-    std::filesystem::remove_all(directory);
-    return 1;
-  }
-
-  auto crashPipeline = pipetune::loadDspPipeline(
-      presetPath,
-      {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 8192});
-  if (!check(crashPipeline.pipeline != nullptr, crashPipeline.error) ||
-      !testCrashRecovery(std::move(crashPipeline.pipeline), processId,
-                         presetPath)) {
     std::filesystem::remove_all(directory);
     return 1;
   }

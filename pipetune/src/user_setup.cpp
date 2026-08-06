@@ -518,8 +518,7 @@ UserManagementResult executeUserUnsetup(
             .warnings = {},
             .error = "unsetup must be run as a non-root user"};
   }
-  if (request.processRunner == nullptr ||
-      request.restoreDefaultSink == nullptr) {
+  if (request.processRunner == nullptr) {
     return {.success = false,
             .warnings = {},
             .error = "unsetup external operations are unavailable"};
@@ -560,14 +559,6 @@ UserManagementResult executeUserUnsetup(
             .warnings = std::move(warnings),
             .error =
                 processFailure("cannot disable pipetune.service", disable)};
-  }
-
-  const auto restored =
-      request.restoreDefaultSink("pipetune_sink", request.restoreUserData);
-  if (!restored.success) {
-    return {.success = false,
-            .warnings = std::move(warnings),
-            .error = restored.error};
   }
 
   if (wirePlumberPolicySnapshot.exists) {

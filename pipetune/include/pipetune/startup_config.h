@@ -40,10 +40,6 @@ struct StartupConfig {
   bool presetFound = false;
   /** Absolute preset path when presetFound is true. */
   std::filesystem::path presetPath;
-  /** True when the configuration contains an output preference. */
-  bool preferredOutputFound = false;
-  /** Preferred PipeWire node.name when preferredOutputFound is true. */
-  std::string preferredOutput;
   /** User-selected DSP and PipeWire graph-rate policy. */
   SampleRatePolicy ratePolicy = {};
   /** User-selected native DSP backend. */
@@ -86,9 +82,9 @@ StartupPresetLoadResult
 loadStartupPreset(const std::filesystem::path &configPath);
 
 /**
- * Loads the optional preset and preferred output from a configuration file.
+ * Loads the optional preset and processing settings from a configuration file.
  *
- * A missing file is successful with both found fields set to false.
+ * A missing file is successful with presetFound set to false.
  *
  * @param configPath Configuration file path.
  * @return Loaded user choices or a validation diagnostic.
@@ -107,8 +103,8 @@ std::string saveStartupConfig(const std::filesystem::path &configPath,
                               const StartupConfig &config);
 
 /**
- * Atomically stores an absolute startup preset while preserving the output
- * preference in a private configuration.
+ * Atomically stores an absolute startup preset while preserving other
+ * processing settings in a private configuration.
  *
  * @param configPath Configuration file path.
  * @param presetPath Absolute preset path to store.
@@ -118,8 +114,8 @@ std::string saveStartupPreset(const std::filesystem::path &configPath,
                               const std::filesystem::path &presetPath);
 
 /**
- * Atomically stores intentional startup bypass while preserving the output
- * preference.
+ * Atomically stores intentional startup bypass while preserving other
+ * processing settings.
  *
  * @param configPath Configuration file path.
  * @return Empty on success, otherwise a human-readable diagnostic.
@@ -127,26 +123,7 @@ std::string saveStartupPreset(const std::filesystem::path &configPath,
 std::string clearStartupPreset(const std::filesystem::path &configPath);
 
 /**
- * Atomically stores a preferred PipeWire output while preserving the preset.
- *
- * @param configPath Configuration file path.
- * @param nodeName Non-empty PipeWire node.name to store.
- * @return Empty on success, otherwise a human-readable diagnostic.
- */
-std::string savePreferredOutput(const std::filesystem::path &configPath,
-                                std::string_view nodeName);
-
-/**
- * Atomically removes the preferred output while preserving the preset.
- *
- * @param configPath Configuration file path.
- * @return Empty on success, otherwise a human-readable diagnostic.
- */
-std::string clearPreferredOutput(const std::filesystem::path &configPath);
-
-/**
- * Atomically stores a sample-rate policy while preserving preset and output
- * choices.
+ * Atomically stores a sample-rate policy while preserving other choices.
  *
  * @param configPath Configuration file path.
  * @param policy Valid automatic/fixed graph-rate policy.

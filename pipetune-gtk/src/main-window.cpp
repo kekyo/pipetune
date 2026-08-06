@@ -94,14 +94,6 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
           requiredWidget(builder, "presetCombo", GTK_TYPE_COMBO_BOX_TEXT),
       .presetChooser = requiredWidget(
           builder, "presetChooser", GTK_TYPE_FILE_CHOOSER_BUTTON),
-      .outputMenuButton = requiredWidget(
-          builder, "outputMenuButton", GTK_TYPE_MENU_BUTTON),
-      .outputButtonLabel =
-          requiredWidget(builder, "outputButtonLabel", GTK_TYPE_LABEL),
-      .outputPopover =
-          requiredWidget(builder, "outputPopover", GTK_TYPE_POPOVER),
-      .outputList =
-          requiredWidget(builder, "outputList", GTK_TYPE_LIST_BOX),
       .rateCombo =
           requiredWidget(builder, "rateCombo", GTK_TYPE_COMBO_BOX_TEXT),
       .rateEnforcementCombo = requiredWidget(

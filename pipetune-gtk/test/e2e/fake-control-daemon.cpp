@@ -2,7 +2,6 @@
 #include "pipetune/control_socket.h"
 #include "pipetune/startup_config.h"
 
-#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -14,7 +13,6 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 struct FakeDaemonState {
   std::mutex mutex;
@@ -27,17 +25,6 @@ struct FakeDaemonState {
 static std::string environmentValue(const char *name) {
   const auto *value = std::getenv(name);
   return value == nullptr ? std::string{} : std::string(value);
-}
-
-static pipetune::SampleRateCapabilities sampleRateCapabilities() {
-  return {
-      .known = true,
-      .constraints =
-          {{.kind = pipetune::SampleRateConstraintKind::range,
-            .minimum = 44100,
-            .maximum = 384000,
-            .step = 0}},
-  };
 }
 
 static std::optional<pipetune::DspBackendVariant>
@@ -55,46 +42,6 @@ effectiveVariant(const pipetune::StartupConfig &config) {
 
 static pipetune::ControlRuntimeStatus
 makeStatus(const pipetune::StartupConfig &config) {
-  constexpr std::string_view defaultOutput =
-      "alsa_output.usb-long-studio-dac.analog-stereo";
-  const auto outputNames = std::vector<std::pair<std::string, std::string>>{
-      {std::string(defaultOutput), "Studio DAC"},
-      {"alsa_output.pci-0000_0b_00.4.hdmi-stereo-extra-long",
-       "Studio DAC"},
-      {"alsa_output.bluetooth-living-room-speaker.a2dp-sink",
-       "Living Room Speaker"},
-  };
-  auto selectedOutput = std::string(defaultOutput);
-  auto selectionReason =
-      pipetune::ControlOutputSelectionReason::systemDefault;
-  if (config.preferredOutputFound) {
-    const auto preferred = std::find_if(
-        outputNames.begin(), outputNames.end(),
-        [&config](const auto &output) {
-          return output.first == config.preferredOutput;
-        });
-    if (preferred == outputNames.end()) {
-      selectionReason = pipetune::ControlOutputSelectionReason::fallback;
-    } else {
-      selectedOutput = preferred->first;
-      selectionReason = pipetune::ControlOutputSelectionReason::preferred;
-    }
-  }
-
-  auto outputs = std::vector<pipetune::ControlOutputDevice>{};
-  outputs.reserve(outputNames.size());
-  for (const auto &[name, description] : outputNames) {
-    outputs.push_back(
-        {.name = name,
-         .description = description,
-         .systemDefault = name == defaultOutput,
-         .preferred =
-             config.preferredOutputFound &&
-             name == config.preferredOutput,
-         .selected = name == selectedOutput,
-         .sampleRateCapabilities = sampleRateCapabilities()});
-  }
-
   const auto dspRate =
       config.ratePolicy.mode == pipetune::SampleRateMode::automatic
           ? 384000u
@@ -108,13 +55,6 @@ makeStatus(const pipetune::StartupConfig &config) {
           config.presetFound ? config.presetPath.string() : std::string{},
       .configurationError = {},
       .activePluginCount = config.presetFound ? 5u : 0u,
-      .preferredTarget = config.preferredOutputFound
-                             ? config.preferredOutput
-                             : std::string{},
-      .selectedTarget = selectedOutput,
-      .outputSelectionReason = selectionReason,
-      .availableOutputs = std::move(outputs),
-      .defaultSinkActive = true,
       .overrunFrames = 2,
       .underrunFrames = 3,
       .processingErrors = 1,
@@ -201,10 +141,6 @@ static std::string commandName(pipetune::ControlCommand command) {
     return "loadPreset";
   case pipetune::ControlCommand::bypass:
     return "bypass";
-  case pipetune::ControlCommand::setOutput:
-    return "setOutput";
-  case pipetune::ControlCommand::clearOutput:
-    return "clearOutput";
   case pipetune::ControlCommand::setRate:
     return "setRate";
   case pipetune::ControlCommand::setDspBackend:
@@ -273,14 +209,6 @@ static pipetune::ControlMessageResult handleRequest(
       state.liveConfig.presetFound = false;
       state.liveConfig.presetPath.clear();
       break;
-    case pipetune::ControlCommand::setOutput:
-      state.liveConfig.preferredOutputFound = true;
-      state.liveConfig.preferredOutput = parsed.request.outputTarget;
-      break;
-    case pipetune::ControlCommand::clearOutput:
-      state.liveConfig.preferredOutputFound = false;
-      state.liveConfig.preferredOutput.clear();
-      break;
     case pipetune::ControlCommand::setRate:
       state.liveConfig.ratePolicy = parsed.request.ratePolicy;
       break;
@@ -345,10 +273,6 @@ static int inspectConfig(const std::filesystem::path &path) {
       << "{\"preset\":"
       << (config.presetFound ? jsonString(config.presetPath.string())
                              : "null")
-      << ",\"preferredOutput\":"
-      << (config.preferredOutputFound
-              ? jsonString(config.preferredOutput)
-              : "null")
       << ",\"rateMode\":"
       << jsonString(pipetune::sampleRateModeName(config.ratePolicy.mode))
       << ",\"fixedRate\":" << config.ratePolicy.fixedRate

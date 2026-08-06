@@ -40,8 +40,6 @@ export interface FakeControlRequest {
 export interface StartupConfigSnapshot {
   /** Absolute preset path, or null for bypass. */
   readonly preset: string | null;
-  /** Preferred output node name, or null for the system default. */
-  readonly preferredOutput: string | null;
   /** Automatic graph-following or fixed sample-rate mode. */
   readonly rateMode: string;
   /** Fixed rate, or zero in automatic mode. */
@@ -213,7 +211,6 @@ export const launchPipeTuneGtk = async (
     [
       '# Managed by PipeTune.',
       'PIPETUNE_PRESET="/tmp/e2e.effetune_preset"',
-      'PIPETUNE_TARGET="alsa_output.usb-long-studio-dac.analog-stereo"',
       'PIPETUNE_DSP_BACKEND=simd',
       'PIPETUNE_DSP_SIMD_VARIANT=x86-64-v3',
       'PIPETUNE_RATE=192000',

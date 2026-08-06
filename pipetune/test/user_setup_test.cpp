@@ -24,11 +24,6 @@ struct FakeProcessRunner {
   std::vector<Invocation> invocations;
 };
 
-struct FakeRestore {
-  std::size_t calls;
-  bool success;
-};
-
 static bool check(bool condition, std::string_view message) {
   if (!condition) {
     std::cerr << message << '\n';
@@ -51,17 +46,6 @@ static pipetune::ProcessResult fakeRunProcess(
     return runner.results[index];
   }
   return {.started = true, .exitCode = 0, .error = {}};
-}
-
-static pipetune::DefaultSinkRestoreResult
-fakeRestoreDefaultSink(std::string, void *userData) {
-  auto &restore = *static_cast<FakeRestore *>(userData);
-  ++restore.calls;
-  return {.success = restore.success,
-          .selectedTarget =
-              restore.success ? "alsa_output.test" : std::string{},
-          .error = restore.success ? std::string{}
-                                   : std::string("restore failed")};
 }
 
 static pipetune::UserManagementPaths makePaths(
@@ -301,15 +285,12 @@ static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
       FakeProcessRunner{.results = {processResult(0), processResult(0),
                                     processResult(0)},
                         .invocations = {}};
-  auto restore = FakeRestore{.calls = 0, .success = true};
   const auto result = pipetune::executeUserUnsetup(
       {.effectiveUserId = 1000,
        .purge = true,
        .paths = paths,
        .processRunner = fakeRunProcess,
-       .processUserData = &runner,
-       .restoreDefaultSink = fakeRestoreDefaultSink,
-       .restoreUserData = &restore});
+       .processUserData = &runner});
   return check(result.success, result.error) &&
          check(runner.invocations.size() == 3,
                "unsetup process invocation count differs") &&
@@ -329,8 +310,6 @@ static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
                "unsetup must reload WirePlumber after removing its policy") &&
          check(!std::filesystem::exists(paths.wirePlumberPolicyPath),
                "unsetup must remove the WirePlumber 0.4 compatibility policy") &&
-         check(restore.calls == 1,
-               "unsetup must restore a physical default sink") &&
          check(pipetune::isPipeTuneManagedAutostartMask(
                    paths.autostartPath) &&
                    std::filesystem::exists(paths.autostartBackupPath),
@@ -350,21 +329,16 @@ static bool testUnsetupStopFailurePreservesConfiguration(
   auto runner =
       FakeProcessRunner{.results = {processResult(0), processResult(1)},
                         .invocations = {}};
-  auto restore = FakeRestore{.calls = 0, .success = true};
   const auto result = pipetune::executeUserUnsetup(
       {.effectiveUserId = 1000,
        .purge = true,
        .paths = paths,
        .processRunner = fakeRunProcess,
-       .processUserData = &runner,
-       .restoreDefaultSink = fakeRestoreDefaultSink,
-       .restoreUserData = &restore});
+       .processUserData = &runner});
   return check(!result.success,
                "service stop failure must fail unsetup") &&
          check(std::filesystem::exists(paths.configPath),
                "service stop failure must prevent configuration purge") &&
-         check(restore.calls == 0,
-               "service stop failure must not run sink restoration") &&
          check(pipetune::isPipeTuneManagedAutostartMask(
                    paths.autostartPath),
                "failed unsetup must retain its autostart mask");

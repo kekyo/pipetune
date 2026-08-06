@@ -76,12 +76,6 @@ static pipetune::ControlResponseParseResult emptyResponse() {
                      .activePreset = {},
                      .configurationError = {},
                      .activePluginCount = 0,
-                     .preferredTarget = {},
-                     .selectedTarget = {},
-                     .outputSelectionReason =
-                         pipetune::ControlOutputSelectionReason::unavailable,
-                     .availableOutputs = {},
-                     .defaultSinkActive = false,
                      .overrunFrames = 0,
                      .underrunFrames = 0,
                      .processingErrors = 0,
@@ -503,20 +497,6 @@ void bypassControlAsync(ControlClient *client,
                         ControlClientReplyCallback callback,
                         void *userData) {
   startRequest(client, pipetune::makeBypassControlRequest(), callback,
-               userData);
-}
-
-void setControlOutputAsync(ControlClient *client, std::string_view target,
-                           ControlClientReplyCallback callback,
-                           void *userData) {
-  startRequest(client, pipetune::makeSetOutputControlRequest(target),
-               callback, userData);
-}
-
-void clearControlOutputAsync(ControlClient *client,
-                             ControlClientReplyCallback callback,
-                             void *userData) {
-  startRequest(client, pipetune::makeClearOutputControlRequest(), callback,
                userData);
 }
 

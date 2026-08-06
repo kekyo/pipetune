@@ -33,25 +33,6 @@ static pipetune::ControlRuntimeStatus rateStatus(
           .activePreset = {},
           .configurationError = {},
           .activePluginCount = 0,
-          .preferredTarget = {},
-          .selectedTarget = "alsa_output.usb",
-          .outputSelectionReason =
-              pipetune::ControlOutputSelectionReason::systemDefault,
-          .availableOutputs =
-              {{.name = "alsa_output.usb",
-                .description = "USB Audio",
-                .systemDefault = true,
-                .preferred = false,
-                .selected = true,
-                .sampleRateCapabilities =
-                    {.known = true,
-                     .constraints =
-                         {{.kind =
-                               pipetune::SampleRateConstraintKind::discrete,
-                           .minimum = 96000,
-                           .maximum = 96000,
-                           .step = 0}}}}},
-          .defaultSinkActive = true,
           .overrunFrames = 0,
           .underrunFrames = 0,
           .processingErrors = 0,

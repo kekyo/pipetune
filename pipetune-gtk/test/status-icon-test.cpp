@@ -20,8 +20,6 @@ static pipetune_gtk::ApplicationState connectedState(
       mode == pipetune::ProcessingMode::preset
           ? "/tmp/active.effetune_preset"
           : "";
-  state.runtime.selectedTarget = "alsa_output.speaker";
-  state.runtime.defaultSinkActive = true;
   return state;
 }
 
@@ -71,7 +69,7 @@ int main() {
     return 1;
   }
 
-  presetState.runtime.defaultSinkActive = false;
+  presetState.runtime.processingErrors = 1;
   const auto attention =
       pipetune_gtk::statusIconPresentation(presetState);
   const auto valid =

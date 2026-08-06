@@ -15,8 +15,6 @@ namespace pipetune_gtk {
 enum class SettingsOperation {
   /** No live operation is currently required. */
   none,
-  /** Replace or clear the preferred output. */
-  output,
   /** Replace the sample-rate policy. */
   rate,
   /** Replace the DSP backend and dispatch variant. */
@@ -79,7 +77,7 @@ void editSettingsTransaction(
  * Selects the next required live operation in dependency order.
  *
  * @param transaction Transaction to inspect.
- * @return Output, rate, backend, processing, or none.
+ * @return Rate, backend, processing, or none.
  */
 SettingsOperation
 nextSettingsOperation(const SettingsTransaction &transaction);
@@ -190,7 +188,7 @@ bool settingsTransactionShouldClose(
  * Converts complete daemon status into the settings transaction value type.
  *
  * @param status Runtime status received from the control socket.
- * @return Live preset, output, rate, and backend choices.
+ * @return Live preset, rate, and backend choices.
  */
 pipetune::StartupConfig startupConfigFromRuntime(
     const pipetune::ControlRuntimeStatus &status);

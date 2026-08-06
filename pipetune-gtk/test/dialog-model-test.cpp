@@ -30,8 +30,6 @@ static pipetune::StartupConfig baseConfig() {
   return {
       .presetFound = true,
       .presetPath = "/tmp/base.effetune_preset",
-      .preferredOutputFound = true,
-      .preferredOutput = "alsa_output.base",
       .ratePolicy = pipetune::defaultSampleRatePolicy(),
       .dspBackend = pipetune::DspBackendKind::scalar,
       .dspSimdVariant = pipetune::DspSimdVariant::automatic,
@@ -43,7 +41,6 @@ static bool testLiveCoalescingApplyAndCancel() {
   auto transaction =
       pipetune_gtk::beginSettingsTransaction(saved, saved, true);
   auto desired = saved;
-  desired.preferredOutput = "alsa_output.first";
   desired.ratePolicy = {
       .mode = pipetune::SampleRateMode::fixed,
       .fixedRate = 192000,
@@ -51,41 +48,33 @@ static bool testLiveCoalescingApplyAndCancel() {
   };
   pipetune_gtk::editSettingsTransaction(transaction, desired);
   if (!check(pipetune_gtk::nextSettingsOperation(transaction) ==
-                 pipetune_gtk::SettingsOperation::output,
-             "output must be applied before dependent settings") ||
+                 pipetune_gtk::SettingsOperation::rate,
+             "rate must be applied before dependent settings") ||
       !check(pipetune_gtk::beginSettingsOperation(
-                 transaction, pipetune_gtk::SettingsOperation::output),
-             "the first output operation must start")) {
+                 transaction, pipetune_gtk::SettingsOperation::rate),
+             "the first rate operation must start")) {
     return false;
   }
 
-  desired.preferredOutput = "alsa_output.coalesced";
+  desired.ratePolicy.fixedRate = 176400;
   pipetune_gtk::editSettingsTransaction(transaction, desired);
   auto firstConfirmation = saved;
-  firstConfirmation.preferredOutput = "alsa_output.first";
+  firstConfirmation.ratePolicy = {
+      .mode = pipetune::SampleRateMode::fixed,
+      .fixedRate = 192000,
+      .enforcement = pipetune::SampleRateEnforcement::force,
+  };
   pipetune_gtk::completeSettingsOperation(
       transaction, true, firstConfirmation, {});
   if (!check(pipetune_gtk::nextSettingsOperation(transaction) ==
-                 pipetune_gtk::SettingsOperation::output,
+                 pipetune_gtk::SettingsOperation::rate,
              "an edit during a request must coalesce into one follow-up")) {
     return false;
   }
 
   pipetune_gtk::beginSettingsOperation(
-      transaction, pipetune_gtk::SettingsOperation::output);
-  auto outputConfirmation = firstConfirmation;
-  outputConfirmation.preferredOutput = "alsa_output.coalesced";
-  pipetune_gtk::completeSettingsOperation(
-      transaction, true, outputConfirmation, {});
-  if (!check(pipetune_gtk::nextSettingsOperation(transaction) ==
-                 pipetune_gtk::SettingsOperation::rate,
-             "rate must follow the confirmed output")) {
-    return false;
-  }
-
-  pipetune_gtk::beginSettingsOperation(
       transaction, pipetune_gtk::SettingsOperation::rate);
-  auto liveConfirmation = outputConfirmation;
+  auto liveConfirmation = firstConfirmation;
   liveConfirmation.ratePolicy = desired.ratePolicy;
   pipetune_gtk::completeSettingsOperation(
       transaction, true, liveConfirmation, {});
@@ -179,7 +168,7 @@ static bool testFailuresDisconnectAndConflict() {
 
   transaction = pipetune_gtk::beginSettingsTransaction(saved, saved, true);
   auto external = saved;
-  external.preferredOutput = "alsa_output.external";
+  external.presetPath = "/tmp/external.effetune_preset";
   pipetune_gtk::observeSettingsRuntime(transaction, external);
   return check(transaction.conflict,
                "an unexpected external change must be detected") &&
@@ -211,19 +200,6 @@ static bool testStructuredStatusModel() {
   state.runtime.processingMode = pipetune::ProcessingMode::preset;
   state.runtime.activePreset = "/tmp/live.effetune_preset";
   state.runtime.activePluginCount = 4;
-  state.runtime.preferredTarget =
-      "alsa_output.usb-Very_Long_USB_Audio_Device_Name.analog-stereo";
-  state.runtime.selectedTarget = state.runtime.preferredTarget;
-  state.runtime.outputSelectionReason =
-      pipetune::ControlOutputSelectionReason::preferred;
-  state.runtime.availableOutputs = {{
-      .name = state.runtime.preferredTarget,
-      .description = "Studio DAC",
-      .systemDefault = true,
-      .preferred = true,
-      .selected = true,
-  }};
-  state.runtime.defaultSinkActive = true;
   state.runtime.inputSampleFormat = "F32P";
   state.runtime.inputSampleRate = 200000;
   state.runtime.inputChannelCount = 2;
@@ -247,11 +223,10 @@ static bool testStructuredStatusModel() {
   const auto sections = pipetune_gtk::buildStatusSections(
       state, baseConfig(), 1704164645012ULL);
   const auto *performance = findSection(sections, "dsp-performance");
-  const auto *routing = findSection(sections, "routing");
-  if (!check(sections.size() == 7,
-             "the status tree must expose seven stable sections") ||
-      !check(performance != nullptr && routing != nullptr,
-             "required status sections are missing")) {
+  if (!check(sections.size() == 6,
+             "the status tree must expose six stable sections") ||
+      !check(performance != nullptr,
+             "the DSP performance section is missing")) {
     return false;
   }
   const auto *load = findItem(*performance, "dsp.load");
@@ -261,7 +236,6 @@ static bool testStructuredStatusModel() {
       findItem(*performance, "errors.processing");
   const auto *processingTime =
       findItem(*performance, "dsp.processing-time");
-  const auto *selected = findItem(*routing, "routing.selected-output");
   if (!check(load != nullptr && load->numericValue.has_value() &&
                  *load->numericValue == 20.0 && load->unit == "%" &&
                  load->minimum == 0.0 && load->maximum == 100.0 &&
@@ -275,12 +249,7 @@ static bool testStructuredStatusModel() {
       !check(overrun != nullptr && overrun->value == "1" &&
                  underrun != nullptr && underrun->value == "2" &&
                  processing != nullptr && processing->value == "3",
-             "runtime counters must be separate status rows") ||
-      !check(selected != nullptr && selected->value == "Studio DAC" &&
-                 selected->tooltip.find(state.runtime.preferredTarget) !=
-                     std::string::npos,
-             "output status must show a short label with the full name "
-             "available")) {
+             "runtime counters must be separate status rows")) {
     return false;
   }
   for (const auto &section : sections) {
@@ -400,11 +369,11 @@ static bool testActionLogHistory() {
   auto log = pipetune_gtk::createActionLog(500);
   const auto pending = pipetune_gtk::appendPendingAction(
       log, 1000, pipetune_gtk::ActionLogCategory::settings,
-      pipetune_gtk::localizedMessage("Change output", {}),
-      pipetune_gtk::technicalMessage("Studio DAC"));
+      pipetune_gtk::localizedMessage("Changing sample-rate policy", {}),
+      pipetune_gtk::technicalMessage("192000 Hz"));
   pipetune_gtk::completePendingAction(
       log, pending, 1010, true, pipetune_gtk::ActionLogSeverity::info,
-      pipetune_gtk::localizedMessage("Output changed", {}),
+      pipetune_gtk::localizedMessage("Sample-rate policy changed", {}),
       pipetune_gtk::technicalMessage({}));
   if (!check(log.entries.size() == 1 &&
                  log.entries.front().state ==
@@ -417,9 +386,8 @@ static bool testActionLogHistory() {
       log, 1020, pipetune_gtk::ActionLogSeverity::warning,
       pipetune_gtk::ActionLogCategory::control,
       pipetune_gtk::ActionLogState::failure,
-      pipetune_gtk::localizedMessage("Fallback selected", {}),
-      pipetune_gtk::localizedMessage(
-          "Preferred output is unavailable", {}));
+      pipetune_gtk::localizedMessage("Rollback requested", {}),
+      pipetune_gtk::localizedMessage("Restoring the initial live settings", {}));
   pipetune_gtk::appendAction(
       log, 1030, pipetune_gtk::ActionLogSeverity::error,
       pipetune_gtk::ActionLogCategory::persistence,

@@ -103,7 +103,7 @@ statusLevelPresentation(const StatusItem &item);
  * @param state Current application and daemon state.
  * @param saved Configuration loaded from persistent storage.
  * @param currentUnixMilliseconds Current wall time for relative input age.
- * @return Seven stable, always-present status sections.
+ * @return Six stable, always-present status sections.
  */
 std::vector<StatusSection> buildStatusSections(
     const ApplicationState &state,

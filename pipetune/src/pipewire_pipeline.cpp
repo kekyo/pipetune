@@ -1008,11 +1008,6 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .activePreset = runtime.activePreset,
           .configurationError = runtime.configurationError,
           .activePluginCount = runtime.pipeline.activePluginCount(),
-          .preferredTarget = {},
-          .selectedTarget = {},
-          .outputSelectionReason = ControlOutputSelectionReason::unavailable,
-          .availableOutputs = {},
-          .defaultSinkActive = false,
           .overrunFrames = runtime.ring.overrunFrames(),
           .underrunFrames = runtime.ring.underrunFrames(),
           .processingErrors =
@@ -1090,13 +1085,6 @@ static ControlMessageResult handleControlRequest(std::string_view message,
             .publishStatus = false};
   }
   auto warnings = std::vector<ControlWarning>{};
-  if (request.request.command == ControlCommand::setOutput ||
-      request.request.command == ControlCommand::clearOutput) {
-    return closeControlResponse(
-        makeControlErrorResponse(
-            "output devices are managed by WirePlumber"),
-        false);
-  }
   if (request.request.command == ControlCommand::setRate) {
     const auto error =
         requestLiveRateChange(runtime, request.request.ratePolicy);

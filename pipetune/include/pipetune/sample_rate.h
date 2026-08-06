@@ -4,51 +4,8 @@
 #include <cstdint>
 #include <span>
 #include <string_view>
-#include <vector>
 
 namespace pipetune {
-
-/**
- * Identifies how an output device describes supported sample rates.
- */
-enum class SampleRateConstraintKind {
-  /** One exact rate. */
-  discrete,
-  /** Every integer rate between inclusive endpoints. */
-  range,
-  /** Rates separated by a fixed step from the inclusive minimum. */
-  step
-};
-
-/**
- * Describes one normalized output-device sample-rate constraint.
- */
-struct SampleRateConstraint {
-  /** Constraint representation. */
-  SampleRateConstraintKind kind = SampleRateConstraintKind::discrete;
-  /** Inclusive minimum rate in hertz. */
-  std::uint32_t minimum = 0;
-  /** Inclusive maximum rate in hertz. */
-  std::uint32_t maximum = 0;
-  /** Step in hertz for step constraints, otherwise zero. */
-  std::uint32_t step = 0;
-
-  /** Compares normalized constraint values. */
-  bool operator==(const SampleRateConstraint &) const = default;
-};
-
-/**
- * Describes whether and how one output accepts PCM sample rates.
- */
-struct SampleRateCapabilities {
-  /** True after PipeWire completed a usable EnumFormat enumeration. */
-  bool known = false;
-  /** Normalized union of discrete, range, and step constraints. */
-  std::vector<SampleRateConstraint> constraints = {};
-
-  /** Compares capability state and normalized constraints. */
-  bool operator==(const SampleRateCapabilities &) const = default;
-};
 
 /**
  * Selects how PipeTune determines its DSP sample rate.
@@ -150,29 +107,6 @@ SampleRatePolicy defaultSampleRatePolicy() noexcept;
  * @return True when the policy can be persisted or sent to the daemon.
  */
 bool sampleRatePolicyIsValid(const SampleRatePolicy &policy) noexcept;
-
-/**
- * Validates, orders, and deduplicates output sample-rate constraints.
- *
- * Unknown capabilities are normalized to an empty constraint list. Known
- * constraints must use positive, ascending endpoints and valid step values.
- *
- * @param capabilities Capability state to normalize in place.
- * @return True on success; false when a known constraint is malformed.
- */
-bool normalizeSampleRateCapabilities(
-    SampleRateCapabilities &capabilities);
-
-/**
- * Reports whether known output capabilities accept a sample rate.
- *
- * @param capabilities Normalized or valid device capabilities.
- * @param sampleRate Candidate rate in hertz.
- * @return True when at least one known constraint contains sampleRate.
- */
-bool sampleRateCapabilitiesSupport(
-    const SampleRateCapabilities &capabilities,
-    std::uint32_t sampleRate) noexcept;
 
 } // namespace pipetune
 

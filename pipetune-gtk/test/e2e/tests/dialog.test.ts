@@ -271,7 +271,7 @@ const expectLoadMeterBelowConnectionStatus = async (
 };
 
 const changeRateTo96Khz = async (): Promise<void> => {
-  await selectSettingsPage(2);
+  await selectSettingsPage(1);
   await selectComboItem('rateCombo', 3);
   await waitForCommands(['set-rate']);
   await waitForLabel('status-rates-fixed', '96 kHz');
@@ -313,7 +313,7 @@ describe('PipeTune GTK dialog', () => {
     );
 
     const switcher = await getElement('settingsSwitcher', 'container');
-    for (let page = 0; page < 5; page += 1) {
+    for (let page = 0; page < 4; page += 1) {
       const pageButton = await switcher.childAt(page);
       expect(pageButton).toBeDefined();
       await expectInsideWindow(pageButton as GtkWidgetElement, window);
@@ -338,30 +338,6 @@ describe('PipeTune GTK dialog', () => {
     expect(
       (await (await getElement('logRevealer', 'container')).info()).states
     ).not.toContain('showing');
-
-    await selectSettingsPage(1);
-    const outputButton = await getElement('outputMenuButton', 'toggleButton');
-    const outputInfo = await outputButton.info();
-    expect(outputInfo.name).toMatch(/^Studio DAC/);
-    expect(outputInfo.name).not.toContain('alsa_output.usb-long');
-    expect(outputInfo.description).toContain(
-      'alsa_output.usb-long-studio-dac.analog-stereo'
-    );
-    await outputButton.click();
-    const outputPopover = await getElement('outputPopover', 'container');
-    const outputList = await getElement('outputList', 'list');
-    await toPass(
-      async () => {
-        const capture = await outputPopover.capture();
-        expect(capture.bounds.width).toBeGreaterThanOrEqual(440);
-        expect(capture.bounds.height).toBeGreaterThanOrEqual(140);
-        expect((await outputList.info()).states).toContain('showing');
-      },
-      {
-        timeoutMs: 10_000,
-        message: 'Output choices did not become visibly available.',
-      }
-    );
   });
 
   it('uses expanded status-pane space for long values', async () => {
@@ -369,16 +345,14 @@ describe('PipeTune GTK dialog', () => {
     await waitForConnected();
     const window = await getElement('mainWindow', 'window');
     await window.resizeTo(1200, 740);
-    const savedOutput = await getElement('status-saved-output', 'label');
-    expect((await savedOutput.info()).states).toContain('showing');
-    expect(await savedOutput.text()).toBe(
-      'alsa_output.usb-long-studio-dac.analog-stereo'
-    );
-    const initialWidth = (await savedOutput.capture()).bounds.width;
+    const savedPreset = await getElement('status-saved-preset', 'label');
+    expect((await savedPreset.info()).states).toContain('showing');
+    expect(await savedPreset.text()).toBe('e2e.effetune_preset');
+    const initialWidth = (await savedPreset.capture()).bounds.width;
 
     await resizeStatusPaneTo(680);
 
-    const expandedWidth = (await savedOutput.capture()).bounds.width;
+    const expandedWidth = (await savedPreset.capture()).bounds.width;
     expect(expandedWidth).toBeGreaterThanOrEqual(480);
     expect(expandedWidth).toBeGreaterThan(initialWidth + 200);
   });
@@ -446,20 +420,8 @@ describe('PipeTune GTK dialog', () => {
     await session.clearRequests();
     const initial = await session.inspectConfig();
 
-    await selectSettingsPage(1);
-    const outputButton = await getElement('outputMenuButton', 'toggleButton');
-    await outputButton.click();
-    const secondStudioDac = await getElement('outputChoice2', 'button');
-    await secondStudioDac.click();
-    let requests = await waitForCommands(['set-output']);
-    expect(
-      requests.find((request) => request.command === 'set-output')
-    ).toMatchObject({
-      target: 'alsa_output.pci-0000_0b_00.4.hdmi-stereo-extra-long',
-    });
-
     await changeRateTo96Khz();
-    await selectSettingsPage(3);
+    await selectSettingsPage(2);
     await selectComboItem('dspBackendCombo', 0);
     await waitForCommands(['set-dsp-backend']);
     await waitForLabel('status-dsp-backend', 'Scalar');
@@ -475,7 +437,6 @@ describe('PipeTune GTK dialog', () => {
     await waitForLabel('status-saved-processing', 'Bypass');
     expect(await session.inspectConfig()).toEqual({
       preset: null,
-      preferredOutput: 'alsa_output.pci-0000_0b_00.4.hdmi-stereo-extra-long',
       rateMode: 'fixed',
       fixedRate: 96000,
       rateEnforcement: 'force',
@@ -483,14 +444,9 @@ describe('PipeTune GTK dialog', () => {
       dspSimdVariant: 'auto',
     });
     expect(await session.app.getWindowCount()).toBeGreaterThan(0);
-    requests = await session.readRequests();
+    const requests = await session.readRequests();
     expect(requests.map((request) => request.command)).toEqual(
-      expect.arrayContaining([
-        'set-output',
-        'set-rate',
-        'set-dsp-backend',
-        'bypass',
-      ])
+      expect.arrayContaining(['set-rate', 'set-dsp-backend', 'bypass'])
     );
   });
 
@@ -528,17 +484,15 @@ describe('PipeTune GTK dialog', () => {
     await waitForConnected();
     await session.clearRequests();
     const initial = await session.inspectConfig();
-    await selectSettingsPage(4);
+    await selectSettingsPage(3);
     const restore = await getElement('restoreDefaultsButton', 'button');
     await restore.click();
     const requests = await waitForCommands([
-      'clear-output',
       'set-rate',
       'set-dsp-backend',
       'bypass',
     ]);
     expect(requests.map((request) => request.command)).toEqual([
-      'clear-output',
       'set-rate',
       'set-dsp-backend',
       'bypass',
@@ -559,7 +513,6 @@ describe('PipeTune GTK dialog', () => {
     await waitForLabel('status-saved-processing', 'Bypass');
     expect(await session.inspectConfig()).toEqual({
       preset: null,
-      preferredOutput: null,
       rateMode: 'automatic',
       fixedRate: 0,
       rateEnforcement: 'suggest',
@@ -572,7 +525,7 @@ describe('PipeTune GTK dialog', () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     const initial = await session.inspectConfig();
-    await selectSettingsPage(4);
+    await selectSettingsPage(3);
     await selectComboItem('languageCombo', 2);
     await toPass(
       async () => {
@@ -594,7 +547,7 @@ describe('PipeTune GTK dialog', () => {
     await session.restartApplication();
     await waitForLabel('statusHeadingLabel', 'PipeTune の状態');
     await waitForLabel('status-system-connection', '接続済み');
-    await selectSettingsPage(4);
+    await selectSettingsPage(3);
     const combo = await getElement('languageCombo', 'comboBox');
     expect(await combo.isChildSelected(2)).toBe(true);
     expect(await session.inspectConfig()).toEqual(initial);
@@ -604,7 +557,7 @@ describe('PipeTune GTK dialog', () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     await session.blockLanguagePreferenceSave();
-    await selectSettingsPage(4);
+    await selectSettingsPage(3);
     try {
       await (await getElement('languageCombo', 'comboBox')).selectChildAt(2);
     } catch (error) {
@@ -649,7 +602,7 @@ describe('PipeTune GTK dialog', () => {
     session = await launchPipeTuneGtk({ rejectedCommand: 'setRate' });
     await waitForConnected();
     await session.clearRequests();
-    await selectSettingsPage(2);
+    await selectSettingsPage(1);
     await selectComboItem('rateCombo', 3);
     await waitForCommands(['set-rate']);
     const drawerToggle = await getElement('logToggleButton', 'toggleButton');

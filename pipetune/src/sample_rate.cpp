@@ -1,8 +1,7 @@
 #include "pipetune/sample_rate.h"
 
-#include <array>
 #include <algorithm>
-#include <tuple>
+#include <array>
 
 namespace pipetune {
 
@@ -81,75 +80,6 @@ bool sampleRatePolicyIsValid(const SampleRatePolicy &policy) noexcept {
            policy.enforcement == SampleRateEnforcement::suggest;
   case SampleRateMode::fixed:
     return isSelectableSampleRate(policy.fixedRate);
-  }
-  return false;
-}
-
-static bool constraintIsValid(
-    const SampleRateConstraint &constraint) noexcept {
-  if (constraint.minimum == 0 ||
-      constraint.maximum < constraint.minimum) {
-    return false;
-  }
-  switch (constraint.kind) {
-  case SampleRateConstraintKind::discrete:
-    return constraint.minimum == constraint.maximum &&
-           constraint.step == 0;
-  case SampleRateConstraintKind::range:
-    return constraint.step == 0;
-  case SampleRateConstraintKind::step:
-    return constraint.step != 0;
-  }
-  return false;
-}
-
-bool normalizeSampleRateCapabilities(
-    SampleRateCapabilities &capabilities) {
-  if (!capabilities.known) {
-    capabilities.constraints.clear();
-    return true;
-  }
-  for (const auto &constraint : capabilities.constraints) {
-    if (!constraintIsValid(constraint)) {
-      return false;
-    }
-  }
-  for (auto &constraint : capabilities.constraints) {
-    if (constraint.minimum == constraint.maximum) {
-      constraint.kind = SampleRateConstraintKind::discrete;
-      constraint.step = 0;
-    }
-  }
-  std::sort(
-      capabilities.constraints.begin(), capabilities.constraints.end(),
-      [](const SampleRateConstraint &left,
-         const SampleRateConstraint &right) {
-        return std::tie(left.minimum, left.maximum, left.kind, left.step) <
-               std::tie(right.minimum, right.maximum, right.kind, right.step);
-      });
-  capabilities.constraints.erase(
-      std::unique(capabilities.constraints.begin(),
-                  capabilities.constraints.end()),
-      capabilities.constraints.end());
-  return true;
-}
-
-bool sampleRateCapabilitiesSupport(
-    const SampleRateCapabilities &capabilities,
-    std::uint32_t sampleRate) noexcept {
-  if (!capabilities.known || sampleRate == 0) {
-    return false;
-  }
-  for (const auto &constraint : capabilities.constraints) {
-    if (!constraintIsValid(constraint) ||
-        sampleRate < constraint.minimum ||
-        sampleRate > constraint.maximum) {
-      continue;
-    }
-    if (constraint.kind != SampleRateConstraintKind::step ||
-        (sampleRate - constraint.minimum) % constraint.step == 0) {
-      return true;
-    }
   }
   return false;
 }

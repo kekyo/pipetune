@@ -17,7 +17,6 @@
 namespace pipetune {
 
 constexpr auto kPresetAssignment = std::string_view{"PIPETUNE_PRESET="};
-constexpr auto kTargetAssignment = std::string_view{"PIPETUNE_TARGET="};
 constexpr auto kDspBackendAssignment =
     std::string_view{"PIPETUNE_DSP_BACKEND="};
 constexpr auto kDspSimdVariantAssignment =
@@ -94,15 +93,6 @@ static std::string validatePresetPath(
       nativePreset.find('\n') != std::string::npos ||
       nativePreset.find('\r') != std::string::npos) {
     return "startup preset path must be an absolute single line";
-  }
-  return {};
-}
-
-static std::string validatePreferredOutput(std::string_view nodeName) {
-  if (nodeName.empty() || nodeName.find('\0') != std::string_view::npos ||
-      nodeName.find('\n') != std::string_view::npos ||
-      nodeName.find('\r') != std::string_view::npos) {
-    return "preferred output must be a non-empty single line";
   }
   return {};
 }
@@ -187,15 +177,6 @@ std::string saveStartupConfig(const std::filesystem::path &configPath,
     }
     contents += std::string(kPresetAssignment) +
                 encodeConfigValue(config.presetPath.string()) + "\n";
-  }
-  if (config.preferredOutputFound) {
-    const auto validation =
-        validatePreferredOutput(config.preferredOutput);
-    if (!validation.empty()) {
-      return validation;
-    }
-    contents += std::string(kTargetAssignment) +
-                encodeConfigValue(config.preferredOutput) + "\n";
   }
   const auto backendName = dspBackendName(config.dspBackend);
   if (backendName.empty()) {
@@ -339,21 +320,6 @@ loadStartupConfig(const std::filesystem::path &configPath) {
           return fail(validation);
         }
         config.presetFound = true;
-      } else if (line.starts_with(kTargetAssignment)) {
-        if (config.preferredOutputFound) {
-          return fail("startup configuration contains duplicate "
-                      "PIPETUNE_TARGET assignments");
-        }
-        if (!decodeConfigValue(line.substr(kTargetAssignment.size()),
-                               config.preferredOutput)) {
-          return fail("preferred output assignment is invalid");
-        }
-        const auto validation =
-            validatePreferredOutput(config.preferredOutput);
-        if (!validation.empty()) {
-          return fail(validation);
-        }
-        config.preferredOutputFound = true;
       } else if (line.starts_with(kDspBackendAssignment)) {
         if (dspBackendFound) {
           return fail("startup configuration contains duplicate "
@@ -432,27 +398,6 @@ std::string clearStartupPreset(const std::filesystem::path &configPath) {
   return saveStartupConfig(configPath, configured.config);
 }
 
-std::string savePreferredOutput(const std::filesystem::path &configPath,
-                                std::string_view nodeName) {
-  auto configured = loadStartupConfig(configPath);
-  if (!configured.error.empty()) {
-    return configured.error;
-  }
-  configured.config.preferredOutputFound = true;
-  configured.config.preferredOutput = nodeName;
-  return saveStartupConfig(configPath, configured.config);
-}
-
-std::string clearPreferredOutput(const std::filesystem::path &configPath) {
-  auto configured = loadStartupConfig(configPath);
-  if (!configured.error.empty()) {
-    return configured.error;
-  }
-  configured.config.preferredOutputFound = false;
-  configured.config.preferredOutput.clear();
-  return saveStartupConfig(configPath, configured.config);
-}
-
 std::string saveSampleRatePolicy(const std::filesystem::path &configPath,
                                  const SampleRatePolicy &policy) {
   if (!sampleRatePolicyIsValid(policy)) {
@@ -502,8 +447,6 @@ std::string resetStartupConfig(const std::filesystem::path &configPath) {
       configPath,
       {.presetFound = false,
        .presetPath = {},
-       .preferredOutputFound = false,
-       .preferredOutput = {},
        .ratePolicy = defaultSampleRatePolicy(),
        .dspBackend = DspBackendKind::scalar,
        .dspSimdVariant = DspSimdVariant::automatic});

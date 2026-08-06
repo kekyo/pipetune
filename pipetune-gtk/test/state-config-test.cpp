@@ -16,7 +16,6 @@ static bool check(bool condition, std::string_view message) {
 }
 
 static pipetune::ControlResponseParseResult statusResponse(
-    bool defaultSinkActive,
     std::span<const pipetune::ControlWarning> warnings,
     std::string_view configurationError) {
   return pipetune::parseControlResponse(
@@ -25,17 +24,6 @@ static pipetune::ControlResponseParseResult statusResponse(
            .activePreset = "/tmp/active.effetune_preset",
            .configurationError = std::string(configurationError),
            .activePluginCount = 4,
-           .preferredTarget = {},
-           .selectedTarget = "alsa_output.speaker",
-           .outputSelectionReason =
-               pipetune::ControlOutputSelectionReason::systemDefault,
-           .availableOutputs =
-               {{.name = "alsa_output.speaker",
-                 .description = "Speakers",
-                 .systemDefault = true,
-                 .preferred = false,
-                 .selected = true}},
-           .defaultSinkActive = defaultSinkActive,
            .overrunFrames = 0,
            .underrunFrames = 0,
            .processingErrors = 0,
@@ -56,17 +44,6 @@ static pipetune::ControlResponseParseResult bypassStatusResponse() {
            .activePreset = {},
            .configurationError = {},
            .activePluginCount = 0,
-           .preferredTarget = {},
-           .selectedTarget = "alsa_output.speaker",
-           .outputSelectionReason =
-               pipetune::ControlOutputSelectionReason::systemDefault,
-           .availableOutputs =
-               {{.name = "alsa_output.speaker",
-                 .description = "Speakers",
-                 .systemDefault = true,
-                 .preferred = false,
-                 .selected = true}},
-           .defaultSinkActive = true,
            .overrunFrames = 0,
            .underrunFrames = 0,
            .processingErrors = 0,
@@ -88,17 +65,6 @@ static pipetune::ControlResponseParseResult inputStatusResponse(
            .activePreset = {},
            .configurationError = {},
            .activePluginCount = 0,
-           .preferredTarget = {},
-           .selectedTarget = "alsa_output.speaker",
-           .outputSelectionReason =
-               pipetune::ControlOutputSelectionReason::systemDefault,
-           .availableOutputs =
-               {{.name = "alsa_output.speaker",
-                 .description = "Speakers",
-                 .systemDefault = true,
-                 .preferred = false,
-                 .selected = true}},
-           .defaultSinkActive = true,
            .overrunFrames = 0,
            .underrunFrames = 0,
            .processingErrors = 0,
@@ -119,7 +85,7 @@ static pipetune::ControlResponseParseResult dspStatusEvent(
     std::uint64_t overrunFrames,
     std::uint64_t underrunFrames,
     std::uint64_t processingErrors) {
-  auto status = statusResponse(true, {}, {}).status;
+  auto status = statusResponse({}, {}).status;
   status.dspProcessedFrames = processedFrames;
   status.dspProcessingNanoseconds = processingNanoseconds;
   status.overrunFrames = overrunFrames;
@@ -147,7 +113,7 @@ static bool testApplicationState() {
              "connecting state must not confirm an applied preset")) {
     return false;
   }
-  const auto healthy = statusResponse(true, {}, {});
+  const auto healthy = statusResponse({}, {});
   pipetune_gtk::applyControlResponse(state, healthy, 1000);
   if (!check(state.connection ==
                  pipetune_gtk::ControlConnectionState::connected,
@@ -188,7 +154,7 @@ static bool testApplicationState() {
                                .pluginName = "Unavailable DSP",
                                .reason = "not built"}};
   pipetune_gtk::applyControlResponse(
-      state, statusResponse(true, warnings, {}), 3000);
+      state, statusResponse(warnings, {}), 3000);
   if (!check(state.warnings.size() == 1,
              "ordinary response warnings were not retained") ||
       !check(pipetune_gtk::isPresetApplied(state),
@@ -214,14 +180,7 @@ static bool testApplicationState() {
   }
 
   pipetune_gtk::applyControlResponse(
-      state, statusResponse(false, {}, {}), 5000);
-  if (!check(pipetune_gtk::trayVisualState(state) ==
-                 pipetune_gtk::TrayVisualState::attention,
-             "an inactive default sink must request attention")) {
-    return false;
-  }
-  pipetune_gtk::applyControlResponse(
-      state, statusResponse(true, {}, "configured preset is unavailable"),
+      state, statusResponse({}, "configured preset is unavailable"),
       6000);
   if (!check(pipetune_gtk::trayVisualState(state) ==
                  pipetune_gtk::TrayVisualState::attention,

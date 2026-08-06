@@ -36,24 +36,6 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
       .activePreset = {},
       .configurationError = {},
       .activePluginCount = 0,
-      .preferredTarget = {},
-      .selectedTarget = "alsa_output.usb_dac",
-      .outputSelectionReason =
-          pipetune::ControlOutputSelectionReason::systemDefault,
-      .availableOutputs =
-          {{.name = "alsa_output.usb_dac",
-            .description = "USB DAC",
-            .systemDefault = true,
-            .preferred = false,
-            .selected = true,
-            .sampleRateCapabilities =
-                {.known = true,
-                 .constraints =
-                     {{.kind = pipetune::SampleRateConstraintKind::range,
-                       .minimum = 44100,
-                       .maximum = 96000,
-                       .step = 0}}}}},
-      .defaultSinkActive = true,
       .overrunFrames = 0,
       .underrunFrames = 0,
       .processingErrors = 0,

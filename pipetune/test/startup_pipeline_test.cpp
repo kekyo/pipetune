@@ -20,15 +20,12 @@ static bool check(bool condition, std::string_view message) {
 }
 
 static bool testIntentionalBypass(const std::filesystem::path &configPath) {
-  const auto savedOutput = pipetune::savePreferredOutput(
-      configPath, "alsa_output.usb_dac");
   const auto savedRate = pipetune::saveSampleRatePolicy(
       configPath,
       {.mode = pipetune::SampleRateMode::fixed,
        .fixedRate = 384000,
        .enforcement = pipetune::SampleRateEnforcement::force});
-  if (!check(savedOutput.empty(), savedOutput) ||
-      !check(savedRate.empty(), savedRate)) {
+  if (!check(savedRate.empty(), savedRate)) {
     return false;
   }
   const auto prepared = pipetune::prepareStartupPipeline(
@@ -39,8 +36,6 @@ static bool testIntentionalBypass(const std::filesystem::path &configPath) {
              "missing startup configuration must not select a preset") ||
       !check(prepared.configurationError.empty(),
              "missing startup configuration must be intentional bypass") ||
-      !check(prepared.preferredOutput == "alsa_output.usb_dac",
-             "startup output must be returned in bypass mode") ||
       !check(prepared.ratePolicy ==
                  pipetune::SampleRatePolicy{
                      .mode = pipetune::SampleRateMode::fixed,
@@ -82,8 +77,6 @@ static bool testConfiguredPreset(const std::filesystem::path &configPath,
              "configured preset path differs") ||
       !check(prepared.configurationError.empty(),
              "valid configured preset must not report an error") ||
-      !check(prepared.preferredOutput == "alsa_output.usb_dac",
-             "loading a preset must preserve the startup output") ||
       !check(prepared.ratePolicy ==
                  pipetune::SampleRatePolicy{
                      .mode = pipetune::SampleRateMode::fixed,
@@ -172,8 +165,6 @@ static bool testDegradedBypass(const std::filesystem::path &configPath,
              "degraded bypass must not report an active preset") ||
       !check(!missing.configurationError.empty(),
              "a missing configured preset must report its diagnostic") ||
-      !check(missing.preferredOutput == "alsa_output.usb_dac",
-             "a missing preset must not discard the startup output") ||
       !check(missing.pipeline->activePluginCount() == 0,
              "degraded bypass must not contain DSP nodes")) {
     return false;

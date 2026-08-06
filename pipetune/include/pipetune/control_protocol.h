@@ -26,10 +26,6 @@ enum class ControlCommand {
   loadPreset,
   /** Replace the active DSP pipeline with transparent pass-through. */
   bypass,
-  /** Replace the user-preferred physical output. */
-  setOutput,
-  /** Clear the user-preferred output and follow the system default. */
-  clearOutput,
   /** Replace the configured DSP and graph-rate policy. */
   setRate,
   /** Rebuild the active preset with another native DSP backend. */
@@ -46,8 +42,6 @@ struct ControlRequest {
   ControlCommand command;
   /** Preset path for loadPreset, or empty for other commands. */
   std::filesystem::path presetPath;
-  /** Preferred PipeWire node.name for setOutput, or empty otherwise. */
-  std::string outputTarget;
   /** Requested policy for setRate, or the default policy otherwise. */
   SampleRatePolicy ratePolicy = {};
   /** Requested backend for setDspBackend, or scalar otherwise. */
@@ -74,38 +68,6 @@ enum class ProcessingMode {
   bypass,
   /** Process PCM through the active preset pipeline. */
   preset
-};
-
-/**
- * Identifies why the engine selected its current physical output.
- */
-enum class ControlOutputSelectionReason {
-  /** No usable physical output is currently available. */
-  unavailable,
-  /** No preference exists and the physical system default is selected. */
-  systemDefault,
-  /** The available user-preferred output is selected. */
-  preferred,
-  /** The preference is unavailable and a physical fallback is selected. */
-  fallback
-};
-
-/**
- * Describes one selectable physical PipeWire output.
- */
-struct ControlOutputDevice {
-  /** Stable PipeWire node.name used by setOutput. */
-  std::string name;
-  /** Human-readable device description. */
-  std::string description;
-  /** True when this node is the remembered physical system default. */
-  bool systemDefault;
-  /** True when this available node matches the user preference. */
-  bool preferred;
-  /** True when this node is the effective playback target. */
-  bool selected;
-  /** Enumerated output sample-rate support, or unknown before enumeration. */
-  SampleRateCapabilities sampleRateCapabilities = {};
 };
 
 /**
@@ -150,16 +112,6 @@ struct ControlRuntimeStatus {
   std::string configurationError;
   /** Number of enabled native DSP nodes. */
   std::size_t activePluginCount;
-  /** User-preferred PipeWire node.name, or empty for system-default mode. */
-  std::string preferredTarget;
-  /** Current physical PipeWire output node name, or empty while unavailable. */
-  std::string selectedTarget;
-  /** Reason selectedTarget was chosen. */
-  ControlOutputSelectionReason outputSelectionReason;
-  /** Current selectable physical outputs. */
-  std::vector<ControlOutputDevice> availableOutputs;
-  /** True after PipeTune's virtual sink became the effective default. */
-  bool defaultSinkActive;
   /** Input frames discarded because the bridge was full. */
   std::uint64_t overrunFrames;
   /** Output frames replaced by silence because the bridge was empty. */
@@ -297,17 +249,6 @@ std::string makeSubscribeControlRequest();
 
 /** Returns a JSON live-bypass request without framing newline. */
 std::string makeBypassControlRequest();
-
-/**
- * Returns a JSON preferred-output request without framing newline.
- *
- * @param nodeName Non-empty PipeWire node.name interpreted by the daemon.
- * @return Encoded request, or an empty string on allocation failure.
- */
-std::string makeSetOutputControlRequest(std::string_view nodeName);
-
-/** Returns a JSON system-default output request without framing newline. */
-std::string makeClearOutputControlRequest();
 
 /**
  * Returns a JSON sample-rate-policy request without framing newline.

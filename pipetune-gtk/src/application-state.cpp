@@ -136,12 +136,6 @@ ApplicationState initialApplicationState() {
               .activePreset = {},
               .configurationError = {},
               .activePluginCount = 0,
-              .preferredTarget = {},
-              .selectedTarget = {},
-              .outputSelectionReason =
-                  pipetune::ControlOutputSelectionReason::unavailable,
-              .availableOutputs = {},
-              .defaultSinkActive = false,
               .overrunFrames = 0,
               .underrunFrames = 0,
               .processingErrors = 0,
@@ -240,8 +234,6 @@ TrayVisualState trayVisualState(const ApplicationState &state) {
       state.runtime.rateTransitioning ||
       state.runtime.dspBackendFallback ||
       !state.runtime.dspBackendError.empty() ||
-      !state.runtime.defaultSinkActive ||
-      state.runtime.selectedTarget.empty() ||
       state.runtime.overrunFrames != 0 ||
       state.runtime.underrunFrames != 0 ||
       state.runtime.processingErrors != 0) {

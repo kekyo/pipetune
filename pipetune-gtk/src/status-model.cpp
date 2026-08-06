@@ -89,10 +89,6 @@ static std::string connectionText(ControlConnectionState connection) {
   return translate("Unknown");
 }
 
-static std::string yesNo(bool value) {
-  return value ? translate("Yes") : translate("No");
-}
-
 static std::string processingModeText(pipetune::ProcessingMode mode) {
   switch (mode) {
   case pipetune::ProcessingMode::bypass:
@@ -170,55 +166,6 @@ static std::string effectiveVariantText(
   const auto name = pipetune::dspBackendVariantName(*variant);
   return name.empty() ? std::string(translate("Unknown"))
                       : std::string(name);
-}
-
-static std::string selectionReasonText(
-    pipetune::ControlOutputSelectionReason reason) {
-  switch (reason) {
-  case pipetune::ControlOutputSelectionReason::unavailable:
-    return translate("No output available");
-  case pipetune::ControlOutputSelectionReason::systemDefault:
-    return translate("System default");
-  case pipetune::ControlOutputSelectionReason::preferred:
-    return translate("Preferred output");
-  case pipetune::ControlOutputSelectionReason::fallback:
-    return translate("System-default fallback");
-  }
-  return translate("Unknown");
-}
-
-static const pipetune::ControlOutputDevice *findOutput(
-    const pipetune::ControlRuntimeStatus &runtime,
-    std::string_view name) {
-  for (const auto &output : runtime.availableOutputs) {
-    if (output.name == name) {
-      return &output;
-    }
-  }
-  return nullptr;
-}
-
-static StatusItem outputItem(
-    std::string id, std::string label,
-    const pipetune::ControlRuntimeStatus &runtime,
-    std::string_view name, StatusSeverity severity) {
-  if (name.empty()) {
-    return textItem(std::move(id), std::move(label),
-                    translate("Unavailable"), severity);
-  }
-  const auto *output = findOutput(runtime, name);
-  if (output == nullptr) {
-    return textItem(std::move(id), std::move(label), std::string(name),
-                    severity, std::string(name));
-  }
-  const auto value =
-      output->description.empty() ? output->name : output->description;
-  auto tooltip = value;
-  if (value != output->name) {
-    tooltip += "\n" + output->name;
-  }
-  return textItem(std::move(id), std::move(label), value, severity,
-                  std::move(tooltip));
 }
 
 static StatusItem dspLoadItem(const ApplicationState &state) {
@@ -309,14 +256,6 @@ std::vector<StatusSection> buildStatusSections(
   const auto livePreset =
       std::filesystem::path(state.runtime.activePreset);
   const auto savedPreset = saved.presetPath;
-  const auto savedOutput =
-      saved.preferredOutputFound
-          ? saved.preferredOutput
-          : std::string(translate("System default"));
-  const auto livePreference =
-      state.runtime.preferredTarget.empty()
-          ? std::string(translate("System default"))
-          : state.runtime.preferredTarget;
   const auto fixedSavedRate =
       saved.ratePolicy.mode == pipetune::SampleRateMode::fixed
           ? sampleRateText(saved.ratePolicy.fixedRate)
@@ -329,7 +268,7 @@ std::vector<StatusSection> buildStatusSections(
           : std::string(translate("Automatic"));
 
   auto sections = std::vector<StatusSection>{};
-  sections.reserve(7);
+  sections.reserve(6);
   sections.push_back({
       .id = "system",
       .label = translate("System"),
@@ -337,13 +276,6 @@ std::vector<StatusSection> buildStatusSections(
           {
               textItem("system.connection", "PipeTune",
                        connectionText(state.connection), unavailable),
-              textItem(
-                  "system.default-sink",
-                  translate("Virtual sink active"),
-                  connected ? yesNo(state.runtime.defaultSinkActive) : "—",
-                  connected && !state.runtime.defaultSinkActive
-                      ? StatusSeverity::warning
-                      : unavailable),
           },
   });
   sections.push_back({
@@ -387,8 +319,6 @@ std::vector<StatusSection> buildStatusSections(
               textItem("saved.preset", translate("Preset"),
                        saved.presetFound ? shortPath(savedPreset) : "—",
                        StatusSeverity::normal, savedPreset.string()),
-              textItem("saved.output", translate("Output"), savedOutput,
-                       StatusSeverity::normal, savedOutput),
               textItem("saved.rate-mode", translate("Rate mode"),
                        sampleRateModeText(saved.ratePolicy.mode)),
               textItem("saved.fixed-rate", translate("Fixed rate"),
@@ -401,33 +331,6 @@ std::vector<StatusSection> buildStatusSections(
                        backendText(saved.dspBackend)),
               textItem("saved.simd-variant", translate("SIMD variant"),
                        simdVariantText(saved.dspSimdVariant)),
-          },
-  });
-  sections.push_back({
-      .id = "routing",
-      .label = translate("Routing"),
-      .items =
-          {
-              textItem("routing.preference", translate("Preference"),
-                       livePreference,
-                       unavailable, livePreference),
-              outputItem(
-                  "routing.selected-output",
-                  translate("Selected output"),
-                  state.runtime, state.runtime.selectedTarget,
-                  state.runtime.selectedTarget.empty()
-                      ? StatusSeverity::warning
-                      : unavailable),
-              textItem(
-                  "routing.reason", translate("Selection reason"),
-                  connected
-                      ? selectionReasonText(
-                            state.runtime.outputSelectionReason)
-                      : "—",
-                  state.runtime.outputSelectionReason ==
-                          pipetune::ControlOutputSelectionReason::fallback
-                      ? StatusSeverity::warning
-                      : unavailable),
           },
   });
   sections.push_back({

@@ -1,7 +1,6 @@
 #ifndef PIPETUNE_USER_SETUP_H
 #define PIPETUNE_USER_SETUP_H
 
-#include "default_sink_restore.h"
 #include "process_runner.h"
 
 #include <cstdint>
@@ -67,12 +66,6 @@ using ProcessRunner = ProcessResult (*)(
     void *userData);
 
 /**
- * Injectable PipeWire fail-open restoration used by unsetup coordination.
- */
-using RestoreDefaultSinkRunner = DefaultSinkRestoreResult (*)(
-    std::string excludedNodeName, void *userData);
-
-/**
  * Describes one setup request.
  */
 struct UserSetupRequest {
@@ -104,10 +97,6 @@ struct UserUnsetupRequest {
   ProcessRunner processRunner;
   /** Opaque process runner argument. */
   void *processUserData;
-  /** Non-null physical default-sink restoration callback. */
-  RestoreDefaultSinkRunner restoreDefaultSink;
-  /** Opaque restoration callback argument. */
-  void *restoreUserData;
 };
 
 /**
