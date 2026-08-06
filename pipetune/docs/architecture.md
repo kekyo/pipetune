@@ -5,14 +5,15 @@
 PipeTune is one per-user PipeWire client process. It is not a PipeWire daemon
 plugin, a PulseAudio module, or a selectable desktop output device. For every
 eligible physical `Audio/Sink`, the process publishes one target-specific
-smart-filter main node and one playback stream. WirePlumber inserts that hidden
-pair when an application targets the corresponding physical output.
+smart-filter main node and one playback stream. WirePlumber inserts that
+internal pair when an application targets the corresponding physical output.
 
 The desktop therefore continues to own all user-facing routing:
 
 - the default output remains the real DAC, speakers, or headphones;
 - per-application output choices continue to name real devices;
-- PipeTune nodes are hidden from ordinary clients; and
+- PipeTune nodes are hidden from ordinary clients on WirePlumber 0.5, while
+  WirePlumber 0.4 may expose them as selectable internal outputs; and
 - the physical sink remains the final mute and volume control.
 
 One `pipetune` executable implements the audio and control behavior for both
@@ -32,7 +33,7 @@ application streams targeting physical output A
                     |
        PipeWire per-application volume and mix
                     |
-        hidden PipeTune filter for output A
+        internal PipeTune filter for output A
                     |
            F32P capture stream
                     |
@@ -114,10 +115,12 @@ property. Metadata changes made by the policy are tracked until WirePlumber
 reports their asynchronous update, so they are not mistaken for a user's later
 output selection.
 
-Both variants deny ordinary clients access to PipeTune's main and playback
+WirePlumber 0.5 denies ordinary clients access to PipeTune's main and playback
 nodes while retaining access for WirePlumber and the owning PipeTune client.
-Consequently Ubuntu's sound panel and equivalent applications list only the
-physical outputs.
+Stable WirePlumber 0.4 cannot express PipeWire's link-only permission through
+its Lua API, so its compatibility policy leaves those nodes readable to keep
+links reliable. Client listings on 0.4 may therefore include the internal
+nodes even though they carry `filter.smart.targetable = false`.
 
 ## Physical-output discovery
 
@@ -142,9 +145,10 @@ global ID:
 - shared `node.link-group` and `filter.smart.name` values; and
 - `pipetune.target.node` naming the physical `node.name`.
 
-The main node is not targetable as a user output. The playback stream is
-passive, targets the physical node directly, and is configured not to reconnect
-silently to a different device.
+The main node declares `filter.smart.targetable = false`. WirePlumber 0.5
+honors that intent and hides the node, while WirePlumber 0.4 clients may still
+expose or target it. The playback stream is passive, targets the physical node
+directly, and is configured not to reconnect silently to a different device.
 
 ## Per-output DSP and real-time path
 
@@ -248,7 +252,7 @@ Protocol version 2 supports:
 
 There are no output-selection or volume commands. Status contains the detected
 WirePlumber backend and a `filterOutputs` array. Every entry reports its
-physical node and description, hidden filter name, waiting/active/direct/error
+physical node and description, internal filter name, waiting/active/direct/error
 state, diagnostic, channel count, capabilities, DSP/requested/active rates,
 resampling fallback, latency, and counters.
 

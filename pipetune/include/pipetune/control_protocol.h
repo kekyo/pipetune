@@ -121,7 +121,7 @@ struct ControlFilterOutputStatus {
   std::string targetNodeName;
   /** User-facing physical sink description. */
   std::string targetDescription;
-  /** Hidden PipeTune node.name, or empty when no filter was created. */
+  /** Internal PipeTune node.name, or empty when no filter was created. */
   std::string filterNodeName;
   /** Current target-specific filter state. */
   ControlFilterState state;

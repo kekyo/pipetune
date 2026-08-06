@@ -9,7 +9,6 @@ local policy_metadata = nil
 local default_metadata = nil
 local rescan_pending = false
 local managed_targets = {}
-local hidden_nodes = {}
 local nodes_by_id = {}
 local pending_metadata_updates = {}
 
@@ -390,16 +389,6 @@ local function schedule_rescan()
   end)
 end
 
-local function hide_node_from_client(client, node_id, owner_id)
-  local properties = client.properties
-  if properties["wireplumber.daemon"] or
-      tostring(client["bound-id"]) == tostring(owner_id) then
-    return
-  end
-  client:update_permissions { [node_id] = "l" }
-end
-
-local clients_om = ObjectManager { Interest { type = "client" } }
 local nodes_om = ObjectManager { Interest { type = "node" } }
 local default_metadata_om = ObjectManager {
   Interest {
@@ -407,34 +396,18 @@ local default_metadata_om = ObjectManager {
     Constraint { "metadata.name", "=", "default" },
   }
 }
-pipetune_policy_runtime.clients = clients_om
 pipetune_policy_runtime.nodes = nodes_om
 pipetune_policy_runtime.default_metadata = default_metadata_om
-
-clients_om:connect("object-added", function(_, client)
-  for node_id, owner_id in pairs(hidden_nodes) do
-    hide_node_from_client(client, node_id, owner_id)
-  end
-end)
 
 nodes_om:connect("object-added", function(_, node)
   local id = node["bound-id"]
   nodes_by_id[id] = node
-  if is_pipetune_filter(node) or
-      parse_bool(node.properties["pipetune.filter.stream"]) then
-    local owner_id = node.properties["client.id"]
-    hidden_nodes[id] = owner_id
-    for client in clients_om:iterate() do
-      hide_node_from_client(client, id, owner_id)
-    end
-  end
   schedule_rescan()
 end)
 
 nodes_om:connect("object-removed", function(_, node)
   local id = node["bound-id"]
   nodes_by_id[id] = nil
-  hidden_nodes[id] = nil
   restore_managed_target(id)
   schedule_rescan()
 end)
@@ -457,7 +430,10 @@ default_metadata_om:connect("object-added", function(_, metadata)
   schedule_rescan()
 end)
 
-clients_om:activate()
+-- Stable WirePlumber 0.4 cannot express PipeWire's link-only permission in
+-- its Lua API. Keeping smart filters readable preserves reliable linking;
+-- filter.smart.targetable advertises their internal role to clients that
+-- honor the newer smart-filter property.
 nodes_om:activate()
 default_metadata_om:activate()
 

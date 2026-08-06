@@ -530,6 +530,55 @@ static bool writeSilentAudio(const std::filesystem::path &path,
   return stream.good();
 }
 
+static bool writeDelayedSignalAudio(const std::filesystem::path &path,
+                                    std::uint32_t channels,
+                                    std::uint32_t frames,
+                                    std::uint32_t silentFrames) {
+  auto stream = std::ofstream(path, std::ios::binary);
+  auto samples = std::array<float, 4096>{};
+  const auto sampleCount = static_cast<std::uint64_t>(channels) * frames;
+  auto written = std::uint64_t{0};
+  while (written < sampleCount && stream) {
+    const auto count = static_cast<std::size_t>(
+        std::min<std::uint64_t>(sampleCount - written, samples.size()));
+    for (auto index = std::size_t{0}; index < count; ++index) {
+      const auto frame = (written + index) / channels;
+      samples[index] =
+          frame < silentFrames
+              ? 0.0F
+              : ((frame / 48) % 2 == 0 ? 0.25F : -0.25F);
+    }
+    stream.write(reinterpret_cast<const char *>(samples.data()),
+                 static_cast<std::streamsize>(count * sizeof(float)));
+    written += count;
+  }
+  return stream.good();
+}
+
+static bool fileContainsSignalAfter(const std::filesystem::path &path,
+                                    std::uintmax_t offset,
+                                    std::size_t minimumSignalSamples) {
+  auto stream = std::ifstream(path, std::ios::binary);
+  if (!stream) {
+    return false;
+  }
+  stream.seekg(static_cast<std::streamoff>(offset));
+  auto samples = std::array<float, 4096>{};
+  auto signalSamples = std::size_t{0};
+  while (stream) {
+    stream.read(reinterpret_cast<char *>(samples.data()),
+                static_cast<std::streamsize>(samples.size() * sizeof(float)));
+    const auto count = static_cast<std::size_t>(stream.gcount()) / sizeof(float);
+    for (auto index = std::size_t{0}; index < count; ++index) {
+      if (std::isfinite(samples[index]) && std::abs(samples[index]) > 0.01F &&
+          ++signalSamples >= minimumSignalSamples) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 static bool exerciseAudioAndPolicyStatus(
     const std::filesystem::path &socketPath,
     const std::filesystem::path &directory, bool requireActivePolicy) {
@@ -603,9 +652,14 @@ static bool exerciseAudioAndPolicyStatus(
     baselineProcessedFrames = monitorReadyOutput->dspProcessedFrames;
   }
 
-  const auto audioPath = directory / "silent.f32";
-  if (!check(writeSilentAudio(audioPath, selected->channelCount, 96'000),
-             "cannot create silent routing probe")) {
+  const auto audioPath = directory / "routing-probe.f32";
+  const auto audioWritten =
+      requireActivePolicy
+          ? writeDelayedSignalAudio(audioPath, selected->channelCount,
+                                    480'000, 96'000)
+          : writeSilentAudio(audioPath, selected->channelCount, 96'000);
+  if (!check(audioWritten,
+             "cannot create routing probe audio")) {
     if (monitor > 0) {
       static_cast<void>(stopCommand(monitor));
     }
@@ -625,7 +679,7 @@ static bool exerciseAudioAndPolicyStatus(
   if (!check(playback > 0 &&
                  waitForGraphNode(playbackNodeName, true,
                                   std::chrono::seconds(3)),
-             "cannot start the silent routing probe")) {
+             "cannot start the routing probe")) {
     if (monitor > 0) {
       static_cast<void>(stopCommand(monitor));
     }
@@ -639,6 +693,44 @@ static bool exerciseAudioAndPolicyStatus(
                output->dspProcessedFrames > baselineProcessedFrames;
       },
       std::chrono::seconds(4));
+  auto continued = std::optional<pipetune::ControlRuntimeStatus>{};
+  auto delayedSignalObserved = !requireActivePolicy;
+  if (requireActivePolicy && processed.has_value()) {
+    const auto earlyOutput =
+        filterOutputForTarget(*processed, targetNodeName);
+    if (earlyOutput.has_value()) {
+      const auto continuedThreshold =
+          earlyOutput->dspProcessedFrames + selected->dspSampleRate;
+      continued = waitForControlStatus(
+          socketPath,
+          [targetNodeName, continuedThreshold](const auto &status) {
+            const auto output = filterOutputForTarget(status, targetNodeName);
+            return output.has_value() &&
+                   output->dspProcessedFrames >= continuedThreshold;
+          },
+          std::chrono::seconds(4));
+    }
+  }
+  if (requireActivePolicy && continued.has_value()) {
+    const auto monitorBytesBeforeDelayedSignal = fileSize(monitorPath);
+    if (monitorBytesBeforeDelayedSignal.has_value()) {
+      const auto signalDeadline = std::chrono::steady_clock::now() +
+                                  std::chrono::seconds(3);
+      do {
+        delayedSignalObserved = fileContainsSignalAfter(
+            monitorPath, *monitorBytesBeforeDelayedSignal,
+            static_cast<std::size_t>(selected->channelCount) * 8);
+        if (!delayedSignalObserved) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+      } while (!delayedSignalObserved &&
+               std::chrono::steady_clock::now() < signalDeadline);
+    }
+  }
+  const auto playbackContinued =
+      !requireActivePolicy ||
+      (continued.has_value() && commandIsAlive(playback) &&
+       waitForGraphNode(playbackNodeName, true, std::chrono::milliseconds(250)));
   const auto playbackStopped = stopCommand(playback);
   auto playbackRemoved = true;
   auto idleBaseline = std::optional<pipetune::ControlFilterOutputStatus>{};
@@ -665,7 +757,13 @@ static bool exerciseAudioAndPolicyStatus(
   const auto monitorStopped = monitor <= 0 || stopCommand(monitor);
   return check(processed.has_value(),
                "routed playback did not advance DSP telemetry") &&
-         check(playbackStopped, "cannot stop the silent routing probe") &&
+         check(playbackContinued,
+               "routed playback stopped advancing DSP while its player "
+               "remained active") &&
+         check(delayedSignalObserved,
+               "physical output monitor did not receive the delayed "
+               "playback signal") &&
+         check(playbackStopped, "cannot stop the routing probe") &&
          check(playbackRemoved,
                "routed playback node remained after the player stopped") &&
          check(!requireActivePolicy ||
@@ -894,9 +992,8 @@ int main(int argumentCount, char **arguments) {
                  "filter service integration test\n";
     return 77;
   }
-  // The worktree policy intentionally hides internal filter nodes from the
-  // pw-dump client. Its isolated-path test therefore uses only the public
-  // control protocol and an audio stream that must advance DSP counters.
+  // The isolated policy path validates routing through the public control
+  // protocol and an audio stream that must advance DSP counters.
   if (requireActivePolicy) {
     return testLiveControl(true) ? 0 : 1;
   }

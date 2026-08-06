@@ -676,6 +676,12 @@ try {
     0,
     `transparent-filter service did not route audio through the worktree policy:\n${serviceTest.stdout ?? ""}\n${serviceTest.stderr ?? ""}\n${wireplumberDiagnostic}`,
   );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.doesNotMatch(
+    wireplumberDiagnostic,
+    /invalid permission string/u,
+    `WirePlumber rejected a PipeTune policy permission:\n${wireplumberDiagnostic}`,
+  );
 
   for (const key of ["protocol.version", "policy.backend", "policy.state"]) {
     const deleted = spawnSync(

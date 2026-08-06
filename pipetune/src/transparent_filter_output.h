@@ -82,7 +82,7 @@ struct TransparentFilterOutput {
   std::string nodeName;
   /** User-facing physical sink description. */
   std::string description;
-  /** Hidden PipeTune smart-filter main-node name. */
+  /** Internal PipeTune smart-filter main-node name. */
   std::string filterNodeName;
   /** Shared node.link-group for the filter's two streams. */
   std::string filterLinkGroup;

@@ -1,7 +1,7 @@
 # PipeTune
 
 PipeTune applies an [EffeTune](https://github.com/Frieve-A/effetune) DSP preset to all audio in one Linux desktop session.
-It runs EffeTune's C++ DSP engine as native host code and publishes hidden,
+It runs EffeTune's C++ DSP engine as native host code and publishes internal,
 target-specific PipeWire smart filters for the physical outputs managed by
 WirePlumber.
 
@@ -17,14 +17,14 @@ desktop applications
 WirePlumber routing to an ordinary physical output
         |
         v
-hidden PipeTune filter main node and PipeWire mix
+internal PipeTune filter main node and PipeWire mix
         |
         v
 native EffeTune C++ DSP pipeline for that output
         or pass-through bypass
         |
         v
-hidden PipeTune playback stream
+internal PipeTune playback stream
         |
         v
 physical PipeWire sink and its normal volume control
@@ -45,7 +45,7 @@ not supported by this MVP.
   each omitted node.
 - Leaves output selection, default routing, mute, and volume ownership with
   PipeWire and the desktop sound controls.
-- Creates one hidden DSP runtime for every eligible local physical output and
+- Creates one internal DSP runtime for every eligible local physical output and
   updates only that runtime after hotplug or format changes.
 - Installs WirePlumber 0.4 and 0.5 policy integrations together. WirePlumber
   loads the matching integration at runtime, so the PipeTune binary and Debian
@@ -63,8 +63,8 @@ not supported by this MVP.
 - Publishes initial and changed runtime state to same-user local subscribers.
 - Starts the managed daemon without a preset and passes audio through unchanged.
 - Automates per-user service, GTK, and autostart setup and removal.
-- Hides PipeTune's filter nodes from ordinary desktop clients so only physical
-  outputs remain visible in sound settings.
+- Hides PipeTune's filter nodes from ordinary desktop clients on WirePlumber
+  0.5. WirePlumber 0.4 may also expose its internal nodes in client listings.
 - Fails open per output: WirePlumber retains or restores the direct route until
   a filter is ready, and again if its nodes disappear.
 
@@ -149,7 +149,7 @@ states settle. It never changes the configured or effective default output.
 ```
 
 The process runs until `SIGINT` or `SIGTERM`, publishes
-one hidden filter for each eligible output, and lets WirePlumber insert those
+one internal filter for each eligible output, and lets WirePlumber insert those
 filters without changing the user's selected devices. Use
 `--dsp-backend scalar` or `--dsp-backend simd` to select the native backend for
 this direct run. `--dsp-variant auto|baseline|x86-64-v3|x86-64-v4|sve` selects
@@ -166,7 +166,7 @@ Inspect or replace the running pipeline:
 The status response includes the processing mode, active preset when
 applicable, native DSP count, configured and effective DSP backends, backend
 availability and fallback diagnostics, the active WirePlumber policy backend,
-each physical output and hidden filter state, per-output rate capabilities,
+each physical output and internal filter state, per-output rate capabilities,
 configured and resolved PCM rates, active physical rates, resampling fallback,
 configuration diagnostics, and audio bridge error counters. A live replacement
 made directly with `--load-preset` is not persisted.
@@ -509,7 +509,7 @@ to a non-desktop PipeTune backup before writing the mask. It refuses to
 overwrite an existing backup. Setup restores that backup exactly. Repeated
 setup and unsetup calls are safe for PipeTune-managed state.
 
-If the daemon or a filter runtime disappears, WirePlumber removes its hidden
+If the daemon or a filter runtime disappears, WirePlumber removes its internal
 route and resumes the original direct physical-output route. The fail-open
 transition can contain a short audio interruption.
 See [the architecture notes](docs/architecture.md) for the process, real-time,

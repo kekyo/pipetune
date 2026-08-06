@@ -133,7 +133,7 @@ is allowed.
 
 The GUI never selects an output. Physical devices, defaults, per-application
 routing, mute, and volume remain in the desktop's normal sound controls. The
-daemon reports every eligible output and its target-specific hidden filter;
+daemon reports every eligible output and its target-specific internal filter;
 the status pane shows whether each filter is waiting, active, on a direct
 fail-open route, or failed.
 

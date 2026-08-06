@@ -18,7 +18,7 @@ Applies an EffeTune DSP preset to all audio in one Linux desktop session.
 
 PipeTune applies an [EffeTune](https://github.com/Frieve-A/effetune) DSP preset
 to all audio in one Linux desktop session.
-WirePlumber inserts its hidden DSP filters immediately before the physical
+WirePlumber inserts its internal DSP filters immediately before the physical
 outputs selected in the normal desktop sound settings. PipeTune also includes
 a GTK 3 control application that remains available through the desktop system
 tray.
@@ -31,7 +31,7 @@ tray.
   `.effetune_preset` extension.
 - Applies the enabled native EffeTune DSP pipeline to desktop audio.
 - Keeps physical output selection and volume control in the desktop's normal
-  sound settings; no PipeTune device is shown there.
+  sound settings. WirePlumber 0.4 may also list internal PipeTune nodes.
 - Runs an independent filter at each output's maximum supported rate or at an
   explicit 44.1, 48, 96, 192, or 384 kHz rate.
 - Selects its WirePlumber 0.4 or 0.5 policy at runtime from one package and one
@@ -138,7 +138,7 @@ flowchart LR
     app["1. Application<br/>Browser / player / game"]
     os["2. OS audio settings<br/>(ordinary physical output)"]
     mix["3. PipeWire mix<br/>application volume"]
-    tune["4. Hidden PipeTune filter<br/>(EffeTune DSP)"]
+    tune["4. Internal PipeTune filter<br/>(EffeTune DSP)"]
     device["5. Physical output<br/>normal device volume"]
 
     app -->|"① sends audio"| os
@@ -147,10 +147,12 @@ flowchart LR
     tune -->|"④ processed audio"| device
 ```
 
-The hidden filter nodes are denied to ordinary desktop clients, so they do not
-appear as selectable devices. The OS output selector, default-output behavior,
-per-application routing, mute, and volume therefore work as they did before
-PipeTune was installed.
+WirePlumber 0.5 hides the filter nodes from ordinary clients. WirePlumber 0.4
+keeps them readable because its stable Lua API cannot grant the link-only
+permission required to hide and link them safely, so client listings may also
+show internal `pipetune.filter.*` nodes. Keep the ordinary physical device
+selected. Default-output behavior, per-application routing, mute, and volume
+continue to use that physical output.
 
 PipeTune maintains one independent filter runtime per eligible local physical
 output. A new or reconnected output gets its own filter automatically. While a
@@ -312,8 +314,8 @@ journalctl --user -u pipetune.service
 ```
 
 If PipeTune stops unexpectedly, WirePlumber restores direct application routes
-as the hidden filter nodes disappear. The physical output and its volume remain
-unchanged.
+as the internal filter nodes disappear. The physical output and its volume
+remain unchanged.
 
 ---
 

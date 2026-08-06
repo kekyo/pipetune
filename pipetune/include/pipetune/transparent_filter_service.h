@@ -67,7 +67,7 @@ struct PipeWireFilterOutputStatus {
   std::string targetNodeName;
   /** User-facing physical sink description. */
   std::string targetDescription;
-  /** Hidden PipeTune main node.name. */
+  /** Internal PipeTune main node.name. */
   std::string filterNodeName;
   /** Filter activation or fail-open state. */
   PipeWireFilterOutputState state;
