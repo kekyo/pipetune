@@ -1,6 +1,6 @@
 # PipeTune
 
-Applies an EffeTune DSP preset to all audio in one Linux desktop session.
+Engine and User Interface for Applied EffeTune DSP on a Linux Desktop
 
 ![PipeTune](./images/pipetune-120.png)
 
@@ -18,7 +18,11 @@ Applies an EffeTune DSP preset to all audio in one Linux desktop session.
 
 PipeTune applies an [EffeTune](https://github.com/Frieve-A/effetune) DSP preset
 to all audio in one Linux desktop session.
-WirePlumber inserts PipeTune as a transparent filter between the mixed desktop
+
+EffeTune DSP performs computations using fully natively compiled binaries.
+On each platform, you can select native SIMD operations.
+
+WirePlumber (PipeWire orchestrator) inserts PipeTune as a transparent filter between the mixed desktop
 playback stream and the normal PipeWire output path. A GTK 3 control
 application remains available through the desktop system tray.
 
@@ -46,7 +50,7 @@ PulseAudio session is not supported.
 Prebuilt Debian packages are published for:
 
 | Distribution | Release | Architectures |
-| --- | --- | --- |
+| :--- | :--- | :--- |
 | Debian | bookworm | amd64, i386, arm64, armhf |
 | Debian | trixie | amd64, i386, arm64, armhf, riscv64 |
 | Ubuntu | 24.04 | amd64, arm64 |

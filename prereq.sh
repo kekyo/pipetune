@@ -39,6 +39,7 @@ gettext
 hicolor-icon-theme
 libgtk-3-dev
 libpipewire-0.3-dev
+libsamplerate0-dev
 nodejs
 pipewire
 pkg-config

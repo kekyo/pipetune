@@ -233,6 +233,8 @@ pkg-config --exists gtk+-3.0 ||
 	fail 'Missing required pkg-config module: gtk+-3.0'
 pkg-config --exists libpipewire-0.3 ||
 	fail 'Missing required pkg-config module: libpipewire-0.3'
+pkg-config --exists samplerate ||
+	fail 'Missing required pkg-config module: samplerate'
 
 cmake \
 	-S . \

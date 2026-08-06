@@ -1,6 +1,6 @@
 # PipeTune
 
-Linuxのデスクトップセッションの音声に、EffeTuneで構築したDSPプリセットを適用
+EffeTune DSPをLinuxデスクトップに適用するエンジンとユーザーインターフェイス
 
 ![PipeTune](./images/pipetune-120.png)
 
@@ -16,8 +16,13 @@ Linuxのデスクトップセッションの音声に、EffeTuneで構築したD
 PipeTuneは、Linuxのデスクトップセッションの音声に
 [EffeTune](https://github.com/Frieve-A/effetune) で構築したDSPプリセットを適用します。
 
-WirePlumberが、アプリケーション音声をミックスした後の通常の再生経路へ
-PipeTuneを透過フィルタとして挿入します。また、デスクトップのシステムトレイに
+WirePlumber (PipeWireオーケストレーター) が、アプリケーション音声をミックスした後の通常の再生経路へ
+PipeTuneを透過フィルタとして挿入します。
+
+EffeTune DSPは完全ネイティブコンパイルされたバイナリで計算を行います。
+各プラットフォームで、ネイティブSIMD演算を選択出来ます。
+
+また、デスクトップのシステムトレイに
 常駐するGTK 3コントロールアプリケーションを提供します。
 
 ![PipeTune UI](./images/pipetune-ui.png)
@@ -43,7 +48,7 @@ systemdユーザーサービスが必要です。WirePlumber 0.4と0.5に対応�
 ビルド済みDebianパッケージは、次の環境向けに公開しています。
 
 | ディストリビューション | リリース | アーキテクチャ |
-| --- | --- | --- |
+| :--- | :--- | :--- |
 | Debian | bookworm | amd64, i386, arm64, armhf |
 | Debian | trixie | amd64, i386, arm64, armhf, riscv64 |
 | Ubuntu | 24.04 | amd64, arm64 |

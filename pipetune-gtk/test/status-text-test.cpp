@@ -110,7 +110,8 @@ static bool testRuntimeText() {
   auto state = activeState();
   state.dspTiming.hasAverage = true;
   state.dspTiming.nanosecondsPerFrame = 1000.0;
-  state.runtime.inputSampleRate = 200000;
+  state.runtime.inputSampleRate = 48000;
+  state.runtime.dspSampleRate = 200000;
   state.runtime.overrunFrames = 4;
   state.runtime.underrunFrames = 5;
   state.runtime.processingErrors = 6;

@@ -63,13 +63,13 @@ static std::string dspProcessingTimeText(
   const auto processingTime =
       fixedDecimal(state.dspTiming.nanosecondsPerFrame / 1000.0, 2) +
       " µs/frame";
-  if (state.runtime.inputSampleRate == 0) {
+  if (state.runtime.dspSampleRate == 0) {
     return formatUiMessage(localizedMessage(
         "{0}  •  Load —", {processingTime}));
   }
   const auto frameBudgetNanoseconds =
       kNanosecondsPerSecond /
-      static_cast<double>(state.runtime.inputSampleRate);
+      static_cast<double>(state.runtime.dspSampleRate);
   const auto loadPercentage =
       state.dspTiming.nanosecondsPerFrame / frameBudgetNanoseconds * 100.0;
   return formatUiMessage(localizedMessage(

@@ -173,12 +173,12 @@ static StatusItem dspLoadItem(const ApplicationState &state) {
       !state.hasRuntimeStatus || !state.dspTiming.hasAverage ||
       !std::isfinite(state.dspTiming.nanosecondsPerFrame) ||
       state.dspTiming.nanosecondsPerFrame < 0.0 ||
-      state.runtime.inputSampleRate == 0) {
+      state.runtime.dspSampleRate == 0) {
     return textItem("dsp.load", translate("Load"), "—");
   }
   const auto frameBudget =
       kNanosecondsPerSecond /
-      static_cast<double>(state.runtime.inputSampleRate);
+      static_cast<double>(state.runtime.dspSampleRate);
   const auto load =
       state.dspTiming.nanosecondsPerFrame / frameBudget * 100.0;
   return numericLevelItem(

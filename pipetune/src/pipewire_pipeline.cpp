@@ -8,6 +8,7 @@
 #include "pipewire_buffer_io.h"
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
+#include "sample_rate_converter.h"
 
 #include <pipewire/pipewire.h>
 #include <spa/buffer/buffer.h>
@@ -85,15 +86,23 @@ struct PipeWireRuntime {
   PipeWireRunMode mode;
   PlanarAudioRing ring;
   AudioTransitionSilencer outputTransitionSilencer;
+  PlanarSampleRateConverter inputRateConverter;
+  PlanarSampleRateConverter outputRateConverter;
   std::vector<float> inputScratch;
+  std::vector<float> dspScratch;
+  std::vector<float> convertedScratch;
   std::vector<float> outputScratch;
   std::atomic<std::uint64_t> processingErrors;
   InputTelemetry inputTelemetry;
+  std::atomic<bool> rateBridgeReady;
   std::atomic<bool> inputFormatNegotiated;
   std::atomic<std::uint32_t> dspSampleRate;
   std::atomic<std::uint32_t> inputStreamSampleRate;
   std::atomic<std::uint32_t> outputStreamSampleRate;
   std::atomic<std::uint32_t> graphSampleRate;
+  std::uint32_t rateBridgeStreamRate;
+  std::uint32_t rateBridgeDspRate;
+  bool silenceNextRateBridge;
   std::uint64_t processedInputFrames;
   ProcessingMode processingMode;
   std::string activePreset;
@@ -146,18 +155,29 @@ struct PipeWireRuntime {
         mode(runtimeMode),
         ring(runtimeOptions.channelCount, runtimeOptions.ringCapacityFrames),
         outputTransitionSilencer(0),
+        inputRateConverter(runtimeOptions.channelCount,
+                           runtimeOptions.maxFrames),
+        outputRateConverter(runtimeOptions.channelCount,
+                            runtimeOptions.maxFrames),
         inputScratch(static_cast<std::size_t>(runtimeOptions.channelCount) *
                          runtimeOptions.maxFrames,
                      0.0F),
+        dspScratch(static_cast<std::size_t>(runtimeOptions.channelCount) *
+                       runtimeOptions.maxFrames,
+                   0.0F),
+        convertedScratch(
+            static_cast<std::size_t>(runtimeOptions.channelCount) *
+                runtimeOptions.maxFrames,
+            0.0F),
         outputScratch(static_cast<std::size_t>(runtimeOptions.channelCount) *
                           runtimeOptions.maxFrames,
                       0.0F),
         processingErrors(0), inputTelemetry(),
-        inputFormatNegotiated(false),
+        rateBridgeReady(false), inputFormatNegotiated(false),
         dspSampleRate(runtimeOptions.dspSampleRate),
         inputStreamSampleRate(0), outputStreamSampleRate(0),
-        graphSampleRate(0),
-        processedInputFrames(0),
+        graphSampleRate(0), rateBridgeStreamRate(0), rateBridgeDspRate(0),
+        silenceNextRateBridge(false), processedInputFrames(0),
         processingMode(runtimeOptions.initialPresetPath.empty()
                            ? ProcessingMode::bypass
                            : ProcessingMode::preset),
@@ -331,7 +351,15 @@ static bool setInputAlwaysProcess(PipeWireRuntime &runtime, bool enabled) {
 static void finishReadinessCheck(PipeWireRuntime &runtime) {
   if (!runtime.inputReady || !runtime.outputReady ||
       !runtime.inputFormatReady || !runtime.outputFormatReady ||
-      !runtime.inputFormatNegotiated.load(std::memory_order_acquire)) {
+      !runtime.inputFormatNegotiated.load(std::memory_order_acquire) ||
+      !runtime.rateBridgeReady.load(std::memory_order_acquire)) {
+    return;
+  }
+  const auto inputRate =
+      runtime.inputStreamSampleRate.load(std::memory_order_acquire);
+  const auto outputRate =
+      runtime.outputStreamSampleRate.load(std::memory_order_acquire);
+  if (inputRate == 0 || inputRate != outputRate) {
     return;
   }
   if (!setInputAlwaysProcess(runtime, false)) {
@@ -516,19 +544,10 @@ static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
     auto lock = std::scoped_lock(runtime.rateStateMutex);
     policy = runtime.configuredRatePolicy;
   }
-  const auto targetDspRate =
-      dspSampleRateForPolicy(policy, negotiatedRate);
-  if (policy.mode == SampleRateMode::fixed &&
-      negotiatedRate != targetDspRate) {
-    const auto error =
-        "PipeWire negotiated " + std::to_string(negotiatedRate) +
-        " Hz for fixed " + std::to_string(targetDspRate) + " Hz PCM";
-    {
-      auto lock = std::scoped_lock(runtime.rateStateMutex);
-      runtime.rateTransitioning = false;
-      runtime.rateError = error;
-    }
-    failRuntime(runtime, error);
+  const auto bridgeRates =
+      resolveSampleRateBridgeRates(policy, negotiatedRate);
+  if (bridgeRates.streamSampleRate == 0 || bridgeRates.dspSampleRate == 0) {
+    failRuntime(runtime, "cannot resolve PipeWire and DSP sample rates");
     return false;
   }
   const auto otherStreamRate =
@@ -541,11 +560,11 @@ static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
   }
   const auto currentRate =
       runtime.dspSampleRate.load(std::memory_order_acquire);
-  if (currentRate != targetDspRate) {
+  if (currentRate != bridgeRates.dspSampleRate) {
     auto pipelineLock =
         std::unique_lock<std::mutex>(runtime.pipelineMutationMutex);
     auto rebuilt = runtime.pipeline.rebuildActive(
-        {.sampleRate = static_cast<float>(targetDspRate),
+        {.sampleRate = static_cast<float>(bridgeRates.dspSampleRate),
          .maxChannels = runtime.options.channelCount,
          .maxFrames = runtime.options.maxFrames});
     if (rebuilt.pipeline == nullptr) {
@@ -559,7 +578,7 @@ static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
       return false;
     }
     runtime.pipeline.replace(std::move(rebuilt.pipeline));
-    runtime.dspSampleRate.store(targetDspRate,
+    runtime.dspSampleRate.store(bridgeRates.dspSampleRate,
                                 std::memory_order_release);
     runtime.processedInputFrames = 0;
   }
@@ -569,6 +588,34 @@ static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
   } else {
     runtime.outputStreamSampleRate.store(negotiatedRate,
                                          std::memory_order_release);
+  }
+  if (input) {
+    runtime.rateBridgeReady.store(false, std::memory_order_release);
+    const auto inputError = runtime.inputRateConverter.configure(
+        bridgeRates.streamSampleRate, bridgeRates.dspSampleRate);
+    const auto outputError = runtime.outputRateConverter.configure(
+        bridgeRates.dspSampleRate, bridgeRates.streamSampleRate);
+    if (inputError != 0 || outputError != 0) {
+      failRuntime(runtime,
+                  "cannot configure PipeWire-to-DSP sample-rate conversion");
+      return false;
+    }
+    const auto bridgeChanged =
+        runtime.rateBridgeStreamRate != 0 &&
+        (runtime.rateBridgeStreamRate != bridgeRates.streamSampleRate ||
+         runtime.rateBridgeDspRate != bridgeRates.dspSampleRate);
+    if (bridgeChanged || runtime.silenceNextRateBridge) {
+      static_cast<void>(runtime.ring.discardQueuedFrames());
+      runtime.outputTransitionSilencer.start(
+          pipelineTransitionSilenceFrames(bridgeRates.streamSampleRate));
+    }
+    runtime.rateBridgeStreamRate = bridgeRates.streamSampleRate;
+    runtime.rateBridgeDspRate = bridgeRates.dspSampleRate;
+    runtime.silenceNextRateBridge = false;
+    runtime.rateBridgeReady.store(true, std::memory_order_release);
+  } else if (runtime.rateBridgeStreamRate == bridgeRates.streamSampleRate &&
+             runtime.rateBridgeDspRate == bridgeRates.dspSampleRate) {
+    runtime.rateBridgeReady.store(true, std::memory_order_release);
   }
   return true;
 }
@@ -581,6 +628,7 @@ static void streamParameterChanged(void *data, std::uint32_t id,
   auto &context = *static_cast<StreamCallbackContext *>(data);
   auto &runtime = *context.runtime;
   if (parameter == nullptr) {
+    runtime.rateBridgeReady.store(false, std::memory_order_release);
     if (context.input) {
       runtime.inputFormatReady = false;
       runtime.inputStreamSampleRate.store(0, std::memory_order_release);
@@ -674,6 +722,76 @@ static void updateGraphSampleRate(PipeWireRuntime &runtime,
   }
 }
 
+static bool convertProcessedDspFrames(
+    PipeWireRuntime &runtime, std::span<const float> dspSamples,
+    std::uint32_t dspFrameCount, std::uint64_t generation) noexcept {
+  auto dspFrameOffset = std::uint32_t{0};
+  while (dspFrameOffset < dspFrameCount) {
+    auto convertedScratch = std::span<float>(runtime.convertedScratch);
+    const auto converted = runtime.outputRateConverter.process(
+        dspSamples, dspFrameCount, dspFrameOffset,
+        dspFrameCount - dspFrameOffset, convertedScratch,
+        runtime.options.maxFrames);
+    if (converted.error != 0 ||
+        (converted.inputFramesUsed == 0 &&
+         converted.outputFramesGenerated == 0)) {
+      return false;
+    }
+    dspFrameOffset += converted.inputFramesUsed;
+    if (converted.outputFramesGenerated == 0) {
+      continue;
+    }
+    convertedScratch = convertedScratch.first(
+        static_cast<std::size_t>(runtime.options.channelCount) *
+        converted.outputFramesGenerated);
+    runtime.ring.write(convertedScratch,
+                       converted.outputFramesGenerated, generation);
+  }
+  return true;
+}
+
+static bool processStreamInputBlock(PipeWireRuntime &runtime,
+                                    std::span<const float> streamSamples,
+                                    std::uint32_t streamFrameCount) noexcept {
+  auto inputFrameOffset = std::uint32_t{0};
+  while (inputFrameOffset < streamFrameCount) {
+    auto dspScratch = std::span<float>(runtime.dspScratch);
+    const auto converted = runtime.inputRateConverter.process(
+        streamSamples, streamFrameCount, inputFrameOffset,
+        streamFrameCount - inputFrameOffset, dspScratch,
+        runtime.options.maxFrames);
+    if (converted.error != 0 ||
+        (converted.inputFramesUsed == 0 &&
+         converted.outputFramesGenerated == 0)) {
+      return false;
+    }
+    inputFrameOffset += converted.inputFramesUsed;
+    const auto dspFrameCount = converted.outputFramesGenerated;
+    if (dspFrameCount == 0) {
+      continue;
+    }
+    dspScratch = dspScratch.first(
+        static_cast<std::size_t>(runtime.options.channelCount) *
+        dspFrameCount);
+    const auto sampleRate =
+        runtime.dspSampleRate.load(std::memory_order_relaxed);
+    const auto timeSeconds =
+        static_cast<double>(runtime.processedInputFrames) / sampleRate;
+    const auto processed = runtime.pipeline.processWithGeneration(
+        dspScratch, runtime.options.channelCount, dspFrameCount,
+        timeSeconds);
+    if (processed.status != ProcessStatus::ok) {
+      runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
+    }
+    runtime.processedInputFrames += dspFrameCount;
+    if (!convertProcessedDspFrames(runtime, dspScratch, dspFrameCount,
+                                   processed.generation)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static void inputProcess(void *data) {
   auto &runtime =
       *static_cast<StreamCallbackContext *>(data)->runtime;
@@ -697,6 +815,13 @@ static void inputProcess(void *data) {
                       currentMonotonicNanoseconds());
   }
 
+  if (!runtime.rateBridgeReady.load(std::memory_order_acquire)) {
+    pipeWireBuffer->size = frameCount;
+    retirePipeWireCaptureBuffer(buffer);
+    pw_stream_queue_buffer(runtime.inputStream, pipeWireBuffer);
+    return;
+  }
+
   auto sourceFrame = std::uint32_t{0};
   while (sourceFrame < frameCount) {
     const auto blockFrames =
@@ -711,17 +836,9 @@ static void inputProcess(void *data) {
           static_cast<std::size_t>(channel) * blockFrames, blockFrames);
       copyInputPlane(buffer.datas[channel], sourceFrame, channelScratch);
     }
-    const auto sampleRate =
-        runtime.dspSampleRate.load(std::memory_order_relaxed);
-    const auto timeSeconds =
-        static_cast<double>(runtime.processedInputFrames) / sampleRate;
-    const auto processResult = runtime.pipeline.processWithGeneration(
-        scratch, runtime.options.channelCount, blockFrames, timeSeconds);
-    if (processResult.status != ProcessStatus::ok) {
+    if (!processStreamInputBlock(runtime, scratch, blockFrames)) {
       runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
     }
-    runtime.ring.write(scratch, blockFrames, processResult.generation);
-    runtime.processedInputFrames += blockFrames;
     sourceFrame += blockFrames;
   }
 
@@ -802,7 +919,8 @@ static void outputProcess(void *data) {
         scratch, runtime.options.channelCount, blockFrames,
         pipelineGeneration,
         pipelineTransitionSilenceFrames(
-            runtime.dspSampleRate.load(std::memory_order_relaxed)));
+            runtime.outputStreamSampleRate.load(
+                std::memory_order_relaxed)));
     for (auto channel = std::uint32_t{0};
          channel < runtime.options.channelCount; ++channel) {
       const auto source = scratch.subspan(
@@ -896,6 +1014,7 @@ static std::string connectStream(PipeWireRuntime &runtime, pw_stream *stream,
 }
 
 static void destroyAudioStreams(PipeWireRuntime &runtime) {
+  runtime.rateBridgeReady.store(false, std::memory_order_release);
   if (runtime.outputStream != nullptr) {
     if (runtime.outputListenerInstalled) {
       spa_hook_remove(&runtime.outputListener);
@@ -1015,6 +1134,8 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
       currentUnixMilliseconds());
   const auto inputNegotiated =
       runtime.inputFormatNegotiated.load(std::memory_order_acquire);
+  const auto inputSampleRate =
+      runtime.inputStreamSampleRate.load(std::memory_order_acquire);
   const auto dspPerformance = runtime.pipeline.performanceCounters();
   auto ratePolicy = SampleRatePolicy{};
   auto rateTransitioning = false;
@@ -1083,7 +1204,7 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .dspProcessedFrames = dspPerformance.processedFrames,
           .dspProcessingNanoseconds = dspPerformance.processingNanoseconds,
           .inputSampleFormat = inputNegotiated ? "F32P" : "",
-          .inputSampleRate = inputNegotiated ? sampleRate : 0,
+          .inputSampleRate = inputNegotiated ? inputSampleRate : 0,
           .inputChannelCount =
               inputNegotiated ? runtime.options.channelCount : 0,
           .inputFramesReceived = input.framesReceived,
@@ -1360,9 +1481,7 @@ static void rateChangeRequested(void *data, std::uint64_t) {
 
   destroyAudioStreams(runtime);
   static_cast<void>(runtime.ring.discardQueuedFrames());
-  runtime.outputTransitionSilencer.start(
-      pipelineTransitionSilenceFrames(
-          runtime.dspSampleRate.load(std::memory_order_acquire)));
+  runtime.silenceNextRateBridge = true;
   const auto streamError = createAudioStreams(runtime);
   if (!streamError.empty()) {
     {

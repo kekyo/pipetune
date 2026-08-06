@@ -93,6 +93,7 @@ endif()
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3)
+pkg_check_modules(SAMPLERATE REQUIRED IMPORTED_TARGET samplerate)
 
 find_program(PIPETUNE_NODE_EXECUTABLE node REQUIRED)
 find_program(PIPETUNE_SYSTEMCTL_EXECUTABLE systemctl REQUIRED)
@@ -209,13 +210,14 @@ add_library(
   src/pipewire_pipeline.cpp
   src/process_runner.cpp
   src/rate_command.cpp
+  src/sample_rate_converter.cpp
   src/user_setup.cpp
   src/wireplumber_04_compat.cpp)
 target_include_directories(pipetune_pipewire PUBLIC include PRIVATE src)
 target_link_libraries(
   pipetune_pipewire
   PUBLIC pipetune_core pipetune_control
-  PRIVATE PkgConfig::PIPEWIRE Threads::Threads)
+  PRIVATE PkgConfig::PIPEWIRE PkgConfig::SAMPLERATE Threads::Threads)
 if(MSVC)
   target_compile_options(pipetune_pipewire PRIVATE /W4 /WX)
 else()
@@ -728,6 +730,25 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_pipewire_buffer_io_tests
     COMMAND pipetune_pipewire_buffer_io_tests)
+
+  add_executable(
+    pipetune_sample_rate_converter_tests
+    test/sample_rate_converter_test.cpp)
+  target_include_directories(
+    pipetune_sample_rate_converter_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_sample_rate_converter_tests PRIVATE pipetune_pipewire)
+  if(MSVC)
+    target_compile_options(
+      pipetune_sample_rate_converter_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_sample_rate_converter_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_sample_rate_converter_tests
+    COMMAND pipetune_sample_rate_converter_tests)
 
   add_executable(
     pipetune_dsp_pipeline_slot_tests

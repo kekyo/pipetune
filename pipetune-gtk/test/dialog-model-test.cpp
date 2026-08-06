@@ -288,7 +288,7 @@ static bool testStructuredStatusModel() {
   const auto *processingTime =
       findItem(*performance, "dsp.processing-time");
   if (!check(load != nullptr && load->numericValue.has_value() &&
-                 *load->numericValue == 20.0 && load->unit == "%" &&
+                 *load->numericValue == 19.2 && load->unit == "%" &&
                  load->minimum == 0.0 && load->maximum == 100.0 &&
                  load->displayKind ==
                      pipetune_gtk::StatusDisplayKind::levelBar,
@@ -319,6 +319,7 @@ static bool testStatusLevelPresentation() {
   state.connection = pipetune_gtk::ControlConnectionState::connected;
   state.hasRuntimeStatus = true;
   state.runtime.inputSampleRate = 200000;
+  state.runtime.dspSampleRate = 200000;
   state.dspTiming.hasAverage = true;
   state.dspTiming.nanosecondsPerFrame = 1000.0;
   const auto sections = pipetune_gtk::buildStatusSections(
