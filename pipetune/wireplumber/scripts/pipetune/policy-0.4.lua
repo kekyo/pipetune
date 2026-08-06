@@ -396,7 +396,7 @@ local function hide_node_from_client(client, node_id, owner_id)
       tostring(client["bound-id"]) == tostring(owner_id) then
     return
   end
-  client:update_permissions { [node_id] = "-" }
+  client:update_permissions { [node_id] = "l" }
 end
 
 local clients_om = ObjectManager { Interest { type = "client" } }
