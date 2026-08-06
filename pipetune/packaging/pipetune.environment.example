@@ -2,13 +2,9 @@
 # To select a preset, use an absolute path and quote paths containing spaces.
 # PIPETUNE_PRESET=/absolute/path/to/preset.effetune_preset
 
-# Leave PIPETUNE_TARGET unset to follow the physical system default.
-# Use a stable PipeWire node.name; PipeTune falls back while it is unavailable.
-# PIPETUNE_TARGET=alsa_output.usb-example
-
-# Leave both rate assignments unset for the Max-and-suggest default.
-# PIPETUNE_RATE accepts max, 44100, 48000, 96000, 192000, or 384000.
-# PIPETUNE_RATE=max
+# Leave both rate assignments unset for the Automatic-and-suggest default.
+# PIPETUNE_RATE accepts automatic, 44100, 48000, 96000, 192000, or 384000.
+# PIPETUNE_RATE=automatic
 # PIPETUNE_RATE_ENFORCEMENT=suggest
 
 # Scalar is the compatibility default. SIMD requires a supported CPU and a

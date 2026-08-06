@@ -7,8 +7,8 @@ desktop system tray.
 ## Controls and status
 
 The main window uses a persistent two-pane layout. The left pane remains
-visible while the right pane switches between **Processing**, **Output**,
-**Rate**, **DSP**, and **Advanced** settings. The default window size is
+visible while the right pane switches between Processing, Rate, DSP, and
+Advanced settings. The default window size is
 1080 × 680 pixels and its supported minimum is 900 × 560 pixels. Both panes
 scroll independently at compact sizes.
 
@@ -18,14 +18,13 @@ unrelated values into one line. Its always-expanded sections are:
 - **System**;
 - **Live Configuration**;
 - **Saved Configuration**;
-- **Routing**;
 - **Input / Rates**;
 - **DSP / Performance**; and
 - **Errors**.
 
-Together they display the daemon connection and virtual-sink state, live and
-saved processing choices, routing decisions, input format and rates, DSP
-backend, processing time and load, error counters, and diagnostics. Long values
+Together they display the daemon connection, live and saved processing
+choices, input format and rates, DSP backend, processing time and load, error
+counters, and diagnostics. Long values
 are ellipsized in the row and remain available in a tooltip. **Load** is a
 horizontal level meter below the connection summary,
 outside the scrolling status rows. Its left edge matches the heading and
@@ -38,12 +37,6 @@ Numeric status items retain their value, unit, and range separately from their
 text presentation, allowing other bounded measurements to adopt the same
 component later without changing status acquisition.
 
-The physical-output chooser is a menu popover rather than a plain combo box.
-It shows a short, disambiguated device description as the primary label, the
-PipeWire node name as ellipsized secondary text, and availability or connector
-badges where applicable. The full description and node name are exposed
-through the tooltip and accessible description.
-
 ## Live preview and persistence
 
 The window treats all settings as one transaction. Opening it captures the
@@ -52,10 +45,9 @@ control immediately previews that choice in PipeTune; no per-setting apply
 button remains. When several fields differ, requests are serialized in this
 dependency order:
 
-1. output;
-2. sample-rate policy;
-3. DSP backend; and
-4. processing mode or preset.
+1. sample-rate policy;
+2. DSP backend; and
+3. processing mode or preset.
 
 The global **Apply** button becomes available only after the daemon has
 confirmed every requested live change. It atomically writes the complete
@@ -133,32 +125,21 @@ backend change rebuilds and atomically replaces the active preset pipeline.
 DSP histories reset during replacement, and a discontinuity or brief silence
 is allowed.
 
-## Output and sample rate
+## Sample rate
 
-The **Preferred physical output** menu starts with **System default**, followed
-by the physical outputs enumerated by the daemon. If a persisted preference is
-currently disconnected, an unavailable row keeps that preference visible.
-The routing status shows whether the daemon is using the preference, the
-system default, a fallback, or no device.
+The DSP sample rate drop-down contains Automatic followed by 44.1, 48, 96,
+192, and 384 kHz. Automatic leaves both filter nodes negotiable and follows the
+rate resolved by the PipeWire graph. A fixed selection requests that rate for
+both filter nodes and the EffeTune engine.
 
-The **DSP rate** drop-down contains **Max** followed by 44.1, 48, 96, 192, and
-384 kHz. Each fixed row is marked **supported**, **unsupported; PipeWire will
-resample**, or **support unknown** using the selected output's capabilities
-reported by the daemon. The GUI does not probe the device or resolve rates.
+The PipeWire enforcement drop-down selects Suggest or Force. `node.rate`
+remains a PipeWire request rather than a guaranteed graph rate. Force applies
+only while PipeTune's filter output is active and does not rewrite the global
+PipeWire clock configuration.
 
-**Max** asks the daemon to use the highest selectable rate supported by the
-selected output. A fixed selection remains the input and EffeTune DSP rate
-even when unsupported; the daemon chooses a compatible output rate and
-PipeWire resamples between them. The **PipeWire request** drop-down selects
-**Suggest** or **Force**. `node.rate` remains a PipeWire request rather than a
-guaranteed graph rate. Force applies only while PipeTune's playback node is
-active and does not rewrite the global PipeWire clock configuration.
-
-The **Effective rates** field passively displays the daemon's final input/DSP
-rate, selected output rate, and active physical rate. An idle device reports
-`idle`; an R/H difference is labeled **PipeWire resampling**. During a live
-transition the field and connection status say that switching is in progress,
-and the PCM rate controls are disabled.
+The persistent status pane passively displays the daemon's input, DSP, and
+negotiated graph rates. During a live transition the connection status says
+that switching is in progress, and the PCM rate controls are disabled.
 
 The GUI writes the complete applied snapshot to:
 
@@ -169,19 +150,18 @@ $XDG_CONFIG_HOME/pipetune/environment
 When `XDG_CONFIG_HOME` is unset, this resolves to
 `~/.config/pipetune/environment`. The directory is mode `0700`, the file is
 mode `0600`, and replacement is atomic. A `PIPETUNE_PRESET` assignment selects
-a preset; its absence starts the daemon in pass-through mode. A
-`PIPETUNE_TARGET` assignment stores a preferred PipeWire `node.name`; its
-absence follows the physical system default. `PIPETUNE_RATE` stores `max` or
-one of the five fixed rates, and `PIPETUNE_RATE_ENFORCEMENT` stores `suggest`
+a preset; its absence starts the daemon in pass-through mode. `PIPETUNE_RATE`
+stores `automatic` or one of the five fixed rates, and
+`PIPETUNE_RATE_ENFORCEMENT` stores `suggest`
 or `force`. `PIPETUNE_DSP_BACKEND` stores `scalar` or `simd`, and
 `PIPETUNE_DSP_SIMD_VARIANT` stores `auto`, `baseline`, `x86-64-v3`,
-`x86-64-v4`, or `sve`. Missing rate assignments use Max-and-suggest, a missing
-backend assignment uses Scalar, and a missing SIMD variant uses Auto. Apply
+`x86-64-v4`, or `sve`. Missing rate assignments use Automatic-and-suggest, a
+missing backend assignment uses Scalar, and a missing SIMD variant uses Auto. Apply
 replaces this file atomically while retaining restrictive directory and file
 permissions.
 
-The Advanced page's **Restore Defaults** selects bypass, System default,
-Max with Suggest, and Scalar with an Auto SIMD preference. It does not restart
+The Advanced page's Restore Defaults selects bypass, Automatic with Suggest,
+and Scalar with an Auto SIMD preference. It does not restart
 the service and does not write the environment file until Apply succeeds.
 
 ## Status subscription
@@ -223,8 +203,7 @@ builds the production GTK executable with stable test-only accessibility IDs,
 starts a deterministic fake control daemon that speaks the production control
 protocol, and runs the dialog under Xvfb. The scenarios verify:
 
-- the persistent status pane, all five settings pages, minimum geometry, and
-  compact output-device presentation;
+- the persistent status pane, all four settings pages, and minimum geometry;
 - the DSP Load meter's accessible range, measured value, responsive
   right-aligned width, rendered fill, and hue;
 - immediate live changes followed by one dialog-wide atomic Apply;

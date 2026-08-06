@@ -16,8 +16,9 @@ Linuxのデスクトップセッションの音声に、EffeTuneで構築したD
 PipeTuneは、Linuxのデスクトップセッションの音声に
 [EffeTune](https://github.com/Frieve-A/effetune) で構築したDSPプリセットを適用します。
 
-選択した音声出力デバイスの手前に、仮想PipeWireシンクを挿入して実現します。
-また、デスクトップのシステムトレイに常駐するGTK 3コントロールアプリケーションを提供します。
+WirePlumberが、アプリケーション音声をミックスした後の通常の再生経路へ
+PipeTuneを透過フィルタとして挿入します。また、デスクトップのシステムトレイに
+常駐するGTK 3コントロールアプリケーションを提供します。
 
 ![PipeTune UI](./images/pipetune-ui.png)
 
@@ -26,15 +27,17 @@ PipeTuneは、Linuxのデスクトップセッションの音声に
 - `.effetune_preset`拡張子の標準形式および旧形式のEffeTuneプリセットファイルを
   読み込みます。
 - 有効なEffeTuneネイティブDSPパイプラインをデスクトップ音声へ適用します。
-- CLIまたはGTKアプリケーションから物理出力を選択できます。
-- 選択した出力の最大対応周波数、または44.1、48、96、192、384 kHzの指定周波数でDSPを計算します。
+- 出力デバイスと全体音量の選択は、通常のPipeWireとWirePlumberの管理に保ちます。
+- PipeWireグラフとの自動交渉、または44.1、48、96、192、384 kHzの指定周波数で
+  DSPを計算します。
 - 互換性重視のScalar、SIMD自動選択、CPU検証済みの命令セット別実装を選択できます。
 - CLIコマンド1つで、ユーザーごとの設定または解除を行えます。
 - GTKアプリケーションに実行状態を表示します。
 
 ### 対応システム
 
-PipeTuneには、PipeWireデスクトップセッションとsystemdユーザーサービスが必要です。
+PipeTuneには、WirePlumberが管理するPipeWireデスクトップセッションと
+systemdユーザーサービスが必要です。WirePlumber 0.4と0.5に対応します。
 単独のPulseAudioセッションには対応していません。
 
 ビルド済みDebianパッケージは、次の環境向けに公開しています。
@@ -85,7 +88,10 @@ PipeTuneはユーザーレベルデーモンとして動作するため、パッ
 pipetune setup
 ```
 
-`setup` はsystemdユーザーサービスを再読み込み、有効化、再起動し、アクティブ状態を確認してからPipeTune GTKアプリケーションをシステムトレイに常駐させます。
+`setup`はsystemdユーザーサービスを再読み込み、有効化、再起動し、アクティブ状態を
+確認してからPipeTune GTKアプリケーションをシステムトレイに常駐させます。
+同時にWirePlumber 0.4互換ファイルを配置します。WirePlumber 0.5では、PipeTuneが
+公開するsmart filterプロパティを直接使用します。
 
 ![System tray](./images/system-tray.png)
 
@@ -94,7 +100,7 @@ pipetune setup
 ## PipeTune設定ウインドウ
 
 PipeTune設定ウインドウは、左側のセクション分けされたPipeTuneステータスを常に表示し、
-右側で**Processing**、**Output**、**Rate**、**DSP**、**Advanced**の設定を
+右側でProcessing、Rate、DSP、Advancedの設定を
 切り替えます。
 
 ![PipeTune UI Window](./images/pipetune-ui-window.png)
@@ -114,56 +120,37 @@ PipeTune切断中は設定が読み取り専用になり、再接続後に処理
 
 ## 音声ストリームとPipeTune
 
-PipeTuneは、ユーザーセッションの仮想的な出力デバイスとなり、EffeTuneのプリセット定義によってDSP計算を行って出力します。
-これを図で簡単に示すと、以下のような流れとなります:
+WirePlumberはPipeTuneを通常の再生経路へ挿入します。PipeWireが各アプリケーションの
+音声を先にミックスし、PipeTuneがそのストリームを処理した後に、通常の全体音量と
+出力デバイス選択が適用されます。
 
 ```mermaid
 flowchart LR
-    app["1. アプリケーション<br/>ブラウザー・プレーヤー・ゲーム"]
-    os["2. OSの音声設定<br/>（PipeWireの既定出力）"]
-    tune["3. PipeTune<br/>(EffeTune DSP)"]
-    device["4. 音声デバイス<br/>DAC・スピーカー・ヘッドホン"]
+    apps["アプリケーション<br/>個別ストリーム音量"]
+    mix["PipeWireミックス"]
+    tune["PipeTuneフィルタ<br/>EffeTune DSPまたはBypass"]
+    output["PipeWire出力<br/>全体音量と既定経路"]
+    device["選択された音声デバイス"]
 
-    app -->|"① 音声を送る"| os
-    os -->|"② PipeTuneに出力"| tune
-    tune -->|"③ 処理済み音声を出力"| device
+    apps --> mix
+    mix --> tune
+    tune --> output
+    output --> device
 ```
 
-- ②で音声ストリームをPipeTuneに出力する必要があります。
-  これは、OSの音声出力デバイスの設定ダイアログなどで指定して下さい:
-  ![Sound control panel](./images/control-panel.png)
-- 音声ストリームの③では、ユーザーが指定した音声デバイスが利用可能なら、そのデバイスへ出力します。
-  指定したデバイスが見つからない間（例えばUSBデバイスが抜けている）は、システム既定へ自動的にフォールバックし、
-  再接続されると指定デバイスへ自動復帰します。
+各アプリケーションの音量はミックス前に適用されます。BypassではEffeTuneを呼び出さず、
+ミックス済みPCMをそのまま後段へ渡します。フィルタの後では、デスクトップの全体音量と
+出力デバイス選択がPipeTuneを使用しない場合と同じように動作します。
 
-## PipeTuneからどのデバイスに出力するか
+## 全体音量と出力デバイス
 
-前節の③は、ユーザーが明示的にデバイスを指定できます。
+スピーカー、ヘッドホン、HDMIなどの出力先は、GNOME設定またはデスクトップ環境の
+通常のサウンド設定で選択します。同じ設定で、PipeTuneより後段の全体音量を調整します。
+PipeTuneは出力先を保存せず、PipeWireの既定デバイスも変更しないため、GTK画面とCLIに
+出力デバイス選択機能はありません。
 
-PipeTune設定ウインドウのOutputページにある**Preferred physical output**メニューから
-出力を選択できます。先頭の**System default**を選ぶと、明示的な指定を破棄します。
-デバイス行には短い説明と接続種別を表示し、完全なPipeWireノード名は補助テキストと
-ツールチップで確認できます。常時表示されるステータスには、実際の出力先と、
-指定デバイス・システム既定・フォールバックのどの理由で選択されたかを表示します。
-
-CLIでは同じ操作を次のコマンドで行えます。
-
-```sh
-pipetune output list
-pipetune output get
-pipetune output select
-pipetune output set alsa_output.example
-pipetune output clear
-```
-
-これらのコマンドを使うには、ユーザー用デーモンが動作している必要があります。
-`output select`は対話可能なターミナルに番号付きメニューを表示します。
-`output set`は安定したPipeWireの`node.name`を保存するため、一時的に切断されている
-デバイスも指定できます。`output clear`はその指定を破棄します。
-
-明示的な指定がなければ、物理的なシステム既定のデバイスへ出力します。
-音声出力が1台も存在しない場合もデーモンは終了せず、デバイスの接続を監視しますが、
-デバイスが現れるまで音声は再生されません。
+通常の既定デバイスが変更またはホットプラグされると、WirePlumberがフィルタ出力を
+再接続します。サウンド設定でPipeTuneデバイスを選ぶ操作は不要です。
 
 ## EffeTune DSPプリセット選択
 
@@ -190,36 +177,27 @@ pipetune bypass
 
 ## PCM周波数の選択
 
-PipeTune設定ウインドウの**DSP rate**と**PipeWire request**ドロップダウンから設定できます。
-**Max**は、選択した出力が対応する44.1、48、96、192、384 kHzのうち
-最高の周波数を使用します。各指定周波数の行には、その出力で対応・非対応・
-不明のいずれであるかを表示します。**Effective rates**には次を表示します。
+PipeTune設定ウインドウのDSP sample rateとPipeWire enforcementから設定できます。
+Automaticは、PipeWireグラフと交渉された周波数に追従します。固定値では、
+44.1、48、96、192、384 kHzのいずれかをフィルタの両ノードとEffeTuneエンジンへ
+要求します。状態表示には、実際のDSP周波数とグラフ周波数が表示されます。
 
-- 入力とEffeTune DSPの周波数
-- 選択されたPipeWire出力グラフの周波数
-- 動作中の物理デバイス周波数（アイドル時は`idle`）
-- PipeWireのリサンプリングが必要かどうか
-
-指定周波数は常にDSPの計算周波数となります。出力が対応していない場合は、
-その周波数以下で対応する最大周波数を出力側に選び、それもなければ
-デバイスの最小対応周波数を選びます。この間の変換はPipeWireが行います。
-
-**Suggest**は`node.rate`を提案として設定するため、PipeWireが異なるグラフ周波数を
-選ぶ場合があります。**Force**はさらに、PipeTuneの再生ノードが動作している間、
-その周波数を維持するようPipeWireへ要求します。どちらもPipeWire全体の
-グローバルクロック設定は変更しません。
+Suggestは`node.rate`を提案として設定するため、PipeWireが異なるグラフ周波数を
+選ぶ場合があります。Forceはさらに、フィルタ出力が動作している間、その固定周波数を
+維持するようPipeWireへ要求します。どちらもPipeWire全体のグローバルクロック設定は
+変更しません。
 
 CLIでは、同じ情報の表示と設定を次のコマンドで行えます。
 
 ```sh
 pipetune rate list
 pipetune rate get
-pipetune rate set max suggest
+pipetune rate set automatic
 pipetune rate set 192000 force
 ```
 
-`rate list`は、利用可能な各出力について5つの選択可能周波数への対応状況を表示します。
-`rate get`は、設定済みポリシーと最終周波数を表示します。
+`rate list`はAutomaticと5つの固定周波数を表示します。`rate get`は、設定済み
+ポリシーと交渉された周波数を表示します。
 デーモン接続中の`rate set`は直ちに切り替え、デーモンが成功を確定した後でのみ
 設定を保存します。デーモンが利用できない場合は、次回起動用として保存します。
 切り替え中はDSPとPipeWireストリームを再構築するため、短い無音区間が発生する
@@ -259,8 +237,7 @@ PipeTune設定ウインドウのAdvancedページにある**Restore Defaults**�
 ライブプレビューします。この時点では保存しません。
 
 - DSPは**Bypass**
-- 物理出力は**System default**
-- PCM周波数は**Max**、PipeWire要求は**Suggest**
+- PCM周波数はAutomatic、PipeWire要求はSuggest
 - ネイティブDSPバックエンドは**Scalar**、SIMD設定は**Auto**
 
 **Apply**で既定値を保存し、**Cancel**で以前のライブ設定へ戻せます。このGTK操作は
@@ -293,8 +270,8 @@ sudo apt remove pipetune
 ```
 
 `unsetup`はGTKアプリケーションを終了し、ユーザーサービスを無効化・停止し、
-既定の出力を物理出力へ戻します。また、GTKアプリケーションが自動起動しないよう
-ユーザー用の自動起動マスクを作成します。起動時のプリセット選択は保持されます。
+WirePlumber 0.4互換ファイルを削除します。また、GTKアプリケーションが自動起動しない
+ようユーザー用の自動起動マスクを作成します。起動時のプリセット選択は保持されます。
 PipeTuneのアプリケーション設定も削除する場合は、`pipetune unsetup --purge`を
 使用します。
 
@@ -303,7 +280,7 @@ PipeTune管理のバックアップとして保存します。後で`pipetune se
 そのバックアップを上書きせずに復元します。パッケージの削除だけでは、
 ユーザーごとの設定や自動起動オーバーライドは削除されません。
 
-## ログと復旧
+## ログ
 
 デーモンのログは次のコマンドで確認できます。
 
@@ -311,12 +288,8 @@ PipeTune管理のバックアップとして保存します。後で`pipetune se
 journalctl --user -u pipetune.service
 ```
 
-手動で起動したPipeTuneプロセスが、既定の出力を物理出力へ戻さないまま終了した場合は、
-次のコマンドで復旧します。
-
-```sh
-pipetune --restore-default
-```
+PipeTuneは既定の出力を所有しないため、停止またはクラッシュ後に出力デバイスを
+復旧する操作は不要です。通常の出力選択と音量ポリシーはWirePlumberが維持します。
 
 ---
 

@@ -18,8 +18,9 @@ Applies an EffeTune DSP preset to all audio in one Linux desktop session.
 
 PipeTune applies an [EffeTune](https://github.com/Frieve-A/effetune) DSP preset
 to all audio in one Linux desktop session.
-It inserts a virtual PipeWire sink in front of the selected physical output and includes a GTK 3 control
-application that remains available through the desktop system tray.
+WirePlumber inserts PipeTune as a transparent filter between the mixed desktop
+playback stream and the normal PipeWire output path. A GTK 3 control
+application remains available through the desktop system tray.
 
 ![PipeTune UI](./images/pipetune-ui.png)
 
@@ -28,16 +29,19 @@ application that remains available through the desktop system tray.
 - Loads canonical and legacy EffeTune preset files with the
   `.effetune_preset` extension.
 - Applies the enabled native EffeTune DSP pipeline to desktop audio.
-- Lets the user choose a physical output from the CLI or GTK application.
-- Runs the DSP at the selected output's maximum supported rate or at an explicit 44.1, 48, 96, 192, or 384 kHz rate.
+- Keeps desktop output-device and master-volume selection under ordinary
+  PipeWire and WirePlumber policy.
+- Follows the negotiated PipeWire graph rate or requests an explicit 44.1,
+  48, 96, 192, or 384 kHz rate.
 - Selects the scalar compatibility DSP backend, automatic SIMD dispatch, or a CPU-validated ISA tier from the CLI or GTK application.
 - Sets up or removes all per-user integration with one CLI command.
 - Displays runtime state in the GTK application.
 
 ### Supported systems
 
-PipeTune requires a PipeWire desktop session and systemd user services. A
-standalone PulseAudio session is not supported.
+PipeTune requires a PipeWire desktop session managed by WirePlumber and
+systemd user services. WirePlumber 0.4 and 0.5 are supported. A standalone
+PulseAudio session is not supported.
 
 Prebuilt Debian packages are published for:
 
@@ -89,7 +93,9 @@ pipetune setup
 ```
 
 `setup` reloads, enables, and restarts the systemd user service, verifies that
-it is active, and then launches the PipeTune GTK application in the system tray.
+it is active, and then launches the PipeTune GTK application in the system
+tray. It also installs the WirePlumber 0.4 compatibility files; WirePlumber 0.5
+uses PipeTune's smart-filter properties directly.
 
 ![System tray](./images/system-tray.png)
 
@@ -99,8 +105,8 @@ selecting **Open** from its menu.
 ## PipeTune settings window
 
 The PipeTune settings window keeps the sectioned PipeTune status pane visible
-on the left while **Processing**, **Output**, **Rate**, **DSP**, and
-**Advanced** settings switch on the right.
+on the left while Processing, Rate, DSP, and Advanced settings switch on the
+right.
 
 ![PipeTune UI Window](./images/pipetune-ui-window.png)
 
@@ -109,7 +115,7 @@ Changing a setting previews it immediately in the running daemon. The single
 snapshot; **Cancel**, Escape, or the title-bar close button restores the
 previous live state before hiding the window.
 
-The persistent pane presents DSP **Load** directly below the connection
+The persistent pane presents DSP Load directly below the connection
 summary, aligned with the summary's left edge so it remains clear of the
 status icon. The responsive horizontal meter contains the current percentage.
 Its graphical fill is capped at 100%, but the text continues to show measured
@@ -121,60 +127,39 @@ disconnected and resume after reconnection.
 
 ## Audio streams and PipeTune
 
-PipeTune acts as a virtual output device for the user session. It performs DSP
-processing as defined by the EffeTune preset, then sends the processed audio to
-the output device. The following diagram shows a simplified view of this flow:
+WirePlumber inserts PipeTune into the normal playback path. PipeWire mixes the
+application streams first, PipeTune processes that mixed stream, and the
+ordinary output-volume and device policy remains after the filter:
 
 ```mermaid
 flowchart LR
-    app["1. Application<br/>Browser / player / game"]
-    os["2. OS audio settings<br/>(PipeWire default output)"]
-    tune["3. PipeTune<br/>(EffeTune DSP)"]
-    device["4. Audio device<br/>DAC / speakers / headphones"]
+    apps["Applications<br/>individual stream volumes"]
+    mix["PipeWire mix"]
+    tune["PipeTune filter<br/>EffeTune DSP or bypass"]
+    output["PipeWire output<br/>master volume and default route"]
+    device["Selected audio device"]
 
-    app -->|"① sends audio"| os
-    os -->|"② sends audio to PipeTune"| tune
-    tune -->|"③ sends processed audio"| device
+    apps --> mix
+    mix --> tune
+    tune --> output
+    output --> device
 ```
 
-- At step ②, the audio stream must be directed to PipeTune. Select PipeTune in
-  the OS audio output device settings or an equivalent dialog:
-  ![Sound control panel](./images/control-panel.png)
-- At step ③, PipeTune sends audio to the user's selected device when that
-  device is available. While the selected device cannot be found—for example,
-  while a USB device is unplugged—PipeTune automatically falls back to the
-  system default and returns to the selected device when it is reconnected.
+Per-application volume is applied before the mix. Bypass copies the mixed PCM
+through without invoking EffeTune. After the filter, the desktop master volume
+and selected output device work exactly as they do without PipeTune.
 
-## Choosing PipeTune's output device
+## System volume and output device
 
-The user can explicitly choose the device used for step ③ in the previous
-section.
+Choose speakers, headphones, HDMI, or another output in GNOME Settings or the
+desktop's ordinary sound control. The same control adjusts the overall output
+volume after PipeTune. PipeTune neither stores an output preference nor
+changes the PipeWire default device, so its GTK window and CLI intentionally
+have no output-device selector.
 
-The PipeTune settings window's Output page provides a
-**Preferred physical output** menu. Its first item, **System default**, clears
-an explicit preference. Device rows use short descriptions and connector
-hints; the full PipeWire node name remains available as secondary text and in
-the tooltip. The persistent status pane shows the effective output and whether
-it was selected as the preference, the system default, or a fallback.
-
-The same operations are available from the CLI:
-
-```sh
-pipetune output list
-pipetune output get
-pipetune output select
-pipetune output set alsa_output.example
-pipetune output clear
-```
-
-These commands require the per-user daemon to be running. `output select`
-offers a numbered menu in an interactive terminal. `output set` stores the
-stable PipeWire `node.name`, including for a device that is temporarily
-disconnected. `output clear` removes that preference.
-
-With no preference, PipeTune follows the physical system default. If no audio
-output exists at all, the daemon remains running and watches for hotplug, but
-audio playback is unavailable until a device appears.
+WirePlumber reconnects the filter output when the ordinary default device
+changes or is hot-plugged. Applications remain routed through PipeTune without
+selecting a PipeTune device in the sound control panel.
 
 ## Selecting an EffeTune DSP preset
 
@@ -202,41 +187,30 @@ pipetune bypass
 
 ## Choosing the PCM rate
 
-The PipeTune settings window provides **DSP rate** and
-**PipeWire request** drop-downs. **Max** follows the highest of 44.1, 48, 96,
-192, and 384 kHz supported by the selected output. Each fixed-rate row says
-whether that output supports the rate. The **Effective rates** row shows:
+The PipeTune settings window provides DSP sample rate and PipeWire enforcement
+drop-downs. Automatic follows the rate negotiated by the PipeWire graph. A
+fixed choice requests 44.1, 48, 96, 192, or 384 kHz for both filter nodes and
+the EffeTune engine. Runtime status shows the active DSP and graph rates.
 
-- the input and EffeTune DSP rate;
-- the selected PipeWire output-graph rate;
-- the active physical-device rate, or `idle`; and
-- whether PipeWire resampling is required.
-
-A fixed rate always remains the DSP rate. If the output does not support it,
-PipeTune selects the greatest supported output rate not above it, or the
-device's minimum rate when none is below it. PipeWire performs the conversion
-between those rates.
-
-**Suggest** sets `node.rate` as a preference; PipeWire may choose another graph
-rate. **Force** additionally asks PipeWire to hold that rate while PipeTune's
-playback node is active. Neither mode changes PipeWire's global clock
-configuration.
+Suggest sets `node.rate` as a preference; PipeWire may negotiate another graph
+rate. Force additionally asks PipeWire to hold the fixed rate while the filter
+output is active. Neither mode changes PipeWire's global clock configuration.
 
 The same information and controls are available from the CLI:
 
 ```sh
 pipetune rate list
 pipetune rate get
-pipetune rate set max suggest
+pipetune rate set automatic
 pipetune rate set 192000 force
 ```
 
-`rate list` reports support for all five selectable rates on every available
-output. `rate get` reports the configured policy and final rates. A connected
-`rate set` applies the change immediately and saves it only after daemon
-confirmation. If the daemon is unavailable, the policy is saved for its next
-start. A live change may cause a short silent interval while PipeTune rebuilds
-the DSP and renegotiates its PipeWire streams.
+`rate list` lists Automatic and the five fixed choices. `rate get` reports the
+configured policy and negotiated rates. A connected `rate set` applies the
+change immediately and saves it only after daemon confirmation. If the daemon
+is unavailable, the policy is saved for its next start. A live change may
+cause a short silent interval while PipeTune rebuilds the DSP and renegotiates
+its filter streams.
 
 ## Choosing the native DSP backend
 
@@ -272,8 +246,7 @@ The PipeTune settings window's Advanced page provides **Restore Defaults**. It
 previews these choices live without saving them:
 
 - DSP **Bypass**;
-- the physical **System default** output;
-- PCM rate **Max** with **Suggest**; and
+- PCM rate Automatic with Suggest; and
 - native DSP backend **Scalar**, with SIMD preference **Auto**.
 
 Click **Apply** to persist the defaults, or **Cancel** to restore the prior
@@ -307,8 +280,9 @@ sudo apt remove pipetune
 ```
 
 `unsetup` quits the GTK application, disables and stops the user service,
-restores a physical default output, and installs a user autostart mask so the
-GTK application stays disabled. It preserves the startup selection. Use
+removes the WirePlumber 0.4 compatibility files, and installs a user
+autostart mask so the GTK application stays disabled. It preserves the
+startup selection. Use
 `pipetune unsetup --purge` to also remove PipeTune's application
 configuration.
 
@@ -317,7 +291,7 @@ PipeTune-managed backup. A later `pipetune setup` restores that backup instead
 of overwriting it. Package removal alone does not delete per-user
 configuration or autostart overrides.
 
-## Logs and recovery
+## Logs
 
 View daemon logs with:
 
@@ -325,12 +299,9 @@ View daemon logs with:
 journalctl --user -u pipetune.service
 ```
 
-If a manually launched PipeTune process was terminated without restoring the
-physical default output, recover it with:
-
-```sh
-pipetune --restore-default
-```
+PipeTune does not own the default output, so stopping or crashing it requires
+no output-device restoration. WirePlumber keeps ordinary output selection and
+volume policy in effect.
 
 ---
 

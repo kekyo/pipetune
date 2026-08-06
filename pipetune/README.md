@@ -1,7 +1,8 @@
 # PipeTune
 
 PipeTune applies an [EffeTune](https://github.com/Frieve-A/effetune) DSP preset to all audio in one Linux desktop session.
-It runs EffeTune's C++ DSP engine as native host code and inserts a virtual PipeWire sink in front of the selected physical output.
+It runs EffeTune's C++ DSP engine as native host code and publishes a
+WirePlumber-managed transparent PipeWire filter.
 
 This repository currently provides an MVP for a native Linux host.
 It uses the formal `.effetune_preset` format.
@@ -12,14 +13,23 @@ It uses the formal `.effetune_preset` format.
 desktop applications
         |
         v
-PipeTune virtual default sink
+PipeWire playback mix
+        |
+        v
+PipeTune filter input
         |
         v
 native EffeTune C++ DSP pipeline
         or pass-through bypass
         |
         v
-selected physical PipeWire sink
+PipeTune filter output
+        |
+        v
+WirePlumber default-output policy and system volume
+        |
+        v
+selected PipeWire sink
 ```
 
 Ubuntu 24.04 uses PipeWire with `pipewire-pulse` by default. PulseAudio
@@ -35,12 +45,10 @@ not supported by this MVP.
   including bus and channel routing.
 - Skips unknown DSPs and DSPs that require external assets, with a warning for
   each omitted node.
-- Follows the physical system default when no preference exists, or persists a
-  preferred `node.name` with automatic fallback and hotplug restoration.
-- Selects the highest supported DSP rate or a fixed 44.1, 48, 96, 192, or
-  384 kHz rate, with a suggested or forced PipeWire graph-rate request.
-- Enumerates each physical output's sample-rate capabilities and immediately
-  reevaluates the rates after capability, target, or policy changes.
+- Publishes a WirePlumber 0.5 smart-filter pair and a WirePlumber 0.4 endpoint
+  contract with the same transparent playback behavior.
+- Follows the negotiated graph rate or requests a fixed 44.1, 48, 96, 192, or
+  384 kHz rate, with suggested or forced PipeWire enforcement.
 - Loads validated scalar, architecture-baseline SIMD, and applicable
   higher-ISA EffeTune DSP shared backends, with scalar as the compatibility
   default and startup fallback.
@@ -50,17 +58,13 @@ not supported by this MVP.
 - Publishes initial and changed runtime state to same-user local subscribers.
 - Starts the managed daemon without a preset and passes audio through unchanged.
 - Automates per-user service, GTK, and autostart setup and removal.
-- Temporarily makes PipeTune the effective PipeWire default without changing
-  WirePlumber's persistent configured default.
-- Restores a physical default on orderly shutdown. The installed systemd unit
-  also invokes an independent restoration command after a crash and restarts
-  PipeTune.
+- Leaves default-device selection, hotplug routing, and master volume entirely
+  under WirePlumber and the desktop sound controls.
 
-The default policy is Max-and-suggest: PipeTune uses the highest selectable
-rate supported by the selected output. Stereo remains the default channel
-layout, and direct runs accept one through eight channels. PipeWire converts
-application streams and resamples between PipeTune's DSP and physical-output
-rates when those differ.
+The default rate policy is Automatic: PipeTune follows the graph rate
+negotiated for its two filter nodes. Stereo remains the default channel
+layout, and direct runs accept one through eight channels. PipeWire performs
+any conversion required by applications or the selected device.
 
 ## Requirements
 
@@ -74,7 +78,8 @@ sudo apt install \
 ```
 
 PipeTune requires CMake 3.24 or newer, a C++20 GCC toolchain, Node.js, PipeWire
-0.3 development files, and GTK 3 development files. The complete test suite
+0.3 development files, GTK 3 development files, and a WirePlumber 0.4 or 0.5
+desktop session. The complete test suite
 also uses `systemd-analyze`, an isolated D-Bus session, Xvfb, X11 utilities,
 `desktop-file-validate`, and the GdkPixbuf thumbnailer.
 
@@ -121,14 +126,14 @@ Node.js and `npx` are required. Unless `PIPETUNE_BUILD_VERSION` is supplied to
 CMake, the version embedded in both executables is resolved from the repository
 Git metadata with `npx screw-up format -e '{version}' -f`.
 
-Before changing the session default, verify a preset and PipeWire negotiation:
+Before running the filter continuously, verify a preset and PipeWire
+negotiation:
 
 ```sh
 ./build/release/pipetune --preset /absolute/path/to/foo.effetune_preset --check
 ```
 
-`--check` creates the streams briefly but does not make PipeTune the default
-sink.
+`--check` creates and negotiates the filter streams briefly, then exits.
 
 ## Run directly
 
@@ -136,18 +141,11 @@ sink.
 ./build/release/pipetune --preset /absolute/path/to/foo.effetune_preset
 ```
 
-The process runs until `SIGINT` or `SIGTERM`, publishes
-`pipetune_sink`, and makes that sink the effective default. To select a
-particular physical output for this direct process run:
+The process runs until `SIGINT` or `SIGTERM` and publishes the linked
+`pipetune_sink` input and `pipetune_sink.output` output nodes. WirePlumber
+inserts them before the ordinary default output; PipeTune does not select a
+physical device.
 
-```sh
-./build/release/pipetune \
-  --preset /absolute/path/to/foo.effetune_preset \
-  --target alsa_output.example
-```
-
-The direct `--target` value is a PipeWire `node.name` and is not persisted.
-Managed daemon output preferences use the `pipetune output` commands below.
 Use `--dsp-backend scalar` or `--dsp-backend simd` to select the native
 backend for this direct run. `--dsp-variant auto|baseline|x86-64-v3|x86-64-v4|sve`
 selects the SIMD dispatch preference. Those choices are not persisted.
@@ -162,12 +160,10 @@ Inspect or replace the running pipeline:
 
 The status response includes the processing mode, active preset when
 applicable, native DSP count, configured and effective DSP backends, backend
-availability and fallback diagnostics, preferred and effective physical
-outputs, output selection reason, selectable output list and rate
-capabilities, configured and resolved PCM rates, active physical rate,
-transition and fallback state, whether PipeTune owns the effective default,
-configuration diagnostics, and audio bridge error counters. A live replacement
-made directly with `--load-preset` is not persisted.
+availability and fallback diagnostics, configured and negotiated PCM rates,
+transition state, configuration diagnostics, input telemetry, and audio bridge
+error counters. A live replacement made directly with `--load-preset` is not
+persisted.
 
 Switch live processing to bypass and save that selection for future daemon
 starts with:
@@ -176,37 +172,19 @@ starts with:
 ./build/release/pipetune bypass
 ```
 
-List, inspect, choose, or clear the managed daemon's output preference with:
-
-```sh
-./build/release/pipetune output list
-./build/release/pipetune output get
-./build/release/pipetune output select
-./build/release/pipetune output set alsa_output.example
-./build/release/pipetune output clear
-```
-
-`list` and `get` also accept `--json`. `select` requires an interactive
-terminal and displays a numbered list. All five operations require a reachable
-daemon. A set or clear request changes the daemon first and updates the shared
-startup configuration only after the daemon confirms it. If persistence then
-fails, the command exits nonzero and reports that the live change remains
-active.
-
-Inspect output support and manage the daemon's PCM rate policy with:
+Inspect and manage the daemon's PCM rate policy with:
 
 ```sh
 ./build/release/pipetune rate list
 ./build/release/pipetune rate get
-./build/release/pipetune rate set max suggest
+./build/release/pipetune rate set automatic
 ./build/release/pipetune rate set 44100 suggest
 ./build/release/pipetune rate set 192000 force
 ```
 
 Fixed `RATE` values are `44100`, `48000`, `96000`, `192000`, and `384000`
-hertz. `rate list` marks each value supported, unsupported, or unknown for
-every available output. `rate get` displays the configured policy, input/DSP
-rate, selected output rate, active physical rate, fallback state, and
+hertz. `rate list` displays Automatic and the five fixed choices. `rate get`
+displays the configured policy, DSP rate, negotiated graph rate, and
 transition state. Both queries accept `--json` and require a reachable daemon.
 
 `rate set` sends a connected daemon the new policy first and persists it only
@@ -215,14 +193,10 @@ startup policy. If the daemon is unavailable, the command instead saves the
 policy for the next start. **Suggest** supplies `node.rate` as a PipeWire
 preference. **Force** also supplies `node.force-rate=0`, which asks PipeWire to
 use the denominator of `node.rate` while PipeTune's playback node is active.
-Neither operation rewrites PipeWire's global clock configuration.
-
-In Max mode, PipeTune selects the highest of its five user-selectable rates
-accepted by the selected output. While device capabilities are unknown, it
-retains the current rates, using 48 kHz only as the initial fallback. In fixed
-mode, the requested rate is always used for capture, playback media format,
-and DSP. An unsupported output uses the greatest advertised rate not above the
-fixed rate, or the device minimum, and PipeWire resamples between them.
+Neither operation rewrites PipeWire's global clock configuration. Automatic
+leaves both filter nodes negotiable and rebuilds EffeTune at the resolved graph
+rate. Fixed mode constrains both filter nodes and EffeTune to the requested
+rate.
 
 Inspect and select the native DSP backend with:
 
@@ -272,14 +246,14 @@ file. It atomically replaces it with:
 
 ```text
 # Managed by PipeTune.
-PIPETUNE_RATE=max
-PIPETUNE_RATE_ENFORCEMENT=suggest
 PIPETUNE_DSP_BACKEND=scalar
 PIPETUNE_DSP_SIMD_VARIANT=auto
+PIPETUNE_RATE=automatic
+PIPETUNE_RATE_ENFORCEMENT=suggest
 ```
 
-The absent preset and target assignments select DSP bypass and the physical
-system default. Scalar is the reset backend. After persistence, the command
+The absent preset assignment selects DSP bypass. Scalar is the reset backend.
+After persistence, the command
 waits for `systemctl --user try-restart pipetune.service`. A running service
 therefore restarts immediately with the defaults, while an inactive service
 remains inactive. If `systemctl` fails, the command exits nonzero and explains
@@ -292,8 +266,8 @@ Run the graphical control application with:
 ```
 
 It subscribes to daemon status changes, applies a selected preset, bypass,
-physical output, rate policy, or native DSP backend live, and persists a
-successful selection in the shared startup configuration. See the
+rate policy, or native DSP backend live, and persists a successful selection
+in the shared startup configuration. See the
 [PipeTune GTK documentation](../pipetune-gtk/README.md) for the exact failure
 and persistence behavior.
 
@@ -411,6 +385,9 @@ Setup performs the following operations:
 - validates an explicitly supplied preset before making external changes;
 - saves that preset atomically with user-only permissions, or preserves the
   existing startup selection when omitted;
+- installs the WirePlumber 0.4 compatibility fragment and runtime scripts and
+  restarts WirePlumber once when any managed file changes; WirePlumber 0.5
+  ignores the Lua policy and uses PipeTune's smart-filter node properties;
 - reloads, enables, and restarts `pipetune.service`, then verifies it is
   active;
 - removes a PipeTune-managed GTK autostart mask and safely restores any custom
@@ -428,13 +405,11 @@ $XDG_CONFIG_HOME/pipetune/environment
 ```
 
 When `XDG_CONFIG_HOME` is unset, it resolves to
-`~/.config/pipetune/environment`. It can store an absolute preset path, a
-stable PipeWire output `node.name`, the PCM rate policy, and the native DSP
-backend selection:
+`~/.config/pipetune/environment`. It can store an absolute preset path, the PCM
+rate policy, and the native DSP backend selection:
 
 ```text
 PIPETUNE_PRESET="/home/user/My Presets/foo.effetune_preset"
-PIPETUNE_TARGET="alsa_output.usb-example"
 PIPETUNE_RATE=192000
 PIPETUNE_RATE_ENFORCEMENT=force
 PIPETUNE_DSP_BACKEND=simd
@@ -444,20 +419,14 @@ PIPETUNE_DSP_SIMD_VARIANT=auto
 An absent file or absent `PIPETUNE_PRESET` means bypass. An invalid
 configuration or unusable startup preset is reported in daemon status, but the
 daemon still starts in bypass so the audio path remains available. The GUI and
-CLI atomically preserve and update the preset, output, rate, backend, and SIMD
-variant selections in this same file.
-
-An absent `PIPETUNE_TARGET` means to follow the physical system default. When
-the configured target is unavailable, PipeTune retains the preference and
-uses the current physical system default as a fallback. It returns to the
-preferred target automatically after hotplug. With no physical output at all,
-the daemon remains alive, releases PipeTune's effective-default claim, and
-waits for a device before resuming playback.
+CLI atomically preserve and update the preset, rate, backend, and SIMD variant
+selections in this same file. Output-device selection and master volume remain
+ordinary WirePlumber state and are never stored here.
 
 An absent `PIPETUNE_RATE` or `PIPETUNE_RATE_ENFORCEMENT` uses the
-Max-and-suggest default. `PIPETUNE_RATE` accepts `max`, `44100`, `48000`,
-`96000`, `192000`, or `384000`; the enforcement value accepts `suggest` or
-`force`.
+Automatic-and-suggest default. `PIPETUNE_RATE` accepts `automatic`, `44100`,
+`48000`, `96000`, `192000`, or `384000`; the enforcement value accepts
+`suggest` or `force`.
 
 An absent `PIPETUNE_DSP_BACKEND` selects `scalar`. The only accepted values
 are `scalar` and `simd`. An absent `PIPETUNE_DSP_SIMD_VARIANT` selects `auto`;
@@ -487,10 +456,11 @@ pipetune unsetup
 ```
 
 This installs a managed user XDG autostart mask, asks the GTK singleton to
-quit, disables and stops the service, and restores a physical default sink.
-Existing PipeTune configuration is retained so a later `pipetune setup`
-resumes the same selection. Use `pipetune unsetup --purge` to additionally
-delete the shared startup configuration and the obsolete
+quit, disables and stops the service, removes the WirePlumber 0.4 compatibility
+files, and restarts WirePlumber when necessary. Existing PipeTune
+configuration is retained so a later `pipetune setup` resumes the same
+selection. Use `pipetune unsetup --purge` to additionally delete the shared
+startup configuration and the obsolete
 `environment.gtk` file from older installations. The autostart mask and any
 custom override backup are deliberately retained by `--purge`.
 
@@ -500,16 +470,11 @@ to a non-desktop PipeTune backup before writing the mask. It refuses to
 overwrite an existing backup. Setup restores that backup exactly. Repeated
 setup and unsetup calls are safe for PipeTune-managed state.
 
-If a manually launched process is killed without restoration, recover
-immediately with:
-
-```sh
-pipetune --restore-default
-```
-
-The fail-open path can contain a short audio interruption.
-See [the architecture notes](docs/architecture.md) for the process, real-time,
-and recovery design, and
+PipeTune never owns the default sink. Stopping or crashing the daemon removes
+its filter nodes, while WirePlumber continues to own ordinary output routing
+and volume; no restoration command is required. See
+[the architecture notes](docs/architecture.md) for the process and real-time
+design, and
 [the DSP backend notes](docs/dsp-backends.md) for optimization and benchmark
 details.
 
