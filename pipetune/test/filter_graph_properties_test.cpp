@@ -40,6 +40,13 @@ static bool testSmartFilterPairContract() {
          check(property(graph.input, "target.endpoint") ==
                    "endpoint.pipetune.playback",
                "filter input must identify the WirePlumber 0.4 endpoint") &&
+         check(property(graph.output, "media.role") ==
+                   "PipeTune-Filter-Output",
+               "filter output must bypass WirePlumber 0.4 client endpoint "
+               "routing") &&
+         check(property(graph.input, "node.pipetune.target-endpoint") ==
+                   "endpoint.pipetune.playback",
+               "filter input must expose the pre-0.4.16 endpoint target") &&
          check(property(graph.output, "media.class") ==
                    "Stream/Output/Audio",
                "filter output must be a playback stream") &&

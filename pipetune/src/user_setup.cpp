@@ -3,6 +3,7 @@
 #include "autostart_override.h"
 #include "pipetune/dsp_pipeline.h"
 #include "pipetune/startup_config.h"
+#include "wireplumber_04_compat.h"
 
 #include <array>
 #include <cerrno>
@@ -22,41 +23,6 @@ constexpr auto kSetupSampleRate = float{48000.0F};
 constexpr auto kSetupChannels = std::uint32_t{2};
 constexpr auto kSetupMaximumFrames = std::uint32_t{8192};
 constexpr auto kMaximumSnapshotBytes = std::size_t{64 * 1024};
-constexpr auto kWirePlumber04Policy = std::string_view{R"lua(-- Managed by PipeTune.
--- WirePlumber 0.5 ignores policy.lua.d and uses PipeTune's smart-filter
--- properties directly. WirePlumber 0.4 uses these endpoints to insert the
--- same filter pair without changing the default physical audio device.
-
-default_policy.policy.roles = default_policy.policy.roles or {}
-default_policy.policy.roles["PipeTune-Playback"] = {
-  ["alias"] = {
-    "Default", "Multimedia", "Movie", "Music", "Game", "Notification",
-    "Communication", "Speech", "Production", "Accessibility", "Test",
-  },
-  ["priority"] = 25,
-  ["action.default"] = "mix",
-}
-default_policy.policy.roles["PipeTune-Capture"] = {
-  ["alias"] = {
-    "Default", "Capture", "Communication", "Speech", "Production", "Test",
-  },
-  ["priority"] = 25,
-  ["action.default"] = "mix",
-  ["media.class"] = "Audio/Source",
-}
-
-default_policy.endpoints = default_policy.endpoints or {}
-default_policy.endpoints["endpoint.pipetune.playback"] = {
-  ["media.class"] = "Audio/Sink",
-  ["role"] = "PipeTune-Playback",
-  ["priority"] = 1000,
-}
-default_policy.endpoints["endpoint.pipetune.capture"] = {
-  ["media.class"] = "Audio/Source",
-  ["role"] = "PipeTune-Capture",
-  ["priority"] = 1000,
-}
-)lua"};
 
 struct FileSnapshot {
   bool exists;
@@ -236,6 +202,10 @@ static void rollbackSetup(const UserSetupRequest &request,
                           const FileSnapshot &configurationSnapshot,
                           bool restoreWirePlumberPolicy,
                           const FileSnapshot &wirePlumberPolicySnapshot,
+                          bool restoreWirePlumberClientScript,
+                          const FileSnapshot &wirePlumberClientScriptSnapshot,
+                          bool restoreWirePlumberDeviceScript,
+                          const FileSnapshot &wirePlumberDeviceScriptSnapshot,
                           bool restartWirePlumber,
                           bool serviceMutationStarted, bool wasEnabled,
                           bool wasActive,
@@ -243,6 +213,22 @@ static void rollbackSetup(const UserSetupRequest &request,
   if (restoreConfiguration) {
     const auto error = restoreFileSnapshot(request.paths.configPath,
                                            configurationSnapshot);
+    if (!error.empty()) {
+      warnings.push_back("setup rollback: " + error);
+    }
+  }
+  if (restoreWirePlumberClientScript) {
+    const auto error = restoreFileSnapshot(
+        request.paths.wirePlumberClientScriptPath,
+        wirePlumberClientScriptSnapshot);
+    if (!error.empty()) {
+      warnings.push_back("setup rollback: " + error);
+    }
+  }
+  if (restoreWirePlumberDeviceScript) {
+    const auto error = restoreFileSnapshot(
+        request.paths.wirePlumberDeviceScriptPath,
+        wirePlumberDeviceScriptSnapshot);
     if (!error.empty()) {
       warnings.push_back("setup rollback: " + error);
     }
@@ -310,7 +296,13 @@ UserManagementPathResult resolveUserManagementPaths(
                   autostart.string() + ".pipetune-backup",
               .wirePlumberPolicyPath =
                   xdgRoot / "wireplumber" / "policy.lua.d" /
-                  "90-pipetune-filter.lua",
+                  "60-pipetune-filter.lua",
+              .wirePlumberClientScriptPath =
+                  xdgRoot / "wireplumber" / "scripts" /
+                  "pipetune-endpoint-client.lua",
+              .wirePlumberDeviceScriptPath =
+                  xdgRoot / "wireplumber" / "scripts" /
+                  "pipetune-endpoint-device.lua",
               .systemctlExecutable = systemctlExecutable,
               .gtkExecutable = gtkExecutable,
           },
@@ -354,6 +346,11 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
     }
   }
 
+  const auto wirePlumberPolicy = wirePlumber04CompatibilityPolicy();
+  const auto wirePlumberClientScript =
+      wirePlumber04EndpointClientPolicy();
+  const auto wirePlumberDeviceScript =
+      wirePlumber04EndpointDevicePolicy();
   const auto wirePlumberPolicySnapshot =
       snapshotFile(request.paths.wirePlumberPolicyPath);
   if (!wirePlumberPolicySnapshot.error.empty()) {
@@ -364,7 +361,29 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
   }
   const auto wirePlumberPolicyNeedsUpdate =
       !wirePlumberPolicySnapshot.exists ||
-      wirePlumberPolicySnapshot.contents != kWirePlumber04Policy;
+      wirePlumberPolicySnapshot.contents != wirePlumberPolicy;
+  const auto wirePlumberClientScriptSnapshot =
+      snapshotFile(request.paths.wirePlumberClientScriptPath);
+  if (!wirePlumberClientScriptSnapshot.error.empty()) {
+    return {.success = false,
+            .warnings = std::move(warnings),
+            .error = "cannot inspect WirePlumber client policy: " +
+                     wirePlumberClientScriptSnapshot.error};
+  }
+  const auto wirePlumberClientScriptNeedsUpdate =
+      !wirePlumberClientScriptSnapshot.exists ||
+      wirePlumberClientScriptSnapshot.contents != wirePlumberClientScript;
+  const auto wirePlumberDeviceScriptSnapshot =
+      snapshotFile(request.paths.wirePlumberDeviceScriptPath);
+  if (!wirePlumberDeviceScriptSnapshot.error.empty()) {
+    return {.success = false,
+            .warnings = std::move(warnings),
+            .error = "cannot inspect WirePlumber device policy: " +
+                     wirePlumberDeviceScriptSnapshot.error};
+  }
+  const auto wirePlumberDeviceScriptNeedsUpdate =
+      !wirePlumberDeviceScriptSnapshot.exists ||
+      wirePlumberDeviceScriptSnapshot.contents != wirePlumberDeviceScript;
 
   auto configurationSnapshot =
       FileSnapshot{.exists = false, .contents = {}, .mode = 0600, .error = {}};
@@ -414,10 +433,16 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
 
   auto serviceMutationStarted = false;
   auto wirePlumberPolicyMutated = false;
+  auto wirePlumberClientScriptMutated = false;
+  auto wirePlumberDeviceScriptMutated = false;
   auto wirePlumberRestartAttempted = false;
   const auto failSetup = [&](std::string error) {
     rollbackSetup(request, request.presetSpecified, configurationSnapshot,
                   wirePlumberPolicyMutated, wirePlumberPolicySnapshot,
+                  wirePlumberClientScriptMutated,
+                  wirePlumberClientScriptSnapshot,
+                  wirePlumberDeviceScriptMutated,
+                  wirePlumberDeviceScriptSnapshot,
                   wirePlumberRestartAttempted,
                   serviceMutationStarted, wasEnabled, wasActive, warnings);
     return UserManagementResult{.success = false,
@@ -437,7 +462,7 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
     const auto policyError = restoreFileSnapshot(
         request.paths.wirePlumberPolicyPath,
         {.exists = true,
-         .contents = std::string(kWirePlumber04Policy),
+         .contents = std::string(wirePlumberPolicy),
          .mode = 0600,
          .error = {}});
     if (!policyError.empty()) {
@@ -445,6 +470,35 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
                        policyError);
     }
     wirePlumberPolicyMutated = true;
+  }
+  if (wirePlumberClientScriptNeedsUpdate) {
+    const auto scriptError = restoreFileSnapshot(
+        request.paths.wirePlumberClientScriptPath,
+        {.exists = true,
+         .contents = std::string(wirePlumberClientScript),
+         .mode = 0600,
+         .error = {}});
+    if (!scriptError.empty()) {
+      return failSetup("cannot install WirePlumber client policy: " +
+                       scriptError);
+    }
+    wirePlumberClientScriptMutated = true;
+  }
+  if (wirePlumberDeviceScriptNeedsUpdate) {
+    const auto scriptError = restoreFileSnapshot(
+        request.paths.wirePlumberDeviceScriptPath,
+        {.exists = true,
+         .contents = std::string(wirePlumberDeviceScript),
+         .mode = 0600,
+         .error = {}});
+    if (!scriptError.empty()) {
+      return failSetup("cannot install WirePlumber device policy: " +
+                       scriptError);
+    }
+    wirePlumberDeviceScriptMutated = true;
+  }
+  if (wirePlumberPolicyMutated || wirePlumberClientScriptMutated ||
+      wirePlumberDeviceScriptMutated) {
     wirePlumberRestartAttempted = true;
     const auto restartWirePlumber = invokeProcess(
         request.processRunner, request.processUserData,
@@ -532,6 +586,22 @@ UserManagementResult executeUserUnsetup(
             .error = "cannot inspect WirePlumber compatibility policy: " +
                      wirePlumberPolicySnapshot.error};
   }
+  const auto wirePlumberClientScriptSnapshot =
+      snapshotFile(request.paths.wirePlumberClientScriptPath);
+  if (!wirePlumberClientScriptSnapshot.error.empty()) {
+    return {.success = false,
+            .warnings = {},
+            .error = "cannot inspect WirePlumber client policy: " +
+                     wirePlumberClientScriptSnapshot.error};
+  }
+  const auto wirePlumberDeviceScriptSnapshot =
+      snapshotFile(request.paths.wirePlumberDeviceScriptPath);
+  if (!wirePlumberDeviceScriptSnapshot.error.empty()) {
+    return {.success = false,
+            .warnings = {},
+            .error = "cannot inspect WirePlumber device policy: " +
+                     wirePlumberDeviceScriptSnapshot.error};
+  }
 
   auto autostart = maskGtkAutostart(
       request.paths.autostartPath, request.paths.autostartBackupPath);
@@ -561,6 +631,21 @@ UserManagementResult executeUserUnsetup(
                 processFailure("cannot disable pipetune.service", disable)};
   }
 
+  auto wirePlumberPolicyRemoved = false;
+  auto wirePlumberClientScriptRemoved = false;
+  auto wirePlumberDeviceScriptRemoved = false;
+  const auto restoreRemovedFile =
+      [&](bool removed, const std::filesystem::path &path,
+          const FileSnapshot &snapshot) {
+        if (!removed) {
+          return;
+        }
+        const auto restoreError = restoreFileSnapshot(path, snapshot);
+        if (!restoreError.empty()) {
+          warnings.push_back("unsetup rollback: " + restoreError);
+        }
+      };
+
   if (wirePlumberPolicySnapshot.exists) {
     const auto policyError =
         removeConfigFile(request.paths.wirePlumberPolicyPath);
@@ -569,18 +654,54 @@ UserManagementResult executeUserUnsetup(
               .warnings = std::move(warnings),
               .error = policyError};
     }
+    wirePlumberPolicyRemoved = true;
+  }
+  if (wirePlumberClientScriptSnapshot.exists) {
+    const auto scriptError =
+        removeConfigFile(request.paths.wirePlumberClientScriptPath);
+    if (!scriptError.empty()) {
+      restoreRemovedFile(wirePlumberPolicyRemoved,
+                         request.paths.wirePlumberPolicyPath,
+                         wirePlumberPolicySnapshot);
+      return {.success = false,
+              .warnings = std::move(warnings),
+              .error = scriptError};
+    }
+    wirePlumberClientScriptRemoved = true;
+  }
+  if (wirePlumberDeviceScriptSnapshot.exists) {
+    const auto scriptError =
+        removeConfigFile(request.paths.wirePlumberDeviceScriptPath);
+    if (!scriptError.empty()) {
+      restoreRemovedFile(wirePlumberClientScriptRemoved,
+                         request.paths.wirePlumberClientScriptPath,
+                         wirePlumberClientScriptSnapshot);
+      restoreRemovedFile(wirePlumberPolicyRemoved,
+                         request.paths.wirePlumberPolicyPath,
+                         wirePlumberPolicySnapshot);
+      return {.success = false,
+              .warnings = std::move(warnings),
+              .error = scriptError};
+    }
+    wirePlumberDeviceScriptRemoved = true;
+  }
+  if (wirePlumberPolicyRemoved || wirePlumberClientScriptRemoved ||
+      wirePlumberDeviceScriptRemoved) {
     const auto restartWirePlumber = invokeProcess(
         request.processRunner, request.processUserData,
         request.paths.systemctlExecutable,
         {"--user", "restart", "wireplumber.service"},
         ProcessWaitMode::wait);
     if (!processSucceeded(restartWirePlumber)) {
-      const auto restoreError = restoreFileSnapshot(
-          request.paths.wirePlumberPolicyPath,
-          wirePlumberPolicySnapshot);
-      if (!restoreError.empty()) {
-        warnings.push_back("unsetup rollback: " + restoreError);
-      }
+      restoreRemovedFile(wirePlumberDeviceScriptRemoved,
+                         request.paths.wirePlumberDeviceScriptPath,
+                         wirePlumberDeviceScriptSnapshot);
+      restoreRemovedFile(wirePlumberClientScriptRemoved,
+                         request.paths.wirePlumberClientScriptPath,
+                         wirePlumberClientScriptSnapshot);
+      restoreRemovedFile(wirePlumberPolicyRemoved,
+                         request.paths.wirePlumberPolicyPath,
+                         wirePlumberPolicySnapshot);
       return {.success = false,
               .warnings = std::move(warnings),
               .error = processFailure(

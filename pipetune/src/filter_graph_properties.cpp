@@ -12,7 +12,6 @@ static void appendCommonProperties(FilterNodeProperties &properties,
   const auto linkGroup = options.nodeName + ".link-group";
   properties.emplace_back("application.name", "PipeTune");
   properties.emplace_back("media.type", "Audio");
-  properties.emplace_back("media.role", "DSP");
   properties.emplace_back("node.name", nodeName);
   properties.emplace_back("node.group", group);
   properties.emplace_back("node.link-group", linkGroup);
@@ -41,12 +40,15 @@ FilterGraphProperties makeFilterGraphProperties(
   appendCommonProperties(result.input, options, options.nodeName);
   result.input.emplace_back("media.class", "Audio/Sink");
   result.input.emplace_back("media.category", "Playback");
+  result.input.emplace_back("media.role", "DSP");
   result.input.emplace_back("node.description", options.nodeDescription);
   result.input.emplace_back("node.virtual", "true");
   result.input.emplace_back("node.always-process", "true");
   result.input.emplace_back("filter.smart", "true");
   result.input.emplace_back("filter.smart.name", "net.kekyo.pipetune");
   result.input.emplace_back("target.endpoint", "endpoint.pipetune.playback");
+  result.input.emplace_back("node.pipetune.target-endpoint",
+                            "endpoint.pipetune.playback");
   result.input.emplace_back("channelmix.min-volume", "1.0");
   result.input.emplace_back("channelmix.max-volume", "1.0");
 
@@ -54,6 +56,7 @@ FilterGraphProperties makeFilterGraphProperties(
                          options.nodeName + ".output");
   result.output.emplace_back("media.class", "Stream/Output/Audio");
   result.output.emplace_back("media.category", "Playback");
+  result.output.emplace_back("media.role", "PipeTune-Filter-Output");
   result.output.emplace_back("node.passive", "true");
   result.output.emplace_back("stream.dont-remix", "true");
   result.output.emplace_back("channelmix.min-volume", "1.0");

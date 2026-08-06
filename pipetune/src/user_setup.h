@@ -26,6 +26,10 @@ struct UserManagementPaths {
   std::filesystem::path autostartBackupPath;
   /** WirePlumber 0.4 endpoint policy fragment managed by PipeTune. */
   std::filesystem::path wirePlumberPolicyPath;
+  /** WirePlumber 0.4 application-to-endpoint policy managed by PipeTune. */
+  std::filesystem::path wirePlumberClientScriptPath;
+  /** WirePlumber 0.4 endpoint-to-device policy managed by PipeTune. */
+  std::filesystem::path wirePlumberDeviceScriptPath;
   /** Absolute systemctl executable path. */
   std::filesystem::path systemctlExecutable;
   /** Absolute pipetune-gtk executable path. */

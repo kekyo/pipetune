@@ -62,7 +62,13 @@ static pipetune::UserManagementPaths makePaths(
           "net.kekyo.pipetune-gtk.desktop.pipetune-backup",
       .wirePlumberPolicyPath =
           directory / "config" / "wireplumber" / "policy.lua.d" /
-          "90-pipetune-filter.lua",
+          "60-pipetune-filter.lua",
+      .wirePlumberClientScriptPath =
+          directory / "config" / "wireplumber" / "scripts" /
+          "pipetune-endpoint-client.lua",
+      .wirePlumberDeviceScriptPath =
+          directory / "config" / "wireplumber" / "scripts" /
+          "pipetune-endpoint-device.lua",
       .systemctlExecutable = "/test/systemctl",
       .gtkExecutable = "/test/pipetune-gtk",
   };
@@ -109,6 +115,26 @@ static bool invocationMatches(const Invocation &invocation,
   return true;
 }
 
+static bool testWirePlumberCompatibilityPaths(
+    const std::filesystem::path &directory) {
+  const auto configRoot = directory / "resolved-config";
+  const auto resolved = pipetune::resolveUserManagementPaths(
+      configRoot.string(), {}, "/test/systemctl", "/test/pipetune-gtk");
+  return check(resolved.error.empty(), resolved.error) &&
+         check(resolved.paths.wirePlumberPolicyPath ==
+                   configRoot / "wireplumber" / "policy.lua.d" /
+                       "60-pipetune-filter.lua",
+               "WirePlumber policy must load before 90-enable-all.lua") &&
+         check(resolved.paths.wirePlumberClientScriptPath ==
+                   configRoot / "wireplumber" / "scripts" /
+                       "pipetune-endpoint-client.lua",
+               "WirePlumber 0.4 client policy must use its script path") &&
+         check(resolved.paths.wirePlumberDeviceScriptPath ==
+                   configRoot / "wireplumber" / "scripts" /
+                       "pipetune-endpoint-device.lua",
+               "WirePlumber 0.4 device policy must use its script path");
+}
+
 static bool testSetupPreservesConfigurationAndRestoresAutostart(
     const std::filesystem::path &directory) {
   const auto paths = makePaths(directory / "preserve");
@@ -140,6 +166,9 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
        .processRunner = fakeRunProcess,
        .processUserData = &runner});
   const auto loaded = pipetune::loadStartupPreset(paths.configPath);
+  const auto policy = readFile(paths.wirePlumberPolicyPath);
+  const auto clientScript = readFile(paths.wirePlumberClientScriptPath);
+  const auto deviceScript = readFile(paths.wirePlumberDeviceScriptPath);
   return check(result.success, result.error) &&
          check(loaded.error.empty() && loaded.found &&
                    loaded.presetPath == existingPreset,
@@ -149,11 +178,28 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
                "setup must restore a backed-up custom autostart override") &&
          check(std::filesystem::exists(paths.wirePlumberPolicyPath),
                "setup must install the WirePlumber 0.4 compatibility policy") &&
-         check(readFile(paths.wirePlumberPolicyPath).find(
-                   "endpoint.pipetune.playback") != std::string::npos &&
-                   readFile(paths.wirePlumberPolicyPath).find(
-                       "endpoint.pipetune.capture") != std::string::npos,
-               "compatibility policy must preserve playback and capture routing") &&
+         check(policy.find("endpoint.pipetune.playback") !=
+                       std::string::npos &&
+                   policy.find("endpoint.pipetune.capture") !=
+                       std::string::npos &&
+                   policy.find("pipetune-endpoint-client.lua") !=
+                       std::string::npos &&
+                   policy.find("pipetune-endpoint-device.lua") !=
+                       std::string::npos,
+               "compatibility policy must configure and load the filter") &&
+         check(std::filesystem::exists(paths.wirePlumberClientScriptPath),
+               "setup must install the WirePlumber 0.4 client policy") &&
+         check(clientScript.find("is.policy.endpoint.client.link") !=
+                       std::string::npos &&
+                   clientScript.find("node.link-group") != std::string::npos,
+               "client policy must route applications but exclude filters") &&
+         check(std::filesystem::exists(paths.wirePlumberDeviceScriptPath),
+               "setup must install the WirePlumber 0.4 device policy") &&
+         check(deviceScript.find("node.pipetune.target-endpoint") !=
+                       std::string::npos &&
+                   deviceScript.find("Stream/Output/Audio") !=
+                       std::string::npos,
+               "compatibility policy must connect both sides of the filter") &&
          check(runner.invocations.size() == 8,
                "setup process invocation count differs") &&
          check(invocationMatches(
@@ -254,6 +300,10 @@ static bool testSetupRollback(const std::filesystem::path &directory) {
                "failed setup must restore the previous configuration") &&
          check(!std::filesystem::exists(paths.wirePlumberPolicyPath),
                "failed setup must restore the previous WirePlumber policy") &&
+         check(!std::filesystem::exists(paths.wirePlumberClientScriptPath),
+               "failed setup must restore the previous client policy") &&
+         check(!std::filesystem::exists(paths.wirePlumberDeviceScriptPath),
+               "failed setup must restore the previous device policy") &&
          check(runner.invocations.size() == 9,
                "setup rollback invocation count differs") &&
          check(invocationMatches(
@@ -274,6 +324,8 @@ static bool testSetupRollback(const std::filesystem::path &directory) {
 static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
   const auto paths = makePaths(directory / "unsetup");
   writeFile(paths.wirePlumberPolicyPath, "managed policy");
+  writeFile(paths.wirePlumberClientScriptPath, "managed client script");
+  writeFile(paths.wirePlumberDeviceScriptPath, "managed device script");
   writeFile(paths.autostartPath,
             "[Desktop Entry]\nType=Application\nX-Custom=true\n");
   const auto saved = pipetune::clearStartupPreset(paths.configPath);
@@ -310,6 +362,10 @@ static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
                "unsetup must reload WirePlumber after removing its policy") &&
          check(!std::filesystem::exists(paths.wirePlumberPolicyPath),
                "unsetup must remove the WirePlumber 0.4 compatibility policy") &&
+         check(!std::filesystem::exists(paths.wirePlumberClientScriptPath),
+               "unsetup must remove the WirePlumber 0.4 client policy") &&
+         check(!std::filesystem::exists(paths.wirePlumberDeviceScriptPath),
+               "unsetup must remove the WirePlumber 0.4 device policy") &&
          check(pipetune::isPipeTuneManagedAutostartMask(
                    paths.autostartPath) &&
                    std::filesystem::exists(paths.autostartBackupPath),
@@ -366,13 +422,15 @@ int main() {
       ("pipetune-user-setup-test-" +
        std::to_string(static_cast<long long>(getpid())));
   std::filesystem::create_directories(directory);
-  const auto passed =
-      testSetupPreservesConfigurationAndRestoresAutostart(directory) &&
-      testExplicitPresetAndValidation(directory) &&
-      testSetupRollback(directory) &&
-      testUnsetupAndPurge(directory) &&
-      testUnsetupStopFailurePreservesConfiguration(directory) &&
-      testRootRejection(directory);
+  auto passed = true;
+  passed = testWirePlumberCompatibilityPaths(directory) && passed;
+  passed =
+      testSetupPreservesConfigurationAndRestoresAutostart(directory) && passed;
+  passed = testExplicitPresetAndValidation(directory) && passed;
+  passed = testSetupRollback(directory) && passed;
+  passed = testUnsetupAndPurge(directory) && passed;
+  passed = testUnsetupStopFailurePreservesConfiguration(directory) && passed;
+  passed = testRootRejection(directory) && passed;
   std::filesystem::remove_all(directory);
   return passed ? 0 : 1;
 }

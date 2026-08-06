@@ -6,6 +6,13 @@ Files: *
 Copyright: 2026 Kouji Matsui
 License: MIT
 
+Files: pipetune/src/wireplumber_04_compat.cpp
+Copyright:
+ 2026 Kouji Matsui
+ 2021 Collabora Ltd.
+License: MIT
+Comment: Endpoint policies are derived from WirePlumber 0.4.17.
+
 Files: deps/effetune/*
 Copyright: 2025-2026 Yoshiyuki Kobayashi
 License: MIT
