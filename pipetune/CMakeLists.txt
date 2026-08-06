@@ -204,6 +204,7 @@ add_library(
   src/dsp_backend_command.cpp
   src/dsp_backend_runtime.cpp
   src/dsp_pipeline_slot.cpp
+  src/filter_graph_properties.cpp
   src/input_telemetry.cpp
   src/output_command.cpp
   src/output_device_tracker.cpp
@@ -515,6 +516,25 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_audio_bridge_tests
     COMMAND pipetune_audio_bridge_tests)
+
+  add_executable(
+    pipetune_filter_graph_properties_tests
+    test/filter_graph_properties_test.cpp)
+  target_include_directories(
+    pipetune_filter_graph_properties_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_filter_graph_properties_tests PRIVATE pipetune_pipewire)
+  if(MSVC)
+    target_compile_options(
+      pipetune_filter_graph_properties_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_filter_graph_properties_tests
+      PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_filter_graph_properties_tests
+    COMMAND pipetune_filter_graph_properties_tests)
 
   add_executable(
     pipetune_input_telemetry_tests
