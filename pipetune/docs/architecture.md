@@ -125,10 +125,13 @@ endpoint policy is active.
 
 Both WirePlumber versions run the same visibility policy. It removes all
 permissions for the marked filter input and the 0.4 endpoint backing nodes from
-every client except WirePlumber and the client that owns the node. Without read
-permission, desktop control panels and PulseAudio compatibility clients do not
-receive those nodes, while WirePlumber can still create and maintain the
-internal links.
+every client except WirePlumber, the PipeTune daemon, and the client that owns
+the node. PipeTune retains access to the WirePlumber-owned endpoint backing
+nodes. When a client owns an active audio playback or capture stream, the policy
+temporarily restores that client's permissions so the stream can link through
+the hidden endpoint. It removes the permissions again after the client's last
+audio stream disappears. Desktop control panels and other clients without an
+audio stream therefore do not receive the internal nodes.
 
 Setup snapshots and atomically updates all six managed files, then restarts
 `wireplumber.service` once if any changed. WirePlumber 0.5 ignores the 0.4 Lua

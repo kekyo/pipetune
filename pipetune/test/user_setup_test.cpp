@@ -257,10 +257,24 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
                        std::string::npos &&
                    visibility04.find("wireplumber.daemon") !=
                        std::string::npos &&
+                   visibility04.find(
+                       "proxy_property(client, "
+                       "\"application.process.binary\") == \"pipetune\"") !=
+                       std::string::npos &&
+                   visibility04.find("Stream/Output/Audio") !=
+                       std::string::npos &&
+                   visibility04.find("Stream/Input/Audio") !=
+                       std::string::npos &&
+                   visibility04.find("pipetune_audio_stream_counts") !=
+                       std::string::npos &&
+                   visibility04.find(
+                       "client:update_permissions { [node_id] = \"all\" }") !=
+                       std::string::npos &&
                    visibility04.find("client.id") != std::string::npos &&
                    visibility04.find("client[\"bound-id\"]") !=
                        std::string::npos,
-               "visibility policy must hide PipeTune nodes from other clients") &&
+               "visibility policy must grant audio stream owners routing "
+               "access while hiding PipeTune nodes from other clients") &&
          check(visibilityConfiguration.find("pipetune-node-visibility.lua") !=
                        std::string::npos &&
                    visibilityConfiguration.find("required") !=
