@@ -547,8 +547,8 @@ validate_deb_package() {
 		usr/bin/pipetune \
 		usr/bin/pipetune-gtk \
 		usr/lib/systemd/user/pipetune.service \
-		usr/share/applications/net.kekyo.pipetune-gtk.desktop \
-		etc/xdg/autostart/net.kekyo.pipetune-gtk.desktop \
+		usr/share/applications/net.kekyo.pipetune_gtk.desktop \
+		etc/xdg/autostart/net.kekyo.pipetune_gtk.desktop \
 		usr/share/icons/hicolor/scalable/apps/pipetune.svg \
 		usr/share/doc/pipetune/README.md \
 		usr/share/doc/pipetune/README.daemon.md \

@@ -196,7 +196,7 @@ int main(int argc, char **argv) {
     return 1;
   }
   auto *application = gtk_application_new(
-      "net.kekyo.pipetune-gtk.tests", G_APPLICATION_NON_UNIQUE);
+      "net.kekyo.pipetune_gtk.tests", G_APPLICATION_NON_UNIQUE);
   auto *registrationError = static_cast<GError *>(nullptr);
   if (!g_application_register(G_APPLICATION(application), nullptr,
                               &registrationError)) {

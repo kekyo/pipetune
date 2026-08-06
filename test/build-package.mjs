@@ -153,13 +153,13 @@ Description: PipeWire system-wide DSP and GTK control application
     "[Service]\nExecStart=/usr/bin/pipetune\n",
   );
   writeFileSync(
-    join(stageRoot, "usr/share/applications/net.kekyo.pipetune-gtk.desktop"),
+    join(stageRoot, "usr/share/applications/net.kekyo.pipetune_gtk.desktop"),
     "[Desktop Entry]\nType=Application\nExec=pipetune-gtk\n",
   );
   if (includeAutostart) {
     cpSync(
-      join(stageRoot, "usr/share/applications/net.kekyo.pipetune-gtk.desktop"),
-      join(stageRoot, "etc/xdg/autostart/net.kekyo.pipetune-gtk.desktop"),
+      join(stageRoot, "usr/share/applications/net.kekyo.pipetune_gtk.desktop"),
+      join(stageRoot, "etc/xdg/autostart/net.kekyo.pipetune_gtk.desktop"),
     );
   }
   writeFileSync(
@@ -779,7 +779,7 @@ validate_deb_package "$2" "$3"
   }
   assertIncludes(
     validateBadPackage.stderr,
-    "net.kekyo.pipetune-gtk.desktop",
+    "net.kekyo.pipetune_gtk.desktop",
     "deb validation did not identify the missing autostart entry",
   );
   const validateMissingDspBackendDocumentation = runSourced(

@@ -284,7 +284,7 @@ UserManagementPathResult resolveUserManagementPaths(
   }
   const auto xdgRoot = config.path.parent_path().parent_path();
   const auto autostart =
-      xdgRoot / "autostart" / "net.kekyo.pipetune-gtk.desktop";
+      xdgRoot / "autostart" / "net.kekyo.pipetune_gtk.desktop";
   return {
       .paths =
           {

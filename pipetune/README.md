@@ -469,7 +469,7 @@ startup configuration and the obsolete
 custom override backup are deliberately retained by `--purge`.
 
 If a custom user file already occupies
-`$XDG_CONFIG_HOME/autostart/net.kekyo.pipetune-gtk.desktop`, unsetup moves it
+`$XDG_CONFIG_HOME/autostart/net.kekyo.pipetune_gtk.desktop`, unsetup moves it
 to a non-desktop PipeTune backup before writing the mask. It refuses to
 overwrite an existing backup. Setup restores that backup exactly. Repeated
 setup and unsetup calls are safe for PipeTune-managed state.

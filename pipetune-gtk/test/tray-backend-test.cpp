@@ -75,7 +75,7 @@ int main() {
 
   if (!check(
           std::string(pipetune_gtk::applicationId()) ==
-              "net.kekyo.pipetune-gtk",
+              "net.kekyo.pipetune_gtk",
           "application id differs") ||
       !check(g_application_id_is_valid(pipetune_gtk::applicationId()),
              "application id must be valid") ||

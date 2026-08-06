@@ -172,8 +172,8 @@ validate_installed_package() {
 		/usr/bin/pipetune \
 		/usr/bin/pipetune-gtk \
 		/usr/lib/systemd/user/pipetune.service \
-		/usr/share/applications/net.kekyo.pipetune-gtk.desktop \
-		/etc/xdg/autostart/net.kekyo.pipetune-gtk.desktop \
+		/usr/share/applications/net.kekyo.pipetune_gtk.desktop \
+		/etc/xdg/autostart/net.kekyo.pipetune_gtk.desktop \
 		/usr/share/icons/hicolor/scalable/apps/pipetune.svg \
 		/usr/share/doc/pipetune/dsp-backends.md \
 		/usr/share/doc/pipetune/copyright; do
@@ -270,8 +270,8 @@ assert_file "$stage_dir/usr/bin/pipetune"
 assert_file "$stage_dir/usr/bin/pipetune-gtk"
 assert_dsp_backend_set "$stage_dir/usr/lib/pipetune" "$deb_arch"
 assert_file "$stage_dir/usr/lib/systemd/user/pipetune.service"
-assert_file "$stage_dir/usr/share/applications/net.kekyo.pipetune-gtk.desktop"
-assert_file "$stage_dir/etc/xdg/autostart/net.kekyo.pipetune-gtk.desktop"
+assert_file "$stage_dir/usr/share/applications/net.kekyo.pipetune_gtk.desktop"
+assert_file "$stage_dir/etc/xdg/autostart/net.kekyo.pipetune_gtk.desktop"
 assert_file "$stage_dir/usr/share/icons/hicolor/scalable/apps/pipetune.svg"
 assert_file "$stage_dir/usr/share/doc/pipetune/copyright"
 assert_file "$stage_dir/usr/share/doc/pipetune/dsp-backends.md"

@@ -19,7 +19,7 @@
 
 namespace pipetune_gtk {
 
-constexpr char kApplicationId[] = "net.kekyo.pipetune-gtk";
+constexpr char kApplicationId[] = "net.kekyo.pipetune_gtk";
 constexpr char kStatusNotifierWatcherService[] =
     "org.kde.StatusNotifierWatcher";
 constexpr char kStatusNotifierWatcherPath[] = "/StatusNotifierWatcher";

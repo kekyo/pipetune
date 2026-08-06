@@ -1,12 +1,14 @@
 import {
   constants,
   accessSync,
+  mkdirSync,
   mkdtempSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const fail = (message, command) => {
@@ -58,6 +60,18 @@ if (
       : join(installPrefix, directory);
     return join(stagingDirectory, destination.replace(/^\/+/u, ''), fileName);
   };
+  const legacyApplication = installPath(
+    applicationDirectory,
+    'net.kekyo.pipetune-gtk.desktop'
+  );
+  const legacyAutostart = installPath(
+    autostartDirectory,
+    'net.kekyo.pipetune-gtk.desktop'
+  );
+  for (const legacyDesktopFile of [legacyApplication, legacyAutostart]) {
+    mkdirSync(dirname(legacyDesktopFile), { recursive: true });
+    writeFileSync(legacyDesktopFile, 'obsolete\n');
+  }
   try {
     const installed = spawnSync(cmake, ['--install', buildDirectory], {
       encoding: 'utf8',
@@ -66,14 +80,20 @@ if (
     if (installed.status !== 0) {
       fail('staged PipeTune GTK installation failed', installed);
     } else {
+      if (
+        statSync(legacyApplication, { throwIfNoEntry: false }) !== undefined ||
+        statSync(legacyAutostart, { throwIfNoEntry: false }) !== undefined
+      ) {
+        fail('staged PipeTune GTK installation retained obsolete launchers');
+      }
       const executable = installPath(binaryDirectory, 'pipetune-gtk');
       const application = installPath(
         applicationDirectory,
-        'net.kekyo.pipetune-gtk.desktop'
+        'net.kekyo.pipetune_gtk.desktop'
       );
       const autostart = installPath(
         autostartDirectory,
-        'net.kekyo.pipetune-gtk.desktop'
+        'net.kekyo.pipetune_gtk.desktop'
       );
       const icon = installPath(iconDirectory, 'pipetune.svg');
       const presetManifest = installPath(presetDirectory, 'presets.txt');

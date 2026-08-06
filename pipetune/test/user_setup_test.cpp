@@ -56,10 +56,10 @@ static pipetune::UserManagementPaths makePaths(
           directory / "config" / "pipetune" / "environment.gtk",
       .autostartPath =
           directory / "config" / "autostart" /
-          "net.kekyo.pipetune-gtk.desktop",
+          "net.kekyo.pipetune_gtk.desktop",
       .autostartBackupPath =
           directory / "config" / "autostart" /
-          "net.kekyo.pipetune-gtk.desktop.pipetune-backup",
+          "net.kekyo.pipetune_gtk.desktop.pipetune-backup",
       .wirePlumberPolicyPath =
           directory / "config" / "wireplumber" / "policy.lua.d" /
           "60-pipetune-filter.lua",

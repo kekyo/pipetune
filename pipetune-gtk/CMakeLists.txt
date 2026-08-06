@@ -305,11 +305,29 @@ install(
   TARGETS pipetune-gtk
   RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(
-  FILES packaging/applications/net.kekyo.pipetune-gtk.desktop
+  FILES packaging/applications/net.kekyo.pipetune_gtk.desktop
   DESTINATION "${PIPETUNE_GTK_APPLICATION_DIR}")
 install(
-  FILES packaging/autostart/net.kekyo.pipetune-gtk.desktop
+  FILES packaging/autostart/net.kekyo.pipetune_gtk.desktop
   DESTINATION "${PIPETUNE_GTK_AUTOSTART_DIR}")
+set(PIPETUNE_GTK_REMOVE_LEGACY_DESKTOP_ENTRIES [=[
+function(pipetune_gtk_remove_legacy_desktop_entry destination)
+  if(IS_ABSOLUTE "${destination}")
+    set(directory "$ENV{DESTDIR}${destination}")
+  else()
+    set(directory "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/${destination}")
+  endif()
+  file(REMOVE "${directory}/net.kekyo.pipetune-gtk.desktop")
+endfunction()
+pipetune_gtk_remove_legacy_desktop_entry("@PIPETUNE_GTK_APPLICATION_DIR@")
+pipetune_gtk_remove_legacy_desktop_entry("@PIPETUNE_GTK_AUTOSTART_DIR@")
+]=])
+string(
+  CONFIGURE
+  "${PIPETUNE_GTK_REMOVE_LEGACY_DESKTOP_ENTRIES}"
+  PIPETUNE_GTK_REMOVE_LEGACY_DESKTOP_ENTRIES
+  @ONLY)
+install(CODE "${PIPETUNE_GTK_REMOVE_LEGACY_DESKTOP_ENTRIES}")
 install(
   FILES packaging/icons/hicolor/scalable/apps/pipetune.svg
   DESTINATION "${PIPETUNE_GTK_ICON_DIR}")
@@ -710,6 +728,7 @@ if(BUILD_TESTING)
 
   find_program(PIPETUNE_GTK_DBUS_RUN_SESSION dbus-run-session REQUIRED)
   find_program(PIPETUNE_GTK_GDBUS gdbus REQUIRED)
+  find_program(PIPETUNE_GTK_GTK_LAUNCH gtk-launch REQUIRED)
   find_program(
     PIPETUNE_GTK_DESKTOP_FILE_VALIDATE desktop-file-validate REQUIRED)
   find_program(
@@ -727,6 +746,21 @@ if(BUILD_TESTING)
       ${PIPETUNE_GTK_GDBUS})
   set_tests_properties(
     pipetune_gtk_application_lifecycle PROPERTIES TIMEOUT 60)
+
+  add_test(
+    NAME pipetune_gtk_desktop_launch
+    COMMAND
+      ${PIPETUNE_GTK_DBUS_RUN_SESSION}
+      --config-file=${CMAKE_CURRENT_SOURCE_DIR}/test/dbus-session.conf --
+      ${PIPETUNE_GTK_XVFB_RUN} -a
+      ${PIPETUNE_GTK_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/desktop-launch.mjs
+      $<TARGET_FILE:pipetune-gtk>
+      ${PIPETUNE_GTK_GTK_LAUNCH}
+      ${CMAKE_CURRENT_SOURCE_DIR}/packaging/applications/net.kekyo.pipetune_gtk.desktop
+      ${PIPETUNE_GTK_GDBUS})
+  set_tests_properties(
+    pipetune_gtk_desktop_launch PROPERTIES TIMEOUT 60)
 
   add_test(
     NAME pipetune_gtk_gestament_e2e

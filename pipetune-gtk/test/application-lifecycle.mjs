@@ -113,7 +113,7 @@ try {
     '--session',
     '--timeout',
     '10',
-    'net.kekyo.pipetune-gtk',
+    'net.kekyo.pipetune_gtk',
   ]);
 
   const hiddenActivation = await execute(executable, ['--hidden']);

@@ -112,10 +112,10 @@ int main() {
       ("pipetune-autostart-test-" +
        std::to_string(static_cast<long long>(getpid())));
   const auto target =
-      directory / "autostart" / "net.kekyo.pipetune-gtk.desktop";
+      directory / "autostart" / "net.kekyo.pipetune_gtk.desktop";
   const auto backup =
       directory / "autostart" /
-      "net.kekyo.pipetune-gtk.desktop.pipetune-backup";
+      "net.kekyo.pipetune_gtk.desktop.pipetune-backup";
   const auto passed =
       testManagedMaskLifecycle(target, backup) &&
       testCustomOverrideRoundTrip(target, backup) &&

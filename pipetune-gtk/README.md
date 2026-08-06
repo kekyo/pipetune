@@ -279,10 +279,10 @@ With that prefix, the GUI integration is installed as:
 /usr/bin/pipetune-gtk
 /usr/lib/pipetune/libeffetune-dsp-scalar.so
 /usr/lib/pipetune/libeffetune-dsp-simd.so
-/usr/share/applications/net.kekyo.pipetune-gtk.desktop
+/usr/share/applications/net.kekyo.pipetune_gtk.desktop
 /usr/share/icons/hicolor/scalable/apps/pipetune.svg
 /usr/share/pipetune/effetune-presets/
-/etc/xdg/autostart/net.kekyo.pipetune-gtk.desktop
+/etc/xdg/autostart/net.kekyo.pipetune_gtk.desktop
 ```
 
 The system autostart entry runs `pipetune-gtk --hidden` at desktop login.
