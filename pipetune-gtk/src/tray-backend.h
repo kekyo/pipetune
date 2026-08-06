@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -81,16 +82,21 @@ struct TrayIconPixmap {
 };
 
 /**
+ * Describes platform context supplied with a tray activation.
+ */
+struct TrayActivationContext {
+  /** Event timestamp, or no value when the backend did not provide one. */
+  std::optional<std::uint32_t> userInteractionTime;
+};
+
+/**
  * Receives tray backend actions.
  */
 struct TrayBackendCallbacks {
   /**
    * Opens or presents the PipeTune window.
-   *
-   * The argument is the GDK timestamp of the user interaction, or
-   * GDK_CURRENT_TIME when the tray transport does not provide one.
    */
-  std::function<void(std::uint32_t)> activate;
+  std::function<void(const TrayActivationContext &)> activate;
   /** Requests an explicit application quit. */
   std::function<void()> quit;
   /** Reports discovery and host availability changes. */
@@ -135,6 +141,15 @@ const char *applicationId();
  */
 TrayBackendKind
 selectTrayBackendKind(const TrayBackendAvailability &availability);
+
+/**
+ * Builds activation context from a backend event timestamp.
+ *
+ * @param timestamp Event timestamp, or zero when unavailable.
+ * @return Activation context with zero normalized to no timestamp.
+ */
+TrayActivationContext
+buildTrayActivationContext(std::uint32_t timestamp);
 
 /**
  * Maps a color mode to the public icon theme name.

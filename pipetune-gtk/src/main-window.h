@@ -3,6 +3,7 @@
 
 #include <gtk/gtk.h>
 
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -120,14 +121,30 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
                                 std::string_view effetuneDspVersion);
 
 /**
+ * Resolves the interaction timestamp used to present the main window.
+ *
+ * A supplied event timestamp is preserved. When no timestamp is available,
+ * a fresh X server timestamp is requested from a realized X11 window so the
+ * window manager can associate the presentation with the tray activation.
+ *
+ * @param window Main application window.
+ * @param userInteractionTime Timestamp supplied by the activation source.
+ * @return Supplied or freshly resolved timestamp, or no value when the
+ * platform cannot provide one.
+ */
+std::optional<guint32> mainWindowPresentationTime(
+    GtkWidget *window,
+    std::optional<guint32> userInteractionTime) noexcept;
+
+/**
  * Shows and presents the main window for a user interaction.
  *
  * @param ui UI state containing the main window.
  * @param userInteractionTime GDK timestamp captured from the interaction, or
- * GDK_CURRENT_TIME when the source does not provide one.
+ * no value when the source does not provide one.
  */
 void presentMainWindow(const MainWindowUi &ui,
-                       guint32 userInteractionTime) noexcept;
+                       std::optional<guint32> userInteractionTime) noexcept;
 
 /**
  * Shows or fully removes the action-log drawer from window allocation.

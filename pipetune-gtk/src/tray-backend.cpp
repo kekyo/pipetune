@@ -203,6 +203,16 @@ selectTrayBackendKind(const TrayBackendAvailability &availability) {
   return TrayBackendKind::none;
 }
 
+TrayActivationContext
+buildTrayActivationContext(std::uint32_t timestamp) {
+  return {
+      .userInteractionTime =
+          timestamp == 0U
+              ? std::optional<std::uint32_t>{}
+              : std::optional<std::uint32_t>{timestamp},
+  };
+}
+
 std::string_view trayIconName(TrayIconColorMode colorMode) {
   return colorMode == TrayIconColorMode::color ? "pipetune"
                                                : std::string_view{};
@@ -417,10 +427,10 @@ static void setAvailability(
 }
 
 static void activateBackend(TrayBackendImplementation *implementation,
-                            std::uint32_t userInteractionTime) {
+                            const TrayActivationContext &context) {
   if (implementation != nullptr && !implementation->destroyed &&
       implementation->options.callbacks.activate) {
-    implementation->options.callbacks.activate(userInteractionTime);
+    implementation->options.callbacks.activate(context);
   }
 }
 
@@ -438,7 +448,9 @@ static void handleMenuEvent(TrayBackendImplementation *implementation,
     return;
   }
   if (itemId == kOpenMenuItemId) {
-    activateBackend(implementation, userInteractionTime);
+    activateBackend(
+        implementation,
+        buildTrayActivationContext(userInteractionTime));
   } else if (itemId == kQuitMenuItemId) {
     quitBackend(implementation);
   }
@@ -449,7 +461,7 @@ static void handleStatusNotifierMethod(
     GDBusMethodInvocation *invocation) {
   if (std::strcmp(methodName, "Activate") == 0 ||
       std::strcmp(methodName, "SecondaryActivate") == 0) {
-    activateBackend(implementation, GDK_CURRENT_TIME);
+    activateBackend(implementation, buildTrayActivationContext(0U));
     g_dbus_method_invocation_return_value(invocation, nullptr);
     return;
   }
@@ -767,7 +779,8 @@ static void updateStatusIcon(
 
 static void onStatusIconActivate(GtkStatusIcon *, gpointer userData) {
   activateBackend(static_cast<TrayBackendImplementation *>(userData),
-                  gtk_get_current_event_time());
+                  buildTrayActivationContext(
+                      gtk_get_current_event_time()));
 }
 
 static void onStatusIconPopup(GtkStatusIcon *statusIcon, guint button,
@@ -781,7 +794,8 @@ static void onStatusIconPopup(GtkStatusIcon *statusIcon, guint button,
 
 static void onStatusIconOpen(GtkMenuItem *, gpointer userData) {
   activateBackend(static_cast<TrayBackendImplementation *>(userData),
-                  gtk_get_current_event_time());
+                  buildTrayActivationContext(
+                      gtk_get_current_event_time()));
 }
 
 static void onStatusIconQuit(GtkMenuItem *, gpointer userData) {

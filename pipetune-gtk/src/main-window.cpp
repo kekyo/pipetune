@@ -7,6 +7,9 @@
 #include <gestament/gtk.h>
 #endif
 
+#include <gdk/gdkx.h>
+
+#include <optional>
 #include <string>
 
 namespace pipetune_gtk {
@@ -155,8 +158,35 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
   return ui;
 }
 
-void presentMainWindow(const MainWindowUi &ui,
-                       guint32 userInteractionTime) noexcept {
+std::optional<guint32> mainWindowPresentationTime(
+    GtkWidget *window,
+    std::optional<guint32> userInteractionTime) noexcept {
+  if (userInteractionTime.has_value() &&
+      userInteractionTime.value() != GDK_CURRENT_TIME) {
+    return userInteractionTime;
+  }
+  if (window == nullptr || !gtk_widget_get_realized(window)) {
+    return std::nullopt;
+  }
+  auto *gdkWindow = gtk_widget_get_window(window);
+  if (gdkWindow == nullptr || !GDK_IS_X11_WINDOW(gdkWindow)) {
+    return std::nullopt;
+  }
+  const auto events = gdk_window_get_events(gdkWindow);
+  if ((events & GDK_PROPERTY_CHANGE_MASK) == 0) {
+    gdk_window_set_events(
+        gdkWindow,
+        static_cast<GdkEventMask>(events | GDK_PROPERTY_CHANGE_MASK));
+  }
+  const auto serverTime = gdk_x11_get_server_time(gdkWindow);
+  return serverTime == GDK_CURRENT_TIME
+             ? std::optional<guint32>{}
+             : std::optional<guint32>{serverTime};
+}
+
+void presentMainWindow(
+    const MainWindowUi &ui,
+    std::optional<guint32> userInteractionTime) noexcept {
   if (ui.window == nullptr) {
     return;
   }
@@ -164,8 +194,14 @@ void presentMainWindow(const MainWindowUi &ui,
   setLogDrawerVisible(
       ui, gtk_toggle_button_get_active(
               GTK_TOGGLE_BUTTON(ui.logToggleButton)) != FALSE);
-  gtk_window_present_with_time(GTK_WINDOW(ui.window),
-                               userInteractionTime);
+  const auto presentationTime =
+      mainWindowPresentationTime(ui.window, userInteractionTime);
+  if (presentationTime.has_value()) {
+    gtk_window_present_with_time(GTK_WINDOW(ui.window),
+                                 presentationTime.value());
+  } else {
+    gtk_window_present(GTK_WINDOW(ui.window));
+  }
 }
 
 void setLogDrawerVisible(const MainWindowUi &ui, bool visible) noexcept {

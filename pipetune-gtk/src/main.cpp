@@ -36,6 +36,7 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <span>
 #include <sstream>
 #include <string>
@@ -105,7 +106,7 @@ static void render(GtkRuntime *runtime);
 static void driveSettings(GtkRuntime *runtime);
 static void beginTransactionFromRuntime(GtkRuntime *runtime);
 static void presentWindow(GtkRuntime *runtime,
-                          guint32 userInteractionTime);
+                          std::optional<guint32> userInteractionTime);
 static void requestQuit(GtkRuntime *runtime);
 static void scheduleReconnect(GtkRuntime *runtime);
 
@@ -1563,7 +1564,7 @@ static void destroyMainWindowPresentation(GtkRuntime *runtime) noexcept {
 }
 
 static void presentWindow(GtkRuntime *runtime,
-                          guint32 userInteractionTime) {
+                          std::optional<guint32> userInteractionTime) {
   if (runtime == nullptr || runtime->ui.window == nullptr) {
     return;
   }
@@ -1698,8 +1699,9 @@ static void onApplicationStartup(GApplication *, gpointer userData) {
       .callbacks =
           {
               .activate =
-                  [runtime](std::uint32_t userInteractionTime) {
-                    presentWindow(runtime, userInteractionTime);
+                  [runtime](const TrayActivationContext &context) {
+                    presentWindow(runtime,
+                                  context.userInteractionTime);
                   },
               .quit = [runtime]() {
                 if (runtime->dialogActive) {
@@ -1750,12 +1752,12 @@ static gint onApplicationCommandLine(GApplication *,
   if (!runtime->activationHandled) {
     runtime->activationHandled = true;
     if (!parsed.options.hidden) {
-      presentWindow(runtime, GDK_CURRENT_TIME);
+      presentWindow(runtime, std::nullopt);
     }
     return 0;
   }
   if (!parsed.options.hidden) {
-    presentWindow(runtime, GDK_CURRENT_TIME);
+    presentWindow(runtime, std::nullopt);
   }
   return 0;
 }

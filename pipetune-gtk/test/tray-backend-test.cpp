@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -99,6 +100,18 @@ int main() {
                  pipetune_gtk::TrayIconColorMode::grayscale)
                  .empty(),
              "grayscale icon name must defer to its pixmap")) {
+    return 1;
+  }
+
+  const auto timedActivation =
+      pipetune_gtk::buildTrayActivationContext(1234U);
+  const auto untimedActivation =
+      pipetune_gtk::buildTrayActivationContext(0U);
+  if (!check(timedActivation.userInteractionTime ==
+                 std::optional<std::uint32_t>{1234U},
+             "tray activation must preserve an event timestamp") ||
+      !check(!untimedActivation.userInteractionTime.has_value(),
+             "an unavailable tray timestamp must stay absent")) {
     return 1;
   }
 

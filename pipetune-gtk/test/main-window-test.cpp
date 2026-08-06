@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -263,6 +264,11 @@ int main(int argc, char **argv) {
 
   gtk_widget_hide(ui.window);
   pipetune_gtk::presentMainWindow(ui, 1234);
+  const auto suppliedPresentationTime =
+      pipetune_gtk::mainWindowPresentationTime(
+          ui.window, std::optional<guint32>{1234U});
+  const auto generatedPresentationTime =
+      pipetune_gtk::mainWindowPresentationTime(ui.window, std::nullopt);
   const auto presentationWorks =
       check(gtk_widget_get_visible(ui.window) != FALSE,
             "presenting the main window must make it visible") &&
@@ -271,7 +277,13 @@ int main(int argc, char **argv) {
       check(gtk_widget_get_visible(ui.settingsPane) != FALSE,
             "settings pane must be visible") &&
       check(gtk_widget_get_visible(ui.logRevealer) == FALSE,
-            "collapsed log drawer must not retain window height");
+            "collapsed log drawer must not retain window height") &&
+      check(suppliedPresentationTime ==
+                std::optional<guint32>{1234U},
+            "an interaction timestamp must be preserved") &&
+      check(generatedPresentationTime.has_value() &&
+                generatedPresentationTime.value() != GDK_CURRENT_TIME,
+            "an untimed X11 activation must receive a fresh server time");
 
   gtk_stack_set_transition_duration(GTK_STACK(ui.settingsStack), 0);
   gtk_stack_set_visible_child_name(GTK_STACK(ui.settingsStack),
