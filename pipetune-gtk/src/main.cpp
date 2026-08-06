@@ -28,8 +28,10 @@
 
 #include <gtk/gtk.h>
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -45,6 +47,8 @@
 #include <utility>
 #include <vector>
 
+#include <unistd.h>
+
 namespace pipetune_gtk {
 
 constexpr auto kReconnectDelaySeconds = guint{2};
@@ -54,6 +58,11 @@ constexpr auto kDspLoadStatusId = std::string_view{"dsp.load"};
 
 struct StatusRowWidgets {
   GtkWidget *text;
+};
+
+struct ApplicationRunResult {
+  int exitCode;
+  bool restartRequested;
 };
 
 struct GtkRuntime {
@@ -97,6 +106,8 @@ struct GtkRuntime {
   bool activationHandled;
   bool shuttingDown;
   bool quitting;
+  bool restartRequested;
+  GtkWidget *uiLanguageRestartDialog;
   MainWindowUi ui;
   GdkPixbuf *statusColorIcon;
   GdkPixbuf *statusGrayscaleIcon;
@@ -109,6 +120,44 @@ static void presentWindow(GtkRuntime *runtime,
                           std::optional<guint32> userInteractionTime);
 static void requestQuit(GtkRuntime *runtime);
 static void scheduleReconnect(GtkRuntime *runtime);
+
+static std::vector<std::string> copyProcessArguments(int argc,
+                                                     char **argv) {
+  auto arguments = std::vector<std::string>{};
+  arguments.reserve(static_cast<std::size_t>(argc));
+  for (auto index = int{0}; index < argc; ++index) {
+    arguments.emplace_back(argv[index]);
+  }
+  return arguments;
+}
+
+static std::filesystem::path currentExecutablePath() {
+  auto error = std::error_code{};
+  const auto executable =
+      std::filesystem::read_symlink("/proc/self/exe", error);
+  return error ? std::filesystem::path{} : executable;
+}
+
+static int restartApplicationProcess(
+    const std::filesystem::path &executable,
+    const std::vector<std::string> &processArguments) {
+  if (executable.empty() || processArguments.empty()) {
+    std::cerr << "pipetune-gtk: cannot resolve executable for restart\n";
+    return 1;
+  }
+  auto argumentStorage = processArguments;
+  auto argumentPointers = std::vector<char *>{};
+  argumentPointers.reserve(argumentStorage.size() + 1U);
+  for (auto &argument : argumentStorage) {
+    argumentPointers.push_back(argument.data());
+  }
+  argumentPointers.push_back(nullptr);
+  ::execv(executable.c_str(), argumentPointers.data());
+  const auto error = errno;
+  std::cerr << "pipetune-gtk: restart failed: "
+            << std::strerror(error) << '\n';
+  return 1;
+}
 
 static std::string versionText() {
   return "PipeTune GTK " + std::string(pipetune::version()) +
@@ -925,6 +974,63 @@ static void onLanguageChanged(GtkComboBox *combo, gpointer userData) {
   render(runtime);
 }
 
+static void onUiLanguageRestartDialogDestroy(GtkWidget *dialog,
+                                             gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (runtime->uiLanguageRestartDialog == dialog) {
+    runtime->uiLanguageRestartDialog = nullptr;
+  }
+}
+
+static void onUiLanguageRestartDialogResponse(GtkDialog *dialog,
+                                              gint response,
+                                              gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  gtk_widget_destroy(GTK_WIDGET(dialog));
+  if (response == GTK_RESPONSE_ACCEPT) {
+    runtime->restartRequested = true;
+    requestQuit(runtime);
+  }
+}
+
+static void showUiLanguageRestartDialog(GtkRuntime *runtime) {
+  if (runtime->uiLanguageRestartDialog != nullptr) {
+    gtk_window_present(GTK_WINDOW(runtime->uiLanguageRestartDialog));
+    return;
+  }
+  auto *dialog = gtk_message_dialog_new(
+      GTK_WINDOW(runtime->ui.window),
+      static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL |
+                                  GTK_DIALOG_DESTROY_WITH_PARENT),
+      GTK_MESSAGE_INFO, GTK_BUTTONS_NONE, "%s",
+      translate("Restart to apply UI language?"));
+  gtk_window_set_title(
+      GTK_WINDOW(dialog), translate("Restart to apply UI language?"));
+  gtk_message_dialog_format_secondary_text(
+      GTK_MESSAGE_DIALOG(dialog), "%s",
+      translate("The UI language change will take effect after PipeTune "
+                "GTK restarts."));
+  auto *later = gtk_dialog_add_button(
+      GTK_DIALOG(dialog), translate("Later"), GTK_RESPONSE_CANCEL);
+  auto *restart = gtk_dialog_add_button(
+      GTK_DIALOG(dialog), translate("Restart now"), GTK_RESPONSE_ACCEPT);
+#ifdef PIPETUNE_GTK_E2E_ACCESSIBILITY
+  gestament_gtk_assign_accessible_id(
+      dialog, "ui_language_restart_dialog");
+  gestament_gtk_assign_accessible_id(
+      later, "ui_language_restart_later_button");
+  gestament_gtk_assign_accessible_id(
+      restart, "ui_language_restart_now_button");
+#endif
+  gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL);
+  runtime->uiLanguageRestartDialog = dialog;
+  g_signal_connect(dialog, "response",
+                   G_CALLBACK(onUiLanguageRestartDialogResponse), runtime);
+  g_signal_connect(dialog, "destroy",
+                   G_CALLBACK(onUiLanguageRestartDialogDestroy), runtime);
+  gtk_widget_show_all(dialog);
+}
+
 static void onProcessingActiveChanged(GObject *object, GParamSpec *,
                                       gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
@@ -1215,6 +1321,7 @@ static void onApplyClicked(GtkButton *, gpointer userData) {
       localizedMessage("Saving all settings", {}),
       technicalMessage(persistenceTargets));
   auto error = std::string{};
+  auto promptForLanguageRestart = false;
   if (persistSettings) {
     error = persistenceTestDiagnostic();
     if (error.empty()) {
@@ -1232,6 +1339,8 @@ static void onApplyClicked(GtkButton *, gpointer userData) {
     error = saved.error;
     if (error.empty()) {
       runtime->savedUiLanguage = runtime->uiLanguage;
+      promptForLanguageRestart =
+          runtime->savedUiLanguage != runtime->presentationLanguage;
     }
   }
   const auto success = error.empty();
@@ -1253,6 +1362,9 @@ static void onApplyClicked(GtkButton *, gpointer userData) {
     revealActionLog(runtime);
   }
   render(runtime);
+  if (success && promptForLanguageRestart) {
+    showUiLanguageRestartDialog(runtime);
+  }
 }
 
 static void onLogToggleChanged(GtkToggleButton *button,
@@ -1775,12 +1887,15 @@ static void onApplicationShutdown(GApplication *, gpointer userData) {
   runtime->controlClient = nullptr;
   destroyTrayBackend(runtime->trayBackend);
   runtime->trayBackend = nullptr;
+  if (runtime->uiLanguageRestartDialog != nullptr) {
+    gtk_widget_destroy(runtime->uiLanguageRestartDialog);
+  }
   destroyMainWindowPresentation(runtime);
   releaseStatusArtwork(runtime);
   releaseApplicationHold(runtime);
 }
 
-static int runApplication(int argc, char **argv) {
+static ApplicationRunResult runApplication(int argc, char **argv) {
   const auto originalLocalization = captureUiLocalizationEnvironment();
   const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
   const auto *home = std::getenv("HOME");
@@ -1845,6 +1960,8 @@ static int runApplication(int argc, char **argv) {
       .activationHandled = false,
       .shuttingDown = false,
       .quitting = false,
+      .restartRequested = false,
+      .uiLanguageRestartDialog = nullptr,
       .ui = {},
       .statusColorIcon = nullptr,
       .statusGrayscaleIcon = nullptr,
@@ -1857,14 +1974,21 @@ static int runApplication(int argc, char **argv) {
                    G_CALLBACK(onApplicationShutdown), &runtime);
   const auto result =
       g_application_run(G_APPLICATION(application), argc, argv);
+  const auto restartRequested = runtime.restartRequested;
   g_object_unref(application);
   restoreUiLocalizationEnvironment(originalLocalization);
-  return result;
+  return {
+      .exitCode = result,
+      .restartRequested = restartRequested,
+  };
 }
 
 } // namespace pipetune_gtk
 
 int main(int argc, char **argv) {
+  const auto processArguments =
+      pipetune_gtk::copyProcessArguments(argc, argv);
+  const auto executable = pipetune_gtk::currentExecutablePath();
   auto arguments = std::vector<std::string_view>{};
   arguments.reserve(argc > 1 ? static_cast<std::size_t>(argc - 1) : 0);
   for (auto index = 1; index < argc; ++index) {
@@ -1884,5 +2008,10 @@ int main(int argc, char **argv) {
     std::cout << pipetune_gtk::versionText() << '\n';
     return 0;
   }
-  return pipetune_gtk::runApplication(argc, argv);
+  const auto result = pipetune_gtk::runApplication(argc, argv);
+  if (result.restartRequested) {
+    return pipetune_gtk::restartApplicationProcess(
+        executable, processArguments);
+  }
+  return result.exitCode;
 }

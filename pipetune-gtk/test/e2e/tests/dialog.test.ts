@@ -604,6 +604,42 @@ describe('PipeTune GTK dialog', () => {
         message: 'Japanese language preference was not saved by Apply.',
       }
     );
+
+    await toPass(
+      async () => {
+        expect(await session?.app.getWindowCount()).toBe(2);
+      },
+      {
+        timeoutMs: 10_000,
+        message: 'The UI language restart dialog did not appear.',
+      }
+    );
+    const restartDialog = await getElement(
+      'ui_language_restart_dialog',
+      'infoBar'
+    );
+    expect((await restartDialog.info()).states).toContain('modal');
+    expect(
+      (
+        await (
+          await getElement('ui_language_restart_now_button', 'button')
+        ).info()
+      ).name
+    ).toBe('Restart now');
+    await (
+      await getElement('ui_language_restart_later_button', 'button')
+    ).click();
+    await toPass(
+      async () => {
+        expect(await session?.app.getWindowCount()).toBe(1);
+      },
+      {
+        timeoutMs: 10_000,
+        message: 'The restart dialog did not close after choosing Later.',
+      }
+    );
+    await waitForLabel('statusHeadingLabel', 'PipeTune Status');
+
     await session.restartApplication();
     await waitForLabel('statusHeadingLabel', 'PipeTune の状態');
     await waitForLabel('status-system-connection', '接続済み');
@@ -611,6 +647,24 @@ describe('PipeTune GTK dialog', () => {
     const combo = await getElement('languageCombo', 'comboBox');
     expect(await combo.isChildSelected(2)).toBe(true);
     expect(await session.inspectConfig()).toEqual(initial);
+  });
+
+  it('restarts immediately with the saved UI language', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await selectSettingsPage(3);
+    await selectComboItem('languageCombo', 2);
+    await (await getElement('applyButton', 'button')).click();
+    await (
+      await getElement('ui_language_restart_now_button', 'button')
+    ).click();
+
+    await waitForLabel('statusHeadingLabel', 'PipeTune の状態');
+    await waitForLabel('status-system-connection', '接続済み');
+    await selectSettingsPage(3);
+    expect(
+      await (await getElement('languageCombo', 'comboBox')).isChildSelected(2)
+    ).toBe(true);
   });
 
   it('discards a staged UI language when Cancel closes the dialog', async () => {

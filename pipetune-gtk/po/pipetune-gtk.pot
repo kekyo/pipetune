@@ -316,6 +316,9 @@ msgstr ""
 msgid "Last input"
 msgstr ""
 
+msgid "Later"
+msgstr ""
+
 msgid "Live Configuration"
 msgstr ""
 
@@ -447,7 +450,13 @@ msgstr ""
 msgid "Rates unavailable"
 msgstr ""
 
+msgid "Restart now"
+msgstr ""
+
 msgid "Restart PipeTune GTK to use the selected language."
+msgstr ""
+
+msgid "Restart to apply UI language?"
 msgstr ""
 
 msgid "Restore defaults"
@@ -514,6 +523,9 @@ msgid "System"
 msgstr ""
 
 msgid "System default"
+msgstr ""
+
+msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr ""
 
 msgid "Turn off to pass audio through without an EffeTune preset."

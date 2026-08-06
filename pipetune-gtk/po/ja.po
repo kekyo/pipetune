@@ -320,6 +320,9 @@ msgstr "言語"
 msgid "Last input"
 msgstr "最終入力"
 
+msgid "Later"
+msgstr "後で"
+
 msgid "Live Configuration"
 msgstr "ライブ設定"
 
@@ -451,8 +454,14 @@ msgstr "レートモード"
 msgid "Rates unavailable"
 msgstr "レートを取得できません"
 
+msgid "Restart now"
+msgstr "今すぐ再起動"
+
 msgid "Restart PipeTune GTK to use the selected language."
 msgstr "選択した言語を使用するにはPipeTune GTKを再起動してください。"
+
+msgid "Restart to apply UI language?"
+msgstr "UI言語を適用するため再起動しますか？"
 
 msgid "Restore defaults"
 msgstr "既定値に戻す"
@@ -519,6 +528,9 @@ msgstr "システム"
 
 msgid "System default"
 msgstr "システム設定"
+
+msgid "The UI language change will take effect after PipeTune GTK restarts."
+msgstr "UI言語の変更はPipeTune GTKの再起動後に反映されます。"
 
 msgid "Turn off to pass audio through without an EffeTune preset."
 msgstr "オフにするとEffeTuneプリセットを使用せず音声をそのまま通します。"
