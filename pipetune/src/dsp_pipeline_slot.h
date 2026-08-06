@@ -12,6 +12,14 @@
 
 namespace pipetune {
 
+/** Result of processing PCM with its exact pipeline generation. */
+struct DspPipelineProcessResult {
+  /** Processing status from the selected pipeline. */
+  ProcessStatus status;
+  /** Generation of the pipeline that processed the PCM. */
+  std::uint64_t generation;
+};
+
 /**
  * Owns one active DSP pipeline that a non-real-time thread may replace.
  *
@@ -55,6 +63,25 @@ public:
   ProcessStatus process(std::span<float> planarSamples,
                         std::uint32_t channelCount, std::uint32_t frameCount,
                         double timeSeconds) noexcept;
+
+  /**
+   * Processes PCM and reports the exact selected pipeline generation.
+   *
+   * This function performs no allocation, locking, or object destruction.
+   *
+   * @param planarSamples Contiguous channel-major samples.
+   * @param channelCount Number of channels represented by the buffer.
+   * @param frameCount Number of frames in each channel.
+   * @param timeSeconds Monotonic stream time in seconds.
+   * @return Processing status and generation from one complete pipeline.
+   */
+  DspPipelineProcessResult
+  processWithGeneration(std::span<float> planarSamples,
+                        std::uint32_t channelCount, std::uint32_t frameCount,
+                        double timeSeconds) noexcept;
+
+  /** Returns the currently active DSP pipeline generation. */
+  std::uint64_t activeGeneration() const noexcept;
 
   /**
    * Atomically activates a prepared replacement.
@@ -129,6 +156,7 @@ public:
   DspPerformanceCounters performanceCounters() const noexcept;
 
 private:
+  void activate(DspPipeline *pipeline) noexcept;
   void reclaimSuperseded();
 
   std::unique_ptr<DspPipeline> current_;
@@ -136,6 +164,7 @@ private:
   std::vector<std::unique_ptr<DspPipeline>> superseded_;
   std::atomic<DspPipeline *> active_;
   std::atomic<DspPipeline *> hazard_;
+  std::atomic<std::uint64_t> activationSequence_;
   std::atomic<std::uint64_t> processedFrames_;
   std::atomic<std::uint64_t> processingNanoseconds_;
 };

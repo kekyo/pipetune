@@ -46,6 +46,16 @@ constexpr auto kSampleBytes = std::uint32_t{sizeof(float)};
 constexpr auto kReadinessTimeoutSeconds = std::time_t{5};
 constexpr auto kMinimumGraphSampleRate = std::uint32_t{8000};
 constexpr auto kMaximumGraphSampleRate = std::uint32_t{768000};
+constexpr auto kPipelineTransitionSilenceMilliseconds = std::uint32_t{20};
+
+static std::uint32_t pipelineTransitionSilenceFrames(
+    std::uint32_t sampleRate) noexcept {
+  return static_cast<std::uint32_t>(
+      (static_cast<std::uint64_t>(sampleRate) *
+           kPipelineTransitionSilenceMilliseconds +
+       999) /
+      1000);
+}
 
 struct PipeWireRuntime;
 
@@ -74,6 +84,7 @@ struct PipeWireRuntime {
   PipeWirePipelineOptions options;
   PipeWireRunMode mode;
   PlanarAudioRing ring;
+  AudioTransitionSilencer outputTransitionSilencer;
   std::vector<float> inputScratch;
   std::vector<float> outputScratch;
   std::atomic<std::uint64_t> processingErrors;
@@ -132,6 +143,7 @@ struct PipeWireRuntime {
       : pipeline(std::move(preparedPipeline)), options(runtimeOptions),
         mode(runtimeMode),
         ring(runtimeOptions.channelCount, runtimeOptions.ringCapacityFrames),
+        outputTransitionSilencer(0),
         inputScratch(static_cast<std::size_t>(runtimeOptions.channelCount) *
                          runtimeOptions.maxFrames,
                      0.0F),
@@ -531,7 +543,6 @@ static bool applyNegotiatedGraphRate(PipeWireRuntime &runtime,
     runtime.dspSampleRate.store(negotiatedRate,
                                 std::memory_order_release);
     runtime.processedInputFrames = 0;
-    static_cast<void>(runtime.ring.discardQueuedFrames());
   }
   runtime.graphSampleRate.store(negotiatedRate,
                                 std::memory_order_release);
@@ -672,12 +683,12 @@ static void inputProcess(void *data) {
         runtime.dspSampleRate.load(std::memory_order_relaxed);
     const auto timeSeconds =
         static_cast<double>(runtime.processedInputFrames) / sampleRate;
-    if (runtime.pipeline.process(scratch, runtime.options.channelCount,
-                                 blockFrames, timeSeconds) !=
-        ProcessStatus::ok) {
+    const auto processResult = runtime.pipeline.processWithGeneration(
+        scratch, runtime.options.channelCount, blockFrames, timeSeconds);
+    if (processResult.status != ProcessStatus::ok) {
       runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
     }
-    runtime.ring.write(scratch, blockFrames);
+    runtime.ring.write(scratch, blockFrames, processResult.generation);
     runtime.processedInputFrames += blockFrames;
     sourceFrame += blockFrames;
   }
@@ -752,7 +763,13 @@ static void outputProcess(void *data) {
                        .first(static_cast<std::size_t>(
                                   runtime.options.channelCount) *
                               blockFrames);
-    runtime.ring.read(scratch, blockFrames);
+    const auto pipelineGeneration = runtime.pipeline.activeGeneration();
+    runtime.ring.read(scratch, blockFrames, pipelineGeneration);
+    runtime.outputTransitionSilencer.apply(
+        scratch, runtime.options.channelCount, blockFrames,
+        pipelineGeneration,
+        pipelineTransitionSilenceFrames(
+            runtime.dspSampleRate.load(std::memory_order_relaxed)));
     for (auto channel = std::uint32_t{0};
          channel < runtime.options.channelCount; ++channel) {
       const auto source = scratch.subspan(
@@ -1294,7 +1311,6 @@ static void rateChangeRequested(void *data, std::uint64_t) {
     runtime.dspSampleRate.store(requested.fixedRate,
                                 std::memory_order_release);
     runtime.processedInputFrames = 0;
-    static_cast<void>(runtime.ring.discardQueuedFrames());
   }
 
   destroyAudioStreams(runtime);

@@ -56,9 +56,12 @@ static bool testReplacementChangesPcm(
   }
   auto slot = pipetune::DspPipelineSlot(std::move(initial));
   auto samples = std::vector<float>{0.25F};
-  if (!check(slot.process(samples, 1, 1, 0.0) ==
-                 pipetune::ProcessStatus::ok,
+  const auto initialResult =
+      slot.processWithGeneration(samples, 1, 1, 0.0);
+  if (!check(initialResult.status == pipetune::ProcessStatus::ok,
              "initial slot processing failed") ||
+      !check(initialResult.generation == 0,
+             "initial pipeline generation must be zero") ||
       !check(approximately(samples[0],
                            0.25F * std::pow(10.0F, 6.0F / 20.0F)),
              "initial slot PCM differs") ||
@@ -72,9 +75,12 @@ static bool testReplacementChangesPcm(
   const auto initialCounters = slot.performanceCounters();
   slot.replace(std::move(replacement));
   samples[0] = 0.25F;
-  return check(slot.process(samples, 1, 1, 0.1) ==
-                   pipetune::ProcessStatus::ok,
+  const auto replacementResult =
+      slot.processWithGeneration(samples, 1, 1, 0.1);
+  return check(replacementResult.status == pipetune::ProcessStatus::ok,
                "replacement slot processing failed") &&
+         check(replacementResult.generation == 1,
+               "replacement pipeline generation must advance") &&
          check(approximately(samples[0],
                              0.25F * std::pow(10.0F, -6.0F / 20.0F)),
                "replacement slot PCM differs") &&
@@ -127,11 +133,16 @@ static bool testConcurrentReplacementProducesOnlyCompletePipelines(
     for (auto iteration = std::uint32_t{0}; iteration < 1000000;
          ++iteration) {
       auto samples = std::vector<float>{0.25F};
-      if (slot.process(samples, 1, 1,
-                       static_cast<double>(iteration) / 48000.0) !=
-              pipetune::ProcessStatus::ok ||
-          (!approximately(samples[0], positive) &&
-           !approximately(samples[0], negative))) {
+      const auto result = slot.processWithGeneration(
+          samples, 1, 1,
+          static_cast<double>(iteration) / 48000.0);
+      const auto generationMatches =
+          (result.generation == 0 &&
+           approximately(samples[0], positive)) ||
+          (result.generation == 1 &&
+           approximately(samples[0], negative));
+      if (result.status != pipetune::ProcessStatus::ok ||
+          !generationMatches) {
         failed.store(true, std::memory_order_relaxed);
         break;
       }

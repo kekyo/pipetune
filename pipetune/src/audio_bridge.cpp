@@ -31,6 +31,7 @@ static void copyFromRing(std::span<const float> source,
 PlanarAudioRing::PlanarAudioRing(std::uint32_t channelCount, std::uint32_t capacityFrames)
     : channelCount_(channelCount), capacityFrames_(capacityFrames),
       samples_(static_cast<std::size_t>(channelCount) * capacityFrames, 0.0F),
+      generations_(capacityFrames, 0),
       readFrame_(0), writeFrame_(0), overrunFrames_(0),
       underrunFrames_(0) {
   if (channelCount == 0 || channelCount > 8) {
@@ -42,7 +43,8 @@ PlanarAudioRing::PlanarAudioRing(std::uint32_t channelCount, std::uint32_t capac
 }
 
 std::uint32_t PlanarAudioRing::write(std::span<const float> planarSamples,
-                                     std::uint32_t frameCount) noexcept {
+                                     std::uint32_t frameCount,
+                                     std::uint64_t generation) noexcept {
   if (planarSamples.size() != static_cast<std::size_t>(channelCount_) * frameCount) {
     return 0;
   }
@@ -62,13 +64,17 @@ std::uint32_t PlanarAudioRing::write(std::span<const float> planarSamples,
         static_cast<std::size_t>(channel) * capacityFrames_, capacityFrames_);
     copyIntoRing(source, destination, writeFrame, acceptedFrames);
   }
+  for (auto frame = std::uint32_t{0}; frame < acceptedFrames; ++frame) {
+    generations_[(writeFrame + frame) % capacityFrames_] = generation;
+  }
   writeFrame_.store(writeFrame + acceptedFrames, std::memory_order_release);
   overrunFrames_.fetch_add(frameCount - acceptedFrames, std::memory_order_relaxed);
   return acceptedFrames;
 }
 
 std::uint32_t PlanarAudioRing::read(std::span<float> planarSamples,
-                                    std::uint32_t frameCount) noexcept {
+                                    std::uint32_t frameCount,
+                                    std::uint64_t expectedGeneration) noexcept {
   if (planarSamples.size() != static_cast<std::size_t>(channelCount_) * frameCount) {
     return 0;
   }
@@ -87,6 +93,16 @@ std::uint32_t PlanarAudioRing::read(std::span<float> planarSamples,
         static_cast<std::size_t>(channel) * frameCount, frameCount);
     copyFromRing(source, destination.first(copiedFrames), readFrame, copiedFrames);
     std::fill(destination.begin() + copiedFrames, destination.end(), 0.0F);
+  }
+  for (auto frame = std::uint32_t{0}; frame < copiedFrames; ++frame) {
+    if (generations_[(readFrame + frame) % capacityFrames_] ==
+        expectedGeneration) {
+      continue;
+    }
+    for (auto channel = std::uint32_t{0}; channel < channelCount_; ++channel) {
+      planarSamples[static_cast<std::size_t>(channel) * frameCount + frame] =
+          0.0F;
+    }
   }
   readFrame_.store(readFrame + copiedFrames, std::memory_order_release);
   underrunFrames_.fetch_add(frameCount - copiedFrames,
@@ -116,6 +132,33 @@ std::uint64_t PlanarAudioRing::overrunFrames() const noexcept {
 
 std::uint64_t PlanarAudioRing::underrunFrames() const noexcept {
   return underrunFrames_.load(std::memory_order_relaxed);
+}
+
+AudioTransitionSilencer::AudioTransitionSilencer(
+    std::uint64_t initialGeneration) noexcept
+    : observedGeneration_(initialGeneration), remainingFrames_(0) {}
+
+std::uint32_t AudioTransitionSilencer::apply(
+    std::span<float> planarSamples, std::uint32_t channelCount,
+    std::uint32_t frameCount, std::uint64_t generation,
+    std::uint32_t silenceFrames) noexcept {
+  if (channelCount == 0 ||
+      planarSamples.size() !=
+          static_cast<std::size_t>(channelCount) * frameCount) {
+    return 0;
+  }
+  if (generation != observedGeneration_) {
+    observedGeneration_ = generation;
+    remainingFrames_ = silenceFrames;
+  }
+  const auto framesToSilence = std::min(frameCount, remainingFrames_);
+  for (auto channel = std::uint32_t{0}; channel < channelCount; ++channel) {
+    auto channelSamples = planarSamples.subspan(
+        static_cast<std::size_t>(channel) * frameCount, frameCount);
+    std::fill_n(channelSamples.begin(), framesToSilence, 0.0F);
+  }
+  remainingFrames_ -= framesToSilence;
+  return framesToSilence;
 }
 
 } // namespace pipetune

@@ -39,10 +39,12 @@ public:
    *
    * @param planarSamples Contiguous channel-major input PCM.
    * @param frameCount Number of frames in each channel.
+   * @param generation DSP pipeline generation that produced every frame.
    * @return Number of frames appended.
    */
   std::uint32_t write(std::span<const float> planarSamples,
-                      std::uint32_t frameCount) noexcept;
+                      std::uint32_t frameCount,
+                      std::uint64_t generation) noexcept;
 
   /**
    * Removes frames and fills any unavailable tail with silence.
@@ -52,10 +54,13 @@ public:
    *
    * @param planarSamples Contiguous channel-major output PCM.
    * @param frameCount Number of requested frames in each channel.
-   * @return Number of frames copied from queued audio, excluding silence.
+   * @param expectedGeneration Active DSP pipeline generation. Queued frames
+   * from any other generation are consumed as silence.
+   * @return Number of queued frames consumed, excluding an unavailable tail.
    */
   std::uint32_t read(std::span<float> planarSamples,
-                     std::uint32_t frameCount) noexcept;
+                     std::uint32_t frameCount,
+                     std::uint64_t expectedGeneration) noexcept;
 
   /**
    * Discards all frames that were fully queued before this call.
@@ -81,10 +86,48 @@ private:
   std::uint32_t channelCount_;
   std::uint32_t capacityFrames_;
   std::vector<float> samples_;
+  std::vector<std::uint64_t> generations_;
   alignas(64) std::atomic<std::uint64_t> readFrame_;
   alignas(64) std::atomic<std::uint64_t> writeFrame_;
   std::atomic<std::uint64_t> overrunFrames_;
   std::atomic<std::uint64_t> underrunFrames_;
+};
+
+/**
+ * Replaces the beginning of a new DSP pipeline generation with silence.
+ *
+ * The object retains the remaining interval across output buffer boundaries.
+ */
+class AudioTransitionSilencer final {
+public:
+  /**
+   * Creates a silencer observing the supplied generation.
+   *
+   * @param initialGeneration Pipeline generation that is already audible.
+   */
+  explicit AudioTransitionSilencer(std::uint64_t initialGeneration) noexcept;
+
+  /**
+   * Applies a silence interval whenever the generation changes.
+   *
+   * An incorrectly shaped buffer is left unchanged. Repeated calls with the
+   * same generation continue, but do not restart, the silence interval.
+   *
+   * @param planarSamples Contiguous channel-major output PCM.
+   * @param channelCount Number of channels represented by the buffer.
+   * @param frameCount Number of frames in each channel.
+   * @param generation Active DSP pipeline generation.
+   * @param silenceFrames Silence interval to start after a generation change.
+   * @return Number of frames replaced with silence in this call.
+   */
+  std::uint32_t apply(std::span<float> planarSamples,
+                      std::uint32_t channelCount, std::uint32_t frameCount,
+                      std::uint64_t generation,
+                      std::uint32_t silenceFrames) noexcept;
+
+private:
+  std::uint64_t observedGeneration_;
+  std::uint32_t remainingFrames_;
 };
 
 } // namespace pipetune
