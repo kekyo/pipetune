@@ -16,7 +16,7 @@ struct ServerState {
   std::mutex mutex;
   bool rejectChanges;
   pipetune::SampleRatePolicy policy;
-  std::uint32_t effectiveRate;
+  std::uint32_t graphRate;
   std::size_t setRequests;
 };
 
@@ -31,15 +31,8 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
   auto lock = std::scoped_lock(state.mutex);
   const auto fixed =
       state.policy.mode == pipetune::SampleRateMode::fixed;
-  const auto dspRate = state.effectiveRate != 0
-                           ? state.effectiveRate
-                           : fixed ? state.policy.fixedRate : 96000U;
-  const auto rateError =
-      fixed && state.policy.enforcement ==
-                   pipetune::SampleRateEnforcement::force &&
-              dspRate != state.policy.fixedRate
-          ? "PipeWire did not apply the forced graph rate"
-          : std::string{};
+  const auto dspRate = fixed ? state.policy.fixedRate : 96000U;
+  const auto graphRate = state.graphRate == 0 ? dspRate : state.graphRate;
   return {
       .processingMode = pipetune::ProcessingMode::bypass,
       .activePreset = {},
@@ -57,9 +50,9 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
       .inputLastReceivedUnixMilliseconds = 0,
       .configuredRatePolicy = state.policy,
       .dspSampleRate = dspRate,
-      .graphSampleRate = dspRate,
+      .graphSampleRate = graphRate,
       .rateTransitioning = false,
-      .rateError = rateError,
+      .rateError = {},
   };
 }
 
@@ -223,31 +216,31 @@ static bool testOfflineChange(
          configHasPolicy(configPath, policy);
 }
 
-static bool testNegotiatedFallbackChange(
+static bool testSeparatedFixedAndGraphRateChange(
     const std::filesystem::path &configPath,
     const std::filesystem::path &socketPath, ServerState &state) {
   const auto requested = pipetune::SampleRatePolicy{
       .mode = pipetune::SampleRateMode::fixed,
       .fixedRate = 192000,
-      .enforcement = pipetune::SampleRateEnforcement::force};
+      .enforcement = pipetune::SampleRateEnforcement::suggest};
   {
     auto lock = std::scoped_lock(state.mutex);
-    state.effectiveRate = 48000;
+    state.graphRate = 48000;
   }
   const auto changed = pipetune::executeSetSampleRatePolicy(
       {.configPath = configPath, .socketPath = socketPath}, requested);
   {
     auto lock = std::scoped_lock(state.mutex);
-    state.effectiveRate = 0;
+    state.graphRate = 0;
   }
   return check(changed.success && changed.liveApplied &&
                    changed.persistenceApplied,
-               "a negotiated rate fallback must keep the live daemon usable") &&
+               "different fixed DSP and graph rates must remain usable") &&
          check(changed.status.configuredRatePolicy == requested &&
-                   changed.status.dspSampleRate == 48000 &&
+                   changed.status.dspSampleRate == 192000 &&
                    changed.status.graphSampleRate == 48000 &&
-                   !changed.status.rateError.empty(),
-               "rate fallback status must retain the request and graph rate") &&
+                   changed.status.rateError.empty(),
+               "rate status must retain fixed DSP and actual graph rates") &&
          configHasPolicy(configPath, requested);
 }
 
@@ -263,7 +256,7 @@ int main() {
       .mutex = {},
       .rejectChanges = false,
       .policy = pipetune::defaultSampleRatePolicy(),
-      .effectiveRate = 0,
+      .graphRate = 0,
       .setRequests = 0};
   auto started = pipetune::startControlServer(
       socketPath,
@@ -280,7 +273,7 @@ int main() {
       testRejectedChange(configPath, socketPath, state) &&
       testSuccessfulAndPartialChanges(
           directory, configPath, socketPath, state) &&
-      testNegotiatedFallbackChange(configPath, socketPath, state);
+      testSeparatedFixedAndGraphRateChange(configPath, socketPath, state);
   started.server.reset();
   passed =
       passed &&

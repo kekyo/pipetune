@@ -159,11 +159,29 @@ static bool testPipelineTransitionProducesSilence() {
                "audio after the silence interval must pass unchanged");
 }
 
+static bool testStreamRestartProducesSilenceWithoutPipelineChange() {
+  auto silencer = pipetune::AudioTransitionSilencer(11);
+  auto beforeRestart = std::vector<float>{1.0F, 2.0F, 11.0F, 12.0F};
+  if (!check(silencer.apply(beforeRestart, 2, 2, 11, 4) == 0,
+             "stable pipeline audio must initially pass unchanged")) {
+    return false;
+  }
+
+  silencer.start(3);
+  auto afterRestart =
+      std::vector<float>{3.0F, 4.0F, 5.0F, 13.0F, 14.0F, 15.0F};
+  return check(silencer.apply(afterRestart, 2, 3, 11, 4) == 3,
+               "a stream restart must silence the requested interval") &&
+         check(afterRestart == std::vector<float>(6, 0.0F),
+               "a stream restart must be silent even without a DSP change");
+}
+
 int main() {
   const auto passed = testPlanarWraparound() && testUnderrunSilence() &&
                       testOverrunDropsNewestTail() &&
                       testMalformedBufferIsRejected() &&
                       testQueuedAudioCanBeDiscardedBeforeChangingOutput() &&
-                      testPipelineTransitionProducesSilence();
+                      testPipelineTransitionProducesSilence() &&
+                      testStreamRestartProducesSilenceWithoutPipelineChange();
   return passed ? 0 : 1;
 }

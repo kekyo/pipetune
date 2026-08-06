@@ -106,9 +106,30 @@ static bool testPolicyValidation() {
                "fixed policy must use a selectable rate");
 }
 
+static bool testDspRateResolution() {
+  const auto fixedSuggest = pipetune::SampleRatePolicy{
+      .mode = pipetune::SampleRateMode::fixed,
+      .fixedRate = 192000,
+      .enforcement = pipetune::SampleRateEnforcement::suggest};
+  const auto fixedForce = pipetune::SampleRatePolicy{
+      .mode = pipetune::SampleRateMode::fixed,
+      .fixedRate = 192000,
+      .enforcement = pipetune::SampleRateEnforcement::force};
+  return check(
+             pipetune::dspSampleRateForPolicy(fixedSuggest, 48000) ==
+                 192000,
+             "Suggest must keep the selected fixed DSP rate") &&
+         check(pipetune::dspSampleRateForPolicy(fixedForce, 48000) ==
+                   192000,
+               "Force must keep the selected fixed DSP rate") &&
+         check(pipetune::dspSampleRateForPolicy(
+                   pipetune::defaultSampleRatePolicy(), 48000) == 48000,
+               "automatic mode must follow the PipeWire graph rate");
+}
+
 int main() {
   return testSelectableRates() && testPolicyNamesAndParsing() &&
-                 testPolicyValidation()
+                 testPolicyValidation() && testDspRateResolution()
              ? 0
              : 1;
 }

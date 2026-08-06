@@ -76,12 +76,17 @@ executeSetSampleRatePolicy(const PersistentRateOptions &options,
       return rateChangeError(
           "daemon returned an unexpected rate status event");
     }
+    const auto fixedDspConfirmed =
+        policy.mode != SampleRateMode::fixed ||
+        response.status.dspSampleRate == policy.fixedRate;
+    const auto automaticDspConfirmed =
+        policy.mode != SampleRateMode::automatic ||
+        response.status.graphSampleRate == 0 ||
+        response.status.dspSampleRate == response.status.graphSampleRate;
     if (response.status.configuredRatePolicy != policy ||
         response.status.rateTransitioning ||
-        response.status.dspSampleRate == 0 ||
-        response.status.graphSampleRate == 0 ||
-        response.status.dspSampleRate !=
-            response.status.graphSampleRate) {
+        response.status.dspSampleRate == 0 || !fixedDspConfirmed ||
+        !automaticDspConfirmed) {
       return rateChangeError(
           "daemon did not confirm the requested sample-rate policy");
     }

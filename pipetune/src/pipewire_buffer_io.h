@@ -2,10 +2,19 @@
 #define PIPETUNE_PIPEWIRE_BUFFER_IO_H
 
 #include <spa/buffer/buffer.h>
+#include <spa/utils/defs.h>
 
 #include <cstdint>
 
 namespace pipetune {
+
+/**
+ * Converts PipeWire's graph time-domain fraction into a sample rate.
+ *
+ * @param rate Graph tick duration, normally expressed as 1/sample-rate.
+ * @return Integral graph sample rate, or zero for an unusable fraction.
+ */
+std::uint32_t pipeWireGraphSampleRate(spa_fraction rate) noexcept;
 
 /**
  * Validates planar floating-point capture data and reports its frame count.

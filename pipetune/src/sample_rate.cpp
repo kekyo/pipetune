@@ -84,4 +84,11 @@ bool sampleRatePolicyIsValid(const SampleRatePolicy &policy) noexcept {
   return false;
 }
 
+std::uint32_t
+dspSampleRateForPolicy(const SampleRatePolicy &policy,
+                       std::uint32_t negotiatedSampleRate) noexcept {
+  return policy.mode == SampleRateMode::fixed ? policy.fixedRate
+                                               : negotiatedSampleRate;
+}
+
 } // namespace pipetune

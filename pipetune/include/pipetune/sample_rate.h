@@ -108,6 +108,17 @@ SampleRatePolicy defaultSampleRatePolicy() noexcept;
  */
 bool sampleRatePolicyIsValid(const SampleRatePolicy &policy) noexcept;
 
+/**
+ * Resolves the DSP rate independently from graph-rate enforcement.
+ *
+ * @param policy Valid configured sample-rate policy.
+ * @param negotiatedSampleRate Negotiated PipeTune PCM rate in hertz.
+ * @return The selected fixed rate, or negotiatedSampleRate in automatic mode.
+ */
+std::uint32_t
+dspSampleRateForPolicy(const SampleRatePolicy &policy,
+                       std::uint32_t negotiatedSampleRate) noexcept;
+
 } // namespace pipetune
 
 #endif

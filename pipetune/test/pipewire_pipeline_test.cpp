@@ -194,7 +194,6 @@ static bool testOrderlySignalShutdown(
                              pipetune::SampleRateEnforcement::force} &&
                  parsedRate.status.dspSampleRate == 96000 &&
                  parsedRate.status.inputSampleRate == 96000 &&
-                 parsedRate.status.graphSampleRate != 0 &&
                  !parsedRate.status.rateTransitioning,
              "live rate response does not report completed renegotiation")) {
     kill(child, SIGTERM);

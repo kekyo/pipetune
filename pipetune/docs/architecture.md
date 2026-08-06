@@ -145,17 +145,17 @@ can still reference it.
 PipeTune supports two rate modes:
 
 - Automatic advertises an F32P rate range from 8 kHz through 768 kHz on both
-  filter nodes. PipeWire negotiates one graph rate, and PipeTune rebuilds the
-  EffeTune pipeline at that resolved rate.
+  filter nodes. PipeTune rebuilds the EffeTune pipeline at the negotiated PCM
+  rate.
 - Fixed requests one of 44.1, 48, 96, 192, or 384 kHz for both filter nodes.
-  EffeTune still follows the rate that PipeWire actually negotiates.
+  Both PipeTune PCM streams and EffeTune remain at that selected rate.
 
-Both nodes must negotiate the same rate. A disagreement is a graph error
-rather than an implicit resampling boundary inside PipeTune. If PipeWire cannot
-apply a fixed request, PipeTune remains connected and rebuilds EffeTune at the
-negotiated graph rate. An unapplied Force request is exposed as a rate
-diagnostic. Conversion needed by an application or physical device remains
-PipeWire's responsibility outside the filter.
+Both filter nodes must negotiate the same PCM rate. A disagreement is an error
+rather than an implicit resampling boundary inside PipeTune. The graph's actual
+time-domain rate is reported independently from `pw_time.rate`. Under a fixed
+Suggest policy, PipeWire may schedule the graph at another rate and owns the
+conversion outside the filter; this does not change the DSP rate. An unapplied
+Force request is exposed as a rate diagnostic.
 
 For a fixed rate, Suggest publishes `node.rate` as a preference. Force also
 publishes `node.force-rate=0` on the output stream while it is active. Neither

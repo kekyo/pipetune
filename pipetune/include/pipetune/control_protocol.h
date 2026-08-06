@@ -134,11 +134,11 @@ struct ControlRuntimeStatus {
   std::uint64_t inputFramesReceived;
   /** Unix time of the latest received frame in milliseconds, or zero before input. */
   std::uint64_t inputLastReceivedUnixMilliseconds;
-  /** Persisted automatic/fixed graph-rate selection. */
+  /** Persisted automatic/fixed DSP-rate selection and graph enforcement. */
   SampleRatePolicy configuredRatePolicy = {};
   /** Active DSP rate in hertz. */
   std::uint32_t dspSampleRate = 0;
-  /** Negotiated PipeWire graph rate, or zero before negotiation. */
+  /** Current PipeWire graph time-domain rate, or zero while inactive. */
   std::uint32_t graphSampleRate = 0;
   /** True while the daemon is rebuilding and renegotiating the filter. */
   bool rateTransitioning = false;

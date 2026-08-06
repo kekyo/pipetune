@@ -5,6 +5,13 @@
 
 namespace pipetune {
 
+std::uint32_t pipeWireGraphSampleRate(spa_fraction rate) noexcept {
+  if (rate.num == 0 || rate.denom == 0 || rate.denom % rate.num != 0) {
+    return 0;
+  }
+  return rate.denom / rate.num;
+}
+
 bool inspectPipeWireCaptureBuffer(const spa_buffer &buffer,
                                   std::uint32_t channelCount,
                                   std::uint32_t &frameCount) noexcept {

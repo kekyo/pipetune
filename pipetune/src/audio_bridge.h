@@ -108,6 +108,15 @@ public:
   explicit AudioTransitionSilencer(std::uint64_t initialGeneration) noexcept;
 
   /**
+   * Starts a fresh silence interval without changing the DSP generation.
+   *
+   * The caller must serialize this operation with apply().
+   *
+   * @param silenceFrames Number of subsequent frames to replace with silence.
+   */
+  void start(std::uint32_t silenceFrames) noexcept;
+
+  /**
    * Applies a silence interval whenever the generation changes.
    *
    * An incorrectly shaped buffer is left unchanged. Repeated calls with the

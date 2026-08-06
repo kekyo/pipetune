@@ -19,7 +19,7 @@ struct FilterGraphPropertyOptions {
   std::string nodeName;
   /** Human-readable description of the filter input node. */
   std::string nodeDescription;
-  /** Fixed PCM rate, or no value when PipeWire negotiates the graph rate. */
+  /** Fixed PipeTune PCM and DSP rate, or no value in automatic mode. */
   std::optional<std::uint32_t> fixedSampleRate;
   /** Number of planar audio channels. */
   std::uint32_t channelCount;

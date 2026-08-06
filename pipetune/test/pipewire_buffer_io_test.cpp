@@ -78,7 +78,18 @@ static bool testConsumedCaptureContentIsRetired() {
       "new producer content must be visible from its first valid frame");
 }
 
+static bool testGraphSampleRateUsesPipeWireTimeDomain() {
+  return check(pipetune::pipeWireGraphSampleRate({1, 48000}) == 48000,
+               "PipeWire graph time must expose its sample rate") &&
+         check(pipetune::pipeWireGraphSampleRate({2, 96000}) == 48000,
+               "equivalent PipeWire graph fractions must be reduced") &&
+         check(pipetune::pipeWireGraphSampleRate({0, 48000}) == 0 &&
+                   pipetune::pipeWireGraphSampleRate({7, 48000}) == 0,
+               "invalid graph time fractions must be unavailable");
+}
+
 int main() {
-  const auto passed = testConsumedCaptureContentIsRetired();
+  const auto passed = testConsumedCaptureContentIsRetired() &&
+                      testGraphSampleRateUsesPipeWireTimeDomain();
   return passed ? 0 : 1;
 }

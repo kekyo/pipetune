@@ -189,15 +189,16 @@ pipetune bypass
 
 The PipeTune settings window provides DSP sample rate and PipeWire enforcement
 drop-downs. Automatic follows the rate negotiated by the PipeWire graph. A
-fixed choice requests 44.1, 48, 96, 192, or 384 kHz for both filter nodes and
-the EffeTune engine. Runtime status shows the active DSP and graph rates.
+fixed choice keeps both PipeTune filter streams and the EffeTune engine at
+44.1, 48, 96, 192, or 384 kHz. Runtime status separately shows the active DSP
+rate and PipeWire's current graph rate.
 
 Suggest sets `node.rate` as a preference; PipeWire may negotiate another graph
 rate. Force additionally asks PipeWire to hold the fixed rate while the filter
 output is active. Neither mode changes PipeWire's global clock configuration.
-If PipeWire cannot apply the request, PipeTune stays connected and runs DSP at
-the negotiated graph rate. An unapplied Force request appears as a rate
-diagnostic.
+When Suggest leaves the graph at another rate, PipeWire performs the conversion
+outside PipeTune and the DSP remains at the selected fixed rate. An unapplied
+Force request appears as a rate diagnostic.
 
 The same information and controls are available from the CLI:
 

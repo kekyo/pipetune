@@ -190,14 +190,16 @@ transition state. Both queries accept `--json` and require a reachable daemon.
 `rate set` sends a connected daemon the new policy first and persists it only
 after the daemon completes the transition. A rejection preserves the previous
 startup policy. If the daemon is unavailable, the command instead saves the
-policy for the next start. **Suggest** supplies `node.rate` as a PipeWire
-preference. **Force** also supplies `node.force-rate=0`, which asks PipeWire to
-use the denominator of `node.rate` while PipeTune's playback node is active.
-If PipeWire cannot apply the request, PipeTune stays connected and continues
-DSP at the negotiated graph rate. An unapplied Force request is shown as a
+policy for the next start. Suggest supplies `node.rate` as a PipeWire
+preference. Force also supplies `node.force-rate=0`, which asks PipeWire to use
+the denominator of `node.rate` while PipeTune's playback node is active. A
+fixed selection keeps PipeTune's PCM streams and DSP at that rate even when
+Suggest allows PipeWire to run its graph at another rate. PipeWire performs
+that conversion outside the filter. An unapplied Force request is shown as a
 rate diagnostic.
+
 Neither operation rewrites PipeWire's global clock configuration. Automatic
-leaves both filter nodes negotiable and rebuilds EffeTune at the resolved graph
+leaves both filter nodes negotiable and rebuilds EffeTune at the resolved PCM
 rate.
 
 Inspect and select the native DSP backend with:

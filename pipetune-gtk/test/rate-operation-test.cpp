@@ -198,30 +198,28 @@ static bool testPersistenceFailure(
                "GTK partial rate success must be explicit");
 }
 
-static bool testNegotiatedFallback(
+static bool testSeparatedFixedAndGraphRates(
     const std::filesystem::path &configPath) {
   const auto requested =
-      fixedPolicy(192000, pipetune::SampleRateEnforcement::force);
-  auto fallbackStatus = rateStatus(requested);
-  fallbackStatus.dspSampleRate = 48000;
-  fallbackStatus.graphSampleRate = 48000;
-  fallbackStatus.rateError =
-      "PipeWire negotiated 48000 Hz instead of the forced 192000 Hz";
+      fixedPolicy(192000, pipetune::SampleRateEnforcement::suggest);
+  auto separatedStatus = rateStatus(requested);
+  separatedStatus.graphSampleRate = 48000;
   auto state = pendingState();
   const auto result = pipetune_gtk::completeRateOperation(
       state,
       {.response = pipetune::parseControlResponse(
-           pipetune::makeControlSuccessResponse(fallbackStatus, {})),
+           pipetune::makeControlSuccessResponse(separatedStatus, {})),
        .transportError = {}},
       {.configPath = configPath, .policy = requested}, 6000);
   return check(result.liveApplied && result.persistenceApplied &&
                    !result.reconnectRequired,
-               "GTK must retain control after a negotiated rate fallback") &&
+               "GTK must accept independent fixed DSP and graph rates") &&
          check(state.connection ==
                    pipetune_gtk::ControlConnectionState::connected &&
-                   state.runtime.dspSampleRate == 48000 &&
-                   !state.runtime.rateError.empty(),
-               "GTK must expose the effective rate and fallback diagnostic") &&
+                   state.runtime.dspSampleRate == 192000 &&
+                   state.runtime.graphSampleRate == 48000 &&
+                   state.runtime.rateError.empty(),
+               "GTK must preserve the fixed DSP rate under Suggest") &&
          configHasPolicy(configPath, requested);
 }
 
@@ -234,10 +232,10 @@ int main() {
   const auto configPath = directory / "config" / "environment";
   const auto passed =
       testRejectedAndUnconfirmedReplies(configPath) &&
-      testSuccessfulAndOfflineChanges(configPath) &&
-      testDisconnectPersistsForNextStart(configPath) &&
-      testPersistenceFailure(directory) &&
-      testNegotiatedFallback(configPath);
+                 testSuccessfulAndOfflineChanges(configPath) &&
+                 testDisconnectPersistsForNextStart(configPath) &&
+                 testPersistenceFailure(directory) &&
+                 testSeparatedFixedAndGraphRates(configPath);
   std::filesystem::remove_all(directory);
   return passed ? 0 : 1;
 }

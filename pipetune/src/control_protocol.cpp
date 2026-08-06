@@ -395,6 +395,31 @@ static bool dspBackendStatusIsConsistent(
          status.dspBackendFallback && !status.dspBackendError.empty();
 }
 
+static bool sampleRateStatusIsConsistent(
+    const ControlRuntimeStatus &status) noexcept {
+  if (!sampleRatePolicyIsValid(status.configuredRatePolicy) ||
+      status.rateError.find('\0') != std::string::npos) {
+    return false;
+  }
+  if (status.rateTransitioning) {
+    return true;
+  }
+  if (status.configuredRatePolicy.mode == SampleRateMode::fixed) {
+    if (status.dspSampleRate != 0 &&
+        status.dspSampleRate != status.configuredRatePolicy.fixedRate &&
+        status.rateError.empty()) {
+      return false;
+    }
+    return status.configuredRatePolicy.enforcement !=
+               SampleRateEnforcement::force ||
+           status.graphSampleRate == 0 ||
+           status.graphSampleRate == status.configuredRatePolicy.fixedRate ||
+           !status.rateError.empty();
+  }
+  return status.graphSampleRate == 0 ||
+         status.graphSampleRate == status.dspSampleRate;
+}
+
 static std::string makeControlStatusMessage(
     const ControlRuntimeStatus &status,
     std::span<const ControlWarning> warnings, bool statusEvent) {
@@ -402,16 +427,7 @@ static std::string makeControlStatusMessage(
        status.activePreset.empty()) ||
       (status.processingMode == ProcessingMode::bypass &&
        !status.activePreset.empty()) ||
-      !sampleRatePolicyIsValid(status.configuredRatePolicy) ||
-      (status.configuredRatePolicy.mode == SampleRateMode::fixed &&
-       status.configuredRatePolicy.enforcement ==
-           SampleRateEnforcement::force &&
-       !status.rateTransitioning && status.dspSampleRate != 0 &&
-       status.dspSampleRate != status.configuredRatePolicy.fixedRate &&
-       status.rateError.empty()) ||
-      (status.graphSampleRate != 0 &&
-       status.graphSampleRate != status.dspSampleRate) ||
-      status.rateError.find('\0') != std::string::npos ||
+      !sampleRateStatusIsConsistent(status) ||
       !dspBackendStatusIsConsistent(status)) {
     return makeControlErrorResponse("cannot encode inconsistent control status");
   }
@@ -1002,16 +1018,7 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
        status.activePreset.empty()) ||
       (status.processingMode == ProcessingMode::bypass &&
        !status.activePreset.empty()) ||
-      !sampleRatePolicyIsValid(status.configuredRatePolicy) ||
-      (status.configuredRatePolicy.mode == SampleRateMode::fixed &&
-       status.configuredRatePolicy.enforcement ==
-           SampleRateEnforcement::force &&
-       !status.rateTransitioning && status.dspSampleRate != 0 &&
-       status.dspSampleRate != status.configuredRatePolicy.fixedRate &&
-       status.rateError.empty()) ||
-      (status.graphSampleRate != 0 &&
-       status.graphSampleRate != status.dspSampleRate) ||
-      status.rateError.find('\0') != std::string::npos ||
+      !sampleRateStatusIsConsistent(status) ||
       !dspBackendStatusIsConsistent(status)) {
     return responseError(
         "successful control response has inconsistent status");

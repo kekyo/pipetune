@@ -20,12 +20,14 @@ static bool confirmsRatePolicy(
     const pipetune::SampleRatePolicy &policy) {
   if (status.configuredRatePolicy != policy ||
       status.rateTransitioning ||
-      status.dspSampleRate == 0 ||
-      status.graphSampleRate == 0 ||
-      status.dspSampleRate != status.graphSampleRate) {
+      status.dspSampleRate == 0) {
     return false;
   }
-  return true;
+  if (policy.mode == pipetune::SampleRateMode::fixed) {
+    return status.dspSampleRate == policy.fixedRate;
+  }
+  return status.graphSampleRate == 0 ||
+         status.dspSampleRate == status.graphSampleRate;
 }
 
 RateOperationCompletion persistRateOperationForNextStart(

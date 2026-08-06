@@ -138,6 +138,10 @@ AudioTransitionSilencer::AudioTransitionSilencer(
     std::uint64_t initialGeneration) noexcept
     : observedGeneration_(initialGeneration), remainingFrames_(0) {}
 
+void AudioTransitionSilencer::start(std::uint32_t silenceFrames) noexcept {
+  remainingFrames_ = silenceFrames;
+}
+
 std::uint32_t AudioTransitionSilencer::apply(
     std::span<float> planarSamples, std::uint32_t channelCount,
     std::uint32_t frameCount, std::uint64_t generation,

@@ -129,13 +129,14 @@ is allowed.
 
 The DSP sample rate drop-down contains Automatic followed by 44.1, 48, 96,
 192, and 384 kHz. Automatic leaves both filter nodes negotiable and follows the
-rate resolved by the PipeWire graph. A fixed selection requests that rate for
-both filter nodes and the EffeTune engine.
+negotiated PCM rate. A fixed selection keeps both filter streams and the
+EffeTune engine at that rate.
 
 The PipeWire enforcement drop-down selects Suggest or Force. `node.rate`
 remains a PipeWire request rather than a guaranteed graph rate. Force applies
 only while PipeTune's filter output is active and does not rewrite the global
-PipeWire clock configuration.
+PipeWire clock configuration. With Suggest, PipeWire may use a different graph
+rate and perform conversion outside PipeTune while the DSP stays fixed.
 
 The persistent status pane passively displays the daemon's input, DSP, and
 negotiated graph rates. During a live transition the connection status says

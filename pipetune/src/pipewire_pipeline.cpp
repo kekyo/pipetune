@@ -91,6 +91,8 @@ struct PipeWireRuntime {
   InputTelemetry inputTelemetry;
   std::atomic<bool> inputFormatNegotiated;
   std::atomic<std::uint32_t> dspSampleRate;
+  std::atomic<std::uint32_t> inputStreamSampleRate;
+  std::atomic<std::uint32_t> outputStreamSampleRate;
   std::atomic<std::uint32_t> graphSampleRate;
   std::uint64_t processedInputFrames;
   ProcessingMode processingMode;
@@ -152,7 +154,9 @@ struct PipeWireRuntime {
                       0.0F),
         processingErrors(0), inputTelemetry(),
         inputFormatNegotiated(false),
-        dspSampleRate(runtimeOptions.dspSampleRate), graphSampleRate(0),
+        dspSampleRate(runtimeOptions.dspSampleRate),
+        inputStreamSampleRate(0), outputStreamSampleRate(0),
+        graphSampleRate(0),
         processedInputFrames(0),
         processingMode(runtimeOptions.initialPresetPath.empty()
                            ? ProcessingMode::bypass
@@ -500,11 +504,11 @@ static spa_pod *buildAutomaticFormatParameter(
   return static_cast<spa_pod *>(spa_pod_builder_pop(&builder, &frame));
 }
 
-static bool applyNegotiatedGraphRate(PipeWireRuntime &runtime,
-                                     std::uint32_t negotiatedRate) {
+static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
+                                      std::uint32_t negotiatedRate) {
   if (negotiatedRate < kMinimumGraphSampleRate ||
       negotiatedRate > kMaximumGraphSampleRate) {
-    failRuntime(runtime, "PipeWire negotiated an unsupported graph rate");
+    failRuntime(runtime, "PipeWire negotiated an unsupported stream rate");
     return false;
   }
   auto policy = SampleRatePolicy{};
@@ -512,21 +516,36 @@ static bool applyNegotiatedGraphRate(PipeWireRuntime &runtime,
     auto lock = std::scoped_lock(runtime.rateStateMutex);
     policy = runtime.configuredRatePolicy;
   }
-
-  const auto graphRate =
-      runtime.graphSampleRate.load(std::memory_order_acquire);
-  if (graphRate != 0 && graphRate != negotiatedRate) {
+  const auto targetDspRate =
+      dspSampleRateForPolicy(policy, negotiatedRate);
+  if (policy.mode == SampleRateMode::fixed &&
+      negotiatedRate != targetDspRate) {
+    const auto error =
+        "PipeWire negotiated " + std::to_string(negotiatedRate) +
+        " Hz for fixed " + std::to_string(targetDspRate) + " Hz PCM";
+    {
+      auto lock = std::scoped_lock(runtime.rateStateMutex);
+      runtime.rateTransitioning = false;
+      runtime.rateError = error;
+    }
+    failRuntime(runtime, error);
+    return false;
+  }
+  const auto otherStreamRate =
+      input ? runtime.outputStreamSampleRate.load(std::memory_order_acquire)
+            : runtime.inputStreamSampleRate.load(std::memory_order_acquire);
+  if (otherStreamRate != 0 && otherStreamRate != negotiatedRate) {
     failRuntime(runtime,
                 "PipeWire negotiated different rates for the filter nodes");
     return false;
   }
   const auto currentRate =
       runtime.dspSampleRate.load(std::memory_order_acquire);
-  if (currentRate != negotiatedRate) {
+  if (currentRate != targetDspRate) {
     auto pipelineLock =
         std::unique_lock<std::mutex>(runtime.pipelineMutationMutex);
     auto rebuilt = runtime.pipeline.rebuildActive(
-        {.sampleRate = static_cast<float>(negotiatedRate),
+        {.sampleRate = static_cast<float>(targetDspRate),
          .maxChannels = runtime.options.channelCount,
          .maxFrames = runtime.options.maxFrames});
     if (rebuilt.pipeline == nullptr) {
@@ -540,23 +559,16 @@ static bool applyNegotiatedGraphRate(PipeWireRuntime &runtime,
       return false;
     }
     runtime.pipeline.replace(std::move(rebuilt.pipeline));
-    runtime.dspSampleRate.store(negotiatedRate,
+    runtime.dspSampleRate.store(targetDspRate,
                                 std::memory_order_release);
     runtime.processedInputFrames = 0;
   }
-  runtime.graphSampleRate.store(negotiatedRate,
-                                std::memory_order_release);
-  auto rateError = std::string{};
-  if (policy.mode == SampleRateMode::fixed &&
-      policy.enforcement == SampleRateEnforcement::force &&
-      negotiatedRate != policy.fixedRate) {
-    rateError = "PipeWire negotiated " + std::to_string(negotiatedRate) +
-                " Hz instead of the forced " +
-                std::to_string(policy.fixedRate) + " Hz";
-  }
-  {
-    auto lock = std::scoped_lock(runtime.rateStateMutex);
-    runtime.rateError = std::move(rateError);
+  if (input) {
+    runtime.inputStreamSampleRate.store(negotiatedRate,
+                                        std::memory_order_release);
+  } else {
+    runtime.outputStreamSampleRate.store(negotiatedRate,
+                                         std::memory_order_release);
   }
   return true;
 }
@@ -571,10 +583,12 @@ static void streamParameterChanged(void *data, std::uint32_t id,
   if (parameter == nullptr) {
     if (context.input) {
       runtime.inputFormatReady = false;
+      runtime.inputStreamSampleRate.store(0, std::memory_order_release);
       runtime.inputFormatNegotiated.store(false,
                                           std::memory_order_release);
     } else {
       runtime.outputFormatReady = false;
+      runtime.outputStreamSampleRate.store(0, std::memory_order_release);
     }
     runtime.graphSampleRate.store(0, std::memory_order_release);
     requestControlStatusUpdate(runtime);
@@ -586,18 +600,22 @@ static void streamParameterChanged(void *data, std::uint32_t id,
       runtime.dspSampleRate.load(std::memory_order_acquire);
   if (parseResult < 0 || negotiated.format != SPA_AUDIO_FORMAT_F32P ||
       negotiated.channels != runtime.options.channelCount ||
-      !applyNegotiatedGraphRate(runtime, negotiated.rate)) {
+      !applyNegotiatedStreamRate(runtime, context.input, negotiated.rate)) {
     if (!runtime.error.empty()) {
       return;
     }
     failRuntime(runtime, "PipeWire negotiated an unsupported audio format");
     return;
   }
-  if (previousRate != negotiated.rate) {
+  const auto currentRate =
+      runtime.dspSampleRate.load(std::memory_order_acquire);
+  if (previousRate != currentRate) {
     if (context.input) {
       runtime.outputFormatReady = false;
+      runtime.outputStreamSampleRate.store(0, std::memory_order_release);
     } else {
       runtime.inputFormatReady = false;
+      runtime.inputStreamSampleRate.store(0, std::memory_order_release);
       runtime.inputFormatNegotiated.store(false,
                                           std::memory_order_release);
     }
@@ -643,9 +661,23 @@ static void copyInputPlane(const spa_data &plane, std::uint32_t sourceFrame,
               source, byteCount - firstBytes);
 }
 
+static void updateGraphSampleRate(PipeWireRuntime &runtime,
+                                  pw_stream *stream) noexcept {
+  auto time = pw_time{};
+  if (pw_stream_get_time_n(stream, &time, sizeof(time)) < 0) {
+    return;
+  }
+  const auto sampleRate = pipeWireGraphSampleRate(time.rate);
+  if (sampleRate >= kMinimumGraphSampleRate &&
+      sampleRate <= kMaximumGraphSampleRate) {
+    runtime.graphSampleRate.store(sampleRate, std::memory_order_release);
+  }
+}
+
 static void inputProcess(void *data) {
   auto &runtime =
       *static_cast<StreamCallbackContext *>(data)->runtime;
+  updateGraphSampleRate(runtime, runtime.inputStream);
   auto *pipeWireBuffer = pw_stream_dequeue_buffer(runtime.inputStream);
   if (pipeWireBuffer == nullptr || pipeWireBuffer->buffer == nullptr) {
     return;
@@ -735,6 +767,7 @@ static void clearOutputChunks(spa_buffer &buffer,
 static void outputProcess(void *data) {
   auto &runtime =
       *static_cast<StreamCallbackContext *>(data)->runtime;
+  updateGraphSampleRate(runtime, runtime.outputStream);
   auto *pipeWireBuffer = pw_stream_dequeue_buffer(runtime.outputStream);
   if (pipeWireBuffer == nullptr || pipeWireBuffer->buffer == nullptr) {
     return;
@@ -883,6 +916,8 @@ static void destroyAudioStreams(PipeWireRuntime &runtime) {
   runtime.outputReady = false;
   runtime.inputFormatReady = false;
   runtime.outputFormatReady = false;
+  runtime.inputStreamSampleRate.store(0, std::memory_order_release);
+  runtime.outputStreamSampleRate.store(0, std::memory_order_release);
   runtime.graphSampleRate.store(0, std::memory_order_release);
   runtime.inputAlwaysProcess = true;
   runtime.inputFormatNegotiated.store(false, std::memory_order_release);
@@ -1025,6 +1060,16 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
       runtime.dspSampleRate.load(std::memory_order_acquire);
   const auto graphSampleRate =
       runtime.graphSampleRate.load(std::memory_order_acquire);
+  if (!rateTransitioning &&
+      ratePolicy.mode == SampleRateMode::fixed &&
+      ratePolicy.enforcement == SampleRateEnforcement::force &&
+      graphSampleRate != 0 && graphSampleRate != ratePolicy.fixedRate &&
+      rateError.empty()) {
+    rateError = "PipeWire graph is " +
+                std::to_string(graphSampleRate) +
+                " Hz instead of the forced " +
+                std::to_string(ratePolicy.fixedRate) + " Hz";
+  }
   return {.processingMode = runtime.processingMode,
           .activePreset = runtime.activePreset,
           .configurationError = runtime.configurationError,
@@ -1314,6 +1359,10 @@ static void rateChangeRequested(void *data, std::uint64_t) {
   }
 
   destroyAudioStreams(runtime);
+  static_cast<void>(runtime.ring.discardQueuedFrames());
+  runtime.outputTransitionSilencer.start(
+      pipelineTransitionSilenceFrames(
+          runtime.dspSampleRate.load(std::memory_order_acquire)));
   const auto streamError = createAudioStreams(runtime);
   if (!streamError.empty()) {
     {
