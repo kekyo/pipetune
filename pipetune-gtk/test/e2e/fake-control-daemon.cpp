@@ -96,7 +96,7 @@ makeStatus(const pipetune::StartupConfig &config) {
   }
 
   const auto dspRate =
-      config.ratePolicy.mode == pipetune::SampleRateMode::maximum
+      config.ratePolicy.mode == pipetune::SampleRateMode::automatic
           ? 384000u
           : config.ratePolicy.fixedRate;
   const auto variant = effectiveVariant(config);
@@ -127,10 +127,8 @@ makeStatus(const pipetune::StartupConfig &config) {
       .inputLastReceivedUnixMilliseconds = 1720000000123,
       .configuredRatePolicy = config.ratePolicy,
       .dspSampleRate = dspRate,
-      .selectedOutputSampleRate = dspRate,
-      .activeOutputSampleRate = dspRate,
+      .graphSampleRate = dspRate,
       .rateTransitioning = false,
-      .rateFallback = false,
       .rateError = {},
       .configuredDspBackend = config.dspBackend,
       .configuredDspSimdVariant = config.dspSimdVariant,

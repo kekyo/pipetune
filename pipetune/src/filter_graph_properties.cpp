@@ -7,8 +7,7 @@ namespace pipetune {
 
 static void appendCommonProperties(FilterNodeProperties &properties,
                                    const FilterGraphPropertyOptions &options,
-                                   std::string_view nodeName,
-                                   std::uint32_t nodeRate) {
+                                   std::string_view nodeName) {
   const auto group = options.nodeName + ".group";
   const auto linkGroup = options.nodeName + ".link-group";
   properties.emplace_back("application.name", "PipeTune");
@@ -17,9 +16,13 @@ static void appendCommonProperties(FilterNodeProperties &properties,
   properties.emplace_back("node.name", nodeName);
   properties.emplace_back("node.group", group);
   properties.emplace_back("node.link-group", linkGroup);
-  properties.emplace_back("node.rate", "1/" + std::to_string(nodeRate));
   properties.emplace_back("audio.format", "F32P");
-  properties.emplace_back("audio.rate", std::to_string(options.sampleRate));
+  if (options.fixedSampleRate.has_value()) {
+    properties.emplace_back(
+        "node.rate", "1/" + std::to_string(*options.fixedSampleRate));
+    properties.emplace_back("audio.rate",
+                            std::to_string(*options.fixedSampleRate));
+  }
   properties.emplace_back("audio.channels",
                           std::to_string(options.channelCount));
   properties.emplace_back("state.restore-props", "false");
@@ -35,8 +38,7 @@ FilterGraphProperties makeFilterGraphProperties(
       .outputAutoconnect = true,
       .outputReconnect = true};
 
-  appendCommonProperties(result.input, options, options.nodeName,
-                         options.sampleRate);
+  appendCommonProperties(result.input, options, options.nodeName);
   result.input.emplace_back("media.class", "Audio/Sink");
   result.input.emplace_back("media.category", "Playback");
   result.input.emplace_back("node.description", options.nodeDescription);
@@ -49,15 +51,14 @@ FilterGraphProperties makeFilterGraphProperties(
   result.input.emplace_back("channelmix.max-volume", "1.0");
 
   appendCommonProperties(result.output, options,
-                         options.nodeName + ".output",
-                         options.outputNodeRate);
+                         options.nodeName + ".output");
   result.output.emplace_back("media.class", "Stream/Output/Audio");
   result.output.emplace_back("media.category", "Playback");
   result.output.emplace_back("node.passive", "true");
   result.output.emplace_back("stream.dont-remix", "true");
   result.output.emplace_back("channelmix.min-volume", "1.0");
   result.output.emplace_back("channelmix.max-volume", "1.0");
-  if (options.forceRate) {
+  if (options.fixedSampleRate.has_value() && options.forceRate) {
     result.output.emplace_back("node.force-rate", "0");
   }
   return result;

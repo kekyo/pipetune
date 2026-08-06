@@ -127,8 +127,8 @@ static std::string sampleRateText(std::uint32_t rate) {
 
 static std::string sampleRateModeText(pipetune::SampleRateMode mode) {
   switch (mode) {
-  case pipetune::SampleRateMode::maximum:
-    return translate("Maximum");
+  case pipetune::SampleRateMode::automatic:
+    return translate("Automatic");
   case pipetune::SampleRateMode::fixed:
     return translate("Fixed");
   }
@@ -481,22 +481,11 @@ std::vector<StatusSection> buildStatusSections(
                   connected ? sampleRateText(state.runtime.dspSampleRate)
                             : "—",
                   unavailable),
-              textItem(
-                  "rates.selected-output",
-                  translate("Selected output rate"),
-                  connected
-                      ? sampleRateText(
-                            state.runtime.selectedOutputSampleRate)
-                      : "—",
-                  unavailable),
-              textItem(
-                  "rates.active-output",
-                  translate("Active output rate"),
-                  connected
-                      ? sampleRateText(
-                            state.runtime.activeOutputSampleRate)
-                      : "—",
-                  unavailable),
+              textItem("rates.graph", translate("PipeWire graph rate"),
+                       connected
+                           ? sampleRateText(state.runtime.graphSampleRate)
+                           : "—",
+                       unavailable),
           },
   });
   sections.push_back({

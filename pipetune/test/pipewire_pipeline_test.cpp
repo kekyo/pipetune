@@ -175,7 +175,7 @@ static bool testOrderlySignalShutdown(
                              pipetune::SampleRateEnforcement::force} &&
                  parsedRate.status.dspSampleRate == 96000 &&
                  parsedRate.status.inputSampleRate == 96000 &&
-                 parsedRate.status.selectedOutputSampleRate != 0 &&
+                 parsedRate.status.graphSampleRate != 0 &&
                  !parsedRate.status.rateTransitioning,
              "live rate response does not report completed renegotiation")) {
     kill(child, SIGTERM);
@@ -413,11 +413,7 @@ int main() {
        .initialConfigurationError = {},
        .controlSocketPath = {},
        .dspSampleRate = 48000,
-       .ratePolicy =
-           {.mode = pipetune::SampleRateMode::fixed,
-            .fixedRate = 48000,
-            .enforcement =
-                pipetune::SampleRateEnforcement::suggest},
+       .ratePolicy = pipetune::defaultSampleRatePolicy(),
        .channelCount = 2,
        .maxFrames = 8192,
        .ringCapacityFrames = 16384,

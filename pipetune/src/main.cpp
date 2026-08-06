@@ -63,7 +63,7 @@ static int runConfigResetCommand(
     const pipetune::CommandLineOptions &options) {
   if (!options.assumeYes) {
     std::cout
-        << "Reset PipeTune configuration to Bypass, Max + Suggest, and "
+        << "Reset PipeTune configuration to Bypass, Automatic, and "
            "scalar DSP? [y/N] "
         << std::flush;
     auto response = std::string{};
@@ -89,7 +89,7 @@ static int runConfigResetCommand(
     std::cerr << "pipetune: " << result.error << '\n';
     return 1;
   }
-  std::cout << "PipeTune configuration was reset to Bypass, Max + Suggest, "
+  std::cout << "PipeTune configuration was reset to Bypass, Automatic, "
                "and scalar DSP.\n";
   return 0;
 }
@@ -426,8 +426,7 @@ static int runRateCommand(
       std::cout << queried.json << '\n';
     } else if (options.action ==
                pipetune::CommandLineAction::rateList) {
-      std::cout <<
-          pipetune::formatSampleRateCapabilities(queried.status);
+      std::cout << pipetune::formatSelectableSampleRates();
     } else {
       std::cout << pipetune::formatSampleRateStatus(queried.status);
     }

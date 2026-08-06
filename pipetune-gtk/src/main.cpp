@@ -782,7 +782,7 @@ static void renderRateControls(GtkRuntime *runtime) {
       translate("Suggest — let PipeWire choose"));
   gtk_combo_box_text_append_text(
       GTK_COMBO_BOX_TEXT(runtime->ui.rateEnforcementCombo),
-      translate("Force — request the selected output rate"));
+      translate("Force — request the fixed graph rate"));
   gtk_combo_box_set_active(
       GTK_COMBO_BOX(runtime->ui.rateEnforcementCombo),
       static_cast<gint>(presentation.activeEnforcementIndex));
@@ -865,7 +865,13 @@ static void renderSettingsControls(GtkRuntime *runtime) {
   gtk_widget_set_sensitive(runtime->ui.presetChooser, editable);
   gtk_widget_set_sensitive(runtime->ui.outputMenuButton, editable);
   gtk_widget_set_sensitive(runtime->ui.rateCombo, editable);
-  gtk_widget_set_sensitive(runtime->ui.rateEnforcementCombo, editable);
+  const auto &rateSettings = runtime->transactionReady
+                                 ? runtime->transaction.desiredLive
+                                 : runtime->savedConfig;
+  gtk_widget_set_sensitive(
+      runtime->ui.rateEnforcementCombo,
+      editable && rateSettings.ratePolicy.mode ==
+                      pipetune::SampleRateMode::fixed);
   gtk_widget_set_sensitive(runtime->ui.dspBackendCombo, editable);
   gtk_widget_set_sensitive(runtime->ui.restoreDefaultsButton, editable);
   gtk_widget_set_sensitive(
@@ -1036,6 +1042,10 @@ static void onRateChanged(GtkComboBox *combo, gpointer userData) {
   auto desired = runtime->transaction.desiredLive;
   desired.ratePolicy.mode = choice.mode;
   desired.ratePolicy.fixedRate = choice.fixedRate;
+  if (choice.mode == pipetune::SampleRateMode::automatic) {
+    desired.ratePolicy.enforcement =
+        pipetune::SampleRateEnforcement::suggest;
+  }
   editDesiredSettings(runtime, desired);
 }
 

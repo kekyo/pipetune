@@ -64,7 +64,7 @@ static bool defaultsWereStored(
                "reset configuration must follow the system output") &&
          check(loaded.config.ratePolicy ==
                    pipetune::defaultSampleRatePolicy(),
-               "reset configuration must select Max and suggest") &&
+               "reset configuration must select automatic") &&
          check(loaded.config.dspBackend ==
                        pipetune::DspBackendKind::scalar &&
                    loaded.config.dspSimdVariant ==

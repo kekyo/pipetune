@@ -338,22 +338,22 @@ static bool testAcceptedInputForms(const std::filesystem::path &configPath) {
                    absentConfig.config.dspSimdVariant ==
                        pipetune::DspSimdVariant::automatic &&
                    absentConfig.config.ratePolicy.mode ==
-                       pipetune::SampleRateMode::maximum &&
+                       pipetune::SampleRateMode::automatic &&
                    absentConfig.config.ratePolicy.fixedRate == 0 &&
                    absentConfig.config.ratePolicy.enforcement ==
                        pipetune::SampleRateEnforcement::suggest,
-               "missing assignments must default to Max and suggest") &&
+               "missing assignments must default to automatic") &&
          check(missingConfig.error.empty() &&
                    missingConfig.config.dspBackend ==
                        pipetune::DspBackendKind::scalar &&
                    missingConfig.config.dspSimdVariant ==
                        pipetune::DspSimdVariant::automatic &&
                    missingConfig.config.ratePolicy.mode ==
-                       pipetune::SampleRateMode::maximum &&
+                       pipetune::SampleRateMode::automatic &&
                    missingConfig.config.ratePolicy.fixedRate == 0 &&
                    missingConfig.config.ratePolicy.enforcement ==
                        pipetune::SampleRateEnforcement::suggest,
-               "a missing file must default to Max and suggest");
+               "a missing file must default to automatic");
 }
 
 static bool testRejectedInputForms(const std::filesystem::path &configPath) {
@@ -387,7 +387,7 @@ static bool testRejectedInputForms(const std::filesystem::path &configPath) {
   const auto unsupportedRate = pipetune::loadStartupConfig(configPath);
 
   writeConfig(configPath,
-              "PIPETUNE_RATE=max\n"
+              "PIPETUNE_RATE=automatic\n"
               "PIPETUNE_RATE_ENFORCEMENT=strict\n");
   const auto unsupportedEnforcement =
       pipetune::loadStartupConfig(configPath);

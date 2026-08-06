@@ -74,9 +74,9 @@ static bool testRequests() {
   const auto setOutput = pipetune::parseControlRequest(setOutputJson);
   const auto clearOutput = pipetune::parseControlRequest(
       pipetune::makeClearOutputControlRequest());
-  const auto setMaximumRate = pipetune::parseControlRequest(
+  const auto setAutomaticRate = pipetune::parseControlRequest(
       pipetune::makeSetRateControlRequest(
-          {.mode = pipetune::SampleRateMode::maximum,
+          {.mode = pipetune::SampleRateMode::automatic,
            .fixedRate = 0,
            .enforcement = pipetune::SampleRateEnforcement::suggest}));
   const auto setFixedRate = pipetune::parseControlRequest(
@@ -101,15 +101,15 @@ static bool testRequests() {
                "clear-output request command differs") &&
          check(clearOutput.request.outputTarget.empty(),
                "clear-output request must not contain a target") &&
-         check(setMaximumRate.error.empty(), setMaximumRate.error) &&
-         check(setMaximumRate.request.command ==
+         check(setAutomaticRate.error.empty(), setAutomaticRate.error) &&
+         check(setAutomaticRate.request.command ==
                        pipetune::ControlCommand::setRate &&
-                   setMaximumRate.request.ratePolicy.mode ==
-                       pipetune::SampleRateMode::maximum &&
-                   setMaximumRate.request.ratePolicy.fixedRate == 0 &&
-                   setMaximumRate.request.ratePolicy.enforcement ==
+                   setAutomaticRate.request.ratePolicy.mode ==
+                       pipetune::SampleRateMode::automatic &&
+                   setAutomaticRate.request.ratePolicy.fixedRate == 0 &&
+                   setAutomaticRate.request.ratePolicy.enforcement ==
                        pipetune::SampleRateEnforcement::suggest,
-               "set-rate Max request differs") &&
+               "set-rate automatic request differs") &&
          check(setFixedRate.error.empty(), setFixedRate.error) &&
          check(setFixedRate.request.command ==
                        pipetune::ControlCommand::setRate &&
@@ -145,9 +145,9 @@ static bool testRejectedRequests() {
       R"json({"command":"set-output","target":"line\nbreak"})json",
       R"json({"command":"clear-output","target":"unexpected"})json",
       R"json({"command":"set-rate"})json",
-      R"json({"command":"set-rate","rateMode":"max","sampleRate":null,"enforcement":"suggest","extra":true})json",
-      R"json({"command":"set-rate","rateMode":"auto","sampleRate":null,"enforcement":"suggest"})json",
-      R"json({"command":"set-rate","rateMode":"max","sampleRate":48000,"enforcement":"suggest"})json",
+      R"json({"command":"set-rate","rateMode":"automatic","sampleRate":null,"enforcement":"suggest","extra":true})json",
+      R"json({"command":"set-rate","rateMode":"max","sampleRate":null,"enforcement":"suggest"})json",
+      R"json({"command":"set-rate","rateMode":"automatic","sampleRate":48000,"enforcement":"suggest"})json",
       R"json({"command":"set-rate","rateMode":"fixed","sampleRate":null,"enforcement":"suggest"})json",
       R"json({"command":"set-rate","rateMode":"fixed","sampleRate":88200,"enforcement":"suggest"})json",
       R"json({"command":"set-rate","rateMode":"fixed","sampleRate":48000,"enforcement":"strict"})json",
@@ -224,10 +224,8 @@ static bool testSuccessResponse() {
             .fixedRate = 96000,
             .enforcement = pipetune::SampleRateEnforcement::force},
        .dspSampleRate = 96000,
-       .selectedOutputSampleRate = 48000,
-       .activeOutputSampleRate = 48000,
+       .graphSampleRate = 96000,
        .rateTransitioning = false,
-       .rateFallback = true,
        .rateError = {},
        .configuredDspBackend = pipetune::DspBackendKind::simd,
        .configuredDspSimdVariant =
@@ -335,10 +333,8 @@ static bool testSuccessResponse() {
                  parsed.status.configuredRatePolicy.enforcement ==
                      pipetune::SampleRateEnforcement::force &&
                  parsed.status.dspSampleRate == 96000 &&
-                 parsed.status.selectedOutputSampleRate == 48000 &&
-                 parsed.status.activeOutputSampleRate == 48000 &&
+                 parsed.status.graphSampleRate == 96000 &&
                  !parsed.status.rateTransitioning &&
-                 parsed.status.rateFallback &&
                  parsed.status.rateError.empty(),
              "parsed response rate status differs") ||
       !check(parsed.status.configuredDspBackend ==
@@ -423,11 +419,8 @@ static bool testSuccessResponse() {
           "force" &&
       yyjson_get_uint(yyjson_obj_get(root, "dspSampleRate")) == 96000 &&
       yyjson_get_uint(
-          yyjson_obj_get(root, "selectedOutputSampleRate")) == 48000 &&
-      yyjson_get_uint(yyjson_obj_get(root, "activeOutputSampleRate")) ==
-          48000 &&
+          yyjson_obj_get(root, "graphSampleRate")) == 96000 &&
       !yyjson_get_bool(yyjson_obj_get(root, "rateTransitioning")) &&
-      yyjson_get_bool(yyjson_obj_get(root, "rateFallback")) &&
       yyjson_is_null(yyjson_obj_get(root, "rateError")) &&
       std::string_view(yyjson_get_str(
           yyjson_obj_get(root, "configuredDspBackend"))) == "simd" &&
@@ -490,14 +483,12 @@ static bool testStatusEvent() {
        .inputFramesReceived = 44100,
        .inputLastReceivedUnixMilliseconds = 1720000001000,
        .configuredRatePolicy =
-           {.mode = pipetune::SampleRateMode::maximum,
+           {.mode = pipetune::SampleRateMode::automatic,
             .fixedRate = 0,
             .enforcement = pipetune::SampleRateEnforcement::suggest},
        .dspSampleRate = 192000,
-       .selectedOutputSampleRate = 192000,
-       .activeOutputSampleRate = 0,
+       .graphSampleRate = 192000,
        .rateTransitioning = true,
-       .rateFallback = false,
        .rateError = "previous transition failed"});
   const auto parsed = pipetune::parseControlResponse(event);
   auto invalidTransition = event;
@@ -543,15 +534,13 @@ static bool testStatusEvent() {
                        1720000001000ULL,
                "status event input telemetry differs") &&
          check(parsed.status.configuredRatePolicy.mode ==
-                       pipetune::SampleRateMode::maximum &&
+                       pipetune::SampleRateMode::automatic &&
                    parsed.status.configuredRatePolicy.fixedRate == 0 &&
                    parsed.status.configuredRatePolicy.enforcement ==
                        pipetune::SampleRateEnforcement::suggest &&
                    parsed.status.dspSampleRate == 192000 &&
-                   parsed.status.selectedOutputSampleRate == 192000 &&
-                   parsed.status.activeOutputSampleRate == 0 &&
+                   parsed.status.graphSampleRate == 192000 &&
                    parsed.status.rateTransitioning &&
-                   !parsed.status.rateFallback &&
                    parsed.status.rateError ==
                        "previous transition failed",
                "status event rate state differs") &&

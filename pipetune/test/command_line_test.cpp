@@ -24,11 +24,11 @@ static bool testRunDefaults() {
          check(result.options.controlSocketPath.empty(),
                "default control socket path must be automatic") &&
          check(result.options.ratePolicy.mode ==
-                   pipetune::SampleRateMode::maximum &&
+                   pipetune::SampleRateMode::automatic &&
                    result.options.ratePolicy.fixedRate == 0 &&
                    result.options.ratePolicy.enforcement ==
                        pipetune::SampleRateEnforcement::suggest,
-               "direct-run rate policy must default to Max and suggest") &&
+               "direct-run rate policy must default to automatic") &&
          check(result.options.dspBackend ==
                    pipetune::DspBackendKind::scalar,
                "direct-run DSP backend must default to scalar") &&
@@ -130,15 +130,15 @@ static bool testRateActions() {
       "rate", "list", "--json", "--socket", "/tmp/pipetune.sock"};
   constexpr auto get =
       std::array<std::string_view, 3>{"rate", "get", "--json"};
-  constexpr auto setMaximum = std::array<std::string_view, 6>{
-      "rate", "set", "max", "suggest", "--socket", "/tmp/pipetune.sock"};
+  constexpr auto setAutomatic = std::array<std::string_view, 5>{
+      "rate", "set", "automatic", "--socket", "/tmp/pipetune.sock"};
   constexpr auto setFixed =
       std::array<std::string_view, 4>{"rate", "set", "384000", "force"};
 
   const auto listResult = pipetune::parseCommandLine(list);
   const auto jsonListResult = pipetune::parseCommandLine(jsonList);
   const auto getResult = pipetune::parseCommandLine(get);
-  const auto maximumResult = pipetune::parseCommandLine(setMaximum);
+  const auto automaticResult = pipetune::parseCommandLine(setAutomatic);
   const auto fixedResult = pipetune::parseCommandLine(setFixed);
   return check(listResult.error.empty(), listResult.error) &&
          check(listResult.options.action ==
@@ -157,16 +157,16 @@ static bool testRateActions() {
                    pipetune::CommandLineAction::rateGet &&
                    getResult.options.json,
                "rate get action differs") &&
-         check(maximumResult.error.empty(), maximumResult.error) &&
-         check(maximumResult.options.action ==
+         check(automaticResult.error.empty(), automaticResult.error) &&
+         check(automaticResult.options.action ==
                    pipetune::CommandLineAction::rateSet &&
-                   maximumResult.options.ratePolicy.mode ==
-                       pipetune::SampleRateMode::maximum &&
-                   maximumResult.options.ratePolicy.fixedRate == 0 &&
-                   maximumResult.options.ratePolicy.enforcement ==
+                   automaticResult.options.ratePolicy.mode ==
+                       pipetune::SampleRateMode::automatic &&
+                   automaticResult.options.ratePolicy.fixedRate == 0 &&
+                   automaticResult.options.ratePolicy.enforcement ==
                        pipetune::SampleRateEnforcement::suggest,
-               "rate set max suggest differs") &&
-         check(maximumResult.options.controlSocketPath ==
+               "rate set automatic differs") &&
+         check(automaticResult.options.controlSocketPath ==
                    "/tmp/pipetune.sock",
                "rate set socket differs") &&
          check(fixedResult.error.empty(), fixedResult.error) &&
@@ -388,7 +388,7 @@ static bool testRejectedArguments() {
   constexpr auto invalidEnforcement =
       std::array<std::string_view, 4>{"rate", "set", "96000", "strict"};
   constexpr auto missingRateArgument =
-      std::array<std::string_view, 3>{"rate", "set", "max"};
+      std::array<std::string_view, 2>{"rate", "set"};
   constexpr auto rateSetWithJson = std::array<std::string_view, 5>{
       "rate", "set", "48000", "force", "--json"};
   constexpr auto duplicateRateSocket = std::array<std::string_view, 6>{

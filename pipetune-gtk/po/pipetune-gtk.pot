@@ -20,10 +20,6 @@ msgid "{0}  •  Load {1}%"
 msgstr ""
 
 #, brace-format
-msgid "{0}  •  PipeWire resampling"
-msgstr ""
-
-#, brace-format
 msgid "{0} — availability not reported"
 msgstr ""
 
@@ -36,23 +32,11 @@ msgid "{0} — available"
 msgstr ""
 
 #, brace-format
-msgid "{0} — support unknown"
-msgstr ""
-
-#, brace-format
-msgid "{0} — supported"
-msgstr ""
-
-#, brace-format
 msgid "{0} — system default"
 msgstr ""
 
 #, brace-format
 msgid "{0} — unavailable"
-msgstr ""
-
-#, brace-format
-msgid "{0} — unsupported; PipeWire will resample"
 msgstr ""
 
 #, brace-format
@@ -103,9 +87,6 @@ msgstr ""
 msgid "Action Log ({0})"
 msgstr ""
 
-msgid "Active output rate"
-msgstr ""
-
 msgid "Active plugins"
 msgstr ""
 
@@ -122,6 +103,9 @@ msgid "Apply"
 msgstr ""
 
 msgid "Automatic"
+msgstr ""
+
+msgid "Automatic — follow PipeWire graph"
 msgstr ""
 
 msgid "Baseline"
@@ -275,6 +259,10 @@ msgstr ""
 msgid "DSP"
 msgstr ""
 
+#, brace-format
+msgid "DSP {0}  •  PipeWire graph {1}"
+msgstr ""
+
 msgid "DSP / Performance"
 msgstr ""
 
@@ -338,10 +326,7 @@ msgstr ""
 msgid "Force"
 msgstr ""
 
-msgid "Force — request the selected output rate"
-msgstr ""
-
-msgid "idle"
+msgid "Force — request the fixed graph rate"
 msgstr ""
 
 msgid "Input / Rates"
@@ -354,10 +339,6 @@ msgid "Input format"
 msgstr ""
 
 msgid "Input sample rate"
-msgstr ""
-
-#, brace-format
-msgid "Input/DSP {0}  •  Output {1}  •  Physical {2}"
 msgstr ""
 
 msgid "Language"
@@ -403,12 +384,6 @@ msgid "Load"
 msgstr ""
 
 msgid "Long PipeWire node names are available in the device tooltip."
-msgstr ""
-
-msgid "Max — highest supported rate"
-msgstr ""
-
-msgid "Maximum"
 msgstr ""
 
 msgid "Measured frame rate"
@@ -483,6 +458,9 @@ msgid "PipeTune: disconnected"
 msgstr ""
 
 msgid "PipeWire enforcement"
+msgstr ""
+
+msgid "PipeWire graph rate"
 msgstr ""
 
 msgid "Preference"
@@ -577,9 +555,6 @@ msgid "Scalar"
 msgstr ""
 
 msgid "Selected output"
-msgstr ""
-
-msgid "Selected output rate"
 msgstr ""
 
 msgid "Selection reason"

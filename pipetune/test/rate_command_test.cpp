@@ -31,7 +31,6 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
   const auto fixed =
       state.policy.mode == pipetune::SampleRateMode::fixed;
   const auto dspRate = fixed ? state.policy.fixedRate : 96000U;
-  const auto outputRate = std::min(dspRate, 96000U);
   return {
       .processingMode = pipetune::ProcessingMode::bypass,
       .activePreset = {},
@@ -67,10 +66,8 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
       .inputLastReceivedUnixMilliseconds = 0,
       .configuredRatePolicy = state.policy,
       .dspSampleRate = dspRate,
-      .selectedOutputSampleRate = outputRate,
-      .activeOutputSampleRate = outputRate,
+      .graphSampleRate = dspRate,
       .rateTransitioning = false,
-      .rateFallback = outputRate != dspRate,
       .rateError = {},
   };
 }
@@ -135,18 +132,17 @@ static bool testStatusAndFormatting(
     return false;
   }
   const auto status = pipetune::formatSampleRateStatus(queried.status);
-  const auto capabilities =
-      pipetune::formatSampleRateCapabilities(queried.status);
-  return check(status.find("Max") != std::string::npos &&
-                   status.find("96 kHz") != std::string::npos &&
-                   status.find("suggest") != std::string::npos,
+  const auto choices = pipetune::formatSelectableSampleRates();
+  return check(status.find("Automatic") != std::string::npos &&
+                   status.find("PipeWire graph rate: 96 kHz") !=
+                       std::string::npos,
                "formatted rate status omits policy or effective rates") &&
-         check(capabilities.find("USB DAC") != std::string::npos &&
-                   capabilities.find("44.1 kHz") != std::string::npos &&
-                   capabilities.find("supported") != std::string::npos &&
-                   capabilities.find("384 kHz") != std::string::npos &&
-                   capabilities.find("unsupported") != std::string::npos,
-               "formatted capabilities omit support hints");
+         check(choices.find("automatic: follow the PipeWire graph") !=
+                   std::string::npos &&
+                   choices.find("44.1 kHz: fixed") != std::string::npos &&
+                   choices.find("384 kHz: fixed") != std::string::npos &&
+                   choices.find("USB DAC") == std::string::npos,
+               "formatted rate choices must not depend on output devices");
 }
 
 static bool testRejectedChange(
@@ -194,8 +190,7 @@ static bool testSuccessfulAndPartialChanges(
              changed.error) ||
       !check(changed.status.configuredRatePolicy == requested &&
                  changed.status.dspSampleRate == 192000 &&
-                 changed.status.selectedOutputSampleRate == 96000 &&
-                 changed.status.rateFallback,
+                 changed.status.graphSampleRate == 192000,
              "live daemon confirmation differs") ||
       !configHasPolicy(configPath, requested)) {
     return false;

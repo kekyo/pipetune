@@ -233,8 +233,7 @@ static bool testStructuredStatusModel() {
       .enforcement = pipetune::SampleRateEnforcement::force,
   };
   state.runtime.dspSampleRate = 192000;
-  state.runtime.selectedOutputSampleRate = 192000;
-  state.runtime.activeOutputSampleRate = 192000;
+  state.runtime.graphSampleRate = 192000;
   state.runtime.configuredDspBackend = pipetune::DspBackendKind::simd;
   state.runtime.configuredDspSimdVariant =
       pipetune::DspSimdVariant::x86_64_v3;

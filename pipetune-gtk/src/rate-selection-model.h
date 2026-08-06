@@ -13,54 +13,37 @@
 namespace pipetune_gtk {
 
 /**
- * Identifies what is known about one fixed rate on the selected output.
- */
-enum class DeviceRateSupport {
-  /** The row is not a fixed sample rate. */
-  notApplicable,
-  /** PipeWire has not supplied usable output capabilities. */
-  unknown,
-  /** The selected output accepts the fixed sample rate. */
-  supported,
-  /** The selected output requires PipeWire resampling. */
-  unsupported
-};
-
-/**
  * Describes one row in the PCM rate drop-down.
  */
 struct SampleRateChoice {
-  /** Maximum-following or fixed selection represented by this row. */
+  /** Automatic or fixed selection represented by this row. */
   pipetune::SampleRateMode mode;
-  /** Fixed rate in hertz, or zero for the Max row. */
+  /** Fixed rate in hertz, or zero for automatic negotiation. */
   std::uint32_t fixedRate;
-  /** Human-readable row label including device support. */
+  /** Human-readable row label. */
   std::string label;
-  /** Selected-device support represented by the row. */
-  DeviceRateSupport support;
 };
 
 /**
  * Describes all PCM rate-selection values required by the GTK view.
  */
 struct RateSelectionPresentation {
-  /** Max followed by all user-selectable fixed rates. */
+  /** Automatic followed by all user-selectable fixed rates. */
   std::vector<SampleRateChoice> choices;
   /** Row matching the policy currently edited by the user. */
   std::size_t activeRateIndex;
   /** Suggest row 0 or Force row 1. */
   std::size_t activeEnforcementIndex;
-  /** Final daemon-selected R, H, active physical rate, and fallback. */
+  /** True when fixed-rate enforcement may be edited. */
+  bool enforcementSensitive;
+  /** Active DSP and negotiated graph rates. */
   std::string effectiveRates;
   /** True when connected controls may be edited. */
   bool sensitive;
 };
 
 /**
- * Maps daemon capabilities and final rates into a passive GTK presentation.
- *
- * Device support comes exclusively from the selected output reported by the
- * daemon. This function does not resolve or choose DSP or graph rates.
+ * Maps the configured policy and negotiated rates into a GTK presentation.
  *
  * @param state Current application and daemon state.
  * @param editedPolicy Policy currently represented by the GTK controls.

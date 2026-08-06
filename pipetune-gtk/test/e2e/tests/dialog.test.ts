@@ -560,7 +560,7 @@ describe('PipeTune GTK dialog', () => {
     expect(await session.inspectConfig()).toEqual({
       preset: null,
       preferredOutput: null,
-      rateMode: 'max',
+      rateMode: 'automatic',
       fixedRate: 0,
       rateEnforcement: 'suggest',
       dspBackend: 'scalar',

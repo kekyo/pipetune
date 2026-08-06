@@ -149,35 +149,41 @@ static CommandLineParseResult parseRateCommandLine(
                       "unknown rate operation: " + std::string(operation));
   }
   options.action = CommandLineAction::rateSet;
-  if (arguments.size() < 3) {
-    return parseError(
-        std::move(options),
-        "rate set requires RATE and ENFORCEMENT");
+  if (arguments.size() < 2) {
+    return parseError(std::move(options), "rate set requires RATE");
   }
 
   const auto rate = arguments[1];
-  if (rate == "max") {
-    options.ratePolicy.mode = SampleRateMode::maximum;
+  auto optionIndex = std::size_t{0};
+  if (rate == "automatic") {
+    options.ratePolicy = defaultSampleRatePolicy();
     options.ratePolicy.fixedRate = 0;
+    optionIndex = 2;
   } else {
+    if (arguments.size() < 3) {
+      return parseError(
+          std::move(options),
+          "a fixed rate requires suggest or force enforcement");
+    }
     auto fixedRate = std::uint32_t{0};
     if (!parseUnsigned(rate, fixedRate) ||
         !isSelectableSampleRate(fixedRate)) {
       return parseError(
           std::move(options),
-          "RATE must be max, 44100, 48000, 96000, 192000, or 384000");
+          "RATE must be automatic, 44100, 48000, 96000, 192000, or 384000");
     }
     options.ratePolicy.mode = SampleRateMode::fixed;
     options.ratePolicy.fixedRate = fixedRate;
-  }
-  if (!parseSampleRateEnforcement(arguments[2],
-                                  options.ratePolicy.enforcement)) {
-    return parseError(std::move(options),
-                      "ENFORCEMENT must be suggest or force");
+    if (!parseSampleRateEnforcement(arguments[2],
+                                    options.ratePolicy.enforcement)) {
+      return parseError(std::move(options),
+                        "ENFORCEMENT must be suggest or force");
+    }
+    optionIndex = 3;
   }
 
   auto sawSocket = false;
-  for (auto index = std::size_t{3}; index < arguments.size(); ++index) {
+  for (auto index = optionIndex; index < arguments.size(); ++index) {
     const auto argument = arguments[index];
     if (argument != "--socket") {
       return parseError(std::move(options),
@@ -576,6 +582,7 @@ std::string_view commandLineUsage() noexcept {
          "  pipetune bypass [--socket PATH]\n"
          "  pipetune rate get [--json] [--socket PATH]\n"
          "  pipetune rate list [--json] [--socket PATH]\n"
+         "  pipetune rate set automatic [--socket PATH]\n"
          "  pipetune rate set RATE ENFORCEMENT [--socket PATH]\n"
          "  pipetune dsp list [--json] [--socket PATH]\n"
          "  pipetune dsp get [--json] [--socket PATH]\n"
@@ -597,7 +604,7 @@ std::string_view commandLineUsage() noexcept {
          "  bypass           Disable DSP live and for future daemon starts.\n"
          "  rate get        Show configured and effective PCM rates.\n"
          "  rate list       List selectable PCM rates.\n"
-         "  rate set        Select max or a fixed rate and suggest or force.\n"
+         "  rate set        Follow the graph or select a fixed rate.\n"
          "  dsp list        List scalar and SIMD backend availability.\n"
          "  dsp get         Show configured and effective DSP backends.\n"
          "  dsp set         Select scalar compatibility or SIMD acceleration.\n"

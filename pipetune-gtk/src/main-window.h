@@ -52,7 +52,7 @@ struct MainWindowUi {
   GtkWidget *outputPopover = nullptr;
   /** Dynamic output device rows. */
   GtkWidget *outputList = nullptr;
-  /** Max or fixed DSP sample-rate drop-down. */
+  /** Automatic or fixed DSP sample-rate drop-down. */
   GtkWidget *rateCombo = nullptr;
   /** PipeWire graph-rate suggestion or force drop-down. */
   GtkWidget *rateEnforcementCombo = nullptr;

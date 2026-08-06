@@ -180,19 +180,15 @@ struct ControlRuntimeStatus {
   std::uint64_t inputFramesReceived;
   /** Unix time of the latest received frame in milliseconds, or zero before input. */
   std::uint64_t inputLastReceivedUnixMilliseconds;
-  /** Persisted Max/fixed and suggest/force selection. */
+  /** Persisted automatic/fixed graph-rate selection. */
   SampleRatePolicy configuredRatePolicy = {};
-  /** Resolved capture, playback-media-format, and DSP rate in hertz. */
+  /** Active DSP rate in hertz. */
   std::uint32_t dspSampleRate = 0;
-  /** Selected physical/graph output rate in hertz. */
-  std::uint32_t selectedOutputSampleRate = 0;
-  /** Active physical output rate, or zero while idle or unavailable. */
-  std::uint32_t activeOutputSampleRate = 0;
-  /** True while the daemon is renegotiating R and H. */
+  /** Negotiated PipeWire graph rate, or zero before negotiation. */
+  std::uint32_t graphSampleRate = 0;
+  /** True while the daemon is rebuilding and renegotiating the filter. */
   bool rateTransitioning = false;
-  /** True when H is a device-compatible fallback for the requested R. */
-  bool rateFallback = false;
-  /** Most recent automatic or live rate-transition diagnostic. */
+  /** Most recent automatic or fixed rate-transition diagnostic. */
   std::string rateError = {};
   /** Persisted or successfully applied DSP backend choice. */
   DspBackendKind configuredDspBackend = DspBackendKind::scalar;
@@ -316,7 +312,7 @@ std::string makeClearOutputControlRequest();
 /**
  * Returns a JSON sample-rate-policy request without framing newline.
  *
- * @param policy Valid Max/fixed and suggest/force policy.
+ * @param policy Valid automatic/fixed graph-rate policy.
  * @return Encoded request, or an empty string for invalid input or failure.
  */
 std::string makeSetRateControlRequest(const SampleRatePolicy &policy);

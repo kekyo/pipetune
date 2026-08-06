@@ -2,6 +2,7 @@
 #define PIPETUNE_FILTER_GRAPH_PROPERTIES_H
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -18,10 +19,8 @@ struct FilterGraphPropertyOptions {
   std::string nodeName;
   /** Human-readable description of the filter input node. */
   std::string nodeDescription;
-  /** PCM and DSP sample rate in hertz. */
-  std::uint32_t sampleRate;
-  /** PipeWire graph-rate hint for the output node in hertz. */
-  std::uint32_t outputNodeRate;
+  /** Fixed PCM rate, or no value when PipeWire negotiates the graph rate. */
+  std::optional<std::uint32_t> fixedSampleRate;
   /** Number of planar audio channels. */
   std::uint32_t channelCount;
   /** True when the output node must force a graph-rate change. */

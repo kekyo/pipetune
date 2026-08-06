@@ -187,10 +187,10 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
                                     policy.enforcement)) {
       return requestError("set-rate request contains an unsupported policy");
     }
-    if (policy.mode == SampleRateMode::maximum) {
+    if (policy.mode == SampleRateMode::automatic) {
       if (!yyjson_is_null(rateValue)) {
         return requestError(
-            "set-rate Max request sampleRate must be null");
+            "set-rate automatic request sampleRate must be null");
       }
       policy.fixedRate = 0;
     } else {
@@ -309,7 +309,7 @@ std::string makeSetRateControlRequest(const SampleRatePolicy &policy) {
       !yyjson_mut_obj_add_str(document.get(), root, "command", "set-rate") ||
       !addString(document.get(), root, "rateMode",
                  sampleRateModeName(policy.mode)) ||
-      (policy.mode == SampleRateMode::maximum
+      (policy.mode == SampleRateMode::automatic
            ? !yyjson_mut_obj_add_null(document.get(), root, "sampleRate")
            : !yyjson_mut_obj_add_uint(document.get(), root, "sampleRate",
                                       policy.fixedRate)) ||
@@ -558,10 +558,14 @@ static std::string makeControlStatusMessage(
        !status.activePreset.empty()) ||
       !outputStatusIsConsistent(status) ||
       !sampleRatePolicyIsValid(status.configuredRatePolicy) ||
-      (status.dspSampleRate != 0 &&
-       !isSelectableSampleRate(status.dspSampleRate)) ||
-      (status.activeOutputSampleRate != 0 &&
-       status.selectedOutputSampleRate == 0) ||
+      (status.configuredRatePolicy.mode == SampleRateMode::fixed &&
+       ((!status.rateTransitioning && status.dspSampleRate != 0 &&
+         status.dspSampleRate != status.configuredRatePolicy.fixedRate) ||
+        (status.graphSampleRate != 0 &&
+         status.graphSampleRate !=
+             status.configuredRatePolicy.fixedRate))) ||
+      (status.graphSampleRate != 0 &&
+       status.graphSampleRate != status.dspSampleRate) ||
       status.rateError.find('\0') != std::string::npos ||
       !dspBackendStatusIsConsistent(status)) {
     return makeControlErrorResponse("cannot encode inconsistent control status");
@@ -616,7 +620,7 @@ static std::string makeControlStatusMessage(
           status.inputLastReceivedUnixMilliseconds) ||
       !addString(document.get(), root, "rateMode",
                  sampleRateModeName(status.configuredRatePolicy.mode)) ||
-      (status.configuredRatePolicy.mode == SampleRateMode::maximum
+      (status.configuredRatePolicy.mode == SampleRateMode::automatic
            ? !yyjson_mut_obj_add_null(document.get(), root,
                                       "configuredSampleRate")
            : !yyjson_mut_obj_add_uint(
@@ -628,16 +632,10 @@ static std::string makeControlStatusMessage(
               status.configuredRatePolicy.enforcement)) ||
       !yyjson_mut_obj_add_uint(document.get(), root, "dspSampleRate",
                                status.dspSampleRate) ||
-      !yyjson_mut_obj_add_uint(
-          document.get(), root, "selectedOutputSampleRate",
-          status.selectedOutputSampleRate) ||
-      !yyjson_mut_obj_add_uint(
-          document.get(), root, "activeOutputSampleRate",
-          status.activeOutputSampleRate) ||
+      !yyjson_mut_obj_add_uint(document.get(), root, "graphSampleRate",
+                               status.graphSampleRate) ||
       !yyjson_mut_obj_add_bool(document.get(), root, "rateTransitioning",
                                status.rateTransitioning) ||
-      !yyjson_mut_obj_add_bool(document.get(), root, "rateFallback",
-                               status.rateFallback) ||
       !addNullableString(document.get(), root, "rateError",
                          status.rateError) ||
       !addString(document.get(), root, "configuredDspBackend",
@@ -965,7 +963,7 @@ static bool readSampleRatePolicy(yyjson_val *object,
           policy.enforcement)) {
     return false;
   }
-  if (policy.mode == SampleRateMode::maximum) {
+  if (policy.mode == SampleRateMode::automatic) {
     if (!yyjson_is_null(rateField)) {
       return false;
     }
@@ -1323,13 +1321,10 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
                         status.inputLastReceivedUnixMilliseconds) ||
       !readSampleRatePolicy(root, status.configuredRatePolicy) ||
       !readUint32Field(root, "dspSampleRate", status.dspSampleRate) ||
-      !readUint32Field(root, "selectedOutputSampleRate",
-                       status.selectedOutputSampleRate) ||
-      !readUint32Field(root, "activeOutputSampleRate",
-                       status.activeOutputSampleRate) ||
+      !readUint32Field(root, "graphSampleRate",
+                       status.graphSampleRate) ||
       !readBooleanField(root, "rateTransitioning",
                         status.rateTransitioning) ||
-      !readBooleanField(root, "rateFallback", status.rateFallback) ||
       !readNullableStringField(root, "rateError",
                                status.rateError) ||
       !readDspBackendKindField(root, "configuredDspBackend",
@@ -1353,10 +1348,15 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       (status.processingMode == ProcessingMode::bypass &&
        !status.activePreset.empty()) ||
       !outputStatusIsConsistent(status) ||
-      (status.dspSampleRate != 0 &&
-       !isSelectableSampleRate(status.dspSampleRate)) ||
-      (status.activeOutputSampleRate != 0 &&
-       status.selectedOutputSampleRate == 0) ||
+      !sampleRatePolicyIsValid(status.configuredRatePolicy) ||
+      (status.configuredRatePolicy.mode == SampleRateMode::fixed &&
+       ((!status.rateTransitioning && status.dspSampleRate != 0 &&
+         status.dspSampleRate != status.configuredRatePolicy.fixedRate) ||
+        (status.graphSampleRate != 0 &&
+         status.graphSampleRate !=
+             status.configuredRatePolicy.fixedRate))) ||
+      (status.graphSampleRate != 0 &&
+       status.graphSampleRate != status.dspSampleRate) ||
       status.rateError.find('\0') != std::string::npos ||
       !dspBackendStatusIsConsistent(status)) {
     return responseError(

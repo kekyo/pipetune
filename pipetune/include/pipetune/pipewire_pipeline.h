@@ -37,7 +37,7 @@ struct PipeWirePipelineOptions {
   std::filesystem::path controlSocketPath;
   /** Initial filter and DSP rate in hertz. */
   std::uint32_t dspSampleRate;
-  /** Initial Max/fixed and suggest/force policy. */
+  /** Initial automatic/fixed graph-rate policy. */
   SampleRatePolicy ratePolicy;
   /** Fixed planar channel count, from one through eight. */
   std::uint32_t channelCount;

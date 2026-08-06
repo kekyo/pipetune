@@ -67,15 +67,14 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
           .inputLastReceivedUnixMilliseconds = 0,
           .configuredRatePolicy = state.ratePolicy,
           .dspSampleRate =
-              state.ratePolicy.mode == pipetune::SampleRateMode::maximum
+              state.ratePolicy.mode == pipetune::SampleRateMode::automatic
                   ? 96000u
                   : state.ratePolicy.fixedRate,
-          .selectedOutputSampleRate = 96000,
-          .activeOutputSampleRate = 0,
+          .graphSampleRate =
+              state.ratePolicy.mode == pipetune::SampleRateMode::automatic
+                  ? 96000u
+                  : state.ratePolicy.fixedRate,
           .rateTransitioning = false,
-          .rateFallback =
-              state.ratePolicy.mode == pipetune::SampleRateMode::fixed &&
-              state.ratePolicy.fixedRate != 96000,
           .rateError = {},
           .configuredDspBackend = state.dspBackend,
           .configuredDspSimdVariant = state.dspSimdVariant,
@@ -290,8 +289,7 @@ static void onSetRateReply(
       !reply.response.success ||
       reply.response.status.configuredRatePolicy != expected ||
       reply.response.status.dspSampleRate != 192000 ||
-      reply.response.status.selectedOutputSampleRate != 96000 ||
-      !reply.response.status.rateFallback) {
+      reply.response.status.graphSampleRate != 192000) {
     state.failed = true;
   } else {
     state.setRateReply = true;

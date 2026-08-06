@@ -160,7 +160,7 @@ void clearControlOutputAsync(ControlClient *client,
  * Requests a live PCM sample-rate policy change.
  *
  * @param client Client used for the request.
- * @param policy Valid Max/fixed and suggest/force policy.
+ * @param policy Valid automatic/fixed graph-rate policy.
  * @param callback Non-null completion callback.
  * @param userData Opaque callback argument.
  */

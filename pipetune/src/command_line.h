@@ -24,7 +24,7 @@ enum class CommandLineAction {
   bypass,
   /** Show the configured and effective sample-rate state. */
   rateGet,
-  /** List output sample-rate capabilities. */
+  /** List automatic and fixed sample-rate choices. */
   rateList,
   /** Set and persist the sample-rate policy. */
   rateSet,

@@ -64,15 +64,14 @@ static pipetune::ControlRuntimeStatus rateStatus(
           .inputLastReceivedUnixMilliseconds = 0,
           .configuredRatePolicy = policy,
           .dspSampleRate =
-              policy.mode == pipetune::SampleRateMode::maximum
+              policy.mode == pipetune::SampleRateMode::automatic
                   ? 96000u
                   : policy.fixedRate,
-          .selectedOutputSampleRate = 96000,
-          .activeOutputSampleRate = 0,
+          .graphSampleRate =
+              policy.mode == pipetune::SampleRateMode::automatic
+                  ? 96000u
+                  : policy.fixedRate,
           .rateTransitioning = false,
-          .rateFallback =
-              policy.mode == pipetune::SampleRateMode::fixed &&
-              policy.fixedRate != 96000,
           .rateError = {}};
 }
 

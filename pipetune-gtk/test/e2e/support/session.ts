@@ -42,9 +42,9 @@ export interface StartupConfigSnapshot {
   readonly preset: string | null;
   /** Preferred output node name, or null for the system default. */
   readonly preferredOutput: string | null;
-  /** Maximum-following or fixed sample-rate mode. */
+  /** Automatic graph-following or fixed sample-rate mode. */
   readonly rateMode: string;
-  /** Fixed rate, or zero in maximum mode. */
+  /** Fixed rate, or zero in automatic mode. */
   readonly fixedRate: number;
   /** Suggest or force graph-rate enforcement. */
   readonly rateEnforcement: string;

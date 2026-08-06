@@ -26,8 +26,7 @@ static bool testSmartFilterPairContract() {
   const auto graph = pipetune::makeFilterGraphProperties(
       {.nodeName = "pipetune",
        .nodeDescription = "PipeTune",
-       .sampleRate = 48000,
-       .outputNodeRate = 48000,
+       .fixedSampleRate = std::nullopt,
        .channelCount = 2,
        .forceRate = false});
 
@@ -53,12 +52,35 @@ static bool testSmartFilterPairContract() {
                "filter nodes must share one link group") &&
          check(!property(graph.output, "target.object").has_value(),
                "filter output must follow WirePlumber policy") &&
+         check(!property(graph.input, "audio.rate").has_value() &&
+                   !property(graph.output, "audio.rate").has_value() &&
+                   !property(graph.input, "node.rate").has_value() &&
+                   !property(graph.output, "node.rate").has_value(),
+               "automatic filtering must leave the graph rate negotiable") &&
          check(graph.outputAutoconnect,
                "filter output must ask the session manager to connect it") &&
          check(graph.outputReconnect,
                "filter output must reconnect after default-device changes");
 }
 
+static bool testFixedGraphRateContract() {
+  const auto graph = pipetune::makeFilterGraphProperties(
+      {.nodeName = "pipetune",
+       .nodeDescription = "PipeTune",
+       .fixedSampleRate = 96000,
+       .channelCount = 2,
+       .forceRate = true});
+
+  return check(property(graph.input, "audio.rate") == "96000" &&
+                   property(graph.output, "audio.rate") == "96000" &&
+                   property(graph.input, "node.rate") == "1/96000" &&
+                   property(graph.output, "node.rate") == "1/96000",
+               "fixed filtering must constrain both nodes to one rate") &&
+         check(property(graph.output, "node.force-rate") == "0",
+               "force mode must request the fixed graph rate");
+}
+
 int main() {
-  return testSmartFilterPairContract() ? 0 : 1;
+  return testSmartFilterPairContract() && testFixedGraphRateContract() ? 0
+                                                                       : 1;
 }

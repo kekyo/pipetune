@@ -149,7 +149,7 @@ std::string clearPreferredOutput(const std::filesystem::path &configPath);
  * choices.
  *
  * @param configPath Configuration file path.
- * @param policy Valid Max/fixed and suggest/force policy.
+ * @param policy Valid automatic/fixed graph-rate policy.
  * @return Empty on success, otherwise a human-readable diagnostic.
  */
 std::string saveSampleRatePolicy(const std::filesystem::path &configPath,
@@ -181,7 +181,7 @@ std::string saveDspBackendSelection(
  * Atomically replaces the startup configuration with PipeTune defaults.
  *
  * The stored defaults select DSP bypass, the system-default output, and the
- * Max + Suggest sample-rate policy and scalar DSP backend. Existing contents
+ * automatic sample-rate policy and scalar DSP backend. Existing contents
  * are not parsed.
  *
  * @param configPath Configuration file path.

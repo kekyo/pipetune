@@ -17,7 +17,7 @@ namespace pipetune_gtk {
 struct RateOperationRequest {
   /** Canonical startup configuration path. */
   std::filesystem::path configPath;
-  /** Requested Max/fixed and suggest/force policy. */
+  /** Requested automatic/fixed graph-rate policy. */
   pipetune::SampleRatePolicy policy;
 };
 

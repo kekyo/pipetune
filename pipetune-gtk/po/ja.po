@@ -25,10 +25,6 @@ msgid "{0}  •  Load {1}%"
 msgstr "{0}  •  負荷 {1}%"
 
 #, brace-format
-msgid "{0}  •  PipeWire resampling"
-msgstr "{0}  •  PipeWire リサンプリング"
-
-#, brace-format
 msgid "{0} — availability not reported"
 msgstr "{0} — 利用可否の報告なし"
 
@@ -41,24 +37,12 @@ msgid "{0} — available"
 msgstr "{0} — 利用可能"
 
 #, brace-format
-msgid "{0} — support unknown"
-msgstr "{0} — 対応状況不明"
-
-#, brace-format
-msgid "{0} — supported"
-msgstr "{0} — 対応"
-
-#, brace-format
 msgid "{0} — system default"
 msgstr "{0} — システム既定"
 
 #, brace-format
 msgid "{0} — unavailable"
 msgstr "{0} — 利用不可"
-
-#, brace-format
-msgid "{0} — unsupported; PipeWire will resample"
-msgstr "{0} — 非対応（PipeWire がリサンプリング）"
 
 #, brace-format
 msgid "{0} · {1} kHz · {2}"
@@ -107,9 +91,6 @@ msgstr "操作ログ"
 msgid "Action Log ({0})"
 msgstr "操作ログ（{0}）"
 
-msgid "Active output rate"
-msgstr "稼働中の出力レート"
-
 msgid "Active plugins"
 msgstr "有効なプラグイン"
 
@@ -127,6 +108,9 @@ msgstr "適用"
 
 msgid "Automatic"
 msgstr "自動"
+
+msgid "Automatic — follow PipeWire graph"
+msgstr "自動 — PipeWireグラフに追従"
 
 msgid "Baseline"
 msgstr "ベースライン"
@@ -279,6 +263,10 @@ msgstr "未接続 · 設定は読み取り専用です"
 msgid "DSP"
 msgstr "DSP"
 
+#, brace-format
+msgid "DSP {0}  •  PipeWire graph {1}"
+msgstr "DSP {0}  •  PipeWireグラフ {1}"
+
 msgid "DSP / Performance"
 msgstr "DSP / パフォーマンス"
 
@@ -342,11 +330,8 @@ msgstr "システム既定に追従中"
 msgid "Force"
 msgstr "強制"
 
-msgid "Force — request the selected output rate"
-msgstr "強制 — 選択した出力レートを要求"
-
-msgid "idle"
-msgstr "アイドル"
+msgid "Force — request the fixed graph rate"
+msgstr "強制 — 固定グラフレートを要求"
 
 msgid "Input / Rates"
 msgstr "入力 / レート"
@@ -359,10 +344,6 @@ msgstr "入力フォーマット"
 
 msgid "Input sample rate"
 msgstr "入力サンプルレート"
-
-#, brace-format
-msgid "Input/DSP {0}  •  Output {1}  •  Physical {2}"
-msgstr "入力/DSP {0}  •  出力 {1}  •  物理 {2}"
 
 msgid "Language"
 msgstr "言語"
@@ -408,12 +389,6 @@ msgstr "負荷"
 
 msgid "Long PipeWire node names are available in the device tooltip."
 msgstr "長いPipeWireノード名はデバイスのツールチップで確認できます。"
-
-msgid "Max — highest supported rate"
-msgstr "最大 — 対応する最高レート"
-
-msgid "Maximum"
-msgstr "最大"
 
 msgid "Measured frame rate"
 msgstr "実測フレームレート"
@@ -488,6 +463,9 @@ msgstr "PipeTune: 未接続"
 
 msgid "PipeWire enforcement"
 msgstr "PipeWire強制方式"
+
+msgid "PipeWire graph rate"
+msgstr "PipeWireグラフレート"
 
 msgid "Preference"
 msgstr "優先設定"
@@ -582,9 +560,6 @@ msgstr "スカラー"
 
 msgid "Selected output"
 msgstr "選択中の出力"
-
-msgid "Selected output rate"
-msgstr "選択中の出力レート"
 
 msgid "Selection reason"
 msgstr "選択理由"

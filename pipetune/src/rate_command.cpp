@@ -130,22 +130,19 @@ std::string formatSampleRateStatus(
     const ControlRuntimeStatus &status) {
   auto formatted = std::ostringstream{};
   formatted << "Configured rate: ";
-  if (status.configuredRatePolicy.mode == SampleRateMode::maximum) {
-    formatted << "Max";
+  if (status.configuredRatePolicy.mode == SampleRateMode::automatic) {
+    formatted << "Automatic";
   } else {
-    formatted << formatRate(status.configuredRatePolicy.fixedRate);
+    formatted << formatRate(status.configuredRatePolicy.fixedRate)
+              << " ("
+              << sampleRateEnforcementName(
+                     status.configuredRatePolicy.enforcement)
+              << ')';
   }
-  formatted << " ("
-            << sampleRateEnforcementName(
-                   status.configuredRatePolicy.enforcement)
-            << ")\n"
-            << "DSP/input rate: " << formatRate(status.dspSampleRate) << '\n'
-            << "Selected output rate: "
-            << formatRate(status.selectedOutputSampleRate) << '\n'
-            << "Active physical rate: "
-            << formatRate(status.activeOutputSampleRate) << '\n'
-            << "Output fallback: "
-            << (status.rateFallback ? "yes" : "no") << '\n'
+  formatted << '\n'
+            << "DSP rate: " << formatRate(status.dspSampleRate) << '\n'
+            << "PipeWire graph rate: "
+            << formatRate(status.graphSampleRate) << '\n'
             << "Transition: "
             << (status.rateTransitioning ? "in progress" : "idle") << '\n';
   if (!status.rateError.empty()) {
@@ -154,31 +151,11 @@ std::string formatSampleRateStatus(
   return formatted.str();
 }
 
-std::string formatSampleRateCapabilities(
-    const ControlRuntimeStatus &status) {
+std::string formatSelectableSampleRates() {
   auto formatted = std::ostringstream{};
-  if (status.availableOutputs.empty()) {
-    formatted << "No audio output devices are currently available.\n";
-    return formatted.str();
-  }
-  for (const auto &output : status.availableOutputs) {
-    formatted << output.description << " (" << output.name << ')';
-    if (output.selected) {
-      formatted << " [selected]";
-    }
-    formatted << '\n';
-    for (const auto rate : selectableSampleRates()) {
-      formatted << "  " << formatRate(rate) << ": ";
-      if (!output.sampleRateCapabilities.known) {
-        formatted << "unknown";
-      } else if (sampleRateCapabilitiesSupport(
-                     output.sampleRateCapabilities, rate)) {
-        formatted << "supported";
-      } else {
-        formatted << "unsupported";
-      }
-      formatted << '\n';
-    }
+  formatted << "automatic: follow the PipeWire graph\n";
+  for (const auto rate : selectableSampleRates()) {
+    formatted << formatRate(rate) << ": fixed\n";
   }
   return formatted.str();
 }

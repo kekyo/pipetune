@@ -14,7 +14,7 @@ namespace pipetune {
 struct RateStatusQueryResult {
   /** True when the daemon returned a valid successful status. */
   bool success;
-  /** Parsed daemon sample-rate and output capability state. */
+  /** Parsed daemon sample-rate state. */
   ControlRuntimeStatus status;
   /** Original successful JSON response for machine-readable output. */
   std::string json;
@@ -51,7 +51,7 @@ struct PersistentRateResult {
 };
 
 /**
- * Queries configured, resolved, actual, and supported sample rates.
+ * Queries the configured and negotiated sample rates.
  *
  * @param socketPath Running daemon control socket path.
  * @return Parsed status, original JSON, or a diagnostic.
@@ -66,7 +66,7 @@ queryRateStatus(const std::filesystem::path &socketPath);
  * saved for the next start. A daemon rejection leaves persistence unchanged.
  *
  * @param options Resolved configuration and control paths.
- * @param policy Valid Max/fixed and suggest/force choice.
+ * @param policy Valid automatic/fixed graph-rate choice.
  * @return Live and persistence outcomes.
  */
 PersistentRateResult
@@ -82,13 +82,11 @@ executeSetSampleRatePolicy(const PersistentRateOptions &options,
 std::string formatSampleRateStatus(const ControlRuntimeStatus &status);
 
 /**
- * Formats selectable rates and support hints for every physical output.
+ * Formats automatic graph negotiation and the selectable fixed rates.
  *
- * @param status Valid daemon status.
- * @return Human-readable capability list ending in a newline.
+ * @return Human-readable selection list ending in a newline.
  */
-std::string formatSampleRateCapabilities(
-    const ControlRuntimeStatus &status);
+std::string formatSelectableSampleRates();
 
 } // namespace pipetune
 

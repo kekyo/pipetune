@@ -109,8 +109,8 @@ static std::string validatePreferredOutput(std::string_view nodeName) {
 
 static bool parseConfiguredRate(std::string_view value,
                                 SampleRatePolicy &policy) {
-  if (value == "max") {
-    policy.mode = SampleRateMode::maximum;
+  if (value == "automatic") {
+    policy.mode = SampleRateMode::automatic;
     policy.fixedRate = 0;
     return true;
   }
@@ -213,8 +213,8 @@ std::string saveStartupConfig(const std::filesystem::path &configPath,
     return "sample-rate policy is invalid";
   }
   contents += std::string(kRateAssignment);
-  if (config.ratePolicy.mode == SampleRateMode::maximum) {
-    contents += "max\n";
+  if (config.ratePolicy.mode == SampleRateMode::automatic) {
+    contents += "automatic\n";
   } else {
     contents += std::to_string(config.ratePolicy.fixedRate) + "\n";
   }
