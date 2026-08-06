@@ -1016,9 +1016,9 @@ static void showUiLanguageRestartDialog(GtkRuntime *runtime) {
       GTK_MESSAGE_DIALOG(dialog), "%s",
       translate("The UI language change will take effect after PipeTune "
                 "GTK restarts."));
-  auto *later = gtk_dialog_add_button(
+  [[maybe_unused]] auto *later = gtk_dialog_add_button(
       GTK_DIALOG(dialog), translate("Later"), GTK_RESPONSE_CANCEL);
-  auto *restart = gtk_dialog_add_button(
+  [[maybe_unused]] auto *restart = gtk_dialog_add_button(
       GTK_DIALOG(dialog), translate("Restart now"), GTK_RESPONSE_ACCEPT);
 #ifdef PIPETUNE_GTK_E2E_ACCESSIBILITY
   gestament_gtk_assign_accessible_id(

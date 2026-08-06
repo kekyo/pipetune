@@ -247,6 +247,35 @@ else()
     pipetune-gtk PRIVATE -Wall -Wextra -Wpedantic -Werror)
 endif()
 
+if(BUILD_TESTING)
+  add_library(
+    pipetune_gtk_production_main_compile_test
+    OBJECT EXCLUDE_FROM_ALL
+    src/main.cpp)
+  target_include_directories(
+    pipetune_gtk_production_main_compile_test
+    PRIVATE "${PIPETUNE_GTK_RESOURCE_DIRECTORY}")
+  target_link_libraries(
+    pipetune_gtk_production_main_compile_test
+    PRIVATE pipetune_gtk_core pipetune_gtk_ui_core pipetune_core
+            PkgConfig::GTK3)
+  if(MSVC)
+    target_compile_options(
+      pipetune_gtk_production_main_compile_test PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_production_main_compile_test
+      PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_gtk_production_main_compile
+    COMMAND
+      "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}"
+      --target pipetune_gtk_production_main_compile_test)
+  set_tests_properties(
+    pipetune_gtk_production_main_compile PROPERTIES TIMEOUT 60)
+endif()
+
 set(
   PIPETUNE_GTK_APPLICATION_DIR
   "${CMAKE_INSTALL_DATADIR}/applications"
