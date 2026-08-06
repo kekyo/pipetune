@@ -47,17 +47,30 @@ if (!cmake || !projectDirectory || !msgfmt) {
       if (built.status !== 0) {
         fail('msgfmt translation target failed', built);
       } else {
-        const catalog = join(
-          buildDirectory,
-          'pipetune-gtk-build',
-          'locale',
+        const catalogLocales = [
+          'ar',
+          'es',
+          'fr',
+          'hi',
           'ja',
-          'LC_MESSAGES',
-          'pipetune-gtk.mo'
-        );
-        const catalogStatus = statSync(catalog, { throwIfNoEntry: false });
-        if (catalogStatus === undefined || catalogStatus.size === 0) {
-          fail('msgfmt translation target did not produce a catalog');
+          'ko',
+          'pt',
+          'ru',
+          'zh',
+        ];
+        for (const locale of catalogLocales) {
+          const catalog = join(
+            buildDirectory,
+            'pipetune-gtk-build',
+            'locale',
+            locale,
+            'LC_MESSAGES',
+            'pipetune-gtk.mo'
+          );
+          const catalogStatus = statSync(catalog, { throwIfNoEntry: false });
+          if (catalogStatus === undefined || catalogStatus.size === 0) {
+            fail(`msgfmt translation target did not produce ${locale}`);
+          }
         }
       }
     }

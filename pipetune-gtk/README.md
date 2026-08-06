@@ -57,7 +57,10 @@ state then becomes the transaction baseline.
 The Advanced page's language selection participates in the same Apply and
 Cancel interaction. Apply stores it in
 `$XDG_CONFIG_HOME/pipetune/gtk.conf`, while Cancel discards the staged choice.
-The saved language takes effect the next time PipeTune GTK starts.
+The available choices are the system default, English, Arabic, Spanish,
+French, Hindi, Japanese, Korean, Portuguese, Russian, and Chinese. After a
+language change is saved, PipeTune GTK offers to restart immediately. Choosing
+Later keeps the current interface language until the application is restarted.
 
 **Cancel**, Escape, and the title-bar close button first restore the live
 configuration captured when the window opened, or the latest successfully

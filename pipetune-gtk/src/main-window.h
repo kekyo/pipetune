@@ -51,7 +51,7 @@ struct MainWindowUi {
   GtkWidget *rateEnforcementCombo = nullptr;
   /** Scalar compatibility or SIMD acceleration backend drop-down. */
   GtkWidget *dspBackendCombo = nullptr;
-  /** System, English, or Japanese presentation-language drop-down. */
+  /** Supported presentation-language drop-down. */
   GtkWidget *languageCombo = nullptr;
   /** Inline notice that a restart is required to apply a language change. */
   GtkWidget *languageRestartNotice = nullptr;

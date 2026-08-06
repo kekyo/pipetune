@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 
 #include <clocale>
+#include <array>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -14,6 +15,34 @@
 #include <string_view>
 
 namespace {
+
+struct LanguageExpectation {
+  pipetune_gtk::UiLanguage language;
+  std::string_view id;
+  std::string_view systemDefaultTranslation;
+};
+
+constexpr auto translatedLanguages =
+    std::array<LanguageExpectation, 9>{
+        LanguageExpectation{pipetune_gtk::UiLanguage::arabic, "ar",
+                            "النظام الافتراضي"},
+        LanguageExpectation{pipetune_gtk::UiLanguage::spanish, "es",
+                            "Valor predeterminado del sistema"},
+        LanguageExpectation{pipetune_gtk::UiLanguage::french, "fr",
+                            "Valeur par défaut du système"},
+        LanguageExpectation{pipetune_gtk::UiLanguage::hindi, "hi",
+                            "सिस्टम डिफ़ॉल्ट"},
+        LanguageExpectation{pipetune_gtk::UiLanguage::japanese, "ja",
+                            "システム設定"},
+        LanguageExpectation{pipetune_gtk::UiLanguage::korean, "ko",
+                            "시스템 기본값"},
+        LanguageExpectation{pipetune_gtk::UiLanguage::portuguese, "pt",
+                            "Padrão do sistema"},
+        LanguageExpectation{pipetune_gtk::UiLanguage::russian, "ru",
+                            "Система по умолчанию"},
+        LanguageExpectation{pipetune_gtk::UiLanguage::chinese, "zh",
+                            "系统默认"},
+    };
 
 const auto check = [](bool condition, std::string_view message) {
   if (!condition) {
@@ -46,6 +75,23 @@ const auto testPreferencePath = [] {
                  std::filesystem::path(
                      "/tmp/home/.config/pipetune/gtk.conf"),
              "HOME must provide the fallback configuration path");
+};
+
+const auto testLanguageIdentifiers = [] {
+  for (const auto &expectation : translatedLanguages) {
+    auto parsed = pipetune_gtk::UiLanguage::system;
+    if (!check(pipetune_gtk::uiLanguageId(expectation.language) ==
+                   expectation.id,
+               "a translated language identifier differs") ||
+        !check(pipetune_gtk::parseUiLanguageId(expectation.id, parsed) &&
+                   parsed == expectation.language,
+               "a translated language identifier must round-trip")) {
+      return false;
+    }
+  }
+  auto unsupported = pipetune_gtk::UiLanguage::system;
+  return check(!pipetune_gtk::parseUiLanguageId("de", unsupported),
+               "an unsupported language identifier must be rejected");
 };
 
 const auto testPreferencePersistence =
@@ -116,7 +162,7 @@ const auto testPreferenceDiagnostics =
       const auto malformed = temporaryDirectory / "malformed.conf";
       const auto unknown = temporaryDirectory / "unknown.conf";
       if (!writeFile(malformed, "[ui\nlanguage=ja\n") ||
-          !writeFile(unknown, "[ui]\nlanguage=fr\n")) {
+          !writeFile(unknown, "[ui]\nlanguage=de\n")) {
         return check(false, "diagnostic fixtures must be writable");
       }
       const auto malformedResult =
@@ -146,15 +192,18 @@ const auto testPreferenceDiagnostics =
 const auto testLocalization = [](const std::filesystem::path &localeDirectory) {
   const auto original =
       pipetune_gtk::captureUiLocalizationEnvironment();
-  const auto japanese = pipetune_gtk::applyUiLanguage(
-      original, pipetune_gtk::UiLanguage::japanese, localeDirectory);
-  if (!check(japanese.warning.empty(),
-             "the Japanese locale must be selectable") ||
-      !check(std::string_view(pipetune_gtk::translate("System default")) ==
-                 "システム設定",
-             "the Japanese catalog must translate GUI messages")) {
-    pipetune_gtk::restoreUiLocalizationEnvironment(original);
-    return false;
+  for (const auto &expectation : translatedLanguages) {
+    const auto localization = pipetune_gtk::applyUiLanguage(
+        original, expectation.language, localeDirectory);
+    if (!check(localization.warning.empty(),
+               "a translated locale must be selectable") ||
+        !check(
+            std::string_view(pipetune_gtk::translate("System default")) ==
+                expectation.systemDefaultTranslation,
+            "a translated catalog must provide its GUI messages")) {
+      pipetune_gtk::restoreUiLocalizationEnvironment(original);
+      return false;
+    }
   }
 
   const auto english = pipetune_gtk::applyUiLanguage(
@@ -200,6 +249,7 @@ int main(int argc, char **argv) {
   g_free(temporary);
   const auto passed =
       testPreferencePath() &&
+      testLanguageIdentifiers() &&
       testPreferencePersistence(temporaryDirectory) &&
       testPreferenceDiagnostics(temporaryDirectory) &&
       testLocalization(argv[1]);

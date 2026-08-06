@@ -15,8 +15,24 @@ enum class UiLanguage {
   system,
   /** Always present English messages. */
   english,
+  /** Always present Arabic messages. */
+  arabic,
+  /** Always present Spanish messages. */
+  spanish,
+  /** Always present French messages. */
+  french,
+  /** Always present Hindi messages. */
+  hindi,
   /** Always present Japanese messages. */
-  japanese
+  japanese,
+  /** Always present Korean messages. */
+  korean,
+  /** Always present Portuguese messages. */
+  portuguese,
+  /** Always present Russian messages. */
+  russian,
+  /** Always present Chinese messages. */
+  chinese
 };
 
 /**
@@ -51,7 +67,7 @@ std::filesystem::path resolveUiLanguageConfigPath(
  * Returns the stable configuration identifier for a language.
  *
  * @param language Language to identify.
- * @return One of system, en, or ja.
+ * @return One of system, en, ar, es, fr, hi, ja, ko, pt, ru, or zh.
  */
 std::string_view uiLanguageId(UiLanguage language) noexcept;
 
@@ -60,7 +76,7 @@ std::string_view uiLanguageId(UiLanguage language) noexcept;
  *
  * @param id Identifier to parse.
  * @param language Receives the parsed language when successful.
- * @return True when id is system, en, or ja.
+ * @return True when id is a supported presentation-language identifier.
  */
 bool parseUiLanguageId(std::string_view id,
                        UiLanguage &language) noexcept;

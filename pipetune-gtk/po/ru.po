@@ -1,0 +1,571 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: PipeTune GTK\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-07-31 00:00+0900\n"
+"PO-Revision-Date: 2026-07-31 00:00+0900\n"
+"Last-Translator: PipeTune contributors\n"
+"Language-Team: Russian\n"
+"Language: ru\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+
+#, brace-format
+msgid "{0}  •  Fallback"
+msgstr "{0}  •  Резервный"
+
+#, brace-format
+msgid "{0}  •  Load —"
+msgstr "{0}  •  Нагрузка —"
+
+#, brace-format
+msgid "{0}  •  Load {1}%"
+msgstr "{0}  •  Нагрузка {1}%"
+
+#, brace-format
+msgid "{0} — availability not reported"
+msgstr "{0} — доступность не сообщена"
+
+#, brace-format
+msgid "{0} — availability unknown"
+msgstr "{0} — доступность неизвестна"
+
+#, brace-format
+msgid "{0} — available"
+msgstr "{0} — доступен"
+
+#, brace-format
+msgid "{0} — unavailable"
+msgstr "{0} — недоступен"
+
+#, brace-format
+msgid "{0} · {1} kHz · {2}"
+msgstr "{0} · {1} кГц · {2}"
+
+#, brace-format
+msgid "{0} ({1})"
+msgstr "{0} ({1})"
+
+#, brace-format
+msgid "{0} channel"
+msgid_plural "{0} channels"
+msgstr[0] "{0} канал"
+msgstr[1] "{0} канала"
+msgstr[2] "{0} каналов"
+
+#, brace-format
+msgid "{0} frames/s"
+msgstr "{0} кадров/с"
+
+#, brace-format
+msgid "{0} h ago"
+msgstr "{0} ч назад"
+
+#, brace-format
+msgid "{0} min ago"
+msgstr "{0} мин назад"
+
+#, brace-format
+msgid "{0} ms ago"
+msgstr "{0} мс назад"
+
+#, brace-format
+msgid "{0} s ago"
+msgstr "{0} с назад"
+
+#, brace-format
+msgid "{0}; CPU: {1}"
+msgstr "{0}; ЦП: {1}"
+
+msgid "32-bit floating-point PCM (planar)"
+msgstr "32-битный PCM с плавающей точкой (планарный)"
+
+msgid "Action Log"
+msgstr "Журнал действий"
+
+#, brace-format
+msgid "Action Log ({0})"
+msgstr "Журнал действий ({0})"
+
+msgid "Active plugins"
+msgstr "Активные плагины"
+
+msgid "Advanced"
+msgstr "Дополнительно"
+
+msgid "All"
+msgstr "Все"
+
+msgid "All settings saved"
+msgstr "Все настройки сохранены"
+
+msgid "Apply"
+msgstr "Применить"
+
+msgid "Automatic"
+msgstr "Автоматически"
+
+msgid "Automatic — follow PipeWire graph"
+msgstr "Автоматически — следовать графу PipeWire"
+
+msgid "Baseline"
+msgstr "Исходное состояние"
+
+msgid "Bypass"
+msgstr "Обход"
+
+msgid "Cancel"
+msgstr "Отмена"
+
+msgid "Cannot apply UI language"
+msgstr "Не удалось применить язык интерфейса"
+
+msgid "Cannot load startup configuration"
+msgstr "Не удалось загрузить начальную конфигурацию"
+
+msgid "Cannot prepare preset"
+msgstr "Не удалось подготовить предустановку"
+
+msgid "Cannot resolve preset"
+msgstr "Не удалось разрешить предустановку"
+
+msgid "Cannot save settings"
+msgstr "Не удалось сохранить настройки"
+
+msgid "Cannot use saved language preference"
+msgstr "Не удалось использовать сохранённый выбор языка"
+
+msgid "Changing DSP backend"
+msgstr "Изменение бэкенда DSP"
+
+msgid "Changing DSP backend failed"
+msgstr "Не удалось изменить бэкенд DSP"
+
+msgid "Changing processing mode"
+msgstr "Изменение режима обработки"
+
+msgid "Changing processing mode failed"
+msgstr "Не удалось изменить режим обработки"
+
+msgid "Changing sample-rate policy"
+msgstr "Изменение политики частоты дискретизации"
+
+msgid "Changing sample-rate policy failed"
+msgstr "Не удалось изменить политику частоты дискретизации"
+
+msgid "Choose a preset before enabling DSP processing"
+msgstr "Выберите предустановку перед включением обработки DSP"
+
+msgid "Choose a standard or saved EffeTune preset…"
+msgstr "Выберите стандартную или сохранённую предустановку EffeTune…"
+
+msgid "Choose an EffeTune preset"
+msgstr "Выберите предустановку EffeTune"
+
+msgid "Choose bypass, Automatic + Suggest, and Scalar + Auto SIMD."
+msgstr "Выберите Обход, Автоматически + Предлагать и Scalar + Авто SIMD."
+
+msgid "Choose the language used by PipeTune GTK."
+msgstr "Выберите язык интерфейса PipeTune GTK."
+
+msgid "Clear"
+msgstr "Очистить"
+
+msgid "Close"
+msgstr "Закрыть"
+
+msgid "Configuration"
+msgstr "Конфигурация"
+
+#, brace-format
+msgid "Configured {0}  •  Effective {1}"
+msgstr "Настроено {0}  •  Фактически {1}"
+
+msgid "Configured backend"
+msgstr "Настроенный бэкенд"
+
+msgid "Configured SIMD"
+msgstr "Настроенный SIMD"
+
+msgid "Connected"
+msgstr "Подключено"
+
+msgid "Connected · changing sample rate"
+msgstr "Подключено · изменение частоты дискретизации"
+
+msgid "Connected and monitoring"
+msgstr "Подключено и отслеживается"
+
+msgid "Connected to PipeTune"
+msgstr "Подключено к PipeTune"
+
+msgid "Connecting"
+msgstr "Подключение"
+
+msgid "Connecting to PipeTune"
+msgstr "Подключение к PipeTune"
+
+msgid "Connecting to the control service…"
+msgstr "Подключение к службе управления…"
+
+msgid "Connecting…"
+msgstr "Подключение…"
+
+msgid "Control"
+msgstr "Управление"
+
+msgid "Control service unavailable"
+msgstr "Служба управления недоступна"
+
+msgid "Control socket unavailable"
+msgstr "Сокет управления недоступен"
+
+msgid "Copy"
+msgstr "Копировать"
+
+msgid "Custom preset file"
+msgstr "Файл пользовательской предустановки"
+
+msgid "Defaults are being applied live; use Apply to save them"
+msgstr "Значения по умолчанию применяются в реальном времени; нажмите Применить, чтобы сохранить их"
+
+msgid "Defaults selected"
+msgstr "Выбраны значения по умолчанию"
+
+msgid "Disconnected"
+msgstr "Отключено"
+
+msgid "Disconnected · settings are read-only"
+msgstr "Отключено · настройки доступны только для чтения"
+
+msgid "DSP"
+msgstr "DSP"
+
+#, brace-format
+msgid "DSP {0}  •  PipeWire graph {1}"
+msgstr "DSP {0}  •  Граф PipeWire {1}"
+
+msgid "DSP / Performance"
+msgstr "DSP / Производительность"
+
+msgid "DSP backend"
+msgstr "Бэкенд DSP"
+
+msgid "DSP backend changed"
+msgstr "Бэкенд DSP изменён"
+
+msgid "DSP Engine"
+msgstr "Движок DSP"
+
+msgid "DSP processing load; graph capped at 100%."
+msgstr "Нагрузка обработки DSP; график ограничен 100%."
+
+msgid "DSP rate"
+msgstr "Частота DSP"
+
+msgid "DSP sample rate"
+msgstr "Частота дискретизации DSP"
+
+msgid "Effective backend"
+msgstr "Фактический бэкенд"
+
+msgid "Effective backend unavailable"
+msgstr "Фактический бэкенд недоступен"
+
+msgid "EffeTune DSP control"
+msgstr "Управление DSP EffeTune"
+
+msgid "EffeTune presets"
+msgstr "Предустановки EffeTune"
+
+msgid "Enable DSP processing"
+msgstr "Включить обработку DSP"
+
+msgid "English"
+msgstr "Английский"
+
+msgid "Errors"
+msgstr "Ошибки"
+
+msgid "Finishing rollback…"
+msgstr "Завершение отката…"
+
+msgid "Fixed"
+msgstr "Фиксированная"
+
+msgid "Fixed rate"
+msgstr "Фиксированная частота"
+
+msgid "Force"
+msgstr "Принудительно"
+
+msgid "Force — request the fixed graph rate"
+msgstr "Принудительно — запросить фиксированную частоту графа"
+
+msgid "Input / Rates"
+msgstr "Вход / Частоты"
+
+msgid "Input channels"
+msgstr "Входные каналы"
+
+msgid "Input format"
+msgstr "Входной формат"
+
+msgid "Input sample rate"
+msgstr "Частота дискретизации входа"
+
+msgid "Language"
+msgstr "Язык"
+
+msgid "Last input"
+msgstr "Последний вход"
+
+msgid "Later"
+msgstr "Позже"
+
+msgid "Live Configuration"
+msgstr "Текущая конфигурация"
+
+msgid "Live enforcement"
+msgstr "Текущее применение"
+
+msgid "Live fixed rate"
+msgstr "Текущая фиксированная частота"
+
+msgid "Live preview active · changes are not saved"
+msgstr "Предпросмотр активен · изменения не сохранены"
+
+msgid "Live preview failed · adjust a setting to retry"
+msgstr "Предпросмотр не удался · измените настройку для повтора"
+
+msgid "Live rate mode"
+msgstr "Текущий режим частоты"
+
+msgid "Live settings changed elsewhere · reopen this dialog"
+msgstr "Текущие настройки изменены в другом месте · откройте этот диалог заново"
+
+msgid "Live settings changed externally"
+msgstr "Текущие настройки изменены извне"
+
+msgid "Live settings match the saved configuration"
+msgstr "Текущие настройки совпадают с сохранённой конфигурацией"
+
+msgid "Live status subscription established"
+msgstr "Подписка на текущее состояние установлена"
+
+msgid "Load"
+msgstr "Нагрузка"
+
+msgid "Measured frame rate"
+msgstr "Измеренная частота кадров"
+
+msgid "Native backend"
+msgstr "Нативный бэкенд"
+
+msgid "Never"
+msgstr "Никогда"
+
+msgid "None"
+msgstr "Нет"
+
+msgid "Open PipeTune"
+msgstr "Открыть PipeTune"
+
+#, brace-format
+msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
+msgstr "Переполнение {0}  •  Недозагрузка {1}  •  Обработка {2}"
+
+msgid "Overrun frames"
+msgstr "Кадры переполнения"
+
+msgid "PCM data rate"
+msgstr "Скорость данных PCM"
+
+msgid "Pending dialog settings will be reapplied"
+msgstr "Ожидающие настройки диалога будут применены повторно"
+
+msgid "PipeTune disconnected"
+msgstr "PipeTune отключён"
+
+msgid "PipeTune reconnected"
+msgstr "PipeTune подключён повторно"
+
+msgid "PipeTune Status"
+msgstr "Состояние PipeTune"
+
+#, brace-format
+msgid "PipeTune: {0}"
+msgstr "PipeTune: {0}"
+
+msgid "PipeTune: active"
+msgstr "PipeTune: активен"
+
+msgid "PipeTune: attention required"
+msgstr "PipeTune: требуется внимание"
+
+msgid "PipeTune: connecting"
+msgstr "PipeTune: подключение"
+
+msgid "PipeTune: disconnected"
+msgstr "PipeTune: отключён"
+
+msgid "PipeWire enforcement"
+msgstr "Применение PipeWire"
+
+msgid "PipeWire graph rate"
+msgstr "Частота графа PipeWire"
+
+msgid "Preset"
+msgstr "Предустановка"
+
+msgid "Preset library"
+msgstr "Библиотека предустановок"
+
+msgid "Preset required"
+msgstr "Требуется предустановка"
+
+msgid "Preset warnings"
+msgstr "Предупреждения предустановки"
+
+msgid "Processing"
+msgstr "Обработка"
+
+msgid "Processing errors"
+msgstr "Ошибки обработки"
+
+msgid "Processing mode changed"
+msgstr "Режим обработки изменён"
+
+msgid "Processing time"
+msgstr "Время обработки"
+
+msgid "Quit"
+msgstr "Выход"
+
+msgid "Rate"
+msgstr "Частота"
+
+msgid "Rate enforcement"
+msgstr "Применение частоты"
+
+msgid "Rate mode"
+msgstr "Режим частоты"
+
+msgid "Rates unavailable"
+msgstr "Частоты недоступны"
+
+msgid "Restart now"
+msgstr "Перезапустить сейчас"
+
+msgid "Restart PipeTune GTK to use the selected language."
+msgstr "Перезапустите PipeTune GTK, чтобы использовать выбранный язык."
+
+msgid "Restart to apply UI language?"
+msgstr "Перезапустить для применения языка интерфейса?"
+
+msgid "Restore defaults"
+msgstr "Восстановить значения по умолчанию"
+
+msgid "Restore Defaults"
+msgstr "Восстановить значения по умолчанию"
+
+msgid "Restoring the live settings captured when the dialog opened"
+msgstr "Восстановление текущих настроек, зафиксированных при открытии диалога"
+
+msgid "Restoring the previous live settings…"
+msgstr "Восстановление предыдущих текущих настроек…"
+
+msgid "Rollback requested"
+msgstr "Запрошен откат"
+
+msgid "Sample Rate"
+msgstr "Частота дискретизации"
+
+msgid "Sample-rate policy changed"
+msgstr "Политика частоты дискретизации изменена"
+
+msgid "Saved Configuration"
+msgstr "Сохранённая конфигурация"
+
+#, brace-format
+msgid "Saved in EffeTune · {0}"
+msgstr "Сохранено в EffeTune · {0}"
+
+msgid "Saving all settings"
+msgstr "Сохранение всех настроек"
+
+msgid "Scalar"
+msgstr "Scalar"
+
+msgid "Settings updated"
+msgstr "Настройки обновлены"
+
+msgid "SIMD variant"
+msgstr "Вариант SIMD"
+
+msgid "Some preset sources are unavailable"
+msgstr "Некоторые источники предустановок недоступны"
+
+#, brace-format
+msgid "Standard · {0} · {1}"
+msgstr "Стандартная · {0} · {1}"
+
+msgid "Startup configuration path unavailable"
+msgstr "Путь начальной конфигурации недоступен"
+
+msgid "Suggest"
+msgstr "Предлагать"
+
+msgid "Suggest — let PipeWire choose"
+msgstr "Предлагать — позволить PipeWire выбрать"
+
+#, brace-format
+msgid "Switching — {0}"
+msgstr "Переключение — {0}"
+
+msgid "System"
+msgstr "Система"
+
+msgid "System default"
+msgstr "Система по умолчанию"
+
+msgid "The UI language change will take effect after PipeTune GTK restarts."
+msgstr "Изменение языка интерфейса вступит в силу после перезапуска PipeTune GTK."
+
+msgid "Turn off to pass audio through without an EffeTune preset."
+msgstr "Отключите, чтобы пропускать звук без предустановки EffeTune."
+
+msgid "unavailable"
+msgstr "недоступно"
+
+msgid "Unavailable"
+msgstr "Недоступно"
+
+msgid "Underrun frames"
+msgstr "Кадры недозагрузки"
+
+msgid "unknown"
+msgstr "неизвестно"
+
+msgid "Unknown"
+msgstr "Неизвестно"
+
+msgid "Unknown sample format"
+msgstr "Неизвестный формат выборки"
+
+msgid "Updating settings"
+msgstr "Обновление настроек"
+
+msgid "Updating settings failed"
+msgstr "Не удалось обновить настройки"
+
+msgid "Versions"
+msgstr "Версии"
+
+msgid "Waiting for live PipeTune state…"
+msgstr "Ожидание текущего состояния PipeTune…"
+
+msgid "Warnings"
+msgstr "Предупреждения"

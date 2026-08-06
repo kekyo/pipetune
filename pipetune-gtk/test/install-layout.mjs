@@ -101,9 +101,22 @@ if (
         presetDirectory,
         'processor/bbe.effetune_preset'
       );
-      const japaneseCatalog = installPath(
-        join(localeDirectory, 'ja', 'LC_MESSAGES'),
-        'pipetune-gtk.mo'
+      const catalogLocales = [
+        'ar',
+        'es',
+        'fr',
+        'hi',
+        'ja',
+        'ko',
+        'pt',
+        'ru',
+        'zh',
+      ];
+      const catalogs = catalogLocales.map((locale) =>
+        installPath(
+          join(localeDirectory, locale, 'LC_MESSAGES'),
+          'pipetune-gtk.mo'
+        )
       );
       try {
         accessSync(executable, constants.X_OK);
@@ -112,9 +125,11 @@ if (
         accessSync(icon, constants.R_OK);
         accessSync(presetManifest, constants.R_OK);
         accessSync(standardPreset, constants.R_OK);
-        accessSync(japaneseCatalog, constants.R_OK);
-        if (statSync(japaneseCatalog).size === 0) {
-          throw new Error('Japanese message catalog is empty');
+        for (const catalog of catalogs) {
+          accessSync(catalog, constants.R_OK);
+          if (statSync(catalog).size === 0) {
+            throw new Error(`Message catalog is empty: ${catalog}`);
+          }
         }
       } catch (error) {
         fail(`installed PipeTune GTK layout is incomplete: ${error.message}`);

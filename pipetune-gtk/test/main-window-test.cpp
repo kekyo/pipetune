@@ -5,6 +5,7 @@
 
 #include <gtk/gtk.h>
 
+#include <array>
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -99,6 +100,33 @@ static bool checkSettingsPages(const pipetune_gtk::MainWindowUi &ui) {
          check(gtk_stack_get_child_by_name(GTK_STACK(ui.settingsStack),
                                            "advanced") != nullptr,
                "advanced page is missing");
+}
+
+static bool checkLanguageChoices(const pipetune_gtk::MainWindowUi &ui) {
+  constexpr auto expected = std::array<std::string_view, 11>{
+      "System default", "English", "العربية", "Español", "Français",
+      "हिन्दी",          "日本語",  "한국어",  "Português", "Русский",
+      "中文",
+  };
+  auto *model = gtk_combo_box_get_model(GTK_COMBO_BOX(ui.languageCombo));
+  if (!check(gtk_tree_model_iter_n_children(model, nullptr) ==
+                 static_cast<gint>(expected.size()),
+             "language choice count differs")) {
+    return false;
+  }
+  for (auto index = std::size_t{0}; index < expected.size(); ++index) {
+    gtk_combo_box_set_active(GTK_COMBO_BOX(ui.languageCombo),
+                             static_cast<gint>(index));
+    auto *label = gtk_combo_box_text_get_active_text(
+        GTK_COMBO_BOX_TEXT(ui.languageCombo));
+    const auto matches =
+        label != nullptr && std::string_view(label) == expected[index];
+    g_free(label);
+    if (!check(matches, "language choice label differs")) {
+      return false;
+    }
+  }
+  return true;
 }
 
 static bool checkRestoreDefaultsDescription(
@@ -223,6 +251,7 @@ int main(int argc, char **argv) {
   const auto valid =
       check(ui.builder != nullptr, "main window builder is unavailable") &&
       checkWidgetTypes(ui) && checkSettingsPages(ui) &&
+      checkLanguageChoices(ui) &&
       checkRestoreDefaultsDescription(ui) && checkLoadMeterHost(ui) &&
       check(gtk_window_get_application(GTK_WINDOW(ui.window)) ==
                 application,

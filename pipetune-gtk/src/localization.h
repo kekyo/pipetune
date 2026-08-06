@@ -53,7 +53,7 @@ void restoreUiLocalizationEnvironment(
  * gettext internals.
  *
  * @param originalEnvironment Process environment captured before localization.
- * @param language System, English, or Japanese presentation language.
+ * @param language Supported presentation language or the system preference.
  * @param localeDirectory Root containing locale catalogs.
  * @return Empty warning on success, otherwise an English diagnostic.
  */

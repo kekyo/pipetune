@@ -1,0 +1,569 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: PipeTune GTK\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-07-31 00:00+0900\n"
+"PO-Revision-Date: 2026-07-31 00:00+0900\n"
+"Last-Translator: PipeTune contributors\n"
+"Language-Team: Chinese\n"
+"Language: zh\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+#, brace-format
+msgid "{0}  •  Fallback"
+msgstr "{0}  •  备用"
+
+#, brace-format
+msgid "{0}  •  Load —"
+msgstr "{0}  •  负载 —"
+
+#, brace-format
+msgid "{0}  •  Load {1}%"
+msgstr "{0}  •  负载 {1}%"
+
+#, brace-format
+msgid "{0} — availability not reported"
+msgstr "{0} — 未报告可用性"
+
+#, brace-format
+msgid "{0} — availability unknown"
+msgstr "{0} — 可用性未知"
+
+#, brace-format
+msgid "{0} — available"
+msgstr "{0} — 可用"
+
+#, brace-format
+msgid "{0} — unavailable"
+msgstr "{0} — 不可用"
+
+#, brace-format
+msgid "{0} · {1} kHz · {2}"
+msgstr "{0} · {1} kHz · {2}"
+
+#, brace-format
+msgid "{0} ({1})"
+msgstr "{0}（{1}）"
+
+#, brace-format
+msgid "{0} channel"
+msgid_plural "{0} channels"
+msgstr[0] "{0} 个声道"
+
+#, brace-format
+msgid "{0} frames/s"
+msgstr "{0} 帧/秒"
+
+#, brace-format
+msgid "{0} h ago"
+msgstr "{0} 小时前"
+
+#, brace-format
+msgid "{0} min ago"
+msgstr "{0} 分钟前"
+
+#, brace-format
+msgid "{0} ms ago"
+msgstr "{0} 毫秒前"
+
+#, brace-format
+msgid "{0} s ago"
+msgstr "{0} 秒前"
+
+#, brace-format
+msgid "{0}; CPU: {1}"
+msgstr "{0}；CPU：{1}"
+
+msgid "32-bit floating-point PCM (planar)"
+msgstr "32 位浮点 PCM（平面）"
+
+msgid "Action Log"
+msgstr "操作日志"
+
+#, brace-format
+msgid "Action Log ({0})"
+msgstr "操作日志（{0}）"
+
+msgid "Active plugins"
+msgstr "活动插件"
+
+msgid "Advanced"
+msgstr "高级"
+
+msgid "All"
+msgstr "全部"
+
+msgid "All settings saved"
+msgstr "所有设置已保存"
+
+msgid "Apply"
+msgstr "应用"
+
+msgid "Automatic"
+msgstr "自动"
+
+msgid "Automatic — follow PipeWire graph"
+msgstr "自动 — 跟随 PipeWire 图"
+
+msgid "Baseline"
+msgstr "基准状态"
+
+msgid "Bypass"
+msgstr "旁路"
+
+msgid "Cancel"
+msgstr "取消"
+
+msgid "Cannot apply UI language"
+msgstr "无法应用界面语言"
+
+msgid "Cannot load startup configuration"
+msgstr "无法加载启动配置"
+
+msgid "Cannot prepare preset"
+msgstr "无法准备预设"
+
+msgid "Cannot resolve preset"
+msgstr "无法解析预设"
+
+msgid "Cannot save settings"
+msgstr "无法保存设置"
+
+msgid "Cannot use saved language preference"
+msgstr "无法使用已保存的语言首选项"
+
+msgid "Changing DSP backend"
+msgstr "正在更改 DSP 后端"
+
+msgid "Changing DSP backend failed"
+msgstr "更改 DSP 后端失败"
+
+msgid "Changing processing mode"
+msgstr "正在更改处理模式"
+
+msgid "Changing processing mode failed"
+msgstr "更改处理模式失败"
+
+msgid "Changing sample-rate policy"
+msgstr "正在更改采样率策略"
+
+msgid "Changing sample-rate policy failed"
+msgstr "更改采样率策略失败"
+
+msgid "Choose a preset before enabling DSP processing"
+msgstr "启用 DSP 处理前请选择预设"
+
+msgid "Choose a standard or saved EffeTune preset…"
+msgstr "选择标准或已保存的 EffeTune 预设…"
+
+msgid "Choose an EffeTune preset"
+msgstr "选择 EffeTune 预设"
+
+msgid "Choose bypass, Automatic + Suggest, and Scalar + Auto SIMD."
+msgstr "选择旁路、自动 + 建议以及 Scalar + 自动 SIMD。"
+
+msgid "Choose the language used by PipeTune GTK."
+msgstr "选择 PipeTune GTK 使用的语言。"
+
+msgid "Clear"
+msgstr "清除"
+
+msgid "Close"
+msgstr "关闭"
+
+msgid "Configuration"
+msgstr "配置"
+
+#, brace-format
+msgid "Configured {0}  •  Effective {1}"
+msgstr "配置值 {0}  •  生效值 {1}"
+
+msgid "Configured backend"
+msgstr "已配置的后端"
+
+msgid "Configured SIMD"
+msgstr "已配置的 SIMD"
+
+msgid "Connected"
+msgstr "已连接"
+
+msgid "Connected · changing sample rate"
+msgstr "已连接 · 正在更改采样率"
+
+msgid "Connected and monitoring"
+msgstr "已连接并正在监控"
+
+msgid "Connected to PipeTune"
+msgstr "已连接到 PipeTune"
+
+msgid "Connecting"
+msgstr "正在连接"
+
+msgid "Connecting to PipeTune"
+msgstr "正在连接到 PipeTune"
+
+msgid "Connecting to the control service…"
+msgstr "正在连接控制服务…"
+
+msgid "Connecting…"
+msgstr "正在连接…"
+
+msgid "Control"
+msgstr "控制"
+
+msgid "Control service unavailable"
+msgstr "控制服务不可用"
+
+msgid "Control socket unavailable"
+msgstr "控制套接字不可用"
+
+msgid "Copy"
+msgstr "复制"
+
+msgid "Custom preset file"
+msgstr "自定义预设文件"
+
+msgid "Defaults are being applied live; use Apply to save them"
+msgstr "正在实时应用默认值；请使用“应用”保存"
+
+msgid "Defaults selected"
+msgstr "已选择默认值"
+
+msgid "Disconnected"
+msgstr "已断开连接"
+
+msgid "Disconnected · settings are read-only"
+msgstr "已断开连接 · 设置为只读"
+
+msgid "DSP"
+msgstr "DSP"
+
+#, brace-format
+msgid "DSP {0}  •  PipeWire graph {1}"
+msgstr "DSP {0}  •  PipeWire 图 {1}"
+
+msgid "DSP / Performance"
+msgstr "DSP / 性能"
+
+msgid "DSP backend"
+msgstr "DSP 后端"
+
+msgid "DSP backend changed"
+msgstr "DSP 后端已更改"
+
+msgid "DSP Engine"
+msgstr "DSP 引擎"
+
+msgid "DSP processing load; graph capped at 100%."
+msgstr "DSP 处理负载；图表上限为 100%。"
+
+msgid "DSP rate"
+msgstr "DSP 速率"
+
+msgid "DSP sample rate"
+msgstr "DSP 采样率"
+
+msgid "Effective backend"
+msgstr "实际后端"
+
+msgid "Effective backend unavailable"
+msgstr "实际后端不可用"
+
+msgid "EffeTune DSP control"
+msgstr "EffeTune DSP 控制"
+
+msgid "EffeTune presets"
+msgstr "EffeTune 预设"
+
+msgid "Enable DSP processing"
+msgstr "启用 DSP 处理"
+
+msgid "English"
+msgstr "英语"
+
+msgid "Errors"
+msgstr "错误"
+
+msgid "Finishing rollback…"
+msgstr "正在完成回滚…"
+
+msgid "Fixed"
+msgstr "固定"
+
+msgid "Fixed rate"
+msgstr "固定速率"
+
+msgid "Force"
+msgstr "强制"
+
+msgid "Force — request the fixed graph rate"
+msgstr "强制 — 请求固定图速率"
+
+msgid "Input / Rates"
+msgstr "输入 / 速率"
+
+msgid "Input channels"
+msgstr "输入声道"
+
+msgid "Input format"
+msgstr "输入格式"
+
+msgid "Input sample rate"
+msgstr "输入采样率"
+
+msgid "Language"
+msgstr "语言"
+
+msgid "Last input"
+msgstr "上次输入"
+
+msgid "Later"
+msgstr "稍后"
+
+msgid "Live Configuration"
+msgstr "实时配置"
+
+msgid "Live enforcement"
+msgstr "实时强制策略"
+
+msgid "Live fixed rate"
+msgstr "实时固定速率"
+
+msgid "Live preview active · changes are not saved"
+msgstr "实时预览已启用 · 更改尚未保存"
+
+msgid "Live preview failed · adjust a setting to retry"
+msgstr "实时预览失败 · 调整设置以重试"
+
+msgid "Live rate mode"
+msgstr "实时速率模式"
+
+msgid "Live settings changed elsewhere · reopen this dialog"
+msgstr "实时设置已在其他位置更改 · 请重新打开此对话框"
+
+msgid "Live settings changed externally"
+msgstr "实时设置已被外部更改"
+
+msgid "Live settings match the saved configuration"
+msgstr "实时设置与已保存的配置一致"
+
+msgid "Live status subscription established"
+msgstr "已建立实时状态订阅"
+
+msgid "Load"
+msgstr "负载"
+
+msgid "Measured frame rate"
+msgstr "实测帧率"
+
+msgid "Native backend"
+msgstr "原生后端"
+
+msgid "Never"
+msgstr "从不"
+
+msgid "None"
+msgstr "无"
+
+msgid "Open PipeTune"
+msgstr "打开 PipeTune"
+
+#, brace-format
+msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
+msgstr "溢出 {0}  •  欠载 {1}  •  处理 {2}"
+
+msgid "Overrun frames"
+msgstr "溢出帧"
+
+msgid "PCM data rate"
+msgstr "PCM 数据速率"
+
+msgid "Pending dialog settings will be reapplied"
+msgstr "将重新应用待处理的对话框设置"
+
+msgid "PipeTune disconnected"
+msgstr "PipeTune 已断开连接"
+
+msgid "PipeTune reconnected"
+msgstr "PipeTune 已重新连接"
+
+msgid "PipeTune Status"
+msgstr "PipeTune 状态"
+
+#, brace-format
+msgid "PipeTune: {0}"
+msgstr "PipeTune：{0}"
+
+msgid "PipeTune: active"
+msgstr "PipeTune：活动"
+
+msgid "PipeTune: attention required"
+msgstr "PipeTune：需要注意"
+
+msgid "PipeTune: connecting"
+msgstr "PipeTune：正在连接"
+
+msgid "PipeTune: disconnected"
+msgstr "PipeTune：已断开连接"
+
+msgid "PipeWire enforcement"
+msgstr "PipeWire 强制策略"
+
+msgid "PipeWire graph rate"
+msgstr "PipeWire 图速率"
+
+msgid "Preset"
+msgstr "预设"
+
+msgid "Preset library"
+msgstr "预设库"
+
+msgid "Preset required"
+msgstr "需要预设"
+
+msgid "Preset warnings"
+msgstr "预设警告"
+
+msgid "Processing"
+msgstr "处理"
+
+msgid "Processing errors"
+msgstr "处理错误"
+
+msgid "Processing mode changed"
+msgstr "处理模式已更改"
+
+msgid "Processing time"
+msgstr "处理时间"
+
+msgid "Quit"
+msgstr "退出"
+
+msgid "Rate"
+msgstr "速率"
+
+msgid "Rate enforcement"
+msgstr "速率强制策略"
+
+msgid "Rate mode"
+msgstr "速率模式"
+
+msgid "Rates unavailable"
+msgstr "速率不可用"
+
+msgid "Restart now"
+msgstr "立即重启"
+
+msgid "Restart PipeTune GTK to use the selected language."
+msgstr "重启 PipeTune GTK 以使用所选语言。"
+
+msgid "Restart to apply UI language?"
+msgstr "重启以应用界面语言？"
+
+msgid "Restore defaults"
+msgstr "恢复默认值"
+
+msgid "Restore Defaults"
+msgstr "恢复默认值"
+
+msgid "Restoring the live settings captured when the dialog opened"
+msgstr "正在恢复打开对话框时捕获的实时设置"
+
+msgid "Restoring the previous live settings…"
+msgstr "正在恢复之前的实时设置…"
+
+msgid "Rollback requested"
+msgstr "已请求回滚"
+
+msgid "Sample Rate"
+msgstr "采样率"
+
+msgid "Sample-rate policy changed"
+msgstr "采样率策略已更改"
+
+msgid "Saved Configuration"
+msgstr "已保存的配置"
+
+#, brace-format
+msgid "Saved in EffeTune · {0}"
+msgstr "已保存于 EffeTune · {0}"
+
+msgid "Saving all settings"
+msgstr "正在保存所有设置"
+
+msgid "Scalar"
+msgstr "Scalar"
+
+msgid "Settings updated"
+msgstr "设置已更新"
+
+msgid "SIMD variant"
+msgstr "SIMD 变体"
+
+msgid "Some preset sources are unavailable"
+msgstr "部分预设源不可用"
+
+#, brace-format
+msgid "Standard · {0} · {1}"
+msgstr "标准 · {0} · {1}"
+
+msgid "Startup configuration path unavailable"
+msgstr "启动配置路径不可用"
+
+msgid "Suggest"
+msgstr "建议"
+
+msgid "Suggest — let PipeWire choose"
+msgstr "建议 — 让 PipeWire 选择"
+
+#, brace-format
+msgid "Switching — {0}"
+msgstr "正在切换 — {0}"
+
+msgid "System"
+msgstr "系统"
+
+msgid "System default"
+msgstr "系统默认"
+
+msgid "The UI language change will take effect after PipeTune GTK restarts."
+msgstr "界面语言更改将在 PipeTune GTK 重启后生效。"
+
+msgid "Turn off to pass audio through without an EffeTune preset."
+msgstr "关闭可在不使用 EffeTune 预设的情况下直通音频。"
+
+msgid "unavailable"
+msgstr "不可用"
+
+msgid "Unavailable"
+msgstr "不可用"
+
+msgid "Underrun frames"
+msgstr "欠载帧"
+
+msgid "unknown"
+msgstr "未知"
+
+msgid "Unknown"
+msgstr "未知"
+
+msgid "Unknown sample format"
+msgstr "未知采样格式"
+
+msgid "Updating settings"
+msgstr "正在更新设置"
+
+msgid "Updating settings failed"
+msgstr "更新设置失败"
+
+msgid "Versions"
+msgstr "版本"
+
+msgid "Waiting for live PipeTune state…"
+msgstr "正在等待 PipeTune 实时状态…"
+
+msgid "Warnings"
+msgstr "警告"

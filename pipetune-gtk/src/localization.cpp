@@ -2,7 +2,6 @@
 
 #include <libintl.h>
 
-#include <array>
 #include <clocale>
 #include <cstdlib>
 #include <cstring>
@@ -26,20 +25,61 @@ static void restoreLanguageEnvironment(
   }
 }
 
-static const char *selectUtf8Locale(int category, UiLanguage language) {
-  const auto candidates =
-      language == UiLanguage::japanese
-          ? std::array<const char *, 4>{
-                "ja_JP.UTF-8", "ja_JP.utf8", "C.UTF-8", "C.utf8"}
-          : std::array<const char *, 4>{
-                "en_US.UTF-8", "en_US.utf8", "C.UTF-8", "C.utf8"};
-  std::setlocale(category, "C");
-  for (const auto *candidate : candidates) {
-    if (std::setlocale(category, candidate) != nullptr) {
-      return candidate;
-    }
+static const char *localePrefix(UiLanguage language) noexcept {
+  switch (language) {
+  case UiLanguage::system:
+    return nullptr;
+  case UiLanguage::english:
+    return "en_US";
+  case UiLanguage::arabic:
+    return "ar_SA";
+  case UiLanguage::spanish:
+    return "es_ES";
+  case UiLanguage::french:
+    return "fr_FR";
+  case UiLanguage::hindi:
+    return "hi_IN";
+  case UiLanguage::japanese:
+    return "ja_JP";
+  case UiLanguage::korean:
+    return "ko_KR";
+  case UiLanguage::portuguese:
+    return "pt_PT";
+  case UiLanguage::russian:
+    return "ru_RU";
+  case UiLanguage::chinese:
+    return "zh_CN";
   }
   return nullptr;
+}
+
+static bool selectLocaleWithPrefix(int category, const char *prefix) {
+  for (const auto &suffix : {std::string(".UTF-8"),
+                             std::string(".utf8")}) {
+    const auto candidate = std::string(prefix) + suffix;
+    if (std::setlocale(category, candidate.c_str()) != nullptr) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool selectUtf8Locale(int category, UiLanguage language) {
+  std::setlocale(category, "C");
+  const auto *prefix = localePrefix(language);
+  if (prefix != nullptr && selectLocaleWithPrefix(category, prefix)) {
+    return true;
+  }
+  for (const auto *fallback : {"en_US", "ja_JP"}) {
+    if (selectLocaleWithPrefix(category, fallback)) {
+      return true;
+    }
+  }
+  if (category == LC_MESSAGES && language != UiLanguage::english) {
+    return false;
+  }
+  return std::setlocale(category, "C.UTF-8") != nullptr ||
+         std::setlocale(category, "C.utf8") != nullptr;
 }
 
 UiLocalizationEnvironment captureUiLocalizationEnvironment() {
@@ -86,11 +126,10 @@ UiLocalizationResult applyUiLanguage(
 
   const auto id = uiLanguageId(language);
   ::setenv("LANGUAGE", std::string(id).c_str(), 1);
-  const auto *characterTypeLocale =
+  const auto characterTypeLocale =
       selectUtf8Locale(LC_CTYPE, language);
-  const auto *messagesLocale =
-      selectUtf8Locale(LC_MESSAGES, language);
-  if (characterTypeLocale == nullptr || messagesLocale == nullptr) {
+  const auto messagesLocale = selectUtf8Locale(LC_MESSAGES, language);
+  if (!characterTypeLocale || !messagesLocale) {
     restoreUiLocalizationEnvironment(originalEnvironment);
     return {
         .warning =

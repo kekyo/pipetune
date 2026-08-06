@@ -572,7 +572,7 @@ describe('PipeTune GTK dialog', () => {
     await waitForConnected();
     const initial = await session.inspectConfig();
     await selectSettingsPage(3);
-    await selectComboItem('languageCombo', 2);
+    await selectComboItem('languageCombo', 6);
     const apply = await getElement('applyButton', 'button');
     await toPass(
       async () => {
@@ -645,7 +645,7 @@ describe('PipeTune GTK dialog', () => {
     await waitForLabel('status-system-connection', '接続済み');
     await selectSettingsPage(3);
     const combo = await getElement('languageCombo', 'comboBox');
-    expect(await combo.isChildSelected(2)).toBe(true);
+    expect(await combo.isChildSelected(6)).toBe(true);
     expect(await session.inspectConfig()).toEqual(initial);
   });
 
@@ -653,7 +653,7 @@ describe('PipeTune GTK dialog', () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     await selectSettingsPage(3);
-    await selectComboItem('languageCombo', 2);
+    await selectComboItem('languageCombo', 6);
     await (await getElement('applyButton', 'button')).click();
     await (
       await getElement('ui_language_restart_now_button', 'button')
@@ -663,7 +663,7 @@ describe('PipeTune GTK dialog', () => {
     await waitForLabel('status-system-connection', '接続済み');
     await selectSettingsPage(3);
     expect(
-      await (await getElement('languageCombo', 'comboBox')).isChildSelected(2)
+      await (await getElement('languageCombo', 'comboBox')).isChildSelected(6)
     ).toBe(true);
   });
 
@@ -671,7 +671,7 @@ describe('PipeTune GTK dialog', () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     await selectSettingsPage(3);
-    await selectComboItem('languageCombo', 2);
+    await selectComboItem('languageCombo', 6);
     await (await getElement('cancelButton', 'button')).click();
     await waitForResult(
       async () => {
@@ -699,7 +699,7 @@ describe('PipeTune GTK dialog', () => {
     await waitForConnected();
     await session.blockLanguagePreferenceSave();
     await selectSettingsPage(3);
-    await selectComboItem('languageCombo', 2);
+    await selectComboItem('languageCombo', 6);
     const combo = await getElement('languageCombo', 'comboBox');
     const apply = await getElement('applyButton', 'button');
     await toPass(
@@ -712,7 +712,7 @@ describe('PipeTune GTK dialog', () => {
       }
     );
     await apply.click();
-    expect(await combo.isChildSelected(2)).toBe(true);
+    expect(await combo.isChildSelected(6)).toBe(true);
     expect((await apply.info()).states).toContain('sensitive');
     expect(
       (await (await getElement('languageRestartNotice', 'label')).info()).states

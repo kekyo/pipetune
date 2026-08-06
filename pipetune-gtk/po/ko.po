@@ -1,0 +1,569 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: PipeTune GTK\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-07-31 00:00+0900\n"
+"PO-Revision-Date: 2026-07-31 00:00+0900\n"
+"Last-Translator: PipeTune contributors\n"
+"Language-Team: Korean\n"
+"Language: ko\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+#, brace-format
+msgid "{0}  •  Fallback"
+msgstr "{0}  •  대체"
+
+#, brace-format
+msgid "{0}  •  Load —"
+msgstr "{0}  •  부하 —"
+
+#, brace-format
+msgid "{0}  •  Load {1}%"
+msgstr "{0}  •  부하 {1}%"
+
+#, brace-format
+msgid "{0} — availability not reported"
+msgstr "{0} — 사용 가능 여부가 보고되지 않음"
+
+#, brace-format
+msgid "{0} — availability unknown"
+msgstr "{0} — 사용 가능 여부를 알 수 없음"
+
+#, brace-format
+msgid "{0} — available"
+msgstr "{0} — 사용 가능"
+
+#, brace-format
+msgid "{0} — unavailable"
+msgstr "{0} — 사용 불가"
+
+#, brace-format
+msgid "{0} · {1} kHz · {2}"
+msgstr "{0} · {1} kHz · {2}"
+
+#, brace-format
+msgid "{0} ({1})"
+msgstr "{0} ({1})"
+
+#, brace-format
+msgid "{0} channel"
+msgid_plural "{0} channels"
+msgstr[0] "{0}채널"
+
+#, brace-format
+msgid "{0} frames/s"
+msgstr "{0} 프레임/초"
+
+#, brace-format
+msgid "{0} h ago"
+msgstr "{0}시간 전"
+
+#, brace-format
+msgid "{0} min ago"
+msgstr "{0}분 전"
+
+#, brace-format
+msgid "{0} ms ago"
+msgstr "{0}밀리초 전"
+
+#, brace-format
+msgid "{0} s ago"
+msgstr "{0}초 전"
+
+#, brace-format
+msgid "{0}; CPU: {1}"
+msgstr "{0}; CPU: {1}"
+
+msgid "32-bit floating-point PCM (planar)"
+msgstr "32비트 부동 소수점 PCM(플래너)"
+
+msgid "Action Log"
+msgstr "작업 로그"
+
+#, brace-format
+msgid "Action Log ({0})"
+msgstr "작업 로그({0})"
+
+msgid "Active plugins"
+msgstr "활성 플러그인"
+
+msgid "Advanced"
+msgstr "고급"
+
+msgid "All"
+msgstr "모두"
+
+msgid "All settings saved"
+msgstr "모든 설정을 저장했습니다"
+
+msgid "Apply"
+msgstr "적용"
+
+msgid "Automatic"
+msgstr "자동"
+
+msgid "Automatic — follow PipeWire graph"
+msgstr "자동 — PipeWire 그래프 따르기"
+
+msgid "Baseline"
+msgstr "기준 상태"
+
+msgid "Bypass"
+msgstr "바이패스"
+
+msgid "Cancel"
+msgstr "취소"
+
+msgid "Cannot apply UI language"
+msgstr "UI 언어를 적용할 수 없습니다"
+
+msgid "Cannot load startup configuration"
+msgstr "시작 구성을 불러올 수 없습니다"
+
+msgid "Cannot prepare preset"
+msgstr "프리셋을 준비할 수 없습니다"
+
+msgid "Cannot resolve preset"
+msgstr "프리셋을 확인할 수 없습니다"
+
+msgid "Cannot save settings"
+msgstr "설정을 저장할 수 없습니다"
+
+msgid "Cannot use saved language preference"
+msgstr "저장된 언어 기본 설정을 사용할 수 없습니다"
+
+msgid "Changing DSP backend"
+msgstr "DSP 백엔드 변경 중"
+
+msgid "Changing DSP backend failed"
+msgstr "DSP 백엔드 변경 실패"
+
+msgid "Changing processing mode"
+msgstr "처리 모드 변경 중"
+
+msgid "Changing processing mode failed"
+msgstr "처리 모드 변경 실패"
+
+msgid "Changing sample-rate policy"
+msgstr "샘플 레이트 정책 변경 중"
+
+msgid "Changing sample-rate policy failed"
+msgstr "샘플 레이트 정책 변경 실패"
+
+msgid "Choose a preset before enabling DSP processing"
+msgstr "DSP 처리를 활성화하기 전에 프리셋을 선택하세요"
+
+msgid "Choose a standard or saved EffeTune preset…"
+msgstr "표준 또는 저장된 EffeTune 프리셋 선택…"
+
+msgid "Choose an EffeTune preset"
+msgstr "EffeTune 프리셋 선택"
+
+msgid "Choose bypass, Automatic + Suggest, and Scalar + Auto SIMD."
+msgstr "바이패스, 자동 + 제안, Scalar + 자동 SIMD를 선택합니다."
+
+msgid "Choose the language used by PipeTune GTK."
+msgstr "PipeTune GTK에서 사용할 언어를 선택합니다."
+
+msgid "Clear"
+msgstr "지우기"
+
+msgid "Close"
+msgstr "닫기"
+
+msgid "Configuration"
+msgstr "구성"
+
+#, brace-format
+msgid "Configured {0}  •  Effective {1}"
+msgstr "구성값 {0}  •  유효값 {1}"
+
+msgid "Configured backend"
+msgstr "구성된 백엔드"
+
+msgid "Configured SIMD"
+msgstr "구성된 SIMD"
+
+msgid "Connected"
+msgstr "연결됨"
+
+msgid "Connected · changing sample rate"
+msgstr "연결됨 · 샘플 레이트 변경 중"
+
+msgid "Connected and monitoring"
+msgstr "연결 및 모니터링 중"
+
+msgid "Connected to PipeTune"
+msgstr "PipeTune에 연결됨"
+
+msgid "Connecting"
+msgstr "연결 중"
+
+msgid "Connecting to PipeTune"
+msgstr "PipeTune에 연결 중"
+
+msgid "Connecting to the control service…"
+msgstr "제어 서비스에 연결 중…"
+
+msgid "Connecting…"
+msgstr "연결 중…"
+
+msgid "Control"
+msgstr "제어"
+
+msgid "Control service unavailable"
+msgstr "제어 서비스를 사용할 수 없음"
+
+msgid "Control socket unavailable"
+msgstr "제어 소켓을 사용할 수 없음"
+
+msgid "Copy"
+msgstr "복사"
+
+msgid "Custom preset file"
+msgstr "사용자 지정 프리셋 파일"
+
+msgid "Defaults are being applied live; use Apply to save them"
+msgstr "기본값이 실시간으로 적용됩니다. 저장하려면 적용을 사용하세요"
+
+msgid "Defaults selected"
+msgstr "기본값을 선택했습니다"
+
+msgid "Disconnected"
+msgstr "연결 끊김"
+
+msgid "Disconnected · settings are read-only"
+msgstr "연결 끊김 · 설정은 읽기 전용입니다"
+
+msgid "DSP"
+msgstr "DSP"
+
+#, brace-format
+msgid "DSP {0}  •  PipeWire graph {1}"
+msgstr "DSP {0}  •  PipeWire 그래프 {1}"
+
+msgid "DSP / Performance"
+msgstr "DSP / 성능"
+
+msgid "DSP backend"
+msgstr "DSP 백엔드"
+
+msgid "DSP backend changed"
+msgstr "DSP 백엔드를 변경했습니다"
+
+msgid "DSP Engine"
+msgstr "DSP 엔진"
+
+msgid "DSP processing load; graph capped at 100%."
+msgstr "DSP 처리 부하이며 그래프는 100%로 제한됩니다."
+
+msgid "DSP rate"
+msgstr "DSP 레이트"
+
+msgid "DSP sample rate"
+msgstr "DSP 샘플 레이트"
+
+msgid "Effective backend"
+msgstr "유효 백엔드"
+
+msgid "Effective backend unavailable"
+msgstr "유효 백엔드를 사용할 수 없음"
+
+msgid "EffeTune DSP control"
+msgstr "EffeTune DSP 제어"
+
+msgid "EffeTune presets"
+msgstr "EffeTune 프리셋"
+
+msgid "Enable DSP processing"
+msgstr "DSP 처리 활성화"
+
+msgid "English"
+msgstr "영어"
+
+msgid "Errors"
+msgstr "오류"
+
+msgid "Finishing rollback…"
+msgstr "롤백 완료 중…"
+
+msgid "Fixed"
+msgstr "고정"
+
+msgid "Fixed rate"
+msgstr "고정 레이트"
+
+msgid "Force"
+msgstr "강제"
+
+msgid "Force — request the fixed graph rate"
+msgstr "강제 — 고정 그래프 레이트 요청"
+
+msgid "Input / Rates"
+msgstr "입력 / 레이트"
+
+msgid "Input channels"
+msgstr "입력 채널"
+
+msgid "Input format"
+msgstr "입력 형식"
+
+msgid "Input sample rate"
+msgstr "입력 샘플 레이트"
+
+msgid "Language"
+msgstr "언어"
+
+msgid "Last input"
+msgstr "마지막 입력"
+
+msgid "Later"
+msgstr "나중에"
+
+msgid "Live Configuration"
+msgstr "실시간 구성"
+
+msgid "Live enforcement"
+msgstr "실시간 적용"
+
+msgid "Live fixed rate"
+msgstr "실시간 고정 레이트"
+
+msgid "Live preview active · changes are not saved"
+msgstr "실시간 미리 보기 활성 · 변경 사항이 저장되지 않음"
+
+msgid "Live preview failed · adjust a setting to retry"
+msgstr "실시간 미리 보기 실패 · 다시 시도하려면 설정을 조정하세요"
+
+msgid "Live rate mode"
+msgstr "실시간 레이트 모드"
+
+msgid "Live settings changed elsewhere · reopen this dialog"
+msgstr "실시간 설정이 다른 곳에서 변경됨 · 이 대화 상자를 다시 여세요"
+
+msgid "Live settings changed externally"
+msgstr "실시간 설정이 외부에서 변경됨"
+
+msgid "Live settings match the saved configuration"
+msgstr "실시간 설정이 저장된 구성과 일치함"
+
+msgid "Live status subscription established"
+msgstr "실시간 상태 구독이 설정됨"
+
+msgid "Load"
+msgstr "부하"
+
+msgid "Measured frame rate"
+msgstr "측정 프레임 레이트"
+
+msgid "Native backend"
+msgstr "네이티브 백엔드"
+
+msgid "Never"
+msgstr "없음"
+
+msgid "None"
+msgstr "없음"
+
+msgid "Open PipeTune"
+msgstr "PipeTune 열기"
+
+#, brace-format
+msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
+msgstr "오버런 {0}  •  언더런 {1}  •  처리 {2}"
+
+msgid "Overrun frames"
+msgstr "오버런 프레임"
+
+msgid "PCM data rate"
+msgstr "PCM 데이터 레이트"
+
+msgid "Pending dialog settings will be reapplied"
+msgstr "보류 중인 대화 상자 설정이 다시 적용됩니다"
+
+msgid "PipeTune disconnected"
+msgstr "PipeTune 연결이 끊어졌습니다"
+
+msgid "PipeTune reconnected"
+msgstr "PipeTune이 다시 연결되었습니다"
+
+msgid "PipeTune Status"
+msgstr "PipeTune 상태"
+
+#, brace-format
+msgid "PipeTune: {0}"
+msgstr "PipeTune: {0}"
+
+msgid "PipeTune: active"
+msgstr "PipeTune: 활성"
+
+msgid "PipeTune: attention required"
+msgstr "PipeTune: 확인 필요"
+
+msgid "PipeTune: connecting"
+msgstr "PipeTune: 연결 중"
+
+msgid "PipeTune: disconnected"
+msgstr "PipeTune: 연결 끊김"
+
+msgid "PipeWire enforcement"
+msgstr "PipeWire 적용"
+
+msgid "PipeWire graph rate"
+msgstr "PipeWire 그래프 레이트"
+
+msgid "Preset"
+msgstr "프리셋"
+
+msgid "Preset library"
+msgstr "프리셋 라이브러리"
+
+msgid "Preset required"
+msgstr "프리셋 필요"
+
+msgid "Preset warnings"
+msgstr "프리셋 경고"
+
+msgid "Processing"
+msgstr "처리"
+
+msgid "Processing errors"
+msgstr "처리 오류"
+
+msgid "Processing mode changed"
+msgstr "처리 모드를 변경했습니다"
+
+msgid "Processing time"
+msgstr "처리 시간"
+
+msgid "Quit"
+msgstr "종료"
+
+msgid "Rate"
+msgstr "레이트"
+
+msgid "Rate enforcement"
+msgstr "레이트 적용"
+
+msgid "Rate mode"
+msgstr "레이트 모드"
+
+msgid "Rates unavailable"
+msgstr "레이트를 사용할 수 없음"
+
+msgid "Restart now"
+msgstr "지금 다시 시작"
+
+msgid "Restart PipeTune GTK to use the selected language."
+msgstr "선택한 언어를 사용하려면 PipeTune GTK를 다시 시작하세요."
+
+msgid "Restart to apply UI language?"
+msgstr "UI 언어를 적용하기 위해 다시 시작할까요?"
+
+msgid "Restore defaults"
+msgstr "기본값 복원"
+
+msgid "Restore Defaults"
+msgstr "기본값 복원"
+
+msgid "Restoring the live settings captured when the dialog opened"
+msgstr "대화 상자가 열릴 때 캡처한 실시간 설정을 복원하는 중"
+
+msgid "Restoring the previous live settings…"
+msgstr "이전 실시간 설정 복원 중…"
+
+msgid "Rollback requested"
+msgstr "롤백 요청됨"
+
+msgid "Sample Rate"
+msgstr "샘플 레이트"
+
+msgid "Sample-rate policy changed"
+msgstr "샘플 레이트 정책을 변경했습니다"
+
+msgid "Saved Configuration"
+msgstr "저장된 구성"
+
+#, brace-format
+msgid "Saved in EffeTune · {0}"
+msgstr "EffeTune에 저장됨 · {0}"
+
+msgid "Saving all settings"
+msgstr "모든 설정 저장 중"
+
+msgid "Scalar"
+msgstr "Scalar"
+
+msgid "Settings updated"
+msgstr "설정을 업데이트했습니다"
+
+msgid "SIMD variant"
+msgstr "SIMD 변형"
+
+msgid "Some preset sources are unavailable"
+msgstr "일부 프리셋 소스를 사용할 수 없습니다"
+
+#, brace-format
+msgid "Standard · {0} · {1}"
+msgstr "표준 · {0} · {1}"
+
+msgid "Startup configuration path unavailable"
+msgstr "시작 구성 경로를 사용할 수 없음"
+
+msgid "Suggest"
+msgstr "제안"
+
+msgid "Suggest — let PipeWire choose"
+msgstr "제안 — PipeWire가 선택하도록 허용"
+
+#, brace-format
+msgid "Switching — {0}"
+msgstr "전환 중 — {0}"
+
+msgid "System"
+msgstr "시스템"
+
+msgid "System default"
+msgstr "시스템 기본값"
+
+msgid "The UI language change will take effect after PipeTune GTK restarts."
+msgstr "PipeTune GTK가 다시 시작된 후 UI 언어 변경이 적용됩니다."
+
+msgid "Turn off to pass audio through without an EffeTune preset."
+msgstr "EffeTune 프리셋 없이 오디오를 통과시키려면 끄세요."
+
+msgid "unavailable"
+msgstr "사용 불가"
+
+msgid "Unavailable"
+msgstr "사용 불가"
+
+msgid "Underrun frames"
+msgstr "언더런 프레임"
+
+msgid "unknown"
+msgstr "알 수 없음"
+
+msgid "Unknown"
+msgstr "알 수 없음"
+
+msgid "Unknown sample format"
+msgstr "알 수 없는 샘플 형식"
+
+msgid "Updating settings"
+msgstr "설정 업데이트 중"
+
+msgid "Updating settings failed"
+msgstr "설정 업데이트 실패"
+
+msgid "Versions"
+msgstr "버전"
+
+msgid "Waiting for live PipeTune state…"
+msgstr "실시간 PipeTune 상태를 기다리는 중…"
+
+msgid "Warnings"
+msgstr "경고"

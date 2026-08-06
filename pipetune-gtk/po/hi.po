@@ -1,0 +1,570 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: PipeTune GTK\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-07-31 00:00+0900\n"
+"PO-Revision-Date: 2026-07-31 00:00+0900\n"
+"Last-Translator: PipeTune contributors\n"
+"Language-Team: Hindi\n"
+"Language: hi\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#, brace-format
+msgid "{0}  •  Fallback"
+msgstr "{0}  •  फ़ॉलबैक"
+
+#, brace-format
+msgid "{0}  •  Load —"
+msgstr "{0}  •  लोड —"
+
+#, brace-format
+msgid "{0}  •  Load {1}%"
+msgstr "{0}  •  लोड {1}%"
+
+#, brace-format
+msgid "{0} — availability not reported"
+msgstr "{0} — उपलब्धता रिपोर्ट नहीं की गई"
+
+#, brace-format
+msgid "{0} — availability unknown"
+msgstr "{0} — उपलब्धता अज्ञात"
+
+#, brace-format
+msgid "{0} — available"
+msgstr "{0} — उपलब्ध"
+
+#, brace-format
+msgid "{0} — unavailable"
+msgstr "{0} — अनुपलब्ध"
+
+#, brace-format
+msgid "{0} · {1} kHz · {2}"
+msgstr "{0} · {1} kHz · {2}"
+
+#, brace-format
+msgid "{0} ({1})"
+msgstr "{0} ({1})"
+
+#, brace-format
+msgid "{0} channel"
+msgid_plural "{0} channels"
+msgstr[0] "{0} चैनल"
+msgstr[1] "{0} चैनल"
+
+#, brace-format
+msgid "{0} frames/s"
+msgstr "{0} फ़्रेम/सेकंड"
+
+#, brace-format
+msgid "{0} h ago"
+msgstr "{0} घंटे पहले"
+
+#, brace-format
+msgid "{0} min ago"
+msgstr "{0} मिनट पहले"
+
+#, brace-format
+msgid "{0} ms ago"
+msgstr "{0} मिलीसेकंड पहले"
+
+#, brace-format
+msgid "{0} s ago"
+msgstr "{0} सेकंड पहले"
+
+#, brace-format
+msgid "{0}; CPU: {1}"
+msgstr "{0}; CPU: {1}"
+
+msgid "32-bit floating-point PCM (planar)"
+msgstr "32-बिट फ़्लोटिंग-पॉइंट PCM (प्लानर)"
+
+msgid "Action Log"
+msgstr "कार्रवाई लॉग"
+
+#, brace-format
+msgid "Action Log ({0})"
+msgstr "कार्रवाई लॉग ({0})"
+
+msgid "Active plugins"
+msgstr "सक्रिय प्लगइन"
+
+msgid "Advanced"
+msgstr "उन्नत"
+
+msgid "All"
+msgstr "सभी"
+
+msgid "All settings saved"
+msgstr "सभी सेटिंग सहेजी गईं"
+
+msgid "Apply"
+msgstr "लागू करें"
+
+msgid "Automatic"
+msgstr "स्वचालित"
+
+msgid "Automatic — follow PipeWire graph"
+msgstr "स्वचालित — PipeWire ग्राफ़ का अनुसरण करें"
+
+msgid "Baseline"
+msgstr "आधार स्थिति"
+
+msgid "Bypass"
+msgstr "बाइपास"
+
+msgid "Cancel"
+msgstr "रद्द करें"
+
+msgid "Cannot apply UI language"
+msgstr "UI भाषा लागू नहीं की जा सकी"
+
+msgid "Cannot load startup configuration"
+msgstr "स्टार्टअप कॉन्फ़िगरेशन लोड नहीं किया जा सका"
+
+msgid "Cannot prepare preset"
+msgstr "प्रीसेट तैयार नहीं किया जा सका"
+
+msgid "Cannot resolve preset"
+msgstr "प्रीसेट निर्धारित नहीं किया जा सका"
+
+msgid "Cannot save settings"
+msgstr "सेटिंग सहेजी नहीं जा सकीं"
+
+msgid "Cannot use saved language preference"
+msgstr "सहेजी गई भाषा वरीयता उपयोग नहीं की जा सकी"
+
+msgid "Changing DSP backend"
+msgstr "DSP बैकएंड बदला जा रहा है"
+
+msgid "Changing DSP backend failed"
+msgstr "DSP बैकएंड बदलना विफल रहा"
+
+msgid "Changing processing mode"
+msgstr "प्रोसेसिंग मोड बदला जा रहा है"
+
+msgid "Changing processing mode failed"
+msgstr "प्रोसेसिंग मोड बदलना विफल रहा"
+
+msgid "Changing sample-rate policy"
+msgstr "सैंपल-रेट नीति बदली जा रही है"
+
+msgid "Changing sample-rate policy failed"
+msgstr "सैंपल-रेट नीति बदलना विफल रहा"
+
+msgid "Choose a preset before enabling DSP processing"
+msgstr "DSP प्रोसेसिंग चालू करने से पहले प्रीसेट चुनें"
+
+msgid "Choose a standard or saved EffeTune preset…"
+msgstr "कोई मानक या सहेजा गया EffeTune प्रीसेट चुनें…"
+
+msgid "Choose an EffeTune preset"
+msgstr "EffeTune प्रीसेट चुनें"
+
+msgid "Choose bypass, Automatic + Suggest, and Scalar + Auto SIMD."
+msgstr "बाइपास, स्वचालित + सुझाव और Scalar + स्वचालित SIMD चुनें।"
+
+msgid "Choose the language used by PipeTune GTK."
+msgstr "PipeTune GTK द्वारा उपयोग की जाने वाली भाषा चुनें।"
+
+msgid "Clear"
+msgstr "साफ़ करें"
+
+msgid "Close"
+msgstr "बंद करें"
+
+msgid "Configuration"
+msgstr "कॉन्फ़िगरेशन"
+
+#, brace-format
+msgid "Configured {0}  •  Effective {1}"
+msgstr "कॉन्फ़िगर किया गया {0}  •  प्रभावी {1}"
+
+msgid "Configured backend"
+msgstr "कॉन्फ़िगर किया गया बैकएंड"
+
+msgid "Configured SIMD"
+msgstr "कॉन्फ़िगर किया गया SIMD"
+
+msgid "Connected"
+msgstr "कनेक्टेड"
+
+msgid "Connected · changing sample rate"
+msgstr "कनेक्टेड · सैंपल रेट बदला जा रहा है"
+
+msgid "Connected and monitoring"
+msgstr "कनेक्टेड और निगरानी जारी"
+
+msgid "Connected to PipeTune"
+msgstr "PipeTune से कनेक्टेड"
+
+msgid "Connecting"
+msgstr "कनेक्ट किया जा रहा है"
+
+msgid "Connecting to PipeTune"
+msgstr "PipeTune से कनेक्ट किया जा रहा है"
+
+msgid "Connecting to the control service…"
+msgstr "नियंत्रण सेवा से कनेक्ट किया जा रहा है…"
+
+msgid "Connecting…"
+msgstr "कनेक्ट किया जा रहा है…"
+
+msgid "Control"
+msgstr "नियंत्रण"
+
+msgid "Control service unavailable"
+msgstr "नियंत्रण सेवा अनुपलब्ध"
+
+msgid "Control socket unavailable"
+msgstr "नियंत्रण सॉकेट अनुपलब्ध"
+
+msgid "Copy"
+msgstr "कॉपी करें"
+
+msgid "Custom preset file"
+msgstr "कस्टम प्रीसेट फ़ाइल"
+
+msgid "Defaults are being applied live; use Apply to save them"
+msgstr "डिफ़ॉल्ट सीधे लागू हो रहे हैं; उन्हें सहेजने के लिए लागू करें चुनें"
+
+msgid "Defaults selected"
+msgstr "डिफ़ॉल्ट चुने गए"
+
+msgid "Disconnected"
+msgstr "डिस्कनेक्टेड"
+
+msgid "Disconnected · settings are read-only"
+msgstr "डिस्कनेक्टेड · सेटिंग केवल पढ़ने योग्य हैं"
+
+msgid "DSP"
+msgstr "DSP"
+
+#, brace-format
+msgid "DSP {0}  •  PipeWire graph {1}"
+msgstr "DSP {0}  •  PipeWire ग्राफ़ {1}"
+
+msgid "DSP / Performance"
+msgstr "DSP / प्रदर्शन"
+
+msgid "DSP backend"
+msgstr "DSP बैकएंड"
+
+msgid "DSP backend changed"
+msgstr "DSP बैकएंड बदला गया"
+
+msgid "DSP Engine"
+msgstr "DSP इंजन"
+
+msgid "DSP processing load; graph capped at 100%."
+msgstr "DSP प्रोसेसिंग लोड; ग्राफ़ 100% पर सीमित है।"
+
+msgid "DSP rate"
+msgstr "DSP रेट"
+
+msgid "DSP sample rate"
+msgstr "DSP सैंपल रेट"
+
+msgid "Effective backend"
+msgstr "प्रभावी बैकएंड"
+
+msgid "Effective backend unavailable"
+msgstr "प्रभावी बैकएंड अनुपलब्ध"
+
+msgid "EffeTune DSP control"
+msgstr "EffeTune DSP नियंत्रण"
+
+msgid "EffeTune presets"
+msgstr "EffeTune प्रीसेट"
+
+msgid "Enable DSP processing"
+msgstr "DSP प्रोसेसिंग चालू करें"
+
+msgid "English"
+msgstr "अंग्रेज़ी"
+
+msgid "Errors"
+msgstr "त्रुटियाँ"
+
+msgid "Finishing rollback…"
+msgstr "रोलबैक पूरा किया जा रहा है…"
+
+msgid "Fixed"
+msgstr "निश्चित"
+
+msgid "Fixed rate"
+msgstr "निश्चित रेट"
+
+msgid "Force"
+msgstr "बलपूर्वक"
+
+msgid "Force — request the fixed graph rate"
+msgstr "बलपूर्वक — निश्चित ग्राफ़ रेट का अनुरोध करें"
+
+msgid "Input / Rates"
+msgstr "इनपुट / रेट"
+
+msgid "Input channels"
+msgstr "इनपुट चैनल"
+
+msgid "Input format"
+msgstr "इनपुट फ़ॉर्मेट"
+
+msgid "Input sample rate"
+msgstr "इनपुट सैंपल रेट"
+
+msgid "Language"
+msgstr "भाषा"
+
+msgid "Last input"
+msgstr "अंतिम इनपुट"
+
+msgid "Later"
+msgstr "बाद में"
+
+msgid "Live Configuration"
+msgstr "लाइव कॉन्फ़िगरेशन"
+
+msgid "Live enforcement"
+msgstr "लाइव प्रवर्तन"
+
+msgid "Live fixed rate"
+msgstr "लाइव निश्चित रेट"
+
+msgid "Live preview active · changes are not saved"
+msgstr "लाइव पूर्वावलोकन सक्रिय · बदलाव सहेजे नहीं गए हैं"
+
+msgid "Live preview failed · adjust a setting to retry"
+msgstr "लाइव पूर्वावलोकन विफल · फिर प्रयास करने के लिए सेटिंग बदलें"
+
+msgid "Live rate mode"
+msgstr "लाइव रेट मोड"
+
+msgid "Live settings changed elsewhere · reopen this dialog"
+msgstr "लाइव सेटिंग कहीं और बदली गईं · यह डायलॉग फिर खोलें"
+
+msgid "Live settings changed externally"
+msgstr "लाइव सेटिंग बाहरी रूप से बदली गईं"
+
+msgid "Live settings match the saved configuration"
+msgstr "लाइव सेटिंग सहेजे गए कॉन्फ़िगरेशन से मेल खाती हैं"
+
+msgid "Live status subscription established"
+msgstr "लाइव स्थिति सदस्यता स्थापित हुई"
+
+msgid "Load"
+msgstr "लोड"
+
+msgid "Measured frame rate"
+msgstr "मापी गई फ़्रेम रेट"
+
+msgid "Native backend"
+msgstr "मूल बैकएंड"
+
+msgid "Never"
+msgstr "कभी नहीं"
+
+msgid "None"
+msgstr "कोई नहीं"
+
+msgid "Open PipeTune"
+msgstr "PipeTune खोलें"
+
+#, brace-format
+msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
+msgstr "ओवररन {0}  •  अंडररन {1}  •  प्रोसेसिंग {2}"
+
+msgid "Overrun frames"
+msgstr "ओवररन फ़्रेम"
+
+msgid "PCM data rate"
+msgstr "PCM डेटा रेट"
+
+msgid "Pending dialog settings will be reapplied"
+msgstr "लंबित डायलॉग सेटिंग फिर लागू की जाएँगी"
+
+msgid "PipeTune disconnected"
+msgstr "PipeTune डिस्कनेक्ट हुआ"
+
+msgid "PipeTune reconnected"
+msgstr "PipeTune फिर कनेक्ट हुआ"
+
+msgid "PipeTune Status"
+msgstr "PipeTune स्थिति"
+
+#, brace-format
+msgid "PipeTune: {0}"
+msgstr "PipeTune: {0}"
+
+msgid "PipeTune: active"
+msgstr "PipeTune: सक्रिय"
+
+msgid "PipeTune: attention required"
+msgstr "PipeTune: ध्यान आवश्यक"
+
+msgid "PipeTune: connecting"
+msgstr "PipeTune: कनेक्ट किया जा रहा है"
+
+msgid "PipeTune: disconnected"
+msgstr "PipeTune: डिस्कनेक्टेड"
+
+msgid "PipeWire enforcement"
+msgstr "PipeWire प्रवर्तन"
+
+msgid "PipeWire graph rate"
+msgstr "PipeWire ग्राफ़ रेट"
+
+msgid "Preset"
+msgstr "प्रीसेट"
+
+msgid "Preset library"
+msgstr "प्रीसेट लाइब्रेरी"
+
+msgid "Preset required"
+msgstr "प्रीसेट आवश्यक"
+
+msgid "Preset warnings"
+msgstr "प्रीसेट चेतावनियाँ"
+
+msgid "Processing"
+msgstr "प्रोसेसिंग"
+
+msgid "Processing errors"
+msgstr "प्रोसेसिंग त्रुटियाँ"
+
+msgid "Processing mode changed"
+msgstr "प्रोसेसिंग मोड बदला गया"
+
+msgid "Processing time"
+msgstr "प्रोसेसिंग समय"
+
+msgid "Quit"
+msgstr "बाहर निकलें"
+
+msgid "Rate"
+msgstr "रेट"
+
+msgid "Rate enforcement"
+msgstr "रेट प्रवर्तन"
+
+msgid "Rate mode"
+msgstr "रेट मोड"
+
+msgid "Rates unavailable"
+msgstr "रेट अनुपलब्ध"
+
+msgid "Restart now"
+msgstr "अभी पुनः आरंभ करें"
+
+msgid "Restart PipeTune GTK to use the selected language."
+msgstr "चुनी हुई भाषा उपयोग करने के लिए PipeTune GTK पुनः आरंभ करें।"
+
+msgid "Restart to apply UI language?"
+msgstr "UI भाषा लागू करने के लिए पुनः आरंभ करें?"
+
+msgid "Restore defaults"
+msgstr "डिफ़ॉल्ट पुनर्स्थापित करें"
+
+msgid "Restore Defaults"
+msgstr "डिफ़ॉल्ट पुनर्स्थापित करें"
+
+msgid "Restoring the live settings captured when the dialog opened"
+msgstr "डायलॉग खुलने पर कैप्चर की गई लाइव सेटिंग पुनर्स्थापित हो रही हैं"
+
+msgid "Restoring the previous live settings…"
+msgstr "पिछली लाइव सेटिंग पुनर्स्थापित हो रही हैं…"
+
+msgid "Rollback requested"
+msgstr "रोलबैक का अनुरोध किया गया"
+
+msgid "Sample Rate"
+msgstr "सैंपल रेट"
+
+msgid "Sample-rate policy changed"
+msgstr "सैंपल-रेट नीति बदली गई"
+
+msgid "Saved Configuration"
+msgstr "सहेजा गया कॉन्फ़िगरेशन"
+
+#, brace-format
+msgid "Saved in EffeTune · {0}"
+msgstr "EffeTune में सहेजा गया · {0}"
+
+msgid "Saving all settings"
+msgstr "सभी सेटिंग सहेजी जा रही हैं"
+
+msgid "Scalar"
+msgstr "Scalar"
+
+msgid "Settings updated"
+msgstr "सेटिंग अपडेट की गईं"
+
+msgid "SIMD variant"
+msgstr "SIMD प्रकार"
+
+msgid "Some preset sources are unavailable"
+msgstr "कुछ प्रीसेट स्रोत अनुपलब्ध हैं"
+
+#, brace-format
+msgid "Standard · {0} · {1}"
+msgstr "मानक · {0} · {1}"
+
+msgid "Startup configuration path unavailable"
+msgstr "स्टार्टअप कॉन्फ़िगरेशन पथ अनुपलब्ध"
+
+msgid "Suggest"
+msgstr "सुझाव"
+
+msgid "Suggest — let PipeWire choose"
+msgstr "सुझाव — PipeWire को चुनने दें"
+
+#, brace-format
+msgid "Switching — {0}"
+msgstr "बदला जा रहा है — {0}"
+
+msgid "System"
+msgstr "सिस्टम"
+
+msgid "System default"
+msgstr "सिस्टम डिफ़ॉल्ट"
+
+msgid "The UI language change will take effect after PipeTune GTK restarts."
+msgstr "PipeTune GTK पुनः आरंभ होने के बाद UI भाषा बदलाव प्रभावी होगा।"
+
+msgid "Turn off to pass audio through without an EffeTune preset."
+msgstr "EffeTune प्रीसेट के बिना ऑडियो पास करने के लिए बंद करें।"
+
+msgid "unavailable"
+msgstr "अनुपलब्ध"
+
+msgid "Unavailable"
+msgstr "अनुपलब्ध"
+
+msgid "Underrun frames"
+msgstr "अंडररन फ़्रेम"
+
+msgid "unknown"
+msgstr "अज्ञात"
+
+msgid "Unknown"
+msgstr "अज्ञात"
+
+msgid "Unknown sample format"
+msgstr "अज्ञात सैंपल फ़ॉर्मेट"
+
+msgid "Updating settings"
+msgstr "सेटिंग अपडेट हो रही हैं"
+
+msgid "Updating settings failed"
+msgstr "सेटिंग अपडेट करना विफल रहा"
+
+msgid "Versions"
+msgstr "संस्करण"
+
+msgid "Waiting for live PipeTune state…"
+msgstr "लाइव PipeTune स्थिति की प्रतीक्षा…"
+
+msgid "Warnings"
+msgstr "चेतावनियाँ"

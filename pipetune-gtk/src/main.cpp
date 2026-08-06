@@ -28,6 +28,7 @@
 
 #include <gtk/gtk.h>
 
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
@@ -697,13 +698,18 @@ static void renderDspControls(GtkRuntime *runtime) {
 }
 
 static gint uiLanguageComboIndex(UiLanguage language) noexcept {
-  switch (language) {
-  case UiLanguage::system:
-    return 0;
-  case UiLanguage::english:
-    return 1;
-  case UiLanguage::japanese:
-    return 2;
+  constexpr auto languages = std::array{
+      UiLanguage::system,     UiLanguage::english,
+      UiLanguage::arabic,     UiLanguage::spanish,
+      UiLanguage::french,     UiLanguage::hindi,
+      UiLanguage::japanese,   UiLanguage::korean,
+      UiLanguage::portuguese, UiLanguage::russian,
+      UiLanguage::chinese,
+  };
+  for (auto index = std::size_t{0}; index < languages.size(); ++index) {
+    if (languages[index] == language) {
+      return static_cast<gint>(index);
+    }
   }
   return 0;
 }
@@ -713,19 +719,19 @@ static bool uiLanguageFromComboIndex(gint index,
   if (language == nullptr) {
     return false;
   }
-  switch (index) {
-  case 0:
-    *language = UiLanguage::system;
-    return true;
-  case 1:
-    *language = UiLanguage::english;
-    return true;
-  case 2:
-    *language = UiLanguage::japanese;
-    return true;
-  default:
+  constexpr auto languages = std::array{
+      UiLanguage::system,     UiLanguage::english,
+      UiLanguage::arabic,     UiLanguage::spanish,
+      UiLanguage::french,     UiLanguage::hindi,
+      UiLanguage::japanese,   UiLanguage::korean,
+      UiLanguage::portuguese, UiLanguage::russian,
+      UiLanguage::chinese,
+  };
+  if (index < 0 || static_cast<std::size_t>(index) >= languages.size()) {
     return false;
   }
+  *language = languages[static_cast<std::size_t>(index)];
+  return true;
 }
 
 static void renderLanguageControl(GtkRuntime *runtime) {

@@ -46,8 +46,24 @@ std::string_view uiLanguageId(UiLanguage language) noexcept {
     return "system";
   case UiLanguage::english:
     return "en";
+  case UiLanguage::arabic:
+    return "ar";
+  case UiLanguage::spanish:
+    return "es";
+  case UiLanguage::french:
+    return "fr";
+  case UiLanguage::hindi:
+    return "hi";
   case UiLanguage::japanese:
     return "ja";
+  case UiLanguage::korean:
+    return "ko";
+  case UiLanguage::portuguese:
+    return "pt";
+  case UiLanguage::russian:
+    return "ru";
+  case UiLanguage::chinese:
+    return "zh";
   }
   return "system";
 }
@@ -62,8 +78,40 @@ bool parseUiLanguageId(std::string_view id,
     language = UiLanguage::english;
     return true;
   }
+  if (id == "ar") {
+    language = UiLanguage::arabic;
+    return true;
+  }
+  if (id == "es") {
+    language = UiLanguage::spanish;
+    return true;
+  }
+  if (id == "fr") {
+    language = UiLanguage::french;
+    return true;
+  }
+  if (id == "hi") {
+    language = UiLanguage::hindi;
+    return true;
+  }
   if (id == "ja") {
     language = UiLanguage::japanese;
+    return true;
+  }
+  if (id == "ko") {
+    language = UiLanguage::korean;
+    return true;
+  }
+  if (id == "pt") {
+    language = UiLanguage::portuguese;
+    return true;
+  }
+  if (id == "ru") {
+    language = UiLanguage::russian;
+    return true;
+  }
+  if (id == "zh") {
+    language = UiLanguage::chinese;
     return true;
   }
   return false;
