@@ -48,12 +48,22 @@ constexpr auto kReadinessTimeoutSeconds = std::time_t{5};
 constexpr auto kMinimumGraphSampleRate = std::uint32_t{8000};
 constexpr auto kMaximumGraphSampleRate = std::uint32_t{768000};
 constexpr auto kPipelineTransitionSilenceMilliseconds = std::uint32_t{20};
+constexpr auto kPipelineTransitionFadeMilliseconds = std::uint32_t{5};
 
 static std::uint32_t pipelineTransitionSilenceFrames(
     std::uint32_t sampleRate) noexcept {
   return static_cast<std::uint32_t>(
       (static_cast<std::uint64_t>(sampleRate) *
            kPipelineTransitionSilenceMilliseconds +
+       999) /
+      1000);
+}
+
+static std::uint32_t pipelineTransitionFadeFrames(
+    std::uint32_t sampleRate) noexcept {
+  return static_cast<std::uint32_t>(
+      (static_cast<std::uint64_t>(sampleRate) *
+           kPipelineTransitionFadeMilliseconds +
        999) /
       1000);
 }
@@ -253,6 +263,38 @@ struct PipeWireRuntime {
     }
   }
 };
+
+static std::uint32_t transitionSampleRate(
+    const PipeWireRuntime &runtime) noexcept {
+  const auto outputRate =
+      runtime.outputStreamSampleRate.load(std::memory_order_acquire);
+  if (outputRate != 0) {
+    return outputRate;
+  }
+  const auto inputRate =
+      runtime.inputStreamSampleRate.load(std::memory_order_acquire);
+  return inputRate == 0 ? runtime.rateBridgeStreamRate : inputRate;
+}
+
+static void startOutputTransition(PipeWireRuntime &runtime,
+                                  std::uint32_t sampleRate) noexcept {
+  // Both stream callbacks run on this runtime's pw_main_loop, so the ring
+  // consumer cannot run concurrently with this intentional discard.
+  static_cast<void>(runtime.ring.discardQueuedFrames());
+  runtime.outputTransitionSilencer.start(
+      pipelineTransitionSilenceFrames(sampleRate),
+      pipelineTransitionFadeFrames(sampleRate));
+}
+
+static void resetOutputTransition(PipeWireRuntime &runtime,
+                                  std::uint32_t sampleRate) noexcept {
+  // Output callbacks share the pw_main_loop with format callbacks, so the
+  // consumer cannot run while its disconnected queue is discarded.
+  static_cast<void>(runtime.ring.discardQueuedFrames());
+  runtime.outputTransitionSilencer.reset(
+      pipelineTransitionSilenceFrames(sampleRate),
+      pipelineTransitionFadeFrames(sampleRate));
+}
 
 struct PipeWireLibraryScope {
   PipeWireLibraryScope() { pw_init(nullptr, nullptr); }
@@ -605,9 +647,7 @@ static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
         (runtime.rateBridgeStreamRate != bridgeRates.streamSampleRate ||
          runtime.rateBridgeDspRate != bridgeRates.dspSampleRate);
     if (bridgeChanged || runtime.silenceNextRateBridge) {
-      static_cast<void>(runtime.ring.discardQueuedFrames());
-      runtime.outputTransitionSilencer.start(
-          pipelineTransitionSilenceFrames(bridgeRates.streamSampleRate));
+      startOutputTransition(runtime, bridgeRates.streamSampleRate);
     }
     runtime.rateBridgeStreamRate = bridgeRates.streamSampleRate;
     runtime.rateBridgeDspRate = bridgeRates.dspSampleRate;
@@ -628,6 +668,13 @@ static void streamParameterChanged(void *data, std::uint32_t id,
   auto &context = *static_cast<StreamCallbackContext *>(data);
   auto &runtime = *context.runtime;
   if (parameter == nullptr) {
+    const auto sampleRate = transitionSampleRate(runtime);
+    if (context.input) {
+      startOutputTransition(runtime, sampleRate);
+    } else {
+      resetOutputTransition(runtime, sampleRate);
+    }
+    runtime.silenceNextRateBridge = true;
     runtime.rateBridgeReady.store(false, std::memory_order_release);
     if (context.input) {
       runtime.inputFormatReady = false;
@@ -914,13 +961,15 @@ static void outputProcess(void *data) {
                                   runtime.options.channelCount) *
                               blockFrames);
     const auto pipelineGeneration = runtime.pipeline.activeGeneration();
-    runtime.ring.read(scratch, blockFrames, pipelineGeneration);
+    const auto availableFrames =
+        runtime.ring.read(scratch, blockFrames, pipelineGeneration);
+    const auto outputSampleRate = runtime.outputStreamSampleRate.load(
+        std::memory_order_relaxed);
     runtime.outputTransitionSilencer.apply(
-        scratch, runtime.options.channelCount, blockFrames,
+        scratch, runtime.options.channelCount, blockFrames, availableFrames,
         pipelineGeneration,
-        pipelineTransitionSilenceFrames(
-            runtime.outputStreamSampleRate.load(
-                std::memory_order_relaxed)));
+        pipelineTransitionSilenceFrames(outputSampleRate),
+        pipelineTransitionFadeFrames(outputSampleRate));
     for (auto channel = std::uint32_t{0};
          channel < runtime.options.channelCount; ++channel) {
       const auto source = scratch.subspan(
@@ -1014,6 +1063,7 @@ static std::string connectStream(PipeWireRuntime &runtime, pw_stream *stream,
 }
 
 static void destroyAudioStreams(PipeWireRuntime &runtime) {
+  resetOutputTransition(runtime, transitionSampleRate(runtime));
   runtime.rateBridgeReady.store(false, std::memory_order_release);
   if (runtime.outputStream != nullptr) {
     if (runtime.outputListenerInstalled) {
@@ -1480,7 +1530,6 @@ static void rateChangeRequested(void *data, std::uint64_t) {
   }
 
   destroyAudioStreams(runtime);
-  static_cast<void>(runtime.ring.discardQueuedFrames());
   runtime.silenceNextRateBridge = true;
   const auto streamError = createAudioStreams(runtime);
   if (!streamError.empty()) {

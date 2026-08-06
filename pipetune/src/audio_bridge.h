@@ -1,6 +1,7 @@
 #ifndef PIPETUNE_AUDIO_BRIDGE_H
 #define PIPETUNE_AUDIO_BRIDGE_H
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <span>
@@ -94,49 +95,87 @@ private:
 };
 
 /**
- * Replaces the beginning of a new DSP pipeline generation with silence.
+ * Smooths output discontinuities through a guaranteed silence interval.
  *
- * The object retains the remaining interval across output buffer boundaries.
+ * The object fades the last emitted sample to silence, waits for a configured
+ * silence interval, and fades in only after queued PCM becomes available.
+ * It also smooths ordinary ring-buffer underrun and recovery boundaries.
  */
 class AudioTransitionSilencer final {
 public:
   /**
-   * Creates a silencer observing the supplied generation.
+   * Creates a transition smoother observing the supplied generation.
    *
    * @param initialGeneration Pipeline generation that is already audible.
    */
   explicit AudioTransitionSilencer(std::uint64_t initialGeneration) noexcept;
 
   /**
-   * Starts a fresh silence interval without changing the DSP generation.
+   * Starts a fresh smoothed silence interval without changing generation.
    *
    * The caller must serialize this operation with apply().
    *
-   * @param silenceFrames Number of subsequent frames to replace with silence.
+   * @param silenceFrames Number of frames to remain fully silent.
+   * @param fadeFrames Number of frames in each fade-out and fade-in.
    */
-  void start(std::uint32_t silenceFrames) noexcept;
+  void start(std::uint32_t silenceFrames,
+             std::uint32_t fadeFrames) noexcept;
 
   /**
-   * Applies a silence interval whenever the generation changes.
+   * Starts from silence after the output transport has disconnected.
+   *
+   * The last emitted sample is forgotten so reconnecting cannot replay it as
+   * a fade-out. New PCM still fades in after the silence interval.
+   *
+   * @param silenceFrames Number of frames to remain fully silent.
+   * @param fadeFrames Number of frames in the subsequent fade-in.
+   */
+  void reset(std::uint32_t silenceFrames,
+             std::uint32_t fadeFrames) noexcept;
+
+  /**
+   * Smooths a transition whenever generation or PCM availability changes.
    *
    * An incorrectly shaped buffer is left unchanged. Repeated calls with the
-   * same generation continue, but do not restart, the silence interval.
+   * same generation continue the active transition without restarting it.
    *
    * @param planarSamples Contiguous channel-major output PCM.
    * @param channelCount Number of channels represented by the buffer.
    * @param frameCount Number of frames in each channel.
+   * @param availableFrames Queued PCM frames at the beginning of the buffer.
    * @param generation Active DSP pipeline generation.
    * @param silenceFrames Silence interval to start after a generation change.
-   * @return Number of frames replaced with silence in this call.
+   * @param fadeFrames Number of frames in each transition fade.
+   * @return Number of frames adjusted in this call.
    */
   std::uint32_t apply(std::span<float> planarSamples,
                       std::uint32_t channelCount, std::uint32_t frameCount,
+                      std::uint32_t availableFrames,
                       std::uint64_t generation,
-                      std::uint32_t silenceFrames) noexcept;
+                      std::uint32_t silenceFrames,
+                      std::uint32_t fadeFrames) noexcept;
 
 private:
+  // Transition phases persist across arbitrary PipeWire output block sizes.
+  enum class Phase {
+    steady,
+    fadingOut,
+    silent,
+    awaitingAudio,
+    fadingIn,
+  };
+
+  // Captures the last audible sample and enters fade-out or direct silence.
+  void beginTransition(std::uint32_t silenceFrames,
+                       std::uint32_t fadeFrames) noexcept;
+
   std::uint64_t observedGeneration_;
+  std::array<float, 8> lastOutputSamples_;
+  std::array<float, 8> fadeStartSamples_;
+  Phase phase_;
   std::uint32_t remainingFrames_;
+  std::uint32_t pendingSilenceFrames_;
+  std::uint32_t fadeFrames_;
 };
 
 } // namespace pipetune

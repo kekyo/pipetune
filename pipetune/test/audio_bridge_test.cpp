@@ -137,7 +137,7 @@ static bool testPipelineTransitionProducesSilence() {
   }
 
   auto silencer = pipetune::AudioTransitionSilencer(7);
-  if (!check(silencer.apply(output, 2, 6, 8, 7) == 6,
+  if (!check(silencer.apply(output, 2, 6, 6, 8, 7, 0) == 6,
              "a pipeline change must start the requested silence") ||
       !check(output ==
                  std::vector<float>(12, 0.0F),
@@ -146,14 +146,14 @@ static bool testPipelineTransitionProducesSilence() {
   }
 
   auto next = std::vector<float>{7.0F, 8.0F, 17.0F, 18.0F};
-  if (!check(silencer.apply(next, 2, 2, 8, 7) == 1,
+  if (!check(silencer.apply(next, 2, 2, 2, 8, 7, 0) == 1,
              "transition silence must continue across output blocks") ||
       !check(next == std::vector<float>({0.0F, 8.0F, 0.0F, 18.0F}),
              "only the remaining transition prefix must be silent")) {
     return false;
   }
   auto final = std::vector<float>{9.0F, 19.0F};
-  return check(silencer.apply(final, 2, 1, 8, 7) == 0,
+  return check(silencer.apply(final, 2, 1, 1, 8, 7, 0) == 0,
                "completed transition silence must not repeat") &&
          check(final == std::vector<float>({9.0F, 19.0F}),
                "audio after the silence interval must pass unchanged");
@@ -162,18 +162,87 @@ static bool testPipelineTransitionProducesSilence() {
 static bool testStreamRestartProducesSilenceWithoutPipelineChange() {
   auto silencer = pipetune::AudioTransitionSilencer(11);
   auto beforeRestart = std::vector<float>{1.0F, 2.0F, 11.0F, 12.0F};
-  if (!check(silencer.apply(beforeRestart, 2, 2, 11, 4) == 0,
+  if (!check(silencer.apply(beforeRestart, 2, 2, 2, 11, 4, 0) == 0,
              "stable pipeline audio must initially pass unchanged")) {
     return false;
   }
 
-  silencer.start(3);
+  silencer.start(3, 0);
   auto afterRestart =
       std::vector<float>{3.0F, 4.0F, 5.0F, 13.0F, 14.0F, 15.0F};
-  return check(silencer.apply(afterRestart, 2, 3, 11, 4) == 3,
+  return check(silencer.apply(afterRestart, 2, 3, 3, 11, 4, 0) == 3,
                "a stream restart must silence the requested interval") &&
          check(afterRestart == std::vector<float>(6, 0.0F),
                "a stream restart must be silent even without a DSP change");
+}
+
+static bool testStreamRestartIsSmoothedAroundSilence() {
+  auto silencer = pipetune::AudioTransitionSilencer(11);
+  auto beforeRestart = std::vector<float>{1.0F, 1.0F, -1.0F, -1.0F};
+  if (!check(silencer.apply(beforeRestart, 2, 2, 2, 11, 3, 2) == 0,
+             "stable audio must pass unchanged before a restart")) {
+    return false;
+  }
+
+  silencer.start(3, 2);
+  auto afterRestart =
+      std::vector<float>{1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F, 1.0F,
+                         -1.0F, -1.0F, -1.0F, -1.0F, -1.0F, -1.0F, -1.0F};
+  return check(silencer.apply(afterRestart, 2, 7, 7, 11, 3, 2) == 7,
+               "every restart transition frame must be adjusted") &&
+         check(afterRestart ==
+                   std::vector<float>({0.5F, 0.0F, 0.0F, 0.0F, 0.0F,
+                                       0.5F, 1.0F, -0.5F, 0.0F, 0.0F,
+                                       0.0F, 0.0F, -0.5F, -1.0F}),
+               "a restart must fade out, remain silent, and fade in");
+}
+
+static bool testUnderrunBoundariesAreSmoothed() {
+  auto silencer = pipetune::AudioTransitionSilencer(4);
+  auto active = std::vector<float>{1.0F, -1.0F};
+  if (!check(silencer.apply(active, 2, 1, 1, 4, 0, 2) == 0,
+             "available audio must initially pass unchanged")) {
+    return false;
+  }
+
+  auto missing = std::vector<float>(6, 0.0F);
+  if (!check(silencer.apply(missing, 2, 3, 0, 4, 0, 2) == 3,
+             "an underrun boundary must be adjusted") ||
+      !check(missing ==
+                 std::vector<float>({0.5F, 0.0F, 0.0F,
+                                     -0.5F, 0.0F, 0.0F}),
+             "an underrun must fade the previous PCM into silence")) {
+    return false;
+  }
+
+  auto resumed =
+      std::vector<float>{1.0F, 1.0F, 1.0F, -1.0F, -1.0F, -1.0F};
+  return check(silencer.apply(resumed, 2, 3, 3, 4, 0, 2) == 2,
+               "resumed PCM must use the configured fade-in") &&
+         check(resumed ==
+                   std::vector<float>({0.5F, 1.0F, 1.0F,
+                                       -0.5F, -1.0F, -1.0F}),
+               "audio must fade in only when new PCM becomes available");
+}
+
+static bool testDisconnectedOutputDoesNotReplayOldSample() {
+  auto silencer = pipetune::AudioTransitionSilencer(5);
+  auto active = std::vector<float>{1.0F, -1.0F};
+  if (!check(silencer.apply(active, 2, 1, 1, 5, 3, 2) == 0,
+             "connected output must initially pass unchanged")) {
+    return false;
+  }
+
+  silencer.reset(3, 2);
+  auto reconnected =
+      std::vector<float>{1.0F, 1.0F, 1.0F, 1.0F, 1.0F,
+                         -1.0F, -1.0F, -1.0F, -1.0F, -1.0F};
+  return check(silencer.apply(reconnected, 2, 5, 5, 5, 3, 2) == 5,
+               "reconnected output must remain guarded") &&
+         check(reconnected ==
+                   std::vector<float>({0.0F, 0.0F, 0.0F, 0.5F, 1.0F,
+                                       0.0F, 0.0F, 0.0F, -0.5F, -1.0F}),
+               "a disconnected output must resume from silence");
 }
 
 int main() {
@@ -182,6 +251,9 @@ int main() {
                       testMalformedBufferIsRejected() &&
                       testQueuedAudioCanBeDiscardedBeforeChangingOutput() &&
                       testPipelineTransitionProducesSilence() &&
-                      testStreamRestartProducesSilenceWithoutPipelineChange();
+                      testStreamRestartProducesSilenceWithoutPipelineChange() &&
+                      testStreamRestartIsSmoothedAroundSilence() &&
+                      testUnderrunBoundariesAreSmoothed() &&
+                      testDisconnectedOutputDoesNotReplayOldSample();
   return passed ? 0 : 1;
 }

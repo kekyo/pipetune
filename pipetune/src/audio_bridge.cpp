@@ -136,33 +136,164 @@ std::uint64_t PlanarAudioRing::underrunFrames() const noexcept {
 
 AudioTransitionSilencer::AudioTransitionSilencer(
     std::uint64_t initialGeneration) noexcept
-    : observedGeneration_(initialGeneration), remainingFrames_(0) {}
+    : observedGeneration_(initialGeneration), lastOutputSamples_{},
+      fadeStartSamples_{}, phase_(Phase::steady), remainingFrames_(0),
+      pendingSilenceFrames_(0), fadeFrames_(0) {}
 
-void AudioTransitionSilencer::start(std::uint32_t silenceFrames) noexcept {
-  remainingFrames_ = silenceFrames;
+void AudioTransitionSilencer::beginTransition(
+    std::uint32_t silenceFrames, std::uint32_t fadeFrames) noexcept {
+  fadeStartSamples_ = lastOutputSamples_;
+  pendingSilenceFrames_ = silenceFrames;
+  fadeFrames_ = fadeFrames;
+  if (fadeFrames != 0) {
+    phase_ = Phase::fadingOut;
+    remainingFrames_ = fadeFrames;
+  } else if (silenceFrames != 0) {
+    phase_ = Phase::silent;
+    remainingFrames_ = silenceFrames;
+    pendingSilenceFrames_ = 0;
+  } else {
+    phase_ = Phase::awaitingAudio;
+    remainingFrames_ = 0;
+  }
+}
+
+void AudioTransitionSilencer::start(std::uint32_t silenceFrames,
+                                    std::uint32_t fadeFrames) noexcept {
+  beginTransition(silenceFrames, fadeFrames);
+}
+
+void AudioTransitionSilencer::reset(std::uint32_t silenceFrames,
+                                    std::uint32_t fadeFrames) noexcept {
+  lastOutputSamples_.fill(0.0F);
+  fadeStartSamples_.fill(0.0F);
+  pendingSilenceFrames_ = 0;
+  fadeFrames_ = fadeFrames;
+  if (silenceFrames == 0) {
+    phase_ = Phase::awaitingAudio;
+    remainingFrames_ = 0;
+  } else {
+    phase_ = Phase::silent;
+    remainingFrames_ = silenceFrames;
+  }
 }
 
 std::uint32_t AudioTransitionSilencer::apply(
     std::span<float> planarSamples, std::uint32_t channelCount,
-    std::uint32_t frameCount, std::uint64_t generation,
-    std::uint32_t silenceFrames) noexcept {
-  if (channelCount == 0 ||
+    std::uint32_t frameCount, std::uint32_t availableFrames,
+    std::uint64_t generation, std::uint32_t silenceFrames,
+    std::uint32_t fadeFrames) noexcept {
+  if (channelCount == 0 || channelCount > lastOutputSamples_.size() ||
+      availableFrames > frameCount ||
       planarSamples.size() !=
           static_cast<std::size_t>(channelCount) * frameCount) {
     return 0;
   }
   if (generation != observedGeneration_) {
     observedGeneration_ = generation;
-    remainingFrames_ = silenceFrames;
+    beginTransition(silenceFrames, fadeFrames);
   }
-  const auto framesToSilence = std::min(frameCount, remainingFrames_);
-  for (auto channel = std::uint32_t{0}; channel < channelCount; ++channel) {
-    auto channelSamples = planarSamples.subspan(
-        static_cast<std::size_t>(channel) * frameCount, frameCount);
-    std::fill_n(channelSamples.begin(), framesToSilence, 0.0F);
+
+  auto adjustedFrames = std::uint32_t{0};
+  for (auto frame = std::uint32_t{0}; frame < frameCount; ++frame) {
+    const auto available = frame < availableFrames;
+    auto adjusted = false;
+    auto reconsiderPhase = true;
+    while (reconsiderPhase) {
+      reconsiderPhase = false;
+      switch (phase_) {
+      case Phase::steady:
+        if (!available) {
+          beginTransition(0, fadeFrames);
+          reconsiderPhase = true;
+        }
+        break;
+      case Phase::fadingOut: {
+        const auto gain = fadeFrames_ == 0
+                              ? 0.0F
+                              : static_cast<float>(remainingFrames_ - 1) /
+                                    static_cast<float>(fadeFrames_);
+        for (auto channel = std::uint32_t{0}; channel < channelCount;
+             ++channel) {
+          planarSamples[static_cast<std::size_t>(channel) * frameCount +
+                        frame] = fadeStartSamples_[channel] * gain;
+        }
+        adjusted = true;
+        --remainingFrames_;
+        if (remainingFrames_ == 0) {
+          if (pendingSilenceFrames_ == 0) {
+            phase_ = Phase::awaitingAudio;
+          } else {
+            phase_ = Phase::silent;
+            remainingFrames_ = pendingSilenceFrames_;
+            pendingSilenceFrames_ = 0;
+          }
+        }
+        break;
+      }
+      case Phase::silent:
+        for (auto channel = std::uint32_t{0}; channel < channelCount;
+             ++channel) {
+          planarSamples[static_cast<std::size_t>(channel) * frameCount +
+                        frame] = 0.0F;
+        }
+        adjusted = true;
+        --remainingFrames_;
+        if (remainingFrames_ == 0) {
+          phase_ = Phase::awaitingAudio;
+        }
+        break;
+      case Phase::awaitingAudio:
+        if (available) {
+          if (fadeFrames == 0) {
+            phase_ = Phase::steady;
+          } else {
+            phase_ = Phase::fadingIn;
+            fadeFrames_ = fadeFrames;
+            remainingFrames_ = fadeFrames;
+          }
+          reconsiderPhase = true;
+        } else {
+          for (auto channel = std::uint32_t{0}; channel < channelCount;
+               ++channel) {
+            planarSamples[static_cast<std::size_t>(channel) * frameCount +
+                          frame] = 0.0F;
+          }
+          adjusted = true;
+        }
+        break;
+      case Phase::fadingIn:
+        if (!available) {
+          beginTransition(0, fadeFrames);
+          reconsiderPhase = true;
+        } else {
+          const auto gain =
+              static_cast<float>(fadeFrames_ - remainingFrames_ + 1) /
+              static_cast<float>(fadeFrames_);
+          for (auto channel = std::uint32_t{0}; channel < channelCount;
+               ++channel) {
+            planarSamples[static_cast<std::size_t>(channel) * frameCount +
+                          frame] *= gain;
+          }
+          adjusted = true;
+          --remainingFrames_;
+          if (remainingFrames_ == 0) {
+            phase_ = Phase::steady;
+          }
+        }
+        break;
+      }
+    }
+    if (adjusted) {
+      ++adjustedFrames;
+    }
+    for (auto channel = std::uint32_t{0}; channel < channelCount; ++channel) {
+      lastOutputSamples_[channel] =
+          planarSamples[static_cast<std::size_t>(channel) * frameCount +
+                        frame];
+    }
   }
-  remainingFrames_ -= framesToSilence;
-  return framesToSilence;
+  return adjustedFrames;
 }
 
 } // namespace pipetune

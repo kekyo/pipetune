@@ -122,17 +122,21 @@ The two PipeWire streams use F32P PCM with one plane per channel:
 1. The input callback dequeues a capture buffer and validates its planes,
    strides, chunk bounds, and frame count.
 2. It copies one bounded block into preallocated planar scratch storage.
-3. Preset mode processes that block in place with EffeTune; bypass mode skips
+3. A preallocated streaming converter changes negotiated PipeWire PCM to the
+   configured DSP rate when those rates differ.
+4. Preset mode processes that block in place with EffeTune; bypass mode skips
    the engine.
-4. The block is written to a preallocated single-producer/single-consumer
+5. A second streaming converter returns fixed-rate DSP output to the
+   negotiated PipeWire PCM rate.
+6. The block is written to a preallocated single-producer/single-consumer
    planar ring.
-5. The output callback reads the available frames into its PipeWire buffer and
-   supplies silence for any underrun.
+7. The output callback reads available frames into its PipeWire buffer and
+   smooths transitions into and out of underrun silence.
 
-If the ring is full, the oldest unread frames are discarded. Overrun,
-underrun, and processing-error counts are exposed in runtime status. Fully
-consumed input chunks are returned with zero valid size so a property-only
-graph wake cannot republish retained PCM.
+If the ring is full, the newest input tail that does not fit is discarded.
+Overrun, underrun, and processing-error counts are exposed in runtime status.
+Fully consumed input chunks are returned with zero valid size so a
+property-only graph wake cannot republish retained PCM.
 
 No mutex, allocation, filesystem access, JSON parsing, socket operation, or
 DSP destruction occurs in a PipeWire process callback. Preset construction
@@ -148,14 +152,15 @@ PipeTune supports two rate modes:
   filter nodes. PipeTune rebuilds the EffeTune pipeline at the negotiated PCM
   rate.
 - Fixed requests one of 44.1, 48, 96, 192, or 384 kHz for both filter nodes.
-  Both PipeTune PCM streams and EffeTune remain at that selected rate.
+  EffeTune remains at that selected rate. If PipeWire negotiates another PCM
+  rate, PipeTune converts immediately before and after the DSP boundary.
 
-Both filter nodes must negotiate the same PCM rate. A disagreement is an error
-rather than an implicit resampling boundary inside PipeTune. The graph's actual
-time-domain rate is reported independently from `pw_time.rate`. Under a fixed
-Suggest policy, PipeWire may schedule the graph at another rate and owns the
-conversion outside the filter; this does not change the DSP rate. An unapplied
-Force request is exposed as a rate diagnostic.
+Both filter nodes must negotiate the same PCM rate. A disagreement is an error.
+The graph's actual time-domain rate is reported independently from
+`pw_time.rate`. Under a fixed Suggest policy, PipeWire may select another PCM
+or graph rate without changing the DSP rate. A Force request that the graph
+does not apply is exposed as a rate diagnostic, while the internal rate bridge
+keeps the selected DSP rate usable.
 
 For a fixed rate, Suggest publishes `node.rate` as a preference. Force also
 publishes `node.force-rate=0` on the output stream while it is active. Neither
@@ -171,9 +176,11 @@ A live rate change runs outside the real-time callbacks:
 5. rebuild the active preset or bypass pipeline at the negotiated rate; and
 6. publish the final status or the transition diagnostic.
 
-A short silent interval is intentional. Preset, bypass, and backend mutations
-are serialized with the transition so no partially rebuilt state becomes
-visible.
+A short silent interval is intentional. The output uses a 5 ms fade-out, at
+least 20 ms of silence, and a 5 ms fade-in that waits for new PCM. The same
+boundary smoothing covers PipeWire format loss and ordinary ring underruns.
+Preset, bypass, and backend mutations are serialized with the transition so no
+partially rebuilt state becomes visible.
 
 ## Preset to native DSP mapping
 
