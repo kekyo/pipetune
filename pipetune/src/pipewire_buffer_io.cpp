@@ -12,6 +12,12 @@ std::uint32_t pipeWireGraphSampleRate(spa_fraction rate) noexcept {
   return rate.denom / rate.num;
 }
 
+bool pipeWireStateTransitionInvalidatesQueuedAudio(
+    pw_stream_state previousState, pw_stream_state state) noexcept {
+  return previousState == PW_STREAM_STATE_STREAMING &&
+         state == PW_STREAM_STATE_PAUSED;
+}
+
 bool inspectPipeWireCaptureBuffer(const spa_buffer &buffer,
                                   std::uint32_t channelCount,
                                   std::uint32_t &frameCount) noexcept {

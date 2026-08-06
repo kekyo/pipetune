@@ -138,6 +138,11 @@ Overrun, underrun, and processing-error counts are exposed in runtime status.
 Fully consumed input chunks are returned with zero valid size so a
 property-only graph wake cannot republish retained PCM.
 
+When an active PipeWire stream returns from `STREAMING` to `PAUSED`, PipeTune
+flushes that stream's PipeWire queue and discards its internal output queue.
+The next activation therefore starts behind the silence guard instead of
+replaying PCM retained from the previous application stream.
+
 No mutex, allocation, filesystem access, JSON parsing, socket operation, or
 DSP destruction occurs in a PipeWire process callback. Preset construction
 happens on the control thread. A hazard-protected pipeline slot swaps a

@@ -88,8 +88,24 @@ static bool testGraphSampleRateUsesPipeWireTimeDomain() {
                "invalid graph time fractions must be unavailable");
 }
 
+static bool testRuntimePauseInvalidatesQueuedAudio() {
+  return check(
+             pipetune::pipeWireStateTransitionInvalidatesQueuedAudio(
+                 PW_STREAM_STATE_STREAMING, PW_STREAM_STATE_PAUSED),
+             "a runtime stream pause must invalidate queued PCM") &&
+         check(
+             !pipetune::pipeWireStateTransitionInvalidatesQueuedAudio(
+                 PW_STREAM_STATE_CONNECTING, PW_STREAM_STATE_PAUSED),
+             "initial format negotiation must not be a runtime pause") &&
+         check(
+             !pipetune::pipeWireStateTransitionInvalidatesQueuedAudio(
+                 PW_STREAM_STATE_PAUSED, PW_STREAM_STATE_STREAMING),
+             "stream resume must not discard newly queued PCM");
+}
+
 int main() {
   const auto passed = testConsumedCaptureContentIsRetired() &&
-                      testGraphSampleRateUsesPipeWireTimeDomain();
+                      testGraphSampleRateUsesPipeWireTimeDomain() &&
+                      testRuntimePauseInvalidatesQueuedAudio();
   return passed ? 0 : 1;
 }

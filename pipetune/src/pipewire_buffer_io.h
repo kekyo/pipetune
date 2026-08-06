@@ -1,6 +1,7 @@
 #ifndef PIPETUNE_PIPEWIRE_BUFFER_IO_H
 #define PIPETUNE_PIPEWIRE_BUFFER_IO_H
 
+#include <pipewire/stream.h>
 #include <spa/buffer/buffer.h>
 #include <spa/utils/defs.h>
 
@@ -15,6 +16,20 @@ namespace pipetune {
  * @return Integral graph sample rate, or zero for an unusable fraction.
  */
 std::uint32_t pipeWireGraphSampleRate(spa_fraction rate) noexcept;
+
+/**
+ * Reports whether a stream state boundary invalidates queued audio.
+ *
+ * The initial transition into PAUSED only completes format negotiation. A
+ * stream that returns to PAUSED after STREAMING has stopped data transport,
+ * so samples retained across that boundary belong to the previous activation.
+ *
+ * @param previousState State reported before the transition.
+ * @param state State reported after the transition.
+ * @return True when queued PCM must not survive the transition.
+ */
+bool pipeWireStateTransitionInvalidatesQueuedAudio(
+    pw_stream_state previousState, pw_stream_state state) noexcept;
 
 /**
  * Validates planar floating-point capture data and reports its frame count.

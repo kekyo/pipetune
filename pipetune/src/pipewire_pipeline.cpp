@@ -432,7 +432,7 @@ static void finishReadinessCheck(PipeWireRuntime &runtime) {
   }
 }
 
-static void streamStateChanged(void *data, pw_stream_state,
+static void streamStateChanged(void *data, pw_stream_state previousState,
                                pw_stream_state state, const char *error) {
   auto &context = *static_cast<StreamCallbackContext *>(data);
   auto &runtime = *context.runtime;
@@ -451,6 +451,15 @@ static void streamStateChanged(void *data, pw_stream_state,
       requestControlStatusUpdate(runtime);
     }
     return;
+  }
+  if (pipeWireStateTransitionInvalidatesQueuedAudio(previousState, state)) {
+    // PipeWire keeps already queued buffers when a graph is suspended. They
+    // belong to the previous source activation and must not play on resume.
+    auto *stream = context.input ? runtime.inputStream : runtime.outputStream;
+    if (stream != nullptr && pw_stream_flush(stream, false) < 0) {
+      runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
+    }
+    resetOutputTransition(runtime, transitionSampleRate(runtime));
   }
   if (context.input) {
     runtime.inputReady = isReadyState(state);
