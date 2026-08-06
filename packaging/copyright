@@ -13,6 +13,13 @@ Copyright:
 License: MIT
 Comment: Endpoint policies are derived from WirePlumber 0.4.17.
 
+Files: pipetune/src/wireplumber_visibility.cpp
+Copyright:
+ 2026 Kouji Matsui
+ 2022-2023 The WirePlumber project contributors
+License: MIT
+Comment: Permission management is derived from WirePlumber policy-dsp.lua.
+
 Files: deps/effetune/*
 Copyright: 2025-2026 Yoshiyuki Kobayashi
 License: MIT

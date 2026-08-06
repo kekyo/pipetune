@@ -212,7 +212,8 @@ add_library(
   src/rate_command.cpp
   src/sample_rate_converter.cpp
   src/user_setup.cpp
-  src/wireplumber_04_compat.cpp)
+  src/wireplumber_04_compat.cpp
+  src/wireplumber_visibility.cpp)
 target_include_directories(pipetune_pipewire PUBLIC include PRIVATE src)
 target_link_libraries(
   pipetune_pipewire

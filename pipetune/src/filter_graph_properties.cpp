@@ -43,6 +43,7 @@ FilterGraphProperties makeFilterGraphProperties(
   result.input.emplace_back("media.role", "DSP");
   result.input.emplace_back("node.description", options.nodeDescription);
   result.input.emplace_back("node.virtual", "true");
+  result.input.emplace_back("node.pipetune.internal", "true");
   result.input.emplace_back("node.always-process", "true");
   result.input.emplace_back("filter.smart", "true");
   result.input.emplace_back("filter.smart.name", "net.kekyo.pipetune");

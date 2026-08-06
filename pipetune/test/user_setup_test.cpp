@@ -69,6 +69,15 @@ static pipetune::UserManagementPaths makePaths(
       .wirePlumberDeviceScriptPath =
           directory / "config" / "wireplumber" / "scripts" /
           "pipetune-endpoint-device.lua",
+      .wirePlumber04VisibilityScriptPath =
+          directory / "config" / "wireplumber" / "scripts" /
+          "pipetune-node-visibility.lua",
+      .wirePlumber05PolicyPath =
+          directory / "config" / "wireplumber" /
+          "wireplumber.conf.d" / "60-pipetune-node-visibility.conf",
+      .wirePlumber05VisibilityScriptPath =
+          directory / "data" / "wireplumber" / "scripts" /
+          "pipetune-node-visibility.lua",
       .systemctlExecutable = "/test/systemctl",
       .gtkExecutable = "/test/pipetune-gtk",
   };
@@ -118,9 +127,15 @@ static bool invocationMatches(const Invocation &invocation,
 static bool testWirePlumberCompatibilityPaths(
     const std::filesystem::path &directory) {
   const auto configRoot = directory / "resolved-config";
+  const auto dataRoot = directory / "resolved-data";
   const auto resolved = pipetune::resolveUserManagementPaths(
-      configRoot.string(), {}, "/test/systemctl", "/test/pipetune-gtk");
+      configRoot.string(), dataRoot.string(), {}, "/test/systemctl",
+      "/test/pipetune-gtk");
+  const auto home = directory / "resolved-home";
+  const auto fallback = pipetune::resolveUserManagementPaths(
+      {}, {}, home, "/test/systemctl", "/test/pipetune-gtk");
   return check(resolved.error.empty(), resolved.error) &&
+         check(fallback.error.empty(), fallback.error) &&
          check(resolved.paths.wirePlumberPolicyPath ==
                    configRoot / "wireplumber" / "policy.lua.d" /
                        "60-pipetune-filter.lua",
@@ -132,7 +147,23 @@ static bool testWirePlumberCompatibilityPaths(
          check(resolved.paths.wirePlumberDeviceScriptPath ==
                    configRoot / "wireplumber" / "scripts" /
                        "pipetune-endpoint-device.lua",
-               "WirePlumber 0.4 device policy must use its script path");
+               "WirePlumber 0.4 device policy must use its script path") &&
+         check(resolved.paths.wirePlumber04VisibilityScriptPath ==
+                   configRoot / "wireplumber" / "scripts" /
+                       "pipetune-node-visibility.lua",
+               "WirePlumber 0.4 visibility policy must use its config path") &&
+         check(resolved.paths.wirePlumber05PolicyPath ==
+                   configRoot / "wireplumber" / "wireplumber.conf.d" /
+                       "60-pipetune-node-visibility.conf",
+               "WirePlumber 0.5 policy must use its config fragment path") &&
+         check(resolved.paths.wirePlumber05VisibilityScriptPath ==
+                   dataRoot / "wireplumber" / "scripts" /
+                       "pipetune-node-visibility.lua",
+               "WirePlumber 0.5 script must honor XDG_DATA_HOME") &&
+         check(fallback.paths.wirePlumber05VisibilityScriptPath ==
+                   home / ".local" / "share" / "wireplumber" / "scripts" /
+                       "pipetune-node-visibility.lua",
+               "WirePlumber 0.5 script must use the XDG data fallback");
 }
 
 static bool testSetupPreservesConfigurationAndRestoresAutostart(
@@ -169,6 +200,12 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
   const auto policy = readFile(paths.wirePlumberPolicyPath);
   const auto clientScript = readFile(paths.wirePlumberClientScriptPath);
   const auto deviceScript = readFile(paths.wirePlumberDeviceScriptPath);
+  const auto visibility04 =
+      readFile(paths.wirePlumber04VisibilityScriptPath);
+  const auto visibility05 =
+      readFile(paths.wirePlumber05VisibilityScriptPath);
+  const auto visibilityConfiguration =
+      readFile(paths.wirePlumber05PolicyPath);
   return check(result.success, result.error) &&
          check(loaded.error.empty() && loaded.found &&
                    loaded.presetPath == existingPreset,
@@ -185,6 +222,8 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
                    policy.find("pipetune-endpoint-client.lua") !=
                        std::string::npos &&
                    policy.find("pipetune-endpoint-device.lua") !=
+                       std::string::npos &&
+                   policy.find("pipetune-node-visibility.lua") !=
                        std::string::npos,
                "compatibility policy must configure and load the filter") &&
          check(std::filesystem::exists(paths.wirePlumberClientScriptPath),
@@ -200,6 +239,33 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
                    deviceScript.find("Stream/Output/Audio") !=
                        std::string::npos,
                "compatibility policy must connect both sides of the filter") &&
+         check(std::filesystem::exists(
+                   paths.wirePlumber04VisibilityScriptPath) &&
+                   std::filesystem::exists(paths.wirePlumber05PolicyPath) &&
+                   std::filesystem::exists(
+                       paths.wirePlumber05VisibilityScriptPath),
+               "setup must install visibility policy for WirePlumber 0.4 "
+               "and 0.5") &&
+         check(!visibility04.empty() && visibility04 == visibility05 &&
+                   visibility04.find("client:update_permissions") !=
+                       std::string::npos &&
+                   visibility04.find("node.pipetune.internal") !=
+                       std::string::npos &&
+                   visibility04.find("control.endpoint.pipetune.playback") !=
+                       std::string::npos &&
+                   visibility04.find("control.endpoint.pipetune.capture") !=
+                       std::string::npos &&
+                   visibility04.find("wireplumber.daemon") !=
+                       std::string::npos &&
+                   visibility04.find("client.id") != std::string::npos &&
+                   visibility04.find("client[\"bound-id\"]") !=
+                       std::string::npos,
+               "visibility policy must hide PipeTune nodes from other clients") &&
+         check(visibilityConfiguration.find("pipetune-node-visibility.lua") !=
+                       std::string::npos &&
+                   visibilityConfiguration.find("required") !=
+                       std::string::npos,
+               "WirePlumber 0.5 must load the visibility policy component") &&
          check(runner.invocations.size() == 8,
                "setup process invocation count differs") &&
          check(invocationMatches(
@@ -304,6 +370,12 @@ static bool testSetupRollback(const std::filesystem::path &directory) {
                "failed setup must restore the previous client policy") &&
          check(!std::filesystem::exists(paths.wirePlumberDeviceScriptPath),
                "failed setup must restore the previous device policy") &&
+         check(!std::filesystem::exists(
+                   paths.wirePlumber04VisibilityScriptPath) &&
+                   !std::filesystem::exists(paths.wirePlumber05PolicyPath) &&
+                   !std::filesystem::exists(
+                       paths.wirePlumber05VisibilityScriptPath),
+               "failed setup must restore all visibility policy files") &&
          check(runner.invocations.size() == 9,
                "setup rollback invocation count differs") &&
          check(invocationMatches(
@@ -326,6 +398,11 @@ static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
   writeFile(paths.wirePlumberPolicyPath, "managed policy");
   writeFile(paths.wirePlumberClientScriptPath, "managed client script");
   writeFile(paths.wirePlumberDeviceScriptPath, "managed device script");
+  writeFile(paths.wirePlumber04VisibilityScriptPath,
+            "managed 0.4 visibility script");
+  writeFile(paths.wirePlumber05PolicyPath, "managed 0.5 policy");
+  writeFile(paths.wirePlumber05VisibilityScriptPath,
+            "managed 0.5 visibility script");
   writeFile(paths.autostartPath,
             "[Desktop Entry]\nType=Application\nX-Custom=true\n");
   const auto saved = pipetune::clearStartupPreset(paths.configPath);
@@ -366,6 +443,12 @@ static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
                "unsetup must remove the WirePlumber 0.4 client policy") &&
          check(!std::filesystem::exists(paths.wirePlumberDeviceScriptPath),
                "unsetup must remove the WirePlumber 0.4 device policy") &&
+         check(!std::filesystem::exists(
+                   paths.wirePlumber04VisibilityScriptPath) &&
+                   !std::filesystem::exists(paths.wirePlumber05PolicyPath) &&
+                   !std::filesystem::exists(
+                       paths.wirePlumber05VisibilityScriptPath),
+               "unsetup must remove all WirePlumber visibility policy files") &&
          check(pipetune::isPipeTuneManagedAutostartMask(
                    paths.autostartPath) &&
                    std::filesystem::exists(paths.autostartBackupPath),
@@ -400,6 +483,39 @@ static bool testUnsetupStopFailurePreservesConfiguration(
                "failed unsetup must retain its autostart mask");
 }
 
+static bool testUnsetupRestartFailureRestoresPolicies(
+    const std::filesystem::path &directory) {
+  const auto paths = makePaths(directory / "unsetup-rollback");
+  writeFile(paths.wirePlumberPolicyPath, "policy");
+  writeFile(paths.wirePlumberClientScriptPath, "client");
+  writeFile(paths.wirePlumberDeviceScriptPath, "device");
+  writeFile(paths.wirePlumber04VisibilityScriptPath, "visibility 0.4");
+  writeFile(paths.wirePlumber05PolicyPath, "configuration 0.5");
+  writeFile(paths.wirePlumber05VisibilityScriptPath, "visibility 0.5");
+  auto runner =
+      FakeProcessRunner{.results = {processResult(0), processResult(0),
+                                    processResult(1)},
+                        .invocations = {}};
+  const auto result = pipetune::executeUserUnsetup(
+      {.effectiveUserId = 1000,
+       .purge = false,
+       .paths = paths,
+       .processRunner = fakeRunProcess,
+       .processUserData = &runner});
+  return check(!result.success,
+               "WirePlumber restart failure must fail unsetup") &&
+         check(readFile(paths.wirePlumberPolicyPath) == "policy" &&
+                   readFile(paths.wirePlumberClientScriptPath) == "client" &&
+                   readFile(paths.wirePlumberDeviceScriptPath) == "device" &&
+                   readFile(paths.wirePlumber04VisibilityScriptPath) ==
+                       "visibility 0.4" &&
+                   readFile(paths.wirePlumber05PolicyPath) ==
+                       "configuration 0.5" &&
+                   readFile(paths.wirePlumber05VisibilityScriptPath) ==
+                       "visibility 0.5",
+               "failed unsetup must restore every WirePlumber policy file");
+}
+
 static bool testRootRejection(const std::filesystem::path &directory) {
   auto runner =
       FakeProcessRunner{.results = {}, .invocations = {}};
@@ -430,6 +546,7 @@ int main() {
   passed = testSetupRollback(directory) && passed;
   passed = testUnsetupAndPurge(directory) && passed;
   passed = testUnsetupStopFailurePreservesConfiguration(directory) && passed;
+  passed = testUnsetupRestartFailureRestoresPolicies(directory) && passed;
   passed = testRootRejection(directory) && passed;
   std::filesystem::remove_all(directory);
   return passed ? 0 : 1;

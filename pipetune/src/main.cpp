@@ -96,10 +96,13 @@ static int runConfigResetCommand(
 static pipetune::UserManagementPathResult
 resolveInstalledUserManagementPaths() {
   const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
+  const auto *xdgDataHome = std::getenv("XDG_DATA_HOME");
   const auto *home = std::getenv("HOME");
   return pipetune::resolveUserManagementPaths(
       xdgConfigHome == nullptr ? std::string_view{}
                                : std::string_view(xdgConfigHome),
+      xdgDataHome == nullptr ? std::string_view{}
+                             : std::string_view(xdgDataHome),
       home == nullptr ? std::filesystem::path{}
                       : std::filesystem::path(home),
       std::filesystem::path{

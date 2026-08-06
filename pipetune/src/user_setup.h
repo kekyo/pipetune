@@ -30,6 +30,12 @@ struct UserManagementPaths {
   std::filesystem::path wirePlumberClientScriptPath;
   /** WirePlumber 0.4 endpoint-to-device policy managed by PipeTune. */
   std::filesystem::path wirePlumberDeviceScriptPath;
+  /** WirePlumber 0.4 internal-node visibility policy. */
+  std::filesystem::path wirePlumber04VisibilityScriptPath;
+  /** WirePlumber 0.5 component configuration for the visibility policy. */
+  std::filesystem::path wirePlumber05PolicyPath;
+  /** WirePlumber 0.5 internal-node visibility policy. */
+  std::filesystem::path wirePlumber05VisibilityScriptPath;
   /** Absolute systemctl executable path. */
   std::filesystem::path systemctlExecutable;
   /** Absolute pipetune-gtk executable path. */
@@ -50,6 +56,7 @@ struct UserManagementPathResult {
  * Resolves PipeTune's per-user configuration and autostart paths.
  *
  * @param xdgConfigHome Value of XDG_CONFIG_HOME, or empty for HOME fallback.
+ * @param xdgDataHome Value of XDG_DATA_HOME, or empty for HOME fallback.
  * @param homeDirectory Value of HOME.
  * @param systemctlExecutable Installed systemctl path.
  * @param gtkExecutable Installed pipetune-gtk path.
@@ -57,6 +64,7 @@ struct UserManagementPathResult {
  */
 UserManagementPathResult resolveUserManagementPaths(
     std::string_view xdgConfigHome,
+    std::string_view xdgDataHome,
     const std::filesystem::path &homeDirectory,
     const std::filesystem::path &systemctlExecutable,
     const std::filesystem::path &gtkExecutable);

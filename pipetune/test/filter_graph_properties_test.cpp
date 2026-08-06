@@ -32,6 +32,8 @@ static bool testSmartFilterPairContract() {
 
   return check(property(graph.input, "media.class") == "Audio/Sink",
                "filter input must be an Audio/Sink") &&
+         check(property(graph.input, "node.pipetune.internal") == "true",
+               "filter input must identify itself as an internal node") &&
          check(property(graph.input, "filter.smart") == "true",
                "filter input must opt in to WirePlumber smart filtering") &&
          check(property(graph.input, "filter.smart.name") ==

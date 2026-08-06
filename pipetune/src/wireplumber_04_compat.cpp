@@ -9,6 +9,8 @@ constexpr auto kWirePlumber04Policy = std::string_view{R"wp04lua(-- Managed by P
 -- properties directly. WirePlumber 0.4 uses these endpoints and compatibility
 -- scripts to insert the same filter without changing the default audio device.
 
+load_script("pipetune-node-visibility.lua")
+
 default_policy.policy.roles = default_policy.policy.roles or {}
 default_policy.policy.roles["PipeTune-Playback"] = {
   ["alias"] = {
@@ -631,4 +633,3 @@ std::string_view wirePlumber04EndpointDevicePolicy() noexcept {
 }
 
 } // namespace pipetune
-
