@@ -2,7 +2,8 @@
 Description=System-wide EffeTune DSP for PipeWire
 After=pipewire.service wireplumber.service
 Wants=pipewire.service wireplumber.service
-StartLimitIntervalSec=0
+StartLimitIntervalSec=30s
+StartLimitBurst=3
 
 [Service]
 Type=simple

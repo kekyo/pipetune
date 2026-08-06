@@ -251,9 +251,11 @@ diagnostic is retained in runtime status. Configured SIMD falls back through
 usable lower variants or to scalar according to the backend rules.
 
 The installed service is ordered after PipeWire and WirePlumber and uses
-`Restart=on-failure`. It has no default-sink restoration command. Removing or
-stopping PipeTune removes the filter nodes; WirePlumber continues to own the
-normal device and volume policy.
+`Restart=on-failure`. Start limiting allows at most three starts in 30 seconds,
+so a permanent startup error cannot repeatedly remove and recreate the audio
+graph. It has no default-sink restoration command. Removing or stopping
+PipeTune removes the filter nodes; WirePlumber continues to own the normal
+device and volume policy.
 
 The setup and unsetup coordinators invoke `systemctl` and `pipetune-gtk` with
 direct argument vectors and no shell. Setup snapshots the managed

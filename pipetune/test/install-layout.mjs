@@ -122,6 +122,15 @@ if (
         const execStart = serviceLines.find((line) =>
           line.startsWith("ExecStart="),
         );
+        const restart = serviceLines.find((line) =>
+          line.startsWith("Restart="),
+        );
+        const startLimitInterval = serviceLines.find((line) =>
+          line.startsWith("StartLimitIntervalSec="),
+        );
+        const startLimitBurst = serviceLines.find((line) =>
+          line.startsWith("StartLimitBurst="),
+        );
         if (environmentFiles.length !== 0) {
           fail(
             "PipeTune user service must let the daemon parse its configuration",
@@ -133,6 +142,15 @@ if (
           )
         ) {
           fail("PipeTune user service does not launch the daemon subcommand");
+        }
+        if (
+          restart !== "Restart=on-failure" ||
+          startLimitInterval !== "StartLimitIntervalSec=30s" ||
+          startLimitBurst !== "StartLimitBurst=3"
+        ) {
+          fail(
+            "PipeTune user service must bound repeated daemon failures",
+          );
         }
 
         const version = spawnSync(executable, ["--version"], {
