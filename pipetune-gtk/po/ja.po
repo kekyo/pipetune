@@ -165,8 +165,8 @@ msgstr "標準または保存済みのEffeTuneプリセットを選択…"
 msgid "Choose an EffeTune preset"
 msgstr "EffeTuneプリセットを選択"
 
-msgid "Choose bypass, system default output, Max + Suggest, Scalar, and Conservative."
-msgstr "バイパス、システム既定の出力、最大＋提案、スカラー、保守的を選択します。"
+msgid "Choose bypass, Automatic + Suggest, and Scalar + Auto SIMD."
+msgstr "バイパス、自動＋提案、スカラー＋自動SIMDを選択します。"
 
 msgid "Choose the language used by PipeTune GTK."
 msgstr "PipeTune GTKで使用する言語を選択します。"

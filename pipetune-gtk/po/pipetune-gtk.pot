@@ -161,7 +161,7 @@ msgstr ""
 msgid "Choose an EffeTune preset"
 msgstr ""
 
-msgid "Choose bypass, system default output, Max + Suggest, Scalar, and Conservative."
+msgid "Choose bypass, Automatic + Suggest, and Scalar + Auto SIMD."
 msgstr ""
 
 msgid "Choose the language used by PipeTune GTK."

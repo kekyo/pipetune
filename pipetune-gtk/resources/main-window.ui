@@ -561,7 +561,7 @@
                                         </child>
                                         <child>
                                           <object class="GtkLabel">
-                                            <property name="label" translatable="yes">Choose bypass, system default output, Max + Suggest, Scalar, and Conservative.</property>
+                                            <property name="label" translatable="yes">Choose bypass, Automatic + Suggest, and Scalar + Auto SIMD.</property>
                                             <property name="xalign">0</property>
                                             <property name="max-width-chars">30</property>
                                             <property name="wrap">True</property>

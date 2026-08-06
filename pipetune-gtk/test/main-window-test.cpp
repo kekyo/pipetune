@@ -100,6 +100,32 @@ static bool checkSettingsPages(const pipetune_gtk::MainWindowUi &ui) {
                "advanced page is missing");
 }
 
+static bool checkRestoreDefaultsDescription(
+    const pipetune_gtk::MainWindowUi &ui) {
+  auto *objects = gtk_builder_get_objects(ui.builder);
+  auto found = false;
+  for (auto *item = objects; item != nullptr; item = item->next) {
+    if (!GTK_IS_LABEL(item->data)) {
+      continue;
+    }
+    const auto text = std::string_view(
+        gtk_label_get_text(GTK_LABEL(item->data)));
+    if (!text.starts_with("Choose bypass,")) {
+      continue;
+    }
+    found = true;
+    if (!check(
+            text ==
+                "Choose bypass, Automatic + Suggest, and Scalar + Auto SIMD.",
+            "restore-defaults description differs")) {
+      g_slist_free(objects);
+      return false;
+    }
+  }
+  g_slist_free(objects);
+  return check(found, "restore-defaults description is missing");
+}
+
 static bool checkLoadMeterHost(const pipetune_gtk::MainWindowUi &ui) {
   auto *heading = GTK_WIDGET(
       gtk_builder_get_object(ui.builder, "statusHeadingLabel"));
@@ -196,7 +222,7 @@ int main(int argc, char **argv) {
   const auto valid =
       check(ui.builder != nullptr, "main window builder is unavailable") &&
       checkWidgetTypes(ui) && checkSettingsPages(ui) &&
-      checkLoadMeterHost(ui) &&
+      checkRestoreDefaultsDescription(ui) && checkLoadMeterHost(ui) &&
       check(gtk_window_get_application(GTK_WINDOW(ui.window)) ==
                 application,
             "main window application differs") &&
