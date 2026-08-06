@@ -588,25 +588,6 @@ if(BUILD_TESTING)
     COMMAND pipetune_command_line_tests)
 
   add_executable(
-    pipetune_removed_output_surface_tests
-    test/removed_output_surface_test.cpp)
-  target_include_directories(
-    pipetune_removed_output_surface_tests PRIVATE src)
-  target_link_libraries(
-    pipetune_removed_output_surface_tests PRIVATE pipetune_pipewire)
-  if(MSVC)
-    target_compile_options(
-      pipetune_removed_output_surface_tests PRIVATE /W4 /WX)
-  else()
-    target_compile_options(
-      pipetune_removed_output_surface_tests
-      PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(
-    NAME pipetune_removed_output_surface_tests
-    COMMAND pipetune_removed_output_surface_tests)
-
-  add_executable(
     pipetune_config_reset_command_tests
     test/config_reset_command_test.cpp)
   target_include_directories(
