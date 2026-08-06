@@ -34,13 +34,15 @@ application streams targeting physical output A
                     |
         hidden PipeTune filter for output A
                     |
-          F32P capture process callback
+           F32P capture stream
+                    |
+       trigger paired playback callback
+                    |
+       dequeue latest capture buffer
                     |
        EffeTune DSP or pass-through pipeline
                     |
          preallocated planar audio ring
-                    |
-          F32P playback process callback
                     |
              physical output A
                     |
@@ -151,10 +153,16 @@ EffeTune pipeline is then built for each output's exact sample rate, channel
 count, and channel positions. This avoids forcing all hardware through the
 least-capable output's format.
 
-The capture callback processes a bounded F32P block in place and writes it to
-that output's single-producer/single-consumer planar ring. The playback callback
-reads available frames and supplies silence on underrun. If the ring is full,
-the oldest unread frames are discarded. Overrun, underrun, processed-frame,
+The asynchronous capture callback triggers its paired playback callback. The
+playback callback dequeues the latest bounded F32P capture block, processes it
+in place, and writes it to that output's preallocated planar ring before
+supplying the playback buffer. PipeTune tracks incoming links to the capture
+node; after stream negotiation, a downstream output monitor cannot trigger DSP
+when no player link remains. Connected players still process neutral input so
+stateful DSP tails and time remain continuous.
+
+The playback path supplies silence on ring underrun. If the ring is full, the
+oldest unread frames are discarded. Overrun, underrun, processed-frame,
 DSP-time, and processing-error counters are retained per output and aggregated
 for status.
 

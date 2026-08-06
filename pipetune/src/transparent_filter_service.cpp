@@ -82,6 +82,8 @@ struct OutputFilterRuntime {
   std::vector<float> captureScratch;
   std::vector<float> playbackScratch;
   std::atomic<std::uint64_t> processingErrors;
+  // UINT32_MAX keeps startup triggers enabled until both streams negotiate.
+  std::atomic<std::uint32_t> captureInputLinkCount;
   std::uint64_t processedFrames;
   pw_stream *captureStream;
   pw_stream *playbackStream;
@@ -122,8 +124,9 @@ struct OutputFilterRuntime {
         playbackScratch(static_cast<std::size_t>(output.channelCount) *
                             options.maxFrames,
                         0.0F),
-        processingErrors(0), processedFrames(0), captureStream(nullptr),
-        playbackStream(nullptr), captureEvents{}, playbackEvents{},
+        processingErrors(0), captureInputLinkCount(UINT32_MAX),
+        processedFrames(0), captureStream(nullptr), playbackStream(nullptr),
+        captureEvents{}, playbackEvents{},
         captureListener{}, playbackListener{}, captureContext{this, true},
         playbackContext{this, false}, captureListenerInstalled(false),
         playbackListenerInstalled(false), captureReady(false),
@@ -170,6 +173,7 @@ struct FilterServiceRuntime {
       physicalNodes;
   std::unordered_map<std::uint32_t, std::unique_ptr<OutputFilterRuntime>>
       filters;
+  std::unordered_map<std::uint32_t, std::uint32_t> filterInputLinkNodes;
   std::uint64_t retiredOverrunFrames;
   std::uint64_t retiredUnderrunFrames;
   std::uint64_t retiredProcessingErrors;
@@ -215,7 +219,8 @@ struct FilterServiceRuntime {
         controlRequestCompleted(false), controlShuttingDown(false),
         controlStatusMutex(),
         controlStatusSnapshot(std::nullopt), physicalNodes(), filters(),
-        retiredOverrunFrames(0), retiredUnderrunFrames(0),
+        filterInputLinkNodes(), retiredOverrunFrames(0),
+        retiredUnderrunFrames(0),
         retiredProcessingErrors(0), enumerationSequence(0),
         policyMetadataId(PW_ID_ANY), initialBindingsSynchronized(false),
         enumerationReady(false), reconcilingOutputs(false),
@@ -759,11 +764,30 @@ static void copyFilterCapturePlane(const spa_data &plane,
               source, byteCount - firstBytes);
 }
 
-static void filterCaptureProcess(void *data) {
-  auto &runtime =
-      *static_cast<FilterStreamContext *>(data)->runtime;
-  auto *pipeWireBuffer = pw_stream_dequeue_buffer(runtime.captureStream);
-  if (pipeWireBuffer == nullptr || pipeWireBuffer->buffer == nullptr) {
+static void recyclePendingFilterCaptureBuffers(
+    OutputFilterRuntime &runtime) noexcept {
+  while (auto *pipeWireBuffer =
+             pw_stream_dequeue_buffer(runtime.captureStream)) {
+    pw_stream_queue_buffer(runtime.captureStream, pipeWireBuffer);
+  }
+}
+
+static void processLatestFilterCaptureBuffer(OutputFilterRuntime &runtime) {
+  auto *pipeWireBuffer = static_cast<pw_buffer *>(nullptr);
+  while (auto *candidate =
+             pw_stream_dequeue_buffer(runtime.captureStream)) {
+    if (pipeWireBuffer != nullptr) {
+      pw_stream_queue_buffer(runtime.captureStream, pipeWireBuffer);
+    }
+    pipeWireBuffer = candidate;
+  }
+  if (pipeWireBuffer == nullptr) {
+    return;
+  }
+  if (pipeWireBuffer->buffer == nullptr) {
+    runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
+    pipeWireBuffer->size = 0;
+    pw_stream_queue_buffer(runtime.captureStream, pipeWireBuffer);
     return;
   }
   auto &buffer = *pipeWireBuffer->buffer;
@@ -776,7 +800,6 @@ static void filterCaptureProcess(void *data) {
     pw_stream_queue_buffer(runtime.captureStream, pipeWireBuffer);
     return;
   }
-
   auto sourceFrame = std::uint32_t{0};
   while (sourceFrame < frameCount) {
     const auto blockFrames =
@@ -809,6 +832,21 @@ static void filterCaptureProcess(void *data) {
   pipeWireBuffer->size = frameCount;
   retirePipeWireCaptureBuffer(buffer);
   pw_stream_queue_buffer(runtime.captureStream, pipeWireBuffer);
+}
+
+static void filterCaptureProcess(void *data) {
+  auto &runtime =
+      *static_cast<FilterStreamContext *>(data)->runtime;
+  // A downstream monitor can schedule this node group without an upstream
+  // player. Only a real incoming link is allowed to trigger DSP playback.
+  if (runtime.captureInputLinkCount.load(std::memory_order_relaxed) == 0) {
+    recyclePendingFilterCaptureBuffers(runtime);
+    return;
+  }
+  if (runtime.playbackStream == nullptr ||
+      pw_stream_trigger_process(runtime.playbackStream) < 0) {
+    recyclePendingFilterCaptureBuffers(runtime);
+  }
 }
 
 static bool inspectFilterPlaybackBuffer(
@@ -862,6 +900,7 @@ static void filterPlaybackProcess(void *data) {
     pw_stream_queue_buffer(runtime.playbackStream, pipeWireBuffer);
     return;
   }
+  processLatestFilterCaptureBuffer(runtime);
   const auto suggestedFrames =
       pipeWireBuffer->requested == 0
           ? capacityFrames
@@ -903,7 +942,8 @@ static std::string connectFilterStream(OutputFilterRuntime &runtime,
                                        pw_stream *stream,
                                        pw_direction direction,
                                        bool autoconnect,
-                                       bool publishLatency) {
+                                       bool publishLatency,
+                                       pw_stream_flags schedulingFlags) {
   auto storage = std::array<std::uint8_t, 2048>{};
   auto builder = spa_pod_builder{};
   spa_pod_builder_init(&builder, storage.data(), storage.size());
@@ -920,7 +960,8 @@ static std::string connectFilterStream(OutputFilterRuntime &runtime,
     parameters[parameterCount++] = spa_process_latency_build(
         &builder, SPA_PARAM_ProcessLatency, &latency);
   }
-  auto flags = PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS;
+  auto flags = PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS |
+               schedulingFlags;
   if (autoconnect) {
     flags |= PW_STREAM_FLAG_AUTOCONNECT;
     flags |= PW_STREAM_FLAG_DONT_RECONNECT;
@@ -934,9 +975,26 @@ static std::string connectFilterStream(OutputFilterRuntime &runtime,
              : std::string{};
 }
 
+static void refreshFilterCaptureInputLinkCount(
+    OutputFilterRuntime &runtime) {
+  if (!outputFilterReady(runtime)) {
+    runtime.captureInputLinkCount.store(UINT32_MAX,
+                                        std::memory_order_relaxed);
+    return;
+  }
+  const auto inputLinkCount = static_cast<std::uint32_t>(std::count_if(
+      runtime.service->filterInputLinkNodes.begin(),
+      runtime.service->filterInputLinkNodes.end(),
+      [&runtime](const auto &link) {
+        return link.second == runtime.mainNodeId;
+      }));
+  runtime.captureInputLinkCount.store(inputLinkCount,
+                                      std::memory_order_relaxed);
+}
+
 static void publishFilterEnabled(OutputFilterRuntime &runtime) {
   auto &service = *runtime.service;
-  if (service.policyMetadata == nullptr || runtime.captureStream == nullptr) {
+  if (runtime.captureStream == nullptr) {
     runtime.enabledPublished = false;
     return;
   }
@@ -945,6 +1003,11 @@ static void publishFilterEnabled(OutputFilterRuntime &runtime) {
     return;
   }
   runtime.mainNodeId = nodeId;
+  refreshFilterCaptureInputLinkCount(runtime);
+  if (service.policyMetadata == nullptr) {
+    runtime.enabledPublished = false;
+    return;
+  }
   const auto enabled = service.policyReady && outputFilterReady(runtime);
   if (enabled && !runtime.enabledPublished) {
     runtime.policyState = "waiting";
@@ -1013,7 +1076,8 @@ static std::string createFilterStreams(OutputFilterRuntime &runtime) {
                          &runtime.captureEvents, &runtime.captureContext);
   runtime.captureListenerInstalled = true;
   auto connectionError = connectFilterStream(
-      runtime, runtime.captureStream, PW_DIRECTION_INPUT, false, true);
+      runtime, runtime.captureStream, PW_DIRECTION_INPUT, false, true,
+      PW_STREAM_FLAG_ASYNC);
   if (!connectionError.empty()) {
     return connectionError;
   }
@@ -1032,7 +1096,8 @@ static std::string createFilterStreams(OutputFilterRuntime &runtime) {
                          &runtime.playbackEvents, &runtime.playbackContext);
   runtime.playbackListenerInstalled = true;
   connectionError = connectFilterStream(
-      runtime, runtime.playbackStream, PW_DIRECTION_OUTPUT, true, false);
+      runtime, runtime.playbackStream, PW_DIRECTION_OUTPUT, true, false,
+      PW_STREAM_FLAG_TRIGGER);
   return connectionError;
 }
 
@@ -1651,6 +1716,22 @@ static void filterRegistryGlobal(void *data, std::uint32_t id,
   if (type == nullptr) {
     return;
   }
+  if (std::string_view(type) == PW_TYPE_INTERFACE_Link) {
+    const auto inputNode = filterUnsignedValue(
+        dictionaryValue(properties, PW_KEY_LINK_INPUT_NODE));
+    if (inputNode == 0 ||
+        !runtime.filterInputLinkNodes.emplace(id, inputNode).second) {
+      return;
+    }
+    for (auto &[outputId, filter] : runtime.filters) {
+      static_cast<void>(outputId);
+      if (filter->mainNodeId == inputNode) {
+        refreshFilterCaptureInputLinkCount(*filter);
+        break;
+      }
+    }
+    return;
+  }
   if (std::string_view(type) == PW_TYPE_INTERFACE_Metadata &&
       dictionaryString(properties, PW_KEY_METADATA_NAME) ==
           "pipetune-policy") {
@@ -1680,6 +1761,19 @@ static void destroyPhysicalOutputNode(PhysicalOutputNode &tracked) {
 
 static void filterRegistryGlobalRemoved(void *data, std::uint32_t id) {
   auto &runtime = *static_cast<FilterServiceRuntime *>(data);
+  const auto inputLink = runtime.filterInputLinkNodes.find(id);
+  if (inputLink != runtime.filterInputLinkNodes.end()) {
+    const auto inputNode = inputLink->second;
+    runtime.filterInputLinkNodes.erase(inputLink);
+    for (auto &[outputId, filter] : runtime.filters) {
+      static_cast<void>(outputId);
+      if (filter->mainNodeId == inputNode) {
+        refreshFilterCaptureInputLinkCount(*filter);
+        break;
+      }
+    }
+    return;
+  }
   if (id == runtime.policyMetadataId) {
     if (runtime.policyMetadata != nullptr) {
       spa_hook_remove(&runtime.policyMetadataListener);

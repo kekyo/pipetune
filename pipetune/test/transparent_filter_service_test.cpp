@@ -23,6 +23,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -150,6 +151,27 @@ static std::vector<GraphNode> parseGraph(std::string_view json,
   }
   yyjson_doc_free(document);
   return nodes;
+}
+
+static bool waitForGraphNode(std::string_view nodeName, bool present,
+                             std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  do {
+    const auto dump = dumpPipeWireGraph();
+    if (dump.has_value()) {
+      auto error = std::string{};
+      const auto graph = parseGraph(*dump, error);
+      const auto found = std::any_of(
+          graph.begin(), graph.end(), [nodeName](const auto &node) {
+            return node.name == nodeName;
+          });
+      if (error.empty() && found == present) {
+        return true;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  } while (std::chrono::steady_clock::now() < deadline);
+  return false;
 }
 
 static void inspectReadyGraph(void *userData) {
@@ -404,6 +426,21 @@ static pid_t startCommand(
   return child;
 }
 
+static bool commandIsAlive(pid_t child) {
+  if (child <= 0) {
+    return false;
+  }
+  return kill(child, 0) == 0 || errno == EPERM;
+}
+
+static std::optional<std::uintmax_t>
+fileSize(const std::filesystem::path &path) {
+  auto error = std::error_code{};
+  const auto size = std::filesystem::file_size(path, error);
+  return error ? std::nullopt
+               : std::optional<std::uintmax_t>{size};
+}
+
 static bool stopCommand(pid_t child) {
   auto status = 0;
   auto waited = waitpid(child, &status, WNOHANG);
@@ -447,6 +484,19 @@ static std::optional<pipetune::ControlRuntimeStatus> readControlStatus(
     return std::nullopt;
   }
   return parsed.status;
+}
+
+static std::optional<pipetune::ControlFilterOutputStatus>
+filterOutputForTarget(const pipetune::ControlRuntimeStatus &status,
+                      std::string_view targetNodeName) {
+  const auto output = std::find_if(
+      status.filterOutputs.begin(), status.filterOutputs.end(),
+      [targetNodeName](const auto &candidate) {
+        return candidate.targetNodeName == targetNodeName;
+      });
+  return output == status.filterOutputs.end()
+             ? std::nullopt
+             : std::optional<pipetune::ControlFilterOutputStatus>(*output);
 }
 
 template <typename Predicate>
@@ -512,31 +562,133 @@ static bool exerciseAudioAndPolicyStatus(
   if (selected == active->filterOutputs.end()) {
     return false;
   }
-  const auto baselineProcessedFrames = active->dspProcessedFrames;
+  const auto targetNodeName = selected->targetNodeName;
+  auto baselineProcessedFrames = selected->dspProcessedFrames;
+
+  auto monitor = pid_t{-1};
+  auto monitorNodeName = std::string{};
+  const auto monitorPath = directory / "peak-monitor.raw";
+  if (requireActivePolicy) {
+    monitorNodeName =
+        "pipetune.test.peak-monitor." + std::to_string(getpid());
+    const auto monitorProperties =
+        "{ node.name = \"" + monitorNodeName +
+        "\" stream.monitor = true resample.peaks = true "
+        "node.rate = \"1/25\" media.role = \"Test\" "
+        "state.restore-props = false }";
+    monitor = startCommand(
+        {"pw-cat", "--record", "--target", targetNodeName,
+         "--properties", monitorProperties, "--rate", "48000",
+         "--channels", std::to_string(selected->channelCount),
+         "--format", "f32", monitorPath.string()});
+    if (!check(monitor > 0 &&
+                   waitForGraphNode(monitorNodeName, true,
+                                    std::chrono::seconds(3)),
+               "GNOME-equivalent output monitor did not become ready")) {
+      if (monitor > 0) {
+        static_cast<void>(stopCommand(monitor));
+      }
+      return false;
+    }
+    const auto monitorReadyStatus = readControlStatus(socketPath);
+    const auto monitorReadyOutput =
+        monitorReadyStatus.has_value()
+            ? filterOutputForTarget(*monitorReadyStatus, targetNodeName)
+            : std::nullopt;
+    if (!check(monitorReadyOutput.has_value(),
+               "cannot observe DSP telemetry before playback")) {
+      static_cast<void>(stopCommand(monitor));
+      return false;
+    }
+    baselineProcessedFrames = monitorReadyOutput->dspProcessedFrames;
+  }
 
   const auto audioPath = directory / "silent.f32";
   if (!check(writeSilentAudio(audioPath, selected->channelCount, 96'000),
              "cannot create silent routing probe")) {
+    if (monitor > 0) {
+      static_cast<void>(stopCommand(monitor));
+    }
     return false;
   }
+  const auto playbackNodeName =
+      "pipetune.test.playback." + std::to_string(getpid());
+  const auto playbackProperties =
+      "{ node.name = \"" + playbackNodeName +
+      "\" media.role = \"Test\" state.restore-props = false }";
   const auto playback = startCommand(
       {"pw-cat", "--playback", "--target", selected->targetNodeName,
        "--rate", "48000", "--channels",
-       std::to_string(selected->channelCount), "--format", "f32", "-"},
+       std::to_string(selected->channelCount), "--format", "f32",
+       "--properties", playbackProperties, "-"},
       audioPath);
-  if (!check(playback > 0, "cannot start the silent routing probe")) {
+  if (!check(playback > 0 &&
+                 waitForGraphNode(playbackNodeName, true,
+                                  std::chrono::seconds(3)),
+             "cannot start the silent routing probe")) {
+    if (monitor > 0) {
+      static_cast<void>(stopCommand(monitor));
+    }
     return false;
   }
   const auto processed = waitForControlStatus(
       socketPath,
-      [baselineProcessedFrames](const auto &status) {
-        return status.dspProcessedFrames > baselineProcessedFrames;
+      [targetNodeName, baselineProcessedFrames](const auto &status) {
+        const auto output = filterOutputForTarget(status, targetNodeName);
+        return output.has_value() &&
+               output->dspProcessedFrames > baselineProcessedFrames;
       },
       std::chrono::seconds(4));
   const auto playbackStopped = stopCommand(playback);
+  auto playbackRemoved = true;
+  auto idleBaseline = std::optional<pipetune::ControlFilterOutputStatus>{};
+  auto idleFinal = std::optional<pipetune::ControlFilterOutputStatus>{};
+  auto monitorBytesAtIdleStart = std::optional<std::uintmax_t>{};
+  auto monitorBytesAtIdleEnd = std::optional<std::uintmax_t>{};
+  if (requireActivePolicy) {
+    playbackRemoved = waitForGraphNode(
+        playbackNodeName, false, std::chrono::seconds(3));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1250));
+    const auto baselineStatus = readControlStatus(socketPath);
+    if (baselineStatus.has_value()) {
+      idleBaseline = filterOutputForTarget(*baselineStatus, targetNodeName);
+    }
+    monitorBytesAtIdleStart = fileSize(monitorPath);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1250));
+    const auto finalStatus = readControlStatus(socketPath);
+    if (finalStatus.has_value()) {
+      idleFinal = filterOutputForTarget(*finalStatus, targetNodeName);
+    }
+    monitorBytesAtIdleEnd = fileSize(monitorPath);
+  }
+  const auto monitorAlive = monitor <= 0 || commandIsAlive(monitor);
+  const auto monitorStopped = monitor <= 0 || stopCommand(monitor);
   return check(processed.has_value(),
                "routed playback did not advance DSP telemetry") &&
-         check(playbackStopped, "cannot stop the silent routing probe");
+         check(playbackStopped, "cannot stop the silent routing probe") &&
+         check(playbackRemoved,
+               "routed playback node remained after the player stopped") &&
+         check(!requireActivePolicy ||
+                   (idleBaseline.has_value() && idleFinal.has_value()),
+               "cannot observe DSP telemetry after the player stopped") &&
+         check(!requireActivePolicy ||
+                   (idleBaseline->activeOutputSampleRate != 0 &&
+                    idleFinal->activeOutputSampleRate != 0),
+               "output monitor did not keep the physical output active") &&
+         check(!requireActivePolicy || monitorAlive,
+               "output monitor stopped during the idle observation") &&
+         check(!requireActivePolicy ||
+                   (monitorBytesAtIdleStart.has_value() &&
+                    monitorBytesAtIdleEnd.has_value() &&
+                    *monitorBytesAtIdleEnd > *monitorBytesAtIdleStart),
+               "output monitor did not receive data while DSP was idle") &&
+         check(!requireActivePolicy ||
+                   (idleFinal->dspProcessedFrames ==
+                        idleBaseline->dspProcessedFrames &&
+                    idleFinal->dspProcessingNanoseconds ==
+                        idleBaseline->dspProcessingNanoseconds),
+               "an output monitor must not drive DSP after the player stops") &&
+         check(monitorStopped, "cannot stop the output monitor");
 }
 
 static bool responseHasPerOutputRate(
