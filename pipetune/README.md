@@ -47,6 +47,8 @@ not supported by this MVP.
   each omitted node.
 - Publishes a WirePlumber 0.5 smart-filter pair and a WirePlumber 0.4 endpoint
   contract with the same transparent playback behavior.
+- Keeps PipeTune's internal processing nodes out of desktop input and output
+  device selectors while retaining transparent WirePlumber routing.
 - Follows the negotiated graph rate or requests a fixed 44.1, 48, 96, 192, or
   384 kHz rate, with suggested or forced PipeWire enforcement.
 - Loads validated scalar, architecture-baseline SIMD, and applicable
@@ -389,9 +391,10 @@ Setup performs the following operations:
 - validates an explicitly supplied preset before making external changes;
 - saves that preset atomically with user-only permissions, or preserves the
   existing startup selection when omitted;
-- installs the WirePlumber 0.4 compatibility fragment and runtime scripts and
-  restarts WirePlumber once when any managed file changes; WirePlumber 0.5
-  ignores the Lua policy and uses PipeTune's smart-filter node properties;
+- installs the WirePlumber 0.4 compatibility policy and the 0.4/0.5 internal
+  node visibility policy, then restarts WirePlumber once when any managed file
+  changes; WirePlumber 0.5 uses PipeTune's smart-filter node properties for
+  routing;
 - reloads, enables, and restarts `pipetune.service`, then verifies it is
   active;
 - removes a PipeTune-managed GTK autostart mask and safely restores any custom
@@ -460,7 +463,7 @@ pipetune unsetup
 ```
 
 This installs a managed user XDG autostart mask, asks the GTK singleton to
-quit, disables and stops the service, removes the WirePlumber 0.4 compatibility
+quit, disables and stops the service, removes all PipeTune-managed WirePlumber
 files, and restarts WirePlumber when necessary. Existing PipeTune
 configuration is retained so a later `pipetune setup` resumes the same
 selection. Use `pipetune unsetup --purge` to additionally delete the shared

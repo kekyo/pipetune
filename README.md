@@ -99,7 +99,9 @@ pipetune setup
 `setup` reloads, enables, and restarts the systemd user service, verifies that
 it is active, and then launches the PipeTune GTK application in the system
 tray. It also installs the WirePlumber 0.4 compatibility files; WirePlumber 0.5
-uses PipeTune's smart-filter properties directly.
+uses PipeTune's smart-filter properties directly. On both versions it installs
+a visibility policy so PipeTune's internal processing endpoints do not appear
+as selectable output devices.
 
 ![System tray](./images/system-tray.png)
 
@@ -288,9 +290,9 @@ sudo apt remove pipetune
 ```
 
 `unsetup` quits the GTK application, disables and stops the user service,
-removes the WirePlumber 0.4 compatibility files, and installs a user
-autostart mask so the GTK application stays disabled. It preserves the
-startup selection. Use
+removes the PipeTune-managed WirePlumber files, and installs a user autostart
+mask so the GTK application stays disabled. It preserves the startup selection.
+Use
 `pipetune unsetup --purge` to also remove PipeTune's application
 configuration.
 

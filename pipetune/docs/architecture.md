@@ -64,6 +64,7 @@ PipeTune publishes this node contract:
 | `filter.smart` | `true` | omitted |
 | `filter.smart.name` | `net.kekyo.pipetune` | omitted |
 | `media.role` | `DSP` | `PipeTune-Filter-Output` |
+| `node.pipetune.internal` | `true` | omitted |
 | `target.endpoint` | `endpoint.pipetune.playback` | omitted |
 | `node.pipetune.target-endpoint` | `endpoint.pipetune.playback` | omitted |
 | `node.passive` | omitted | `true` |
@@ -83,15 +84,27 @@ to the filter input and connects the filter output to the ordinary default
 sink. A change to the desktop default output therefore changes the downstream
 link without a PipeTune control request.
 
+`pipetune setup` also installs the visibility component at the standard 0.5
+configuration and data locations:
+
+```text
+$XDG_CONFIG_HOME/wireplumber/wireplumber.conf.d/60-pipetune-node-visibility.conf
+$XDG_DATA_HOME/wireplumber/scripts/pipetune-node-visibility.lua
+```
+
+When `XDG_DATA_HOME` is unset, its standard `$HOME/.local/share` fallback is
+used.
+
 ### WirePlumber 0.4
 
 WirePlumber 0.4 does not implement the 0.5 smart-filter policy. `pipetune
-setup` installs one configuration fragment and two runtime policy scripts:
+setup` installs one configuration fragment and three runtime policy scripts:
 
 ```text
 $XDG_CONFIG_HOME/wireplumber/policy.lua.d/60-pipetune-filter.lua
 $XDG_CONFIG_HOME/wireplumber/scripts/pipetune-endpoint-client.lua
 $XDG_CONFIG_HOME/wireplumber/scripts/pipetune-endpoint-device.lua
+$XDG_CONFIG_HOME/wireplumber/scripts/pipetune-node-visibility.lua
 ```
 
 The `60-` prefix makes the fragment run after WirePlumber's endpoint defaults
@@ -110,10 +123,17 @@ client endpoint routing, then the device policy links it to the current
 default sink. The capture endpoint preserves ordinary source routing while
 endpoint policy is active.
 
-Setup snapshots and atomically updates all three managed files, then restarts
+Both WirePlumber versions run the same visibility policy. It removes all
+permissions for the marked filter input and the 0.4 endpoint backing nodes from
+every client except WirePlumber and the client that owns the node. Without read
+permission, desktop control panels and PulseAudio compatibility clients do not
+receive those nodes, while WirePlumber can still create and maintain the
+internal links.
+
+Setup snapshots and atomically updates all six managed files, then restarts
 `wireplumber.service` once if any changed. WirePlumber 0.5 ignores the 0.4 Lua
 configuration path and uses the smart-filter properties instead. `pipetune
-unsetup` removes all three files and restarts WirePlumber when necessary.
+unsetup` removes all six files and restarts WirePlumber when necessary.
 
 ## Real-time data flow
 
@@ -273,10 +293,10 @@ device and volume policy.
 
 The setup and unsetup coordinators invoke `systemctl` and `pipetune-gtk` with
 direct argument vectors and no shell. Setup snapshots the managed
-configuration, WirePlumber 0.4 policy files, service state, and GTK autostart
-state before mutation. A later failure triggers best-effort rollback. Unsetup
-removes only PipeTune-managed files, preserving a custom GTK autostart override
-through its reserved backup.
+configuration, WirePlumber 0.4/0.5 policy files, service state, and GTK
+autostart state before mutation. A later failure triggers best-effort rollback.
+Unsetup removes only PipeTune-managed files, preserving a custom GTK autostart
+override through its reserved backup.
 
 ## GTK control plane
 
