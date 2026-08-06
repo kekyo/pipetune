@@ -54,6 +54,11 @@ confirmed every requested live change. It atomically writes the complete
 configuration snapshot and leaves the window open. The newly saved and live
 state then becomes the transaction baseline.
 
+The Advanced page's language selection participates in the same Apply and
+Cancel interaction. Apply stores it in
+`$XDG_CONFIG_HOME/pipetune/gtk.conf`, while Cancel discards the staged choice.
+The saved language takes effect the next time PipeTune GTK starts.
+
 **Cancel**, Escape, and the title-bar close button first restore the live
 configuration captured when the window opened, or the latest successfully
 applied baseline, and hide the window only after the daemon confirms the

@@ -567,12 +567,32 @@ describe('PipeTune GTK dialog', () => {
     });
   });
 
-  it('saves the UI language independently and applies it after restart', async () => {
+  it('stages the UI language until Apply and uses it after restart', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     const initial = await session.inspectConfig();
     await selectSettingsPage(3);
     await selectComboItem('languageCombo', 2);
+    const apply = await getElement('applyButton', 'button');
+    await toPass(
+      async () => {
+        expect((await apply.info()).states).toContain('sensitive');
+      },
+      {
+        timeoutMs: 10_000,
+        message: 'Apply did not become available after changing language.',
+      }
+    );
+    await expect(
+      readFile(session.languageConfigPath, 'utf8')
+    ).rejects.toThrow();
+    await waitForLabel(
+      'languageRestartNotice',
+      'Restart PipeTune GTK to use the selected language.'
+    );
+    expect(await session.inspectConfig()).toEqual(initial);
+
+    await apply.click();
     await toPass(
       async () => {
         expect(await readFile(session?.languageConfigPath ?? '', 'utf8')).toBe(
@@ -581,15 +601,9 @@ describe('PipeTune GTK dialog', () => {
       },
       {
         timeoutMs: 10_000,
-        message: 'Japanese language preference was not saved.',
+        message: 'Japanese language preference was not saved by Apply.',
       }
     );
-    await waitForLabel(
-      'languageRestartNotice',
-      'Restart PipeTune GTK to use the selected language.'
-    );
-    expect(await session.inspectConfig()).toEqual(initial);
-
     await session.restartApplication();
     await waitForLabel('statusHeadingLabel', 'PipeTune の状態');
     await waitForLabel('status-system-connection', '接続済み');
@@ -599,36 +613,56 @@ describe('PipeTune GTK dialog', () => {
     expect(await session.inspectConfig()).toEqual(initial);
   });
 
-  it('reverts the language selector and logs a preference save failure', async () => {
+  it('discards a staged UI language when Cancel closes the dialog', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await selectSettingsPage(3);
+    await selectComboItem('languageCombo', 2);
+    await (await getElement('cancelButton', 'button')).click();
+    await waitForResult(
+      async () => {
+        const count = await session?.app.getWindowCount();
+        if (count !== 0) {
+          throw new Error(`dialog still has ${String(count)} windows`);
+        }
+        return true;
+      },
+      { timeoutMs: 10_000, message: 'Dialog did not close after Cancel.' }
+    );
+    await expect(
+      readFile(session.languageConfigPath, 'utf8')
+    ).rejects.toThrow();
+
+    await session.restartApplication();
+    await waitForConnected();
+    await selectSettingsPage(3);
+    const combo = await getElement('languageCombo', 'comboBox');
+    expect(await combo.isChildSelected(0)).toBe(true);
+  });
+
+  it('keeps the staged language applicable after a save failure', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     await session.blockLanguagePreferenceSave();
     await selectSettingsPage(3);
-    try {
-      await (await getElement('languageCombo', 'comboBox')).selectChildAt(2);
-    } catch (error) {
-      if (
-        !(error instanceof Error) ||
-        !error.message.includes(
-          'ComboBox child selection did not change the selected item.'
-        )
-      ) {
-        throw error;
-      }
-    }
+    await selectComboItem('languageCombo', 2);
     const combo = await getElement('languageCombo', 'comboBox');
+    const apply = await getElement('applyButton', 'button');
     await toPass(
       async () => {
-        expect(await combo.isChildSelected(0)).toBe(true);
+        expect((await apply.info()).states).toContain('sensitive');
       },
       {
         timeoutMs: 10_000,
-        message: 'Failed language selection was not reverted.',
+        message: 'Staged language did not enable Apply.',
       }
     );
+    await apply.click();
+    expect(await combo.isChildSelected(2)).toBe(true);
+    expect((await apply.info()).states).toContain('sensitive');
     expect(
       (await (await getElement('languageRestartNotice', 'label')).info()).states
-    ).not.toContain('showing');
+    ).toContain('showing');
     await toPass(
       async () => {
         expect(

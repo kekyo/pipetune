@@ -125,9 +125,6 @@ msgstr ""
 msgid "Cannot resolve preset"
 msgstr ""
 
-msgid "Cannot save language preference"
-msgstr ""
-
 msgid "Cannot save settings"
 msgstr ""
 
@@ -314,9 +311,6 @@ msgid "Input sample rate"
 msgstr ""
 
 msgid "Language"
-msgstr ""
-
-msgid "Language preference saved"
 msgstr ""
 
 msgid "Last input"

@@ -67,6 +67,7 @@ struct GtkRuntime {
   UiLocalizationEnvironment originalLocalization;
   std::filesystem::path uiLanguageConfigPath;
   UiLanguage presentationLanguage;
+  UiLanguage savedUiLanguage;
   UiLanguage uiLanguage;
   bool languageRestartRequired;
   std::string uiLanguageLoadWarning;
@@ -525,6 +526,26 @@ static UiMessage settingsOperationFailure(SettingsOperation operation) {
   return localizedMessage("Updating settings failed", {});
 }
 
+static bool languagePreferenceIsDirty(
+    const GtkRuntime &runtime) noexcept {
+  return runtime.uiLanguage != runtime.savedUiLanguage;
+}
+
+static bool dialogCanApply(const GtkRuntime &runtime) noexcept {
+  if (!runtime.dialogActive) {
+    return false;
+  }
+  const auto languageDirty = languagePreferenceIsDirty(runtime);
+  if (!runtime.transactionReady) {
+    return languageDirty;
+  }
+  const auto settingsApplicable =
+      settingsTransactionCanApply(runtime.transaction);
+  const auto settingsDirty =
+      settingsTransactionIsDirty(runtime.transaction);
+  return settingsApplicable || (languageDirty && !settingsDirty);
+}
+
 static std::string transactionStateText(const GtkRuntime &runtime) {
   if (!runtime.dialogActive) {
     return {};
@@ -553,7 +574,8 @@ static std::string transactionStateText(const GtkRuntime &runtime) {
                settingsOperationName(transaction.inFlight)) +
            "…";
   }
-  if (settingsTransactionIsDirty(transaction)) {
+  if (settingsTransactionIsDirty(transaction) ||
+      languagePreferenceIsDirty(runtime)) {
     return translate("Live preview active · changes are not saved");
   }
   return translate("Live settings match the saved configuration");
@@ -692,8 +714,7 @@ static void renderSettingsControls(GtkRuntime *runtime) {
                            runtime->dialogActive);
   gtk_widget_set_sensitive(
       runtime->ui.applyButton,
-      runtime->transactionReady &&
-          settingsTransactionCanApply(runtime->transaction));
+      dialogCanApply(*runtime));
   gtk_widget_set_sensitive(runtime->ui.cancelButton,
                            runtime->dialogActive);
   const auto transactionText = transactionStateText(*runtime);
@@ -758,6 +779,9 @@ static void beginRollbackAndClose(GtkRuntime *runtime,
   if (runtime == nullptr || !runtime->dialogActive) {
     return;
   }
+  runtime->uiLanguage = runtime->savedUiLanguage;
+  runtime->languageRestartRequired =
+      runtime->uiLanguage != runtime->presentationLanguage;
   runtime->closeAfterRollback = true;
   runtime->quitAfterRollback = quitWhenComplete;
   if (!runtime->transactionReady) {
@@ -894,30 +918,9 @@ static void onLanguageChanged(GtkComboBox *combo, gpointer userData) {
       selected == runtime->uiLanguage) {
     return;
   }
-  const auto saved = saveUiLanguagePreference(
-      runtime->uiLanguageConfigPath, selected);
-  if (!saved.error.empty()) {
-    runtime->updatingControls = true;
-    gtk_combo_box_set_active(
-        GTK_COMBO_BOX(runtime->ui.languageCombo),
-        uiLanguageComboIndex(runtime->uiLanguage));
-    runtime->updatingControls = false;
-    appendCompletedAction(
-        runtime, ActionLogSeverity::error,
-        ActionLogCategory::persistence, false,
-        localizedMessage("Cannot save language preference", {}),
-        technicalMessage(saved.error));
-    render(runtime);
-    return;
-  }
   runtime->uiLanguage = selected;
   runtime->languageRestartRequired =
       runtime->uiLanguage != runtime->presentationLanguage;
-  appendCompletedAction(
-      runtime, ActionLogSeverity::info,
-      ActionLogCategory::persistence, true,
-      localizedMessage("Language preference saved", {}),
-      technicalMessage(runtime->uiLanguageConfigPath.string()));
   render(runtime);
 }
 
@@ -1190,29 +1193,53 @@ static std::string persistenceTestDiagnostic() {
 
 static void onApplyClicked(GtkButton *, gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
-  if (!runtime->transactionReady ||
-      !settingsTransactionCanApply(runtime->transaction)) {
+  if (!dialogCanApply(*runtime)) {
     return;
+  }
+  const auto persistSettings =
+      runtime->transactionReady &&
+      settingsTransactionCanApply(runtime->transaction);
+  const auto persistLanguage = languagePreferenceIsDirty(*runtime);
+  auto persistenceTargets = std::string{};
+  if (persistSettings) {
+    persistenceTargets = runtime->startupConfigPath.string();
+  }
+  if (persistLanguage) {
+    appendDetail(persistenceTargets,
+                 runtime->uiLanguageConfigPath.string());
   }
   const auto pending = appendPendingAction(
       runtime->actionLog, currentUnixMilliseconds(),
       ActionLogCategory::persistence,
       localizedMessage("Saving all settings", {}),
-      technicalMessage(runtime->startupConfigPath.string()));
-  auto error = persistenceTestDiagnostic();
-  if (error.empty()) {
-    error = pipetune::saveStartupConfig(
-        runtime->startupConfigPath, runtime->transaction.desiredLive);
+      technicalMessage(persistenceTargets));
+  auto error = std::string{};
+  if (persistSettings) {
+    error = persistenceTestDiagnostic();
+    if (error.empty()) {
+      error = pipetune::saveStartupConfig(
+          runtime->startupConfigPath, runtime->transaction.desiredLive);
+    }
+    completeSettingsPersistence(runtime->transaction, error.empty(), error);
+    if (error.empty()) {
+      runtime->savedConfig = runtime->transaction.saved;
+    }
+  }
+  if (error.empty() && persistLanguage) {
+    const auto saved = saveUiLanguagePreference(
+        runtime->uiLanguageConfigPath, runtime->uiLanguage);
+    error = saved.error;
+    if (error.empty()) {
+      runtime->savedUiLanguage = runtime->uiLanguage;
+    }
   }
   const auto success = error.empty();
-  completeSettingsPersistence(runtime->transaction, success, error);
   if (success) {
-    runtime->savedConfig = runtime->transaction.saved;
     completePendingAction(
         runtime->actionLog, pending, currentUnixMilliseconds(), true,
         ActionLogSeverity::info,
         localizedMessage("All settings saved", {}),
-        technicalMessage(runtime->startupConfigPath.string()));
+        technicalMessage(persistenceTargets));
   } else {
     setControlDiagnostic(
         runtime->state,
@@ -1787,6 +1814,7 @@ static int runApplication(int argc, char **argv) {
       .originalLocalization = originalLocalization,
       .uiLanguageConfigPath = uiLanguageConfigPath,
       .presentationLanguage = presentationLanguage,
+      .savedUiLanguage = presentationLanguage,
       .uiLanguage = presentationLanguage,
       .languageRestartRequired = false,
       .uiLanguageLoadWarning = loadedLanguage.warning,

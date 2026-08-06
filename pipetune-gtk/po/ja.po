@@ -129,9 +129,6 @@ msgstr "プリセットを準備できません"
 msgid "Cannot resolve preset"
 msgstr "プリセットを解決できません"
 
-msgid "Cannot save language preference"
-msgstr "言語設定を保存できません"
-
 msgid "Cannot save settings"
 msgstr "設定を保存できません"
 
@@ -319,9 +316,6 @@ msgstr "入力サンプルレート"
 
 msgid "Language"
 msgstr "言語"
-
-msgid "Language preference saved"
-msgstr "言語設定を保存しました"
 
 msgid "Last input"
 msgstr "最終入力"
