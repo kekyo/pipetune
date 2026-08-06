@@ -44,7 +44,7 @@ FilterGraphProperties makeFilterGraphProperties(
   result.input.emplace_back("node.always-process", "true");
   result.input.emplace_back("filter.smart", "true");
   result.input.emplace_back("filter.smart.name", "net.kekyo.pipetune");
-  result.input.emplace_back("target.endpoint", "pipetune.playback");
+  result.input.emplace_back("target.endpoint", "endpoint.pipetune.playback");
   result.input.emplace_back("channelmix.min-volume", "1.0");
   result.input.emplace_back("channelmix.max-volume", "1.0");
 
@@ -64,4 +64,3 @@ FilterGraphProperties makeFilterGraphProperties(
 }
 
 } // namespace pipetune
-

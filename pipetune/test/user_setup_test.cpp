@@ -76,6 +76,9 @@ static pipetune::UserManagementPaths makePaths(
       .autostartBackupPath =
           directory / "config" / "autostart" /
           "net.kekyo.pipetune-gtk.desktop.pipetune-backup",
+      .wirePlumberPolicyPath =
+          directory / "config" / "wireplumber" / "policy.lua.d" /
+          "90-pipetune-filter.lua",
       .systemctlExecutable = "/test/systemctl",
       .gtkExecutable = "/test/pipetune-gtk",
   };
@@ -160,7 +163,14 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
          check(readFile(paths.autostartPath) == customOverride &&
                    !std::filesystem::exists(paths.autostartBackupPath),
                "setup must restore a backed-up custom autostart override") &&
-         check(runner.invocations.size() == 7,
+         check(std::filesystem::exists(paths.wirePlumberPolicyPath),
+               "setup must install the WirePlumber 0.4 compatibility policy") &&
+         check(readFile(paths.wirePlumberPolicyPath).find(
+                   "endpoint.pipetune.playback") != std::string::npos &&
+                   readFile(paths.wirePlumberPolicyPath).find(
+                       "endpoint.pipetune.capture") != std::string::npos,
+               "compatibility policy must preserve playback and capture routing") &&
+         check(runner.invocations.size() == 8,
                "setup process invocation count differs") &&
          check(invocationMatches(
                    runner.invocations[2], "/test/systemctl",
@@ -169,21 +179,26 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
                "setup must reload the user manager first") &&
          check(invocationMatches(
                    runner.invocations[3], "/test/systemctl",
+                   {"--user", "restart", "wireplumber.service"},
+                   pipetune::ProcessWaitMode::wait),
+               "setup must reload WirePlumber after installing its policy") &&
+         check(invocationMatches(
+                   runner.invocations[4], "/test/systemctl",
                    {"--user", "enable", "pipetune.service"},
                    pipetune::ProcessWaitMode::wait),
                "setup enable invocation differs") &&
          check(invocationMatches(
-                   runner.invocations[4], "/test/systemctl",
+                   runner.invocations[5], "/test/systemctl",
                    {"--user", "restart", "pipetune.service"},
                    pipetune::ProcessWaitMode::wait),
                "setup restart invocation differs") &&
          check(invocationMatches(
-                   runner.invocations[5], "/test/systemctl",
+                   runner.invocations[6], "/test/systemctl",
                    {"--user", "is-active", "--quiet", "pipetune.service"},
                    pipetune::ProcessWaitMode::wait),
                "setup active verification differs") &&
          check(invocationMatches(
-                   runner.invocations[6], "/test/pipetune-gtk",
+                   runner.invocations[7], "/test/pipetune-gtk",
                    {"--hidden"}, pipetune::ProcessWaitMode::detached),
                "setup must finish by launching GTK hidden");
 }
@@ -237,8 +252,8 @@ static bool testSetupRollback(const std::filesystem::path &directory) {
   }
   auto runner = FakeProcessRunner{
       .results = {processResult(0), processResult(0), processResult(0),
-                  processResult(0), processResult(1), processResult(0),
-                  processResult(0)},
+                  processResult(0), processResult(0), processResult(1),
+                  processResult(0), processResult(0), processResult(0)},
       .invocations = {}};
   const auto result = pipetune::executeUserSetup(
       {.effectiveUserId = 1000,
@@ -253,21 +268,28 @@ static bool testSetupRollback(const std::filesystem::path &directory) {
          check(restored.error.empty() && restored.found &&
                    restored.presetPath == oldPreset,
                "failed setup must restore the previous configuration") &&
-         check(runner.invocations.size() == 7,
+         check(!std::filesystem::exists(paths.wirePlumberPolicyPath),
+               "failed setup must restore the previous WirePlumber policy") &&
+         check(runner.invocations.size() == 9,
                "setup rollback invocation count differs") &&
          check(invocationMatches(
-                   runner.invocations[5], "/test/systemctl",
-                   {"--user", "enable", "pipetune.service"},
+                   runner.invocations[6], "/test/systemctl",
+                   {"--user", "restart", "wireplumber.service"},
                    pipetune::ProcessWaitMode::wait) &&
                    invocationMatches(
-                       runner.invocations[6], "/test/systemctl",
+                       runner.invocations[7], "/test/systemctl",
+                   {"--user", "enable", "pipetune.service"},
+                       pipetune::ProcessWaitMode::wait) &&
+                   invocationMatches(
+                       runner.invocations[8], "/test/systemctl",
                        {"--user", "restart", "pipetune.service"},
                        pipetune::ProcessWaitMode::wait),
-               "setup rollback must restore enabled and active state");
+               "setup rollback must restore WirePlumber and service state");
 }
 
 static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
   const auto paths = makePaths(directory / "unsetup");
+  writeFile(paths.wirePlumberPolicyPath, "managed policy");
   writeFile(paths.autostartPath,
             "[Desktop Entry]\nType=Application\nX-Custom=true\n");
   const auto saved = pipetune::clearStartupPreset(paths.configPath);
@@ -276,7 +298,8 @@ static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
   }
   writeFile(paths.legacyConfigPath, "legacy");
   auto runner =
-      FakeProcessRunner{.results = {processResult(0), processResult(0)},
+      FakeProcessRunner{.results = {processResult(0), processResult(0),
+                                    processResult(0)},
                         .invocations = {}};
   auto restore = FakeRestore{.calls = 0, .success = true};
   const auto result = pipetune::executeUserUnsetup(
@@ -288,7 +311,7 @@ static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
        .restoreDefaultSink = fakeRestoreDefaultSink,
        .restoreUserData = &restore});
   return check(result.success, result.error) &&
-         check(runner.invocations.size() == 2,
+         check(runner.invocations.size() == 3,
                "unsetup process invocation count differs") &&
          check(invocationMatches(
                    runner.invocations[0], "/test/pipetune-gtk",
@@ -299,6 +322,13 @@ static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
                    {"--user", "disable", "--now", "pipetune.service"},
                    pipetune::ProcessWaitMode::wait),
                "unsetup service stop invocation differs") &&
+         check(invocationMatches(
+                   runner.invocations[2], "/test/systemctl",
+                   {"--user", "restart", "wireplumber.service"},
+                   pipetune::ProcessWaitMode::wait),
+               "unsetup must reload WirePlumber after removing its policy") &&
+         check(!std::filesystem::exists(paths.wirePlumberPolicyPath),
+               "unsetup must remove the WirePlumber 0.4 compatibility policy") &&
          check(restore.calls == 1,
                "unsetup must restore a physical default sink") &&
          check(pipetune::isPipeTuneManagedAutostartMask(

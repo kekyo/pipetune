@@ -39,7 +39,7 @@ static bool testSmartFilterPairContract() {
                    "net.kekyo.pipetune",
                "filter input must publish a stable smart-filter name") &&
          check(property(graph.input, "target.endpoint") ==
-                   "pipetune.playback",
+                   "endpoint.pipetune.playback",
                "filter input must identify the WirePlumber 0.4 endpoint") &&
          check(property(graph.output, "media.class") ==
                    "Stream/Output/Audio",

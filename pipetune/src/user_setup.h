@@ -25,6 +25,8 @@ struct UserManagementPaths {
   std::filesystem::path autostartPath;
   /** Non-desktop backup reserved for an existing custom override. */
   std::filesystem::path autostartBackupPath;
+  /** WirePlumber 0.4 endpoint policy fragment managed by PipeTune. */
+  std::filesystem::path wirePlumberPolicyPath;
   /** Absolute systemctl executable path. */
   std::filesystem::path systemctlExecutable;
   /** Absolute pipetune-gtk executable path. */
