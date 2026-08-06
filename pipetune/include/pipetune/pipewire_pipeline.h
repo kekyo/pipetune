@@ -22,30 +22,21 @@ namespace pipetune {
 using PipeWireReadyCallback = void (*)(void *userData);
 
 /**
- * Configures the PipeWire nodes surrounding one native DSP pipeline.
+ * Configures the PipeWire nodes forming one policy-linked DSP filter.
  */
 struct PipeWirePipelineOptions {
-  /** Stable PipeWire node name exposed as the virtual system sink. */
-  std::string sinkName;
-  /** Human-readable virtual sink description. */
-  std::string sinkDescription;
-  /**
-   * Preferred sink node.name; empty follows the physical system default.
-   *
-   * A missing preference falls back to the physical system default and is
-   * restored automatically when the preferred node returns.
-   */
-  std::string targetObject;
+  /** Stable PipeWire node name exposed as the filter input. */
+  std::string filterName;
+  /** Human-readable filter input description. */
+  std::string filterDescription;
   /** Initial preset path, or empty when the supplied pipeline is bypass. */
   std::filesystem::path initialPresetPath;
   /** Startup configuration diagnostic reported until a live mode change. */
   std::string initialConfigurationError;
   /** User-only control socket path, or empty to disable live control. */
   std::filesystem::path controlSocketPath;
-  /** Initial capture, playback media-format, and DSP rate in hertz. */
+  /** Initial filter and DSP rate in hertz. */
   std::uint32_t dspSampleRate;
-  /** Initial PipeWire playback graph-rate hint in hertz. */
-  std::uint32_t outputSampleRate;
   /** Initial Max/fixed and suggest/force policy. */
   SampleRatePolicy ratePolicy;
   /** Fixed planar channel count, from one through eight. */
@@ -54,13 +45,6 @@ struct PipeWirePipelineOptions {
   std::uint32_t maxFrames;
   /** Inter-stream ring capacity; must be at least maxFrames. */
   std::uint32_t ringCapacityFrames;
-  /**
-   * True to make the virtual sink the effective system default for the run.
-   *
-   * The configured session-manager default is not changed. An orderly signal
-   * restores the selected physical sink before the function returns.
-   */
-  bool manageDefaultSink;
   /** One-shot readiness callback, or null when no notification is needed. */
   PipeWireReadyCallback readyCallback;
   /** Opaque argument passed to readyCallback. */
@@ -103,18 +87,16 @@ struct PipeWireRunResult {
   std::uint64_t underrunFrames;
   /** DSP blocks that could not be processed and were passed through. */
   std::uint64_t processingErrors;
-  /** Last physical node.name selected for playback, or empty when unavailable. */
-  std::string selectedTarget;
 };
 
 /**
- * Publishes a virtual sink and forwards its processed PCM to a real sink.
+ * Publishes a WirePlumber-recognized input/output filter node pair.
  *
  * The supplied DSP pipeline must have been prepared for the same sample rate,
  * at least channelCount channels, and at least maxFrames frames. Ownership is
  * retained for the complete run so control requests can replace the pipeline.
- * This function blocks according to mode and does not allocate in PipeWire
- * process callbacks.
+ * WirePlumber owns target selection and volume policy. This function blocks
+ * according to mode and does not allocate in PipeWire process callbacks.
  *
  * @param pipeline Owned prepared native EffeTune pipeline.
  * @param options PipeWire stream and bridge configuration.

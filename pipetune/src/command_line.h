@@ -22,16 +22,6 @@ enum class CommandLineAction {
   daemon,
   /** Bypass live and startup DSP processing. */
   bypass,
-  /** List physical outputs reported by the running engine. */
-  outputList,
-  /** Show the preferred and effective engine-owned output. */
-  outputGet,
-  /** Set and persist an explicit preferred output. */
-  outputSet,
-  /** Clear the explicit preference and follow the system default. */
-  outputClear,
-  /** Interactively choose and persist an output preference. */
-  outputSelect,
   /** Show the configured and effective sample-rate state. */
   rateGet,
   /** List output sample-rate capabilities. */
@@ -54,8 +44,6 @@ enum class CommandLineAction {
   loadPreset,
   /** Ask a running PipeTune process for its current status. */
   status,
-  /** Restore an available physical sink as the PipeWire default. */
-  restoreDefault,
   /** Print command usage. */
   help,
   /** Print the PipeTune version. */
@@ -74,12 +62,6 @@ struct CommandLineOptions {
   std::filesystem::path configPath;
   /** Explicit control socket path, or empty for the XDG runtime default. */
   std::filesystem::path controlSocketPath;
-  /** Preferred PipeWire node.name for outputSet, or empty otherwise. */
-  std::string outputTarget;
-  /** PipeWire target object, or empty for the current default sink. */
-  std::string targetObject;
-  /** Stable virtual sink node name. */
-  std::string sinkName;
   /** DSP and PipeWire graph-rate policy. */
   SampleRatePolicy ratePolicy;
   /** Direct-run or dspSet native backend choice. */

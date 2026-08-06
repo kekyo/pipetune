@@ -100,14 +100,12 @@ static bool testOrderlySignalShutdown(
     close(descriptors[0]);
     const auto result = pipetune::runPipeWirePipeline(
         std::move(pipeline),
-        {.sinkName = "pipetune_signal_test_" + std::string(processId),
-         .sinkDescription = "PipeTune signal integration test",
-         .targetObject = "",
+        {.filterName = "pipetune_signal_test_" + std::string(processId),
+         .filterDescription = "PipeTune signal integration test",
          .initialPresetPath = initialPresetPath,
          .initialConfigurationError = {},
          .controlSocketPath = socketPath,
          .dspSampleRate = 48000,
-         .outputSampleRate = 48000,
          .ratePolicy =
              {.mode = pipetune::SampleRateMode::fixed,
               .fixedRate = 48000,
@@ -116,7 +114,6 @@ static bool testOrderlySignalShutdown(
          .channelCount = 2,
          .maxFrames = 8192,
          .ringCapacityFrames = 16384,
-         .manageDefaultSink = true,
          .readyCallback = reportReadyToParent,
          .readyUserData = &descriptors[1]},
         pipetune::PipeWireRunMode::untilInterrupted);
@@ -290,14 +287,12 @@ static bool testCrashRecovery(
     close(descriptors[0]);
     const auto result = pipetune::runPipeWirePipeline(
         std::move(pipeline),
-        {.sinkName = sinkName,
-         .sinkDescription = "PipeTune crash integration test",
-         .targetObject = "",
+        {.filterName = sinkName,
+         .filterDescription = "PipeTune crash integration test",
          .initialPresetPath = initialPresetPath,
          .initialConfigurationError = {},
          .controlSocketPath = {},
          .dspSampleRate = 48000,
-         .outputSampleRate = 48000,
          .ratePolicy =
              {.mode = pipetune::SampleRateMode::fixed,
               .fixedRate = 48000,
@@ -306,7 +301,6 @@ static bool testCrashRecovery(
          .channelCount = 2,
          .maxFrames = 8192,
          .ringCapacityFrames = 16384,
-         .manageDefaultSink = true,
          .readyCallback = reportReadyToParent,
          .readyUserData = &descriptors[1]},
         pipetune::PipeWireRunMode::untilInterrupted);
@@ -413,14 +407,12 @@ int main() {
   auto readyNotifications = 0;
   const auto result = pipetune::runPipeWirePipeline(
       std::move(readyPipeline.pipeline),
-      {.sinkName = "pipetune_test_" + processId,
-       .sinkDescription = "PipeTune integration test",
-       .targetObject = "",
+      {.filterName = "pipetune_test_" + processId,
+       .filterDescription = "PipeTune integration test",
        .initialPresetPath = presetPath,
        .initialConfigurationError = {},
        .controlSocketPath = {},
        .dspSampleRate = 48000,
-       .outputSampleRate = 48000,
        .ratePolicy =
            {.mode = pipetune::SampleRateMode::fixed,
             .fixedRate = 48000,
@@ -429,7 +421,6 @@ int main() {
        .channelCount = 2,
        .maxFrames = 8192,
        .ringCapacityFrames = 16384,
-       .manageDefaultSink = false,
        .readyCallback = countReadyNotification,
        .readyUserData = &readyNotifications},
       pipetune::PipeWireRunMode::untilReady);
@@ -438,10 +429,8 @@ int main() {
   return check(result.success, result.error) &&
                  check(readyNotifications == 1,
                        "PipeWire readiness must be reported exactly once") &&
-                 check(!result.selectedTarget.empty() &&
-                           result.selectedTarget !=
-                               "pipetune_test_" + processId,
-                       "automatic tracking must select a non-PipeTune sink")
+                 check(result.processingErrors == 0,
+                       "readiness must not report processing errors")
              ? 0
              : 1;
 }

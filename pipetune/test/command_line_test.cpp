@@ -23,8 +23,6 @@ static bool testRunDefaults() {
                "preset path differs") &&
          check(result.options.controlSocketPath.empty(),
                "default control socket path must be automatic") &&
-         check(result.options.targetObject.empty(), "default target must be automatic") &&
-         check(result.options.sinkName == "pipetune_sink", "default sink name differs") &&
          check(result.options.ratePolicy.mode ==
                    pipetune::SampleRateMode::maximum &&
                    result.options.ratePolicy.fixedRate == 0 &&
@@ -42,18 +40,14 @@ static bool testRunDefaults() {
 }
 
 static bool testExplicitOptions() {
-  constexpr auto arguments = std::array<std::string_view, 15>{
-      "--check",   "--channels", "8",          "--target",
-      "alsa_out", "--sink-name", "studio",     "--socket",
-      "/tmp/pipetune.sock", "--dsp-backend", "simd", "--dsp-variant",
-      "x86-64-v4", "--preset",
-      "studio.effetune_preset"};
+  constexpr auto arguments = std::array<std::string_view, 11>{
+      "--check", "--channels", "8", "--socket", "/tmp/pipetune.sock",
+      "--dsp-backend", "simd", "--dsp-variant", "x86-64-v4",
+      "--preset", "studio.effetune_preset"};
   const auto result = pipetune::parseCommandLine(arguments);
   return check(result.error.empty(), result.error) &&
          check(result.options.checkOnly, "--check must select readiness mode") &&
          check(result.options.channelCount == 8, "explicit channels differ") &&
-         check(result.options.targetObject == "alsa_out", "explicit target differs") &&
-         check(result.options.sinkName == "studio", "explicit sink name differs") &&
          check(result.options.controlSocketPath == "/tmp/pipetune.sock",
                "explicit control socket differs") &&
          check(result.options.dspBackend ==
@@ -127,63 +121,6 @@ static bool testBypassAction() {
          check(explicitResult.options.controlSocketPath ==
                    "/tmp/pipetune.sock",
                "explicit bypass socket differs");
-}
-
-static bool testOutputActions() {
-  constexpr auto list =
-      std::array<std::string_view, 2>{"output", "list"};
-  constexpr auto jsonList = std::array<std::string_view, 5>{
-      "output", "list", "--json", "--socket", "/tmp/pipetune.sock"};
-  constexpr auto get =
-      std::array<std::string_view, 3>{"output", "get", "--json"};
-  constexpr auto set = std::array<std::string_view, 5>{
-      "output", "set", "alsa_output.usb", "--socket", "/tmp/pipetune.sock"};
-  constexpr auto clear = std::array<std::string_view, 4>{
-      "output", "clear", "--socket", "/tmp/pipetune.sock"};
-  constexpr auto select = std::array<std::string_view, 4>{
-      "output", "select", "--socket", "/tmp/pipetune.sock"};
-  const auto listResult = pipetune::parseCommandLine(list);
-  const auto jsonListResult = pipetune::parseCommandLine(jsonList);
-  const auto getResult = pipetune::parseCommandLine(get);
-  const auto setResult = pipetune::parseCommandLine(set);
-  const auto clearResult = pipetune::parseCommandLine(clear);
-  const auto selectResult = pipetune::parseCommandLine(select);
-  return check(listResult.error.empty(), listResult.error) &&
-         check(listResult.options.action ==
-                   pipetune::CommandLineAction::outputList,
-               "output list action differs") &&
-         check(!listResult.options.json,
-               "output list must default to human-readable output") &&
-         check(jsonListResult.error.empty(), jsonListResult.error) &&
-         check(jsonListResult.options.action ==
-                   pipetune::CommandLineAction::outputList &&
-                   jsonListResult.options.json,
-               "output list --json action differs") &&
-         check(jsonListResult.options.controlSocketPath ==
-                   "/tmp/pipetune.sock",
-               "output list socket differs") &&
-         check(getResult.error.empty(), getResult.error) &&
-         check(getResult.options.action ==
-                   pipetune::CommandLineAction::outputGet &&
-                   getResult.options.json,
-               "output get action differs") &&
-         check(setResult.error.empty(), setResult.error) &&
-         check(setResult.options.action ==
-                   pipetune::CommandLineAction::outputSet,
-               "output set action differs") &&
-         check(setResult.options.outputTarget == "alsa_output.usb",
-               "output set target differs") &&
-         check(setResult.options.controlSocketPath ==
-                   "/tmp/pipetune.sock",
-               "output set socket differs") &&
-         check(clearResult.error.empty(), clearResult.error) &&
-         check(clearResult.options.action ==
-                   pipetune::CommandLineAction::outputClear,
-               "output clear action differs") &&
-         check(selectResult.error.empty(), selectResult.error) &&
-         check(selectResult.options.action ==
-                   pipetune::CommandLineAction::outputSelect,
-               "output select action differs");
 }
 
 static bool testRateActions() {
@@ -346,27 +283,6 @@ static bool testConfigResetAction() {
                "config reset --yes must skip confirmation");
 }
 
-static bool testDefaultRestorationAction() {
-  constexpr auto defaultArguments =
-      std::array<std::string_view, 1>{"--restore-default"};
-  constexpr auto namedArguments = std::array<std::string_view, 3>{
-      "--restore-default", "--sink-name", "custom_sink"};
-  const auto defaultResult = pipetune::parseCommandLine(defaultArguments);
-  const auto namedResult = pipetune::parseCommandLine(namedArguments);
-  return check(defaultResult.error.empty(), defaultResult.error) &&
-         check(defaultResult.options.action ==
-                   pipetune::CommandLineAction::restoreDefault,
-               "--restore-default must select fail-open restoration") &&
-         check(defaultResult.options.sinkName == "pipetune_sink",
-               "restoration default sink name differs") &&
-         check(namedResult.error.empty(), namedResult.error) &&
-         check(namedResult.options.action ==
-                   pipetune::CommandLineAction::restoreDefault,
-               "named restoration action differs") &&
-         check(namedResult.options.sinkName == "custom_sink",
-               "restoration exclusion name differs");
-}
-
 static bool testInformationalActions() {
   constexpr auto help = std::array<std::string_view, 1>{"--help"};
   constexpr auto version = std::array<std::string_view, 1>{"--version"};
@@ -386,14 +302,6 @@ static bool testInformationalActions() {
                    "pipetune bypass [--socket PATH]") !=
                    std::string_view::npos,
                "usage must explain persistent bypass") &&
-         check(pipetune::commandLineUsage().find(
-                   "pipetune output list [--json] [--socket PATH]") !=
-                   std::string_view::npos,
-               "usage must explain output listing") &&
-         check(pipetune::commandLineUsage().find(
-                   "pipetune output set TARGET [--socket PATH]") !=
-                   std::string_view::npos,
-               "usage must explain preferred-output selection") &&
          check(pipetune::commandLineUsage().find(
                    "pipetune rate get [--json] [--socket PATH]") !=
                    std::string_view::npos,
@@ -427,7 +335,7 @@ static bool testInformationalActions() {
                    std::string_view::npos,
                "usage must explain configuration reset") &&
          check(pipetune::commandLineUsage().find(
-                   "Reset Bypass, output, PCM rate, and DSP backend.") !=
+                   "Reset Bypass, PCM rate, and DSP backend.") !=
                    std::string_view::npos,
                "usage must describe every reset selection");
 }
@@ -661,11 +569,10 @@ static bool testRejectedArguments() {
 int main() {
   const auto passed = testRunDefaults() && testExplicitOptions() &&
                       testControlActions() && testDaemonAction() &&
-                      testBypassAction() && testOutputActions() &&
-                      testRateActions() && testDspActions() &&
+                      testBypassAction() && testRateActions() &&
+                      testDspActions() &&
                       testUserSetupActions() &&
                       testConfigResetAction() &&
-                      testDefaultRestorationAction() &&
                       testInformationalActions() && testRejectedArguments();
   return passed ? 0 : 1;
 }

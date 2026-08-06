@@ -5,7 +5,6 @@
 #include "default_sink_restore.h"
 #include "dsp_backend_command.h"
 #include "installed_tools.h"
-#include "output_command.h"
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
 #include "pipetune/dsp_pipeline.h"
@@ -64,8 +63,8 @@ static int runConfigResetCommand(
     const pipetune::CommandLineOptions &options) {
   if (!options.assumeYes) {
     std::cout
-        << "Reset PipeTune configuration to Bypass, system-default output, "
-           "Max + Suggest, and scalar DSP? [y/N] "
+        << "Reset PipeTune configuration to Bypass, Max + Suggest, and "
+           "scalar DSP? [y/N] "
         << std::flush;
     auto response = std::string{};
     if (!std::getline(std::cin, response) ||
@@ -90,8 +89,8 @@ static int runConfigResetCommand(
     std::cerr << "pipetune: " << result.error << '\n';
     return 1;
   }
-  std::cout << "PipeTune configuration was reset to Bypass, system-default "
-               "output, Max + Suggest, and scalar DSP.\n";
+  std::cout << "PipeTune configuration was reset to Bypass, Max + Suggest, "
+               "and scalar DSP.\n";
   return 0;
 }
 
@@ -281,19 +280,16 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
   }
   const auto result = pipetune::runPipeWirePipeline(
       std::move(prepared.pipeline),
-      {.sinkName = "pipetune_sink",
-       .sinkDescription = "PipeTune Processed Audio",
-       .targetObject = prepared.preferredOutput,
+      {.filterName = "pipetune_sink",
+       .filterDescription = "PipeTune Processed Audio",
        .initialPresetPath = prepared.activePresetPath,
        .initialConfigurationError = prepared.configurationError,
        .controlSocketPath = socket.path,
        .dspSampleRate = kInitialSampleRate,
-       .outputSampleRate = kInitialSampleRate,
        .ratePolicy = prepared.ratePolicy,
        .channelCount = 2,
        .maxFrames = kMaximumProcessFrames,
        .ringCapacityFrames = kRingCapacityFrames,
-       .manageDefaultSink = true,
        .readyCallback = nullptr,
        .readyUserData = nullptr,
        .dspBackends = std::move(prepared.dspBackends),
@@ -344,87 +340,6 @@ static int runPersistentBypass(
     }
     std::cout << ".\n";
   }
-  return 0;
-}
-
-static bool isOutputCommand(pipetune::CommandLineAction action) {
-  return action == pipetune::CommandLineAction::outputList ||
-         action == pipetune::CommandLineAction::outputGet ||
-         action == pipetune::CommandLineAction::outputSet ||
-         action == pipetune::CommandLineAction::outputClear ||
-         action == pipetune::CommandLineAction::outputSelect;
-}
-
-static int runOutputCommand(
-    const pipetune::CommandLineOptions &options) {
-  const auto socket =
-      pipetune::resolveControlSocketPath(options.controlSocketPath);
-  if (!socket.error.empty()) {
-    std::cerr << "pipetune: " << socket.error << '\n';
-    return 1;
-  }
-
-  if (options.action == pipetune::CommandLineAction::outputList ||
-      options.action == pipetune::CommandLineAction::outputGet) {
-    const auto queried = pipetune::queryOutputStatus(socket.path);
-    if (!queried.success) {
-      std::cerr << "pipetune: " << queried.error << '\n';
-      return 1;
-    }
-    if (options.json) {
-      std::cout << queried.json << '\n';
-    } else if (options.action ==
-               pipetune::CommandLineAction::outputList) {
-      std::cout << pipetune::formatOutputDeviceList(queried.status);
-    } else {
-      std::cout << pipetune::formatOutputSelection(queried.status);
-    }
-    return 0;
-  }
-
-  auto selectedTarget = options.outputTarget;
-  auto clearPreference =
-      options.action == pipetune::CommandLineAction::outputClear;
-  if (options.action == pipetune::CommandLineAction::outputSelect) {
-    if (!isatty(STDIN_FILENO)) {
-      std::cerr
-          << "pipetune: output select requires an interactive terminal\n";
-      return 1;
-    }
-    const auto queried = pipetune::queryOutputStatus(socket.path);
-    if (!queried.success) {
-      std::cerr << "pipetune: " << queried.error << '\n';
-      return 1;
-    }
-    const auto choice = pipetune::promptForOutputSelection(
-        queried.status, std::cin, std::cout);
-    if (!choice.success) {
-      std::cerr << "pipetune: " << choice.error << '\n';
-      return 1;
-    }
-    clearPreference = choice.clearPreference;
-    selectedTarget = choice.target;
-  }
-
-  const auto config = resolveUserStartupConfigPath();
-  if (!config.error.empty()) {
-    std::cerr << "pipetune: " << config.error << '\n';
-    return 1;
-  }
-  const auto change =
-      clearPreference
-          ? pipetune::executeClearPreferredOutput(
-                {.configPath = config.path, .socketPath = socket.path})
-          : pipetune::executeSetPreferredOutput(
-                {.configPath = config.path, .socketPath = socket.path},
-                selectedTarget);
-  if (!change.success) {
-    std::cerr << "pipetune: " << change.error << '\n';
-    return 1;
-  }
-  std::cout << (clearPreference ? "Output preference cleared.\n"
-                                : "Output preference saved.\n")
-            << pipetune::formatOutputSelection(change.status);
   return 0;
 }
 
@@ -571,9 +486,6 @@ int main(int argc, char **argv) {
   if (parsed.options.action == pipetune::CommandLineAction::bypass) {
     return runPersistentBypass(parsed.options);
   }
-  if (isOutputCommand(parsed.options.action)) {
-    return runOutputCommand(parsed.options);
-  }
   if (isRateCommand(parsed.options.action)) {
     return runRateCommand(parsed.options);
   }
@@ -589,18 +501,6 @@ int main(int argc, char **argv) {
   }
   if (parsed.options.action == pipetune::CommandLineAction::unsetup) {
     return runUnsetupCommand(parsed.options);
-  }
-  if (parsed.options.action ==
-      pipetune::CommandLineAction::restoreDefault) {
-    const auto restored =
-        pipetune::restorePipeWireDefaultSink(parsed.options.sinkName);
-    if (!restored.success) {
-      std::cerr << "pipetune: " << restored.error << '\n';
-      return 1;
-    }
-    std::cout << "Restored PipeWire default sink: "
-              << restored.selectedTarget << '\n';
-    return 0;
   }
   if (parsed.options.action == pipetune::CommandLineAction::loadPreset ||
       parsed.options.action == pipetune::CommandLineAction::status) {
@@ -658,19 +558,16 @@ int main(int argc, char **argv) {
   }
   const auto result = pipetune::runPipeWirePipeline(
       std::move(loaded.pipeline),
-      {.sinkName = parsed.options.sinkName,
-       .sinkDescription = "PipeTune Processed Audio",
-       .targetObject = parsed.options.targetObject,
+      {.filterName = "pipetune_sink",
+       .filterDescription = "PipeTune Processed Audio",
        .initialPresetPath = presetPath,
        .initialConfigurationError = {},
        .controlSocketPath = controlSocket,
        .dspSampleRate = kInitialSampleRate,
-       .outputSampleRate = kInitialSampleRate,
        .ratePolicy = parsed.options.ratePolicy,
        .channelCount = parsed.options.channelCount,
        .maxFrames = kMaximumProcessFrames,
        .ringCapacityFrames = kRingCapacityFrames,
-       .manageDefaultSink = !parsed.options.checkOnly,
        .readyCallback = nullptr,
        .readyUserData = nullptr,
        .dspBackends = std::move(backends),
@@ -683,7 +580,7 @@ int main(int argc, char **argv) {
     return 1;
   }
   if (parsed.options.checkOnly) {
-    std::cout << "PipeWire pipeline is ready: " << parsed.options.sinkName << '\n';
+    std::cout << "PipeWire filter is ready: pipetune_sink\n";
   }
   if (result.overrunFrames != 0 || result.underrunFrames != 0 ||
       result.processingErrors != 0) {
