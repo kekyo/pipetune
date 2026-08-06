@@ -176,11 +176,13 @@ A live rate change runs outside the real-time callbacks:
 5. rebuild the active preset or bypass pipeline at the negotiated rate; and
 6. publish the final status or the transition diagnostic.
 
-A short silent interval is intentional. The output uses a 5 ms fade-out, at
-least 20 ms of silence, and a 5 ms fade-in that waits for new PCM. The same
-boundary smoothing covers PipeWire format loss and ordinary ring underruns.
-Preset, bypass, and backend mutations are serialized with the transition so no
-partially rebuilt state becomes visible.
+A short silent interval is intentional. The output uses a 5 ms fade-out,
+suppresses at least the first 20 ms of queued PCM after a discontinuity, and
+uses a 5 ms fade-in. Frames emitted while the input remains empty do not
+consume that guard, so a delayed tail from a stopped stream cannot resume after
+the initial silence. The same boundary smoothing covers PipeWire format loss
+and ordinary ring underruns. Preset, bypass, and backend mutations are
+serialized with the transition so no partially rebuilt state becomes visible.
 
 ## Preset to native DSP mapping
 

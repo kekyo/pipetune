@@ -204,7 +204,7 @@ std::uint32_t AudioTransitionSilencer::apply(
       switch (phase_) {
       case Phase::steady:
         if (!available) {
-          beginTransition(0, fadeFrames);
+          beginTransition(silenceFrames, fadeFrames);
           reconsiderPhase = true;
         }
         break;
@@ -238,9 +238,11 @@ std::uint32_t AudioTransitionSilencer::apply(
                         frame] = 0.0F;
         }
         adjusted = true;
-        --remainingFrames_;
-        if (remainingFrames_ == 0) {
-          phase_ = Phase::awaitingAudio;
+        if (available) {
+          --remainingFrames_;
+          if (remainingFrames_ == 0) {
+            phase_ = Phase::awaitingAudio;
+          }
         }
         break;
       case Phase::awaitingAudio:
@@ -264,7 +266,7 @@ std::uint32_t AudioTransitionSilencer::apply(
         break;
       case Phase::fadingIn:
         if (!available) {
-          beginTransition(0, fadeFrames);
+          beginTransition(silenceFrames, fadeFrames);
           reconsiderPhase = true;
         } else {
           const auto gain =

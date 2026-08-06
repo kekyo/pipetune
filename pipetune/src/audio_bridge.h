@@ -98,8 +98,10 @@ private:
  * Smooths output discontinuities through a guaranteed silence interval.
  *
  * The object fades the last emitted sample to silence, waits for a configured
- * silence interval, and fades in only after queued PCM becomes available.
- * It also smooths ordinary ring-buffer underrun and recovery boundaries.
+ * silence interval, and fades in only after queued PCM becomes available. Only
+ * suppressed PCM advances the silence interval, so time spent in an underrun
+ * cannot expire the guard before delayed frames arrive. It also smooths
+ * ordinary ring-buffer underrun and recovery boundaries.
  */
 class AudioTransitionSilencer final {
 public:
@@ -115,7 +117,7 @@ public:
    *
    * The caller must serialize this operation with apply().
    *
-   * @param silenceFrames Number of frames to remain fully silent.
+   * @param silenceFrames Number of available PCM frames to suppress.
    * @param fadeFrames Number of frames in each fade-out and fade-in.
    */
   void start(std::uint32_t silenceFrames,
@@ -127,7 +129,7 @@ public:
    * The last emitted sample is forgotten so reconnecting cannot replay it as
    * a fade-out. New PCM still fades in after the silence interval.
    *
-   * @param silenceFrames Number of frames to remain fully silent.
+   * @param silenceFrames Number of available PCM frames to suppress.
    * @param fadeFrames Number of frames in the subsequent fade-in.
    */
   void reset(std::uint32_t silenceFrames,
@@ -144,7 +146,8 @@ public:
    * @param frameCount Number of frames in each channel.
    * @param availableFrames Queued PCM frames at the beginning of the buffer.
    * @param generation Active DSP pipeline generation.
-   * @param silenceFrames Silence interval to start after a generation change.
+   * @param silenceFrames Available PCM frames to suppress after a generation
+   * change or underrun.
    * @param fadeFrames Number of frames in each transition fade.
    * @return Number of frames adjusted in this call.
    */

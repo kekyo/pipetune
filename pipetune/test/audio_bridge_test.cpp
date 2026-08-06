@@ -225,6 +225,48 @@ static bool testUnderrunBoundariesAreSmoothed() {
                "audio must fade in only when new PCM becomes available");
 }
 
+static bool testLateAudioAfterUnderrunIsDiscarded() {
+  auto silencer = pipetune::AudioTransitionSilencer(6);
+  auto active = std::vector<float>{1.0F};
+  if (!check(silencer.apply(active, 1, 1, 1, 6, 4, 2) == 0,
+             "available audio must initially pass unchanged")) {
+    return false;
+  }
+
+  auto firstGap = std::vector<float>(6, 0.0F);
+  if (!check(silencer.apply(firstGap, 1, 6, 0, 6, 4, 2) == 6,
+             "a long input gap must remain silent") ||
+      !check(firstGap ==
+                 std::vector<float>({0.5F, 0.0F, 0.0F, 0.0F, 0.0F,
+                                     0.0F}),
+             "the input gap must contain only the fade-out")) {
+    return false;
+  }
+
+  auto lateOldAudio = std::vector<float>{1.0F, 1.0F};
+  if (!check(silencer.apply(lateOldAudio, 1, 2, 2, 6, 4, 2) == 2,
+             "late PCM must be consumed by the silence guard") ||
+      !check(lateOldAudio == std::vector<float>(2, 0.0F),
+             "late PCM from the previous stream must not become audible")) {
+    return false;
+  }
+
+  auto secondGap = std::vector<float>(4, 0.0F);
+  if (!check(silencer.apply(secondGap, 1, 4, 0, 6, 4, 2) == 4,
+             "a second gap must retain the remaining silence guard") ||
+      !check(secondGap == std::vector<float>(4, 0.0F),
+             "a second gap must not replay the previous sample")) {
+    return false;
+  }
+
+  auto newAudio = std::vector<float>{-1.0F, -1.0F, -1.0F, -1.0F};
+  return check(silencer.apply(newAudio, 1, 4, 4, 6, 4, 2) == 4,
+               "stable replacement PCM must complete the silence guard") &&
+         check(newAudio ==
+                   std::vector<float>({0.0F, 0.0F, -0.5F, -1.0F}),
+               "replacement PCM must fade in after the late tail is discarded");
+}
+
 static bool testDisconnectedOutputDoesNotReplayOldSample() {
   auto silencer = pipetune::AudioTransitionSilencer(5);
   auto active = std::vector<float>{1.0F, -1.0F};
@@ -254,6 +296,7 @@ int main() {
                       testStreamRestartProducesSilenceWithoutPipelineChange() &&
                       testStreamRestartIsSmoothedAroundSilence() &&
                       testUnderrunBoundariesAreSmoothed() &&
+                      testLateAudioAfterUnderrunIsDiscarded() &&
                       testDisconnectedOutputDoesNotReplayOldSample();
   return passed ? 0 : 1;
 }
