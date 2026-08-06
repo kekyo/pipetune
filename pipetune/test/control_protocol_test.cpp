@@ -153,6 +153,7 @@ static bool testSuccessResponse() {
       {.processingMode = pipetune::ProcessingMode::preset,
        .activePreset = "/tmp/live.effetune_preset",
        .configurationError = {},
+       .configurationRevision = 41,
        .activePluginCount = 7,
        .overrunFrames = 11,
        .underrunFrames = 12,
@@ -232,6 +233,8 @@ static bool testSuccessResponse() {
       !check(parsed.status.activePreset ==
                  "/tmp/live.effetune_preset",
              "parsed response preset differs") ||
+      !check(parsed.status.configurationRevision == 41,
+             "parsed response configuration revision differs") ||
       !check(parsed.status.activePluginCount == 7,
              "parsed response plugin count differs") ||
       !check(parsed.status.overrunFrames == 11 &&
@@ -294,6 +297,7 @@ static bool testSuccessResponse() {
       std::string_view(yyjson_get_str(yyjson_obj_get(root, "preset"))) ==
           "/tmp/live.effetune_preset" &&
       yyjson_is_null(yyjson_obj_get(root, "configurationError")) &&
+      yyjson_get_uint(yyjson_obj_get(root, "configurationRevision")) == 41 &&
       yyjson_get_uint(yyjson_obj_get(root, "activePluginCount")) == 7 &&
       yyjson_get_uint(yyjson_obj_get(root, "overrunFrames")) == 11 &&
       yyjson_get_uint(yyjson_obj_get(root, "underrunFrames")) == 12 &&
@@ -360,6 +364,7 @@ static bool testStatusEvent() {
       {.processingMode = pipetune::ProcessingMode::preset,
        .activePreset = "/tmp/event.effetune_preset",
        .configurationError = {},
+       .configurationRevision = 42,
        .activePluginCount = 2,
        .overrunFrames = 21,
        .underrunFrames = 22,
@@ -382,13 +387,17 @@ static bool testStatusEvent() {
   const auto parsed = pipetune::parseControlResponse(event);
   auto invalidTransition = event;
   auto missingRateError = event;
+  auto missingRevision = event;
   if (!check(replaceOnce(invalidTransition,
                          R"json("rateTransitioning":true)json",
                          R"json("rateTransitioning":"true")json"),
              "cannot prepare invalid transition state") ||
       !check(replaceOnce(missingRateError, "rateError",
                          "missingRateError"),
-             "cannot prepare missing rate error")) {
+             "cannot prepare missing rate error") ||
+      !check(replaceOnce(missingRevision, "configurationRevision",
+                         "missingConfigurationRevision"),
+             "cannot prepare missing configuration revision")) {
     return false;
   }
   return check(parsed.valid, parsed.error) &&
@@ -401,6 +410,8 @@ static bool testStatusEvent() {
          check(parsed.status.activePreset ==
                    "/tmp/event.effetune_preset",
                "status event preset differs") &&
+         check(parsed.status.configurationRevision == 42,
+               "status event configuration revision differs") &&
          check(parsed.status.activePluginCount == 2,
                "status event plugin count differs") &&
          check(parsed.status.overrunFrames == 21 &&
@@ -433,7 +444,9 @@ static bool testStatusEvent() {
          check(!pipetune::parseControlResponse(invalidTransition).valid,
                "non-boolean rate transition state must be rejected") &&
          check(!pipetune::parseControlResponse(missingRateError).valid,
-               "missing rate error field must be rejected");
+               "missing rate error field must be rejected") &&
+         check(!pipetune::parseControlResponse(missingRevision).valid,
+               "missing configuration revision must be rejected");
 }
 
 static bool testBypassStatus() {

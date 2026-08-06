@@ -430,6 +430,9 @@ static std::string makeControlStatusMessage(
                          status.activePreset) ||
       !addNullableString(document.get(), root, "configurationError",
                          status.configurationError) ||
+      !yyjson_mut_obj_add_uint(document.get(), root,
+                               "configurationRevision",
+                               status.configurationRevision) ||
       !yyjson_mut_obj_add_uint(document.get(), root, "activePluginCount",
                                status.activePluginCount) ||
       !yyjson_mut_obj_add_uint(document.get(), root, "overrunFrames",
@@ -950,6 +953,8 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       !readNullableStringField(root, "preset", status.activePreset) ||
       !readNullableStringField(root, "configurationError",
                                status.configurationError) ||
+      !readCounterField(root, "configurationRevision",
+                        status.configurationRevision) ||
       !readSizeField(root, "activePluginCount",
                      status.activePluginCount) ||
       !readCounterField(root, "overrunFrames", status.overrunFrames) ||

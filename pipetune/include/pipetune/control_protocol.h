@@ -110,6 +110,8 @@ struct ControlRuntimeStatus {
   std::string activePreset;
   /** Startup configuration diagnostic, or empty when configuration is valid. */
   std::string configurationError;
+  /** Monotonic revision of the live user-selected configuration. */
+  std::uint64_t configurationRevision = 0;
   /** Number of enabled native DSP nodes. */
   std::size_t activePluginCount;
   /** Input frames discarded because the bridge was full. */

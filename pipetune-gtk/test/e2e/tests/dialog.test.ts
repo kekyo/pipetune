@@ -450,6 +450,52 @@ describe('PipeTune GTK dialog', () => {
     );
   });
 
+  it('keeps confirmed SIMD and sample-rate edits applicable after older status events', async () => {
+    session = await launchPipeTuneGtk({
+      rejectedCommand: undefined,
+      staleStatusAfterChange: true,
+    });
+    await waitForConnected();
+    await session.clearRequests();
+
+    await selectSettingsPage(2);
+    await selectComboItem('dspBackendCombo', 4);
+    await waitForCommands(['set-dsp-backend']);
+    await waitForLabel('status-errors-configuration', 'E2E stale status');
+    await waitForLabel('status-errors-configuration', 'None');
+
+    const apply = await getElement('applyButton', 'button');
+    await toPass(
+      async () => {
+        expect((await apply.info()).states).toContain('sensitive');
+        expect(
+          (await (await getElement('dspBackendCombo', 'comboBox')).info())
+            .states
+        ).toContain('sensitive');
+      },
+      {
+        timeoutMs: 10_000,
+        message: 'An older status event locked confirmed SIMD settings.',
+      }
+    );
+
+    await selectSettingsPage(1);
+    await selectComboItem('rateCombo', 3);
+    await waitForCommands(['set-rate']);
+    await waitForLabel('status-errors-configuration', 'E2E stale status');
+    await waitForLabel('status-errors-configuration', 'None');
+    await waitForLabel('status-rates-fixed', '96 kHz');
+    await toPass(
+      async () => {
+        expect((await apply.info()).states).toContain('sensitive');
+      },
+      {
+        timeoutMs: 10_000,
+        message: 'Apply did not remain available after the sample-rate edit.',
+      }
+    );
+  });
+
   it.each(['escape', 'close'] as const)(
     'rolls live changes back before hiding on %s',
     async (method) => {
@@ -665,5 +711,47 @@ describe('PipeTune GTK dialog', () => {
       requests.find((request) => request.command === 'set-rate')
     ).toMatchObject({ sampleRate: 96000 });
     await waitForLabel('status-rates-fixed', '96 kHz');
+  });
+
+  it('keeps Restore defaults usable while disconnected', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await selectSettingsPage(3);
+    await session.clearRequests();
+
+    await session.disconnectDaemon();
+    await waitForLabel('status-system-connection', 'Disconnected');
+    const restore = await getElement('restoreDefaultsButton', 'button');
+    expect((await restore.info()).states).toContain('sensitive');
+    await restore.click();
+
+    await session.reconnectDaemon();
+    await waitForLabel('status-system-connection', 'Connected');
+    const requests = await waitForCommands([
+      'subscribe',
+      'set-rate',
+      'set-dsp-backend',
+      'bypass',
+    ]);
+    expect(requests.map((request) => request.command)).toEqual(
+      expect.arrayContaining([
+        'subscribe',
+        'set-rate',
+        'set-dsp-backend',
+        'bypass',
+      ])
+    );
+    await waitForLabel('status-live-processing', 'Bypass');
+    await toPass(
+      async () => {
+        expect(
+          (await (await getElement('applyButton', 'button')).info()).states
+        ).toContain('sensitive');
+      },
+      {
+        timeoutMs: 10_000,
+        message: 'Restored defaults did not become applicable after reconnect.',
+      }
+    );
   });
 });

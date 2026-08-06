@@ -102,6 +102,7 @@ struct GtkRuntime {
 
 static void render(GtkRuntime *runtime);
 static void driveSettings(GtkRuntime *runtime);
+static void beginTransactionFromRuntime(GtkRuntime *runtime);
 static void presentWindow(GtkRuntime *runtime,
                           guint32 userInteractionTime);
 static void requestQuit(GtkRuntime *runtime);
@@ -687,7 +688,8 @@ static void renderSettingsControls(GtkRuntime *runtime) {
       editable && rateSettings.ratePolicy.mode ==
                       pipetune::SampleRateMode::fixed);
   gtk_widget_set_sensitive(runtime->ui.dspBackendCombo, editable);
-  gtk_widget_set_sensitive(runtime->ui.restoreDefaultsButton, editable);
+  gtk_widget_set_sensitive(runtime->ui.restoreDefaultsButton,
+                           runtime->dialogActive);
   gtk_widget_set_sensitive(
       runtime->ui.applyButton,
       runtime->transactionReady &&
@@ -1132,15 +1134,42 @@ static void onPresetFileSet(GtkFileChooserButton *, gpointer userData) {
 
 static void onRestoreDefaultsClicked(GtkButton *, gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
-  if (!controlsAreEditable(*runtime)) {
+  if (runtime == nullptr || !runtime->dialogActive) {
     return;
+  }
+  const auto defaults = defaultStartupConfig();
+  if (!runtime->startupConfigAvailable &&
+      !runtime->startupConfigPath.empty()) {
+    const auto error = pipetune::saveStartupConfig(
+        runtime->startupConfigPath, defaults);
+    if (!error.empty()) {
+      appendCompletedAction(
+          runtime, ActionLogSeverity::error,
+          ActionLogCategory::persistence, false,
+          localizedMessage("Cannot save settings", {}),
+          technicalMessage(error));
+      revealActionLog(runtime);
+    } else {
+      runtime->savedConfig = defaults;
+      runtime->startupConfigAvailable = true;
+    }
+  }
+  if (!runtime->transactionReady) {
+    beginTransactionFromRuntime(runtime);
+  }
+  if (!runtime->transactionReady) {
+    runtime->transaction = beginSettingsTransaction(
+        runtime->savedConfig, runtime->savedConfig, 0, false);
+    runtime->transactionReady = true;
   }
   appendCompletedAction(
       runtime, ActionLogSeverity::info, ActionLogCategory::settings, true,
       localizedMessage("Defaults selected", {}),
       localizedMessage(
           "Defaults are being applied live; use Apply to save them", {}));
-  editDesiredSettings(runtime, defaultStartupConfig());
+  restoreSettingsDefaults(runtime->transaction, defaults);
+  render(runtime);
+  driveSettings(runtime);
 }
 
 static std::string persistenceTestDiagnostic() {
@@ -1280,6 +1309,9 @@ static void onSettingsOperationReply(const ControlClientReply &reply,
   const auto diagnostic =
       success ? std::string{} : controlDiagnostic(reply);
   completeSettingsOperation(runtime->transaction, success, confirmed,
+                            success
+                                ? reply.response.status.configurationRevision
+                                : runtime->transaction.confirmedRevision,
                             diagnostic);
   completePendingAction(
       runtime->actionLog, pendingId, currentUnixMilliseconds(), success,
@@ -1356,7 +1388,9 @@ static void beginTransactionFromRuntime(GtkRuntime *runtime) {
   }
   const auto live = startupConfigFromRuntime(runtime->state.runtime);
   runtime->transaction =
-      beginSettingsTransaction(runtime->savedConfig, live, true);
+      beginSettingsTransaction(
+          runtime->savedConfig, live,
+          runtime->state.runtime.configurationRevision, true);
   runtime->transactionReady = true;
   if (live.presetFound) {
     runtime->lastPresetPath = live.presetPath;
@@ -1385,14 +1419,18 @@ static void onSubscriptionMessage(
     if (!runtime->transactionReady) {
       beginTransactionFromRuntime(runtime);
     } else if (!runtime->transaction.connected) {
-      reconnectSettingsTransaction(runtime->transaction, live);
+      reconnectSettingsTransaction(
+          runtime->transaction, live,
+          runtime->state.runtime.configurationRevision);
       appendCompletedAction(
           runtime, ActionLogSeverity::info, ActionLogCategory::control,
           true, localizedMessage("PipeTune reconnected", {}),
           localizedMessage(
               "Pending dialog settings will be reapplied", {}));
     } else {
-      observeSettingsRuntime(runtime->transaction, live);
+      observeSettingsRuntime(
+          runtime->transaction, live,
+          runtime->state.runtime.configurationRevision);
       if (runtime->transaction.conflict) {
         appendCompletedAction(
             runtime, ActionLogSeverity::warning,

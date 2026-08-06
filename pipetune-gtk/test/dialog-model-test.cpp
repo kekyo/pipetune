@@ -39,7 +39,7 @@ static pipetune::StartupConfig baseConfig() {
 static bool testLiveCoalescingApplyAndCancel() {
   const auto saved = baseConfig();
   auto transaction =
-      pipetune_gtk::beginSettingsTransaction(saved, saved, true);
+      pipetune_gtk::beginSettingsTransaction(saved, saved, 1, true);
   auto desired = saved;
   desired.ratePolicy = {
       .mode = pipetune::SampleRateMode::fixed,
@@ -65,7 +65,7 @@ static bool testLiveCoalescingApplyAndCancel() {
       .enforcement = pipetune::SampleRateEnforcement::force,
   };
   pipetune_gtk::completeSettingsOperation(
-      transaction, true, firstConfirmation, {});
+      transaction, true, firstConfirmation, 2, {});
   if (!check(pipetune_gtk::nextSettingsOperation(transaction) ==
                  pipetune_gtk::SettingsOperation::rate,
              "an edit during a request must coalesce into one follow-up")) {
@@ -77,7 +77,7 @@ static bool testLiveCoalescingApplyAndCancel() {
   auto liveConfirmation = firstConfirmation;
   liveConfirmation.ratePolicy = desired.ratePolicy;
   pipetune_gtk::completeSettingsOperation(
-      transaction, true, liveConfirmation, {});
+      transaction, true, liveConfirmation, 3, {});
   if (!check(pipetune_gtk::settingsTransactionCanApply(transaction),
              "Apply must enable after every live change is confirmed") ||
       !check(pipetune_gtk::settingsTransactionIsDirty(transaction),
@@ -104,7 +104,7 @@ static bool testLiveCoalescingApplyAndCancel() {
   liveConfirmation.dspSimdVariant =
       pipetune::DspSimdVariant::x86_64_v3;
   pipetune_gtk::completeSettingsOperation(
-      transaction, true, liveConfirmation, {});
+      transaction, true, liveConfirmation, 4, {});
   pipetune_gtk::requestSettingsCancel(transaction);
   if (!check(pipetune_gtk::nextSettingsOperation(transaction) ==
                  pipetune_gtk::SettingsOperation::dspBackend,
@@ -114,7 +114,7 @@ static bool testLiveCoalescingApplyAndCancel() {
   pipetune_gtk::beginSettingsOperation(
       transaction, pipetune_gtk::SettingsOperation::dspBackend);
   pipetune_gtk::completeSettingsOperation(
-      transaction, true, transaction.baselineLive, {});
+      transaction, true, transaction.baselineLive, 5, {});
   return check(
       pipetune_gtk::settingsTransactionShouldClose(transaction),
       "Cancel may close only after rollback is confirmed");
@@ -123,7 +123,7 @@ static bool testLiveCoalescingApplyAndCancel() {
 static bool testFailuresDisconnectAndConflict() {
   const auto saved = baseConfig();
   auto transaction =
-      pipetune_gtk::beginSettingsTransaction(saved, saved, true);
+      pipetune_gtk::beginSettingsTransaction(saved, saved, 1, true);
   auto desired = saved;
   desired.dspBackend = pipetune::DspBackendKind::simd;
   desired.dspSimdVariant = pipetune::DspSimdVariant::x86_64_v3;
@@ -131,7 +131,7 @@ static bool testFailuresDisconnectAndConflict() {
   pipetune_gtk::beginSettingsOperation(
       transaction, pipetune_gtk::SettingsOperation::dspBackend);
   pipetune_gtk::completeSettingsOperation(
-      transaction, false, saved, "backend rejected");
+      transaction, false, saved, 1, "backend rejected");
   if (!check(pipetune_gtk::nextSettingsOperation(transaction) ==
                  pipetune_gtk::SettingsOperation::none,
              "a rejected live edit must not retry indefinitely") ||
@@ -158,7 +158,7 @@ static bool testFailuresDisconnectAndConflict() {
     return false;
   }
 
-  pipetune_gtk::reconnectSettingsTransaction(transaction, saved);
+  pipetune_gtk::reconnectSettingsTransaction(transaction, saved, 1);
   if (!check(transaction.connected &&
                  pipetune_gtk::nextSettingsOperation(transaction) ==
                      pipetune_gtk::SettingsOperation::dspBackend,
@@ -166,14 +166,65 @@ static bool testFailuresDisconnectAndConflict() {
     return false;
   }
 
-  transaction = pipetune_gtk::beginSettingsTransaction(saved, saved, true);
+  transaction =
+      pipetune_gtk::beginSettingsTransaction(saved, saved, 7, true);
   auto external = saved;
   external.presetPath = "/tmp/external.effetune_preset";
-  pipetune_gtk::observeSettingsRuntime(transaction, external);
+  pipetune_gtk::observeSettingsRuntime(transaction, external, 8);
   return check(transaction.conflict,
                "an unexpected external change must be detected") &&
          check(!pipetune_gtk::settingsTransactionCanApply(transaction),
                "Apply must remain disabled after an external conflict");
+}
+
+static bool testStaleStatusAndRestoreRecovery() {
+  const auto saved = baseConfig();
+  auto transaction =
+      pipetune_gtk::beginSettingsTransaction(saved, saved, 10, true);
+  auto desired = saved;
+  desired.dspBackend = pipetune::DspBackendKind::simd;
+  desired.dspSimdVariant = pipetune::DspSimdVariant::x86_64_v4;
+  pipetune_gtk::editSettingsTransaction(transaction, desired);
+  if (!check(pipetune_gtk::beginSettingsOperation(
+                 transaction,
+                 pipetune_gtk::SettingsOperation::dspBackend),
+             "the SIMD operation must start")) {
+    return false;
+  }
+  pipetune_gtk::completeSettingsOperation(
+      transaction, true, desired, 11, {});
+  pipetune_gtk::observeSettingsRuntime(transaction, saved, 10);
+  if (!check(!transaction.conflict,
+             "a status older than the confirmed reply must be ignored") ||
+      !check(pipetune_gtk::settingsTransactionCanApply(transaction),
+             "a confirmed SIMD edit must enable Apply")) {
+    return false;
+  }
+
+  auto external = desired;
+  external.ratePolicy = {
+      .mode = pipetune::SampleRateMode::fixed,
+      .fixedRate = 96000,
+      .enforcement = pipetune::SampleRateEnforcement::suggest,
+  };
+  pipetune_gtk::observeSettingsRuntime(transaction, external, 12);
+  if (!check(transaction.conflict,
+             "a newer external change must still create a conflict")) {
+    return false;
+  }
+
+  pipetune_gtk::restoreSettingsDefaults(
+      transaction,
+      {.presetFound = false,
+       .presetPath = {},
+       .ratePolicy = pipetune::defaultSampleRatePolicy(),
+       .dspBackend = pipetune::DspBackendKind::scalar,
+       .dspSimdVariant = pipetune::DspSimdVariant::automatic});
+  return check(!transaction.conflict,
+               "Restore defaults must recover an external conflict") &&
+         check(pipetune_gtk::nextSettingsOperation(transaction) ==
+                   pipetune_gtk::SettingsOperation::rate,
+               "restored defaults must resume live application");
 }
 
 static const pipetune_gtk::StatusSection *findSection(
@@ -423,6 +474,7 @@ static bool testActionLogHistory() {
 int main() {
   return testLiveCoalescingApplyAndCancel() &&
                  testFailuresDisconnectAndConflict() &&
+                 testStaleStatusAndRestoreRecovery() &&
                  testStructuredStatusModel() &&
                  testStatusLevelPresentation() && testActionLogHistory()
              ? 0

@@ -17,6 +17,11 @@
 struct FakeDaemonState {
   std::mutex mutex;
   pipetune::StartupConfig liveConfig;
+  std::uint64_t configurationRevision;
+  std::optional<std::pair<pipetune::StartupConfig, std::uint64_t>>
+      stalePublication;
+  std::uint32_t stalePublicationCount;
+  bool staleStatusAfterChange;
   std::filesystem::path requestLogPath;
   std::string rejectedCommand;
   std::uint64_t dspTelemetrySequence;
@@ -41,7 +46,8 @@ effectiveVariant(const pipetune::StartupConfig &config) {
 }
 
 static pipetune::ControlRuntimeStatus
-makeStatus(const pipetune::StartupConfig &config) {
+makeStatus(const pipetune::StartupConfig &config,
+           std::uint64_t configurationRevision) {
   const auto dspRate =
       config.ratePolicy.mode == pipetune::SampleRateMode::automatic
           ? 384000u
@@ -54,6 +60,7 @@ makeStatus(const pipetune::StartupConfig &config) {
       .activePreset =
           config.presetFound ? config.presetPath.string() : std::string{},
       .configurationError = {},
+      .configurationRevision = configurationRevision,
       .activePluginCount = config.presetFound ? 5u : 0u,
       .overrunFrames = 2,
       .underrunFrames = 3,
@@ -117,9 +124,23 @@ makeStatus(const pipetune::StartupConfig &config) {
 }
 
 static pipetune::ControlRuntimeStatus snapshotStatus(
-    FakeDaemonState &state) {
+    FakeDaemonState &state, bool publication) {
   auto lock = std::scoped_lock(state.mutex);
-  auto status = makeStatus(state.liveConfig);
+  auto config = state.liveConfig;
+  auto revision = state.configurationRevision;
+  auto stale = false;
+  if (publication && state.stalePublication.has_value()) {
+    config = state.stalePublication->first;
+    revision = state.stalePublication->second;
+    if (--state.stalePublicationCount == 0) {
+      state.stalePublication.reset();
+    }
+    stale = true;
+  }
+  auto status = makeStatus(config, revision);
+  if (stale) {
+    status.configurationError = "E2E stale status";
+  }
   status.dspProcessedFrames +=
       state.dspTelemetrySequence * status.inputSampleRate;
   status.dspProcessingNanoseconds +=
@@ -130,7 +151,7 @@ static pipetune::ControlRuntimeStatus snapshotStatus(
 
 static std::string provideStatus(void *userData) {
   auto &state = *static_cast<FakeDaemonState *>(userData);
-  return pipetune::makeControlStatusEvent(snapshotStatus(state));
+  return pipetune::makeControlStatusEvent(snapshotStatus(state, true));
 }
 
 static std::string commandName(pipetune::ControlCommand command) {
@@ -193,13 +214,15 @@ static pipetune::ControlMessageResult handleRequest(
   }
   if (parsed.request.command == pipetune::ControlCommand::status) {
     return closeResponse(pipetune::makeControlSuccessResponse(
-                             snapshotStatus(state),
+                             snapshotStatus(state, false),
                              std::span<const pipetune::ControlWarning>{}),
                          false);
   }
 
   {
     auto lock = std::scoped_lock(state.mutex);
+    const auto previous = std::pair(state.liveConfig,
+                                    state.configurationRevision);
     switch (parsed.request.command) {
     case pipetune::ControlCommand::loadPreset:
       state.liveConfig.presetFound = true;
@@ -220,10 +243,15 @@ static pipetune::ControlMessageResult handleRequest(
     case pipetune::ControlCommand::subscribe:
       break;
     }
+    ++state.configurationRevision;
+    if (state.staleStatusAfterChange) {
+      state.stalePublication = previous;
+      state.stalePublicationCount = 2;
+    }
   }
   return closeResponse(
       pipetune::makeControlSuccessResponse(
-          snapshotStatus(state),
+          snapshotStatus(state, false),
           std::span<const pipetune::ControlWarning>{}),
       true);
 }
@@ -317,6 +345,11 @@ int main(int argc, char **argv) {
   auto state = FakeDaemonState{
       .mutex = {},
       .liveConfig = loaded.config,
+      .configurationRevision = 1,
+      .stalePublication = std::nullopt,
+      .stalePublicationCount = 0,
+      .staleStatusAfterChange =
+          environmentValue("PIPETUNE_E2E_STALE_STATUS_AFTER_CHANGE") == "1",
       .requestLogPath = environmentValue("PIPETUNE_E2E_REQUEST_LOG"),
       .rejectedCommand =
           environmentValue("PIPETUNE_E2E_REJECT_COMMAND"),

@@ -7,15 +7,18 @@
 #include <yyjson.h>
 
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <cerrno>
 #include <csignal>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <sys/wait.h>
+#include <thread>
 #include <unistd.h>
 
 static bool check(bool condition, std::string_view message) {
@@ -75,6 +78,23 @@ static bool responseHasLivePreset(std::string_view response,
       yyjson_arr_size(warnings) == expectedWarningCount;
   yyjson_doc_free(document);
   return matches;
+}
+
+static std::optional<pipetune::ControlRuntimeStatus>
+waitForInactiveGraph(const std::filesystem::path &socketPath) {
+  const auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::seconds(8);
+  while (std::chrono::steady_clock::now() < deadline) {
+    const auto exchange = pipetune::exchangeControlMessage(
+        socketPath, pipetune::makeStatusControlRequest());
+    const auto parsed = pipetune::parseControlResponse(exchange.response);
+    if (exchange.error.empty() && parsed.valid && parsed.success &&
+        parsed.status.graphSampleRate == 0) {
+      return parsed.status;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  return std::nullopt;
 }
 
 static bool testOrderlySignalShutdown(
@@ -234,6 +254,32 @@ static bool testOrderlySignalShutdown(
       !check(responseHasLivePreset(statusAfterFailure.response,
                                    replacementPresetPath, 0),
              "failed loading must leave the previous preset active")) {
+    kill(child, SIGTERM);
+    auto childStatus = 0;
+    waitpid(child, &childStatus, 0);
+    return false;
+  }
+
+  const auto inactive = waitForInactiveGraph(socketPath);
+  if (!check(inactive.has_value(),
+             "PipeWire filter graph did not become idle") ||
+      !check(!inactive->rateTransitioning,
+             "an idle graph must not remain in a sample-rate transition")) {
+    kill(child, SIGTERM);
+    auto childStatus = 0;
+    waitpid(child, &childStatus, 0);
+    return false;
+  }
+  const auto backendChangeWhileIdle = pipetune::exchangeControlMessage(
+      socketPath, pipetune::makeSetDspBackendControlRequest(
+                      pipetune::DspBackendKind::scalar));
+  const auto parsedIdleBackend =
+      pipetune::parseControlResponse(backendChangeWhileIdle.response);
+  if (!check(backendChangeWhileIdle.error.empty(),
+             backendChangeWhileIdle.error) ||
+      !check(parsedIdleBackend.valid, parsedIdleBackend.error) ||
+      !check(parsedIdleBackend.success,
+             "an idle graph must still accept DSP setting changes")) {
     kill(child, SIGTERM);
     auto childStatus = 0;
     waitpid(child, &childStatus, 0);

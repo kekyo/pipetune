@@ -58,6 +58,8 @@ export interface StartupConfigSnapshot {
 export interface PipeTuneGtkTestOptions {
   /** Fake-daemon command name to reject, or undefined to accept all commands. */
   readonly rejectedCommand: string | undefined;
+  /** Publish one older configuration after each accepted live change. */
+  readonly staleStatusAfterChange?: boolean;
 }
 
 /**
@@ -106,7 +108,8 @@ const startFakeDaemon = async (
   environment: GtkAppEnvironment,
   runtimeDirectory: string,
   requestLogPath: string,
-  rejectedCommand: string | undefined
+  rejectedCommand: string | undefined,
+  staleStatusAfterChange: boolean | undefined
 ): Promise<FakeDaemon> => {
   const executable = requiredEnvironment('PIPETUNE_GTK_E2E_DAEMON');
   const child = spawn(executable, [], {
@@ -114,6 +117,8 @@ const startFakeDaemon = async (
       ...environment,
       PIPETUNE_E2E_REQUEST_LOG: requestLogPath,
       PIPETUNE_E2E_REJECT_COMMAND: rejectedCommand,
+      PIPETUNE_E2E_STALE_STATUS_AFTER_CHANGE:
+        staleStatusAfterChange === true ? '1' : undefined,
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -190,7 +195,9 @@ const inspectStartupConfig = async (
  * @returns A connected GTK session with a visible main window.
  */
 export const launchPipeTuneGtk = async (
-  options: PipeTuneGtkTestOptions = { rejectedCommand: undefined }
+  options: PipeTuneGtkTestOptions = {
+    rejectedCommand: undefined,
+  }
 ): Promise<PipeTuneGtkTestSession> => {
   const root = await mkdtemp(join(tmpdir(), 'pipetune-gtk-e2e-'));
   const runtimeDirectory = join(root, 'runtime');
@@ -244,7 +251,8 @@ export const launchPipeTuneGtk = async (
       environment,
       runtimeDirectory,
       requestLogPath,
-      options.rejectedCommand
+      options.rejectedCommand,
+      options.staleStatusAfterChange
     );
     app = await launcher.launch();
   } catch (error) {
@@ -294,7 +302,8 @@ export const launchPipeTuneGtk = async (
       environment,
       runtimeDirectory,
       requestLogPath,
-      options.rejectedCommand
+      options.rejectedCommand,
+      options.staleStatusAfterChange
     );
   };
   const release = async (): Promise<void> => {

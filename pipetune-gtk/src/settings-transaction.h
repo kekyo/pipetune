@@ -4,6 +4,7 @@
 #include "pipetune/control_protocol.h"
 #include "pipetune/startup_config.h"
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -35,6 +36,8 @@ struct SettingsTransaction {
   pipetune::StartupConfig desiredLive;
   /** Latest state confirmed by the daemon. */
   pipetune::StartupConfig confirmedLive;
+  /** Revision associated with confirmedLive. */
+  std::uint64_t confirmedRevision;
   /** Operation currently awaiting a daemon reply. */
   SettingsOperation inFlight;
   /** Desired snapshot captured when the current operation started. */
@@ -56,12 +59,14 @@ struct SettingsTransaction {
  *
  * @param saved Configuration loaded from persistent storage.
  * @param live Complete live state reported by the daemon.
+ * @param liveRevision Monotonic configuration revision reported by the daemon.
  * @param connected True when live requests may be issued immediately.
  * @return Initialized transaction with no operation in flight.
  */
 SettingsTransaction beginSettingsTransaction(
     const pipetune::StartupConfig &saved,
-    const pipetune::StartupConfig &live, bool connected);
+    const pipetune::StartupConfig &live, std::uint64_t liveRevision,
+    bool connected);
 
 /**
  * Replaces the desired settings and permits a failed operation to retry.
@@ -72,6 +77,19 @@ SettingsTransaction beginSettingsTransaction(
 void editSettingsTransaction(
     SettingsTransaction &transaction,
     const pipetune::StartupConfig &desired);
+
+/**
+ * Selects defaults as an explicit recovery from every transaction state.
+ *
+ * A pending operation may complete first, after which the default snapshot is
+ * applied. Disconnection keeps the snapshot queued until reconnection.
+ *
+ * @param transaction Transaction to recover.
+ * @param defaults Complete default configuration.
+ */
+void restoreSettingsDefaults(
+    SettingsTransaction &transaction,
+    const pipetune::StartupConfig &defaults);
 
 /**
  * Selects the next required live operation in dependency order.
@@ -98,11 +116,13 @@ bool beginSettingsOperation(SettingsTransaction &transaction,
  * @param transaction Transaction to update.
  * @param success True when the daemon accepted the request.
  * @param confirmed Complete live state returned by the daemon.
+ * @param confirmedRevision Revision returned with confirmed.
  * @param diagnostic Failure diagnostic, or empty after success.
  */
 void completeSettingsOperation(
     SettingsTransaction &transaction, bool success,
     const pipetune::StartupConfig &confirmed,
+    std::uint64_t confirmedRevision,
     std::string_view diagnostic);
 
 /**
@@ -119,10 +139,12 @@ void markSettingsDisconnected(SettingsTransaction &transaction,
  *
  * @param transaction Transaction to update.
  * @param live Complete state received after reconnection.
+ * @param liveRevision Revision associated with live.
  */
 void reconnectSettingsTransaction(
     SettingsTransaction &transaction,
-    const pipetune::StartupConfig &live);
+    const pipetune::StartupConfig &live,
+    std::uint64_t liveRevision);
 
 /**
  * Observes a subscribed live state change outside an explicit operation.
@@ -131,10 +153,12 @@ void reconnectSettingsTransaction(
  *
  * @param transaction Transaction to update.
  * @param live Complete subscribed live state.
+ * @param liveRevision Revision associated with live.
  */
 void observeSettingsRuntime(
     SettingsTransaction &transaction,
-    const pipetune::StartupConfig &live);
+    const pipetune::StartupConfig &live,
+    std::uint64_t liveRevision);
 
 /**
  * Requests restoration of the baseline captured when the dialog opened.

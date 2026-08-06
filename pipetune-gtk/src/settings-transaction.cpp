@@ -48,12 +48,14 @@ static std::string confirmationDiagnostic(SettingsOperation operation) {
 
 SettingsTransaction beginSettingsTransaction(
     const pipetune::StartupConfig &saved,
-    const pipetune::StartupConfig &live, bool connected) {
+    const pipetune::StartupConfig &live, std::uint64_t liveRevision,
+    bool connected) {
   return {
       .saved = saved,
       .baselineLive = live,
       .desiredLive = live,
       .confirmedLive = live,
+      .confirmedRevision = liveRevision,
       .inFlight = SettingsOperation::none,
       .inFlightTarget = live,
       .connected = connected,
@@ -62,6 +64,16 @@ SettingsTransaction beginSettingsTransaction(
       .liveChangeFailed = false,
       .diagnostic = {},
   };
+}
+
+void restoreSettingsDefaults(
+    SettingsTransaction &transaction,
+    const pipetune::StartupConfig &defaults) {
+  transaction.desiredLive = defaults;
+  transaction.cancelRequested = false;
+  transaction.conflict = false;
+  transaction.liveChangeFailed = false;
+  transaction.diagnostic.clear();
 }
 
 void editSettingsTransaction(
@@ -116,6 +128,7 @@ bool beginSettingsOperation(SettingsTransaction &transaction,
 void completeSettingsOperation(
     SettingsTransaction &transaction, bool success,
     const pipetune::StartupConfig &confirmed,
+    std::uint64_t confirmedRevision,
     std::string_view diagnostic) {
   const auto operation = transaction.inFlight;
   if (operation == SettingsOperation::none) {
@@ -136,6 +149,7 @@ void completeSettingsOperation(
     return;
   }
   transaction.confirmedLive = confirmed;
+  transaction.confirmedRevision = confirmedRevision;
   transaction.liveChangeFailed = false;
   transaction.diagnostic.clear();
 }
@@ -150,9 +164,11 @@ void markSettingsDisconnected(SettingsTransaction &transaction,
 
 void reconnectSettingsTransaction(
     SettingsTransaction &transaction,
-    const pipetune::StartupConfig &live) {
+    const pipetune::StartupConfig &live,
+    std::uint64_t liveRevision) {
   transaction.connected = true;
   transaction.confirmedLive = live;
+  transaction.confirmedRevision = liveRevision;
   transaction.inFlight = SettingsOperation::none;
   transaction.inFlightTarget = live;
   transaction.conflict = false;
@@ -162,16 +178,22 @@ void reconnectSettingsTransaction(
 
 void observeSettingsRuntime(
     SettingsTransaction &transaction,
-    const pipetune::StartupConfig &live) {
+    const pipetune::StartupConfig &live,
+    std::uint64_t liveRevision) {
   if (!transaction.connected) {
-    reconnectSettingsTransaction(transaction, live);
+    reconnectSettingsTransaction(transaction, live, liveRevision);
     return;
   }
   if (transaction.inFlight != SettingsOperation::none ||
-      configMatches(transaction.confirmedLive, live)) {
+      liveRevision < transaction.confirmedRevision) {
+    return;
+  }
+  if (configMatches(transaction.confirmedLive, live)) {
+    transaction.confirmedRevision = liveRevision;
     return;
   }
   transaction.confirmedLive = live;
+  transaction.confirmedRevision = liveRevision;
   transaction.conflict = true;
   transaction.liveChangeFailed = false;
   transaction.diagnostic =

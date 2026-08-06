@@ -85,6 +85,7 @@ struct PipeWireRuntime {
   ProcessingMode processingMode;
   std::string activePreset;
   std::string configurationError;
+  std::atomic<std::uint64_t> configurationRevision;
   DspBackendRuntimeState dspBackendState;
   std::mutex pipelineMutationMutex;
   std::mutex dspBackendStateMutex;
@@ -146,6 +147,7 @@ struct PipeWireRuntime {
                            : ProcessingMode::preset),
         activePreset(runtimeOptions.initialPresetPath.string()),
         configurationError(runtimeOptions.initialConfigurationError),
+        configurationRevision(0),
         dspBackendState(makeDspBackendRuntimeState(
             resolveRuntimeBackends(runtimeOptions),
             runtimeOptions.configuredDspBackend,
@@ -564,10 +566,6 @@ static void streamParameterChanged(void *data, std::uint32_t id,
       runtime.outputFormatReady = false;
     }
     runtime.graphSampleRate.store(0, std::memory_order_release);
-    {
-      auto lock = std::scoped_lock(runtime.rateStateMutex);
-      runtime.rateTransitioning = true;
-    }
     requestControlStatusUpdate(runtime);
     return;
   }
@@ -1013,6 +1011,8 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
   return {.processingMode = runtime.processingMode,
           .activePreset = runtime.activePreset,
           .configurationError = runtime.configurationError,
+          .configurationRevision = runtime.configurationRevision.load(
+              std::memory_order_acquire),
           .activePluginCount = runtime.pipeline.activePluginCount(),
           .overrunFrames = runtime.ring.overrunFrames(),
           .underrunFrames = runtime.ring.underrunFrames(),
@@ -1125,6 +1125,10 @@ static ControlMessageResult handleControlRequest(std::string_view message,
       return closeControlResponse(makeControlErrorResponse(switched.error),
                                   false);
     }
+    if (switched.changed) {
+      runtime.configurationRevision.fetch_add(1,
+                                              std::memory_order_release);
+    }
     for (auto &warning : switched.warnings) {
       warnings.push_back({.nodeIndex = warning.nodeIndex,
                           .pluginName = std::move(warning.pluginName),
@@ -1159,6 +1163,8 @@ static ControlMessageResult handleControlRequest(std::string_view message,
     runtime.processingMode = ProcessingMode::bypass;
     runtime.activePreset.clear();
     runtime.configurationError.clear();
+    runtime.configurationRevision.fetch_add(1,
+                                            std::memory_order_release);
     return closeControlResponse(
         makeControlSuccessResponse(controlStatus(runtime), warnings), true);
   }
@@ -1212,6 +1218,8 @@ static ControlMessageResult handleControlRequest(std::string_view message,
     runtime.processingMode = ProcessingMode::preset;
     runtime.activePreset = request.request.presetPath.string();
     runtime.configurationError.clear();
+    runtime.configurationRevision.fetch_add(1,
+                                            std::memory_order_release);
     return closeControlResponse(
         makeControlSuccessResponse(controlStatus(runtime), warnings), true);
   }
@@ -1235,6 +1243,7 @@ static void rateChangeRequested(void *data, std::uint64_t) {
   }
   auto previous = SampleRatePolicy{};
   auto unchanged = false;
+  auto configurationChanged = false;
   const auto currentRate =
       runtime.dspSampleRate.load(std::memory_order_acquire);
   {
@@ -1247,7 +1256,12 @@ static void rateChangeRequested(void *data, std::uint64_t) {
       runtime.configuredRatePolicy = requested;
       runtime.rateError.clear();
       runtime.rateTransitioning = true;
+      configurationChanged = true;
     }
+  }
+  if (configurationChanged) {
+    runtime.configurationRevision.fetch_add(1,
+                                            std::memory_order_release);
   }
   if (unchanged) {
     completePendingRateRequest(runtime, {});
@@ -1270,6 +1284,8 @@ static void rateChangeRequested(void *data, std::uint64_t) {
         runtime.rateTransitioning = false;
         runtime.rateError = rebuilt.error;
       }
+      runtime.configurationRevision.fetch_add(1,
+                                              std::memory_order_release);
       completePendingRateRequest(runtime, rebuilt.error);
       requestControlStatusUpdate(runtime);
       return;
