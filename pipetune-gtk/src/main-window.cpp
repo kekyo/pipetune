@@ -109,8 +109,10 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
           builder, "languageRestartNotice", GTK_TYPE_LABEL),
       .restoreDefaultsButton = requiredWidget(
           builder, "restoreDefaultsButton", GTK_TYPE_BUTTON),
-      .versionLabel =
-          requiredWidget(builder, "versionLabel", GTK_TYPE_LABEL),
+      .pipeTuneVersionLink = requiredWidget(
+          builder, "pipeTuneVersionLink", GTK_TYPE_LINK_BUTTON),
+      .effetuneVersionLink = requiredWidget(
+          builder, "effetuneVersionLink", GTK_TYPE_LINK_BUTTON),
       .logToggleButton = requiredWidget(
           builder, "logToggleButton", GTK_TYPE_TOGGLE_BUTTON),
       .logToggleLabel =
@@ -134,13 +136,17 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
   };
   auto *headerBar =
       requiredWidget(builder, "headerBar", GTK_TYPE_HEADER_BAR);
-  const auto versionText =
-      "PipeTune " + std::string(pipeTuneVersion) +
-      "  •  EffeTune DSP " + std::string(effetuneDspVersion);
+  const auto pipeTuneVersionText =
+      "PipeTune " + std::string(pipeTuneVersion);
+  const auto effetuneVersionText =
+      "EffeTune DSP " + std::string(effetuneDspVersion);
   gtk_window_set_application(GTK_WINDOW(ui.window), application);
   gtk_window_set_title(GTK_WINDOW(ui.window), "PipeTune");
   gtk_header_bar_set_title(GTK_HEADER_BAR(headerBar), "PipeTune");
-  gtk_label_set_text(GTK_LABEL(ui.versionLabel), versionText.c_str());
+  gtk_button_set_label(GTK_BUTTON(ui.pipeTuneVersionLink),
+                       pipeTuneVersionText.c_str());
+  gtk_button_set_label(GTK_BUTTON(ui.effetuneVersionLink),
+                       effetuneVersionText.c_str());
   gtk_combo_box_set_active(GTK_COMBO_BOX(ui.logFilterCombo), 0);
   gtk_window_set_default(GTK_WINDOW(ui.window), ui.applyButton);
 

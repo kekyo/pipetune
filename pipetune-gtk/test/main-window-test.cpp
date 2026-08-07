@@ -60,8 +60,10 @@ static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
                "language restart notice type differs") &&
          check(GTK_IS_BUTTON(ui.restoreDefaultsButton),
                "restore-defaults button type differs") &&
-         check(GTK_IS_LABEL(ui.versionLabel),
-               "version label type differs") &&
+         check(GTK_IS_LINK_BUTTON(ui.pipeTuneVersionLink),
+               "PipeTune version link type differs") &&
+         check(GTK_IS_LINK_BUTTON(ui.effetuneVersionLink),
+               "EffeTune version link type differs") &&
          check(GTK_IS_TOGGLE_BUTTON(ui.logToggleButton),
                "log toggle type differs") &&
          check(GTK_IS_REVEALER(ui.logRevealer),
@@ -80,6 +82,45 @@ static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
                "cancel button type differs") &&
          check(GTK_IS_BUTTON(ui.applyButton),
                "global apply button type differs");
+}
+
+static bool checkVersionLinks(const pipetune_gtk::MainWindowUi &ui) {
+  auto *pipeTuneObject =
+      gtk_builder_get_object(ui.builder, "pipeTuneVersionLink");
+  auto *effetuneObject =
+      gtk_builder_get_object(ui.builder, "effetuneVersionLink");
+  if (!check(GTK_IS_LINK_BUTTON(pipeTuneObject),
+             "PipeTune version link is missing") ||
+      !check(GTK_IS_LINK_BUTTON(effetuneObject),
+             "EffeTune version link is missing")) {
+    return false;
+  }
+  auto *pipeTuneLink = GTK_LINK_BUTTON(pipeTuneObject);
+  auto *effetuneLink = GTK_LINK_BUTTON(effetuneObject);
+  auto *pipeTuneParent = gtk_widget_get_parent(GTK_WIDGET(pipeTuneLink));
+  auto *effetuneParent = gtk_widget_get_parent(GTK_WIDGET(effetuneLink));
+  return check(pipeTuneParent == effetuneParent &&
+                   GTK_IS_BOX(pipeTuneParent) &&
+                   gtk_orientable_get_orientation(
+                       GTK_ORIENTABLE(pipeTuneParent)) ==
+                       GTK_ORIENTATION_VERTICAL,
+               "version links must occupy separate rows") &&
+         check(std::string_view(
+                   gtk_button_get_label(GTK_BUTTON(pipeTuneLink))) ==
+                   "PipeTune 1.2.3",
+               "PipeTune version link text differs") &&
+         check(std::string_view(
+                   gtk_link_button_get_uri(pipeTuneLink)) ==
+                   "https://github.com/kekyo/pipetune",
+               "PipeTune repository link differs") &&
+         check(std::string_view(
+                   gtk_button_get_label(GTK_BUTTON(effetuneLink))) ==
+                   "EffeTune DSP 4.5.6",
+               "EffeTune version link text differs") &&
+         check(std::string_view(
+                   gtk_link_button_get_uri(effetuneLink)) ==
+                   "https://github.com/Frieve-A/effetune",
+               "EffeTune repository link differs");
 }
 
 static bool checkSettingsPages(const pipetune_gtk::MainWindowUi &ui) {
@@ -252,7 +293,8 @@ int main(int argc, char **argv) {
       check(ui.builder != nullptr, "main window builder is unavailable") &&
       checkWidgetTypes(ui) && checkSettingsPages(ui) &&
       checkLanguageChoices(ui) &&
-      checkRestoreDefaultsDescription(ui) && checkLoadMeterHost(ui) &&
+      checkRestoreDefaultsDescription(ui) && checkVersionLinks(ui) &&
+      checkLoadMeterHost(ui) &&
       check(gtk_window_get_application(GTK_WINDOW(ui.window)) ==
                 application,
             "main window application differs") &&
@@ -281,10 +323,6 @@ int main(int argc, char **argv) {
             "log drawer must start collapsed") &&
       check(gtk_widget_get_visible(ui.languageRestartNotice) == FALSE,
             "language restart notice must start hidden") &&
-      check(std::string_view(
-                gtk_label_get_text(GTK_LABEL(ui.versionLabel))) ==
-                "PipeTune 1.2.3  •  EffeTune DSP 4.5.6",
-            "version text differs") &&
       check(gtk_builder_get_object(ui.builder, "rateApplyButton") == nullptr,
             "per-setting rate Apply button must not exist") &&
       check(gtk_builder_get_object(ui.builder,

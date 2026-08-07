@@ -57,8 +57,10 @@ struct MainWindowUi {
   GtkWidget *languageRestartNotice = nullptr;
   /** Restores the transaction to PipeTune defaults. */
   GtkWidget *restoreDefaultsButton = nullptr;
-  /** PipeTune and EffeTune DSP version text. */
-  GtkWidget *versionLabel = nullptr;
+  /** PipeTune version and repository link. */
+  GtkWidget *pipeTuneVersionLink = nullptr;
+  /** EffeTune DSP version and repository link. */
+  GtkWidget *effetuneVersionLink = nullptr;
   /** Opens or closes the action-log drawer. */
   GtkWidget *logToggleButton = nullptr;
   /** Action-log toggle caption. */

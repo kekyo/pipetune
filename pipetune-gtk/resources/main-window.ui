@@ -619,13 +619,24 @@
                                       </packing>
                                     </child>
                                     <child>
-                                      <object class="GtkLabel" id="versionLabel">
-                                        <property name="label">—</property>
-                                        <property name="xalign">1</property>
-                                        <property name="selectable">True</property>
-                                        <style>
-                                          <class name="dim-label"/>
-                                        </style>
+                                      <object class="GtkBox" id="versionLinks">
+                                        <property name="orientation">vertical</property>
+                                        <property name="spacing">2</property>
+                                        <property name="halign">end</property>
+                                        <child>
+                                          <object class="GtkLinkButton" id="pipeTuneVersionLink">
+                                            <property name="label">PipeTune</property>
+                                            <property name="uri">https://github.com/kekyo/pipetune</property>
+                                            <property name="halign">end</property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkLinkButton" id="effetuneVersionLink">
+                                            <property name="label">EffeTune DSP</property>
+                                            <property name="uri">https://github.com/Frieve-A/effetune</property>
+                                            <property name="halign">end</property>
+                                          </object>
+                                        </child>
                                       </object>
                                     </child>
                                   </object>
