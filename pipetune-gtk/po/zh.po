@@ -105,8 +105,8 @@ msgstr "应用"
 msgid "Automatic"
 msgstr "自动"
 
-msgid "Automatic — follow PipeWire graph"
-msgstr "自动 — 跟随 PipeWire 图"
+msgid "Automatic — follow PipeWire graph sampling frequency"
+msgstr "自动 — 跟随 PipeWire 图采样频率"
 
 msgid "Baseline"
 msgstr "基准状态"
@@ -147,11 +147,11 @@ msgstr "正在更改处理模式"
 msgid "Changing processing mode failed"
 msgstr "更改处理模式失败"
 
-msgid "Changing sample-rate policy"
-msgstr "正在更改采样率策略"
+msgid "Changing sampling-frequency policy"
+msgstr "正在更改采样频率策略"
 
-msgid "Changing sample-rate policy failed"
-msgstr "更改采样率策略失败"
+msgid "Changing sampling-frequency policy failed"
+msgstr "更改采样频率策略失败"
 
 msgid "Choose a preset before enabling DSP processing"
 msgstr "启用 DSP 处理前请选择预设"
@@ -190,8 +190,8 @@ msgstr "已配置的 SIMD"
 msgid "Connected"
 msgstr "已连接"
 
-msgid "Connected · changing sample rate"
-msgstr "已连接 · 正在更改采样率"
+msgid "Connected · changing sampling frequency"
+msgstr "已连接 · 正在更改采样频率"
 
 msgid "Connected and monitoring"
 msgstr "已连接并正在监控"
@@ -241,10 +241,6 @@ msgstr "已断开连接 · 设置为只读"
 msgid "DSP"
 msgstr "DSP"
 
-#, brace-format
-msgid "DSP {0}  •  PipeWire graph {1}"
-msgstr "DSP {0}  •  PipeWire 图 {1}"
-
 msgid "DSP / Performance"
 msgstr "DSP / 性能"
 
@@ -260,11 +256,12 @@ msgstr "DSP 引擎"
 msgid "DSP processing load; graph capped at 100%."
 msgstr "DSP 处理负载；图表上限为 100%。"
 
-msgid "DSP rate"
-msgstr "DSP 速率"
+msgid "DSP sampling frequency"
+msgstr "DSP 采样频率"
 
-msgid "DSP sample rate"
-msgstr "DSP 采样率"
+#, brace-format
+msgid "DSP sampling frequency {0}  •  PipeWire graph sampling frequency {1}"
+msgstr "DSP 采样频率 {0}  •  PipeWire 图采样频率 {1}"
 
 msgid "Effective backend"
 msgstr "实际后端"
@@ -293,17 +290,17 @@ msgstr "正在完成回滚…"
 msgid "Fixed"
 msgstr "固定"
 
-msgid "Fixed rate"
-msgstr "固定速率"
+msgid "Fixed sampling frequency"
+msgstr "固定采样频率"
 
 msgid "Force"
 msgstr "强制"
 
-msgid "Force — request the fixed graph rate"
-msgstr "强制 — 请求固定图速率"
+msgid "Force — request the fixed graph sampling frequency"
+msgstr "强制 — 请求固定图采样频率"
 
-msgid "Input / Rates"
-msgstr "输入 / 速率"
+msgid "Input / Sampling Frequencies"
+msgstr "输入 / 采样频率"
 
 msgid "Input channels"
 msgstr "输入声道"
@@ -311,8 +308,8 @@ msgstr "输入声道"
 msgid "Input format"
 msgstr "输入格式"
 
-msgid "Input sample rate"
-msgstr "输入采样率"
+msgid "Input sampling frequency"
+msgstr "输入采样频率"
 
 msgid "Language"
 msgstr "语言"
@@ -329,8 +326,8 @@ msgstr "实时配置"
 msgid "Live enforcement"
 msgstr "实时强制策略"
 
-msgid "Live fixed rate"
-msgstr "实时固定速率"
+msgid "Live fixed sampling frequency"
+msgstr "实时固定采样频率"
 
 msgid "Live preview active · changes are not saved"
 msgstr "实时预览已启用 · 更改尚未保存"
@@ -338,8 +335,8 @@ msgstr "实时预览已启用 · 更改尚未保存"
 msgid "Live preview failed · adjust a setting to retry"
 msgstr "实时预览失败 · 调整设置以重试"
 
-msgid "Live rate mode"
-msgstr "实时速率模式"
+msgid "Live sampling-frequency mode"
+msgstr "实时采样频率模式"
 
 msgid "Live settings changed elsewhere · reopen this dialog"
 msgstr "实时设置已在其他位置更改 · 请重新打开此对话框"
@@ -412,8 +409,8 @@ msgstr "PipeTune：已断开连接"
 msgid "PipeWire enforcement"
 msgstr "PipeWire 强制策略"
 
-msgid "PipeWire graph rate"
-msgstr "PipeWire 图速率"
+msgid "PipeWire graph sampling frequency"
+msgstr "PipeWire 图采样频率"
 
 msgid "Preset"
 msgstr "预设"
@@ -442,18 +439,6 @@ msgstr "处理时间"
 msgid "Quit"
 msgstr "退出"
 
-msgid "Rate"
-msgstr "速率"
-
-msgid "Rate enforcement"
-msgstr "速率强制策略"
-
-msgid "Rate mode"
-msgstr "速率模式"
-
-msgid "Rates unavailable"
-msgstr "速率不可用"
-
 msgid "Restart now"
 msgstr "立即重启"
 
@@ -478,11 +463,23 @@ msgstr "正在恢复之前的实时设置…"
 msgid "Rollback requested"
 msgstr "已请求回滚"
 
-msgid "Sample Rate"
-msgstr "采样率"
+msgid "Sampling frequencies unavailable"
+msgstr "采样频率不可用"
 
-msgid "Sample-rate policy changed"
-msgstr "采样率策略已更改"
+msgid "Sampling frequency"
+msgstr "采样频率"
+
+msgid "Sampling Frequency"
+msgstr "采样频率"
+
+msgid "Sampling-frequency enforcement"
+msgstr "采样频率强制策略"
+
+msgid "Sampling-frequency mode"
+msgstr "采样频率模式"
+
+msgid "Sampling-frequency policy changed"
+msgstr "采样频率策略已更改"
 
 msgid "Saved Configuration"
 msgstr "已保存的配置"
@@ -516,8 +513,8 @@ msgstr "启动配置路径不可用"
 msgid "Suggest"
 msgstr "建议"
 
-msgid "Suggest — let PipeWire choose"
-msgstr "建议 — 让 PipeWire 选择"
+msgid "Suggest — let PipeWire choose the graph sampling frequency"
+msgstr "建议 — 让 PipeWire 选择图采样频率"
 
 #, brace-format
 msgid "Switching — {0}"

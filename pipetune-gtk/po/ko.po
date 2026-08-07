@@ -105,8 +105,8 @@ msgstr "적용"
 msgid "Automatic"
 msgstr "자동"
 
-msgid "Automatic — follow PipeWire graph"
-msgstr "자동 — PipeWire 그래프 따르기"
+msgid "Automatic — follow PipeWire graph sampling frequency"
+msgstr "자동 — PipeWire 그래프 샘플링 주파수 따르기"
 
 msgid "Baseline"
 msgstr "기준 상태"
@@ -147,11 +147,11 @@ msgstr "처리 모드 변경 중"
 msgid "Changing processing mode failed"
 msgstr "처리 모드 변경 실패"
 
-msgid "Changing sample-rate policy"
-msgstr "샘플 레이트 정책 변경 중"
+msgid "Changing sampling-frequency policy"
+msgstr "샘플링 주파수 정책 변경 중"
 
-msgid "Changing sample-rate policy failed"
-msgstr "샘플 레이트 정책 변경 실패"
+msgid "Changing sampling-frequency policy failed"
+msgstr "샘플링 주파수 정책 변경 실패"
 
 msgid "Choose a preset before enabling DSP processing"
 msgstr "DSP 처리를 활성화하기 전에 프리셋을 선택하세요"
@@ -190,8 +190,8 @@ msgstr "구성된 SIMD"
 msgid "Connected"
 msgstr "연결됨"
 
-msgid "Connected · changing sample rate"
-msgstr "연결됨 · 샘플 레이트 변경 중"
+msgid "Connected · changing sampling frequency"
+msgstr "연결됨 · 샘플링 주파수 변경 중"
 
 msgid "Connected and monitoring"
 msgstr "연결 및 모니터링 중"
@@ -241,10 +241,6 @@ msgstr "연결 끊김 · 설정은 읽기 전용입니다"
 msgid "DSP"
 msgstr "DSP"
 
-#, brace-format
-msgid "DSP {0}  •  PipeWire graph {1}"
-msgstr "DSP {0}  •  PipeWire 그래프 {1}"
-
 msgid "DSP / Performance"
 msgstr "DSP / 성능"
 
@@ -260,11 +256,12 @@ msgstr "DSP 엔진"
 msgid "DSP processing load; graph capped at 100%."
 msgstr "DSP 처리 부하이며 그래프는 100%로 제한됩니다."
 
-msgid "DSP rate"
-msgstr "DSP 레이트"
+msgid "DSP sampling frequency"
+msgstr "DSP 샘플링 주파수"
 
-msgid "DSP sample rate"
-msgstr "DSP 샘플 레이트"
+#, brace-format
+msgid "DSP sampling frequency {0}  •  PipeWire graph sampling frequency {1}"
+msgstr "DSP 샘플링 주파수 {0}  •  PipeWire 그래프 샘플링 주파수 {1}"
 
 msgid "Effective backend"
 msgstr "유효 백엔드"
@@ -293,17 +290,17 @@ msgstr "롤백 완료 중…"
 msgid "Fixed"
 msgstr "고정"
 
-msgid "Fixed rate"
-msgstr "고정 레이트"
+msgid "Fixed sampling frequency"
+msgstr "고정 샘플링 주파수"
 
 msgid "Force"
 msgstr "강제"
 
-msgid "Force — request the fixed graph rate"
-msgstr "강제 — 고정 그래프 레이트 요청"
+msgid "Force — request the fixed graph sampling frequency"
+msgstr "강제 — 고정 그래프 샘플링 주파수 요청"
 
-msgid "Input / Rates"
-msgstr "입력 / 레이트"
+msgid "Input / Sampling Frequencies"
+msgstr "입력 / 샘플링 주파수"
 
 msgid "Input channels"
 msgstr "입력 채널"
@@ -311,8 +308,8 @@ msgstr "입력 채널"
 msgid "Input format"
 msgstr "입력 형식"
 
-msgid "Input sample rate"
-msgstr "입력 샘플 레이트"
+msgid "Input sampling frequency"
+msgstr "입력 샘플링 주파수"
 
 msgid "Language"
 msgstr "언어"
@@ -329,8 +326,8 @@ msgstr "실시간 구성"
 msgid "Live enforcement"
 msgstr "실시간 적용"
 
-msgid "Live fixed rate"
-msgstr "실시간 고정 레이트"
+msgid "Live fixed sampling frequency"
+msgstr "실시간 고정 샘플링 주파수"
 
 msgid "Live preview active · changes are not saved"
 msgstr "실시간 미리 보기 활성 · 변경 사항이 저장되지 않음"
@@ -338,8 +335,8 @@ msgstr "실시간 미리 보기 활성 · 변경 사항이 저장되지 않음"
 msgid "Live preview failed · adjust a setting to retry"
 msgstr "실시간 미리 보기 실패 · 다시 시도하려면 설정을 조정하세요"
 
-msgid "Live rate mode"
-msgstr "실시간 레이트 모드"
+msgid "Live sampling-frequency mode"
+msgstr "실시간 샘플링 주파수 모드"
 
 msgid "Live settings changed elsewhere · reopen this dialog"
 msgstr "실시간 설정이 다른 곳에서 변경됨 · 이 대화 상자를 다시 여세요"
@@ -412,8 +409,8 @@ msgstr "PipeTune: 연결 끊김"
 msgid "PipeWire enforcement"
 msgstr "PipeWire 적용"
 
-msgid "PipeWire graph rate"
-msgstr "PipeWire 그래프 레이트"
+msgid "PipeWire graph sampling frequency"
+msgstr "PipeWire 그래프 샘플링 주파수"
 
 msgid "Preset"
 msgstr "프리셋"
@@ -442,18 +439,6 @@ msgstr "처리 시간"
 msgid "Quit"
 msgstr "종료"
 
-msgid "Rate"
-msgstr "레이트"
-
-msgid "Rate enforcement"
-msgstr "레이트 적용"
-
-msgid "Rate mode"
-msgstr "레이트 모드"
-
-msgid "Rates unavailable"
-msgstr "레이트를 사용할 수 없음"
-
 msgid "Restart now"
 msgstr "지금 다시 시작"
 
@@ -478,11 +463,23 @@ msgstr "이전 실시간 설정 복원 중…"
 msgid "Rollback requested"
 msgstr "롤백 요청됨"
 
-msgid "Sample Rate"
-msgstr "샘플 레이트"
+msgid "Sampling frequencies unavailable"
+msgstr "샘플링 주파수를 사용할 수 없음"
 
-msgid "Sample-rate policy changed"
-msgstr "샘플 레이트 정책을 변경했습니다"
+msgid "Sampling frequency"
+msgstr "샘플링 주파수"
+
+msgid "Sampling Frequency"
+msgstr "샘플링 주파수"
+
+msgid "Sampling-frequency enforcement"
+msgstr "샘플링 주파수 적용"
+
+msgid "Sampling-frequency mode"
+msgstr "샘플링 주파수 모드"
+
+msgid "Sampling-frequency policy changed"
+msgstr "샘플링 주파수 정책을 변경했습니다"
 
 msgid "Saved Configuration"
 msgstr "저장된 구성"
@@ -516,8 +513,8 @@ msgstr "시작 구성 경로를 사용할 수 없음"
 msgid "Suggest"
 msgstr "제안"
 
-msgid "Suggest — let PipeWire choose"
-msgstr "제안 — PipeWire가 선택하도록 허용"
+msgid "Suggest — let PipeWire choose the graph sampling frequency"
+msgstr "제안 — PipeWire가 그래프 샘플링 주파수를 선택하도록 허용"
 
 #, brace-format
 msgid "Switching — {0}"

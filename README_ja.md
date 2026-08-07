@@ -171,7 +171,7 @@ pipetune bypass
 
 ## PCM周波数の選択
 
-PipeTune設定ウインドウの `DSP sample rate` と `PipeWire enforcement` から設定出来ます。
+PipeTune設定ウインドウの `DSPサンプリング周波数` と `PipeWire強制方式` から設定出来ます。
 `Automatic` は、PipeWireグラフと交渉された周波数に追従します。
 固定値では、 `44.1`, `48`, `96`, `192`, `384` kHzのいずれかをフィルタの両ノードとEffeTuneエンジンへ要求します。
 状態表示には、実際のDSP周波数とグラフ周波数が表示されます。

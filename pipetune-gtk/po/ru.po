@@ -107,8 +107,8 @@ msgstr "Применить"
 msgid "Automatic"
 msgstr "Автоматически"
 
-msgid "Automatic — follow PipeWire graph"
-msgstr "Автоматически — следовать графу PipeWire"
+msgid "Automatic — follow PipeWire graph sampling frequency"
+msgstr "Автоматически — следовать частоте дискретизации графа PipeWire"
 
 msgid "Baseline"
 msgstr "Исходное состояние"
@@ -149,10 +149,10 @@ msgstr "Изменение режима обработки"
 msgid "Changing processing mode failed"
 msgstr "Не удалось изменить режим обработки"
 
-msgid "Changing sample-rate policy"
+msgid "Changing sampling-frequency policy"
 msgstr "Изменение политики частоты дискретизации"
 
-msgid "Changing sample-rate policy failed"
+msgid "Changing sampling-frequency policy failed"
 msgstr "Не удалось изменить политику частоты дискретизации"
 
 msgid "Choose a preset before enabling DSP processing"
@@ -192,7 +192,7 @@ msgstr "Настроенный SIMD"
 msgid "Connected"
 msgstr "Подключено"
 
-msgid "Connected · changing sample rate"
+msgid "Connected · changing sampling frequency"
 msgstr "Подключено · изменение частоты дискретизации"
 
 msgid "Connected and monitoring"
@@ -243,10 +243,6 @@ msgstr "Отключено · настройки доступны только �
 msgid "DSP"
 msgstr "DSP"
 
-#, brace-format
-msgid "DSP {0}  •  PipeWire graph {1}"
-msgstr "DSP {0}  •  Граф PipeWire {1}"
-
 msgid "DSP / Performance"
 msgstr "DSP / Производительность"
 
@@ -262,11 +258,12 @@ msgstr "Движок DSP"
 msgid "DSP processing load; graph capped at 100%."
 msgstr "Нагрузка обработки DSP; график ограничен 100%."
 
-msgid "DSP rate"
-msgstr "Частота DSP"
-
-msgid "DSP sample rate"
+msgid "DSP sampling frequency"
 msgstr "Частота дискретизации DSP"
+
+#, brace-format
+msgid "DSP sampling frequency {0}  •  PipeWire graph sampling frequency {1}"
+msgstr "Частота дискретизации DSP {0}  •  Частота дискретизации графа PipeWire {1}"
 
 msgid "Effective backend"
 msgstr "Фактический бэкенд"
@@ -295,17 +292,17 @@ msgstr "Завершение отката…"
 msgid "Fixed"
 msgstr "Фиксированная"
 
-msgid "Fixed rate"
-msgstr "Фиксированная частота"
+msgid "Fixed sampling frequency"
+msgstr "Фиксированная частота дискретизации"
 
 msgid "Force"
 msgstr "Принудительно"
 
-msgid "Force — request the fixed graph rate"
-msgstr "Принудительно — запросить фиксированную частоту графа"
+msgid "Force — request the fixed graph sampling frequency"
+msgstr "Принудительно — запросить фиксированную частоту дискретизации графа"
 
-msgid "Input / Rates"
-msgstr "Вход / Частоты"
+msgid "Input / Sampling Frequencies"
+msgstr "Вход / Частоты дискретизации"
 
 msgid "Input channels"
 msgstr "Входные каналы"
@@ -313,7 +310,7 @@ msgstr "Входные каналы"
 msgid "Input format"
 msgstr "Входной формат"
 
-msgid "Input sample rate"
+msgid "Input sampling frequency"
 msgstr "Частота дискретизации входа"
 
 msgid "Language"
@@ -331,8 +328,8 @@ msgstr "Текущая конфигурация"
 msgid "Live enforcement"
 msgstr "Текущее применение"
 
-msgid "Live fixed rate"
-msgstr "Текущая фиксированная частота"
+msgid "Live fixed sampling frequency"
+msgstr "Текущая фиксированная частота дискретизации"
 
 msgid "Live preview active · changes are not saved"
 msgstr "Предпросмотр активен · изменения не сохранены"
@@ -340,8 +337,8 @@ msgstr "Предпросмотр активен · изменения не со�
 msgid "Live preview failed · adjust a setting to retry"
 msgstr "Предпросмотр не удался · измените настройку для повтора"
 
-msgid "Live rate mode"
-msgstr "Текущий режим частоты"
+msgid "Live sampling-frequency mode"
+msgstr "Текущий режим частоты дискретизации"
 
 msgid "Live settings changed elsewhere · reopen this dialog"
 msgstr "Текущие настройки изменены в другом месте · откройте этот диалог заново"
@@ -414,8 +411,8 @@ msgstr "PipeTune: отключён"
 msgid "PipeWire enforcement"
 msgstr "Применение PipeWire"
 
-msgid "PipeWire graph rate"
-msgstr "Частота графа PipeWire"
+msgid "PipeWire graph sampling frequency"
+msgstr "Частота дискретизации графа PipeWire"
 
 msgid "Preset"
 msgstr "Предустановка"
@@ -444,18 +441,6 @@ msgstr "Время обработки"
 msgid "Quit"
 msgstr "Выход"
 
-msgid "Rate"
-msgstr "Частота"
-
-msgid "Rate enforcement"
-msgstr "Применение частоты"
-
-msgid "Rate mode"
-msgstr "Режим частоты"
-
-msgid "Rates unavailable"
-msgstr "Частоты недоступны"
-
 msgid "Restart now"
 msgstr "Перезапустить сейчас"
 
@@ -480,10 +465,22 @@ msgstr "Восстановление предыдущих текущих нас�
 msgid "Rollback requested"
 msgstr "Запрошен откат"
 
-msgid "Sample Rate"
+msgid "Sampling frequencies unavailable"
+msgstr "Частоты дискретизации недоступны"
+
+msgid "Sampling frequency"
 msgstr "Частота дискретизации"
 
-msgid "Sample-rate policy changed"
+msgid "Sampling Frequency"
+msgstr "Частота дискретизации"
+
+msgid "Sampling-frequency enforcement"
+msgstr "Применение частоты дискретизации"
+
+msgid "Sampling-frequency mode"
+msgstr "Режим частоты дискретизации"
+
+msgid "Sampling-frequency policy changed"
 msgstr "Политика частоты дискретизации изменена"
 
 msgid "Saved Configuration"
@@ -518,8 +515,8 @@ msgstr "Путь начальной конфигурации недоступе�
 msgid "Suggest"
 msgstr "Предлагать"
 
-msgid "Suggest — let PipeWire choose"
-msgstr "Предлагать — позволить PipeWire выбрать"
+msgid "Suggest — let PipeWire choose the graph sampling frequency"
+msgstr "Предлагать — позволить PipeWire выбрать частоту дискретизации графа"
 
 #, brace-format
 msgid "Switching — {0}"

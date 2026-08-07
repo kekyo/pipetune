@@ -106,8 +106,8 @@ msgstr "लागू करें"
 msgid "Automatic"
 msgstr "स्वचालित"
 
-msgid "Automatic — follow PipeWire graph"
-msgstr "स्वचालित — PipeWire ग्राफ़ का अनुसरण करें"
+msgid "Automatic — follow PipeWire graph sampling frequency"
+msgstr "स्वचालित — PipeWire ग्राफ़ की नमूनाकरण आवृत्ति का अनुसरण करें"
 
 msgid "Baseline"
 msgstr "आधार स्थिति"
@@ -148,11 +148,11 @@ msgstr "प्रोसेसिंग मोड बदला जा रहा �
 msgid "Changing processing mode failed"
 msgstr "प्रोसेसिंग मोड बदलना विफल रहा"
 
-msgid "Changing sample-rate policy"
-msgstr "सैंपल-रेट नीति बदली जा रही है"
+msgid "Changing sampling-frequency policy"
+msgstr "नमूनाकरण आवृत्ति नीति बदली जा रही है"
 
-msgid "Changing sample-rate policy failed"
-msgstr "सैंपल-रेट नीति बदलना विफल रहा"
+msgid "Changing sampling-frequency policy failed"
+msgstr "नमूनाकरण आवृत्ति नीति बदलना विफल रहा"
 
 msgid "Choose a preset before enabling DSP processing"
 msgstr "DSP प्रोसेसिंग चालू करने से पहले प्रीसेट चुनें"
@@ -191,8 +191,8 @@ msgstr "कॉन्फ़िगर किया गया SIMD"
 msgid "Connected"
 msgstr "कनेक्टेड"
 
-msgid "Connected · changing sample rate"
-msgstr "कनेक्टेड · सैंपल रेट बदला जा रहा है"
+msgid "Connected · changing sampling frequency"
+msgstr "कनेक्टेड · नमूनाकरण आवृत्ति बदली जा रही है"
 
 msgid "Connected and monitoring"
 msgstr "कनेक्टेड और निगरानी जारी"
@@ -242,10 +242,6 @@ msgstr "डिस्कनेक्टेड · सेटिंग केवल 
 msgid "DSP"
 msgstr "DSP"
 
-#, brace-format
-msgid "DSP {0}  •  PipeWire graph {1}"
-msgstr "DSP {0}  •  PipeWire ग्राफ़ {1}"
-
 msgid "DSP / Performance"
 msgstr "DSP / प्रदर्शन"
 
@@ -261,11 +257,12 @@ msgstr "DSP इंजन"
 msgid "DSP processing load; graph capped at 100%."
 msgstr "DSP प्रोसेसिंग लोड; ग्राफ़ 100% पर सीमित है।"
 
-msgid "DSP rate"
-msgstr "DSP रेट"
+msgid "DSP sampling frequency"
+msgstr "DSP नमूनाकरण आवृत्ति"
 
-msgid "DSP sample rate"
-msgstr "DSP सैंपल रेट"
+#, brace-format
+msgid "DSP sampling frequency {0}  •  PipeWire graph sampling frequency {1}"
+msgstr "DSP नमूनाकरण आवृत्ति {0}  •  PipeWire ग्राफ़ नमूनाकरण आवृत्ति {1}"
 
 msgid "Effective backend"
 msgstr "प्रभावी बैकएंड"
@@ -294,17 +291,17 @@ msgstr "रोलबैक पूरा किया जा रहा है…"
 msgid "Fixed"
 msgstr "निश्चित"
 
-msgid "Fixed rate"
-msgstr "निश्चित रेट"
+msgid "Fixed sampling frequency"
+msgstr "निश्चित नमूनाकरण आवृत्ति"
 
 msgid "Force"
 msgstr "बलपूर्वक"
 
-msgid "Force — request the fixed graph rate"
-msgstr "बलपूर्वक — निश्चित ग्राफ़ रेट का अनुरोध करें"
+msgid "Force — request the fixed graph sampling frequency"
+msgstr "बलपूर्वक — निश्चित ग्राफ़ नमूनाकरण आवृत्ति का अनुरोध करें"
 
-msgid "Input / Rates"
-msgstr "इनपुट / रेट"
+msgid "Input / Sampling Frequencies"
+msgstr "इनपुट / नमूनाकरण आवृत्तियाँ"
 
 msgid "Input channels"
 msgstr "इनपुट चैनल"
@@ -312,8 +309,8 @@ msgstr "इनपुट चैनल"
 msgid "Input format"
 msgstr "इनपुट फ़ॉर्मेट"
 
-msgid "Input sample rate"
-msgstr "इनपुट सैंपल रेट"
+msgid "Input sampling frequency"
+msgstr "इनपुट नमूनाकरण आवृत्ति"
 
 msgid "Language"
 msgstr "भाषा"
@@ -330,8 +327,8 @@ msgstr "लाइव कॉन्फ़िगरेशन"
 msgid "Live enforcement"
 msgstr "लाइव प्रवर्तन"
 
-msgid "Live fixed rate"
-msgstr "लाइव निश्चित रेट"
+msgid "Live fixed sampling frequency"
+msgstr "लाइव निश्चित नमूनाकरण आवृत्ति"
 
 msgid "Live preview active · changes are not saved"
 msgstr "लाइव पूर्वावलोकन सक्रिय · बदलाव सहेजे नहीं गए हैं"
@@ -339,8 +336,8 @@ msgstr "लाइव पूर्वावलोकन सक्रिय · ब
 msgid "Live preview failed · adjust a setting to retry"
 msgstr "लाइव पूर्वावलोकन विफल · फिर प्रयास करने के लिए सेटिंग बदलें"
 
-msgid "Live rate mode"
-msgstr "लाइव रेट मोड"
+msgid "Live sampling-frequency mode"
+msgstr "लाइव नमूनाकरण आवृत्ति मोड"
 
 msgid "Live settings changed elsewhere · reopen this dialog"
 msgstr "लाइव सेटिंग कहीं और बदली गईं · यह डायलॉग फिर खोलें"
@@ -358,7 +355,7 @@ msgid "Load"
 msgstr "लोड"
 
 msgid "Measured frame rate"
-msgstr "मापी गई फ़्रेम रेट"
+msgstr "मापी गई फ़्रेम दर"
 
 msgid "Native backend"
 msgstr "मूल बैकएंड"
@@ -380,7 +377,7 @@ msgid "Overrun frames"
 msgstr "ओवररन फ़्रेम"
 
 msgid "PCM data rate"
-msgstr "PCM डेटा रेट"
+msgstr "PCM डेटा दर"
 
 msgid "Pending dialog settings will be reapplied"
 msgstr "लंबित डायलॉग सेटिंग फिर लागू की जाएँगी"
@@ -413,8 +410,8 @@ msgstr "PipeTune: डिस्कनेक्टेड"
 msgid "PipeWire enforcement"
 msgstr "PipeWire प्रवर्तन"
 
-msgid "PipeWire graph rate"
-msgstr "PipeWire ग्राफ़ रेट"
+msgid "PipeWire graph sampling frequency"
+msgstr "PipeWire ग्राफ़ नमूनाकरण आवृत्ति"
 
 msgid "Preset"
 msgstr "प्रीसेट"
@@ -443,18 +440,6 @@ msgstr "प्रोसेसिंग समय"
 msgid "Quit"
 msgstr "बाहर निकलें"
 
-msgid "Rate"
-msgstr "रेट"
-
-msgid "Rate enforcement"
-msgstr "रेट प्रवर्तन"
-
-msgid "Rate mode"
-msgstr "रेट मोड"
-
-msgid "Rates unavailable"
-msgstr "रेट अनुपलब्ध"
-
 msgid "Restart now"
 msgstr "अभी पुनः आरंभ करें"
 
@@ -479,11 +464,23 @@ msgstr "पिछली लाइव सेटिंग पुनर्स्थ
 msgid "Rollback requested"
 msgstr "रोलबैक का अनुरोध किया गया"
 
-msgid "Sample Rate"
-msgstr "सैंपल रेट"
+msgid "Sampling frequencies unavailable"
+msgstr "नमूनाकरण आवृत्तियाँ अनुपलब्ध"
 
-msgid "Sample-rate policy changed"
-msgstr "सैंपल-रेट नीति बदली गई"
+msgid "Sampling frequency"
+msgstr "नमूनाकरण आवृत्ति"
+
+msgid "Sampling Frequency"
+msgstr "नमूनाकरण आवृत्ति"
+
+msgid "Sampling-frequency enforcement"
+msgstr "नमूनाकरण आवृत्ति प्रवर्तन"
+
+msgid "Sampling-frequency mode"
+msgstr "नमूनाकरण आवृत्ति मोड"
+
+msgid "Sampling-frequency policy changed"
+msgstr "नमूनाकरण आवृत्ति नीति बदली गई"
 
 msgid "Saved Configuration"
 msgstr "सहेजा गया कॉन्फ़िगरेशन"
@@ -517,8 +514,8 @@ msgstr "स्टार्टअप कॉन्फ़िगरेशन पथ 
 msgid "Suggest"
 msgstr "सुझाव"
 
-msgid "Suggest — let PipeWire choose"
-msgstr "सुझाव — PipeWire को चुनने दें"
+msgid "Suggest — let PipeWire choose the graph sampling frequency"
+msgstr "सुझाव — PipeWire को ग्राफ़ नमूनाकरण आवृत्ति चुनने दें"
 
 #, brace-format
 msgid "Switching — {0}"

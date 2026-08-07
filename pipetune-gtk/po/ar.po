@@ -110,8 +110,8 @@ msgstr "تطبيق"
 msgid "Automatic"
 msgstr "تلقائي"
 
-msgid "Automatic — follow PipeWire graph"
-msgstr "تلقائي — اتبع مخطط PipeWire"
+msgid "Automatic — follow PipeWire graph sampling frequency"
+msgstr "تلقائي — اتبع تردد أخذ العينات لمخطط PipeWire"
 
 msgid "Baseline"
 msgstr "خط الأساس"
@@ -152,11 +152,11 @@ msgstr "جارٍ تغيير وضع المعالجة"
 msgid "Changing processing mode failed"
 msgstr "فشل تغيير وضع المعالجة"
 
-msgid "Changing sample-rate policy"
-msgstr "جارٍ تغيير سياسة معدل العينة"
+msgid "Changing sampling-frequency policy"
+msgstr "جارٍ تغيير سياسة تردد أخذ العينات"
 
-msgid "Changing sample-rate policy failed"
-msgstr "فشل تغيير سياسة معدل العينة"
+msgid "Changing sampling-frequency policy failed"
+msgstr "فشل تغيير سياسة تردد أخذ العينات"
 
 msgid "Choose a preset before enabling DSP processing"
 msgstr "اختر إعدادًا مسبقًا قبل تمكين معالجة DSP"
@@ -195,8 +195,8 @@ msgstr "SIMD المكوّن"
 msgid "Connected"
 msgstr "متصل"
 
-msgid "Connected · changing sample rate"
-msgstr "متصل · جارٍ تغيير معدل العينة"
+msgid "Connected · changing sampling frequency"
+msgstr "متصل · جارٍ تغيير تردد أخذ العينات"
 
 msgid "Connected and monitoring"
 msgstr "متصل وتتم المراقبة"
@@ -246,10 +246,6 @@ msgstr "غير متصل · الإعدادات للقراءة فقط"
 msgid "DSP"
 msgstr "DSP"
 
-#, brace-format
-msgid "DSP {0}  •  PipeWire graph {1}"
-msgstr "DSP ‏{0}  •  مخطط PipeWire ‏{1}"
-
 msgid "DSP / Performance"
 msgstr "DSP / الأداء"
 
@@ -265,11 +261,12 @@ msgstr "محرك DSP"
 msgid "DSP processing load; graph capped at 100%."
 msgstr "حمل معالجة DSP؛ الرسم محدود عند 100%."
 
-msgid "DSP rate"
-msgstr "معدل DSP"
+msgid "DSP sampling frequency"
+msgstr "تردد أخذ عينات DSP"
 
-msgid "DSP sample rate"
-msgstr "معدل عينة DSP"
+#, brace-format
+msgid "DSP sampling frequency {0}  •  PipeWire graph sampling frequency {1}"
+msgstr "تردد أخذ عينات DSP ‏{0}  •  تردد أخذ العينات لمخطط PipeWire ‏{1}"
 
 msgid "Effective backend"
 msgstr "الواجهة الخلفية الفعلية"
@@ -298,17 +295,17 @@ msgstr "جارٍ إنهاء التراجع…"
 msgid "Fixed"
 msgstr "ثابت"
 
-msgid "Fixed rate"
-msgstr "معدل ثابت"
+msgid "Fixed sampling frequency"
+msgstr "تردد أخذ عينات ثابت"
 
 msgid "Force"
 msgstr "فرض"
 
-msgid "Force — request the fixed graph rate"
-msgstr "فرض — اطلب معدل المخطط الثابت"
+msgid "Force — request the fixed graph sampling frequency"
+msgstr "فرض — اطلب تردد أخذ العينات الثابت للمخطط"
 
-msgid "Input / Rates"
-msgstr "الإدخال / المعدلات"
+msgid "Input / Sampling Frequencies"
+msgstr "الإدخال / ترددات أخذ العينات"
 
 msgid "Input channels"
 msgstr "قنوات الإدخال"
@@ -316,8 +313,8 @@ msgstr "قنوات الإدخال"
 msgid "Input format"
 msgstr "تنسيق الإدخال"
 
-msgid "Input sample rate"
-msgstr "معدل عينة الإدخال"
+msgid "Input sampling frequency"
+msgstr "تردد أخذ عينات الإدخال"
 
 msgid "Language"
 msgstr "اللغة"
@@ -334,8 +331,8 @@ msgstr "الإعدادات المباشرة"
 msgid "Live enforcement"
 msgstr "الفرض المباشر"
 
-msgid "Live fixed rate"
-msgstr "المعدل الثابت المباشر"
+msgid "Live fixed sampling frequency"
+msgstr "تردد أخذ العينات الثابت المباشر"
 
 msgid "Live preview active · changes are not saved"
 msgstr "المعاينة المباشرة نشطة · التغييرات غير محفوظة"
@@ -343,8 +340,8 @@ msgstr "المعاينة المباشرة نشطة · التغييرات غير 
 msgid "Live preview failed · adjust a setting to retry"
 msgstr "فشلت المعاينة المباشرة · عدّل إعدادًا للمحاولة مجددًا"
 
-msgid "Live rate mode"
-msgstr "وضع المعدل المباشر"
+msgid "Live sampling-frequency mode"
+msgstr "وضع تردد أخذ العينات المباشر"
 
 msgid "Live settings changed elsewhere · reopen this dialog"
 msgstr "تغيرت الإعدادات المباشرة في مكان آخر · أعد فتح مربع الحوار"
@@ -417,8 +414,8 @@ msgstr "PipeTune: غير متصل"
 msgid "PipeWire enforcement"
 msgstr "فرض PipeWire"
 
-msgid "PipeWire graph rate"
-msgstr "معدل مخطط PipeWire"
+msgid "PipeWire graph sampling frequency"
+msgstr "تردد أخذ العينات لمخطط PipeWire"
 
 msgid "Preset"
 msgstr "الإعداد المسبق"
@@ -447,18 +444,6 @@ msgstr "زمن المعالجة"
 msgid "Quit"
 msgstr "إنهاء"
 
-msgid "Rate"
-msgstr "المعدل"
-
-msgid "Rate enforcement"
-msgstr "فرض المعدل"
-
-msgid "Rate mode"
-msgstr "وضع المعدل"
-
-msgid "Rates unavailable"
-msgstr "المعدلات غير متاحة"
-
 msgid "Restart now"
 msgstr "إعادة التشغيل الآن"
 
@@ -483,11 +468,23 @@ msgstr "جارٍ استعادة الإعدادات المباشرة السابق
 msgid "Rollback requested"
 msgstr "طُلب التراجع"
 
-msgid "Sample Rate"
-msgstr "معدل العينة"
+msgid "Sampling frequencies unavailable"
+msgstr "ترددات أخذ العينات غير متاحة"
 
-msgid "Sample-rate policy changed"
-msgstr "تم تغيير سياسة معدل العينة"
+msgid "Sampling frequency"
+msgstr "تردد أخذ العينات"
+
+msgid "Sampling Frequency"
+msgstr "تردد أخذ العينات"
+
+msgid "Sampling-frequency enforcement"
+msgstr "فرض تردد أخذ العينات"
+
+msgid "Sampling-frequency mode"
+msgstr "وضع تردد أخذ العينات"
+
+msgid "Sampling-frequency policy changed"
+msgstr "تم تغيير سياسة تردد أخذ العينات"
 
 msgid "Saved Configuration"
 msgstr "الإعدادات المحفوظة"
@@ -521,8 +518,8 @@ msgstr "مسار إعدادات بدء التشغيل غير متاح"
 msgid "Suggest"
 msgstr "اقتراح"
 
-msgid "Suggest — let PipeWire choose"
-msgstr "اقتراح — دع PipeWire يختار"
+msgid "Suggest — let PipeWire choose the graph sampling frequency"
+msgstr "اقتراح — دع PipeWire يختار تردد أخذ العينات للمخطط"
 
 #, brace-format
 msgid "Switching — {0}"

@@ -20,28 +20,51 @@ struct LanguageExpectation {
   pipetune_gtk::UiLanguage language;
   std::string_view id;
   std::string_view systemDefaultTranslation;
+  std::string_view samplingFrequencyTranslation;
+  std::string_view graphSamplingFrequencyTranslation;
+  std::string_view measuredFrameRateTranslation;
+  std::string_view pcmDataRateTranslation;
 };
 
 constexpr auto translatedLanguages =
     std::array<LanguageExpectation, 9>{
         LanguageExpectation{pipetune_gtk::UiLanguage::arabic, "ar",
-                            "النظام الافتراضي"},
+                            "النظام الافتراضي", "تردد أخذ العينات",
+                            "تردد أخذ العينات لمخطط PipeWire",
+                            "معدل الإطارات المقاس", "معدل بيانات PCM"},
         LanguageExpectation{pipetune_gtk::UiLanguage::spanish, "es",
-                            "Valor predeterminado del sistema"},
+                            "Valor predeterminado del sistema",
+                            "Frecuencia de muestreo",
+                            "Frecuencia de muestreo del grafo de PipeWire",
+                            "Tasa de fotogramas medida", "Tasa de datos PCM"},
         LanguageExpectation{pipetune_gtk::UiLanguage::french, "fr",
-                            "Valeur par défaut du système"},
+                            "Valeur par défaut du système",
+                            "Fréquence d'échantillonnage",
+                            "Fréquence d'échantillonnage du graphe PipeWire",
+                            "Cadence d'images mesurée", "Débit de données PCM"},
         LanguageExpectation{pipetune_gtk::UiLanguage::hindi, "hi",
-                            "सिस्टम डिफ़ॉल्ट"},
+                            "सिस्टम डिफ़ॉल्ट", "नमूनाकरण आवृत्ति",
+                            "PipeWire ग्राफ़ नमूनाकरण आवृत्ति",
+                            "मापी गई फ़्रेम दर", "PCM डेटा दर"},
         LanguageExpectation{pipetune_gtk::UiLanguage::japanese, "ja",
-                            "システム設定"},
+                            "システム設定", "サンプリング周波数",
+                            "PipeWireグラフのサンプリング周波数",
+                            "実測フレームレート", "PCMデータレート"},
         LanguageExpectation{pipetune_gtk::UiLanguage::korean, "ko",
-                            "시스템 기본값"},
+                            "시스템 기본값", "샘플링 주파수",
+                            "PipeWire 그래프 샘플링 주파수",
+                            "측정 프레임 레이트", "PCM 데이터 레이트"},
         LanguageExpectation{pipetune_gtk::UiLanguage::portuguese, "pt",
-                            "Padrão do sistema"},
+                            "Padrão do sistema", "Frequência de amostragem",
+                            "Frequência de amostragem do grafo PipeWire",
+                            "Taxa de fotogramas medida", "Taxa de dados PCM"},
         LanguageExpectation{pipetune_gtk::UiLanguage::russian, "ru",
-                            "Система по умолчанию"},
+                            "Система по умолчанию", "Частота дискретизации",
+                            "Частота дискретизации графа PipeWire",
+                            "Измеренная частота кадров", "Скорость данных PCM"},
         LanguageExpectation{pipetune_gtk::UiLanguage::chinese, "zh",
-                            "系统默认"},
+                            "系统默认", "采样频率", "PipeWire 图采样频率",
+                            "实测帧率", "PCM 数据速率"},
     };
 
 const auto check = [](bool condition, std::string_view message) {
@@ -200,7 +223,26 @@ const auto testLocalization = [](const std::filesystem::path &localeDirectory) {
         !check(
             std::string_view(pipetune_gtk::translate("System default")) ==
                 expectation.systemDefaultTranslation,
-            "a translated catalog must provide its GUI messages")) {
+            "a translated catalog must provide its GUI messages") ||
+        !check(
+            std::string_view(
+                pipetune_gtk::translate("Sampling frequency")) ==
+                expectation.samplingFrequencyTranslation,
+            "sampling frequency terminology differs") ||
+        !check(
+            std::string_view(pipetune_gtk::translate(
+                "PipeWire graph sampling frequency")) ==
+                expectation.graphSamplingFrequencyTranslation,
+            "graph sampling frequency terminology differs") ||
+        !check(
+            std::string_view(
+                pipetune_gtk::translate("Measured frame rate")) ==
+                expectation.measuredFrameRateTranslation,
+            "measured frame-rate terminology differs") ||
+        !check(
+            std::string_view(pipetune_gtk::translate("PCM data rate")) ==
+                expectation.pcmDataRateTranslation,
+            "PCM data-rate terminology differs")) {
       pipetune_gtk::restoreUiLocalizationEnvironment(original);
       return false;
     }

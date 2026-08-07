@@ -321,7 +321,7 @@
                                 <property name="activatable">False</property>
                                 <child>
                                   <object class="GtkLabel">
-                                    <property name="label" translatable="yes">Sample Rate</property>
+                                    <property name="label" translatable="yes">Sampling Frequency</property>
                                     <property name="xalign">0</property>
                                     <style>
                                       <class name="section-heading"/>
@@ -341,7 +341,7 @@
                                     <property name="margin">14</property>
                                     <child>
                                       <object class="GtkLabel">
-                                        <property name="label" translatable="yes">DSP sample rate</property>
+                                        <property name="label" translatable="yes">DSP sampling frequency</property>
                                         <property name="xalign">0</property>
                                       </object>
                                     </child>
@@ -379,7 +379,7 @@
                       </object>
                       <packing>
                         <property name="name">rate</property>
-                        <property name="title" translatable="yes">Rate</property>
+                        <property name="title" translatable="yes">Sampling Frequency</property>
                       </packing>
                     </child>
                     <child>

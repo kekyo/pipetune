@@ -35,7 +35,7 @@ static bool testChoicesAndEffectiveRates() {
   return check(presentation.choices.size() == 6,
                "rate choices must contain Automatic plus five fixed rates") &&
          check(presentation.choices[0].label ==
-                   "Automatic — follow PipeWire graph",
+                   "Automatic — follow PipeWire graph sampling frequency",
                "Automatic rate choice label differs") &&
          check(presentation.choices[1].label == "44.1 kHz",
                "44.1 kHz fixed-rate label differs") &&
@@ -52,7 +52,8 @@ static bool testChoicesAndEffectiveRates() {
          check(presentation.enforcementSensitive,
                "fixed-rate enforcement must be editable") &&
          check(presentation.effectiveRates ==
-                   "DSP 192 kHz  •  PipeWire graph 192 kHz",
+                   "DSP sampling frequency 192 kHz  •  "
+                   "PipeWire graph sampling frequency 192 kHz",
                "effective rate summary differs") &&
          check(presentation.sensitive,
                "healthy connected rate controls must be enabled");
@@ -91,7 +92,8 @@ static bool testDisconnectedPresentation() {
                "offline default rate choice must be Automatic") &&
          check(!presentation.enforcementSensitive,
                "automatic mode must not expose fixed enforcement") &&
-         check(presentation.effectiveRates == "Rates unavailable",
+         check(presentation.effectiveRates ==
+                   "Sampling frequencies unavailable",
                "offline effective rate summary differs") &&
          check(!presentation.sensitive,
                "disconnected live rate controls must be disabled");

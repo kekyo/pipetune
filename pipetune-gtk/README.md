@@ -18,7 +18,7 @@ unrelated values into one line. Its always-expanded sections are:
 - **System**;
 - **Live Configuration**;
 - **Saved Configuration**;
-- **Input / Rates**;
+- **Input / Sampling Frequencies**;
 - **DSP / Performance**; and
 - **Errors**.
 
@@ -135,9 +135,9 @@ is allowed.
 
 ## Sample rate
 
-The DSP sample rate drop-down contains Automatic followed by 44.1, 48, 96,
-192, and 384 kHz. Automatic leaves both filter nodes negotiable and follows the
-negotiated PCM rate. A fixed selection keeps both filter streams and the
+The DSP sampling frequency drop-down contains Automatic followed by 44.1, 48,
+96, 192, and 384 kHz. Automatic leaves both filter nodes negotiable and follows
+the negotiated PCM rate. A fixed selection keeps both filter streams and the
 EffeTune engine at that rate.
 
 The PipeWire enforcement drop-down selects Suggest or Force. `node.rate`

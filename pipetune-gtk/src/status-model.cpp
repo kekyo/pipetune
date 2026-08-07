@@ -319,13 +319,15 @@ std::vector<StatusSection> buildStatusSections(
               textItem("saved.preset", translate("Preset"),
                        saved.presetFound ? shortPath(savedPreset) : "—",
                        StatusSeverity::normal, savedPreset.string()),
-              textItem("saved.rate-mode", translate("Rate mode"),
+              textItem("saved.rate-mode",
+                       translate("Sampling-frequency mode"),
                        sampleRateModeText(saved.ratePolicy.mode)),
-              textItem("saved.fixed-rate", translate("Fixed rate"),
+              textItem("saved.fixed-rate",
+                       translate("Fixed sampling frequency"),
                        fixedSavedRate),
               textItem(
                   "saved.rate-enforcement",
-                  translate("Rate enforcement"),
+                  translate("Sampling-frequency enforcement"),
                   rateEnforcementText(saved.ratePolicy.enforcement)),
               textItem("saved.backend", translate("DSP backend"),
                        backendText(saved.dspBackend)),
@@ -335,7 +337,7 @@ std::vector<StatusSection> buildStatusSections(
   });
   sections.push_back({
       .id = "input-rates",
-      .label = translate("Input / Rates"),
+      .label = translate("Input / Sampling Frequencies"),
       .items =
           {
               textItem("input.format", translate("Input format"),
@@ -345,7 +347,8 @@ std::vector<StatusSection> buildStatusSections(
                            : "—",
                        unavailable),
               textItem(
-                  "input.sample-rate", translate("Input sample rate"),
+                  "input.sample-rate",
+                  translate("Input sampling frequency"),
                   connected
                       ? sampleRateText(state.runtime.inputSampleRate)
                       : "—",
@@ -364,13 +367,14 @@ std::vector<StatusSection> buildStatusSections(
               textItem("input.pcm-rate", translate("PCM data rate"),
                        input.pcmDataRate, unavailable),
               textItem(
-                  "rates.mode", translate("Live rate mode"),
+                  "rates.mode", translate("Live sampling-frequency mode"),
                   connected
                       ? sampleRateModeText(
                             state.runtime.configuredRatePolicy.mode)
                       : "—",
                   unavailable),
-              textItem("rates.fixed", translate("Live fixed rate"),
+              textItem("rates.fixed",
+                       translate("Live fixed sampling frequency"),
                        connected ? fixedLiveRate : "—", unavailable),
               textItem(
                   "rates.enforcement", translate("Live enforcement"),
@@ -380,11 +384,12 @@ std::vector<StatusSection> buildStatusSections(
                       : "—",
                   unavailable),
               textItem(
-                  "rates.dsp", translate("DSP rate"),
+                  "rates.dsp", translate("DSP sampling frequency"),
                   connected ? sampleRateText(state.runtime.dspSampleRate)
                             : "—",
                   unavailable),
-              textItem("rates.graph", translate("PipeWire graph rate"),
+              textItem("rates.graph",
+                       translate("PipeWire graph sampling frequency"),
                        connected
                            ? sampleRateText(state.runtime.graphSampleRate)
                            : "—",
@@ -463,7 +468,7 @@ std::vector<StatusSection> buildStatusSections(
                       : unavailable,
                   state.runtime.configurationError),
               textItem(
-                  "errors.rate", translate("Rate"),
+                  "errors.rate", translate("Sampling frequency"),
                   connected ? errorText(state.runtime.rateError) : "—",
                   connected ? errorSeverity(state.runtime.rateError)
                             : unavailable,

@@ -183,8 +183,8 @@ pipetune bypass
 
 ## Choosing the PCM rate
 
-Configure the rate using `DSP sample rate` and `PipeWire enforcement` in the
-PipeTune settings window. `Automatic` follows the rate negotiated by the
+Configure the rate using `DSP sampling frequency` and `PipeWire enforcement`
+in the PipeTune settings window. `Automatic` follows the rate negotiated by the
 PipeWire graph. A fixed setting requests `44.1`, `48`, `96`, `192`, or `384`
 kHz for both filter nodes and the EffeTune engine. The status display shows the
 actual DSP and graph rates.

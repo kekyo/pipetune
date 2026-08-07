@@ -101,7 +101,7 @@ msgstr ""
 msgid "Automatic"
 msgstr ""
 
-msgid "Automatic — follow PipeWire graph"
+msgid "Automatic — follow PipeWire graph sampling frequency"
 msgstr ""
 
 msgid "Baseline"
@@ -143,10 +143,10 @@ msgstr ""
 msgid "Changing processing mode failed"
 msgstr ""
 
-msgid "Changing sample-rate policy"
+msgid "Changing sampling-frequency policy"
 msgstr ""
 
-msgid "Changing sample-rate policy failed"
+msgid "Changing sampling-frequency policy failed"
 msgstr ""
 
 msgid "Choose a preset before enabling DSP processing"
@@ -186,7 +186,7 @@ msgstr ""
 msgid "Connected"
 msgstr ""
 
-msgid "Connected · changing sample rate"
+msgid "Connected · changing sampling frequency"
 msgstr ""
 
 msgid "Connected and monitoring"
@@ -237,10 +237,6 @@ msgstr ""
 msgid "DSP"
 msgstr ""
 
-#, brace-format
-msgid "DSP {0}  •  PipeWire graph {1}"
-msgstr ""
-
 msgid "DSP / Performance"
 msgstr ""
 
@@ -256,10 +252,11 @@ msgstr ""
 msgid "DSP processing load; graph capped at 100%."
 msgstr ""
 
-msgid "DSP rate"
+msgid "DSP sampling frequency"
 msgstr ""
 
-msgid "DSP sample rate"
+#, brace-format
+msgid "DSP sampling frequency {0}  •  PipeWire graph sampling frequency {1}"
 msgstr ""
 
 msgid "Effective backend"
@@ -289,16 +286,16 @@ msgstr ""
 msgid "Fixed"
 msgstr ""
 
-msgid "Fixed rate"
+msgid "Fixed sampling frequency"
 msgstr ""
 
 msgid "Force"
 msgstr ""
 
-msgid "Force — request the fixed graph rate"
+msgid "Force — request the fixed graph sampling frequency"
 msgstr ""
 
-msgid "Input / Rates"
+msgid "Input / Sampling Frequencies"
 msgstr ""
 
 msgid "Input channels"
@@ -307,7 +304,7 @@ msgstr ""
 msgid "Input format"
 msgstr ""
 
-msgid "Input sample rate"
+msgid "Input sampling frequency"
 msgstr ""
 
 msgid "Language"
@@ -325,7 +322,7 @@ msgstr ""
 msgid "Live enforcement"
 msgstr ""
 
-msgid "Live fixed rate"
+msgid "Live fixed sampling frequency"
 msgstr ""
 
 msgid "Live preview active · changes are not saved"
@@ -334,7 +331,7 @@ msgstr ""
 msgid "Live preview failed · adjust a setting to retry"
 msgstr ""
 
-msgid "Live rate mode"
+msgid "Live sampling-frequency mode"
 msgstr ""
 
 msgid "Live settings changed elsewhere · reopen this dialog"
@@ -408,7 +405,7 @@ msgstr ""
 msgid "PipeWire enforcement"
 msgstr ""
 
-msgid "PipeWire graph rate"
+msgid "PipeWire graph sampling frequency"
 msgstr ""
 
 msgid "Preset"
@@ -438,18 +435,6 @@ msgstr ""
 msgid "Quit"
 msgstr ""
 
-msgid "Rate"
-msgstr ""
-
-msgid "Rate enforcement"
-msgstr ""
-
-msgid "Rate mode"
-msgstr ""
-
-msgid "Rates unavailable"
-msgstr ""
-
 msgid "Restart now"
 msgstr ""
 
@@ -474,10 +459,22 @@ msgstr ""
 msgid "Rollback requested"
 msgstr ""
 
-msgid "Sample Rate"
+msgid "Sampling frequencies unavailable"
 msgstr ""
 
-msgid "Sample-rate policy changed"
+msgid "Sampling frequency"
+msgstr ""
+
+msgid "Sampling Frequency"
+msgstr ""
+
+msgid "Sampling-frequency enforcement"
+msgstr ""
+
+msgid "Sampling-frequency mode"
+msgstr ""
+
+msgid "Sampling-frequency policy changed"
 msgstr ""
 
 msgid "Saved Configuration"
@@ -512,7 +509,7 @@ msgstr ""
 msgid "Suggest"
 msgstr ""
 
-msgid "Suggest — let PipeWire choose"
+msgid "Suggest — let PipeWire choose the graph sampling frequency"
 msgstr ""
 
 #, brace-format

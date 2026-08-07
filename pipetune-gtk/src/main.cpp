@@ -228,7 +228,7 @@ static std::string connectionSummary(const ApplicationState &state) {
     break;
   }
   if (state.hasRuntimeStatus && state.runtime.rateTransitioning) {
-    return translate("Connected · changing sample rate");
+    return translate("Connected · changing sampling frequency");
   }
   return translate("Connected and monitoring");
 }
@@ -538,7 +538,7 @@ static void appendCompletedAction(
 static UiMessage settingsOperationName(SettingsOperation operation) {
   switch (operation) {
   case SettingsOperation::rate:
-    return localizedMessage("Changing sample-rate policy", {});
+    return localizedMessage("Changing sampling-frequency policy", {});
   case SettingsOperation::dspBackend:
     return localizedMessage("Changing DSP backend", {});
   case SettingsOperation::processing:
@@ -552,7 +552,7 @@ static UiMessage settingsOperationName(SettingsOperation operation) {
 static UiMessage settingsOperationSuccess(SettingsOperation operation) {
   switch (operation) {
   case SettingsOperation::rate:
-    return localizedMessage("Sample-rate policy changed", {});
+    return localizedMessage("Sampling-frequency policy changed", {});
   case SettingsOperation::dspBackend:
     return localizedMessage("DSP backend changed", {});
   case SettingsOperation::processing:
@@ -566,7 +566,7 @@ static UiMessage settingsOperationSuccess(SettingsOperation operation) {
 static UiMessage settingsOperationFailure(SettingsOperation operation) {
   switch (operation) {
   case SettingsOperation::rate:
-    return localizedMessage("Changing sample-rate policy failed", {});
+    return localizedMessage("Changing sampling-frequency policy failed", {});
   case SettingsOperation::dspBackend:
     return localizedMessage("Changing DSP backend failed", {});
   case SettingsOperation::processing:
@@ -669,10 +669,11 @@ static void renderRateControls(GtkRuntime *runtime) {
       GTK_COMBO_BOX_TEXT(runtime->ui.rateEnforcementCombo));
   gtk_combo_box_text_append_text(
       GTK_COMBO_BOX_TEXT(runtime->ui.rateEnforcementCombo),
-      translate("Suggest — let PipeWire choose"));
+      translate(
+          "Suggest — let PipeWire choose the graph sampling frequency"));
   gtk_combo_box_text_append_text(
       GTK_COMBO_BOX_TEXT(runtime->ui.rateEnforcementCombo),
-      translate("Force — request the fixed graph rate"));
+      translate("Force — request the fixed graph sampling frequency"));
   gtk_combo_box_set_active(
       GTK_COMBO_BOX(runtime->ui.rateEnforcementCombo),
       static_cast<gint>(presentation.activeEnforcementIndex));

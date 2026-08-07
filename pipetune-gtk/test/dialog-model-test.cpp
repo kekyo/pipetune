@@ -274,10 +274,50 @@ static bool testStructuredStatusModel() {
   const auto sections = pipetune_gtk::buildStatusSections(
       state, baseConfig(), 1704164645012ULL);
   const auto *performance = findSection(sections, "dsp-performance");
+  const auto *inputRates = findSection(sections, "input-rates");
+  const auto *errors = findSection(sections, "errors");
   if (!check(sections.size() == 6,
              "the status tree must expose six stable sections") ||
       !check(performance != nullptr,
-             "the DSP performance section is missing")) {
+             "the DSP performance section is missing") ||
+      !check(inputRates != nullptr,
+             "the input and sampling-frequency section is missing") ||
+      !check(errors != nullptr, "the error section is missing")) {
+    return false;
+  }
+  const auto *inputFrequency =
+      findItem(*inputRates, "input.sample-rate");
+  const auto *measuredFrameRate =
+      findItem(*inputRates, "input.frame-rate");
+  const auto *pcmDataRate = findItem(*inputRates, "input.pcm-rate");
+  const auto *liveFrequency = findItem(*inputRates, "rates.fixed");
+  const auto *dspFrequency = findItem(*inputRates, "rates.dsp");
+  const auto *graphFrequency = findItem(*inputRates, "rates.graph");
+  const auto *frequencyError = findItem(*errors, "errors.rate");
+  if (!check(inputRates->label == "Input / Sampling Frequencies",
+             "sampling-frequency section label differs") ||
+      !check(inputFrequency != nullptr &&
+                 inputFrequency->label == "Input sampling frequency",
+             "input sampling-frequency label differs") ||
+      !check(measuredFrameRate != nullptr &&
+                 measuredFrameRate->label == "Measured frame rate",
+             "measured frame rate must remain a rate") ||
+      !check(pcmDataRate != nullptr &&
+                 pcmDataRate->label == "PCM data rate",
+             "PCM data rate must remain a rate") ||
+      !check(liveFrequency != nullptr &&
+                 liveFrequency->label == "Live fixed sampling frequency",
+             "live sampling-frequency label differs") ||
+      !check(dspFrequency != nullptr &&
+                 dspFrequency->label == "DSP sampling frequency",
+             "DSP sampling-frequency label differs") ||
+      !check(graphFrequency != nullptr &&
+                 graphFrequency->label ==
+                     "PipeWire graph sampling frequency",
+             "graph sampling-frequency label differs") ||
+      !check(frequencyError != nullptr &&
+                 frequencyError->label == "Sampling frequency",
+             "sampling-frequency error label differs")) {
     return false;
   }
   const auto *load = findItem(*performance, "dsp.load");
@@ -421,11 +461,13 @@ static bool testActionLogHistory() {
   auto log = pipetune_gtk::createActionLog(500);
   const auto pending = pipetune_gtk::appendPendingAction(
       log, 1000, pipetune_gtk::ActionLogCategory::settings,
-      pipetune_gtk::localizedMessage("Changing sample-rate policy", {}),
+      pipetune_gtk::localizedMessage(
+          "Changing sampling-frequency policy", {}),
       pipetune_gtk::technicalMessage("192000 Hz"));
   pipetune_gtk::completePendingAction(
       log, pending, 1010, true, pipetune_gtk::ActionLogSeverity::info,
-      pipetune_gtk::localizedMessage("Sample-rate policy changed", {}),
+      pipetune_gtk::localizedMessage(
+          "Sampling-frequency policy changed", {}),
       pipetune_gtk::technicalMessage({}));
   if (!check(log.entries.size() == 1 &&
                  log.entries.front().state ==

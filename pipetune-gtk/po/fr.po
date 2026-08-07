@@ -106,8 +106,8 @@ msgstr "Appliquer"
 msgid "Automatic"
 msgstr "Automatique"
 
-msgid "Automatic — follow PipeWire graph"
-msgstr "Automatique — suivre le graphe PipeWire"
+msgid "Automatic — follow PipeWire graph sampling frequency"
+msgstr "Automatique — suivre la fréquence d'échantillonnage du graphe PipeWire"
 
 msgid "Baseline"
 msgstr "État initial"
@@ -148,10 +148,10 @@ msgstr "Changement du mode de traitement"
 msgid "Changing processing mode failed"
 msgstr "Échec du changement du mode de traitement"
 
-msgid "Changing sample-rate policy"
+msgid "Changing sampling-frequency policy"
 msgstr "Changement de la politique de fréquence d'échantillonnage"
 
-msgid "Changing sample-rate policy failed"
+msgid "Changing sampling-frequency policy failed"
 msgstr "Échec du changement de la politique de fréquence d'échantillonnage"
 
 msgid "Choose a preset before enabling DSP processing"
@@ -191,7 +191,7 @@ msgstr "SIMD configuré"
 msgid "Connected"
 msgstr "Connecté"
 
-msgid "Connected · changing sample rate"
+msgid "Connected · changing sampling frequency"
 msgstr "Connecté · changement de la fréquence d'échantillonnage"
 
 msgid "Connected and monitoring"
@@ -242,10 +242,6 @@ msgstr "Déconnecté · les paramètres sont en lecture seule"
 msgid "DSP"
 msgstr "DSP"
 
-#, brace-format
-msgid "DSP {0}  •  PipeWire graph {1}"
-msgstr "DSP {0}  •  Graphe PipeWire {1}"
-
 msgid "DSP / Performance"
 msgstr "DSP / Performances"
 
@@ -261,11 +257,12 @@ msgstr "Moteur DSP"
 msgid "DSP processing load; graph capped at 100%."
 msgstr "Charge de traitement DSP ; graphique limité à 100 %."
 
-msgid "DSP rate"
-msgstr "Fréquence DSP"
-
-msgid "DSP sample rate"
+msgid "DSP sampling frequency"
 msgstr "Fréquence d'échantillonnage DSP"
+
+#, brace-format
+msgid "DSP sampling frequency {0}  •  PipeWire graph sampling frequency {1}"
+msgstr "Fréquence d'échantillonnage DSP {0}  •  Fréquence d'échantillonnage du graphe PipeWire {1}"
 
 msgid "Effective backend"
 msgstr "Moteur effectif"
@@ -294,17 +291,17 @@ msgstr "Finalisation de l'annulation…"
 msgid "Fixed"
 msgstr "Fixe"
 
-msgid "Fixed rate"
-msgstr "Fréquence fixe"
+msgid "Fixed sampling frequency"
+msgstr "Fréquence d'échantillonnage fixe"
 
 msgid "Force"
 msgstr "Forcer"
 
-msgid "Force — request the fixed graph rate"
-msgstr "Forcer — demander la fréquence fixe du graphe"
+msgid "Force — request the fixed graph sampling frequency"
+msgstr "Forcer — demander la fréquence d'échantillonnage fixe du graphe"
 
-msgid "Input / Rates"
-msgstr "Entrée / Fréquences"
+msgid "Input / Sampling Frequencies"
+msgstr "Entrée / Fréquences d'échantillonnage"
 
 msgid "Input channels"
 msgstr "Canaux d'entrée"
@@ -312,7 +309,7 @@ msgstr "Canaux d'entrée"
 msgid "Input format"
 msgstr "Format d'entrée"
 
-msgid "Input sample rate"
+msgid "Input sampling frequency"
 msgstr "Fréquence d'échantillonnage d'entrée"
 
 msgid "Language"
@@ -330,8 +327,8 @@ msgstr "Configuration en direct"
 msgid "Live enforcement"
 msgstr "Application en direct"
 
-msgid "Live fixed rate"
-msgstr "Fréquence fixe en direct"
+msgid "Live fixed sampling frequency"
+msgstr "Fréquence d'échantillonnage fixe en direct"
 
 msgid "Live preview active · changes are not saved"
 msgstr "Aperçu en direct actif · les modifications ne sont pas enregistrées"
@@ -339,8 +336,8 @@ msgstr "Aperçu en direct actif · les modifications ne sont pas enregistrées"
 msgid "Live preview failed · adjust a setting to retry"
 msgstr "Échec de l'aperçu en direct · modifiez un paramètre pour réessayer"
 
-msgid "Live rate mode"
-msgstr "Mode de fréquence en direct"
+msgid "Live sampling-frequency mode"
+msgstr "Mode de fréquence d'échantillonnage en direct"
 
 msgid "Live settings changed elsewhere · reopen this dialog"
 msgstr "Les paramètres en direct ont été modifiés ailleurs · rouvrez cette boîte de dialogue"
@@ -358,7 +355,7 @@ msgid "Load"
 msgstr "Charge"
 
 msgid "Measured frame rate"
-msgstr "Fréquence d'images mesurée"
+msgstr "Cadence d'images mesurée"
 
 msgid "Native backend"
 msgstr "Moteur natif"
@@ -413,8 +410,8 @@ msgstr "PipeTune : déconnecté"
 msgid "PipeWire enforcement"
 msgstr "Application PipeWire"
 
-msgid "PipeWire graph rate"
-msgstr "Fréquence du graphe PipeWire"
+msgid "PipeWire graph sampling frequency"
+msgstr "Fréquence d'échantillonnage du graphe PipeWire"
 
 msgid "Preset"
 msgstr "Préréglage"
@@ -443,18 +440,6 @@ msgstr "Temps de traitement"
 msgid "Quit"
 msgstr "Quitter"
 
-msgid "Rate"
-msgstr "Fréquence"
-
-msgid "Rate enforcement"
-msgstr "Application de la fréquence"
-
-msgid "Rate mode"
-msgstr "Mode de fréquence"
-
-msgid "Rates unavailable"
-msgstr "Fréquences indisponibles"
-
 msgid "Restart now"
 msgstr "Redémarrer maintenant"
 
@@ -479,10 +464,22 @@ msgstr "Restauration des paramètres en direct précédents…"
 msgid "Rollback requested"
 msgstr "Annulation demandée"
 
-msgid "Sample Rate"
+msgid "Sampling frequencies unavailable"
+msgstr "Fréquences d'échantillonnage indisponibles"
+
+msgid "Sampling frequency"
 msgstr "Fréquence d'échantillonnage"
 
-msgid "Sample-rate policy changed"
+msgid "Sampling Frequency"
+msgstr "Fréquence d'échantillonnage"
+
+msgid "Sampling-frequency enforcement"
+msgstr "Application de la fréquence d'échantillonnage"
+
+msgid "Sampling-frequency mode"
+msgstr "Mode de fréquence d'échantillonnage"
+
+msgid "Sampling-frequency policy changed"
 msgstr "Politique de fréquence d'échantillonnage modifiée"
 
 msgid "Saved Configuration"
@@ -517,8 +514,8 @@ msgstr "Chemin de configuration de démarrage indisponible"
 msgid "Suggest"
 msgstr "Suggérer"
 
-msgid "Suggest — let PipeWire choose"
-msgstr "Suggérer — laisser PipeWire choisir"
+msgid "Suggest — let PipeWire choose the graph sampling frequency"
+msgstr "Suggérer — laisser PipeWire choisir la fréquence d'échantillonnage du graphe"
 
 #, brace-format
 msgid "Switching — {0}"

@@ -26,11 +26,12 @@ static std::string sampleRateText(std::uint32_t sampleRate) {
 static std::string effectiveRateText(
     const ApplicationState &state) {
   if (!state.hasRuntimeStatus) {
-    return translate("Rates unavailable");
+    return translate("Sampling frequencies unavailable");
   }
   const auto &runtime = state.runtime;
   auto text = formatUiMessage(localizedMessage(
-      "DSP {0}  •  PipeWire graph {1}",
+      "DSP sampling frequency {0}  •  "
+      "PipeWire graph sampling frequency {1}",
       {sampleRateText(runtime.dspSampleRate),
        sampleRateText(runtime.graphSampleRate)}));
   if (runtime.rateTransitioning) {
@@ -46,7 +47,8 @@ RateSelectionPresentation makeRateSelectionPresentation(
   auto choices = std::vector<SampleRateChoice>{{
       .mode = pipetune::SampleRateMode::automatic,
       .fixedRate = 0,
-      .label = translate("Automatic — follow PipeWire graph"),
+      .label = translate(
+          "Automatic — follow PipeWire graph sampling frequency"),
   }};
   choices.reserve(pipetune::selectableSampleRates().size() + 1);
   auto activeRateIndex = std::size_t{0};

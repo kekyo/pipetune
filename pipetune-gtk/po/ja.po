@@ -105,8 +105,8 @@ msgstr "適用"
 msgid "Automatic"
 msgstr "自動"
 
-msgid "Automatic — follow PipeWire graph"
-msgstr "自動 — PipeWireグラフに追従"
+msgid "Automatic — follow PipeWire graph sampling frequency"
+msgstr "自動 — PipeWireグラフのサンプリング周波数に追従"
 
 msgid "Baseline"
 msgstr "ベースライン"
@@ -147,11 +147,11 @@ msgstr "処理モードを変更中"
 msgid "Changing processing mode failed"
 msgstr "処理モードの変更に失敗しました"
 
-msgid "Changing sample-rate policy"
-msgstr "サンプルレートポリシーを変更中"
+msgid "Changing sampling-frequency policy"
+msgstr "サンプリング周波数ポリシーを変更中"
 
-msgid "Changing sample-rate policy failed"
-msgstr "サンプルレートポリシーの変更に失敗しました"
+msgid "Changing sampling-frequency policy failed"
+msgstr "サンプリング周波数ポリシーの変更に失敗しました"
 
 msgid "Choose a preset before enabling DSP processing"
 msgstr "DSP処理を有効にする前にプリセットを選択してください"
@@ -190,8 +190,8 @@ msgstr "設定済みSIMD"
 msgid "Connected"
 msgstr "接続済み"
 
-msgid "Connected · changing sample rate"
-msgstr "接続済み · サンプルレートを変更中"
+msgid "Connected · changing sampling frequency"
+msgstr "接続済み · サンプリング周波数を変更中"
 
 msgid "Connected and monitoring"
 msgstr "接続して監視中"
@@ -241,10 +241,6 @@ msgstr "未接続 · 設定は読み取り専用です"
 msgid "DSP"
 msgstr "DSP"
 
-#, brace-format
-msgid "DSP {0}  •  PipeWire graph {1}"
-msgstr "DSP {0}  •  PipeWireグラフ {1}"
-
 msgid "DSP / Performance"
 msgstr "DSP / パフォーマンス"
 
@@ -260,11 +256,12 @@ msgstr "DSPエンジン"
 msgid "DSP processing load; graph capped at 100%."
 msgstr "DSP処理負荷（グラフの上限は100%）。"
 
-msgid "DSP rate"
-msgstr "DSPレート"
+msgid "DSP sampling frequency"
+msgstr "DSPサンプリング周波数"
 
-msgid "DSP sample rate"
-msgstr "DSPサンプルレート"
+#, brace-format
+msgid "DSP sampling frequency {0}  •  PipeWire graph sampling frequency {1}"
+msgstr "DSPサンプリング周波数 {0}  •  PipeWireグラフのサンプリング周波数 {1}"
 
 msgid "Effective backend"
 msgstr "実効バックエンド"
@@ -293,17 +290,17 @@ msgstr "ロールバックを完了中…"
 msgid "Fixed"
 msgstr "固定"
 
-msgid "Fixed rate"
-msgstr "固定レート"
+msgid "Fixed sampling frequency"
+msgstr "固定サンプリング周波数"
 
 msgid "Force"
 msgstr "強制"
 
-msgid "Force — request the fixed graph rate"
-msgstr "強制 — 固定グラフレートを要求"
+msgid "Force — request the fixed graph sampling frequency"
+msgstr "強制 — グラフの固定サンプリング周波数を要求"
 
-msgid "Input / Rates"
-msgstr "入力 / レート"
+msgid "Input / Sampling Frequencies"
+msgstr "入力 / サンプリング周波数"
 
 msgid "Input channels"
 msgstr "入力チャンネル"
@@ -311,8 +308,8 @@ msgstr "入力チャンネル"
 msgid "Input format"
 msgstr "入力フォーマット"
 
-msgid "Input sample rate"
-msgstr "入力サンプルレート"
+msgid "Input sampling frequency"
+msgstr "入力サンプリング周波数"
 
 msgid "Language"
 msgstr "言語"
@@ -329,8 +326,8 @@ msgstr "ライブ設定"
 msgid "Live enforcement"
 msgstr "ライブ強制方式"
 
-msgid "Live fixed rate"
-msgstr "ライブ固定レート"
+msgid "Live fixed sampling frequency"
+msgstr "ライブ固定サンプリング周波数"
 
 msgid "Live preview active · changes are not saved"
 msgstr "ライブプレビュー中 · 変更は保存されていません"
@@ -338,8 +335,8 @@ msgstr "ライブプレビュー中 · 変更は保存されていません"
 msgid "Live preview failed · adjust a setting to retry"
 msgstr "ライブプレビューに失敗しました · 設定を変更して再試行してください"
 
-msgid "Live rate mode"
-msgstr "ライブレートモード"
+msgid "Live sampling-frequency mode"
+msgstr "ライブサンプリング周波数モード"
 
 msgid "Live settings changed elsewhere · reopen this dialog"
 msgstr "ライブ設定が外部で変更されました · このダイアログを開き直してください"
@@ -412,8 +409,8 @@ msgstr "PipeTune: 未接続"
 msgid "PipeWire enforcement"
 msgstr "PipeWire強制方式"
 
-msgid "PipeWire graph rate"
-msgstr "PipeWireグラフレート"
+msgid "PipeWire graph sampling frequency"
+msgstr "PipeWireグラフのサンプリング周波数"
 
 msgid "Preset"
 msgstr "プリセット"
@@ -442,18 +439,6 @@ msgstr "処理時間"
 msgid "Quit"
 msgstr "終了"
 
-msgid "Rate"
-msgstr "レート"
-
-msgid "Rate enforcement"
-msgstr "レート強制方式"
-
-msgid "Rate mode"
-msgstr "レートモード"
-
-msgid "Rates unavailable"
-msgstr "レートを取得できません"
-
 msgid "Restart now"
 msgstr "今すぐ再起動"
 
@@ -478,11 +463,23 @@ msgstr "以前のライブ設定を復元中…"
 msgid "Rollback requested"
 msgstr "ロールバックを要求しました"
 
-msgid "Sample Rate"
-msgstr "サンプルレート"
+msgid "Sampling frequencies unavailable"
+msgstr "サンプリング周波数を取得できません"
 
-msgid "Sample-rate policy changed"
-msgstr "サンプルレートポリシーを変更しました"
+msgid "Sampling frequency"
+msgstr "サンプリング周波数"
+
+msgid "Sampling Frequency"
+msgstr "サンプリング周波数"
+
+msgid "Sampling-frequency enforcement"
+msgstr "サンプリング周波数強制方式"
+
+msgid "Sampling-frequency mode"
+msgstr "サンプリング周波数モード"
+
+msgid "Sampling-frequency policy changed"
+msgstr "サンプリング周波数ポリシーを変更しました"
 
 msgid "Saved Configuration"
 msgstr "保存済み設定"
@@ -516,8 +513,8 @@ msgstr "起動設定のパスを利用できません"
 msgid "Suggest"
 msgstr "提案"
 
-msgid "Suggest — let PipeWire choose"
-msgstr "提案 — PipeWireに選択を任せる"
+msgid "Suggest — let PipeWire choose the graph sampling frequency"
+msgstr "提案 — PipeWireにグラフのサンプリング周波数の選択を任せる"
 
 #, brace-format
 msgid "Switching — {0}"

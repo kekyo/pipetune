@@ -106,8 +106,8 @@ msgstr "Aplicar"
 msgid "Automatic"
 msgstr "Automático"
 
-msgid "Automatic — follow PipeWire graph"
-msgstr "Automático — seguir o grafo PipeWire"
+msgid "Automatic — follow PipeWire graph sampling frequency"
+msgstr "Automático — seguir a frequência de amostragem do grafo PipeWire"
 
 msgid "Baseline"
 msgstr "Estado inicial"
@@ -148,10 +148,10 @@ msgstr "A alterar o modo de processamento"
 msgid "Changing processing mode failed"
 msgstr "Falha ao alterar o modo de processamento"
 
-msgid "Changing sample-rate policy"
+msgid "Changing sampling-frequency policy"
 msgstr "A alterar a política de frequência de amostragem"
 
-msgid "Changing sample-rate policy failed"
+msgid "Changing sampling-frequency policy failed"
 msgstr "Falha ao alterar a política de frequência de amostragem"
 
 msgid "Choose a preset before enabling DSP processing"
@@ -191,7 +191,7 @@ msgstr "SIMD configurado"
 msgid "Connected"
 msgstr "Ligado"
 
-msgid "Connected · changing sample rate"
+msgid "Connected · changing sampling frequency"
 msgstr "Ligado · a alterar a frequência de amostragem"
 
 msgid "Connected and monitoring"
@@ -242,10 +242,6 @@ msgstr "Desligado · as definições são só de leitura"
 msgid "DSP"
 msgstr "DSP"
 
-#, brace-format
-msgid "DSP {0}  •  PipeWire graph {1}"
-msgstr "DSP {0}  •  Grafo PipeWire {1}"
-
 msgid "DSP / Performance"
 msgstr "DSP / Desempenho"
 
@@ -261,11 +257,12 @@ msgstr "Motor DSP"
 msgid "DSP processing load; graph capped at 100%."
 msgstr "Carga de processamento DSP; gráfico limitado a 100%."
 
-msgid "DSP rate"
-msgstr "Frequência DSP"
-
-msgid "DSP sample rate"
+msgid "DSP sampling frequency"
 msgstr "Frequência de amostragem DSP"
+
+#, brace-format
+msgid "DSP sampling frequency {0}  •  PipeWire graph sampling frequency {1}"
+msgstr "Frequência de amostragem DSP {0}  •  Frequência de amostragem do grafo PipeWire {1}"
 
 msgid "Effective backend"
 msgstr "Motor efetivo"
@@ -294,17 +291,17 @@ msgstr "A concluir a reversão…"
 msgid "Fixed"
 msgstr "Fixa"
 
-msgid "Fixed rate"
-msgstr "Frequência fixa"
+msgid "Fixed sampling frequency"
+msgstr "Frequência de amostragem fixa"
 
 msgid "Force"
 msgstr "Forçar"
 
-msgid "Force — request the fixed graph rate"
-msgstr "Forçar — pedir a frequência fixa do grafo"
+msgid "Force — request the fixed graph sampling frequency"
+msgstr "Forçar — pedir a frequência de amostragem fixa do grafo"
 
-msgid "Input / Rates"
-msgstr "Entrada / Frequências"
+msgid "Input / Sampling Frequencies"
+msgstr "Entrada / Frequências de amostragem"
 
 msgid "Input channels"
 msgstr "Canais de entrada"
@@ -312,7 +309,7 @@ msgstr "Canais de entrada"
 msgid "Input format"
 msgstr "Formato de entrada"
 
-msgid "Input sample rate"
+msgid "Input sampling frequency"
 msgstr "Frequência de amostragem de entrada"
 
 msgid "Language"
@@ -330,8 +327,8 @@ msgstr "Configuração em direto"
 msgid "Live enforcement"
 msgstr "Aplicação em direto"
 
-msgid "Live fixed rate"
-msgstr "Frequência fixa em direto"
+msgid "Live fixed sampling frequency"
+msgstr "Frequência de amostragem fixa em direto"
 
 msgid "Live preview active · changes are not saved"
 msgstr "Pré-visualização em direto ativa · as alterações não estão guardadas"
@@ -339,8 +336,8 @@ msgstr "Pré-visualização em direto ativa · as alterações não estão guard
 msgid "Live preview failed · adjust a setting to retry"
 msgstr "Falha na pré-visualização em direto · ajuste uma definição para tentar novamente"
 
-msgid "Live rate mode"
-msgstr "Modo de frequência em direto"
+msgid "Live sampling-frequency mode"
+msgstr "Modo de frequência de amostragem em direto"
 
 msgid "Live settings changed elsewhere · reopen this dialog"
 msgstr "As definições em direto mudaram noutro local · reabra esta caixa de diálogo"
@@ -358,7 +355,7 @@ msgid "Load"
 msgstr "Carga"
 
 msgid "Measured frame rate"
-msgstr "Frequência de fotogramas medida"
+msgstr "Taxa de fotogramas medida"
 
 msgid "Native backend"
 msgstr "Motor nativo"
@@ -413,8 +410,8 @@ msgstr "PipeTune: desligado"
 msgid "PipeWire enforcement"
 msgstr "Aplicação PipeWire"
 
-msgid "PipeWire graph rate"
-msgstr "Frequência do grafo PipeWire"
+msgid "PipeWire graph sampling frequency"
+msgstr "Frequência de amostragem do grafo PipeWire"
 
 msgid "Preset"
 msgstr "Predefinição"
@@ -443,18 +440,6 @@ msgstr "Tempo de processamento"
 msgid "Quit"
 msgstr "Sair"
 
-msgid "Rate"
-msgstr "Frequência"
-
-msgid "Rate enforcement"
-msgstr "Aplicação da frequência"
-
-msgid "Rate mode"
-msgstr "Modo de frequência"
-
-msgid "Rates unavailable"
-msgstr "Frequências indisponíveis"
-
 msgid "Restart now"
 msgstr "Reiniciar agora"
 
@@ -479,10 +464,22 @@ msgstr "A restaurar as definições em direto anteriores…"
 msgid "Rollback requested"
 msgstr "Reversão pedida"
 
-msgid "Sample Rate"
+msgid "Sampling frequencies unavailable"
+msgstr "Frequências de amostragem indisponíveis"
+
+msgid "Sampling frequency"
 msgstr "Frequência de amostragem"
 
-msgid "Sample-rate policy changed"
+msgid "Sampling Frequency"
+msgstr "Frequência de amostragem"
+
+msgid "Sampling-frequency enforcement"
+msgstr "Aplicação da frequência de amostragem"
+
+msgid "Sampling-frequency mode"
+msgstr "Modo de frequência de amostragem"
+
+msgid "Sampling-frequency policy changed"
 msgstr "Política de frequência de amostragem alterada"
 
 msgid "Saved Configuration"
@@ -517,8 +514,8 @@ msgstr "Caminho da configuração de arranque indisponível"
 msgid "Suggest"
 msgstr "Sugerir"
 
-msgid "Suggest — let PipeWire choose"
-msgstr "Sugerir — deixar o PipeWire escolher"
+msgid "Suggest — let PipeWire choose the graph sampling frequency"
+msgstr "Sugerir — deixar o PipeWire escolher a frequência de amostragem do grafo"
 
 #, brace-format
 msgid "Switching — {0}"
