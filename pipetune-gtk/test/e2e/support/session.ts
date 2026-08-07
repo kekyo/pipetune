@@ -92,6 +92,8 @@ export interface PipeTuneGtkTestSession {
   readonly disconnectDaemon: () => Promise<void>;
   /** Starts a fresh fake daemon from the current persisted configuration. */
   readonly reconnectDaemon: () => Promise<void>;
+  /** Publishes one deterministic status event without changing live settings. */
+  readonly publishStatus: () => Promise<void>;
   /** Stops all processes and removes the isolated filesystem root. */
   readonly release: () => Promise<void>;
 }
@@ -306,6 +308,20 @@ export const launchPipeTuneGtk = async (
       options.staleStatusAfterChange
     );
   };
+  const publishStatus = async (): Promise<void> => {
+    if (daemon === undefined) {
+      throw new Error('fake daemon is unavailable');
+    }
+    await new Promise<void>((resolve, reject) => {
+      daemon?.process.stdin.write('publish-status\n', (error) => {
+        if (error !== null && error !== undefined) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  };
   const release = async (): Promise<void> => {
     await launcher.release();
     const activeDaemon = daemon;
@@ -338,6 +354,7 @@ export const launchPipeTuneGtk = async (
     restartApplication,
     disconnectDaemon,
     reconnectDaemon,
+    publishStatus,
     release,
   };
 };

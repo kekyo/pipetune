@@ -96,6 +96,7 @@ struct GtkRuntime {
   std::string presetCatalogSourceDiagnostic;
   std::string presetCatalogSavedDiagnostic;
   std::vector<SampleRateChoice> rateChoices;
+  std::vector<std::string> rateEnforcementChoices;
   std::vector<DspBackendChoice> dspBackendChoices;
   std::map<std::string, StatusRowWidgets> statusRows;
   StatusLevelMeterWidgets statusLoadMeter;
@@ -640,13 +641,37 @@ static bool controlsAreEditable(const GtkRuntime &runtime) {
          !runtime.transaction.conflict;
 }
 
+template <typename Choice>
+static bool choiceLabelsMatch(const std::vector<Choice> &left,
+                              const std::vector<Choice> &right) {
+  if (left.size() != right.size()) {
+    return false;
+  }
+  for (auto index = std::size_t{0}; index < left.size(); ++index) {
+    if (left[index].label != right[index].label) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static void setComboBoxActive(GtkWidget *widget,
+                              std::size_t activeIndex) {
+  const auto active = static_cast<gint>(activeIndex);
+  if (gtk_combo_box_get_active(GTK_COMBO_BOX(widget)) != active) {
+    gtk_combo_box_set_active(GTK_COMBO_BOX(widget), active);
+  }
+}
+
 static void renderPresetControls(GtkRuntime *runtime) {
   const auto &settings = runtime->transactionReady
                              ? runtime->transaction.desiredLive
                              : runtime->savedConfig;
-  gtk_switch_set_active(
-      GTK_SWITCH(runtime->ui.processingEnabledSwitch),
-      settings.presetFound ? TRUE : FALSE);
+  const auto active = settings.presetFound ? TRUE : FALSE;
+  auto *processing = GTK_SWITCH(runtime->ui.processingEnabledSwitch);
+  if (gtk_switch_get_active(processing) != active) {
+    gtk_switch_set_active(processing, active);
+  }
 }
 
 static void renderRateControls(GtkRuntime *runtime) {
@@ -655,28 +680,34 @@ static void renderRateControls(GtkRuntime *runtime) {
                              : runtime->savedConfig;
   const auto presentation =
       makeRateSelectionPresentation(runtime->state, settings.ratePolicy);
-  runtime->rateChoices = presentation.choices;
-  gtk_combo_box_text_remove_all(
-      GTK_COMBO_BOX_TEXT(runtime->ui.rateCombo));
-  for (const auto &choice : runtime->rateChoices) {
-    gtk_combo_box_text_append_text(
-        GTK_COMBO_BOX_TEXT(runtime->ui.rateCombo), choice.label.c_str());
+  if (!choiceLabelsMatch(runtime->rateChoices, presentation.choices)) {
+    gtk_combo_box_text_remove_all(
+        GTK_COMBO_BOX_TEXT(runtime->ui.rateCombo));
+    for (const auto &choice : presentation.choices) {
+      gtk_combo_box_text_append_text(
+          GTK_COMBO_BOX_TEXT(runtime->ui.rateCombo), choice.label.c_str());
+    }
   }
-  gtk_combo_box_set_active(
-      GTK_COMBO_BOX(runtime->ui.rateCombo),
-      static_cast<gint>(presentation.activeRateIndex));
-  gtk_combo_box_text_remove_all(
-      GTK_COMBO_BOX_TEXT(runtime->ui.rateEnforcementCombo));
-  gtk_combo_box_text_append_text(
-      GTK_COMBO_BOX_TEXT(runtime->ui.rateEnforcementCombo),
+  runtime->rateChoices = presentation.choices;
+  setComboBoxActive(runtime->ui.rateCombo,
+                    presentation.activeRateIndex);
+  const auto enforcementChoices = std::vector<std::string>{
       translate(
-          "Suggest — let PipeWire choose the graph sampling frequency"));
-  gtk_combo_box_text_append_text(
-      GTK_COMBO_BOX_TEXT(runtime->ui.rateEnforcementCombo),
-      translate("Force — request the fixed graph sampling frequency"));
-  gtk_combo_box_set_active(
-      GTK_COMBO_BOX(runtime->ui.rateEnforcementCombo),
-      static_cast<gint>(presentation.activeEnforcementIndex));
+          "Suggest — let PipeWire choose the graph sampling frequency"),
+      translate("Force — request the fixed graph sampling frequency"),
+  };
+  if (runtime->rateEnforcementChoices != enforcementChoices) {
+    gtk_combo_box_text_remove_all(
+        GTK_COMBO_BOX_TEXT(runtime->ui.rateEnforcementCombo));
+    for (const auto &label : enforcementChoices) {
+      gtk_combo_box_text_append_text(
+          GTK_COMBO_BOX_TEXT(runtime->ui.rateEnforcementCombo),
+          label.c_str());
+    }
+    runtime->rateEnforcementChoices = enforcementChoices;
+  }
+  setComboBoxActive(runtime->ui.rateEnforcementCombo,
+                    presentation.activeEnforcementIndex);
 }
 
 static void renderDspControls(GtkRuntime *runtime) {
@@ -685,17 +716,19 @@ static void renderDspControls(GtkRuntime *runtime) {
                              : runtime->savedConfig;
   const auto backend = makeDspBackendSelectionPresentation(
       runtime->state, settings.dspBackend, settings.dspSimdVariant);
-  runtime->dspBackendChoices = backend.choices;
-  gtk_combo_box_text_remove_all(
-      GTK_COMBO_BOX_TEXT(runtime->ui.dspBackendCombo));
-  for (const auto &choice : runtime->dspBackendChoices) {
-    gtk_combo_box_text_append_text(
-        GTK_COMBO_BOX_TEXT(runtime->ui.dspBackendCombo),
-        choice.label.c_str());
+  if (!choiceLabelsMatch(runtime->dspBackendChoices,
+                         backend.choices)) {
+    gtk_combo_box_text_remove_all(
+        GTK_COMBO_BOX_TEXT(runtime->ui.dspBackendCombo));
+    for (const auto &choice : backend.choices) {
+      gtk_combo_box_text_append_text(
+          GTK_COMBO_BOX_TEXT(runtime->ui.dspBackendCombo),
+          choice.label.c_str());
+    }
   }
-  gtk_combo_box_set_active(
-      GTK_COMBO_BOX(runtime->ui.dspBackendCombo),
-      static_cast<gint>(backend.activeIndex));
+  runtime->dspBackendChoices = backend.choices;
+  setComboBoxActive(runtime->ui.dspBackendCombo,
+                    backend.activeIndex);
 }
 
 static gint uiLanguageComboIndex(UiLanguage language) noexcept {
@@ -736,9 +769,12 @@ static bool uiLanguageFromComboIndex(gint index,
 }
 
 static void renderLanguageControl(GtkRuntime *runtime) {
-  gtk_combo_box_set_active(
-      GTK_COMBO_BOX(runtime->ui.languageCombo),
-      uiLanguageComboIndex(runtime->uiLanguage));
+  const auto active = uiLanguageComboIndex(runtime->uiLanguage);
+  if (gtk_combo_box_get_active(
+          GTK_COMBO_BOX(runtime->ui.languageCombo)) != active) {
+    gtk_combo_box_set_active(
+        GTK_COMBO_BOX(runtime->ui.languageCombo), active);
+  }
   if (runtime->languageRestartRequired) {
     gtk_widget_show(runtime->ui.languageRestartNotice);
   } else {
@@ -1956,6 +1992,7 @@ static ApplicationRunResult runApplication(int argc, char **argv) {
       .presetCatalogSourceDiagnostic = {},
       .presetCatalogSavedDiagnostic = {},
       .rateChoices = {},
+      .rateEnforcementChoices = {},
       .dspBackendChoices = {},
       .statusRows = {},
       .statusLoadMeter = {},

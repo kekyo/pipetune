@@ -25,6 +25,7 @@ struct FakeDaemonState {
   std::filesystem::path requestLogPath;
   std::string rejectedCommand;
   std::uint64_t dspTelemetrySequence;
+  std::uint64_t manualStatusSequence;
 };
 
 static std::string environmentValue(const char *name) {
@@ -140,6 +141,10 @@ static pipetune::ControlRuntimeStatus snapshotStatus(
   auto status = makeStatus(config, revision);
   if (stale) {
     status.configurationError = "E2E stale status";
+  } else if (state.manualStatusSequence != 0) {
+    status.configurationError =
+        "E2E manual status " +
+        std::to_string(state.manualStatusSequence);
   }
   status.dspProcessedFrames +=
       state.dspTelemetrySequence * status.inputSampleRate;
@@ -354,6 +359,7 @@ int main(int argc, char **argv) {
       .rejectedCommand =
           environmentValue("PIPETUNE_E2E_REJECT_COMMAND"),
       .dspTelemetrySequence = 0,
+      .manualStatusSequence = 0,
   };
   auto started = pipetune::startControlServer(
       socketPath.path,
@@ -368,6 +374,13 @@ int main(int argc, char **argv) {
   std::cout << "READY\n" << std::flush;
   auto input = std::string{};
   while (std::getline(std::cin, input)) {
+    if (input == "publish-status") {
+      {
+        auto lock = std::scoped_lock(state.mutex);
+        ++state.manualStatusSequence;
+      }
+      pipetune::publishControlStatus(started.server.get());
+    }
   }
   started.server.reset();
   return 0;

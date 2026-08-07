@@ -106,6 +106,23 @@ const selectComboItem = async (id: string, index: number): Promise<void> => {
   );
 };
 
+const expectComboItemSelected = async (
+  id: string,
+  index: number
+): Promise<void> => {
+  await toPass(
+    async () => {
+      expect(
+        await (await getElement(id, 'comboBox')).isChildSelected(index)
+      ).toBe(true);
+    },
+    {
+      timeoutMs: 10_000,
+      message: `${id} did not display item ${String(index)}`,
+    }
+  );
+};
+
 const selectSettingsPage = async (index: number): Promise<void> => {
   const switcher = await getElement('settingsSwitcher', 'container');
   const child = await switcher.childAt(index);
@@ -450,6 +467,61 @@ describe('PipeTune GTK dialog', () => {
     );
   });
 
+  it('finishes a processing switch drag across a status refresh', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await session.clearRequests();
+    const window = await getElement('mainWindow', 'window');
+    const processing = await getElement('processingEnabledSwitch', 'switch');
+    const bounds = (await processing.capture()).bounds;
+    await window.activate();
+    const centerY = bounds.y + Math.floor(bounds.height / 2);
+    const activeX = bounds.x + Math.floor((bounds.width * 3) / 4);
+    const inactiveX = bounds.x + Math.floor(bounds.width / 4);
+    await session.app.input.moveMouseTo(activeX, centerY);
+    await session.app.input.setMouseButton('left', true);
+    try {
+      await session.app.input.moveMouseTo(
+        bounds.x + Math.floor(bounds.width / 2),
+        centerY
+      );
+      await session.publishStatus();
+      await waitForLabel('status-errors-configuration', 'E2E manual status 1');
+      await session.app.input.moveMouseTo(inactiveX, centerY);
+    } finally {
+      await session.app.input.setMouseButton('left', false);
+    }
+
+    await toPass(
+      async () => {
+        expect(await processing.isChecked()).toBe(false);
+      },
+      {
+        timeoutMs: 10_000,
+        message: 'Status refresh interrupted the processing switch action.',
+      }
+    );
+    await waitForCommands(['bypass']);
+  });
+
+  it('finishes a native backend selection across a status refresh', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await selectSettingsPage(2);
+    await session.clearRequests();
+    const backend = await getElement('dspBackendCombo', 'comboBox');
+    await backend.click();
+    const scalar = await backend.childAt(0);
+    expect(scalar).toBeDefined();
+
+    await session.publishStatus();
+    await waitForLabel('status-errors-configuration', 'E2E manual status 1');
+    await scalar?.click();
+
+    await expectComboItemSelected('dspBackendCombo', 0);
+    await waitForCommands(['set-dsp-backend']);
+  });
+
   it('keeps confirmed SIMD and sample-rate edits applicable after older status events', async () => {
     session = await launchPipeTuneGtk({
       rejectedCommand: undefined,
@@ -533,6 +605,15 @@ describe('PipeTune GTK dialog', () => {
     await selectSettingsPage(3);
     const restore = await getElement('restoreDefaultsButton', 'button');
     await restore.click();
+    await selectSettingsPage(0);
+    expect(
+      await (await getElement('processingEnabledSwitch', 'switch')).isChecked()
+    ).toBe(false);
+    await selectSettingsPage(1);
+    await expectComboItemSelected('rateCombo', 0);
+    await expectComboItemSelected('rateEnforcementCombo', 0);
+    await selectSettingsPage(2);
+    await expectComboItemSelected('dspBackendCombo', 0);
     const requests = await waitForCommands([
       'set-rate',
       'set-dsp-backend',
