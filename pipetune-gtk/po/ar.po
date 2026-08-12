@@ -392,6 +392,12 @@ msgstr "تم قطع اتصال PipeTune"
 msgid "PipeTune reconnected"
 msgstr "أُعيد اتصال PipeTune"
 
+msgid "PipeTune setup completed"
+msgstr "اكتمل إعداد PipeTune"
+
+msgid "PipeTune setup failed"
+msgstr "فشل إعداد PipeTune"
+
 msgid "PipeTune Status"
 msgstr "حالة PipeTune"
 
@@ -498,6 +504,9 @@ msgstr "جارٍ حفظ جميع الإعدادات"
 
 msgid "Scalar"
 msgstr "Scalar"
+
+msgid "Setting up PipeTune for this user…"
+msgstr "جارٍ إعداد PipeTune لهذا المستخدم…"
 
 msgid "Settings updated"
 msgstr "تم تحديث الإعدادات"

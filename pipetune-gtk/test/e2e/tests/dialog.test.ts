@@ -327,6 +327,26 @@ const hideWithKeyboard = async (method: 'escape' | 'close'): Promise<void> => {
 };
 
 describe('PipeTune GTK dialog', () => {
+  it('reports setup failure and still connects to an available daemon', async () => {
+    session = await launchPipeTuneGtk({
+      rejectedCommand: undefined,
+      setupFails: true,
+    });
+    await waitForConnected();
+    const drawerToggle = await getElement('logToggleButton', 'toggleButton');
+    await toPass(
+      async () => {
+        expect(await drawerToggle.isChecked()).toBe(true);
+      },
+      {
+        timeoutMs: 10_000,
+        message: 'Setup failure did not open the action log.',
+      }
+    );
+    await selectComboItem('logFilterCombo', 2);
+    expect(await (await getElement('logList', 'list')).getChildCount()).toBe(1);
+  });
+
   it('keeps structured status visible beside every settings page at minimum size', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();

@@ -61,6 +61,8 @@ export interface PipeTuneGtkTestOptions {
   readonly rejectedCommand: string | undefined;
   /** Publish one older configuration after each accepted live change. */
   readonly staleStatusAfterChange?: boolean;
+  /** Make the deterministic per-user setup helper fail. */
+  readonly setupFails?: boolean;
 }
 
 /**
@@ -207,6 +209,8 @@ export const launchPipeTuneGtk = async (
   const root = await mkdtemp(join(tmpdir(), 'pipetune-gtk-e2e-'));
   const runtimeDirectory = join(root, 'runtime');
   const configDirectory = join(root, 'config');
+  const dataDirectory = join(root, 'data');
+  const stateDirectory = join(root, 'state');
   const pipeTuneConfigDirectory = join(configDirectory, 'pipetune');
   const configPath = join(pipeTuneConfigDirectory, 'environment');
   const languageConfigPath = join(pipeTuneConfigDirectory, 'gtk.conf');
@@ -220,6 +224,8 @@ export const launchPipeTuneGtk = async (
   const homeDirectory = join(root, 'home');
   await mkdir(runtimeDirectory, { mode: 0o700 });
   await mkdir(pipeTuneConfigDirectory, { recursive: true });
+  await mkdir(dataDirectory);
+  await mkdir(stateDirectory);
   await mkdir(homeDirectory);
   await writeFile(requestLogPath, '', { mode: 0o600 });
   await writeFile(persistenceGuardPath, 'allow\n', { mode: 0o600 });
@@ -249,7 +255,14 @@ export const launchPipeTuneGtk = async (
     env: {
       XDG_RUNTIME_DIR: runtimeDirectory,
       XDG_CONFIG_HOME: configDirectory,
+      XDG_DATA_HOME: dataDirectory,
+      XDG_STATE_HOME: stateDirectory,
       HOME: homeDirectory,
+      PIPETUNE_GTK_E2E_PIPETUNE_EXECUTABLE: requiredEnvironment(
+        'PIPETUNE_GTK_E2E_SETUP_HELPER'
+      ),
+      PIPETUNE_GTK_SETUP_HELPER_FAIL:
+        options.setupFails === true ? '1' : undefined,
       PIPETUNE_GTK_E2E_PERSISTENCE_GUARD: persistenceGuardPath,
     },
   });

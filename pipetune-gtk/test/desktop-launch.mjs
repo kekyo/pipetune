@@ -1,5 +1,11 @@
 import { execFile } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -8,28 +14,39 @@ const execFileAsync = promisify(execFile);
 const executable = process.argv[2];
 const gtkLaunch = process.argv[3];
 const desktopFile = process.argv[4];
-const gdbus = process.argv[5];
+const setupHelper = process.argv[5];
+const gdbus = process.argv[6];
 
 if (
   executable === undefined ||
   gtkLaunch === undefined ||
   desktopFile === undefined ||
+  setupHelper === undefined ||
   gdbus === undefined
 ) {
   throw new Error(
-    'PipeTune GTK, gtk-launch, desktop entry, and gdbus paths are required'
+    'PipeTune GTK, gtk-launch, desktop entry, setup helper, and gdbus paths are required'
   );
 }
 
 const root = await mkdtemp(join(tmpdir(), 'pipetune-gtk-desktop-launch-'));
 const dataDirectory = join(root, 'data');
+const configDirectory = join(root, 'config');
+const stateDirectory = join(root, 'state');
+const homeDirectory = join(root, 'home');
 const applicationDirectory = join(dataDirectory, 'applications');
+const setupRecordPath = join(root, 'setup-invocations');
 const desktopFileName = basename(desktopFile);
 const desktopId = desktopFileName.slice(0, -'.desktop'.length);
 const environment = {
   ...process.env,
   PATH: `${dirname(executable)}:${process.env.PATH ?? ''}`,
+  HOME: homeDirectory,
+  XDG_CONFIG_HOME: configDirectory,
   XDG_DATA_HOME: dataDirectory,
+  XDG_STATE_HOME: stateDirectory,
+  PIPETUNE_GTK_E2E_PIPETUNE_EXECUTABLE: setupHelper,
+  PIPETUNE_GTK_SETUP_HELPER_RECORD: setupRecordPath,
 };
 
 const execute = async (program, commandArguments) =>
@@ -89,7 +106,35 @@ const waitForExit = async () => {
   throw new Error('desktop-launched PipeTune did not exit');
 };
 
-await mkdir(applicationDirectory, { recursive: true });
+const waitForSetup = async () => {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    try {
+      const invocations = (await readFile(setupRecordPath, 'utf8'))
+        .split('\n')
+        .filter((line) => line !== '');
+      if (
+        invocations.length === 1 &&
+        invocations[0] === 'setup --no-launch-gtk'
+      ) {
+        return;
+      }
+    } catch (error) {
+      if (error.code !== 'ENOENT') {
+        throw error;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('desktop-launched PipeTune did not run per-user setup');
+};
+
+await Promise.all([
+  mkdir(applicationDirectory, { recursive: true }),
+  mkdir(configDirectory),
+  mkdir(stateDirectory),
+  mkdir(homeDirectory),
+]);
 await copyFile(desktopFile, join(applicationDirectory, desktopFileName));
 try {
   const launched = await execute(gtkLaunch, [desktopId]);
@@ -104,6 +149,7 @@ try {
     desktopId,
   ]);
   await waitForWindow();
+  await waitForSetup();
   const quit = await execute(executable, ['--quit']);
   if (quit.stderr !== '') {
     throw new Error(`remote quit failed: ${quit.stderr}`);

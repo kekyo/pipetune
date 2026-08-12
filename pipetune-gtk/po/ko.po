@@ -387,6 +387,12 @@ msgstr "PipeTune 연결이 끊어졌습니다"
 msgid "PipeTune reconnected"
 msgstr "PipeTune이 다시 연결되었습니다"
 
+msgid "PipeTune setup completed"
+msgstr "PipeTune 설정 완료"
+
+msgid "PipeTune setup failed"
+msgstr "PipeTune 설정 실패"
+
 msgid "PipeTune Status"
 msgstr "PipeTune 상태"
 
@@ -493,6 +499,9 @@ msgstr "모든 설정 저장 중"
 
 msgid "Scalar"
 msgstr "Scalar"
+
+msgid "Setting up PipeTune for this user…"
+msgstr "이 사용자를 위해 PipeTune을 설정하는 중…"
 
 msgid "Settings updated"
 msgstr "설정을 업데이트했습니다"

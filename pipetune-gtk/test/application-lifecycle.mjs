@@ -1,24 +1,52 @@
 import { execFile, spawn } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 const executable = process.argv[2];
 const pipeTuneExecutable = process.argv[3];
-const gdbus = process.argv[4];
+const setupHelper = process.argv[4];
+const gdbus = process.argv[5];
 
 if (
   executable === undefined ||
   pipeTuneExecutable === undefined ||
+  setupHelper === undefined ||
   gdbus === undefined
 ) {
   throw new Error(
-    'PipeTune GTK, CLI, and gdbus executable paths are required'
+    'PipeTune GTK, CLI, setup helper, and gdbus executable paths are required'
   );
 }
+
+const root = await mkdtemp(join(tmpdir(), 'pipetune-gtk-lifecycle-'));
+const configDirectory = join(root, 'config');
+const dataDirectory = join(root, 'data');
+const stateDirectory = join(root, 'state');
+const homeDirectory = join(root, 'home');
+const setupRecordPath = join(root, 'setup-invocations');
+await Promise.all([
+  mkdir(configDirectory),
+  mkdir(dataDirectory),
+  mkdir(stateDirectory),
+  mkdir(homeDirectory),
+]);
+const environment = {
+  ...process.env,
+  HOME: homeDirectory,
+  XDG_CONFIG_HOME: configDirectory,
+  XDG_DATA_HOME: dataDirectory,
+  XDG_STATE_HOME: stateDirectory,
+  PIPETUNE_GTK_E2E_PIPETUNE_EXECUTABLE: setupHelper,
+  PIPETUNE_GTK_SETUP_HELPER_RECORD: setupRecordPath,
+};
 
 const execute = async (program, commandArguments) =>
   await execFileAsync(program, commandArguments, {
     encoding: 'utf8',
+    env: environment,
     timeout: 15000,
     killSignal: 'SIGKILL',
   });
@@ -42,6 +70,7 @@ if (version.stderr !== '' || version.stdout !== `${expectedVersionText}\n`) {
 }
 
 const application = spawn(executable, ['--hidden'], {
+  env: environment,
   stdio: ['ignore', 'ignore', 'pipe'],
 });
 let stderr = '';
@@ -107,6 +136,31 @@ const waitForExit = async () => {
   }
 };
 
+const readSetupInvocations = async () => {
+  try {
+    return (await readFile(setupRecordPath, 'utf8'))
+      .split('\n')
+      .filter((line) => line !== '');
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+};
+
+const waitForInitialSetup = async () => {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const invocations = await readSetupInvocations();
+    if (invocations.length === 1) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('primary instance did not run per-user setup');
+};
+
 try {
   await execute(gdbus, [
     'wait',
@@ -115,6 +169,7 @@ try {
     '10',
     'net.kekyo.pipetune_gtk',
   ]);
+  await waitForInitialSetup();
 
   const hiddenActivation = await execute(executable, ['--hidden']);
   if (hiddenActivation.stderr !== '') {
@@ -147,6 +202,15 @@ try {
       `single-instance window identity differs: ${activatedWindows.join(',')}/${repeatedWindows.join(',')}`
     );
   }
+  const setupInvocations = await readSetupInvocations();
+  if (
+    setupInvocations.length !== 1 ||
+    setupInvocations[0] !== 'setup --no-launch-gtk'
+  ) {
+    throw new Error(
+      `per-user setup must run once in the primary instance: ${setupInvocations.join(',')}`
+    );
+  }
   const quit = await execute(executable, ['--quit']);
   if (quit.stderr !== '') {
     throw new Error(`remote quit failed: ${quit.stderr}`);
@@ -167,4 +231,5 @@ try {
       application.kill('SIGKILL');
     }
   }
+  await rm(root, { recursive: true, force: true });
 }

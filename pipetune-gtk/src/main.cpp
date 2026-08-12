@@ -4,6 +4,7 @@
 #include "dsp-backend-selection-model.h"
 #include "installed-locales.h"
 #include "installed-presets.h"
+#include "installed-tools.h"
 #include "launch-options.h"
 #include "localization.h"
 #include "main-window.h"
@@ -17,6 +18,7 @@
 #include "tray-backend.h"
 #include "ui-language.h"
 #include "ui-message.h"
+#include "user-setup-client.h"
 
 #include "pipetune/control_socket.h"
 #include "pipetune/startup_config.h"
@@ -69,6 +71,9 @@ struct ApplicationRunResult {
 struct GtkRuntime {
   GtkApplication *application;
   ApplicationState state;
+  UserSetupClient *userSetupClient;
+  bool userSetupPending;
+  std::uint64_t userSetupActionId;
   ControlClient *controlClient;
   TrayBackendState *trayBackend;
   TrayBackendAvailabilityState trayAvailability;
@@ -140,6 +145,17 @@ static std::filesystem::path currentExecutablePath() {
   const auto executable =
       std::filesystem::read_symlink("/proc/self/exe", error);
   return error ? std::filesystem::path{} : executable;
+}
+
+static std::filesystem::path pipeTuneExecutablePath() {
+#ifdef PIPETUNE_GTK_E2E_ACCESSIBILITY
+  const auto *overridePath =
+      std::getenv("PIPETUNE_GTK_E2E_PIPETUNE_EXECUTABLE");
+  if (overridePath != nullptr && overridePath[0] != '\0') {
+    return overridePath;
+  }
+#endif
+  return kPipeTuneExecutable;
 }
 
 static int restartApplicationProcess(
@@ -221,7 +237,11 @@ static TrayIconState iconStateForApplication(
   return TrayIconState::active;
 }
 
-static std::string connectionSummary(const ApplicationState &state) {
+static std::string connectionSummary(const GtkRuntime &runtime) {
+  if (runtime.userSetupPending) {
+    return translate("Setting up PipeTune for this user…");
+  }
+  const auto &state = runtime.state;
   switch (state.connection) {
   case ControlConnectionState::connecting:
     return translate("Connecting to the control service…");
@@ -586,7 +606,7 @@ static bool languagePreferenceIsDirty(
 }
 
 static bool dialogCanApply(const GtkRuntime &runtime) noexcept {
-  if (!runtime.dialogActive) {
+  if (!runtime.dialogActive || runtime.userSetupPending) {
     return false;
   }
   const auto languageDirty = languagePreferenceIsDirty(runtime);
@@ -603,6 +623,9 @@ static bool dialogCanApply(const GtkRuntime &runtime) noexcept {
 static std::string transactionStateText(const GtkRuntime &runtime) {
   if (!runtime.dialogActive) {
     return {};
+  }
+  if (runtime.userSetupPending) {
+    return translate("Setting up PipeTune for this user…");
   }
   if (!runtime.transactionReady) {
     return translate("Waiting for live PipeTune state…");
@@ -636,7 +659,8 @@ static std::string transactionStateText(const GtkRuntime &runtime) {
 }
 
 static bool controlsAreEditable(const GtkRuntime &runtime) {
-  return runtime.dialogActive && runtime.startupConfigAvailable &&
+  return runtime.dialogActive && !runtime.userSetupPending &&
+         runtime.startupConfigAvailable &&
          runtime.transactionReady &&
          runtime.transaction.connected &&
          !runtime.transaction.cancelRequested &&
@@ -805,8 +829,12 @@ static void renderSettingsControls(GtkRuntime *runtime) {
       editable && rateSettings.ratePolicy.mode ==
                       pipetune::SampleRateMode::fixed);
   gtk_widget_set_sensitive(runtime->ui.dspBackendCombo, editable);
+  gtk_widget_set_sensitive(runtime->ui.languageCombo,
+                           runtime->dialogActive &&
+                               !runtime->userSetupPending);
   gtk_widget_set_sensitive(runtime->ui.restoreDefaultsButton,
-                           runtime->dialogActive);
+                           runtime->dialogActive &&
+                               !runtime->userSetupPending);
   gtk_widget_set_sensitive(
       runtime->ui.applyButton,
       dialogCanApply(*runtime));
@@ -832,7 +860,7 @@ static void renderStatusArtwork(GtkRuntime *runtime) {
                                  GTK_ICON_SIZE_MENU);
     gtk_widget_show(runtime->ui.statusBadge);
   }
-  const auto summary = connectionSummary(runtime->state);
+  const auto summary = connectionSummary(*runtime);
   gtk_label_set_text(GTK_LABEL(runtime->ui.connectionSummaryLabel),
                      summary.c_str());
   updateTrayBackend(runtime->trayBackend,
@@ -1874,6 +1902,85 @@ static void initializeControlClient(GtkRuntime *runtime) {
   startControlSubscription(runtime->controlClient);
 }
 
+static void sendUserSetupFailureNotification(
+    GtkRuntime *runtime, std::string_view diagnostic) {
+  auto *notification =
+      g_notification_new(translate("PipeTune setup failed"));
+  const auto body = diagnostic.empty()
+                        ? std::string(translate("PipeTune setup failed"))
+                        : std::string(diagnostic);
+  g_notification_set_body(notification, body.c_str());
+  g_notification_set_priority(notification,
+                              G_NOTIFICATION_PRIORITY_HIGH);
+  g_application_send_notification(
+      G_APPLICATION(runtime->application), "user-setup-failed",
+      notification);
+  g_object_unref(notification);
+}
+
+static void onUserSetupCompleted(const UserSetupClientResult &result,
+                                 void *userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (runtime->shuttingDown) {
+    return;
+  }
+  if (runtime->userSetupPending) {
+    runtime->userSetupPending = false;
+    g_application_unmark_busy(G_APPLICATION(runtime->application));
+  }
+
+  const auto detail = result.success ? result.standardOutput : result.error;
+  completePendingAction(
+      runtime->actionLog, runtime->userSetupActionId,
+      currentUnixMilliseconds(), result.success,
+      result.success ? ActionLogSeverity::info : ActionLogSeverity::error,
+      result.success
+          ? localizedMessage("PipeTune setup completed", {})
+          : localizedMessage("PipeTune setup failed", {}),
+      technicalMessage(detail));
+  runtime->userSetupActionId = 0;
+  if (result.success) {
+    g_application_withdraw_notification(
+        G_APPLICATION(runtime->application), "user-setup-failed");
+  } else {
+    revealActionLog(runtime);
+    if (runtime->ui.window == nullptr ||
+        gtk_widget_get_visible(runtime->ui.window) == FALSE) {
+      sendUserSetupFailureNotification(runtime, result.error);
+    }
+  }
+  initializeControlClient(runtime);
+  render(runtime);
+}
+
+static void initializeUserSetup(GtkRuntime *runtime) {
+  const auto executable = pipeTuneExecutablePath();
+  runtime->userSetupPending = true;
+  runtime->userSetupActionId = appendPendingAction(
+      runtime->actionLog, currentUnixMilliseconds(),
+      ActionLogCategory::application,
+      localizedMessage("Setting up PipeTune for this user…", {}),
+      technicalMessage(executable.string()));
+  g_application_mark_busy(G_APPLICATION(runtime->application));
+  runtime->userSetupClient = createUserSetupClient(executable);
+  if (runtime->userSetupClient == nullptr) {
+    onUserSetupCompleted(
+        {.success = false,
+         .standardOutput = {},
+         .error = "installed PipeTune executable path is invalid"},
+        runtime);
+    return;
+  }
+  if (!setupUserIfNeededAsync(runtime->userSetupClient,
+                              onUserSetupCompleted, runtime)) {
+    onUserSetupCompleted(
+        {.success = false,
+         .standardOutput = {},
+         .error = "cannot schedule PipeTune user setup"},
+        runtime);
+  }
+}
+
 static void onApplicationStartup(GApplication *, gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
   createMainWindowPresentation(runtime);
@@ -1911,7 +2018,7 @@ static void onApplicationStartup(GApplication *, gpointer userData) {
                   },
           },
   });
-  initializeControlClient(runtime);
+  initializeUserSetup(runtime);
   render(runtime);
 }
 
@@ -1964,6 +2071,12 @@ static void onApplicationShutdown(GApplication *, gpointer userData) {
     g_source_remove(runtime->reconnectSource);
     runtime->reconnectSource = 0;
   }
+  if (runtime->userSetupPending) {
+    runtime->userSetupPending = false;
+    g_application_unmark_busy(G_APPLICATION(runtime->application));
+  }
+  destroyUserSetupClient(runtime->userSetupClient);
+  runtime->userSetupClient = nullptr;
   destroyEffeTunePresetFileMonitor(runtime->presetFileMonitor);
   runtime->presetFileMonitor = nullptr;
   destroyControlClient(runtime->controlClient);
@@ -2005,6 +2118,9 @@ static ApplicationRunResult runApplication(int argc, char **argv) {
   auto runtime = GtkRuntime{
       .application = application,
       .state = initialApplicationState(),
+      .userSetupClient = nullptr,
+      .userSetupPending = false,
+      .userSetupActionId = 0,
       .controlClient = nullptr,
       .trayBackend = nullptr,
       .trayAvailability = TrayBackendAvailabilityState::pending,

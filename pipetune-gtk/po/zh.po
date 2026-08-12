@@ -387,6 +387,12 @@ msgstr "PipeTune 已断开连接"
 msgid "PipeTune reconnected"
 msgstr "PipeTune 已重新连接"
 
+msgid "PipeTune setup completed"
+msgstr "PipeTune 设置已完成"
+
+msgid "PipeTune setup failed"
+msgstr "PipeTune 设置失败"
+
 msgid "PipeTune Status"
 msgstr "PipeTune 状态"
 
@@ -493,6 +499,9 @@ msgstr "正在保存所有设置"
 
 msgid "Scalar"
 msgstr "Scalar"
+
+msgid "Setting up PipeTune for this user…"
+msgstr "正在为此用户设置 PipeTune…"
 
 msgid "Settings updated"
 msgstr "设置已更新"

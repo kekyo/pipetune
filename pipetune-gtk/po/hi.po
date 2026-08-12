@@ -388,6 +388,12 @@ msgstr "PipeTune डिस्कनेक्ट हुआ"
 msgid "PipeTune reconnected"
 msgstr "PipeTune फिर कनेक्ट हुआ"
 
+msgid "PipeTune setup completed"
+msgstr "PipeTune सेटअप पूरा हुआ"
+
+msgid "PipeTune setup failed"
+msgstr "PipeTune सेटअप विफल हुआ"
+
 msgid "PipeTune Status"
 msgstr "PipeTune स्थिति"
 
@@ -494,6 +500,9 @@ msgstr "सभी सेटिंग सहेजी जा रही हैं"
 
 msgid "Scalar"
 msgstr "Scalar"
+
+msgid "Setting up PipeTune for this user…"
+msgstr "इस उपयोगकर्ता के लिए PipeTune सेट अप किया जा रहा है…"
 
 msgid "Settings updated"
 msgstr "सेटिंग अपडेट की गईं"

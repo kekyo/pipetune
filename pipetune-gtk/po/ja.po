@@ -387,6 +387,12 @@ msgstr "PipeTuneから切断されました"
 msgid "PipeTune reconnected"
 msgstr "PipeTuneに再接続しました"
 
+msgid "PipeTune setup completed"
+msgstr "PipeTune のセットアップが完了しました"
+
+msgid "PipeTune setup failed"
+msgstr "PipeTune のセットアップに失敗しました"
+
 msgid "PipeTune Status"
 msgstr "PipeTune の状態"
 
@@ -493,6 +499,9 @@ msgstr "すべての設定を保存中"
 
 msgid "Scalar"
 msgstr "スカラー"
+
+msgid "Setting up PipeTune for this user…"
+msgstr "このユーザー向けに PipeTune をセットアップしています…"
 
 msgid "Settings updated"
 msgstr "設定を更新しました"

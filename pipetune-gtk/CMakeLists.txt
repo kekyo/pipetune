@@ -175,7 +175,8 @@ add_library(
   src/status-model.cpp
   src/status-text.cpp
   src/ui-language.cpp
-  src/ui-message.cpp)
+  src/ui-message.cpp
+  src/user-setup-client.cpp)
 target_include_directories(pipetune_gtk_core PUBLIC src)
 target_link_libraries(
   pipetune_gtk_core
@@ -682,6 +683,40 @@ if(BUILD_TESTING)
     pipetune_gtk_configuration_reset_client_tests PROPERTIES TIMEOUT 10)
 
   add_executable(
+    pipetune_gtk_user_setup_helper
+    test/user-setup-helper.cpp)
+  if(MSVC)
+    target_compile_options(
+      pipetune_gtk_user_setup_helper PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_user_setup_helper PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+
+  add_executable(
+    pipetune_gtk_user_setup_client_tests
+    test/user-setup-client-test.cpp)
+  target_link_libraries(
+    pipetune_gtk_user_setup_client_tests
+    PRIVATE pipetune_gtk_core PkgConfig::GIO)
+  if(MSVC)
+    target_compile_options(
+      pipetune_gtk_user_setup_client_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_user_setup_client_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_gtk_user_setup_client_tests
+    COMMAND
+      pipetune_gtk_user_setup_client_tests
+      $<TARGET_FILE:pipetune_gtk_user_setup_helper>)
+  set_tests_properties(
+    pipetune_gtk_user_setup_client_tests PROPERTIES TIMEOUT 10)
+
+  add_executable(
     pipetune_gtk_tray_backend_tests
     test/tray-backend-test.cpp)
   target_link_libraries(
@@ -784,6 +819,7 @@ if(BUILD_TESTING)
       ${CMAKE_CURRENT_SOURCE_DIR}/test/application-lifecycle.mjs
       $<TARGET_FILE:pipetune-gtk>
       $<TARGET_FILE:pipetune>
+      $<TARGET_FILE:pipetune_gtk_user_setup_helper>
       ${PIPETUNE_GTK_GDBUS})
   set_tests_properties(
     pipetune_gtk_application_lifecycle PROPERTIES TIMEOUT 60)
@@ -799,6 +835,7 @@ if(BUILD_TESTING)
       $<TARGET_FILE:pipetune-gtk>
       ${PIPETUNE_GTK_GTK_LAUNCH}
       ${CMAKE_CURRENT_SOURCE_DIR}/packaging/applications/net.kekyo.pipetune_gtk.desktop
+      $<TARGET_FILE:pipetune_gtk_user_setup_helper>
       ${PIPETUNE_GTK_GDBUS})
   set_tests_properties(
     pipetune_gtk_desktop_launch PROPERTIES TIMEOUT 60)
@@ -809,6 +846,7 @@ if(BUILD_TESTING)
       "${CMAKE_COMMAND}" -E env
       "PIPETUNE_GTK_BINARY=$<TARGET_FILE:pipetune-gtk>"
       "PIPETUNE_GTK_E2E_DAEMON=$<TARGET_FILE:pipetune_gtk_e2e_daemon>"
+      "PIPETUNE_GTK_E2E_SETUP_HELPER=$<TARGET_FILE:pipetune_gtk_user_setup_helper>"
       "${PIPETUNE_GTK_NPM}" test)
   set_tests_properties(
     pipetune_gtk_gestament_e2e PROPERTIES

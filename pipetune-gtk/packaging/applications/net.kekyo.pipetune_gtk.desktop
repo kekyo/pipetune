@@ -14,3 +14,4 @@ Terminal=false
 Categories=AudioVideo;Audio;Settings;
 StartupNotify=true
 StartupWMClass=Pipetune-gtk
+X-GNOME-UsesNotifications=true

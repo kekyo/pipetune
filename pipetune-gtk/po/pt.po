@@ -388,6 +388,12 @@ msgstr "PipeTune desligado"
 msgid "PipeTune reconnected"
 msgstr "PipeTune ligado novamente"
 
+msgid "PipeTune setup completed"
+msgstr "Configuração do PipeTune concluída"
+
+msgid "PipeTune setup failed"
+msgstr "Falha na configuração do PipeTune"
+
 msgid "PipeTune Status"
 msgstr "Estado do PipeTune"
 
@@ -494,6 +500,9 @@ msgstr "A guardar todas as definições"
 
 msgid "Scalar"
 msgstr "Scalar"
+
+msgid "Setting up PipeTune for this user…"
+msgstr "Configurando o PipeTune para este usuário…"
 
 msgid "Settings updated"
 msgstr "Definições atualizadas"

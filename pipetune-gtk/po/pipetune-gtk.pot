@@ -383,6 +383,12 @@ msgstr ""
 msgid "PipeTune reconnected"
 msgstr ""
 
+msgid "PipeTune setup completed"
+msgstr ""
+
+msgid "PipeTune setup failed"
+msgstr ""
+
 msgid "PipeTune Status"
 msgstr ""
 
@@ -488,6 +494,9 @@ msgid "Saving all settings"
 msgstr ""
 
 msgid "Scalar"
+msgstr ""
+
+msgid "Setting up PipeTune for this user…"
 msgstr ""
 
 msgid "Settings updated"
