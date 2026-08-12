@@ -259,10 +259,10 @@ The complete test suite loads every architecture-applicable shared library,
 checks its ABI and catalog, compares each CPU-runnable SIMD PFFFT impulse
 transform with scalar within tolerance, and processes equivalent preset
 pipelines through the runnable variants. It compares the actual packaged
-libraries, including standalone Release builds, with EffeTune's official Vinyl
-Artifacts golden case to preserve source-specific floating-point policy. It
-also runs the existing EffeTune native DSP tests and JavaScript/native parity
-corpus.
+libraries, including standalone Release builds, with EffeTune's official Auto
+Leveler, Cassette Artifacts, Tape Artifacts, and Vinyl Artifacts golden cases
+to preserve source-specific floating-point policy. It also runs the existing
+EffeTune native DSP tests and JavaScript/native parity corpus.
 
 These tests establish compatibility for covered inputs, not universal
 floating-point identity. Scalar remains the recovery backend when a user or
