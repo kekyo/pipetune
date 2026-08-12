@@ -2115,6 +2115,7 @@ static ApplicationRunResult runApplication(int argc, char **argv) {
   gtk_disable_setlocale();
   auto *application = gtk_application_new(
       applicationId(), G_APPLICATION_HANDLES_COMMAND_LINE);
+  const auto defaultConfig = defaultStartupConfig();
   auto runtime = GtkRuntime{
       .application = application,
       .state = initialApplicationState(),
@@ -2125,7 +2126,7 @@ static ApplicationRunResult runApplication(int argc, char **argv) {
       .trayBackend = nullptr,
       .trayAvailability = TrayBackendAvailabilityState::pending,
       .startupConfigPath = {},
-      .savedConfig = defaultStartupConfig(),
+      .savedConfig = defaultConfig,
       .startupConfigAvailable = false,
       .originalLocalization = originalLocalization,
       .uiLanguageConfigPath = uiLanguageConfigPath,
@@ -2135,7 +2136,8 @@ static ApplicationRunResult runApplication(int argc, char **argv) {
       .languageRestartRequired = false,
       .uiLanguageLoadWarning = loadedLanguage.warning,
       .localizationWarning = localizationWarning,
-      .transaction = {},
+      .transaction = beginSettingsTransaction(
+          defaultConfig, defaultConfig, 0, false),
       .transactionReady = false,
       .dialogActive = false,
       .updatingControls = false,
