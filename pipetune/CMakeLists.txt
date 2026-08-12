@@ -425,6 +425,7 @@ if(BUILD_TESTING)
     NAME pipetune_effetune_backend_artifact_tests
     COMMAND
       pipetune_effetune_backend_artifact_tests
+      ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/lofi/vinyl_artifacts/golden/case-003.f32
       ${PIPETUNE_DSP_BACKEND_ARTIFACT_TEST_ARGS})
 
   add_test(NAME pipetune_cli_help COMMAND pipetune --help)
@@ -938,7 +939,8 @@ if(BUILD_TESTING)
       ${CMAKE_CURRENT_SOURCE_DIR}/test/component-build.mjs
       ${CMAKE_COMMAND}
       ${CMAKE_CURRENT_SOURCE_DIR}
-      $<TARGET_FILE:pipetune>)
+      $<TARGET_FILE:pipetune>
+      $<TARGET_FILE:pipetune_effetune_backend_artifact_tests>)
   set_tests_properties(
     pipetune_component_build PROPERTIES TIMEOUT 180)
 endif()

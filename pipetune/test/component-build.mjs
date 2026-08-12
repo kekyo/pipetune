@@ -1,4 +1,9 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -22,8 +27,14 @@ const run = (command, commandArguments, options) =>
 
 const overriddenVersion = "9.8.7-test";
 
-const [cmake, sourceDirectory, workspaceExecutable] = process.argv.slice(2);
-if (!cmake || !sourceDirectory || !workspaceExecutable) {
+const [cmake, sourceDirectory, workspaceExecutable, backendArtifactTest] =
+  process.argv.slice(2);
+if (
+  !cmake ||
+  !sourceDirectory ||
+  !workspaceExecutable ||
+  !backendArtifactTest
+) {
   fail("component build test arguments are incomplete");
 } else {
   const effetunePackage = JSON.parse(
@@ -126,6 +137,39 @@ if (!cmake || !sourceDirectory || !workspaceExecutable) {
             benchmarkBuilt,
           );
         } else {
+          const backendNames = [
+            "libeffetune-dsp-scalar.so",
+            "libeffetune-dsp-simd.so",
+            "libeffetune-dsp-simd-x86-64-v3.so",
+            "libeffetune-dsp-simd-x86-64-v4.so",
+            "libeffetune-dsp-simd-arm64-sve.so",
+          ];
+          const backendPaths = backendNames
+            .map((name) => join(buildDirectory, name))
+            .filter((path) => existsSync(path));
+          const goldenPath = join(
+            dirname(sourceDirectory),
+            "deps",
+            "effetune",
+            "dsp",
+            "plugins",
+            "lofi",
+            "vinyl_artifacts",
+            "golden",
+            "case-003.f32",
+          );
+          const artifactCheck = run(
+            backendArtifactTest,
+            [goldenPath, ...backendPaths],
+            {},
+          );
+          if (artifactCheck.status !== 0) {
+            fail(
+              "standalone Release DSP backends failed artifact validation",
+              artifactCheck,
+            );
+          }
+
           const benchmark = run(
             join(buildDirectory, "pipetune-dsp-benchmark"),
             [

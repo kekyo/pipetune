@@ -129,6 +129,53 @@ static bool testLegacyPreset(const std::filesystem::path &directory) {
                "legacy short-form parameters must be applied");
 }
 
+static bool containsWarning(const std::vector<pipetune::PipelineWarning> &warnings,
+                            std::string_view expected) {
+  return std::ranges::any_of(warnings, [expected](const auto &warning) {
+    return warning.pluginName == expected;
+  });
+}
+
+static bool testEffeTune23Pipeline(const std::filesystem::path &directory) {
+  const auto path = writePreset(
+      directory, "effetune-2.3.effetune_preset",
+      R"json({
+        "pipeline": [
+          {"name":"Oscillator","enabled":true,"parameters":{"wf":"impulse","vl":-12}},
+          {"name":"Loudness Equalizer","enabled":true,"parameters":{"sp":85,"rv":-12}},
+          {"name":"AM Radio Simulator","enabled":true,"parameters":{}},
+          {"name":"FM Radio Simulator","enabled":true,"parameters":{}},
+          {"name":"SW Radio Simulator","enabled":true,"parameters":{}},
+          {"name":"FIR Crossover","enabled":true,"parameters":{}},
+          {"name":"5Band FIR PEQ","enabled":true,"parameters":{}},
+          {"name":"Group Delay EQ","enabled":true,"parameters":{}}
+        ]
+      })json");
+  const auto result = pipetune::loadDspPipeline(
+      path,
+      {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+  if (!check(result.pipeline != nullptr, result.error) ||
+      !check(result.pipeline->activePluginCount() == 5,
+             "EffeTune 2.3 non-asset DSP nodes must become active") ||
+      !check(result.warnings.size() == 3,
+             "EffeTune 2.3 asset-dependent DSP nodes must be omitted") ||
+      !check(containsWarning(result.warnings, "FIR Crossover") &&
+                 containsWarning(result.warnings, "5Band FIR PEQ") &&
+                 containsWarning(result.warnings, "Group Delay EQ"),
+             "every omitted EffeTune 2.3 DSP must be identified")) {
+    return false;
+  }
+
+  auto samples = std::vector<float>(128u, 0.0F);
+  return check(result.pipeline->process(samples, 2, 64, 0.0) ==
+                   pipetune::ProcessStatus::ok,
+               "EffeTune 2.3 DSP nodes must process audio") &&
+         check(std::ranges::all_of(samples, [](float value) {
+                 return std::isfinite(value);
+               }),
+               "EffeTune 2.3 DSP output must remain finite");
+}
+
 static bool testRawLegacyPipeline(const std::filesystem::path &directory) {
   const auto path = writePreset(
       directory, "raw-legacy.effetune_preset",
@@ -237,9 +284,9 @@ int main() {
 
   const auto passed =
       testBypassPipeline() && testCanonicalPreset(directory) &&
-      testLegacyPreset(directory) && testRawLegacyPipeline(directory) &&
-      testRejectedInputs(directory) && testRuntimeBounds(directory) &&
-      testRetainedRecipeRebuild(directory);
+      testLegacyPreset(directory) && testEffeTune23Pipeline(directory) &&
+      testRawLegacyPipeline(directory) && testRejectedInputs(directory) &&
+      testRuntimeBounds(directory) && testRetainedRecipeRebuild(directory);
   std::filesystem::remove_all(directory);
   return passed ? 0 : 1;
 }

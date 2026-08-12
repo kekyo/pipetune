@@ -16,7 +16,10 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -64,6 +67,19 @@ struct BackendApi {
   const float *(*designFftOutput)(const et_design_fft *) = nullptr;
   et_status (*designFftForward)(et_design_fft *) = nullptr;
   et_status (*designFftInverse)(et_design_fft *) = nullptr;
+  et_engine (*engineCreate)() = nullptr;
+  void (*engineDestroy)(et_engine) = nullptr;
+  et_status (*enginePrepare)(et_engine, float, std::uint32_t, std::uint32_t,
+                             std::uint32_t) = nullptr;
+  et_instance (*instanceCreate)(et_engine, const char *) = nullptr;
+  void (*instanceDestroy)(et_engine, et_instance) = nullptr;
+  et_status (*instanceSetSeed)(et_engine, et_instance, std::uint32_t,
+                               std::uint32_t) = nullptr;
+  et_status (*instanceSetParams)(et_engine, et_instance, const float *,
+                                 std::uint32_t, std::uint32_t,
+                                 std::uint32_t) = nullptr;
+  et_status (*instanceProcess)(et_engine, et_instance, float *, std::uint32_t,
+                               std::uint32_t, double) = nullptr;
 };
 
 static BackendApi loadBackend(const std::filesystem::path &path) {
@@ -106,6 +122,22 @@ static BackendApi loadBackend(const std::filesystem::path &path) {
       api.handle, "et_design_fft_forward");
   api.designFftInverse = loadFunction<decltype(api.designFftInverse)>(
       api.handle, "et_design_fft_inverse");
+  api.engineCreate =
+      loadFunction<decltype(api.engineCreate)>(api.handle, "et_engine_create");
+  api.engineDestroy = loadFunction<decltype(api.engineDestroy)>(
+      api.handle, "et_engine_destroy");
+  api.enginePrepare = loadFunction<decltype(api.enginePrepare)>(
+      api.handle, "et_engine_prepare");
+  api.instanceCreate = loadFunction<decltype(api.instanceCreate)>(
+      api.handle, "et_instance_create");
+  api.instanceDestroy = loadFunction<decltype(api.instanceDestroy)>(
+      api.handle, "et_instance_destroy");
+  api.instanceSetSeed = loadFunction<decltype(api.instanceSetSeed)>(
+      api.handle, "et_instance_set_seed");
+  api.instanceSetParams = loadFunction<decltype(api.instanceSetParams)>(
+      api.handle, "et_instance_set_params");
+  api.instanceProcess = loadFunction<decltype(api.instanceProcess)>(
+      api.handle, "et_instance_process");
   return api;
 }
 
@@ -184,6 +216,192 @@ static void checkCatalogsMatch(const BackendApi &scalar,
                 simd.kernelAssetCapacity(index, slot),
             "kernel asset capacities must match between variants");
     }
+  }
+}
+
+static std::uint32_t findKernelIndex(const BackendApi &api,
+                                     std::string_view typeName) {
+  const auto count = api.kernelCount();
+  for (auto index = std::uint32_t{0}; index < count; ++index) {
+    if (kernelName(api, index) == typeName) {
+      return index;
+    }
+  }
+  return count;
+}
+
+static void checkEffeTune23Catalog(const BackendApi &api) {
+  static constexpr std::array<std::string_view, 6> addedTypes = {
+      "FIRCrossoverPlugin",       "FiveBandFIRPEQPlugin",
+      "GroupDelayEqPlugin",       "AMRadioSimulatorPlugin",
+      "FMRadioSimulatorPlugin",   "SWRadioSimulatorPlugin"};
+  check(api.kernelCount() == 76u,
+        "EffeTune 2.3 backend catalog must contain 76 kernels");
+  for (const auto typeName : addedTypes) {
+    check(findKernelIndex(api, typeName) < api.kernelCount(),
+          "EffeTune 2.3 backend catalog must contain every new kernel");
+  }
+}
+
+static std::vector<float>
+readGoldenAudio(const std::filesystem::path &path) {
+  auto input = std::ifstream(path, std::ios::binary | std::ios::ate);
+  if (!input) {
+    check(false, "Vinyl Artifacts golden output must be readable");
+    return {};
+  }
+  const auto byteCount = input.tellg();
+  if (byteCount <= 0 || byteCount % static_cast<std::streamoff>(sizeof(float)) !=
+                            std::streamoff{0}) {
+    check(false, "Vinyl Artifacts golden output must contain float32 samples");
+    return {};
+  }
+  auto audio = std::vector<float>(
+      static_cast<std::size_t>(byteCount) / sizeof(float));
+  input.seekg(0, std::ios::beg);
+  input.read(reinterpret_cast<char *>(audio.data()),
+             static_cast<std::streamsize>(byteCount));
+  if (!input) {
+    check(false, "Vinyl Artifacts golden output must be read completely");
+    return {};
+  }
+  return audio;
+}
+
+static std::vector<float> vinylArtifactsInput() {
+  constexpr auto frameCount = std::uint32_t{2049};
+  constexpr auto channelCount = std::uint32_t{4};
+  constexpr auto float53Denominator = 9007199254740992.0;
+  auto state = std::uint64_t{0xeffe7a5c};
+  auto input = std::vector<float>(
+      static_cast<std::size_t>(frameCount) * channelCount);
+  for (auto &sample : input) {
+    auto value = state;
+    value ^= value << 13u;
+    value ^= value >> 7u;
+    value ^= value << 17u;
+    state = value;
+    const auto uniform =
+        static_cast<double>(value >> 11u) / float53Denominator;
+    sample = static_cast<float>(uniform * 2.0 - 1.0);
+  }
+  return input;
+}
+
+static std::vector<float> renderVinylArtifactsGoldenCase(
+    const BackendApi &api) {
+  constexpr auto sampleRate = 48000.0F;
+  constexpr auto frameCount = std::uint32_t{2049};
+  constexpr auto channelCount = std::uint32_t{4};
+  constexpr auto blockSize = std::uint32_t{65};
+  constexpr auto telemetryBytes = std::uint32_t{64u * 1024u};
+  static constexpr std::array parameters = {
+      120.0F, 0.0F, 2000.0F, 0.0F, 0.0F, 0.0F,
+      100.0F, 0.0F, 200.0F, 100.0F, 0.0F, 100.0F};
+
+  const auto kernelIndex = findKernelIndex(api, "VinylArtifactsPlugin");
+  check(kernelIndex < api.kernelCount(),
+        "Vinyl Artifacts kernel must be available");
+  if (kernelIndex >= api.kernelCount()) {
+    return {};
+  }
+
+  const auto engine = api.engineCreate();
+  check(engine != 0u, "Vinyl Artifacts test engine must be created");
+  if (engine == 0u) {
+    return {};
+  }
+  auto audio = std::vector<float>{};
+  auto instance = et_instance{0};
+  const auto prepared = api.enginePrepare(
+      engine, sampleRate, channelCount, blockSize, telemetryBytes);
+  check(prepared == ET_OK, "Vinyl Artifacts test engine must be prepared");
+  if (prepared == ET_OK) {
+    instance = api.instanceCreate(engine, "VinylArtifactsPlugin");
+    check(instance != 0u, "Vinyl Artifacts instance must be created");
+  }
+  if (instance != 0u) {
+    const auto seeded =
+        api.instanceSetSeed(engine, instance, 0xeffe7a5cu, 0u);
+    check(seeded == ET_OK, "Vinyl Artifacts instance must accept its seed");
+    const auto staged = api.instanceSetParams(
+        engine, instance, parameters.data(),
+        static_cast<std::uint32_t>(parameters.size()),
+        api.kernelParamsHash(kernelIndex), 0u);
+    check(staged == ET_OK,
+          "Vinyl Artifacts instance must accept its parameters");
+    if (seeded == ET_OK && staged == ET_OK) {
+      const auto input = vinylArtifactsInput();
+      audio = input;
+      auto block = std::vector<float>(
+          static_cast<std::size_t>(channelCount) * blockSize);
+      for (auto startFrame = std::uint32_t{0}; startFrame < frameCount;) {
+        const auto blockFrames = std::min(blockSize, frameCount - startFrame);
+        for (auto channel = std::uint32_t{0}; channel < channelCount;
+             ++channel) {
+          const auto sourceOffset =
+              static_cast<std::size_t>(channel) * frameCount + startFrame;
+          const auto blockOffset =
+              static_cast<std::size_t>(channel) * blockFrames;
+          std::copy_n(input.data() + sourceOffset, blockFrames,
+                      block.data() + blockOffset);
+        }
+        const auto processed = api.instanceProcess(
+            engine, instance, block.data(), channelCount, blockFrames,
+            static_cast<double>(startFrame) / sampleRate);
+        check(processed == ET_OK,
+              "Vinyl Artifacts instance must process every block");
+        if (processed != ET_OK) {
+          audio.clear();
+          break;
+        }
+        for (auto channel = std::uint32_t{0}; channel < channelCount;
+             ++channel) {
+          const auto targetOffset =
+              static_cast<std::size_t>(channel) * frameCount + startFrame;
+          const auto blockOffset =
+              static_cast<std::size_t>(channel) * blockFrames;
+          std::copy_n(block.data() + blockOffset, blockFrames,
+                      audio.data() + targetOffset);
+        }
+        startFrame += blockFrames;
+      }
+    }
+    api.instanceDestroy(engine, instance);
+  }
+  api.engineDestroy(engine);
+  check(std::ranges::all_of(audio,
+                            [](float value) { return std::isfinite(value); }),
+        "Vinyl Artifacts output must remain finite");
+  return audio;
+}
+
+static void checkVinylArtifactsGolden(const BackendApi &api,
+                                      std::uint32_t variant,
+                                      std::span<const float> golden) {
+  constexpr auto tolerance = 1.0e-5F;
+  const auto actual = renderVinylArtifactsGoldenCase(api);
+  check(actual.size() == golden.size(),
+        "Vinyl Artifacts output size must match the official golden");
+  if (actual.size() != golden.size()) {
+    return;
+  }
+  auto maximumDifference = 0.0F;
+  auto maximumIndex = std::size_t{0};
+  for (auto index = std::size_t{0}; index < actual.size(); ++index) {
+    const auto difference = std::abs(actual[index] - golden[index]);
+    if (difference > maximumDifference) {
+      maximumDifference = difference;
+      maximumIndex = index;
+    }
+  }
+  if (maximumDifference > tolerance) {
+    std::fprintf(stderr,
+                 "EffeTune backend variant %u differs from the official "
+                 "Vinyl Artifacts golden at sample %zu: %.9g > %.9g\n",
+                 variant, maximumIndex, static_cast<double>(maximumDifference),
+                 static_cast<double>(tolerance));
+    ++failures;
   }
 }
 
@@ -298,15 +516,18 @@ static bool cpuSupports(std::uint32_t variant) {
 }
 
 int main(int argc, char **argv) {
-  if (argc < 3) {
+  if (argc < 4) {
     std::fprintf(stderr,
-                 "usage: effetune_backend_artifact_test SCALAR_SO SIMD_SO "
-                 "[ISA_SIMD_SO...]\n");
+                 "usage: effetune_backend_artifact_test VINYL_GOLDEN_F32 "
+                 "SCALAR_SO SIMD_SO [ISA_SIMD_SO...]\n");
     return 2;
   }
 
+  const auto vinylGolden = readGoldenAudio(argv[1]);
+  check(vinylGolden.size() == 8196u,
+        "Vinyl Artifacts golden must contain four channels of 2049 frames");
   auto loaded = std::vector<std::pair<std::uint32_t, BackendApi>>{};
-  for (auto index = 1; index < argc; ++index) {
+  for (auto index = 2; index < argc; ++index) {
     const auto path = std::filesystem::path(argv[index]);
     const auto variant = expectedVariant(path);
     if (!cpuSupports(variant)) {
@@ -324,14 +545,17 @@ int main(int argc, char **argv) {
     if (scalar.handle != nullptr && scalar.abiVersion != nullptr &&
         scalar.buildFlags != nullptr && scalar.backendVariant != nullptr) {
       check(scalar.abiVersion() == EFFETUNE_DSP_ABI_VERSION,
-            "scalar backend must use the official EffeTune v2.2 ABI");
+            "scalar backend must use the official EffeTune ABI");
       check((scalar.buildFlags() & ET_BUILD_SIMD) == 0u,
             "scalar backend must clear ET_BUILD_SIMD");
       check(scalar.backendVariant() ==
                 PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
             "scalar backend must report its concrete variant");
       checkAllAbiSymbols(scalar.handle);
+      checkEffeTune23Catalog(scalar);
       const auto scalarSpectrum = renderImpulseSpectrum(scalar);
+      checkVinylArtifactsGolden(
+          scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR, vinylGolden);
 
       for (auto index = std::size_t{1}; index < loaded.size(); ++index) {
         const auto expected = loaded[index].first;
@@ -341,13 +565,14 @@ int main(int argc, char **argv) {
           continue;
         }
         check(simd.abiVersion() == EFFETUNE_DSP_ABI_VERSION,
-              "SIMD backend must use the official EffeTune v2.2 ABI");
+              "SIMD backend must use the official EffeTune ABI");
         check((simd.buildFlags() & ET_BUILD_SIMD) != 0u,
               "SIMD backend must set ET_BUILD_SIMD");
         check(simd.backendVariant() == expected,
               "SIMD backend must report its concrete variant");
         checkAllAbiSymbols(simd.handle);
         checkCatalogsMatch(scalar, simd);
+        checkVinylArtifactsGolden(simd, expected, vinylGolden);
 
         const auto simdSpectrum = renderImpulseSpectrum(simd);
         check(scalarSpectrum.size() == simdSpectrum.size(),

@@ -215,6 +215,15 @@ function(
     APPEND
     PROPERTY OBJECT_DEPENDS "${EFFETUNE_DSP_DIR}/registry.inc")
 
+  # EffeTune applies this source-specific policy in its own DSP directory.
+  # Source properties are directory-scoped, so mirror it for the PipeTune-owned
+  # shared backends to preserve the official Vinyl Artifacts golden output.
+  set_property(
+    SOURCE "${EFFETUNE_DSP_DIR}/plugins/lofi/vinyl_artifacts/kernel.cpp"
+    APPEND
+    PROPERTY COMPILE_OPTIONS
+             "$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-ffp-contract=off>")
+
   pipetune_add_native_pffft(
     pipetune_effetune_pffft_scalar
     SCALAR
