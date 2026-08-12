@@ -308,11 +308,15 @@ PipeTune removes the filter nodes; WirePlumber continues to own the normal
 device and volume policy.
 
 The setup and unsetup coordinators invoke `systemctl` and `pipetune-gtk` with
-direct argument vectors and no shell. Setup snapshots the managed
-configuration, WirePlumber 0.4/0.5 policy files, service state, and GTK
-autostart state before mutation. A later failure triggers best-effort rollback.
-Unsetup removes only PipeTune-managed files, preserving a custom GTK autostart
-override through its reserved backup.
+direct argument vectors and no shell. Setup serializes per-user management
+with an advisory lock and checks a versioned record below `XDG_STATE_HOME`,
+the exact contents of all six managed WirePlumber files, service enablement
+and activity, and the GTK autostart mask. Plain setup returns once these are
+current; `--force` repeats the workflow. Setup snapshots the managed
+configuration, WirePlumber 0.4/0.5 policy files, and service state before
+mutation. A later failure triggers best-effort rollback. Unsetup removes the
+completion record and only PipeTune-managed files, preserving a custom GTK
+autostart override through its reserved backup.
 
 ## GTK control plane
 
@@ -320,6 +324,14 @@ override through its reserved backup.
 asynchronous subscription connection and uses separate asynchronous requests
 for preset, bypass, rate-policy, and DSP-backend changes. There is no output
 device UI or output control request.
+
+During primary application startup, a separate GIO subprocess client invokes
+the installed CLI as `pipetune setup --no-launch-gtk`. Control subscription
+initialization waits for this asynchronous check. The UI remains responsive
+and read-only while it is pending. A setup failure is retained in the action
+log and sent through `GNotification` for a hidden launch, after which GTK
+still starts its control subscription. Secondary application activations do
+not run setup again.
 
 EffeTune desktop presets are stored together in one JSON object, so a saved
 choice is materialized as a deterministic private standalone snapshot before

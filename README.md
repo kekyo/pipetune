@@ -87,16 +87,31 @@ pipetune --version
 
 ## Initial setup
 
-Since PipeTune runs as a user-level daemon, additional setup is required for each user after the package is installed.
+Since PipeTune runs as a user-level daemon, setup is required once for each
+desktop user after the package is installed. Double-clicking the PipeTune icon
+in the GNOME application launcher, or launching it from another desktop
+application menu, performs this setup automatically before the GTK application
+connects to the daemon. This also covers a user launching PipeTune for the
+first time when the package was installed earlier by someone else.
 
-Run setup as the regular desktop user, without `sudo`:
+To perform the same setup explicitly, run this as the regular desktop user,
+without `sudo`:
 
 ```sh
 pipetune setup
 ```
 
-`setup` reloads, enables, and restarts the systemd user service, verifies that
-it is active, and then launches the PipeTune GTK application in the system tray.
+`setup` checks the current user's managed files, setup version, and systemd
+user service. If the integration is already current, it exits without
+repeating setup. Otherwise it installs or repairs the integration and launches
+PipeTune GTK in the system tray. Use `pipetune setup --force` (or the short
+form `pipetune setup -f`) to repeat the setup operations unconditionally.
+
+During an automatic first launch, the window displays setup progress and
+keeps its controls read-only. If setup fails, PipeTune GTK opens the Action
+Log with the diagnostic and sends a desktop notification when the window is
+hidden. It still attempts to connect so an already-running daemon remains
+usable.
 
 ![System tray](./images/system-tray.png)
 
@@ -296,7 +311,9 @@ To update PipeTune, download a newer matching package from
 [GitHub Releases](https://github.com/kekyo/pipetune/releases/) and install it
 with the same `sudo apt install ./pipetune-*.deb` command.
 
-Then run `pipetune setup` as the regular desktop user.
+Then launch PipeTune from the desktop application menu. It detects the updated
+setup version and applies any required per-user changes. The equivalent manual
+command is `pipetune setup` as the regular desktop user.
 
 Before removing the package, undo its per-user integration as the desktop user:
 

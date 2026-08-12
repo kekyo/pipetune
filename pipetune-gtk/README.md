@@ -4,6 +4,24 @@
 daemon. It is a single-instance application that can remain resident in the
 desktop system tray.
 
+## Per-user setup at startup
+
+The primary GTK instance asynchronously runs the installed CLI as
+`pipetune setup --no-launch-gtk` before opening its daemon control
+subscription. The CLI checks the current user's versioned completion state,
+managed WirePlumber files, GTK autostart state, and enabled and active systemd
+user service, so an already-current launch performs only the readiness checks.
+This makes the application-menu icon sufficient for first use after package
+installation, including the first launch by another user on the same machine.
+
+While setup is pending, the connection summary reports setup progress and all
+settings controls remain read-only. Success proceeds to the ordinary control
+connection. Failure opens the Action Log with the CLI diagnostic and, when
+the window is hidden, sends a desktop notification. The control connection is
+still attempted so an independently running daemon can remain usable. The
+fixed installed CLI path is invoked directly without a shell, and
+`--no-launch-gtk` prevents recursive GTK startup.
+
 ## Controls and status
 
 The main window uses a persistent two-pane layout. The left pane remains
@@ -219,6 +237,8 @@ builds the production GTK executable with stable test-only accessibility IDs,
 starts a deterministic fake control daemon that speaks the production control
 protocol, and runs the dialog under Xvfb. The scenarios verify:
 
+- per-user setup from primary, application-menu, and hidden startup paths;
+- setup failure diagnostics followed by an ordinary control connection;
 - the persistent status pane, all four settings pages, and minimum geometry;
 - the DSP Load meter's accessible range, measured value, responsive
   right-aligned width, rendered fill, and hue;
@@ -296,12 +316,16 @@ With that prefix, the GUI integration is installed as:
 ```
 
 The system autostart entry runs `pipetune-gtk --hidden` at desktop login.
-Normal per-user setup restores PipeTune-managed autostart state and starts the
-GTK application immediately:
+Starting PipeTune GTK from that entry, the application menu, or a terminal
+automatically requests conditional per-user setup. Running the same check
+explicitly repairs PipeTune-managed state when required:
 
 ```sh
 pipetune setup
 ```
+
+An already-current `pipetune setup` does not repeat the setup workflow. Use
+`pipetune setup --force` or `pipetune setup -f` to force it.
 
 Disable the GTK application and the daemon together with:
 

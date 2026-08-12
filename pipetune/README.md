@@ -386,6 +386,17 @@ Configure and start PipeTune as the desktop user, without `sudo`:
 pipetune setup
 ```
 
+Plain `setup` first checks whether the current user's integration is already
+current. It returns successfully without repeating setup when the installed
+PipeTune version, all six managed WirePlumber files, the GTK autostart state,
+and the enabled and active service are ready. Run the existing setup workflow
+unconditionally with either form:
+
+```sh
+pipetune setup --force
+pipetune setup -f
+```
+
 The preset is optional. With no existing selection, setup starts the daemon in
 bypass mode: audio passes through PipeTune without DSP processing. When a
 selection already exists, omitting `--preset` preserves it.
@@ -395,6 +406,9 @@ To validate and select a preset before starting the service:
 ```sh
 pipetune setup --preset /absolute/path/to/foo.effetune_preset
 ```
+
+An explicit `--preset` always validates, saves, and applies that selection,
+even when the remaining setup state is current.
 
 Setup performs the following operations:
 
@@ -413,9 +427,23 @@ Setup performs the following operations:
   override that was backed up by `unsetup`; and
 - launches `pipetune-gtk --hidden`.
 
+After successful setup, a versioned completion record is written to
+`$XDG_STATE_HOME/pipetune/setup-state`, or
+`~/.local/state/pipetune/setup-state` when `XDG_STATE_HOME` is unset. Setup
+and unsetup serialize their changes through an advisory lock in the same
+state directory. `unsetup` removes the completion record.
+
+PipeTune GTK runs this conditional check asynchronously during primary
+application startup as `pipetune setup --no-launch-gtk`. The launch
+suppression prevents setup from recursively starting another GTK instance.
+Consequently, starting `pipetune-gtk` directly or from its desktop launcher
+also performs missing per-user setup without requiring a terminal.
+
 If a required service operation or GTK launch fails, setup reports the failure
 and attempts to restore the previous startup configuration and service state.
 Unmanaged or orphaned autostart files are preserved and reported as warnings.
+GTK records automatic-setup failures in its Action Log, sends a desktop
+notification when hidden, and then still attempts the control connection.
 
 The daemon and GTK application share one optional startup configuration:
 
