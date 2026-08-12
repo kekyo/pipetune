@@ -164,17 +164,18 @@ PFFFT acceleration and compiler auto-vectorization affect different DSP work:
 | DSP work | Expected SIMD opportunity | Limiting factors |
 | --- | --- | --- |
 | Spectrum Analyzer and Spectrogram FFTs | High, direct PFFFT consumer | FFT runs at the analyzer cadence, so whole-pipeline gain is diluted between frames |
-| IR Reverb and Room EQ convolution | High, direct PFFFT consumer | PipeTune currently omits nodes that require external assets |
+| FIR Crossover, 5Band FIR PEQ, Group Delay EQ, IR Reverb, and Room EQ convolution | High, direct PFFFT consumer | PipeTune currently omits nodes that require external assets |
 | Large sample-independent transforms, buffer mixing, matrixing, and analyzer preparation | Medium to high auto-vectorization potential | Often memory-bandwidth limited; inexpensive nodes have little absolute cost |
 | Pitch shifting and long window/ring-buffer operations | Medium, sometimes high aggregate potential | Wrap branches, square roots, interpolation, and state handling inhibit parts of each loop |
 | Multiband split/combine, saturation, and dynamics | Medium aggregate potential | Filters and envelopes have sample-to-sample dependencies |
 | Biquads, recursive delays, algorithmic reverbs, resonators, and modulation | Low to medium | Feedback state usually prevents vectorization across time; channels or modes may still be parallel |
 | Volume, mute, polarity, simple routing, and meters | Technically vectorizable but usually low impact | Their scalar cost is already small |
 
-Only Spectrum Analyzer, Spectrogram, the partitioned convolver used by IR
-Reverb and Room EQ, and the design-time FFT API call PFFFT directly in the
-current native code. Other gains must come from compiler vectorization or
-secondary effects such as better instruction scheduling.
+Only Spectrum Analyzer, Spectrogram, the partitioned convolver used by FIR
+Crossover, 5Band FIR PEQ, Group Delay EQ, IR Reverb, and Room EQ, and the
+design-time FFT API call PFFFT directly in the current native code. Other gains
+must come from compiler vectorization or secondary effects such as better
+instruction scheduling.
 
 Telemetry-rate behavior is unchanged by this work. In particular, selecting
 telemetry rate zero does not newly stop analyzer processing.
@@ -257,8 +258,11 @@ useful for correctness but not for selecting optimization policy.
 The complete test suite loads every architecture-applicable shared library,
 checks its ABI and catalog, compares each CPU-runnable SIMD PFFFT impulse
 transform with scalar within tolerance, and processes equivalent preset
-pipelines through the runnable variants. It also runs the existing EffeTune
-native DSP tests and JavaScript/native parity corpus.
+pipelines through the runnable variants. It compares the actual packaged
+libraries, including standalone Release builds, with EffeTune's official Vinyl
+Artifacts golden case to preserve source-specific floating-point policy. It
+also runs the existing EffeTune native DSP tests and JavaScript/native parity
+corpus.
 
 These tests establish compatibility for covered inputs, not universal
 floating-point identity. Scalar remains the recovery backend when a user or

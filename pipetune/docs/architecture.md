@@ -363,7 +363,9 @@ later explicit activation presents the existing singleton window.
 
 - Stereo is the managed-service layout. Direct runs accept one through eight
   channels, but no live channel-layout control is provided.
-- Room EQ and IR Reverb assets stored in EffeTune's IndexedDB are not carried
-  by `.effetune_preset` files and are omitted with warnings.
+- FIR Crossover, 5Band FIR PEQ, Group Delay EQ, Room EQ, and IR Reverb require
+  convolution assets that are generated or stored separately by EffeTune.
+  Those assets are not carried by `.effetune_preset` files, so the nodes are
+  omitted with warnings.
 - PipeTune does not provide a machine-wide service shared by multiple logged-in
   users.
