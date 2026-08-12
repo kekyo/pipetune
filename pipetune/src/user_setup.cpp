@@ -111,6 +111,16 @@ static ProcessResult invokeProcess(
   return runner(executable, arguments, mode, userData);
 }
 
+static ProcessResult restartUserAudioStack(
+    ProcessRunner runner, void *userData,
+    const UserManagementPaths &paths) {
+  return invokeProcess(
+      runner, userData, paths.systemctlExecutable,
+      {"--user", "restart", "pipewire.service", "wireplumber.service",
+       "pipewire-pulse.service"},
+      ProcessWaitMode::wait);
+}
+
 static FileSnapshot snapshotFile(const std::filesystem::path &path) {
   struct stat status {};
   if (lstat(path.c_str(), &status) != 0) {
@@ -283,7 +293,7 @@ static void rollbackSetup(const UserSetupRequest &request,
                           bool restoreConfiguration,
                           const FileSnapshot &configurationSnapshot,
                           std::span<const ManagedFileState> wirePlumberFiles,
-                          bool restartWirePlumber,
+                          bool restartAudioStack,
                           bool serviceMutationStarted, bool wasEnabled,
                           bool wasActive,
                           std::vector<std::string> &warnings) {
@@ -295,10 +305,13 @@ static void rollbackSetup(const UserSetupRequest &request,
     }
   }
   restoreMutatedManagedFiles(wirePlumberFiles, "setup rollback: ", warnings);
-  if (restartWirePlumber) {
-    appendProcessRollbackWarning(
-        request, {"--user", "restart", "wireplumber.service"},
-        "setup rollback could not restart wireplumber.service", warnings);
+  if (restartAudioStack) {
+    const auto result = restartUserAudioStack(
+        request.processRunner, request.processUserData, request.paths);
+    if (!processSucceeded(result)) {
+      warnings.push_back(processFailure(
+          "setup rollback could not restart the user audio stack", result));
+    }
   }
   if (!serviceMutationStarted) {
     return;
@@ -475,10 +488,10 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
 
   auto serviceMutationStarted = false;
   auto wirePlumberMutated = false;
-  auto wirePlumberRestartAttempted = false;
+  auto audioStackRestartAttempted = false;
   const auto failSetup = [&](std::string error) {
     rollbackSetup(request, request.presetSpecified, configurationSnapshot,
-                  wirePlumberFiles, wirePlumberRestartAttempted,
+                  wirePlumberFiles, audioStackRestartAttempted,
                   serviceMutationStarted, wasEnabled, wasActive, warnings);
     return UserManagementResult{.success = false,
                                 .warnings = std::move(warnings),
@@ -511,15 +524,12 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
     wirePlumberMutated = true;
   }
   if (wirePlumberMutated) {
-    wirePlumberRestartAttempted = true;
-    const auto restartWirePlumber = invokeProcess(
-        request.processRunner, request.processUserData,
-        request.paths.systemctlExecutable,
-        {"--user", "restart", "wireplumber.service"},
-        ProcessWaitMode::wait);
-    if (!processSucceeded(restartWirePlumber)) {
+    audioStackRestartAttempted = true;
+    const auto restartAudioStack = restartUserAudioStack(
+        request.processRunner, request.processUserData, request.paths);
+    if (!processSucceeded(restartAudioStack)) {
       return failSetup(processFailure(
-          "cannot restart wireplumber.service", restartWirePlumber));
+          "cannot restart the user audio stack", restartAudioStack));
     }
   }
 
@@ -644,18 +654,22 @@ UserManagementResult executeUserUnsetup(
     wirePlumberFilesRemoved = true;
   }
   if (wirePlumberFilesRemoved) {
-    const auto restartWirePlumber = invokeProcess(
-        request.processRunner, request.processUserData,
-        request.paths.systemctlExecutable,
-        {"--user", "restart", "wireplumber.service"},
-        ProcessWaitMode::wait);
-    if (!processSucceeded(restartWirePlumber)) {
+    const auto restartAudioStack = restartUserAudioStack(
+        request.processRunner, request.processUserData, request.paths);
+    if (!processSucceeded(restartAudioStack)) {
       restoreMutatedManagedFiles(wirePlumberFiles, "unsetup rollback: ",
                                  warnings);
+      const auto rollbackRestart = restartUserAudioStack(
+          request.processRunner, request.processUserData, request.paths);
+      if (!processSucceeded(rollbackRestart)) {
+        warnings.push_back(processFailure(
+            "unsetup rollback could not restart the user audio stack",
+            rollbackRestart));
+      }
       return {.success = false,
               .warnings = std::move(warnings),
               .error = processFailure(
-                  "cannot restart wireplumber.service", restartWirePlumber)};
+                  "cannot restart the user audio stack", restartAudioStack)};
     }
   }
 

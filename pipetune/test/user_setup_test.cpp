@@ -124,6 +124,14 @@ static bool invocationMatches(const Invocation &invocation,
   return true;
 }
 
+static bool audioStackRestartMatches(const Invocation &invocation) {
+  return invocationMatches(
+      invocation, "/test/systemctl",
+      {"--user", "restart", "pipewire.service", "wireplumber.service",
+       "pipewire-pulse.service"},
+      pipetune::ProcessWaitMode::wait);
+}
+
 static bool testWirePlumberCompatibilityPaths(
     const std::filesystem::path &directory) {
   const auto configRoot = directory / "resolved-config";
@@ -287,11 +295,9 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
                    {"--user", "daemon-reload"},
                    pipetune::ProcessWaitMode::wait),
                "setup must reload the user manager first") &&
-         check(invocationMatches(
-                   runner.invocations[3], "/test/systemctl",
-                   {"--user", "restart", "wireplumber.service"},
-                   pipetune::ProcessWaitMode::wait),
-               "setup must reload WirePlumber after installing its policy") &&
+         check(audioStackRestartMatches(runner.invocations[3]),
+               "setup must reset the audio stack after installing its "
+               "policy") &&
          check(invocationMatches(
                    runner.invocations[4], "/test/systemctl",
                    {"--user", "enable", "pipetune.service"},
@@ -392,19 +398,17 @@ static bool testSetupRollback(const std::filesystem::path &directory) {
                "failed setup must restore all visibility policy files") &&
          check(runner.invocations.size() == 9,
                "setup rollback invocation count differs") &&
-         check(invocationMatches(
-                   runner.invocations[6], "/test/systemctl",
-                   {"--user", "restart", "wireplumber.service"},
-                   pipetune::ProcessWaitMode::wait) &&
+         check(audioStackRestartMatches(runner.invocations[6]) &&
                    invocationMatches(
                        runner.invocations[7], "/test/systemctl",
-                   {"--user", "enable", "pipetune.service"},
+                       {"--user", "enable", "pipetune.service"},
                        pipetune::ProcessWaitMode::wait) &&
                    invocationMatches(
                        runner.invocations[8], "/test/systemctl",
                        {"--user", "restart", "pipetune.service"},
                        pipetune::ProcessWaitMode::wait),
-               "setup rollback must restore WirePlumber and service state");
+               "setup rollback must restore the audio stack and service "
+               "state");
 }
 
 static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
@@ -446,11 +450,9 @@ static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
                    {"--user", "disable", "--now", "pipetune.service"},
                    pipetune::ProcessWaitMode::wait),
                "unsetup service stop invocation differs") &&
-         check(invocationMatches(
-                   runner.invocations[2], "/test/systemctl",
-                   {"--user", "restart", "wireplumber.service"},
-                   pipetune::ProcessWaitMode::wait),
-               "unsetup must reload WirePlumber after removing its policy") &&
+         check(audioStackRestartMatches(runner.invocations[2]),
+               "unsetup must reset the audio stack after removing its "
+               "policy") &&
          check(!std::filesystem::exists(paths.wirePlumberPolicyPath),
                "unsetup must remove the WirePlumber 0.4 compatibility policy") &&
          check(!std::filesystem::exists(paths.wirePlumberClientScriptPath),
@@ -508,7 +510,7 @@ static bool testUnsetupRestartFailureRestoresPolicies(
   writeFile(paths.wirePlumber05VisibilityScriptPath, "visibility 0.5");
   auto runner =
       FakeProcessRunner{.results = {processResult(0), processResult(0),
-                                    processResult(1)},
+                                    processResult(1), processResult(0)},
                         .invocations = {}};
   const auto result = pipetune::executeUserUnsetup(
       {.effectiveUserId = 1000,
@@ -517,7 +519,7 @@ static bool testUnsetupRestartFailureRestoresPolicies(
        .processRunner = fakeRunProcess,
        .processUserData = &runner});
   return check(!result.success,
-               "WirePlumber restart failure must fail unsetup") &&
+               "audio stack restart failure must fail unsetup") &&
          check(readFile(paths.wirePlumberPolicyPath) == "policy" &&
                    readFile(paths.wirePlumberClientScriptPath) == "client" &&
                    readFile(paths.wirePlumberDeviceScriptPath) == "device" &&
@@ -527,7 +529,13 @@ static bool testUnsetupRestartFailureRestoresPolicies(
                        "configuration 0.5" &&
                    readFile(paths.wirePlumber05VisibilityScriptPath) ==
                        "visibility 0.5",
-               "failed unsetup must restore every WirePlumber policy file");
+               "failed unsetup must restore every WirePlumber policy file") &&
+         check(runner.invocations.size() == 4,
+               "unsetup rollback invocation count differs") &&
+         check(audioStackRestartMatches(runner.invocations[2]) &&
+                   audioStackRestartMatches(runner.invocations[3]),
+               "unsetup rollback must reactivate restored policies with a "
+               "second audio stack reset");
 }
 
 static bool testRootRejection(const std::filesystem::path &directory) {
