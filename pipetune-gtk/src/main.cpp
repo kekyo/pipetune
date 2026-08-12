@@ -93,6 +93,8 @@ struct GtkRuntime {
   std::vector<PresetChoice> presetChoices;
   std::filesystem::path effetuneUserPresetPath;
   EffeTunePresetFileMonitor *presetFileMonitor;
+  bool savedPresetCatalogParsed;
+  std::filesystem::path checkedActiveSavedPresetPath;
   std::string presetCatalogSourceDiagnostic;
   std::string presetCatalogSavedDiagnostic;
   std::vector<SampleRateChoice> rateChoices;
@@ -1155,17 +1157,46 @@ static void replacePresetChoices(
   runtime->updatingControls = false;
 }
 
+static std::filesystem::path savedPresetSnapshotDirectory(
+    const GtkRuntime &runtime) {
+  return runtime.startupConfigPath.parent_path() / "effetune-presets";
+}
+
+static void refreshRuntimeActiveSavedPresetSnapshot(
+    GtkRuntime *runtime) {
+  if (!runtime->savedPresetCatalogParsed ||
+      !runtime->state.hasRuntimeStatus ||
+      runtime->state.runtime.processingMode !=
+          pipetune::ProcessingMode::preset) {
+    return;
+  }
+  const auto refreshed = refreshActiveSavedPresetSnapshot(
+      runtime->presetChoices, runtime->state.runtime.activePreset,
+      savedPresetSnapshotDirectory(*runtime));
+  if (!refreshed.error.empty()) {
+    appendCompletedAction(
+        runtime, ActionLogSeverity::error,
+        ActionLogCategory::application, false,
+        localizedMessage("Cannot prepare preset", {}),
+        technicalMessage(refreshed.error));
+  }
+}
+
 static void refreshSavedPresetCatalog(GtkRuntime *runtime) {
   if (runtime->effetuneUserPresetPath.empty()) {
     return;
   }
   const auto refresh =
       loadEffeTuneSavedPresets(runtime->effetuneUserPresetPath);
+  runtime->savedPresetCatalogParsed = refresh.parsed;
   auto choices = applyEffeTuneSavedPresetRefresh(
       runtime->presetChoices, refresh);
   runtime->presetCatalogSavedDiagnostic =
       catalogDiagnosticText(refresh.diagnostics, {});
   replacePresetChoices(runtime, std::move(choices));
+  if (refresh.parsed) {
+    refreshRuntimeActiveSavedPresetSnapshot(runtime);
+  }
 }
 
 static void onEffeTunePresetFileChanged(void *userData) {
@@ -1239,8 +1270,7 @@ static void onPresetComboChanged(GtkComboBox *combo,
   const auto &choice =
       runtime->presetChoices[static_cast<std::size_t>(active - 1)];
   const auto resolved = resolvePresetChoicePath(
-      choice,
-      runtime->startupConfigPath.parent_path() / "effetune-presets");
+      choice, savedPresetSnapshotDirectory(*runtime));
   if (!resolved.error.empty()) {
     appendCompletedAction(
         runtime, ActionLogSeverity::error, ActionLogCategory::settings,
@@ -1590,6 +1620,16 @@ static void onSubscriptionMessage(
       runtime->state.hasRuntimeStatus;
   applyControlResponse(runtime->state, message,
                        currentMonotonicMilliseconds());
+  const auto activePresetPath =
+      runtime->state.hasRuntimeStatus &&
+              runtime->state.runtime.processingMode ==
+                  pipetune::ProcessingMode::preset
+          ? std::filesystem::path(runtime->state.runtime.activePreset)
+          : std::filesystem::path{};
+  if (activePresetPath != runtime->checkedActiveSavedPresetPath) {
+    runtime->checkedActiveSavedPresetPath = activePresetPath;
+    refreshRuntimeActiveSavedPresetSnapshot(runtime);
+  }
   if (!previouslyConnected && runtime->state.hasRuntimeStatus) {
     appendCompletedAction(runtime, ActionLogSeverity::info,
                           ActionLogCategory::control, true,
@@ -1989,6 +2029,8 @@ static ApplicationRunResult runApplication(int argc, char **argv) {
       .presetChoices = {},
       .effetuneUserPresetPath = {},
       .presetFileMonitor = nullptr,
+      .savedPresetCatalogParsed = false,
+      .checkedActiveSavedPresetPath = {},
       .presetCatalogSourceDiagnostic = {},
       .presetCatalogSavedDiagnostic = {},
       .rateChoices = {},

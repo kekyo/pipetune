@@ -292,6 +292,96 @@ static bool testMissingAndMalformedSources(
                "malformed user storage must add a diagnostic");
 }
 
+static bool testActiveSavedPresetSnapshotRefresh(
+    const std::filesystem::path &directory) {
+  const auto snapshotDirectory = directory / "active-snapshots";
+  auto active = pipetune_gtk::PresetChoice{
+      .source = pipetune_gtk::PresetSource::saved,
+      .name = "Actively used",
+      .category = {},
+      .path = {},
+      .serializedPreset =
+          R"json({"plugins":[{"nm":"Volume","en":true,"vl":6,"ch":"A"}]})json",
+  };
+  const auto materialized = pipetune_gtk::resolvePresetChoicePath(
+      active, snapshotDirectory);
+  if (!check(materialized.error.empty(), materialized.error)) {
+    return false;
+  }
+
+  struct stat before {};
+  if (!check(stat(materialized.path.c_str(), &before) == 0,
+             "active saved preset snapshot is unavailable")) {
+    return false;
+  }
+
+  active.serializedPreset =
+      R"json({"plugins":[{"nm":"Volume","en":true,"vl":-6,"ch":"A"}]})json";
+  const auto refreshed =
+      pipetune_gtk::refreshActiveSavedPresetSnapshot(
+          {active}, materialized.path, snapshotDirectory);
+  if (!check(refreshed.error.empty(), refreshed.error) ||
+      !check(refreshed.matched,
+             "active saved preset snapshot was not matched") ||
+      !check(refreshed.changed,
+             "changed active saved preset snapshot was not refreshed")) {
+    return false;
+  }
+
+  const auto loaded = pipetune::loadDspPipeline(
+      materialized.path,
+      {.sampleRate = 48000.0F, .maxChannels = 1, .maxFrames = 32});
+  if (!check(loaded.pipeline != nullptr, loaded.error)) {
+    return false;
+  }
+  auto samples = std::vector<float>{0.25F};
+  if (!check(loaded.pipeline->process(samples, 1, 1, 0.0) ==
+                 pipetune::ProcessStatus::ok,
+             "refreshed saved preset snapshot processing failed") ||
+      !check(approximately(
+                 samples[0],
+                 0.25F * std::pow(10.0F, -6.0F / 20.0F)),
+             "refreshed saved preset snapshot DSP output differs")) {
+    return false;
+  }
+
+  struct stat afterRefresh {};
+  if (!check(stat(materialized.path.c_str(), &afterRefresh) == 0,
+             "refreshed saved preset snapshot is unavailable") ||
+      !check(afterRefresh.st_ino != before.st_ino,
+             "changed saved preset snapshot was not atomically replaced")) {
+    return false;
+  }
+  const auto unchanged =
+      pipetune_gtk::refreshActiveSavedPresetSnapshot(
+          {active}, materialized.path, snapshotDirectory);
+  struct stat afterUnchanged {};
+  if (!check(stat(materialized.path.c_str(), &afterUnchanged) == 0,
+             "unchanged saved preset snapshot is unavailable") ||
+      !check(unchanged.error.empty(), unchanged.error) ||
+      !check(unchanged.matched && !unchanged.changed,
+             "unchanged active snapshot must not be replaced") ||
+      !check(afterUnchanged.st_ino == afterRefresh.st_ino,
+             "unchanged active snapshot produced a file update")) {
+    return false;
+  }
+
+  active.serializedPreset =
+      R"json({"plugins":[{"nm":"Volume","en":true,"vl":3,"ch":"A"}]})json";
+  const auto unrelated =
+      pipetune_gtk::refreshActiveSavedPresetSnapshot(
+          {active}, directory / "custom.effetune_preset",
+          snapshotDirectory);
+  struct stat afterUnrelated {};
+  return check(stat(materialized.path.c_str(), &afterUnrelated) == 0,
+               "active snapshot disappeared after unrelated refresh") &&
+         check(unrelated.error.empty(), unrelated.error) &&
+         check(!unrelated.matched && !unrelated.changed,
+               "unrelated active path matched a saved preset") &&
+         check(afterUnrelated.st_ino == afterRefresh.st_ino,
+               "unrelated preset refresh changed the active snapshot");
+}
+
 static bool testSavedPresetFileMonitoring(
     const std::filesystem::path &directory) {
   const auto userFile =
@@ -489,6 +579,7 @@ int main(int argc, char **argv) {
       testStoragePathResolution(directory) &&
       testCatalogAndMaterialization(directory) &&
       testMissingAndMalformedSources(directory) &&
+      testActiveSavedPresetSnapshotRefresh(directory) &&
       testSavedPresetFileMonitoring(directory) &&
       testBundledStandardPresets(argv[1]);
   std::filesystem::remove_all(directory);

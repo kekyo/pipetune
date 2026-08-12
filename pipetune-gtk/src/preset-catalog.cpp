@@ -477,4 +477,74 @@ PresetChoicePathResult resolvePresetChoicePath(
   return materializeSavedPreset(choice, savedPresetDirectory);
 }
 
+ActiveSavedPresetRefreshResult refreshActiveSavedPresetSnapshot(
+    const std::vector<PresetChoice> &choices,
+    const std::filesystem::path &activePresetPath,
+    const std::filesystem::path &savedPresetDirectory) {
+  if (activePresetPath.empty() || savedPresetDirectory.empty()) {
+    return {.matched = false, .changed = false, .error = {}};
+  }
+
+  auto filesystemError = std::error_code{};
+  const auto active = std::filesystem::absolute(
+                          activePresetPath, filesystemError)
+                          .lexically_normal();
+  if (filesystemError) {
+    return {
+        .matched = false,
+        .changed = false,
+        .error = "cannot resolve active saved preset path: " +
+                 filesystemError.message(),
+    };
+  }
+
+  for (const auto &choice : choices) {
+    if (choice.source != PresetSource::saved) {
+      continue;
+    }
+    filesystemError.clear();
+    const auto expected = std::filesystem::absolute(
+                              savedPresetPath(choice, savedPresetDirectory),
+                              filesystemError)
+                              .lexically_normal();
+    if (filesystemError) {
+      return {
+          .matched = false,
+          .changed = false,
+          .error = "cannot resolve saved preset snapshot path: " +
+                   filesystemError.message(),
+      };
+    }
+    if (expected != active) {
+      continue;
+    }
+    if (!validateSerializedPreset(choice.serializedPreset)) {
+      return {
+          .matched = true,
+          .changed = false,
+          .error = "saved EffeTune preset is invalid",
+      };
+    }
+
+    auto current = std::string{};
+    auto readError = std::string{};
+    if (readLimitedFile(expected, kMaximumUserPresetBytes, current,
+                        readError) &&
+        current == choice.serializedPreset) {
+      return {.matched = true, .changed = false, .error = {}};
+    }
+    const auto materialized =
+        materializeSavedPreset(choice, savedPresetDirectory);
+    if (!materialized.error.empty()) {
+      return {
+          .matched = true,
+          .changed = false,
+          .error = materialized.error,
+      };
+    }
+    return {.matched = true, .changed = true, .error = {}};
+  }
+  return {.matched = false, .changed = false, .error = {}};
+}
+
 } // namespace pipetune_gtk

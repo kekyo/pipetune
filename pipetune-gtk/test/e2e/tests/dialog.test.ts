@@ -106,6 +106,25 @@ const selectComboItem = async (id: string, index: number): Promise<void> => {
   );
 };
 
+const findComboItem = async (id: string, name: string): Promise<number> =>
+  waitForResult(
+    async () => {
+      const combo = await getElement(id, 'comboBox');
+      const count = await combo.getChildCount();
+      for (let index = 0; index < count; index += 1) {
+        const child = await combo.childAt(index);
+        if (child !== undefined && (await child.info()).name === name) {
+          return index;
+        }
+      }
+      throw new Error(`${name} is unavailable in ${id}`);
+    },
+    {
+      timeoutMs: 10_000,
+      message: `${id} did not expose ${name}`,
+    }
+  );
+
 const expectComboItemSelected = async (
   id: string,
   index: number
@@ -464,6 +483,59 @@ describe('PipeTune GTK dialog', () => {
     const requests = await session.readRequests();
     expect(requests.map((request) => request.command)).toEqual(
       expect.arrayContaining(['set-rate', 'set-dsp-backend', 'bypass'])
+    );
+  });
+
+  it('refreshes the active snapshot when an EffeTune saved preset changes', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await session.replaceEffeTuneSavedPresets(
+      JSON.stringify({
+        'Live saved preset': {
+          plugins: [{ nm: 'Volume', en: true, vl: 6, ch: 'A' }],
+        },
+      })
+    );
+    const savedIndex = await findComboItem(
+      'presetCombo',
+      'Saved in EffeTune · Live saved preset'
+    );
+    await session.clearRequests();
+    await selectComboItem('presetCombo', savedIndex);
+    const requests = await waitForCommands(['load']);
+    const load = requests.find((request) => request.command === 'load');
+    expect(load).toBeDefined();
+    const snapshotPath = load?.preset;
+    expect(typeof snapshotPath).toBe('string');
+    if (typeof snapshotPath !== 'string') {
+      throw new Error('Saved preset load path is unavailable.');
+    }
+    expect(
+      (
+        JSON.parse(await readFile(snapshotPath, 'utf8')) as {
+          plugins: Array<{ vl: number }>;
+        }
+      ).plugins[0]?.vl
+    ).toBe(6);
+
+    await session.replaceEffeTuneSavedPresets(
+      JSON.stringify({
+        'Live saved preset': {
+          plugins: [{ nm: 'Volume', en: true, vl: -6, ch: 'A' }],
+        },
+      })
+    );
+    await toPass(
+      async () => {
+        const snapshot = JSON.parse(await readFile(snapshotPath, 'utf8')) as {
+          plugins: Array<{ vl: number }>;
+        };
+        expect(snapshot.plugins[0]?.vl).toBe(-6);
+      },
+      {
+        timeoutMs: 10_000,
+        message: 'The active saved-preset snapshot was not refreshed.',
+      }
     );
   });
 

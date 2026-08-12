@@ -4,6 +4,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  rename,
   rm,
   stat,
   writeFile,
@@ -94,6 +95,8 @@ export interface PipeTuneGtkTestSession {
   readonly reconnectDaemon: () => Promise<void>;
   /** Publishes one deterministic status event without changing live settings. */
   readonly publishStatus: () => Promise<void>;
+  /** Atomically replaces EffeTune's saved-preset JSON file. */
+  readonly replaceEffeTuneSavedPresets: (contents: string) => Promise<void>;
   /** Stops all processes and removes the isolated filesystem root. */
   readonly release: () => Promise<void>;
 }
@@ -207,6 +210,11 @@ export const launchPipeTuneGtk = async (
   const pipeTuneConfigDirectory = join(configDirectory, 'pipetune');
   const configPath = join(pipeTuneConfigDirectory, 'environment');
   const languageConfigPath = join(pipeTuneConfigDirectory, 'gtk.conf');
+  const effetunePresetPath = join(
+    configDirectory,
+    'effetune',
+    'effetune_presets.json'
+  );
   const requestLogPath = join(root, 'requests.jsonl');
   const persistenceGuardPath = join(root, 'persistence-guard');
   const homeDirectory = join(root, 'home');
@@ -322,6 +330,14 @@ export const launchPipeTuneGtk = async (
       });
     });
   };
+  const replaceEffeTuneSavedPresets = async (
+    contents: string
+  ): Promise<void> => {
+    await mkdir(join(configDirectory, 'effetune'), { recursive: true });
+    const temporaryPath = `${effetunePresetPath}.new`;
+    await writeFile(temporaryPath, contents, { mode: 0o600 });
+    await rename(temporaryPath, effetunePresetPath);
+  };
   const release = async (): Promise<void> => {
     await launcher.release();
     const activeDaemon = daemon;
@@ -355,6 +371,7 @@ export const launchPipeTuneGtk = async (
     disconnectDaemon,
     reconnectDaemon,
     publishStatus,
+    replaceEffeTuneSavedPresets,
     release,
   };
 };

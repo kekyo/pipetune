@@ -77,6 +77,18 @@ struct PresetChoicePathResult {
 };
 
 /**
+ * Reports an attempted refresh of the active saved-preset snapshot.
+ */
+struct ActiveSavedPresetRefreshResult {
+  /** Whether the active path belongs to one of the supplied saved presets. */
+  bool matched;
+  /** Whether the snapshot contents were replaced. */
+  bool changed;
+  /** Refresh diagnostic, or empty on success or no match. */
+  std::string error;
+};
+
+/**
  * Resolves the EffeTune desktop application's user-preset JSON file.
  *
  * Electron stores EffeTune data below `effetune` in the XDG configuration
@@ -145,6 +157,24 @@ std::vector<PresetChoice> applyEffeTuneSavedPresetRefresh(
  */
 PresetChoicePathResult resolvePresetChoicePath(
     const PresetChoice &choice,
+    const std::filesystem::path &savedPresetDirectory);
+
+/**
+ * Refreshes the saved-preset snapshot currently used by the daemon.
+ *
+ * The active path is matched against deterministic snapshot paths for the
+ * supplied saved choices. A matching snapshot is atomically replaced only
+ * when its serialized contents changed. Standard and non-active choices are
+ * never materialized by this operation.
+ *
+ * @param choices Current standard and saved preset choices.
+ * @param activePresetPath Preset path currently reported by the daemon.
+ * @param savedPresetDirectory Private saved-preset snapshot directory.
+ * @return Match, change, and diagnostic state.
+ */
+ActiveSavedPresetRefreshResult refreshActiveSavedPresetSnapshot(
+    const std::vector<PresetChoice> &choices,
+    const std::filesystem::path &activePresetPath,
     const std::filesystem::path &savedPresetDirectory);
 
 } // namespace pipetune_gtk
