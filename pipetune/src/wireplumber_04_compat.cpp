@@ -76,6 +76,8 @@ config.roles = config.roles or {}
 local self = {}
 self.scanning = false
 self.pending_rescan = false
+self.syncing = false
+self.pending_sync = false
 
 function rescan ()
   for si in linkables_om:iterate() do
@@ -99,6 +101,24 @@ function scheduleRescan ()
       scheduleRescan ()
     end)
   end
+end
+
+function scheduleSynchronizedRescan ()
+  if self.syncing then
+    self.pending_sync = true
+    return
+  end
+
+  self.syncing = true
+  Core.sync(function ()
+    self.syncing = false
+    scheduleRescan ()
+
+    if self.pending_sync then
+      self.pending_sync = false
+      scheduleSynchronizedRescan ()
+    end
+  end)
 end
 
 function findRole(role, tmc)
@@ -317,7 +337,7 @@ linkables_om:connect("objects-changed", function (om)
 end)
 
 endpoints_om:connect("objects-changed", function (om)
-  scheduleRescan ()
+  scheduleSynchronizedRescan ()
 end)
 
 linkables_om:connect("object-removed", function (om, si)
@@ -327,6 +347,7 @@ end)
 endpoints_om:activate()
 linkables_om:activate()
 links_om:activate()
+scheduleSynchronizedRescan ()
 )wp04lua"};
 constexpr auto kWirePlumber04EndpointDevicePolicy =
     std::string_view{R"wp04lua(-- Managed by PipeTune for WirePlumber 0.4 compatibility.

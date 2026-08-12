@@ -142,6 +142,9 @@ default_policy.enable = function()
     components["policy-endpoint-client.lua"] = nil
     load_script("pipetune-endpoint-client-test.lua", default_policy.policy)
   end
+  if components["policy-node.lua"] then
+    components["policy-node.lua"] = nil
+  end
 end
 `,
 );
