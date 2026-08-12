@@ -39,6 +39,8 @@ const dataDirectory = join(directory, "data");
 const homeDirectory = join(directory, "home");
 const remote = `pipetune-rescan-${process.pid}`;
 const audioPath = join(directory, "silence.wav");
+const initialPlayerName = "pipetune_endpoint_rescan_player";
+const retryPlayerName = "pipetune_endpoint_rescan_retry_player";
 for (const path of [
   runtimeDirectory,
   configDirectory,
@@ -267,8 +269,8 @@ const findNode = (graph, name) =>
       object.info?.props?.["node.name"] === name,
   );
 
-const graphHasTestLink = (graph) => {
-  const player = findNode(graph, "pipetune_endpoint_rescan_player");
+const graphHasTestLink = (graph, playerName) => {
+  const player = findNode(graph, playerName);
   const endpoint = findNode(graph, "control.endpoint.pipetune.test");
   if (!player || !endpoint) {
     return false;
@@ -325,14 +327,14 @@ try {
     "--channels=2",
     "--format=s16",
     "--properties",
-    "{ node.name = pipetune_endpoint_rescan_player media.role = Test }",
+    `{ node.name = ${initialPlayerName} media.role = Test }`,
     audioPath,
   ]);
   await waitFor("the pre-existing playback stream", () => {
     if (playerProcess.exited) {
       fail("the playback stream exited before being registered");
     }
-    return findNode(inspectGraph(), "pipetune_endpoint_rescan_player");
+    return findNode(inspectGraph(), initialPlayerName);
   });
 
   const wireplumberProcess = startProcess("wireplumber", wireplumber, []);
@@ -344,7 +346,32 @@ try {
   });
   await waitFor(
     "the pre-existing stream to be linked after endpoint registration",
-    () => graphHasTestLink(inspectGraph()),
+    () => graphHasTestLink(inspectGraph(), initialPlayerName),
+  );
+
+  playerProcess.child.kill("SIGTERM");
+  await waitFor("the first playback stream to be removed", () => {
+    return !findNode(inspectGraph(), initialPlayerName);
+  });
+
+  const retryPlayerProcess = startProcess("pw-cat retry", pwCat, [
+    "--playback",
+    "--rate=48000",
+    "--channels=2",
+    "--format=s16",
+    "--properties",
+    `{ node.name = ${retryPlayerName} media.role = Test }`,
+    audioPath,
+  ]);
+  await waitFor("the retry playback stream", () => {
+    if (retryPlayerProcess.exited) {
+      fail("the retry playback stream exited before being registered");
+    }
+    return findNode(inspectGraph(), retryPlayerName);
+  });
+  await waitFor(
+    "the retry stream to be linked after the first stream was removed",
+    () => graphHasTestLink(inspectGraph(), retryPlayerName),
   );
 } catch (error) {
   failure = error;
