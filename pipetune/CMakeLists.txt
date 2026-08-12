@@ -139,10 +139,22 @@ add_custom_command(
   VERBATIM)
 
 set(ET_SIMD OFF CACHE BOOL "Match EffeTune's native scalar DSP configuration" FORCE)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/EffeTuneNativeBackends.cmake")
+pipetune_resolve_native_processor(
+  PIPETUNE_NATIVE_PROCESSOR
+  "${CMAKE_SYSTEM_PROCESSOR}"
+  "${CMAKE_SIZEOF_VOID_P}")
 add_subdirectory(
   "${PIPETUNE_EFFETUNE_DIR}/dsp"
   "${CMAKE_CURRENT_BINARY_DIR}/effetune-dsp")
-include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/EffeTuneNativeBackends.cmake")
+pipetune_configure_effetune_portability_target(
+  effetune_dsp_core
+  "${PIPETUNE_NATIVE_PROCESSOR}")
+if(TARGET effetune_dsp_tube_simulator_tests)
+  pipetune_configure_effetune_portability_target(
+    effetune_dsp_tube_simulator_tests
+    "${PIPETUNE_NATIVE_PROCESSOR}")
+endif()
 pipetune_add_effetune_native_backends(
   "${PIPETUNE_EFFETUNE_DIR}/dsp"
   "${CMAKE_BINARY_DIR}"

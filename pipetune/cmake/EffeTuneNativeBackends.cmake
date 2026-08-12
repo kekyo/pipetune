@@ -20,6 +20,34 @@ function(
   set(${OUTPUT_VARIABLE} "${resolved_processor}" PARENT_SCOPE)
 endfunction()
 
+# EffeTune's Tube Simulator keeps its GNU f64x2 helpers within one translation
+# unit. On 32-bit targets GCC reports their file-local calling convention as a
+# psABI warning even though no vector type crosses a library ABI boundary.
+function(
+  pipetune_resolve_effetune_portability_options
+  OUTPUT_VARIABLE
+  NATIVE_PROCESSOR)
+  set(portability_options)
+  if(NATIVE_PROCESSOR MATCHES "^(i[3-6]86|x86|arm|armv[5-8].*)$")
+    list(
+      APPEND portability_options
+      "$<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Wno-error=psabi>")
+  endif()
+  set(${OUTPUT_VARIABLE} "${portability_options}" PARENT_SCOPE)
+endfunction()
+
+function(
+  pipetune_configure_effetune_portability_target
+  TARGET_NAME
+  NATIVE_PROCESSOR)
+  pipetune_resolve_effetune_portability_options(
+    portability_options
+    "${NATIVE_PROCESSOR}")
+  if(portability_options)
+    target_compile_options(${TARGET_NAME} PRIVATE ${portability_options})
+  endif()
+endfunction()
+
 function(
   pipetune_configure_native_variant_target
   TARGET_NAME
@@ -164,6 +192,9 @@ function(
       -Werror
       $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
       $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
+  pipetune_configure_effetune_portability_target(
+    ${TARGET_NAME}
+    "${NATIVE_PROCESSOR}")
   if(NOT VARIANT_NAME STREQUAL "SCALAR")
     pipetune_configure_native_variant_target(
       ${TARGET_NAME} ${VARIANT_NAME} ${NATIVE_PROCESSOR})
