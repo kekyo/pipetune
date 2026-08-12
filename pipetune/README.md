@@ -392,7 +392,8 @@ Setup performs the following operations:
 - saves that preset atomically with user-only permissions, or preserves the
   existing startup selection when omitted;
 - installs the WirePlumber 0.4 compatibility policy and the 0.4/0.5 internal
-  node visibility policy, then restarts WirePlumber once when any managed file
+  node visibility policy, then restarts PipeWire, WirePlumber, and PipeWire's
+  PulseAudio server in one user-systemd transaction when any managed file
   changes; WirePlumber 0.5 uses PipeTune's smart-filter node properties for
   routing;
 - reloads, enables, and restarts `pipetune.service`, then verifies it is
@@ -464,7 +465,8 @@ pipetune unsetup
 
 This installs a managed user XDG autostart mask, asks the GTK singleton to
 quit, disables and stops the service, removes all PipeTune-managed WirePlumber
-files, and restarts WirePlumber when necessary. Existing PipeTune
+files, and restarts PipeWire, WirePlumber, and PipeWire's PulseAudio server in
+one user-systemd transaction when necessary. Existing PipeTune
 configuration is retained so a later `pipetune setup` resumes the same
 selection. Use `pipetune unsetup --purge` to additionally delete the shared
 startup configuration and the obsolete

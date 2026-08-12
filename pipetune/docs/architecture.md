@@ -134,9 +134,11 @@ audio stream disappears. Desktop control panels and other clients without an
 audio stream therefore do not receive the internal nodes.
 
 Setup snapshots and atomically updates all six managed files, then restarts
-`wireplumber.service` once if any changed. WirePlumber 0.5 ignores the 0.4 Lua
+`pipewire.service`, `wireplumber.service`, and `pipewire-pulse.service` in one
+user-systemd transaction if any changed. WirePlumber 0.5 ignores the 0.4 Lua
 configuration path and uses the smart-filter properties instead. `pipetune
-unsetup` removes all six files and restarts WirePlumber when necessary.
+unsetup` removes all six files and restarts the same audio stack when
+necessary.
 
 ## Real-time data flow
 

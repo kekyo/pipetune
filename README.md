@@ -23,29 +23,28 @@ EffeTune DSP performs computations using fully natively compiled binaries.
 On each platform, you can select native SIMD operations.
 
 WirePlumber (PipeWire orchestrator) inserts PipeTune as a transparent filter between the mixed desktop
-playback stream and the normal PipeWire output path. A GTK 3 control
+playback stream and the normal PipeWire output path. A GTK3 control
 application remains available through the desktop system tray.
 
 ![PipeTune UI](./images/pipetune-ui.png)
 
 ### Features
 
-- Loads canonical and legacy EffeTune preset files with the
-  `.effetune_preset` extension.
-- Applies the enabled native EffeTune DSP pipeline to desktop audio.
-- Keeps desktop output-device and master-volume selection under ordinary
-  PipeWire and WirePlumber policy.
-- Follows the negotiated PipeWire graph rate or requests an explicit 44.1,
-  48, 96, 192, or 384 kHz rate.
-- Selects the scalar compatibility DSP backend, automatic SIMD dispatch, or a CPU-validated ISA tier from the CLI or GTK application.
-- Sets up or removes all per-user integration with one CLI command.
-- Displays runtime state in the GTK application.
+- You can load EffeTune preset files to apply a DSP pipeline to the audio output of the entire Linux system.
+- Loads standard and legacy EffeTune preset files with the `.effetune_preset` extension
+  and applies the DSP pipeline to desktop audio.
+- Automatically negotiates the sampling rate with the PipeWire graph, or computes the DSP at specified rates of 44.1, 48, 96, 192, or 384 kHz.
+- The DSP performs computations entirely in native code. You can choose between Scalar (for compatibility), automatic SIMD selection, or CPU-verified implementations for specific instruction sets.
+- A GTK application that resides in the system tray allows you to manage various DSP states and settings.
+- Operation is also possible via CLI commands.
 
 ### Supported systems
 
 PipeTune requires a PipeWire desktop session managed by WirePlumber and
 systemd user services. WirePlumber 0.4 and 0.5 are supported. A standalone
-PulseAudio session is not supported.
+
+> Note: This applies to the standard Debian and Ubuntu distributions.
+> It may also work on other distributions if they meet the system requirements.
 
 Prebuilt Debian packages are published for:
 
@@ -56,19 +55,19 @@ Prebuilt Debian packages are published for:
 | Ubuntu | 24.04 | amd64, arm64 |
 | Ubuntu | 26.04 | amd64, arm64 |
 
-Use the following command if you are unsure which package architecture to
-download:
-
-```sh
-dpkg --print-architecture
-```
-
 ---
 
 ## Download and install
 
 Download the `.deb` matching your distribution, release, and architecture
 from the [PipeTune GitHub Releases page](https://github.com/kekyo/pipetune/releases/).
+
+Use the following command if you are unsure which package architecture to
+download:
+
+```sh
+dpkg --print-architecture
+```
 
 Open a terminal in the directory containing the downloaded package. Make sure
 that directory contains only the intended PipeTune package, then install it
