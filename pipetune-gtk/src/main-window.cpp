@@ -42,6 +42,19 @@ static void installStyle() {
   g_object_unref(provider);
 }
 
+static void configureCompactComboBox(GtkWidget *widget) {
+  auto *comboBox = GTK_COMBO_BOX(widget);
+  gtk_combo_box_set_popup_fixed_width(comboBox, FALSE);
+  auto *cells = gtk_cell_layout_get_cells(GTK_CELL_LAYOUT(comboBox));
+  for (auto *item = cells; item != nullptr; item = item->next) {
+    if (GTK_IS_CELL_RENDERER_TEXT(item->data)) {
+      g_object_set(G_OBJECT(item->data), "ellipsize", PANGO_ELLIPSIZE_END,
+                   nullptr);
+    }
+  }
+  g_list_free(cells);
+}
+
 MainWindowUi createMainWindowUi(GtkApplication *application,
                                 std::string_view pipeTuneVersion,
                                 std::string_view effetuneDspVersion) {
@@ -134,6 +147,11 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
       .applyButton =
           requiredWidget(builder, "applyButton", GTK_TYPE_BUTTON),
   };
+  configureCompactComboBox(ui.presetCombo);
+  configureCompactComboBox(ui.rateCombo);
+  configureCompactComboBox(ui.rateEnforcementCombo);
+  configureCompactComboBox(ui.dspBackendCombo);
+  configureCompactComboBox(ui.languageCombo);
   auto *headerBar =
       requiredWidget(builder, "headerBar", GTK_TYPE_HEADER_BAR);
   const auto pipeTuneVersionText =

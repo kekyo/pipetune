@@ -851,7 +851,7 @@ if(BUILD_TESTING)
   set_tests_properties(
     pipetune_gtk_gestament_e2e PROPERTIES
     WORKING_DIRECTORY "${PIPETUNE_GTK_E2E_DIRECTORY}"
-    TIMEOUT 180)
+    TIMEOUT 240)
 
   add_test(
     NAME pipetune_gtk_install_layout

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { PNG } from 'pngjs';
 
 import type {
+  GtkCaptureBounds,
   GtkElementOfKind,
   GtkWidgetElement,
   GtkWidgetKind,
@@ -34,14 +35,18 @@ const elementOfKind = <Kind extends GtkWidgetKind>(
   return element as GtkElementOfKind<Kind>;
 };
 
+const getWidget = async (id: string): Promise<GtkWidgetElement> => {
+  if (session === undefined) {
+    throw new Error('GTK session is unavailable');
+  }
+  return session.app.getById(id);
+};
+
 const getElement = async <Kind extends GtkWidgetKind>(
   id: string,
   kind: Kind
 ): Promise<GtkElementOfKind<Kind>> => {
-  if (session === undefined) {
-    throw new Error('GTK session is unavailable');
-  }
-  return elementOfKind(await session.app.getById(id), kind);
+  return elementOfKind(await getWidget(id), kind);
 };
 
 const waitForLabel = async (id: string, expected: string): Promise<void> => {
@@ -182,6 +187,21 @@ const expectInsideWindow = async (
   expect(
     elementCapture.bounds.y + elementCapture.bounds.height
   ).toBeLessThanOrEqual(windowCapture.bounds.y + windowCapture.bounds.height);
+};
+
+const expectInsideBounds = async (
+  element: GtkWidgetElement,
+  containerBounds: GtkCaptureBounds
+): Promise<void> => {
+  const elementCapture = await element.capture();
+  expect(elementCapture.bounds.x).toBeGreaterThanOrEqual(containerBounds.x);
+  expect(elementCapture.bounds.y).toBeGreaterThanOrEqual(containerBounds.y);
+  expect(
+    elementCapture.bounds.x + elementCapture.bounds.width
+  ).toBeLessThanOrEqual(containerBounds.x + containerBounds.width);
+  expect(
+    elementCapture.bounds.y + elementCapture.bounds.height
+  ).toBeLessThanOrEqual(containerBounds.y + containerBounds.height);
 };
 
 const resizeStatusPaneTo = async (targetWidth: number): Promise<void> => {
@@ -347,37 +367,72 @@ describe('PipeTune GTK dialog', () => {
     expect(await (await getElement('logList', 'list')).getChildCount()).toBe(1);
   });
 
-  it('keeps structured status visible beside every settings page at minimum size', async () => {
+  it('keeps structured status and controls visible at compact window sizes', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
+    const longPresetName =
+      'Measurement 1 · 37db4eddbb8479aa · listening-room correction with an intentionally long saved preset name';
+    await session.replaceEffeTuneSavedPresets(
+      JSON.stringify({
+        [longPresetName]: {
+          plugins: [{ nm: 'Volume', en: true, vl: 0, ch: 'A' }],
+        },
+      })
+    );
+    await findComboItem('presetCombo', `Saved in EffeTune · ${longPresetName}`);
+
     const window = await getElement('mainWindow', 'window');
     const hints = await window.resizeHints();
     expect(hints.minWidth).toBe(900);
     expect(hints.minHeight).toBe(560);
-
-    const resized = await window.resizeTo(900, 560);
-    expect(resized.width).toBe(900);
-    expect(resized.height).toBe(560);
     const statusPane = await getElement('persistentStatusPane', 'container');
     const settingsPane = await getElement('settingsPane', 'container');
-    expect((await statusPane.capture()).clipped).toBe(false);
-    expect((await settingsPane.capture()).clipped).toBe(false);
-    await expectInsideWindow(statusPane, window);
-    await expectInsideWindow(settingsPane, window);
-    expect((await statusPane.capture()).bounds.width).toBeGreaterThanOrEqual(
-      340
-    );
-
     const switcher = await getElement('settingsSwitcher', 'container');
-    for (let page = 0; page < 4; page += 1) {
-      const pageButton = await switcher.childAt(page);
-      expect(pageButton).toBeDefined();
-      await expectInsideWindow(pageButton as GtkWidgetElement, window);
-      await selectSettingsPage(page);
-      expect(
-        await (await getElement('status-live-processing', 'label')).text()
-      ).toBe('Preset');
+    const controlsByPage = [
+      ['processingEnabledSwitch', 'presetCombo', 'presetChooser'],
+      ['rateCombo', 'rateEnforcementCombo'],
+      ['dspBackendCombo'],
+      [
+        'languageCombo',
+        'restoreDefaultsButton',
+        'pipeTuneVersionLink',
+        'effetuneVersionLink',
+      ],
+    ] as const;
+
+    for (const [width, height] of [
+      [1080, 680],
+      [900, 560],
+    ] as const) {
+      const resized = await window.resizeTo(width, height);
+      expect(resized.width).toBe(width);
+      expect(resized.height).toBe(height);
+      expect((await statusPane.capture()).clipped).toBe(false);
+      const settingsCapture = await settingsPane.capture();
+      expect(settingsCapture.clipped).toBe(false);
+      await expectInsideWindow(statusPane, window);
+      await expectInsideWindow(settingsPane, window);
+      expect((await statusPane.capture()).bounds.width).toBeGreaterThanOrEqual(
+        340
+      );
+
+      for (let page = 0; page < controlsByPage.length; page += 1) {
+        const pageButton = await switcher.childAt(page);
+        expect(pageButton).toBeDefined();
+        await expectInsideWindow(pageButton as GtkWidgetElement, window);
+        await selectSettingsPage(page);
+        expect(
+          await (await getElement('status-live-processing', 'label')).text()
+        ).toBe('Preset');
+        for (const controlId of controlsByPage[page] ?? []) {
+          await expectInsideBounds(
+            await getWidget(controlId),
+            settingsCapture.bounds
+          );
+        }
+      }
     }
+
     await expectInsideWindow(
       await getElement('logToggleButton', 'toggleButton'),
       window
