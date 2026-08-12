@@ -673,6 +673,41 @@ if(BUILD_TESTING)
     NAME pipetune_user_setup_tests
     COMMAND pipetune_user_setup_tests)
 
+  find_program(PIPETUNE_PIPEWIRE_EXECUTABLE pipewire REQUIRED)
+  find_program(PIPETUNE_WIREPLUMBER_EXECUTABLE wireplumber REQUIRED)
+  find_program(PIPETUNE_PW_CAT_EXECUTABLE pw-cat REQUIRED)
+  find_program(PIPETUNE_PW_DUMP_EXECUTABLE pw-dump REQUIRED)
+  add_executable(
+    pipetune_wireplumber_policy_fixture
+    test/wireplumber_policy_fixture.cpp)
+  target_include_directories(
+    pipetune_wireplumber_policy_fixture PRIVATE src)
+  target_link_libraries(
+    pipetune_wireplumber_policy_fixture PRIVATE pipetune_pipewire)
+  if(MSVC)
+    target_compile_options(
+      pipetune_wireplumber_policy_fixture PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_wireplumber_policy_fixture PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_wireplumber_endpoint_rescan
+    COMMAND
+      ${PIPETUNE_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/wireplumber-endpoint-rescan.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE}
+      ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+      ${PIPETUNE_PW_CAT_EXECUTABLE}
+      ${PIPETUNE_PW_DUMP_EXECUTABLE}
+      $<TARGET_FILE:pipetune_wireplumber_policy_fixture>)
+  set_tests_properties(
+    pipetune_wireplumber_endpoint_rescan
+    PROPERTIES
+      SKIP_RETURN_CODE 77
+      TIMEOUT 30)
+
   add_executable(
     pipetune_rate_command_tests
     test/rate_command_test.cpp)
