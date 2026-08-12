@@ -90,7 +90,7 @@ const emitElement = (field, index, enumName) => {
     `${cppString(field.arrayKey ?? '')}, ${cppString(field.objectArrayKey ?? '')}, ` +
     `${cppString(field.memberKey ?? '')}, ${index}u, ${kind}, ` +
     `${numberLiteral(minimum)}, ${numberLiteral(maximum)}, ${numberLiteral(defaultValue)}, ` +
-    `${enumValues}}`;
+    `${enumValues}, ${field.rejectInvalid ? 'true' : 'false'}}`;
 };
 
 const generateCatalog = () => {

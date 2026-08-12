@@ -60,6 +60,15 @@ for (const spec of loadParamSpecs(path.join(effetuneRoot, 'dsp/plugins'))) {
   cases.push({ type: spec.type, parameters: {} });
   cases.push({ type: spec.type, parameters: makeDirectParameters(spec, 'valid') });
   cases.push({ type: spec.type, parameters: makeDirectParameters(spec, 'invalid') });
+  for (const field of spec.fields.filter(field => field.rejectInvalid)) {
+    for (const key of field.keys) {
+      cases.push({
+        type: spec.type,
+        parameters: { [key]: { invalid: true } },
+        expectedRejectedKey: key
+      });
+    }
+  }
   if (spec.fields.some(field => field.arrayKey || field.objectArrayKey)) {
     cases.push({ type: spec.type, parameters: makeContainerParameters(spec) });
   }
@@ -116,9 +125,23 @@ try {
       expectedError = true;
     }
     const native = actual.cases[index];
-    if (expectedError || testCase.expectedError) {
+    if (testCase.expectedRejectedKey) {
+      if (!expectedError || native.error !== `invalid enum parameter ${testCase.expectedRejectedKey}`) {
+        throw new Error(
+          `parameter packing must reject invalid enum ${testCase.expectedRejectedKey} for ${testCase.type}`
+        );
+      }
+      return;
+    }
+    if (testCase.expectedError) {
       if (native.error !== 'structured parameter capacity exceeded') {
         throw new Error(`parameter packing must reject excess structured data for ${testCase.type}`);
+      }
+      return;
+    }
+    if (expectedError) {
+      if (native.error === '') {
+        throw new Error(`parameter packing must reject invalid parameters for ${testCase.type}`);
       }
       return;
     }

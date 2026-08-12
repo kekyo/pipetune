@@ -64,7 +64,8 @@ static bool readSafeInteger(yyjson_val *value, double &output) {
   return false;
 }
 
-static float packElement(yyjson_val *value, const ParameterElement &element) {
+static float packElement(yyjson_val *value, const ParameterElement &element,
+                         std::string &error) {
   if (element.kind == ParameterKind::boolean) {
     if (yyjson_is_bool(value)) {
       return yyjson_get_bool(value) ? 1.0F : 0.0F;
@@ -82,12 +83,18 @@ static float packElement(yyjson_val *value, const ParameterElement &element) {
   }
 
   if (element.kind == ParameterKind::enumeration) {
+    if (value == nullptr) {
+      return static_cast<float>(element.defaultValue);
+    }
     if (yyjson_is_str(value)) {
       const auto text = std::string_view(yyjson_get_str(value), yyjson_get_len(value));
       const auto match = std::ranges::find(element.enumerationValues, text);
       if (match != element.enumerationValues.end()) {
         return static_cast<float>(std::distance(element.enumerationValues.begin(), match));
       }
+    }
+    if (element.rejectInvalid) {
+      error = "invalid enum parameter " + std::string(element.directKey);
     }
     return static_cast<float>(element.defaultValue);
   }
@@ -166,7 +173,8 @@ PackedParameters packDspParameters(const DspDefinition &definition, yyjson_val *
       PackedParameters{.definition = &definition, .floats = {}, .bytes = {}, .error = {}};
   packed.floats.reserve(definition.elements.size());
   for (const auto &element : definition.elements) {
-    packed.floats.push_back(packElement(readElementSource(parameters, element), element));
+    packed.floats.push_back(
+        packElement(readElementSource(parameters, element), element, packed.error));
   }
   if (definition.structured.present) {
     packed.bytes = packMatrixRoutes(definition.structured, parameters, packed.error);

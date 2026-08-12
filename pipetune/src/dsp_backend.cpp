@@ -262,6 +262,7 @@ static bool loadRemainingSymbols(void *handle, DspBackendApi &api,
   PIPETUNE_LOAD_DSP_SYMBOL(instanceAssetAbort, et_instance_asset_abort)
   PIPETUNE_LOAD_DSP_SYMBOL(instanceAssetState, et_instance_asset_state)
   PIPETUNE_LOAD_DSP_SYMBOL(instanceProcess, et_instance_process)
+  PIPETUNE_LOAD_DSP_SYMBOL(instanceRuntimeEvent, et_instance_runtime_event)
   PIPETUNE_LOAD_DSP_SYMBOL(arenaCombinedPtr, et_arena_combined_ptr)
   PIPETUNE_LOAD_DSP_SYMBOL(arenaBusPtr, et_arena_bus_ptr)
   PIPETUNE_LOAD_DSP_SYMBOL(arenaScratchPtr, et_arena_scratch_ptr)

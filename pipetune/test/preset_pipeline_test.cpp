@@ -136,44 +136,122 @@ static bool containsWarning(const std::vector<pipetune::PipelineWarning> &warnin
   });
 }
 
-static bool testEffeTune23Pipeline(const std::filesystem::path &directory) {
+static bool testEffeTune24Pipeline(const std::filesystem::path &directory) {
   const auto path = writePreset(
-      directory, "effetune-2.3.effetune_preset",
+      directory, "effetune-2.4.effetune_preset",
       R"json({
         "pipeline": [
-          {"name":"Oscillator","enabled":true,"parameters":{"wf":"impulse","vl":-12}},
-          {"name":"Loudness Equalizer","enabled":true,"parameters":{"sp":85,"rv":-12}},
-          {"name":"AM Radio Simulator","enabled":true,"parameters":{}},
-          {"name":"FM Radio Simulator","enabled":true,"parameters":{}},
-          {"name":"SW Radio Simulator","enabled":true,"parameters":{}},
+          {"name":"SBC Codec Simulator","enabled":true,"parameters":{"bp":35}},
+          {"name":"Cassette Artifacts","enabled":true,"parameters":{"dg":"Consumer"}},
+          {"name":"G.726 Simulator","enabled":true,"parameters":{"br":"32"}},
+          {"name":"GSM-FR Simulator","enabled":true,"parameters":{"tc":1}},
+          {"name":"MP3 Codec Simulator","enabled":true,"parameters":{"br":"64"}},
+          {"name":"Tape Artifacts","enabled":true,"parameters":{"sp":"15"}},
+          {"name":"Tube Simulator","enabled":true,"parameters":{"tp":"12AX7"}},
+          {"name":"AM Radio Simulator","enabled":true,"parameters":{"rd":true}},
+          {"name":"FM Radio Simulator","enabled":true,"parameters":{"rd":true}},
+          {"name":"SW Radio Simulator","enabled":true,"parameters":{"rd":true,"mo":"USB","bf":125}},
           {"name":"FIR Crossover","enabled":true,"parameters":{}},
           {"name":"5Band FIR PEQ","enabled":true,"parameters":{}},
-          {"name":"Group Delay EQ","enabled":true,"parameters":{}}
+          {"name":"Group Delay EQ","enabled":true,"parameters":{}},
+          {"name":"Room EQ","enabled":true,"parameters":{}},
+          {"name":"IR Reverb","enabled":true,"parameters":{}}
         ]
       })json");
   const auto result = pipetune::loadDspPipeline(
       path,
       {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
   if (!check(result.pipeline != nullptr, result.error) ||
-      !check(result.pipeline->activePluginCount() == 5,
-             "EffeTune 2.3 non-asset DSP nodes must become active") ||
-      !check(result.warnings.size() == 3,
-             "EffeTune 2.3 asset-dependent DSP nodes must be omitted") ||
+      !check(result.pipeline->activePluginCount() == 10,
+             "EffeTune 2.4 non-asset DSP nodes must become active") ||
+      !check(result.warnings.size() == 5,
+             "EffeTune asset-dependent DSP nodes must be omitted") ||
       !check(containsWarning(result.warnings, "FIR Crossover") &&
                  containsWarning(result.warnings, "5Band FIR PEQ") &&
-                 containsWarning(result.warnings, "Group Delay EQ"),
-             "every omitted EffeTune 2.3 DSP must be identified")) {
+                 containsWarning(result.warnings, "Group Delay EQ") &&
+                 containsWarning(result.warnings, "Room EQ") &&
+                 containsWarning(result.warnings, "IR Reverb"),
+             "every omitted asset-dependent DSP must be identified")) {
     return false;
   }
 
   auto samples = std::vector<float>(128u, 0.0F);
   return check(result.pipeline->process(samples, 2, 64, 0.0) ==
                    pipetune::ProcessStatus::ok,
-               "EffeTune 2.3 DSP nodes must process audio") &&
+               "EffeTune 2.4 DSP nodes must process audio") &&
          check(std::ranges::all_of(samples, [](float value) {
                  return std::isfinite(value);
                }),
-               "EffeTune 2.3 DSP output must remain finite");
+               "EffeTune 2.4 DSP output must remain finite");
+}
+
+static bool testTubeSimulatorLatency(const std::filesystem::path &directory) {
+  const auto path = writePreset(
+      directory, "tube-simulator.effetune_preset",
+      R"json({"pipeline":[{"name":"Tube Simulator","enabled":true,"parameters":{}}]})json");
+  const auto result = pipetune::loadDspPipeline(
+      path,
+      {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+  return check(result.pipeline != nullptr, result.error) &&
+         check(result.pipeline->activePluginCount() == 1,
+               "Tube Simulator must become active at 48 kHz") &&
+         check(result.pipeline->latencyFrames() == 64,
+               "Tube Simulator must report its 64-frame processing latency");
+}
+
+static bool channelsApproximatelyEqual(std::span<const float> samples,
+                                       std::uint32_t firstChannel,
+                                       std::uint32_t secondChannel,
+                                       std::uint32_t frameCount) {
+  const auto firstOffset = static_cast<std::size_t>(firstChannel) * frameCount;
+  const auto secondOffset = static_cast<std::size_t>(secondChannel) * frameCount;
+  for (auto frame = std::uint32_t{0}; frame < frameCount; ++frame) {
+    if (!approximately(samples[firstOffset + frame],
+                       samples[secondOffset + frame], 2.0e-5F)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool testBalanceChannelPairs(const std::filesystem::path &directory) {
+  static constexpr auto frameCount = std::uint32_t{512};
+  const auto run = [&](std::string_view filename, std::string_view plugin,
+                       std::string_view parameters) {
+    const auto path = writePreset(
+        directory, filename,
+        "{\"pipeline\":[{\"name\":\"" + std::string(plugin) +
+            "\",\"enabled\":true,\"channel\":\"A\",\"parameters\":" +
+            std::string(parameters) + "}]}");
+    const auto result = pipetune::loadDspPipeline(
+        path,
+        {.sampleRate = 48000.0F, .maxChannels = 4, .maxFrames = frameCount});
+    if (!check(result.pipeline != nullptr, result.error)) {
+      return false;
+    }
+    auto samples = std::vector<float>(4u * frameCount);
+    for (auto channel = std::uint32_t{0}; channel < 4u; ++channel) {
+      for (auto frame = std::uint32_t{0}; frame < frameCount; ++frame) {
+        samples[static_cast<std::size_t>(channel) * frameCount + frame] =
+            static_cast<float>(static_cast<int>(frame % 29u) - 14) * 0.025F;
+      }
+    }
+    if (!check(result.pipeline->process(samples, 4u, frameCount, 0.0) ==
+                   pipetune::ProcessStatus::ok,
+               "balance DSP must process four-channel audio")) {
+      return false;
+    }
+    return check(channelsApproximatelyEqual(samples, 0u, 2u, frameCount) &&
+                     channelsApproximatelyEqual(samples, 1u, 3u, frameCount) &&
+                     !channelsApproximatelyEqual(samples, 0u, 1u, frameCount),
+                 "balance DSP must affect and apply the same rule to every "
+                 "channel pair");
+  };
+
+  return run("stereo-balance-pairs.effetune_preset", "Stereo Balance",
+             R"json({"bl":0.5})json") &&
+         run("multiband-balance-pairs.effetune_preset", "Multiband Balance",
+             R"json({"bands":[{"balance":100},{"balance":100},{"balance":100},{"balance":100},{"balance":100}]})json");
 }
 
 static bool testRawLegacyPipeline(const std::filesystem::path &directory) {
@@ -284,7 +362,9 @@ int main() {
 
   const auto passed =
       testBypassPipeline() && testCanonicalPreset(directory) &&
-      testLegacyPreset(directory) && testEffeTune23Pipeline(directory) &&
+      testLegacyPreset(directory) && testEffeTune24Pipeline(directory) &&
+      testTubeSimulatorLatency(directory) &&
+      testBalanceChannelPairs(directory) &&
       testRawLegacyPipeline(directory) && testRejectedInputs(directory) &&
       testRuntimeBounds(directory) && testRetainedRecipeRebuild(directory);
   std::filesystem::remove_all(directory);

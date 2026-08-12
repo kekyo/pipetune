@@ -425,6 +425,9 @@ if(BUILD_TESTING)
     NAME pipetune_effetune_backend_artifact_tests
     COMMAND
       pipetune_effetune_backend_artifact_tests
+      ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/dynamics/auto_leveler/golden/case-008.f32
+      ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/lofi/cassette_artifacts/golden/case-001.f32
+      ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/lofi/tape_artifacts/golden/case-001.f32
       ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/lofi/vinyl_artifacts/golden/case-003.f32
       ${PIPETUNE_DSP_BACKEND_ARTIFACT_TEST_ARGS})
 

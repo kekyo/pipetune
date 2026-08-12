@@ -47,6 +47,7 @@ struct DspBackendApi {
   decltype(&et_instance_asset_abort) instanceAssetAbort = nullptr;
   decltype(&et_instance_asset_state) instanceAssetState = nullptr;
   decltype(&et_instance_process) instanceProcess = nullptr;
+  decltype(&et_instance_runtime_event) instanceRuntimeEvent = nullptr;
   decltype(&et_arena_combined_ptr) arenaCombinedPtr = nullptr;
   decltype(&et_arena_bus_ptr) arenaBusPtr = nullptr;
   decltype(&et_arena_scratch_ptr) arenaScratchPtr = nullptr;

@@ -31,6 +31,7 @@ struct ParameterElement {
   double maximum;
   double defaultValue;
   std::span<const std::string_view> enumerationValues;
+  bool rejectInvalid;
 };
 
 struct StructuredParameter {

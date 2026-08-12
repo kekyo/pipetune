@@ -147,20 +147,46 @@ if (
           const backendPaths = backendNames
             .map((name) => join(buildDirectory, name))
             .filter((path) => existsSync(path));
-          const goldenPath = join(
+          const goldenRoot = join(
             dirname(sourceDirectory),
             "deps",
             "effetune",
             "dsp",
             "plugins",
-            "lofi",
-            "vinyl_artifacts",
-            "golden",
-            "case-003.f32",
           );
+          const goldenPaths = [
+            join(
+              goldenRoot,
+              "dynamics",
+              "auto_leveler",
+              "golden",
+              "case-008.f32",
+            ),
+            join(
+              goldenRoot,
+              "lofi",
+              "cassette_artifacts",
+              "golden",
+              "case-001.f32",
+            ),
+            join(
+              goldenRoot,
+              "lofi",
+              "tape_artifacts",
+              "golden",
+              "case-001.f32",
+            ),
+            join(
+              goldenRoot,
+              "lofi",
+              "vinyl_artifacts",
+              "golden",
+              "case-003.f32",
+            ),
+          ];
           const artifactCheck = run(
             backendArtifactTest,
-            [goldenPath, ...backendPaths],
+            [...goldenPaths, ...backendPaths],
             {},
           );
           if (artifactCheck.status !== 0) {

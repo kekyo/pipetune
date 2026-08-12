@@ -33,6 +33,7 @@ PIPETUNE_EFFETUNE_BACKEND_1 {
     et_instance_asset_abort;
     et_instance_asset_state;
     et_instance_process;
+    et_instance_runtime_event;
     et_arena_combined_ptr;
     et_arena_bus_ptr;
     et_arena_scratch_ptr;

@@ -127,6 +127,9 @@ function(
     CONFIGURE_DEPENDS
     "${EFFETUNE_DSP_DIR}/plugins/*/kernel.cpp")
   list(APPEND effetune_production_sources ${effetune_plugin_sources})
+  list(
+    APPEND effetune_production_sources
+    "${EFFETUNE_DSP_DIR}/plugins/lofi/gsm_full_rate_simulator/codec.cpp")
 
   set(backend_abi_source
       "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../src/effetune_backend_abi.c")
@@ -217,9 +220,13 @@ function(
 
   # EffeTune applies this source-specific policy in its own DSP directory.
   # Source properties are directory-scoped, so mirror it for the PipeTune-owned
-  # shared backends to preserve the official Vinyl Artifacts golden output.
+  # shared backends to preserve the official golden outputs.
   set_property(
-    SOURCE "${EFFETUNE_DSP_DIR}/plugins/lofi/vinyl_artifacts/kernel.cpp"
+    SOURCE
+      "${EFFETUNE_DSP_DIR}/plugins/dynamics/auto_leveler/kernel.cpp"
+      "${EFFETUNE_DSP_DIR}/plugins/lofi/cassette_artifacts/kernel.cpp"
+      "${EFFETUNE_DSP_DIR}/plugins/lofi/tape_artifacts/kernel.cpp"
+      "${EFFETUNE_DSP_DIR}/plugins/lofi/vinyl_artifacts/kernel.cpp"
     APPEND
     PROPERTY COMPILE_OPTIONS
              "$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-ffp-contract=off>")
