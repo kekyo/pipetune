@@ -78,6 +78,9 @@ static pipetune::UserManagementPaths makePaths(
       .wirePlumber05VisibilityScriptPath =
           directory / "data" / "wireplumber" / "scripts" /
           "pipetune-node-visibility.lua",
+      .setupStatePath = directory / "state" / "pipetune" / "setup-state",
+      .managementLockPath =
+          directory / "state" / "pipetune" / "management.lock",
       .systemctlExecutable = "/test/systemctl",
       .gtkExecutable = "/test/pipetune-gtk",
   };
@@ -136,12 +139,13 @@ static bool testWirePlumberCompatibilityPaths(
     const std::filesystem::path &directory) {
   const auto configRoot = directory / "resolved-config";
   const auto dataRoot = directory / "resolved-data";
+  const auto stateRoot = directory / "resolved-state";
   const auto resolved = pipetune::resolveUserManagementPaths(
-      configRoot.string(), dataRoot.string(), {}, "/test/systemctl",
-      "/test/pipetune-gtk");
+      configRoot.string(), dataRoot.string(), stateRoot.string(), {},
+      "/test/systemctl", "/test/pipetune-gtk");
   const auto home = directory / "resolved-home";
   const auto fallback = pipetune::resolveUserManagementPaths(
-      {}, {}, home, "/test/systemctl", "/test/pipetune-gtk");
+      {}, {}, {}, home, "/test/systemctl", "/test/pipetune-gtk");
   return check(resolved.error.empty(), resolved.error) &&
          check(fallback.error.empty(), fallback.error) &&
          check(resolved.paths.wirePlumberPolicyPath ==
@@ -168,10 +172,18 @@ static bool testWirePlumberCompatibilityPaths(
                    dataRoot / "wireplumber" / "scripts" /
                        "pipetune-node-visibility.lua",
                "WirePlumber 0.5 script must honor XDG_DATA_HOME") &&
+         check(resolved.paths.setupStatePath ==
+                   stateRoot / "pipetune" / "setup-state" &&
+                   resolved.paths.managementLockPath ==
+                       stateRoot / "pipetune" / "management.lock",
+               "setup state must honor XDG_STATE_HOME") &&
          check(fallback.paths.wirePlumber05VisibilityScriptPath ==
                    home / ".local" / "share" / "wireplumber" / "scripts" /
                        "pipetune-node-visibility.lua",
-               "WirePlumber 0.5 script must use the XDG data fallback");
+               "WirePlumber 0.5 script must use the XDG data fallback") &&
+         check(fallback.paths.setupStatePath ==
+                   home / ".local" / "state" / "pipetune" / "setup-state",
+               "setup state must use the XDG state fallback");
 }
 
 static bool testSetupPreservesConfigurationAndRestoresAutostart(
@@ -199,6 +211,8 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
       .invocations = {}};
   const auto result = pipetune::executeUserSetup(
       {.effectiveUserId = 1000,
+       .force = false,
+       .launchGtk = true,
        .presetSpecified = false,
        .presetPath = {},
        .paths = paths,
@@ -215,6 +229,8 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
   const auto visibilityConfiguration =
       readFile(paths.wirePlumber05PolicyPath);
   return check(result.success, result.error) &&
+         check(std::filesystem::exists(paths.setupStatePath),
+               "successful setup must record its current completion state") &&
          check(loaded.error.empty() && loaded.found &&
                    loaded.presetPath == existingPreset,
                "setup without --preset must preserve the existing preset") &&
@@ -319,6 +335,91 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
                "setup must finish by launching GTK hidden");
 }
 
+static bool testSetupSkipsCurrentStateAndForceRepeats(
+    const std::filesystem::path &directory) {
+  const auto paths = makePaths(directory / "conditional");
+  auto initialRunner = FakeProcessRunner{
+      .results = {processResult(1), processResult(1), processResult(0),
+                  processResult(0), processResult(0), processResult(0),
+                  processResult(0)},
+      .invocations = {}};
+  const auto initial = pipetune::executeUserSetup(
+      {.effectiveUserId = 1000,
+       .force = false,
+       .launchGtk = false,
+       .presetSpecified = false,
+       .presetPath = {},
+       .paths = paths,
+       .processRunner = fakeRunProcess,
+       .processUserData = &initialRunner});
+  if (!check(initial.success, initial.error) ||
+      !check(std::filesystem::exists(paths.setupStatePath),
+             "initial setup must persist its completion state")) {
+    return false;
+  }
+
+  auto currentRunner = FakeProcessRunner{
+      .results = {processResult(0), processResult(0)}, .invocations = {}};
+  const auto current = pipetune::executeUserSetup(
+      {.effectiveUserId = 1000,
+       .force = false,
+       .launchGtk = false,
+       .presetSpecified = false,
+       .presetPath = {},
+       .paths = paths,
+       .processRunner = fakeRunProcess,
+       .processUserData = &currentRunner});
+  if (!check(current.success, current.error) ||
+      !check(currentRunner.invocations.size() == 2,
+             "current setup must stop after enablement and activity probes")) {
+    return false;
+  }
+
+  writeFile(paths.wirePlumberPolicyPath, "outdated policy");
+  auto repairRunner = FakeProcessRunner{
+      .results = {processResult(0), processResult(0), processResult(0),
+                  processResult(0), processResult(0), processResult(0),
+                  processResult(0)},
+      .invocations = {}};
+  const auto repaired = pipetune::executeUserSetup(
+      {.effectiveUserId = 1000,
+       .force = false,
+       .launchGtk = false,
+       .presetSpecified = false,
+       .presetPath = {},
+       .paths = paths,
+       .processRunner = fakeRunProcess,
+       .processUserData = &repairRunner});
+  if (!check(repaired.success, repaired.error) ||
+      !check(repairRunner.invocations.size() == 7 &&
+                 audioStackRestartMatches(repairRunner.invocations[3]),
+             "outdated managed policy must trigger setup and audio restart")) {
+    return false;
+  }
+
+  auto forcedRunner = FakeProcessRunner{
+      .results = {processResult(0), processResult(0), processResult(0),
+                  processResult(0), processResult(0), processResult(0)},
+      .invocations = {}};
+  const auto forced = pipetune::executeUserSetup(
+      {.effectiveUserId = 1000,
+       .force = true,
+       .launchGtk = false,
+       .presetSpecified = false,
+       .presetPath = {},
+       .paths = paths,
+       .processRunner = fakeRunProcess,
+       .processUserData = &forcedRunner});
+  return check(forced.success, forced.error) &&
+         check(forcedRunner.invocations.size() == 6,
+               "forced setup must repeat service setup without relaunching GTK") &&
+         check(invocationMatches(
+                   forcedRunner.invocations[2], "/test/systemctl",
+                   {"--user", "daemon-reload"},
+                   pipetune::ProcessWaitMode::wait),
+               "forced setup must perform the existing setup workflow");
+}
+
 static bool testExplicitPresetAndValidation(
     const std::filesystem::path &directory) {
   const auto paths = makePaths(directory / "explicit");
@@ -330,6 +431,8 @@ static bool testExplicitPresetAndValidation(
       .invocations = {}};
   const auto configured = pipetune::executeUserSetup(
       {.effectiveUserId = 1000,
+       .force = false,
+       .launchGtk = true,
        .presetSpecified = true,
        .presetPath = preset,
        .paths = paths,
@@ -347,6 +450,8 @@ static bool testExplicitPresetAndValidation(
       FakeProcessRunner{.results = {}, .invocations = {}};
   const auto invalid = pipetune::executeUserSetup(
       {.effectiveUserId = 1000,
+       .force = false,
+       .launchGtk = true,
        .presetSpecified = true,
        .presetPath = directory / "missing.effetune_preset",
        .paths = makePaths(directory / "invalid"),
@@ -373,6 +478,8 @@ static bool testSetupRollback(const std::filesystem::path &directory) {
       .invocations = {}};
   const auto result = pipetune::executeUserSetup(
       {.effectiveUserId = 1000,
+       .force = false,
+       .launchGtk = true,
        .presetSpecified = true,
        .presetPath = newPreset,
        .paths = paths,
@@ -396,6 +503,8 @@ static bool testSetupRollback(const std::filesystem::path &directory) {
                    !std::filesystem::exists(
                        paths.wirePlumber05VisibilityScriptPath),
                "failed setup must restore all visibility policy files") &&
+         check(!std::filesystem::exists(paths.setupStatePath),
+               "failed setup must not retain its completion state") &&
          check(runner.invocations.size() == 9,
                "setup rollback invocation count differs") &&
          check(audioStackRestartMatches(runner.invocations[6]) &&
@@ -427,6 +536,7 @@ static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
   if (!check(saved.empty(), saved)) {
     return false;
   }
+  writeFile(paths.setupStatePath, "current setup state");
   writeFile(paths.legacyConfigPath, "legacy");
   auto runner =
       FakeProcessRunner{.results = {processResult(0), processResult(0),
@@ -471,7 +581,9 @@ static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
                "unsetup must retain its mask and custom override backup") &&
          check(!std::filesystem::exists(paths.configPath) &&
                    !std::filesystem::exists(paths.legacyConfigPath),
-               "unsetup --purge must remove both app configuration files");
+               "unsetup --purge must remove both app configuration files") &&
+         check(!std::filesystem::exists(paths.setupStatePath),
+               "unsetup must remove the setup completion state");
 }
 
 static bool testUnsetupStopFailurePreservesConfiguration(
@@ -543,6 +655,8 @@ static bool testRootRejection(const std::filesystem::path &directory) {
       FakeProcessRunner{.results = {}, .invocations = {}};
   const auto result = pipetune::executeUserSetup(
       {.effectiveUserId = 0,
+       .force = false,
+       .launchGtk = true,
        .presetSpecified = false,
        .presetPath = {},
        .paths = makePaths(directory / "root"),
@@ -564,6 +678,7 @@ int main() {
   passed = testWirePlumberCompatibilityPaths(directory) && passed;
   passed =
       testSetupPreservesConfigurationAndRestoresAutostart(directory) && passed;
+  passed = testSetupSkipsCurrentStateAndForceRepeats(directory) && passed;
   passed = testExplicitPresetAndValidation(directory) && passed;
   passed = testSetupRollback(directory) && passed;
   passed = testUnsetupAndPurge(directory) && passed;

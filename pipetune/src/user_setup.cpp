@@ -3,6 +3,7 @@
 #include "autostart_override.h"
 #include "pipetune/dsp_pipeline.h"
 #include "pipetune/startup_config.h"
+#include "pipetune/version.h"
 #include "wireplumber_04_compat.h"
 #include "wireplumber_visibility.h"
 
@@ -13,6 +14,7 @@
 #include <fstream>
 #include <string>
 #include <string_view>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <utility>
@@ -24,6 +26,7 @@ constexpr auto kSetupSampleRate = float{48000.0F};
 constexpr auto kSetupChannels = std::uint32_t{2};
 constexpr auto kSetupMaximumFrames = std::uint32_t{8192};
 constexpr auto kMaximumSnapshotBytes = std::size_t{64 * 1024};
+constexpr auto kSetupStateSchema = std::string_view{"1"};
 
 struct FileSnapshot {
   bool exists;
@@ -40,6 +43,62 @@ struct ManagedFileState {
   bool needsUpdate;
   bool mutated;
 };
+
+struct UserManagementLock {
+  int descriptor{-1};
+
+  UserManagementLock() = default;
+  UserManagementLock(const UserManagementLock &) = delete;
+  UserManagementLock &operator=(const UserManagementLock &) = delete;
+
+  ~UserManagementLock() {
+    if (descriptor >= 0) {
+      close(descriptor);
+    }
+  }
+};
+
+static std::string currentSetupStateContents() {
+  return "schema=" + std::string(kSetupStateSchema) + "\nversion=" +
+         std::string(version()) + "\n";
+}
+
+static std::string acquireUserManagementLock(
+    const std::filesystem::path &path, UserManagementLock &lock) {
+  const auto directory = path.parent_path();
+  if (directory.empty()) {
+    return "management lock requires a parent directory";
+  }
+  auto filesystemError = std::error_code{};
+  std::filesystem::create_directories(directory, filesystemError);
+  if (filesystemError) {
+    return "cannot create PipeTune state directory: " +
+           filesystemError.message();
+  }
+  if (chmod(directory.c_str(), 0700) != 0) {
+    return "cannot secure PipeTune state directory: " +
+           std::string(std::strerror(errno));
+  }
+
+  lock.descriptor =
+      open(path.c_str(), O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_RDWR, 0600);
+  if (lock.descriptor < 0) {
+    return "cannot open PipeTune management lock: " +
+           std::string(std::strerror(errno));
+  }
+  if (fchmod(lock.descriptor, 0600) != 0) {
+    return "cannot secure PipeTune management lock: " +
+           std::string(std::strerror(errno));
+  }
+  while (flock(lock.descriptor, LOCK_EX) != 0) {
+    if (errno == EINTR) {
+      continue;
+    }
+    return "cannot lock PipeTune user management: " +
+           std::string(std::strerror(errno));
+  }
+  return {};
+}
 
 static std::array<ManagedFileState, 6> makeWirePlumberFiles(
     const UserManagementPaths &paths) {
@@ -292,6 +351,8 @@ static void appendProcessRollbackWarning(
 static void rollbackSetup(const UserSetupRequest &request,
                           bool restoreConfiguration,
                           const FileSnapshot &configurationSnapshot,
+                          bool restoreSetupState,
+                          const FileSnapshot &setupStateSnapshot,
                           std::span<const ManagedFileState> wirePlumberFiles,
                           bool restartAudioStack,
                           bool serviceMutationStarted, bool wasEnabled,
@@ -300,6 +361,13 @@ static void rollbackSetup(const UserSetupRequest &request,
   if (restoreConfiguration) {
     const auto error = restoreFileSnapshot(request.paths.configPath,
                                            configurationSnapshot);
+    if (!error.empty()) {
+      warnings.push_back("setup rollback: " + error);
+    }
+  }
+  if (restoreSetupState) {
+    const auto error = restoreFileSnapshot(request.paths.setupStatePath,
+                                           setupStateSnapshot);
     if (!error.empty()) {
       warnings.push_back("setup rollback: " + error);
     }
@@ -339,6 +407,7 @@ static void rollbackSetup(const UserSetupRequest &request,
 UserManagementPathResult resolveUserManagementPaths(
     std::string_view xdgConfigHome,
     std::string_view xdgDataHome,
+    std::string_view xdgStateHome,
     const std::filesystem::path &homeDirectory,
     const std::filesystem::path &systemctlExecutable,
     const std::filesystem::path &gtkExecutable) {
@@ -355,10 +424,17 @@ UserManagementPathResult resolveUserManagementPaths(
     return {.paths = {},
             .error = "HOME is required when XDG_DATA_HOME is unset"};
   }
+  if (xdgStateHome.empty() && homeDirectory.empty()) {
+    return {.paths = {},
+            .error = "HOME is required when XDG_STATE_HOME is unset"};
+  }
   const auto xdgRoot = config.path.parent_path().parent_path();
   const auto xdgDataRoot =
       xdgDataHome.empty() ? homeDirectory / ".local" / "share"
                           : std::filesystem::path(xdgDataHome);
+  const auto xdgStateRoot =
+      xdgStateHome.empty() ? homeDirectory / ".local" / "state"
+                           : std::filesystem::path(xdgStateHome);
   const auto autostart =
       xdgRoot / "autostart" / "net.kekyo.pipetune_gtk.desktop";
   return {
@@ -388,6 +464,10 @@ UserManagementPathResult resolveUserManagementPaths(
               .wirePlumber05VisibilityScriptPath =
                   xdgDataRoot / "wireplumber" / "scripts" /
                   "pipetune-node-visibility.lua",
+              .setupStatePath =
+                  xdgStateRoot / "pipetune" / "setup-state",
+              .managementLockPath =
+                  xdgStateRoot / "pipetune" / "management.lock",
               .systemctlExecutable = systemctlExecutable,
               .gtkExecutable = gtkExecutable,
           },
@@ -431,6 +511,15 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
     }
   }
 
+  auto managementLock = UserManagementLock{};
+  const auto lockError = acquireUserManagementLock(
+      request.paths.managementLockPath, managementLock);
+  if (!lockError.empty()) {
+    return {.success = false,
+            .warnings = std::move(warnings),
+            .error = lockError};
+  }
+
   auto wirePlumberFiles = makeWirePlumberFiles(request.paths);
   const auto wirePlumberInspectionError =
       inspectManagedFiles(wirePlumberFiles);
@@ -439,6 +528,18 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
             .warnings = std::move(warnings),
             .error = wirePlumberInspectionError};
   }
+
+  const auto expectedSetupState = currentSetupStateContents();
+  const auto setupStateSnapshot = snapshotFile(request.paths.setupStatePath);
+  if (!setupStateSnapshot.error.empty()) {
+    return {.success = false,
+            .warnings = std::move(warnings),
+            .error = "cannot inspect setup completion state: " +
+                     setupStateSnapshot.error};
+  }
+  const auto setupStateCurrent =
+      setupStateSnapshot.exists &&
+      setupStateSnapshot.contents == expectedSetupState;
 
   auto configurationSnapshot =
       FileSnapshot{.exists = false, .contents = {}, .mode = 0600, .error = {}};
@@ -476,6 +577,18 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
   const auto wasEnabled = enabledProbe.exitCode == 0;
   const auto wasActive = activeProbe.exitCode == 0;
 
+  auto managedFilesCurrent = true;
+  for (const auto &file : wirePlumberFiles) {
+    managedFilesCurrent = managedFilesCurrent && !file.needsUpdate;
+  }
+  if (!request.force && !request.presetSpecified && setupStateCurrent &&
+      managedFilesCurrent && wasEnabled && wasActive &&
+      !isPipeTuneManagedAutostartMask(request.paths.autostartPath)) {
+    return {.success = true,
+            .warnings = std::move(warnings),
+            .error = {}};
+  }
+
   if (request.presetSpecified) {
     const auto saveError =
         saveStartupPreset(request.paths.configPath, request.presetPath);
@@ -489,10 +602,12 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
   auto serviceMutationStarted = false;
   auto wirePlumberMutated = false;
   auto audioStackRestartAttempted = false;
+  auto setupStateMutated = false;
   const auto failSetup = [&](std::string error) {
     rollbackSetup(request, request.presetSpecified, configurationSnapshot,
-                  wirePlumberFiles, audioStackRestartAttempted,
-                  serviceMutationStarted, wasEnabled, wasActive, warnings);
+                  setupStateMutated, setupStateSnapshot, wirePlumberFiles,
+                  audioStackRestartAttempted, serviceMutationStarted,
+                  wasEnabled, wasActive, warnings);
     return UserManagementResult{.success = false,
                                 .warnings = std::move(warnings),
                                 .error = std::move(error)};
@@ -567,12 +682,26 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
     return failSetup(autostart.error);
   }
 
-  const auto gtk = invokeProcess(
-      request.processRunner, request.processUserData,
-      request.paths.gtkExecutable, {"--hidden"},
-      ProcessWaitMode::detached);
-  if (!processSucceeded(gtk)) {
-    return failSetup(processFailure("cannot launch pipetune-gtk", gtk));
+  const auto setupStateError = restoreFileSnapshot(
+      request.paths.setupStatePath,
+      {.exists = true,
+       .contents = expectedSetupState,
+       .mode = 0600,
+       .error = {}});
+  if (!setupStateError.empty()) {
+    return failSetup("cannot save setup completion state: " +
+                     setupStateError);
+  }
+  setupStateMutated = true;
+
+  if (request.launchGtk) {
+    const auto gtk = invokeProcess(
+        request.processRunner, request.processUserData,
+        request.paths.gtkExecutable, {"--hidden"},
+        ProcessWaitMode::detached);
+    if (!processSucceeded(gtk)) {
+      return failSetup(processFailure("cannot launch pipetune-gtk", gtk));
+    }
   }
   return {.success = true,
           .warnings = std::move(warnings),
@@ -598,6 +727,15 @@ UserManagementResult executeUserUnsetup(
     return {.success = false,
             .warnings = {},
             .error = "unsetup external operations are unavailable"};
+  }
+
+  auto managementLock = UserManagementLock{};
+  const auto lockError = acquireUserManagementLock(
+      request.paths.managementLockPath, managementLock);
+  if (!lockError.empty()) {
+    return {.success = false,
+            .warnings = {},
+            .error = lockError};
   }
 
   auto wirePlumberFiles = makeWirePlumberFiles(request.paths);
@@ -687,6 +825,12 @@ UserManagementResult executeUserUnsetup(
               .warnings = std::move(warnings),
               .error = legacyError};
     }
+  }
+  const auto setupStateError = removeConfigFile(request.paths.setupStatePath);
+  if (!setupStateError.empty()) {
+    return {.success = false,
+            .warnings = std::move(warnings),
+            .error = setupStateError};
   }
   return {.success = true,
           .warnings = std::move(warnings),

@@ -224,20 +224,46 @@ static bool testDspActions() {
 
 static bool testUserSetupActions() {
   constexpr auto setup = std::array<std::string_view, 1>{"setup"};
+  constexpr auto forcedSetup =
+      std::array<std::string_view, 2>{"setup", "--force"};
+  constexpr auto shortForcedSetup =
+      std::array<std::string_view, 2>{"setup", "-f"};
+  constexpr auto setupWithoutGtk =
+      std::array<std::string_view, 2>{"setup", "--no-launch-gtk"};
   constexpr auto setupPreset = std::array<std::string_view, 3>{
       "setup", "--preset", "/tmp/setup.effetune_preset"};
   constexpr auto unsetup = std::array<std::string_view, 1>{"unsetup"};
   constexpr auto purge =
       std::array<std::string_view, 2>{"unsetup", "--purge"};
   const auto setupResult = pipetune::parseCommandLine(setup);
+  const auto forcedSetupResult = pipetune::parseCommandLine(forcedSetup);
+  const auto shortForcedSetupResult =
+      pipetune::parseCommandLine(shortForcedSetup);
+  const auto setupWithoutGtkResult =
+      pipetune::parseCommandLine(setupWithoutGtk);
   const auto presetResult = pipetune::parseCommandLine(setupPreset);
   const auto unsetupResult = pipetune::parseCommandLine(unsetup);
   const auto purgeResult = pipetune::parseCommandLine(purge);
   return check(setupResult.error.empty(), setupResult.error) &&
          check(setupResult.options.action ==
                    pipetune::CommandLineAction::setup &&
-                   setupResult.options.presetPath.empty(),
+                   setupResult.options.presetPath.empty() &&
+                   !setupResult.options.forceSetup &&
+                   setupResult.options.launchGtk,
                "setup without a preset must preserve startup selection") &&
+         check(forcedSetupResult.error.empty(), forcedSetupResult.error) &&
+         check(forcedSetupResult.options.forceSetup &&
+                   forcedSetupResult.options.launchGtk,
+               "setup --force must request unconditional setup") &&
+         check(shortForcedSetupResult.error.empty(),
+               shortForcedSetupResult.error) &&
+         check(shortForcedSetupResult.options.forceSetup,
+               "setup -f must alias --force") &&
+         check(setupWithoutGtkResult.error.empty(),
+               setupWithoutGtkResult.error) &&
+         check(!setupWithoutGtkResult.options.forceSetup &&
+                   !setupWithoutGtkResult.options.launchGtk,
+               "GTK bootstrap setup must suppress a recursive GTK launch") &&
          check(presetResult.error.empty(), presetResult.error) &&
          check(presetResult.options.action ==
                    pipetune::CommandLineAction::setup &&
@@ -323,7 +349,8 @@ static bool testInformationalActions() {
                    std::string_view::npos,
                "usage must not advertise legacy direct --rate") &&
          check(pipetune::commandLineUsage().find(
-                   "pipetune setup [--preset FILE]") !=
+                   "pipetune setup [-f|--force] [--no-launch-gtk] "
+                   "[--preset FILE]") !=
                    std::string_view::npos,
                "usage must explain per-user setup") &&
          check(pipetune::commandLineUsage().find(
@@ -377,6 +404,10 @@ static bool testRejectedArguments() {
   constexpr auto duplicateSetupPreset = std::array<std::string_view, 5>{
       "setup", "--preset", "/tmp/a.effetune_preset", "--preset",
       "/tmp/b.effetune_preset"};
+  constexpr auto duplicateSetupForce =
+      std::array<std::string_view, 3>{"setup", "-f", "--force"};
+  constexpr auto duplicateNoLaunchGtk = std::array<std::string_view, 3>{
+      "setup", "--no-launch-gtk", "--no-launch-gtk"};
   constexpr auto unsetupWithPreset = std::array<std::string_view, 3>{
       "unsetup", "--preset", "/tmp/a.effetune_preset"};
   constexpr auto duplicatePurge =
@@ -468,6 +499,10 @@ static bool testRejectedArguments() {
                "setup must reject --purge") &&
          check(!pipetune::parseCommandLine(duplicateSetupPreset).error.empty(),
                "setup must reject duplicate presets") &&
+         check(!pipetune::parseCommandLine(duplicateSetupForce).error.empty(),
+               "setup must reject duplicate force options") &&
+         check(!pipetune::parseCommandLine(duplicateNoLaunchGtk).error.empty(),
+               "setup must reject duplicate GTK launch suppression") &&
          check(!pipetune::parseCommandLine(unsetupWithPreset).error.empty(),
                "unsetup must reject preset selection") &&
          check(!pipetune::parseCommandLine(duplicatePurge).error.empty(),

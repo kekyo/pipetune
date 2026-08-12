@@ -17,6 +17,8 @@ static CommandLineOptions defaultOptions() {
           .dspSimdVariant = DspSimdVariant::automatic,
           .channelCount = 2,
           .checkOnly = false,
+          .forceSetup = false,
+          .launchGtk = true,
           .purge = false,
           .assumeYes = false,
           .json = false};
@@ -322,9 +324,29 @@ static CommandLineParseResult parseSetupCommandLine(
     std::span<const std::string_view> arguments) {
   auto options = defaultOptions();
   options.action = CommandLineAction::setup;
+  auto sawForce = false;
+  auto sawNoLaunchGtk = false;
   auto sawPreset = false;
   for (auto index = std::size_t{0}; index < arguments.size(); ++index) {
     const auto argument = arguments[index];
+    if (argument == "-f" || argument == "--force") {
+      if (sawForce) {
+        return parseError(std::move(options),
+                          "duplicate setup force option");
+      }
+      sawForce = true;
+      options.forceSetup = true;
+      continue;
+    }
+    if (argument == "--no-launch-gtk") {
+      if (sawNoLaunchGtk) {
+        return parseError(std::move(options),
+                          "duplicate option: --no-launch-gtk");
+      }
+      sawNoLaunchGtk = true;
+      options.launchGtk = false;
+      continue;
+    }
     if (argument != "--preset") {
       return parseError(std::move(options),
                         "unknown setup option: " + std::string(argument));
@@ -588,7 +610,7 @@ std::string_view commandLineUsage() noexcept {
          "  pipetune dsp get [--json] [--socket PATH]\n"
          "  pipetune dsp set scalar|simd [--variant VARIANT] [--socket PATH]\n"
          "  pipetune config reset [-y|--yes]\n"
-         "  pipetune setup [--preset FILE]\n"
+         "  pipetune setup [-f|--force] [--no-launch-gtk] [--preset FILE]\n"
          "  pipetune unsetup [--purge]\n"
          "  pipetune --preset FILE [--channels COUNT]\n"
          "           [--dsp-backend scalar|simd]\n"

@@ -36,6 +36,10 @@ struct UserManagementPaths {
   std::filesystem::path wirePlumber05PolicyPath;
   /** WirePlumber 0.5 internal-node visibility policy. */
   std::filesystem::path wirePlumber05VisibilityScriptPath;
+  /** Versioned completion state for conditional setup. */
+  std::filesystem::path setupStatePath;
+  /** Advisory lock serializing setup and unsetup for one user. */
+  std::filesystem::path managementLockPath;
   /** Absolute systemctl executable path. */
   std::filesystem::path systemctlExecutable;
   /** Absolute pipetune-gtk executable path. */
@@ -57,6 +61,7 @@ struct UserManagementPathResult {
  *
  * @param xdgConfigHome Value of XDG_CONFIG_HOME, or empty for HOME fallback.
  * @param xdgDataHome Value of XDG_DATA_HOME, or empty for HOME fallback.
+ * @param xdgStateHome Value of XDG_STATE_HOME, or empty for HOME fallback.
  * @param homeDirectory Value of HOME.
  * @param systemctlExecutable Installed systemctl path.
  * @param gtkExecutable Installed pipetune-gtk path.
@@ -65,6 +70,7 @@ struct UserManagementPathResult {
 UserManagementPathResult resolveUserManagementPaths(
     std::string_view xdgConfigHome,
     std::string_view xdgDataHome,
+    std::string_view xdgStateHome,
     const std::filesystem::path &homeDirectory,
     const std::filesystem::path &systemctlExecutable,
     const std::filesystem::path &gtkExecutable);
@@ -83,6 +89,10 @@ using ProcessRunner = ProcessResult (*)(
 struct UserSetupRequest {
   /** Effective user identifier; zero is rejected. */
   std::uint32_t effectiveUserId;
+  /** True to repeat setup even when the current installation is ready. */
+  bool force;
+  /** True to launch pipetune-gtk after setup completes. */
+  bool launchGtk;
   /** True when presetPath was explicitly supplied. */
   bool presetSpecified;
   /** Absolute preset path when presetSpecified is true. */

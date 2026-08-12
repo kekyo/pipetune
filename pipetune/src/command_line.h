@@ -72,6 +72,10 @@ struct CommandLineOptions {
   std::uint32_t channelCount;
   /** True to stop once both PipeWire streams are ready. */
   bool checkOnly;
+  /** True to repeat setup even when the current installation is ready. */
+  bool forceSetup;
+  /** True to launch pipetune-gtk after setup completes. */
+  bool launchGtk;
   /** True to remove app configuration during unsetup. */
   bool purge;
   /** True to perform a destructive configuration action without prompting. */

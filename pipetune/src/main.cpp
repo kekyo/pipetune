@@ -97,12 +97,15 @@ static pipetune::UserManagementPathResult
 resolveInstalledUserManagementPaths() {
   const auto *xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
   const auto *xdgDataHome = std::getenv("XDG_DATA_HOME");
+  const auto *xdgStateHome = std::getenv("XDG_STATE_HOME");
   const auto *home = std::getenv("HOME");
   return pipetune::resolveUserManagementPaths(
       xdgConfigHome == nullptr ? std::string_view{}
                                : std::string_view(xdgConfigHome),
       xdgDataHome == nullptr ? std::string_view{}
                              : std::string_view(xdgDataHome),
+      xdgStateHome == nullptr ? std::string_view{}
+                              : std::string_view(xdgStateHome),
       home == nullptr ? std::filesystem::path{}
                       : std::filesystem::path(home),
       std::filesystem::path{
@@ -141,6 +144,8 @@ static int runSetupCommand(
   }
   const auto result = pipetune::executeUserSetup(
       {.effectiveUserId = static_cast<std::uint32_t>(geteuid()),
+       .force = options.forceSetup,
+       .launchGtk = options.launchGtk,
        .presetSpecified = presetSpecified,
        .presetPath = std::move(presetPath),
        .paths = paths.paths,
