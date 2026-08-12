@@ -7,12 +7,13 @@
 #include <yyjson.h>
 
 #include <array>
-#include <chrono>
-#include <cstdlib>
 #include <cerrno>
+#include <chrono>
 #include <csignal>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -95,6 +96,44 @@ waitForInactiveGraph(const std::filesystem::path &socketPath) {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
   return std::nullopt;
+}
+
+static std::optional<pipetune::ControlRuntimeStatus> waitForStatus(
+    const std::filesystem::path &socketPath,
+    const std::function<bool(const pipetune::ControlRuntimeStatus &)> &matches) {
+  const auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::seconds(5);
+  while (std::chrono::steady_clock::now() < deadline) {
+    const auto exchange = pipetune::exchangeControlMessage(
+        socketPath, pipetune::makeStatusControlRequest());
+    const auto parsed = pipetune::parseControlResponse(exchange.response);
+    if (exchange.error.empty() && parsed.valid && parsed.success &&
+        matches(parsed.status)) {
+      return parsed.status;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+  }
+  return std::nullopt;
+}
+
+static bool writePresetContents(const std::filesystem::path &path,
+                                std::string_view contents) {
+  auto preset = std::ofstream(path, std::ios::binary | std::ios::trunc);
+  preset.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+  preset.close();
+  return preset.good();
+}
+
+static bool replacePresetContents(const std::filesystem::path &path,
+                                  std::string_view contents) {
+  auto temporary = path;
+  temporary += ".replacement";
+  if (!writePresetContents(temporary, contents)) {
+    return false;
+  }
+  auto error = std::error_code{};
+  std::filesystem::rename(temporary, path, error);
+  return !error;
 }
 
 static bool testOrderlySignalShutdown(
@@ -229,11 +268,91 @@ static bool testOrderlySignalShutdown(
   const auto load = pipetune::exchangeControlMessage(
       socketPath,
       pipetune::makeLoadPresetControlRequest(replacementPresetPath));
+  const auto parsedLoad = pipetune::parseControlResponse(load.response);
   if (!check(load.error.empty(), load.error) ||
-      !check(pipetune::inspectControlResponse(load.response).success,
-             "live preset request failed") ||
+      !check(parsedLoad.valid, parsedLoad.error) ||
+      !check(parsedLoad.success, "live preset request failed") ||
       !check(responseHasLivePreset(load.response, replacementPresetPath, 1),
              "live preset response does not report the active replacement")) {
+    kill(child, SIGTERM);
+    auto childStatus = 0;
+    waitpid(child, &childStatus, 0);
+    return false;
+  }
+
+  if (!check(replacePresetContents(
+                 replacementPresetPath,
+                 R"json({"pipeline":[
+      {"name":"Volume","enabled":true,"parameters":{"vl":-3},"channel":"A"},
+      {"name":"Volume","enabled":true,"parameters":{"vl":-4},"channel":"A"}
+    ]})json"),
+             "cannot atomically update the active preset")) {
+    kill(child, SIGTERM);
+    auto childStatus = 0;
+    waitpid(child, &childStatus, 0);
+    return false;
+  }
+  const auto automaticallyReloaded = waitForStatus(
+      socketPath, [&parsedLoad](const auto &status) {
+        return status.activePluginCount == 2 &&
+               status.configurationError.empty() &&
+               status.configurationRevision >
+                   parsedLoad.status.configurationRevision;
+      });
+  if (!check(automaticallyReloaded.has_value(),
+             "active preset replacement was not loaded automatically")) {
+    kill(child, SIGTERM);
+    auto childStatus = 0;
+    waitpid(child, &childStatus, 0);
+    return false;
+  }
+
+  if (!check(writePresetContents(replacementPresetPath,
+                                 R"json({"pipeline":[)json"),
+             "cannot write a malformed active preset")) {
+    kill(child, SIGTERM);
+    auto childStatus = 0;
+    waitpid(child, &childStatus, 0);
+    return false;
+  }
+  const auto rejectedReload = waitForStatus(
+      socketPath, [&automaticallyReloaded](const auto &status) {
+        return !status.configurationError.empty() &&
+               status.configurationRevision ==
+                   automaticallyReloaded->configurationRevision;
+      });
+  if (!check(rejectedReload.has_value(),
+             "malformed automatic reload did not report an error") ||
+      !check(rejectedReload->activePluginCount == 2 &&
+                 rejectedReload->activePreset ==
+                     replacementPresetPath.string(),
+             "malformed automatic reload changed the active preset")) {
+    kill(child, SIGTERM);
+    auto childStatus = 0;
+    waitpid(child, &childStatus, 0);
+    return false;
+  }
+
+  if (!check(replacePresetContents(
+                 replacementPresetPath,
+                 R"json({"pipeline":[
+      {"name":"Volume","enabled":true,"parameters":{"vl":-9},"channel":"A"}
+    ]})json"),
+             "cannot repair the active preset")) {
+    kill(child, SIGTERM);
+    auto childStatus = 0;
+    waitpid(child, &childStatus, 0);
+    return false;
+  }
+  const auto recoveredReload = waitForStatus(
+      socketPath, [&rejectedReload](const auto &status) {
+        return status.activePluginCount == 1 &&
+               status.configurationError.empty() &&
+               status.configurationRevision >
+                   rejectedReload->configurationRevision;
+      });
+  if (!check(recoveredReload.has_value(),
+             "automatic preset reload did not recover after repair")) {
     kill(child, SIGTERM);
     auto childStatus = 0;
     waitpid(child, &childStatus, 0);

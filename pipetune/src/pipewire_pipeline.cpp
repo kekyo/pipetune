@@ -1,5 +1,6 @@
 #include "pipetune/pipewire_pipeline.h"
 
+#include "active_preset_file_monitor.h"
 #include "audio_bridge.h"
 #include "dsp_backend_runtime.h"
 #include "dsp_pipeline_slot.h"
@@ -118,6 +119,7 @@ struct PipeWireRuntime {
   std::string activePreset;
   std::string configurationError;
   std::atomic<std::uint64_t> configurationRevision;
+  bool presetReloadPending;
   DspBackendRuntimeState dspBackendState;
   std::mutex pipelineMutationMutex;
   std::mutex dspBackendStateMutex;
@@ -131,6 +133,7 @@ struct PipeWireRuntime {
   bool rateRequestCompleted;
   std::string rateRequestError;
   std::string rateError;
+  std::unique_ptr<ActivePresetFileMonitor> presetFileMonitor;
   std::unique_ptr<ControlServer> controlServer;
   pw_main_loop *mainLoop;
   pw_context *context;
@@ -193,7 +196,7 @@ struct PipeWireRuntime {
                            : ProcessingMode::preset),
         activePreset(runtimeOptions.initialPresetPath.string()),
         configurationError(runtimeOptions.initialConfigurationError),
-        configurationRevision(0),
+        configurationRevision(0), presetReloadPending(false),
         dspBackendState(makeDspBackendRuntimeState(
             resolveRuntimeBackends(runtimeOptions),
             runtimeOptions.configuredDspBackend,
@@ -206,7 +209,8 @@ struct PipeWireRuntime {
             runtimeOptions.ratePolicy.mode == SampleRateMode::fixed &&
             runtimeOptions.ratePolicy.fixedRate != runtimeOptions.dspSampleRate),
         rateRequestPending(false), rateRequestCompleted(false),
-        rateRequestError(), rateError(), controlServer(), mainLoop(nullptr),
+        rateRequestError(), rateError(), presetFileMonitor(), controlServer(),
+        mainLoop(nullptr),
         context(nullptr), core(nullptr), inputStream(nullptr),
         outputStream(nullptr), rateChangeSource(nullptr), timeoutSource(nullptr),
         interruptSource(nullptr), terminateSource(nullptr), inputEvents{},
@@ -227,6 +231,7 @@ struct PipeWireRuntime {
 
   ~PipeWireRuntime() {
     controlServer.reset();
+    presetFileMonitor.reset();
     if (outputStream != nullptr) {
       if (outputListenerInstalled) {
         spa_hook_remove(&outputListener);
@@ -1291,8 +1296,131 @@ static ControlMessageResult closeControlResponse(std::string response,
           .publishStatus = publishStatus};
 }
 
+struct PresetActivationResult {
+  std::vector<ControlWarning> warnings;
+  std::string error;
+  bool deferred;
+};
+
+static PresetActivationResult activatePreset(
+    PipeWireRuntime &runtime, const std::filesystem::path &presetPath,
+    bool automaticReload) {
+  auto pipelineLock =
+      std::unique_lock<std::mutex>(runtime.pipelineMutationMutex);
+  {
+    auto rateLock = std::scoped_lock(runtime.rateStateMutex);
+    if (runtime.rateTransitioning) {
+      return {
+          .warnings = {},
+          .error = automaticReload
+                       ? std::string{}
+                       : "cannot load a preset during sample-rate transition",
+          .deferred = automaticReload,
+      };
+    }
+  }
+
+  auto backend = std::shared_ptr<const DspBackend>{};
+  {
+    auto backendLock = std::scoped_lock(runtime.dspBackendStateMutex);
+    if (runtime.dspBackendState.effectiveVariant.has_value()) {
+      const auto *loaded = runtime.dspBackendState.backends.find(
+          *runtime.dspBackendState.effectiveVariant);
+      if (loaded != nullptr) {
+        backend = loaded->backend;
+      }
+    }
+  }
+  if (backend == nullptr) {
+    const auto error =
+        "cannot load a preset without a usable scalar DSP backend";
+    if (automaticReload) {
+      runtime.configurationError =
+          "Automatic preset reload failed: " + std::string(error);
+    }
+    return {.warnings = {}, .error = error, .deferred = false};
+  }
+
+  auto loaded = loadDspPipeline(
+      presetPath,
+      {.sampleRate = static_cast<float>(
+           runtime.dspSampleRate.load(std::memory_order_acquire)),
+       .maxChannels = runtime.options.channelCount,
+       .maxFrames = runtime.options.maxFrames},
+      std::move(backend));
+  if (loaded.pipeline == nullptr) {
+    if (automaticReload) {
+      runtime.configurationError =
+          "Automatic preset reload failed: " + loaded.error;
+    }
+    return {.warnings = {},
+            .error = std::move(loaded.error),
+            .deferred = false};
+  }
+
+  auto warnings = std::vector<ControlWarning>{};
+  warnings.reserve(loaded.warnings.size());
+  for (auto &warning : loaded.warnings) {
+    warnings.push_back({.nodeIndex = warning.nodeIndex,
+                        .pluginName = std::move(warning.pluginName),
+                        .reason = std::move(warning.reason)});
+  }
+  runtime.pipeline.replace(std::move(loaded.pipeline));
+  runtime.processingMode = ProcessingMode::preset;
+  runtime.activePreset = presetPath.string();
+  runtime.configurationError.clear();
+  runtime.configurationRevision.fetch_add(1, std::memory_order_release);
+  runtime.presetReloadPending = false;
+  if (!automaticReload && runtime.presetFileMonitor != nullptr) {
+    const auto monitorError = runtime.presetFileMonitor->setPath(presetPath);
+    if (!monitorError.empty()) {
+      runtime.configurationError = monitorError;
+    }
+  }
+  return {.warnings = std::move(warnings), .error = {}, .deferred = false};
+}
+
+static bool retryPendingPresetReload(PipeWireRuntime &runtime) {
+  if (!runtime.presetReloadPending) {
+    return false;
+  }
+  if (runtime.processingMode != ProcessingMode::preset ||
+      runtime.activePreset.empty()) {
+    runtime.presetReloadPending = false;
+    return false;
+  }
+  const auto activated = activatePreset(
+      runtime, std::filesystem::path(runtime.activePreset), true);
+  if (activated.deferred) {
+    return false;
+  }
+  runtime.presetReloadPending = false;
+  return true;
+}
+
+static bool handlePresetFileMonitorEvent(void *userData) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(userData);
+  if (runtime.presetFileMonitor == nullptr) {
+    return false;
+  }
+  const auto event = runtime.presetFileMonitor->consume();
+  if (!event.error.empty()) {
+    runtime.configurationError = event.error;
+    return true;
+  }
+  if (!event.changed || runtime.processingMode != ProcessingMode::preset ||
+      runtime.activePreset.empty()) {
+    return false;
+  }
+  const auto activated = activatePreset(
+      runtime, std::filesystem::path(runtime.activePreset), true);
+  runtime.presetReloadPending = activated.deferred;
+  return !activated.deferred;
+}
+
 static std::string provideControlStatus(void *userData) {
   auto &runtime = *static_cast<PipeWireRuntime *>(userData);
+  static_cast<void>(retryPendingPresetReload(runtime));
   return makeControlStatusEvent(controlStatus(runtime));
 }
 
@@ -1332,6 +1460,11 @@ static ControlMessageResult handleControlRequest(std::string_view message,
             .connectionMode = ControlConnectionMode::subscribe,
             .publishStatus = false};
   }
+  if (request.request.command == ControlCommand::status) {
+    const auto reloaded = retryPendingPresetReload(runtime);
+    return closeControlResponse(
+        makeControlSuccessResponse(controlStatus(runtime), {}), reloaded);
+  }
   auto warnings = std::vector<ControlWarning>{};
   if (request.request.command == ControlCommand::setRate) {
     const auto error =
@@ -1339,6 +1472,7 @@ static ControlMessageResult handleControlRequest(std::string_view message,
     if (!error.empty()) {
       return closeControlResponse(makeControlErrorResponse(error), false);
     }
+    static_cast<void>(retryPendingPresetReload(runtime));
     return closeControlResponse(
         makeControlSuccessResponse(controlStatus(runtime), warnings), true);
   }
@@ -1405,63 +1539,23 @@ static ControlMessageResult handleControlRequest(std::string_view message,
     runtime.processingMode = ProcessingMode::bypass;
     runtime.activePreset.clear();
     runtime.configurationError.clear();
+    runtime.presetReloadPending = false;
+    if (runtime.presetFileMonitor != nullptr) {
+      runtime.presetFileMonitor->clear();
+    }
     runtime.configurationRevision.fetch_add(1,
                                             std::memory_order_release);
     return closeControlResponse(
         makeControlSuccessResponse(controlStatus(runtime), warnings), true);
   }
   if (request.request.command == ControlCommand::loadPreset) {
-    auto pipelineLock =
-        std::unique_lock<std::mutex>(runtime.pipelineMutationMutex);
-    {
-      auto rateLock = std::scoped_lock(runtime.rateStateMutex);
-      if (runtime.rateTransitioning) {
-        return closeControlResponse(
-            makeControlErrorResponse(
-                "cannot load a preset during sample-rate transition"),
-            false);
-      }
-    }
-    auto backend = std::shared_ptr<const DspBackend>{};
-    {
-      auto backendLock =
-          std::scoped_lock(runtime.dspBackendStateMutex);
-      if (runtime.dspBackendState.effectiveVariant.has_value()) {
-        const auto *loaded = runtime.dspBackendState.backends.find(
-            *runtime.dspBackendState.effectiveVariant);
-        if (loaded != nullptr) {
-          backend = loaded->backend;
-        }
-      }
-    }
-    if (backend == nullptr) {
+    auto activated =
+        activatePreset(runtime, request.request.presetPath, false);
+    if (!activated.error.empty()) {
       return closeControlResponse(
-          makeControlErrorResponse(
-              "cannot load a preset without a usable scalar DSP backend"),
-          false);
+          makeControlErrorResponse(activated.error), false);
     }
-    auto loaded = loadDspPipeline(
-        request.request.presetPath,
-        {.sampleRate = static_cast<float>(
-             runtime.dspSampleRate.load(std::memory_order_acquire)),
-         .maxChannels = runtime.options.channelCount,
-         .maxFrames = runtime.options.maxFrames},
-        std::move(backend));
-    if (loaded.pipeline == nullptr) {
-      return closeControlResponse(makeControlErrorResponse(loaded.error),
-                                  false);
-    }
-    for (auto &warning : loaded.warnings) {
-      warnings.push_back({.nodeIndex = warning.nodeIndex,
-                          .pluginName = std::move(warning.pluginName),
-                          .reason = std::move(warning.reason)});
-    }
-    runtime.pipeline.replace(std::move(loaded.pipeline));
-    runtime.processingMode = ProcessingMode::preset;
-    runtime.activePreset = request.request.presetPath.string();
-    runtime.configurationError.clear();
-    runtime.configurationRevision.fetch_add(1,
-                                            std::memory_order_release);
+    warnings = std::move(activated.warnings);
     return closeControlResponse(
         makeControlSuccessResponse(controlStatus(runtime), warnings), true);
   }
@@ -1556,12 +1650,24 @@ static bool createControlServer(PipeWireRuntime &runtime) {
   if (runtime.options.controlSocketPath.empty()) {
     return true;
   }
+  auto monitored = createActivePresetFileMonitor(
+      std::filesystem::path(runtime.activePreset));
+  if (monitored.monitor == nullptr) {
+    failRuntime(runtime,
+                "cannot start active preset monitoring: " +
+                    monitored.error);
+    return false;
+  }
+  runtime.presetFileMonitor = std::move(monitored.monitor);
   auto started = startControlServer(
       runtime.options.controlSocketPath,
       {.handler = handleControlRequest,
        .statusProvider = provideControlStatus,
-       .userData = &runtime});
+       .userData = &runtime,
+       .eventDescriptor = runtime.presetFileMonitor->descriptor(),
+       .eventHandler = handlePresetFileMonitorEvent});
   if (started.server == nullptr) {
+    runtime.presetFileMonitor.reset();
     failRuntime(runtime,
                 "cannot start PipeTune control server: " + started.error);
     return false;

@@ -42,6 +42,8 @@ struct ControlServer::Impl {
   ControlMessageHandler handler;
   ControlStatusProvider statusProvider;
   void *userData;
+  int eventDescriptor;
+  ControlDescriptorEventHandler eventHandler;
   int listener;
   int stopEvent;
   int publishEvent;
@@ -51,8 +53,9 @@ struct ControlServer::Impl {
   Impl(std::filesystem::path path, const ControlServerOptions &options)
       : socketPath(std::move(path)), handler(options.handler),
         statusProvider(options.statusProvider), userData(options.userData),
-        listener(-1), stopEvent(-1), publishEvent(-1), ownsSocket(false),
-        thread() {}
+        eventDescriptor(options.eventDescriptor),
+        eventHandler(options.eventHandler), listener(-1), stopEvent(-1),
+        publishEvent(-1), ownsSocket(false), thread() {}
 
   ~Impl() {
     if (thread.joinable()) {
@@ -412,8 +415,13 @@ static void runControlServer(ControlServer::Impl *implementation) {
                                nextPublication - beforePoll))
                       .count())
             : -1;
+    const auto observesApplicationEvent =
+        implementation->eventDescriptor >= 0 &&
+        implementation->eventHandler != nullptr;
+    const auto subscriberOffset =
+        observesApplicationEvent ? std::size_t{4} : std::size_t{3};
     auto descriptors = std::vector<pollfd>{};
-    descriptors.reserve(3 + subscribers.size());
+    descriptors.reserve(subscriberOffset + subscribers.size());
     descriptors.push_back(pollfd{.fd = implementation->listener,
                                  .events = POLLIN,
                                  .revents = 0});
@@ -423,6 +431,12 @@ static void runControlServer(ControlServer::Impl *implementation) {
     descriptors.push_back(pollfd{.fd = implementation->publishEvent,
                                  .events = POLLIN,
                                  .revents = 0});
+    if (observesApplicationEvent) {
+      descriptors.push_back(
+          pollfd{.fd = implementation->eventDescriptor,
+                 .events = POLLIN,
+                 .revents = 0});
+    }
     for (const auto &subscriber : subscribers) {
       auto events = static_cast<short>(POLLIN);
       if (!subscriber.output.empty()) {
@@ -453,8 +467,21 @@ static void runControlServer(ControlServer::Impl *implementation) {
       publishToSubscribers(*implementation, subscribers);
     }
 
+    if (observesApplicationEvent &&
+        (descriptors[3].revents & POLLIN) != 0) {
+      auto publishStatus = false;
+      try {
+        publishStatus =
+            implementation->eventHandler(implementation->userData);
+      } catch (const std::exception &) {
+      }
+      if (publishStatus) {
+        publishToSubscribers(*implementation, subscribers);
+      }
+    }
+
     for (auto index = std::size_t{0}; index < subscribers.size(); ++index) {
-      const auto revents = descriptors[index + 3].revents;
+      const auto revents = descriptors[index + subscriberOffset].revents;
       auto &subscriber = subscribers[index];
       if ((revents & static_cast<short>(POLLHUP | POLLERR | POLLNVAL |
                                        POLLIN)) != 0) {
@@ -509,6 +536,11 @@ startControlServer(const std::filesystem::path &socketPath,
   if (options.handler == nullptr) {
     return {.server = nullptr,
             .error = "control message handler must not be null"};
+  }
+  if ((options.eventDescriptor >= 0) !=
+      (options.eventHandler != nullptr)) {
+    return {.server = nullptr,
+            .error = "control event descriptor and handler must be paired"};
   }
   auto address = sockaddr_un{};
   auto addressLength = socklen_t{0};

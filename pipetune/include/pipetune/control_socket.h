@@ -69,6 +69,16 @@ using ControlMessageHandler =
 using ControlStatusProvider = std::string (*)(void *userData);
 
 /**
+ * Handles one readable application event on the control service thread.
+ *
+ * The callback must drain its configured descriptor before returning.
+ *
+ * @param userData Opaque pointer supplied to startControlServer().
+ * @return True when subscribers should receive a fresh status.
+ */
+using ControlDescriptorEventHandler = bool (*)(void *userData);
+
+/**
  * Configures callbacks for a control server.
  */
 struct ControlServerOptions {
@@ -78,6 +88,10 @@ struct ControlServerOptions {
   ControlStatusProvider statusProvider;
   /** Opaque argument passed to both callbacks. */
   void *userData;
+  /** Optional readable descriptor observed by the service thread. */
+  int eventDescriptor = -1;
+  /** Callback paired with eventDescriptor, or null when it is unused. */
+  ControlDescriptorEventHandler eventHandler = nullptr;
 };
 
 struct ControlServerStartResult;

@@ -197,6 +197,7 @@ endif()
 
 add_library(
   pipetune_pipewire STATIC
+  src/active_preset_file_monitor.cpp
   src/autostart_override.cpp
   src/bypass_command.cpp
   src/command_line.cpp
@@ -551,6 +552,25 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_input_telemetry_tests
     COMMAND pipetune_input_telemetry_tests)
+
+  add_executable(
+    pipetune_active_preset_file_monitor_tests
+    test/active_preset_file_monitor_test.cpp)
+  target_include_directories(
+    pipetune_active_preset_file_monitor_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_active_preset_file_monitor_tests PRIVATE pipetune_pipewire)
+  if(MSVC)
+    target_compile_options(
+      pipetune_active_preset_file_monitor_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_active_preset_file_monitor_tests
+      PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_active_preset_file_monitor_tests
+    COMMAND pipetune_active_preset_file_monitor_tests)
 
   add_executable(
     pipetune_pipewire_pipeline_tests
