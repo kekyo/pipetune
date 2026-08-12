@@ -193,15 +193,23 @@ const expectInsideBounds = async (
   element: GtkWidgetElement,
   containerBounds: GtkCaptureBounds
 ): Promise<void> => {
-  const elementCapture = await element.capture();
-  expect(elementCapture.bounds.x).toBeGreaterThanOrEqual(containerBounds.x);
-  expect(elementCapture.bounds.y).toBeGreaterThanOrEqual(containerBounds.y);
-  expect(
-    elementCapture.bounds.x + elementCapture.bounds.width
-  ).toBeLessThanOrEqual(containerBounds.x + containerBounds.width);
-  expect(
-    elementCapture.bounds.y + elementCapture.bounds.height
-  ).toBeLessThanOrEqual(containerBounds.y + containerBounds.height);
+  await toPass(
+    async () => {
+      const elementCapture = await element.capture();
+      expect(elementCapture.bounds.x).toBeGreaterThanOrEqual(containerBounds.x);
+      expect(elementCapture.bounds.y).toBeGreaterThanOrEqual(containerBounds.y);
+      expect(
+        elementCapture.bounds.x + elementCapture.bounds.width
+      ).toBeLessThanOrEqual(containerBounds.x + containerBounds.width);
+      expect(
+        elementCapture.bounds.y + elementCapture.bounds.height
+      ).toBeLessThanOrEqual(containerBounds.y + containerBounds.height);
+    },
+    {
+      timeoutMs: 1_000,
+      message: 'Control did not settle inside the settings pane',
+    }
+  );
 };
 
 const resizeStatusPaneTo = async (targetWidth: number): Promise<void> => {
