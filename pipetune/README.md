@@ -55,6 +55,10 @@ not supported by this MVP.
   higher-ISA EffeTune DSP shared backends, with scalar as the compatibility
   default and startup fallback.
 - Replaces the preset in a running process through a same-user Unix socket.
+- Monitors the active preset for in-place writes, atomic replacement,
+  deletion, and recreation, and reloads valid updates automatically.
+- Keeps the previous DSP pipeline active and publishes a diagnostic when an
+  automatic preset reload fails.
 - Rebuilds and atomically switches an active preset between DSP backends.
 - Switches live and future startup processing to explicit DSP bypass.
 - Publishes initial and changed runtime state to same-user local subscribers.
@@ -166,6 +170,13 @@ availability and fallback diagnostics, configured and negotiated PCM rates,
 transition state, configuration diagnostics, input telemetry, and audio bridge
 error counters. A live replacement made directly with `--load-preset` is not
 persisted.
+
+The active preset path is monitored after it is loaded. A valid in-place edit,
+atomic replacement, or recreation builds a complete pipeline and atomically
+activates it. A failed automatic reload leaves the previous pipeline and
+configuration revision intact, publishes the failure in the configuration
+diagnostic, and retries after the next file update. Bypass mode stops active
+preset monitoring.
 
 Switch live processing to bypass and save that selection for future daemon
 starts with:

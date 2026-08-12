@@ -266,6 +266,17 @@ per client. Preset activation and relevant PipeWire state transitions request a
 fresh publication outside the real-time callbacks. Slow subscribers cannot
 accumulate an unbounded history.
 
+The control service poll loop also observes an inotify descriptor for the
+active preset. It watches both the file and its parent so in-place close-write,
+atomic replacement, deletion, and recreation are detected. Reloading happens
+on the control thread under the same pipeline-mutation boundary as an explicit
+load. The candidate pipeline is parsed and fully constructed before the active
+slot is replaced. Failure therefore preserves the previous pipeline, active
+path, plugin count, and configuration revision while publishing a
+configuration diagnostic. A later filesystem event retries the load. A
+sample-rate transition defers the attempt until the transition completes, and
+bypass removes the active watch.
+
 ## Managed startup and preferences
 
 The systemd user unit starts `pipetune daemon` with the optional configuration
@@ -309,6 +320,16 @@ override through its reserved backup.
 asynchronous subscription connection and uses separate asynchronous requests
 for preset, bypass, rate-policy, and DSP-backend changes. There is no output
 device UI or output control request.
+
+EffeTune desktop presets are stored together in one JSON object, so a saved
+choice is materialized as a deterministic private standalone snapshot before
+the daemon loads it. When a valid catalog refresh changes the entry whose
+snapshot path matches the daemon's active preset, GTK compares serialized
+contents and atomically replaces only that snapshot. This gives the daemon's
+ordinary active-file monitor one consistent source of reload events. Invalid
+catalog refreshes, unchanged contents, and non-active entries do not touch the
+active snapshot. The same reconciliation runs when daemon status first reports
+a different active path, covering updates made while GTK was stopped.
 
 Runtime counters and cumulative native EffeTune processing time are published
 once per second. The GUI derives a per-frame interval average and divides it by

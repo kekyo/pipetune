@@ -173,6 +173,15 @@ The user preset file saved by the Linux AppImage is located at
 Select a preset from the list or specify a file to preview it immediately in
 the DSP.
 
+While preset processing is active, PipeTune monitors the file used by the DSP.
+An in-place edit or atomic replacement is loaded automatically. The new
+pipeline is built completely before activation; if reading, parsing, or DSP
+construction fails, the currently running pipeline remains active and the
+error is shown in runtime status. A later valid update is retried
+automatically. When the active choice is a preset saved by EffeTune, the
+settings application refreshes its private standalone snapshot after the
+corresponding entry changes, which triggers the same daemon-side reload.
+
 From the CLI, you can specify either a preset file path or bypass mode:
 
 ```sh

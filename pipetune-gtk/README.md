@@ -108,14 +108,21 @@ application runs and is also checked whenever the window is presented. Once
 an updated file parses as a complete preset object, only the previous
 **Saved in EffeTune** entries are replaced. **Standard** entries are retained.
 Malformed updates and file deletion retain the last valid entries. Monitoring
-does not change the file chooser, its standalone snapshot, or the preset
-already loaded by the daemon.
+does not select a different preset or modify snapshots for non-active entries.
+If the changed entry is the saved preset currently reported by the daemon, the
+application atomically refreshes its standalone snapshot. The daemon detects
+that replacement and automatically loads the updated DSP pipeline. Unchanged
+serialized contents do not rewrite the snapshot. A malformed multi-preset
+file leaves both the last valid catalog and the active snapshot untouched.
 
 Selecting a named EffeTune preset atomically writes a mode-`0600` standalone
 snapshot below
 `$XDG_CONFIG_HOME/pipetune/effetune-presets`, with the same HOME fallback as
 the startup configuration. The snapshot lets the daemon load one entry from
 EffeTune's multi-preset JSON file and remains valid after the AppImage exits.
+The application also reconciles an active saved-preset snapshot when it next
+connects, covering changes made while the settings application was not
+running.
 
 The **Preset file** chooser remains available for any standalone
 `.effetune_preset` file. The **Enable DSP processing** switch selects preset
