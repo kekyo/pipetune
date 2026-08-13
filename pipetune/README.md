@@ -371,11 +371,13 @@ with `sudo`.
 Files recorded by the most recent installation can be removed with:
 
 ```sh
-sudo make uninstall
+sudo make uninstall PREFIX=/usr
 ```
 
 This removes installed files but does not remove user configuration or empty
-installation directories.
+installation directories. Use the same `PREFIX` and `DESTDIR` as the install.
+When CMake's manifest is missing, the target reconstructs it from the current
+`BUILD_DIR` in a temporary staging directory before removing files.
 
 For end-user installation from a prebuilt Debian package, see the
 [workspace installation guide](../README.md#download-and-install).

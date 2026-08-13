@@ -295,8 +295,12 @@ sudo make install PREFIX=/usr
 Remove files recorded by the most recent installation with:
 
 ```sh
-sudo make uninstall
+sudo make uninstall PREFIX=/usr
 ```
+
+Use the same `PREFIX` and `DESTDIR` as the install. If CMake's manifest is
+missing, the target safely reconstructs it from the current `BUILD_DIR` in a
+temporary staging directory.
 
 For end-user installation from a prebuilt Debian package, see the
 [workspace installation guide](../README.md#download-and-install). Developers
