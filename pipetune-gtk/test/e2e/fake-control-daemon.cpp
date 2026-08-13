@@ -1,0 +1,392 @@
+/* pipetune - Engine and User Interface for Applied EffeTune DSP on a Linux Desktop
+ * Copyright (c) Kouji Matsui. (@kekyo@mi.kekyo.net)
+ * Under MIT.
+ * https://github.com/kekyo/pipetune/
+ */
+#include "pipetune/control_protocol.h"
+#include "pipetune/control_socket.h"
+#include "pipetune/startup_config.h"
+
+#include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <mutex>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
+
+struct FakeDaemonState {
+  std::mutex mutex;
+  pipetune::StartupConfig liveConfig;
+  std::uint64_t configurationRevision;
+  std::optional<std::pair<pipetune::StartupConfig, std::uint64_t>>
+      stalePublication;
+  std::uint32_t stalePublicationCount;
+  bool staleStatusAfterChange;
+  std::filesystem::path requestLogPath;
+  std::string rejectedCommand;
+  std::uint64_t dspTelemetrySequence;
+  std::uint64_t manualStatusSequence;
+};
+
+static std::string environmentValue(const char *name) {
+  const auto *value = std::getenv(name);
+  return value == nullptr ? std::string{} : std::string(value);
+}
+
+static std::optional<pipetune::DspBackendVariant>
+effectiveVariant(const pipetune::StartupConfig &config) {
+  if (config.dspBackend == pipetune::DspBackendKind::scalar) {
+    return pipetune::DspBackendVariant::scalar;
+  }
+  const auto pinned =
+      pipetune::concreteDspBackendVariant(config.dspSimdVariant);
+  return pinned.has_value()
+             ? pinned
+             : std::optional<pipetune::DspBackendVariant>(
+                   pipetune::DspBackendVariant::x86_64_v4);
+}
+
+static pipetune::ControlRuntimeStatus
+makeStatus(const pipetune::StartupConfig &config,
+           std::uint64_t configurationRevision) {
+  const auto dspRate =
+      config.ratePolicy.mode == pipetune::SampleRateMode::automatic
+          ? 384000u
+          : config.ratePolicy.fixedRate;
+  const auto variant = effectiveVariant(config);
+  return {
+      .processingMode = config.presetFound
+                            ? pipetune::ProcessingMode::preset
+                            : pipetune::ProcessingMode::bypass,
+      .activePreset =
+          config.presetFound ? config.presetPath.string() : std::string{},
+      .configurationError = {},
+      .configurationRevision = configurationRevision,
+      .activePluginCount = config.presetFound ? 5u : 0u,
+      .overrunFrames = 2,
+      .underrunFrames = 3,
+      .processingErrors = 1,
+      .dspProcessedFrames = 384000,
+      .dspProcessingNanoseconds = 600000000,
+      .inputSampleFormat = "F32P",
+      .inputSampleRate = dspRate,
+      .inputChannelCount = 2,
+      .inputFramesReceived = 768000,
+      .inputLastReceivedUnixMilliseconds = 1720000000123,
+      .configuredRatePolicy = config.ratePolicy,
+      .dspSampleRate = dspRate,
+      .graphSampleRate = dspRate,
+      .rateTransitioning = false,
+      .rateError = {},
+      .configuredDspBackend = config.dspBackend,
+      .configuredDspSimdVariant = config.dspSimdVariant,
+      .effectiveDspBackend = config.dspBackend,
+      .effectiveDspVariant = variant,
+      .dspBackendFallback = false,
+      .dspBackendError = {},
+      .availableDspBackends =
+          {{
+              {.kind = pipetune::DspBackendKind::scalar,
+               .available = true,
+               .cpuRequirement = "none",
+               .error = {}},
+              {.kind = pipetune::DspBackendKind::simd,
+               .available = true,
+               .cpuRequirement = "E2E SIMD CPU",
+               .error = {}},
+          }},
+      .availableDspVariants =
+          {{.variant = pipetune::DspBackendVariant::scalar,
+            .available = true,
+            .cpuSupported = true,
+            .cpuRequirement = "none",
+            .error = {}},
+           {.variant = pipetune::DspBackendVariant::simdBaseline,
+            .available = true,
+            .cpuSupported = true,
+            .cpuRequirement = "baseline SIMD",
+            .error = {}},
+           {.variant = pipetune::DspBackendVariant::x86_64_v3,
+            .available = true,
+            .cpuSupported = true,
+            .cpuRequirement = "x86-64-v3",
+            .error = {}},
+           {.variant = pipetune::DspBackendVariant::x86_64_v4,
+            .available = true,
+            .cpuSupported = true,
+            .cpuRequirement = "x86-64-v4",
+            .error = {}},
+           {.variant = pipetune::DspBackendVariant::arm64Sve,
+            .available = true,
+            .cpuSupported = true,
+            .cpuRequirement = "Arm SVE",
+            .error = {}}},
+  };
+}
+
+static pipetune::ControlRuntimeStatus snapshotStatus(
+    FakeDaemonState &state, bool publication) {
+  auto lock = std::scoped_lock(state.mutex);
+  auto config = state.liveConfig;
+  auto revision = state.configurationRevision;
+  auto stale = false;
+  if (publication && state.stalePublication.has_value()) {
+    config = state.stalePublication->first;
+    revision = state.stalePublication->second;
+    if (--state.stalePublicationCount == 0) {
+      state.stalePublication.reset();
+    }
+    stale = true;
+  }
+  auto status = makeStatus(config, revision);
+  if (stale) {
+    status.configurationError = "E2E stale status";
+  } else if (state.manualStatusSequence != 0) {
+    status.configurationError =
+        "E2E manual status " +
+        std::to_string(state.manualStatusSequence);
+  }
+  status.dspProcessedFrames +=
+      state.dspTelemetrySequence * status.inputSampleRate;
+  status.dspProcessingNanoseconds +=
+      state.dspTelemetrySequence * std::uint64_t{600000000};
+  ++state.dspTelemetrySequence;
+  return status;
+}
+
+static std::string provideStatus(void *userData) {
+  auto &state = *static_cast<FakeDaemonState *>(userData);
+  return pipetune::makeControlStatusEvent(snapshotStatus(state, true));
+}
+
+static std::string commandName(pipetune::ControlCommand command) {
+  switch (command) {
+  case pipetune::ControlCommand::status:
+    return "status";
+  case pipetune::ControlCommand::loadPreset:
+    return "loadPreset";
+  case pipetune::ControlCommand::bypass:
+    return "bypass";
+  case pipetune::ControlCommand::setRate:
+    return "setRate";
+  case pipetune::ControlCommand::setDspBackend:
+    return "setDspBackend";
+  case pipetune::ControlCommand::subscribe:
+    return "subscribe";
+  }
+  return "unknown";
+}
+
+static void appendRequestLog(FakeDaemonState &state,
+                             std::string_view message) {
+  if (state.requestLogPath.empty()) {
+    return;
+  }
+  auto stream = std::ofstream(state.requestLogPath, std::ios::app);
+  if (stream) {
+    stream << message << '\n';
+  }
+}
+
+static pipetune::ControlMessageResult closeResponse(std::string response,
+                                                    bool publishStatus) {
+  return {.response = std::move(response),
+          .connectionMode = pipetune::ControlConnectionMode::close,
+          .publishStatus = publishStatus};
+}
+
+static pipetune::ControlMessageResult handleRequest(
+    std::string_view message, void *userData) {
+  auto &state = *static_cast<FakeDaemonState *>(userData);
+  {
+    auto lock = std::scoped_lock(state.mutex);
+    appendRequestLog(state, message);
+  }
+  const auto parsed = pipetune::parseControlRequest(message);
+  if (!parsed.error.empty()) {
+    return closeResponse(pipetune::makeControlErrorResponse(parsed.error),
+                         false);
+  }
+  const auto name = commandName(parsed.request.command);
+  if (state.rejectedCommand == "all" || state.rejectedCommand == name) {
+    return closeResponse(
+        pipetune::makeControlErrorResponse("E2E rejected " + name), false);
+  }
+  if (parsed.request.command == pipetune::ControlCommand::subscribe) {
+    return {.response = provideStatus(&state),
+            .connectionMode = pipetune::ControlConnectionMode::subscribe,
+            .publishStatus = false};
+  }
+  if (parsed.request.command == pipetune::ControlCommand::status) {
+    return closeResponse(pipetune::makeControlSuccessResponse(
+                             snapshotStatus(state, false),
+                             std::span<const pipetune::ControlWarning>{}),
+                         false);
+  }
+
+  {
+    auto lock = std::scoped_lock(state.mutex);
+    const auto previous = std::pair(state.liveConfig,
+                                    state.configurationRevision);
+    switch (parsed.request.command) {
+    case pipetune::ControlCommand::loadPreset:
+      state.liveConfig.presetFound = true;
+      state.liveConfig.presetPath = parsed.request.presetPath;
+      break;
+    case pipetune::ControlCommand::bypass:
+      state.liveConfig.presetFound = false;
+      state.liveConfig.presetPath.clear();
+      break;
+    case pipetune::ControlCommand::setRate:
+      state.liveConfig.ratePolicy = parsed.request.ratePolicy;
+      break;
+    case pipetune::ControlCommand::setDspBackend:
+      state.liveConfig.dspBackend = parsed.request.dspBackend;
+      state.liveConfig.dspSimdVariant = parsed.request.dspSimdVariant;
+      break;
+    case pipetune::ControlCommand::status:
+    case pipetune::ControlCommand::subscribe:
+      break;
+    }
+    ++state.configurationRevision;
+    if (state.staleStatusAfterChange) {
+      state.stalePublication = previous;
+      state.stalePublicationCount = 2;
+    }
+  }
+  return closeResponse(
+      pipetune::makeControlSuccessResponse(
+          snapshotStatus(state, false),
+          std::span<const pipetune::ControlWarning>{}),
+      true);
+}
+
+static std::string jsonString(std::string_view value) {
+  auto escaped = std::string{"\""};
+  for (const auto character : value) {
+    switch (character) {
+    case '"':
+      escaped += "\\\"";
+      break;
+    case '\\':
+      escaped += "\\\\";
+      break;
+    case '\b':
+      escaped += "\\b";
+      break;
+    case '\f':
+      escaped += "\\f";
+      break;
+    case '\n':
+      escaped += "\\n";
+      break;
+    case '\r':
+      escaped += "\\r";
+      break;
+    case '\t':
+      escaped += "\\t";
+      break;
+    default:
+      escaped += character;
+      break;
+    }
+  }
+  escaped += '"';
+  return escaped;
+}
+
+static int inspectConfig(const std::filesystem::path &path) {
+  const auto loaded = pipetune::loadStartupConfig(path);
+  if (!loaded.error.empty()) {
+    std::cerr << loaded.error << '\n';
+    return 1;
+  }
+  const auto &config = loaded.config;
+  std::cout
+      << "{\"preset\":"
+      << (config.presetFound ? jsonString(config.presetPath.string())
+                             : "null")
+      << ",\"rateMode\":"
+      << jsonString(pipetune::sampleRateModeName(config.ratePolicy.mode))
+      << ",\"fixedRate\":" << config.ratePolicy.fixedRate
+      << ",\"rateEnforcement\":"
+      << jsonString(pipetune::sampleRateEnforcementName(
+             config.ratePolicy.enforcement))
+      << ",\"dspBackend\":"
+      << jsonString(pipetune::dspBackendName(config.dspBackend))
+      << ",\"dspSimdVariant\":"
+      << jsonString(pipetune::dspSimdVariantName(config.dspSimdVariant))
+      << "}\n";
+  return 0;
+}
+
+int main(int argc, char **argv) {
+  if (argc == 3 && std::string_view(argv[1]) == "--inspect-config") {
+    return inspectConfig(argv[2]);
+  }
+  if (argc != 1) {
+    std::cerr << "usage: pipetune-gtk-e2e-daemon "
+                 "[--inspect-config PATH]\n";
+    return 1;
+  }
+
+  const auto socketPath = pipetune::resolveControlSocketPath({});
+  if (!socketPath.error.empty()) {
+    std::cerr << socketPath.error << '\n';
+    return 1;
+  }
+  const auto configPath = pipetune::resolveStartupConfigPath(
+      environmentValue("XDG_CONFIG_HOME"), environmentValue("HOME"));
+  if (!configPath.error.empty()) {
+    std::cerr << configPath.error << '\n';
+    return 1;
+  }
+  const auto loaded = pipetune::loadStartupConfig(configPath.path);
+  if (!loaded.error.empty()) {
+    std::cerr << loaded.error << '\n';
+    return 1;
+  }
+
+  auto state = FakeDaemonState{
+      .mutex = {},
+      .liveConfig = loaded.config,
+      .configurationRevision = 1,
+      .stalePublication = std::nullopt,
+      .stalePublicationCount = 0,
+      .staleStatusAfterChange =
+          environmentValue("PIPETUNE_E2E_STALE_STATUS_AFTER_CHANGE") == "1",
+      .requestLogPath = environmentValue("PIPETUNE_E2E_REQUEST_LOG"),
+      .rejectedCommand =
+          environmentValue("PIPETUNE_E2E_REJECT_COMMAND"),
+      .dspTelemetrySequence = 0,
+      .manualStatusSequence = 0,
+  };
+  auto started = pipetune::startControlServer(
+      socketPath.path,
+      {.handler = handleRequest,
+       .statusProvider = provideStatus,
+       .userData = &state});
+  if (started.server == nullptr) {
+    std::cerr << started.error << '\n';
+    return 1;
+  }
+
+  std::cout << "READY\n" << std::flush;
+  auto input = std::string{};
+  while (std::getline(std::cin, input)) {
+    if (input == "publish-status") {
+      {
+        auto lock = std::scoped_lock(state.mutex);
+        ++state.manualStatusSequence;
+      }
+      pipetune::publishControlStatus(started.server.get());
+    }
+  }
+  started.server.reset();
+  return 0;
+}

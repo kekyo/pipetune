@@ -1,0 +1,11 @@
+#ifndef PIPETUNE_GTK_INSTALLED_PRESETS_H
+#define PIPETUNE_GTK_INSTALLED_PRESETS_H
+
+namespace pipetune_gtk {
+
+constexpr char kEffeTuneStandardPresetDirectory[] =
+    "@PIPETUNE_GTK_RUNTIME_EFFETUNE_PRESET_DIR@";
+
+} // namespace pipetune_gtk
+
+#endif

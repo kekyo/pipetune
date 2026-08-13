@@ -1,0 +1,839 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface domain="pipetune-gtk">
+  <requires lib="gtk+" version="3.24"/>
+  <object class="GtkApplicationWindow" id="mainWindow">
+    <property name="default-width">1080</property>
+    <property name="default-height">680</property>
+    <property name="window-position">center</property>
+    <child type="titlebar">
+      <object class="GtkHeaderBar" id="headerBar">
+        <property name="subtitle" translatable="yes">EffeTune DSP control</property>
+        <property name="show-close-button">False</property>
+        <child>
+          <object class="GtkButton" id="closeButton">
+            <property name="relief">none</property>
+            <property name="tooltip-text" translatable="yes">Close</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">window-close-symbolic</property>
+              </object>
+            </child>
+          </object>
+          <packing>
+            <property name="pack-type">end</property>
+          </packing>
+        </child>
+      </object>
+    </child>
+    <child>
+      <object class="GtkBox" id="windowContent">
+        <property name="orientation">vertical</property>
+        <child>
+          <object class="GtkPaned" id="mainPaned">
+            <property name="orientation">horizontal</property>
+            <property name="position">390</property>
+            <property name="wide-handle">True</property>
+            <property name="vexpand">True</property>
+            <child>
+              <object class="GtkBox" id="persistentStatusPane">
+                <property name="orientation">vertical</property>
+                <property name="width-request">340</property>
+                <style>
+                  <class name="status-pane"/>
+                </style>
+                <child>
+                  <object class="GtkBox" id="connectionHero">
+                    <property name="orientation">horizontal</property>
+                    <property name="spacing">12</property>
+                    <property name="margin-start">20</property>
+                    <property name="margin-end">20</property>
+                    <property name="margin-top">18</property>
+                    <property name="margin-bottom">14</property>
+                    <child>
+                      <object class="GtkOverlay">
+                        <property name="width-request">48</property>
+                        <property name="height-request">48</property>
+                        <child>
+                          <object class="GtkImage" id="statusImage"/>
+                        </child>
+                        <child type="overlay">
+                          <object class="GtkImage" id="statusBadge">
+                            <property name="icon-name">network-offline-symbolic</property>
+                            <property name="pixel-size">18</property>
+                            <property name="halign">end</property>
+                            <property name="valign">end</property>
+                            <property name="no-show-all">True</property>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">False</property>
+                        <property name="fill">False</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">3</property>
+                        <property name="valign">center</property>
+                        <child>
+                          <object class="GtkLabel" id="statusHeadingLabel">
+                            <property name="label" translatable="yes">PipeTune Status</property>
+                            <property name="xalign">0</property>
+                            <style>
+                              <class name="title"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="connectionSummaryLabel">
+                            <property name="label" translatable="yes">Connecting…</property>
+                            <property name="xalign">0</property>
+                            <property name="ellipsize">end</property>
+                            <property name="hexpand">True</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkBox" id="statusLoadMeterBox">
+                            <property name="hexpand">True</property>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="expand">True</property>
+                        <property name="fill">True</property>
+                      </packing>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkSeparator"/>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">True</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkScrolledWindow" id="statusScrolledWindow">
+                    <property name="hscrollbar-policy">never</property>
+                    <property name="vscrollbar-policy">automatic</property>
+                    <property name="vexpand">True</property>
+                    <property name="shadow-type">none</property>
+                    <child>
+                      <object class="GtkListBox" id="statusList">
+                        <property name="selection-mode">none</property>
+                        <style>
+                          <class name="status-list"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                  <packing>
+                    <property name="expand">True</property>
+                    <property name="fill">True</property>
+                  </packing>
+                </child>
+              </object>
+              <packing>
+                <property name="resize">False</property>
+                <property name="shrink">True</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkBox" id="settingsPane">
+                <property name="orientation">vertical</property>
+                <property name="hexpand">True</property>
+                <style>
+                  <class name="settings-pane"/>
+                </style>
+                <child>
+                  <object class="GtkStackSwitcher" id="settingsSwitcher">
+                    <property name="halign">center</property>
+                    <property name="homogeneous">False</property>
+                    <property name="margin-top">14</property>
+                    <property name="margin-bottom">10</property>
+                    <property name="stack">settingsStack</property>
+                    <style>
+                      <class name="settings-switcher"/>
+                    </style>
+                  </object>
+                  <packing>
+                    <property name="expand">False</property>
+                    <property name="fill">False</property>
+                  </packing>
+                </child>
+                <child>
+                  <object class="GtkStack" id="settingsStack">
+                    <property name="transition-type">slide-left-right</property>
+                    <property name="transition-duration">160</property>
+                    <property name="homogeneous">True</property>
+                    <property name="vexpand">True</property>
+                    <child>
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">never</property>
+                        <property name="vscrollbar-policy">automatic</property>
+                        <child>
+                          <object class="GtkListBox" id="processingSettingsList">
+                            <property name="selection-mode">none</property>
+                            <property name="margin-start">22</property>
+                            <property name="margin-end">22</property>
+                            <property name="margin-bottom">22</property>
+                            <style>
+                              <class name="settings-list"/>
+                            </style>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label" translatable="yes">Processing</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="section-heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">18</property>
+                                    <property name="margin">14</property>
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="orientation">vertical</property>
+                                        <property name="spacing">3</property>
+                                        <property name="hexpand">True</property>
+                                        <child>
+                                          <object class="GtkLabel">
+                                            <property name="label" translatable="yes">Enable DSP processing</property>
+                                            <property name="xalign">0</property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkLabel">
+                                            <property name="label" translatable="yes">Turn off to pass audio through without an EffeTune preset.</property>
+                                            <property name="xalign">0</property>
+                                            <property name="max-width-chars">30</property>
+                                            <property name="wrap">True</property>
+                                            <style>
+                                              <class name="dim-label"/>
+                                            </style>
+                                          </object>
+                                        </child>
+                                      </object>
+                                      <packing>
+                                        <property name="expand">True</property>
+                                        <property name="fill">True</property>
+                                      </packing>
+                                    </child>
+                                    <child>
+                                      <object class="GtkSwitch" id="processingEnabledSwitch">
+                                        <property name="valign">center</property>
+                                      </object>
+                                      <packing>
+                                        <property name="expand">False</property>
+                                        <property name="fill">False</property>
+                                      </packing>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">8</property>
+                                    <property name="margin">14</property>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label" translatable="yes">Preset library</property>
+                                        <property name="xalign">0</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkComboBoxText" id="presetCombo"/>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">8</property>
+                                    <property name="margin">14</property>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label" translatable="yes">Custom preset file</property>
+                                        <property name="xalign">0</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkFileChooserButton" id="presetChooser">
+                                        <property name="title" translatable="yes">Choose an EffeTune preset</property>
+                                        <property name="action">open</property>
+                                        <property name="hexpand">True</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="name">processing</property>
+                        <property name="title" translatable="yes">Processing</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">never</property>
+                        <property name="vscrollbar-policy">automatic</property>
+                        <child>
+                          <object class="GtkListBox" id="rateSettingsList">
+                            <property name="selection-mode">none</property>
+                            <property name="margin-start">22</property>
+                            <property name="margin-end">22</property>
+                            <property name="margin-bottom">22</property>
+                            <style>
+                              <class name="settings-list"/>
+                            </style>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label" translatable="yes">Sampling Frequency</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="section-heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">8</property>
+                                    <property name="margin">14</property>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label" translatable="yes">DSP sampling frequency</property>
+                                        <property name="xalign">0</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkComboBoxText" id="rateCombo"/>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">8</property>
+                                    <property name="margin">14</property>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label" translatable="yes">PipeWire enforcement</property>
+                                        <property name="xalign">0</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkComboBoxText" id="rateEnforcementCombo"/>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="name">rate</property>
+                        <property name="title" translatable="yes">Sampling Frequency</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">never</property>
+                        <property name="vscrollbar-policy">automatic</property>
+                        <child>
+                          <object class="GtkListBox" id="dspSettingsList">
+                            <property name="selection-mode">none</property>
+                            <property name="margin-start">22</property>
+                            <property name="margin-end">22</property>
+                            <property name="margin-bottom">22</property>
+                            <style>
+                              <class name="settings-list"/>
+                            </style>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label" translatable="yes">DSP Engine</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="section-heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">8</property>
+                                    <property name="margin">14</property>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label" translatable="yes">Native backend</property>
+                                        <property name="xalign">0</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkComboBoxText" id="dspBackendCombo"/>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="name">dsp</property>
+                        <property name="title" translatable="yes">DSP</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">never</property>
+                        <property name="vscrollbar-policy">automatic</property>
+                        <child>
+                          <object class="GtkListBox" id="advancedSettingsList">
+                            <property name="selection-mode">none</property>
+                            <property name="margin-start">22</property>
+                            <property name="margin-end">22</property>
+                            <property name="margin-bottom">22</property>
+                            <style>
+                              <class name="settings-list"/>
+                            </style>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label" translatable="yes">Advanced</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="section-heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">8</property>
+                                    <property name="margin">14</property>
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="orientation">horizontal</property>
+                                        <property name="spacing">18</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">vertical</property>
+                                            <property name="spacing">3</property>
+                                            <property name="hexpand">True</property>
+                                            <child>
+                                              <object class="GtkLabel">
+                                                <property name="label" translatable="yes">Language</property>
+                                                <property name="xalign">0</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkLabel">
+                                                <property name="label" translatable="yes">Choose the language used by PipeTune GTK.</property>
+                                                <property name="xalign">0</property>
+                                                <property name="wrap">True</property>
+                                                <style>
+                                                  <class name="dim-label"/>
+                                                </style>
+                                              </object>
+                                            </child>
+                                          </object>
+                                          <packing>
+                                            <property name="expand">True</property>
+                                            <property name="fill">True</property>
+                                          </packing>
+                                        </child>
+                                        <child>
+                                          <object class="GtkComboBoxText" id="languageCombo">
+                                            <property name="valign">center</property>
+                                            <items>
+                                              <item translatable="yes">System default</item>
+                                              <item translatable="yes">English</item>
+                                              <item>العربية</item>
+                                              <item>Español</item>
+                                              <item>Français</item>
+                                              <item>हिन्दी</item>
+                                              <item>日本語</item>
+                                              <item>한국어</item>
+                                              <item>Português</item>
+                                              <item>Русский</item>
+                                              <item>中文</item>
+                                            </items>
+                                          </object>
+                                          <packing>
+                                            <property name="expand">False</property>
+                                            <property name="fill">False</property>
+                                          </packing>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="languageRestartNotice">
+                                        <property name="label" translatable="yes">Restart PipeTune GTK to use the selected language.</property>
+                                        <property name="xalign">0</property>
+                                        <property name="wrap">True</property>
+                                        <property name="no-show-all">True</property>
+                                        <style>
+                                          <class name="dim-label"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">18</property>
+                                    <property name="margin">14</property>
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="orientation">vertical</property>
+                                        <property name="spacing">3</property>
+                                        <property name="hexpand">True</property>
+                                        <child>
+                                          <object class="GtkLabel">
+                                            <property name="label" translatable="yes">Restore defaults</property>
+                                            <property name="xalign">0</property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkLabel">
+                                            <property name="label" translatable="yes">Choose bypass, Automatic + Suggest, and Scalar + Auto SIMD.</property>
+                                            <property name="xalign">0</property>
+                                            <property name="max-width-chars">30</property>
+                                            <property name="wrap">True</property>
+                                            <style>
+                                              <class name="dim-label"/>
+                                            </style>
+                                          </object>
+                                        </child>
+                                      </object>
+                                      <packing>
+                                        <property name="expand">True</property>
+                                        <property name="fill">True</property>
+                                      </packing>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="restoreDefaultsButton">
+                                        <property name="label" translatable="yes">Restore Defaults</property>
+                                        <property name="valign">center</property>
+                                      </object>
+                                      <packing>
+                                        <property name="expand">False</property>
+                                        <property name="fill">False</property>
+                                      </packing>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow">
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">18</property>
+                                    <property name="margin">14</property>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label" translatable="yes">Versions</property>
+                                        <property name="xalign">0</property>
+                                        <property name="hexpand">True</property>
+                                      </object>
+                                      <packing>
+                                        <property name="expand">True</property>
+                                        <property name="fill">True</property>
+                                      </packing>
+                                    </child>
+                                    <child>
+                                      <object class="GtkBox" id="versionLinks">
+                                        <property name="orientation">vertical</property>
+                                        <property name="spacing">2</property>
+                                        <property name="halign">end</property>
+                                        <child>
+                                          <object class="GtkLinkButton" id="pipeTuneVersionLink">
+                                            <property name="label">PipeTune</property>
+                                            <property name="uri">https://github.com/kekyo/pipetune</property>
+                                            <property name="halign">end</property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkLinkButton" id="effetuneVersionLink">
+                                            <property name="label">EffeTune DSP</property>
+                                            <property name="uri">https://github.com/Frieve-A/effetune</property>
+                                            <property name="halign">end</property>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="name">advanced</property>
+                        <property name="title" translatable="yes">Advanced</property>
+                      </packing>
+                    </child>
+                  </object>
+                  <packing>
+                    <property name="expand">True</property>
+                    <property name="fill">True</property>
+                  </packing>
+                </child>
+              </object>
+              <packing>
+                <property name="resize">True</property>
+                <property name="shrink">True</property>
+              </packing>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">True</property>
+            <property name="fill">True</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkToggleButton" id="logToggleButton">
+            <property name="relief">none</property>
+            <property name="active">False</property>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">8</property>
+                <property name="margin-start">14</property>
+                <property name="margin-end">14</property>
+                <child>
+                  <object class="GtkImage">
+                    <property name="icon-name">pan-up-symbolic</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="logToggleLabel">
+                    <property name="label" translatable="yes">Action Log</property>
+                    <property name="xalign">0</property>
+                    <property name="hexpand">True</property>
+                  </object>
+                  <packing>
+                    <property name="expand">True</property>
+                    <property name="fill">True</property>
+                  </packing>
+                </child>
+              </object>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">True</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkRevealer" id="logRevealer">
+            <property name="transition-type">slide-up</property>
+            <property name="transition-duration">160</property>
+            <property name="reveal-child">False</property>
+            <child>
+              <object class="GtkBox" id="logDrawer">
+                <property name="orientation">vertical</property>
+                <property name="height-request">190</property>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">horizontal</property>
+                    <property name="spacing">8</property>
+                    <property name="margin-start">14</property>
+                    <property name="margin-end">14</property>
+                    <property name="margin-top">10</property>
+                    <property name="margin-bottom">8</property>
+                    <child>
+                      <object class="GtkComboBoxText" id="logFilterCombo">
+                        <items>
+                          <item translatable="yes">All</item>
+                          <item translatable="yes">Warnings</item>
+                          <item translatable="yes">Errors</item>
+                        </items>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="logCopyButton">
+                        <property name="label" translatable="yes">Copy</property>
+                      </object>
+                      <packing>
+                        <property name="pack-type">end</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="logClearButton">
+                        <property name="label" translatable="yes">Clear</property>
+                      </object>
+                      <packing>
+                        <property name="pack-type">end</property>
+                      </packing>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkScrolledWindow">
+                    <property name="hscrollbar-policy">never</property>
+                    <property name="vscrollbar-policy">automatic</property>
+                    <property name="shadow-type">in</property>
+                    <property name="vexpand">True</property>
+                    <child>
+                      <object class="GtkListBox" id="logList">
+                        <property name="selection-mode">none</property>
+                        <style>
+                          <class name="log-list"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                  <packing>
+                    <property name="expand">True</property>
+                    <property name="fill">True</property>
+                  </packing>
+                </child>
+              </object>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">True</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkSeparator"/>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">True</property>
+          </packing>
+        </child>
+        <child>
+          <object class="GtkBox" id="dialogFooter">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">10</property>
+            <property name="margin-start">16</property>
+            <property name="margin-end">16</property>
+            <property name="margin-top">12</property>
+            <property name="margin-bottom">12</property>
+            <child>
+              <object class="GtkLabel" id="transactionStateLabel">
+                <property name="label" translatable="yes">Connecting…</property>
+                <property name="xalign">0</property>
+                <property name="ellipsize">end</property>
+                <property name="hexpand">True</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+              <packing>
+                <property name="expand">True</property>
+                <property name="fill">True</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkButton" id="cancelButton">
+                <property name="label" translatable="yes">Cancel</property>
+              </object>
+              <packing>
+                <property name="expand">False</property>
+                <property name="fill">False</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkButton" id="applyButton">
+                <property name="label" translatable="yes">Apply</property>
+                <property name="can-default">True</property>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
+              </object>
+              <packing>
+                <property name="expand">False</property>
+                <property name="fill">False</property>
+              </packing>
+            </child>
+          </object>
+          <packing>
+            <property name="expand">False</property>
+            <property name="fill">True</property>
+          </packing>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>

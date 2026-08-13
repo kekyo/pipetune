@@ -1,0 +1,15 @@
+#ifndef PIPETUNE_INSTALLED_TOOLS_H
+#define PIPETUNE_INSTALLED_TOOLS_H
+
+#include <string_view>
+
+namespace pipetune {
+
+inline constexpr auto installedSystemctlPath =
+    std::string_view{"@PIPETUNE_SYSTEMCTL_EXECUTABLE@"};
+inline constexpr auto installedGtkPath =
+    std::string_view{"@PIPETUNE_INSTALLED_GTK_EXECUTABLE@"};
+
+} // namespace pipetune
+
+#endif

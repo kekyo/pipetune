@@ -1,0 +1,11 @@
+#ifndef PIPETUNE_GTK_INSTALLED_TOOLS_H
+#define PIPETUNE_GTK_INSTALLED_TOOLS_H
+
+namespace pipetune_gtk {
+
+constexpr char kPipeTuneExecutable[] =
+    "@PIPETUNE_GTK_RUNTIME_PIPETUNE_EXECUTABLE@";
+
+} // namespace pipetune_gtk
+
+#endif

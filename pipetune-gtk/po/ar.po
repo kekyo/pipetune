@@ -1,0 +1,580 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: PipeTune GTK\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-07-31 00:00+0900\n"
+"PO-Revision-Date: 2026-07-31 00:00+0900\n"
+"Last-Translator: PipeTune contributors\n"
+"Language-Team: Arabic\n"
+"Language: ar\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=6; plural=(n==0 ? 0 : n==1 ? 1 : n==2 ? 2 : n%100>=3 && n%100<=10 ? 3 : n%100>=11 && n%100<=99 ? 4 : 5);\n"
+
+#, brace-format
+msgid "{0}  •  Fallback"
+msgstr "{0}  •  احتياطي"
+
+#, brace-format
+msgid "{0}  •  Load —"
+msgstr "{0}  •  الحمل —"
+
+#, brace-format
+msgid "{0}  •  Load {1}%"
+msgstr "{0}  •  الحمل {1}%"
+
+#, brace-format
+msgid "{0} — availability not reported"
+msgstr "{0} — لم يتم الإبلاغ عن التوفر"
+
+#, brace-format
+msgid "{0} — availability unknown"
+msgstr "{0} — التوفر غير معروف"
+
+#, brace-format
+msgid "{0} — available"
+msgstr "{0} — متاح"
+
+#, brace-format
+msgid "{0} — unavailable"
+msgstr "{0} — غير متاح"
+
+#, brace-format
+msgid "{0} · {1} kHz · {2}"
+msgstr "{0} · {1} كيلوهرتز · {2}"
+
+#, brace-format
+msgid "{0} ({1})"
+msgstr "{0} ({1})"
+
+#, brace-format
+msgid "{0} channel"
+msgid_plural "{0} channels"
+msgstr[0] "{0} قناة"
+msgstr[1] "{0} قناة"
+msgstr[2] "{0} قناتان"
+msgstr[3] "{0} قنوات"
+msgstr[4] "{0} قناة"
+msgstr[5] "{0} قناة"
+
+#, brace-format
+msgid "{0} frames/s"
+msgstr "{0} إطار/ث"
+
+#, brace-format
+msgid "{0} h ago"
+msgstr "منذ {0} س"
+
+#, brace-format
+msgid "{0} min ago"
+msgstr "منذ {0} د"
+
+#, brace-format
+msgid "{0} ms ago"
+msgstr "منذ {0} مللي ث"
+
+#, brace-format
+msgid "{0} s ago"
+msgstr "منذ {0} ث"
+
+#, brace-format
+msgid "{0}; CPU: {1}"
+msgstr "{0}؛ المعالج: {1}"
+
+msgid "32-bit floating-point PCM (planar)"
+msgstr "PCM بنقطة عائمة 32 بت (مستوي)"
+
+msgid "Action Log"
+msgstr "سجل الإجراءات"
+
+#, brace-format
+msgid "Action Log ({0})"
+msgstr "سجل الإجراءات ({0})"
+
+msgid "Active plugins"
+msgstr "الإضافات النشطة"
+
+msgid "Advanced"
+msgstr "متقدم"
+
+msgid "All"
+msgstr "الكل"
+
+msgid "All settings saved"
+msgstr "تم حفظ جميع الإعدادات"
+
+msgid "Apply"
+msgstr "تطبيق"
+
+msgid "Automatic"
+msgstr "تلقائي"
+
+msgid "Automatic — follow PipeWire graph sampling frequency"
+msgstr "تلقائي — اتبع تردد أخذ العينات لمخطط PipeWire"
+
+msgid "Baseline"
+msgstr "خط الأساس"
+
+msgid "Bypass"
+msgstr "تجاوز"
+
+msgid "Cancel"
+msgstr "إلغاء"
+
+msgid "Cannot apply UI language"
+msgstr "تعذر تطبيق لغة الواجهة"
+
+msgid "Cannot load startup configuration"
+msgstr "تعذر تحميل إعدادات بدء التشغيل"
+
+msgid "Cannot prepare preset"
+msgstr "تعذر تحضير الإعداد المسبق"
+
+msgid "Cannot resolve preset"
+msgstr "تعذر تحديد الإعداد المسبق"
+
+msgid "Cannot save settings"
+msgstr "تعذر حفظ الإعدادات"
+
+msgid "Cannot use saved language preference"
+msgstr "تعذر استخدام تفضيل اللغة المحفوظ"
+
+msgid "Changing DSP backend"
+msgstr "جارٍ تغيير واجهة DSP الخلفية"
+
+msgid "Changing DSP backend failed"
+msgstr "فشل تغيير واجهة DSP الخلفية"
+
+msgid "Changing processing mode"
+msgstr "جارٍ تغيير وضع المعالجة"
+
+msgid "Changing processing mode failed"
+msgstr "فشل تغيير وضع المعالجة"
+
+msgid "Changing sampling-frequency policy"
+msgstr "جارٍ تغيير سياسة تردد أخذ العينات"
+
+msgid "Changing sampling-frequency policy failed"
+msgstr "فشل تغيير سياسة تردد أخذ العينات"
+
+msgid "Choose a preset before enabling DSP processing"
+msgstr "اختر إعدادًا مسبقًا قبل تمكين معالجة DSP"
+
+msgid "Choose a standard or saved EffeTune preset…"
+msgstr "اختر إعداد EffeTune قياسيًا أو محفوظًا…"
+
+msgid "Choose an EffeTune preset"
+msgstr "اختر إعداد EffeTune مسبقًا"
+
+msgid "Choose bypass, Automatic + Suggest, and Scalar + Auto SIMD."
+msgstr "اختر التجاوز، وتلقائي + اقتراح، وScalar + SIMD تلقائي."
+
+msgid "Choose the language used by PipeTune GTK."
+msgstr "اختر اللغة التي يستخدمها PipeTune GTK."
+
+msgid "Clear"
+msgstr "مسح"
+
+msgid "Close"
+msgstr "إغلاق"
+
+msgid "Configuration"
+msgstr "الإعدادات"
+
+#, brace-format
+msgid "Configured {0}  •  Effective {1}"
+msgstr "المكوّن {0}  •  الفعلي {1}"
+
+msgid "Configured backend"
+msgstr "الواجهة الخلفية المكوّنة"
+
+msgid "Configured SIMD"
+msgstr "SIMD المكوّن"
+
+msgid "Connected"
+msgstr "متصل"
+
+msgid "Connected · changing sampling frequency"
+msgstr "متصل · جارٍ تغيير تردد أخذ العينات"
+
+msgid "Connected and monitoring"
+msgstr "متصل وتتم المراقبة"
+
+msgid "Connected to PipeTune"
+msgstr "متصل بـ PipeTune"
+
+msgid "Connecting"
+msgstr "جارٍ الاتصال"
+
+msgid "Connecting to PipeTune"
+msgstr "جارٍ الاتصال بـ PipeTune"
+
+msgid "Connecting to the control service…"
+msgstr "جارٍ الاتصال بخدمة التحكم…"
+
+msgid "Connecting…"
+msgstr "جارٍ الاتصال…"
+
+msgid "Control"
+msgstr "التحكم"
+
+msgid "Control service unavailable"
+msgstr "خدمة التحكم غير متاحة"
+
+msgid "Control socket unavailable"
+msgstr "مقبس التحكم غير متاح"
+
+msgid "Copy"
+msgstr "نسخ"
+
+msgid "Custom preset file"
+msgstr "ملف إعداد مسبق مخصص"
+
+msgid "Defaults are being applied live; use Apply to save them"
+msgstr "تُطبّق القيم الافتراضية مباشرة؛ استخدم تطبيق لحفظها"
+
+msgid "Defaults selected"
+msgstr "تم تحديد القيم الافتراضية"
+
+msgid "Disconnected"
+msgstr "غير متصل"
+
+msgid "Disconnected · settings are read-only"
+msgstr "غير متصل · الإعدادات للقراءة فقط"
+
+msgid "DSP"
+msgstr "DSP"
+
+msgid "DSP / Performance"
+msgstr "DSP / الأداء"
+
+msgid "DSP backend"
+msgstr "واجهة DSP الخلفية"
+
+msgid "DSP backend changed"
+msgstr "تم تغيير واجهة DSP الخلفية"
+
+msgid "DSP Engine"
+msgstr "محرك DSP"
+
+msgid "DSP processing load; graph capped at 100%."
+msgstr "حمل معالجة DSP؛ الرسم محدود عند 100%."
+
+msgid "DSP sampling frequency"
+msgstr "تردد أخذ عينات DSP"
+
+#, brace-format
+msgid "DSP sampling frequency {0}  •  PipeWire graph sampling frequency {1}"
+msgstr "تردد أخذ عينات DSP ‏{0}  •  تردد أخذ العينات لمخطط PipeWire ‏{1}"
+
+msgid "Effective backend"
+msgstr "الواجهة الخلفية الفعلية"
+
+msgid "Effective backend unavailable"
+msgstr "الواجهة الخلفية الفعلية غير متاحة"
+
+msgid "EffeTune DSP control"
+msgstr "التحكم في EffeTune DSP"
+
+msgid "EffeTune presets"
+msgstr "إعدادات EffeTune المسبقة"
+
+msgid "Enable DSP processing"
+msgstr "تمكين معالجة DSP"
+
+msgid "English"
+msgstr "الإنجليزية"
+
+msgid "Errors"
+msgstr "الأخطاء"
+
+msgid "Finishing rollback…"
+msgstr "جارٍ إنهاء التراجع…"
+
+msgid "Fixed"
+msgstr "ثابت"
+
+msgid "Fixed sampling frequency"
+msgstr "تردد أخذ عينات ثابت"
+
+msgid "Force"
+msgstr "فرض"
+
+msgid "Force — request the fixed graph sampling frequency"
+msgstr "فرض — اطلب تردد أخذ العينات الثابت للمخطط"
+
+msgid "Input / Sampling Frequencies"
+msgstr "الإدخال / ترددات أخذ العينات"
+
+msgid "Input channels"
+msgstr "قنوات الإدخال"
+
+msgid "Input format"
+msgstr "تنسيق الإدخال"
+
+msgid "Input sampling frequency"
+msgstr "تردد أخذ عينات الإدخال"
+
+msgid "Language"
+msgstr "اللغة"
+
+msgid "Last input"
+msgstr "آخر إدخال"
+
+msgid "Later"
+msgstr "لاحقًا"
+
+msgid "Live Configuration"
+msgstr "الإعدادات المباشرة"
+
+msgid "Live enforcement"
+msgstr "الفرض المباشر"
+
+msgid "Live fixed sampling frequency"
+msgstr "تردد أخذ العينات الثابت المباشر"
+
+msgid "Live preview active · changes are not saved"
+msgstr "المعاينة المباشرة نشطة · التغييرات غير محفوظة"
+
+msgid "Live preview failed · adjust a setting to retry"
+msgstr "فشلت المعاينة المباشرة · عدّل إعدادًا للمحاولة مجددًا"
+
+msgid "Live sampling-frequency mode"
+msgstr "وضع تردد أخذ العينات المباشر"
+
+msgid "Live settings changed elsewhere · reopen this dialog"
+msgstr "تغيرت الإعدادات المباشرة في مكان آخر · أعد فتح مربع الحوار"
+
+msgid "Live settings changed externally"
+msgstr "تغيرت الإعدادات المباشرة خارجيًا"
+
+msgid "Live settings match the saved configuration"
+msgstr "تطابق الإعدادات المباشرة الإعدادات المحفوظة"
+
+msgid "Live status subscription established"
+msgstr "تم الاشتراك في الحالة المباشرة"
+
+msgid "Load"
+msgstr "الحمل"
+
+msgid "Measured frame rate"
+msgstr "معدل الإطارات المقاس"
+
+msgid "Native backend"
+msgstr "الواجهة الخلفية الأصلية"
+
+msgid "Never"
+msgstr "أبدًا"
+
+msgid "None"
+msgstr "لا شيء"
+
+msgid "Open PipeTune"
+msgstr "فتح PipeTune"
+
+#, brace-format
+msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
+msgstr "تجاوز {0}  •  نقص {1}  •  معالجة {2}"
+
+msgid "Overrun frames"
+msgstr "إطارات التجاوز"
+
+msgid "PCM data rate"
+msgstr "معدل بيانات PCM"
+
+msgid "Pending dialog settings will be reapplied"
+msgstr "ستُعاد تطبيق إعدادات مربع الحوار المعلقة"
+
+msgid "PipeTune disconnected"
+msgstr "تم قطع اتصال PipeTune"
+
+msgid "PipeTune reconnected"
+msgstr "أُعيد اتصال PipeTune"
+
+msgid "PipeTune setup completed"
+msgstr "اكتمل إعداد PipeTune"
+
+msgid "PipeTune setup failed"
+msgstr "فشل إعداد PipeTune"
+
+msgid "PipeTune Status"
+msgstr "حالة PipeTune"
+
+#, brace-format
+msgid "PipeTune: {0}"
+msgstr "PipeTune: ‏{0}"
+
+msgid "PipeTune: active"
+msgstr "PipeTune: نشط"
+
+msgid "PipeTune: attention required"
+msgstr "PipeTune: يتطلب الانتباه"
+
+msgid "PipeTune: connecting"
+msgstr "PipeTune: جارٍ الاتصال"
+
+msgid "PipeTune: disconnected"
+msgstr "PipeTune: غير متصل"
+
+msgid "PipeWire enforcement"
+msgstr "فرض PipeWire"
+
+msgid "PipeWire graph sampling frequency"
+msgstr "تردد أخذ العينات لمخطط PipeWire"
+
+msgid "Preset"
+msgstr "الإعداد المسبق"
+
+msgid "Preset library"
+msgstr "مكتبة الإعدادات المسبقة"
+
+msgid "Preset required"
+msgstr "يلزم إعداد مسبق"
+
+msgid "Preset warnings"
+msgstr "تحذيرات الإعداد المسبق"
+
+msgid "Processing"
+msgstr "المعالجة"
+
+msgid "Processing errors"
+msgstr "أخطاء المعالجة"
+
+msgid "Processing mode changed"
+msgstr "تم تغيير وضع المعالجة"
+
+msgid "Processing time"
+msgstr "زمن المعالجة"
+
+msgid "Quit"
+msgstr "إنهاء"
+
+msgid "Restart now"
+msgstr "إعادة التشغيل الآن"
+
+msgid "Restart PipeTune GTK to use the selected language."
+msgstr "أعد تشغيل PipeTune GTK لاستخدام اللغة المحددة."
+
+msgid "Restart to apply UI language?"
+msgstr "إعادة التشغيل لتطبيق لغة الواجهة؟"
+
+msgid "Restore defaults"
+msgstr "استعادة القيم الافتراضية"
+
+msgid "Restore Defaults"
+msgstr "استعادة القيم الافتراضية"
+
+msgid "Restoring the live settings captured when the dialog opened"
+msgstr "جارٍ استعادة الإعدادات المباشرة الملتقطة عند فتح مربع الحوار"
+
+msgid "Restoring the previous live settings…"
+msgstr "جارٍ استعادة الإعدادات المباشرة السابقة…"
+
+msgid "Rollback requested"
+msgstr "طُلب التراجع"
+
+msgid "Sampling frequencies unavailable"
+msgstr "ترددات أخذ العينات غير متاحة"
+
+msgid "Sampling frequency"
+msgstr "تردد أخذ العينات"
+
+msgid "Sampling Frequency"
+msgstr "تردد أخذ العينات"
+
+msgid "Sampling-frequency enforcement"
+msgstr "فرض تردد أخذ العينات"
+
+msgid "Sampling-frequency mode"
+msgstr "وضع تردد أخذ العينات"
+
+msgid "Sampling-frequency policy changed"
+msgstr "تم تغيير سياسة تردد أخذ العينات"
+
+msgid "Saved Configuration"
+msgstr "الإعدادات المحفوظة"
+
+#, brace-format
+msgid "Saved in EffeTune · {0}"
+msgstr "محفوظ في EffeTune · {0}"
+
+msgid "Saving all settings"
+msgstr "جارٍ حفظ جميع الإعدادات"
+
+msgid "Scalar"
+msgstr "Scalar"
+
+msgid "Setting up PipeTune for this user…"
+msgstr "جارٍ إعداد PipeTune لهذا المستخدم…"
+
+msgid "Settings updated"
+msgstr "تم تحديث الإعدادات"
+
+msgid "SIMD variant"
+msgstr "متغير SIMD"
+
+msgid "Some preset sources are unavailable"
+msgstr "بعض مصادر الإعدادات المسبقة غير متاحة"
+
+#, brace-format
+msgid "Standard · {0} · {1}"
+msgstr "قياسي · {0} · {1}"
+
+msgid "Startup configuration path unavailable"
+msgstr "مسار إعدادات بدء التشغيل غير متاح"
+
+msgid "Suggest"
+msgstr "اقتراح"
+
+msgid "Suggest — let PipeWire choose the graph sampling frequency"
+msgstr "اقتراح — دع PipeWire يختار تردد أخذ العينات للمخطط"
+
+#, brace-format
+msgid "Switching — {0}"
+msgstr "جارٍ التبديل — {0}"
+
+msgid "System"
+msgstr "النظام"
+
+msgid "System default"
+msgstr "النظام الافتراضي"
+
+msgid "The UI language change will take effect after PipeTune GTK restarts."
+msgstr "سيُطبّق تغيير لغة الواجهة بعد إعادة تشغيل PipeTune GTK."
+
+msgid "Turn off to pass audio through without an EffeTune preset."
+msgstr "أوقف التشغيل لتمرير الصوت دون إعداد EffeTune مسبق."
+
+msgid "unavailable"
+msgstr "غير متاح"
+
+msgid "Unavailable"
+msgstr "غير متاح"
+
+msgid "Underrun frames"
+msgstr "إطارات النقص"
+
+msgid "unknown"
+msgstr "غير معروف"
+
+msgid "Unknown"
+msgstr "غير معروف"
+
+msgid "Unknown sample format"
+msgstr "تنسيق عينة غير معروف"
+
+msgid "Updating settings"
+msgstr "جارٍ تحديث الإعدادات"
+
+msgid "Updating settings failed"
+msgstr "فشل تحديث الإعدادات"
+
+msgid "Versions"
+msgstr "الإصدارات"
+
+msgid "Waiting for live PipeTune state…"
+msgstr "في انتظار حالة PipeTune المباشرة…"
+
+msgid "Warnings"
+msgstr "التحذيرات"

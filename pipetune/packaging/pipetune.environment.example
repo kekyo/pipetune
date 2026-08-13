@@ -1,0 +1,16 @@
+# Leave PIPETUNE_PRESET unset to start in DSP bypass mode.
+# To select a preset, use an absolute path and quote paths containing spaces.
+# PIPETUNE_PRESET=/absolute/path/to/preset.effetune_preset
+
+# Leave both rate assignments unset for the Automatic-and-suggest default.
+# PIPETUNE_RATE accepts automatic, 44100, 48000, 96000, 192000, or 384000.
+# PIPETUNE_RATE=automatic
+# PIPETUNE_RATE_ENFORCEMENT=suggest
+
+# Scalar is the compatibility default. SIMD requires a supported CPU and a
+# validated architecture-specific library; it falls back at daemon startup.
+PIPETUNE_DSP_BACKEND=scalar
+
+# auto selects the highest usable SIMD tier. It can be pinned to baseline,
+# x86-64-v3, x86-64-v4, or sve where that variant applies.
+PIPETUNE_DSP_SIMD_VARIANT=auto

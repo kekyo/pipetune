@@ -1,0 +1,348 @@
+# PipeTune GTK
+
+`pipetune-gtk` is the GTK 3 control application for the per-user PipeTune
+daemon. It is a single-instance application that can remain resident in the
+desktop system tray.
+
+## Per-user setup at startup
+
+The primary GTK instance asynchronously runs the installed CLI as
+`pipetune setup --no-launch-gtk` before opening its daemon control
+subscription. The CLI checks the current user's versioned completion state,
+managed WirePlumber files, GTK autostart state, and enabled and active systemd
+user service, so an already-current launch performs only the readiness checks.
+This makes the application-menu icon sufficient for first use after package
+installation, including the first launch by another user on the same machine.
+
+While setup is pending, the connection summary reports setup progress and all
+settings controls remain read-only. Success proceeds to the ordinary control
+connection. Failure opens the Action Log with the CLI diagnostic and, when
+the window is hidden, sends a desktop notification. The control connection is
+still attempted so an independently running daemon can remain usable. The
+fixed installed CLI path is invoked directly without a shell, and
+`--no-launch-gtk` prevents recursive GTK startup.
+
+## Controls and status
+
+The main window uses a persistent two-pane layout. The left pane remains
+visible while the right pane switches between Processing, Rate, DSP, and
+Advanced settings. The default window size is
+1080 × 680 pixels and its supported minimum is 900 × 560 pixels. Both panes
+scroll independently at compact sizes.
+
+The left pane uses sectioned, non-selectable list rows instead of combining
+unrelated values into one line. Its always-expanded sections are:
+
+- **System**;
+- **Live Configuration**;
+- **Saved Configuration**;
+- **Input / Sampling Frequencies**;
+- **DSP / Performance**; and
+- **Errors**.
+
+Together they display the daemon connection, live and saved processing
+choices, input format and rates, DSP backend, processing time and load, error
+counters, and diagnostics. Long values
+are ellipsized in the row and remain available in a tooltip. **Load** is a
+horizontal level meter below the connection summary,
+outside the scrolling status rows. Its left edge matches the heading and
+summary labels so it clears the status icon. It grows with the status pane from
+150 to 280 pixels and overlays the existing percentage text at the right edge.
+The meter uses 11 restrained-saturation hue steps from teal through muted red.
+Its graphical fill is capped at 100%, while the text preserves the measured
+value above 100% so overload remains explicit.
+Numeric status items retain their value, unit, and range separately from their
+text presentation, allowing other bounded measurements to adopt the same
+component later without changing status acquisition.
+
+## Live preview and persistence
+
+The window treats all settings as one transaction. Opening it captures the
+saved startup configuration and the daemon's live configuration. Changing any
+control immediately previews that choice in PipeTune; no per-setting apply
+button remains. When several fields differ, requests are serialized in this
+dependency order:
+
+1. sample-rate policy;
+2. DSP backend; and
+3. processing mode or preset.
+
+The global **Apply** button becomes available only after the daemon has
+confirmed every requested live change. It atomically writes the complete
+configuration snapshot and leaves the window open. The newly saved and live
+state then becomes the transaction baseline.
+
+The Advanced page's language selection participates in the same Apply and
+Cancel interaction. Apply stores it in
+`$XDG_CONFIG_HOME/pipetune/gtk.conf`, while Cancel discards the staged choice.
+The available choices are the system default, English, Arabic, Spanish,
+French, Hindi, Japanese, Korean, Portuguese, Russian, and Chinese. After a
+language change is saved, PipeTune GTK offers to restart immediately. Choosing
+Later keeps the current interface language until the application is restarted.
+
+**Cancel**, Escape, and the title-bar close button first restore the live
+configuration captured when the window opened, or the latest successfully
+applied baseline, and hide the window only after the daemon confirms the
+rollback. The startup configuration is not modified. **Restore Defaults** on
+the Advanced page follows the same rules: defaults are previewed live and
+remain unsaved until the global Apply button is used.
+
+Settings become read-only while the daemon is disconnected. If the connection
+drops during a transaction, the desired live state is retained and reapplied
+after reconnection. If a subscribed live configuration changes outside the
+dialog, editing and Apply stop until the window is closed and reopened, so an
+external change cannot be silently overwritten.
+
+If a live request fails, the failed choice is not persisted. Adjusting a
+setting permits a retry. If live preview succeeds but atomic persistence
+fails, the live choices remain active, the saved snapshot remains unchanged,
+the window stays open, and the action log opens with the diagnostic.
+
+## Action log
+
+The full-width **Action Log** drawer at the bottom retains the latest 500
+connection, settings, persistence, and application actions in memory.
+Pending, successful, warning, and failed actions keep their timestamp,
+summary, and diagnostic. The drawer can show all entries, warnings and errors,
+or errors only. **Copy** copies the currently filtered history and **Clear**
+removes the retained history. A failed action opens the drawer automatically;
+closing the drawer does not close the settings window.
+
+## Processing presets
+
+The **EffeTune presets** drop-down contains the standard presets bundled with
+the pinned EffeTune release and named presets saved by the EffeTune desktop
+application. The standard files are installed below
+`$prefix/share/pipetune/effetune-presets`. EffeTune's Linux AppImage stores its
+named presets together in:
+
+```text
+$XDG_CONFIG_HOME/effetune/effetune_presets.json
+```
+
+When `XDG_CONFIG_HOME` is unset, that path resolves to
+`~/.config/effetune/effetune_presets.json`. The file is monitored while the
+application runs and is also checked whenever the window is presented. Once
+an updated file parses as a complete preset object, only the previous
+**Saved in EffeTune** entries are replaced. **Standard** entries are retained.
+Malformed updates and file deletion retain the last valid entries. Monitoring
+does not select a different preset or modify snapshots for non-active entries.
+If the changed entry is the saved preset currently reported by the daemon, the
+application atomically refreshes its standalone snapshot. The daemon detects
+that replacement and automatically loads the updated DSP pipeline. Unchanged
+serialized contents do not rewrite the snapshot. A malformed multi-preset
+file leaves both the last valid catalog and the active snapshot untouched.
+
+Selecting a named EffeTune preset atomically writes a mode-`0600` standalone
+snapshot below
+`$XDG_CONFIG_HOME/pipetune/effetune-presets`, with the same HOME fallback as
+the startup configuration. The snapshot lets the daemon load one entry from
+EffeTune's multi-preset JSON file and remains valid after the AppImage exits.
+The application also reconciles an active saved-preset snapshot when it next
+connects, covering changes made while the settings application was not
+running.
+
+The **Preset file** chooser remains available for any standalone
+`.effetune_preset` file. The **Enable DSP processing** switch selects preset
+processing or pass-through bypass. Both the preset selection and the switch
+participate in the dialog-wide live preview and persistence transaction.
+
+## DSP backend
+
+The DSP page's **Native backend** drop-down selects **Scalar**,
+**SIMD (Auto)**, or an applicable baseline, x86-64-v3, x86-64-v4, or Arm64
+SVE tier. Scalar is the compatibility default. Each row shows the availability
+and CPU requirement reported by the daemon; the status pane also shows the
+concrete effective tier, startup fallback, and validation diagnostics. A live
+backend change rebuilds and atomically replaces the active preset pipeline.
+DSP histories reset during replacement, and a discontinuity or brief silence
+is allowed.
+
+## Sample rate
+
+The DSP sampling frequency drop-down contains Automatic followed by 44.1, 48,
+96, 192, and 384 kHz. Automatic leaves both filter nodes negotiable and follows
+the negotiated PCM rate. A fixed selection keeps both filter streams and the
+EffeTune engine at that rate.
+
+The PipeWire enforcement drop-down selects Suggest or Force. `node.rate`
+remains a PipeWire request rather than a guaranteed graph rate. Force applies
+only while PipeTune's filter output is active and does not rewrite the global
+PipeWire clock configuration. With Suggest, PipeWire may use a different graph
+rate and perform conversion outside PipeTune while the DSP stays fixed.
+
+The persistent status pane passively displays the daemon's input, DSP, and
+negotiated graph rates. During a live transition the connection status says
+that switching is in progress, and the PCM rate controls are disabled.
+
+The GUI writes the complete applied snapshot to:
+
+```text
+$XDG_CONFIG_HOME/pipetune/environment
+```
+
+When `XDG_CONFIG_HOME` is unset, this resolves to
+`~/.config/pipetune/environment`. The directory is mode `0700`, the file is
+mode `0600`, and replacement is atomic. A `PIPETUNE_PRESET` assignment selects
+a preset; its absence starts the daemon in pass-through mode. `PIPETUNE_RATE`
+stores `automatic` or one of the five fixed rates, and
+`PIPETUNE_RATE_ENFORCEMENT` stores `suggest`
+or `force`. `PIPETUNE_DSP_BACKEND` stores `scalar` or `simd`, and
+`PIPETUNE_DSP_SIMD_VARIANT` stores `auto`, `baseline`, `x86-64-v3`,
+`x86-64-v4`, or `sve`. Missing rate assignments use Automatic-and-suggest, a
+missing backend assignment uses Scalar, and a missing SIMD variant uses Auto. Apply
+replaces this file atomically while retaining restrictive directory and file
+permissions.
+
+The Advanced page's Restore Defaults selects bypass, Automatic with Suggest,
+and Scalar with an Auto SIMD preference. It does not restart
+the service and does not write the environment file until Apply succeeds.
+
+## Status subscription
+
+The GUI uses the daemon's same-user Unix control socket. It receives an initial
+status event and later daemon publications over a persistent asynchronous GIO
+connection. The daemon publishes runtime counters and cumulative native
+EffeTune processing time once per second. The GUI derives the displayed
+per-frame average between publications. It compares that average with the
+frame duration derived from the negotiated input sample rate and displays the
+ratio as **Load**; 100% is the theoretical real-time deadline, and values above
+100% remain visible. When the latest interval contains no DSP frames,
+**EffeTune DSP time** displays `—` rather than retaining an earlier load
+measurement. It does not poll for status; a short retry timer is used only to
+reconnect after the socket becomes unavailable.
+
+## System tray compatibility
+
+The tray backend prefers a StatusNotifierItem host. On X11 it falls back to
+`GtkStatusIcon` and XEmbed using the elder-terms compatibility approach.
+`GtkStatusIcon` is intentionally retained despite its GTK deprecation because
+compatibility with those notification areas is a project requirement.
+
+Closing the window hides it while a tray host is available. The tray icon
+opens and presents the window, and its menu provides Open PipeTune and Quit
+actions. A `--hidden` start remains unmapped regardless of tray discovery, so
+desktop-session autostart does not open a GTK window. In a session without a
+tray host, run `pipetune-gtk` normally to present the existing instance.
+
+## End-to-end tests
+
+`test/e2e` is a private, non-distributed TypeScript project for the GTK dialog.
+It requires Node.js 20 or later, pins `gestament` 1.4.0, and uses Vite,
+Vitest, and prettier-max. It intentionally has no package-release or screw-up
+configuration.
+
+The repository-wide `make test` command installs the locked npm dependencies,
+builds the production GTK executable with stable test-only accessibility IDs,
+starts a deterministic fake control daemon that speaks the production control
+protocol, and runs the dialog under Xvfb. The scenarios verify:
+
+- per-user setup from primary, application-menu, and hidden startup paths;
+- setup failure diagnostics followed by an ordinary control connection;
+- the persistent status pane, all four settings pages, and minimum geometry;
+- the DSP Load meter's accessible range, measured value, responsive
+  right-aligned width, rendered fill, and hue;
+- immediate live changes followed by one dialog-wide atomic Apply;
+- rollback before hide through Escape and title-bar close;
+- live default restoration without persistence before Apply;
+- retained, filtered, cleared, and automatically revealed failure logs;
+- persistence failure without loss of the saved snapshot; and
+- read-only disconnect behavior followed by pending-state reapplication after
+  reconnect.
+
+## Run
+
+Build from the workspace root:
+
+```sh
+make
+make test
+```
+
+Start with the window visible:
+
+```sh
+./build/release/pipetune-gtk
+```
+
+Start without initially presenting the window:
+
+```sh
+./build/release/pipetune-gtk --hidden
+```
+
+A later ordinary launch activates the existing instance and presents its
+window. Ask the running singleton to exit with:
+
+```sh
+./build/release/pipetune-gtk --quit
+```
+
+The same command exits successfully without presenting a window when no
+instance is running. Use `pipetune-gtk --help` and `pipetune-gtk --version` for
+the remaining command-line information.
+
+## Install and autostart
+
+Build as the desktop user, then install the daemon, GUI, service, desktop
+entry, autostart entry, and icon together:
+
+```sh
+make PREFIX=/usr
+sudo make install PREFIX=/usr
+```
+
+Remove files recorded by the most recent installation with:
+
+```sh
+sudo make uninstall PREFIX=/usr
+```
+
+Use the same `PREFIX` and `DESTDIR` as the install. If CMake's manifest is
+missing, the target safely reconstructs it from the current `BUILD_DIR` in a
+temporary staging directory.
+
+For end-user installation from a prebuilt Debian package, see the
+[workspace installation guide](../README.md#download-and-install). Developers
+can build the complete package matrix using the
+[Debian package build instructions](../pipetune/README.md#debian-package-builds).
+
+With that prefix, the GUI integration is installed as:
+
+```text
+/usr/bin/pipetune-gtk
+/usr/lib/pipetune/libeffetune-dsp-scalar.so
+/usr/lib/pipetune/libeffetune-dsp-simd.so
+/usr/share/applications/net.kekyo.pipetune_gtk.desktop
+/usr/share/icons/hicolor/scalable/apps/pipetune.svg
+/usr/share/pipetune/effetune-presets/
+/etc/xdg/autostart/net.kekyo.pipetune_gtk.desktop
+```
+
+The system autostart entry runs `pipetune-gtk --hidden` at desktop login.
+Starting PipeTune GTK from that entry, the application menu, or a terminal
+automatically requests conditional per-user setup. Running the same check
+explicitly repairs PipeTune-managed state when required:
+
+```sh
+pipetune setup
+```
+
+An already-current `pipetune setup` does not repeat the setup workflow. Use
+`pipetune setup --force` or `pipetune setup -f` to force it.
+
+Disable the GTK application and the daemon together with:
+
+```sh
+pipetune unsetup
+```
+
+Unsetup writes a user override with `Hidden=true` and a PipeTune ownership
+marker at the same desktop filename. If a custom override already exists, it
+is moved to a non-desktop backup first; an existing backup is never
+overwritten. A later setup removes only PipeTune's own mask and restores the
+backup. Unmanaged targets and orphaned backups are preserved with warnings.
+See the [PipeTune documentation](../pipetune/README.md#install-as-a-user-service)
+for service behavior, optional presets, purge semantics, and recovery. See the
+[DSP backend notes](../pipetune/docs/dsp-backends.md) for architecture,
+expected preset effects, and benchmarking.

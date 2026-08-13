@@ -1,0 +1,13 @@
+#include "pipetune/version.h"
+
+namespace pipetune {
+
+std::string_view version() noexcept {
+  return "@PIPETUNE_BUILD_VERSION@";
+}
+
+std::string_view effetuneVersion() noexcept {
+  return "@PIPETUNE_EFFETUNE_VERSION@";
+}
+
+} // namespace pipetune

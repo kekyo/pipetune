@@ -1,0 +1,377 @@
+/* pipetune - Engine and User Interface for Applied EffeTune DSP on a Linux Desktop
+ * Copyright (c) Kouji Matsui. (@kekyo@mi.kekyo.net)
+ * Under MIT.
+ * https://github.com/kekyo/pipetune/
+ */
+#include "pipetune/dsp_pipeline.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <span>
+#include <string>
+#include <string_view>
+#include <unistd.h>
+#include <vector>
+
+static bool fail(std::string_view message) {
+  std::cerr << message << '\n';
+  return false;
+}
+
+static bool check(bool condition, std::string_view message) {
+  return condition ? true : fail(message);
+}
+
+static std::filesystem::path writePreset(const std::filesystem::path &directory,
+                                         std::string_view name, std::string_view json) {
+  const auto path = directory / name;
+  auto stream = std::ofstream(path, std::ios::binary);
+  stream.write(json.data(), static_cast<std::streamsize>(json.size()));
+  return path;
+}
+
+static bool approximately(float actual, float expected, float tolerance = 1.0e-6F) {
+  return std::abs(actual - expected) <= tolerance;
+}
+
+static bool testBypassPipeline() {
+  const auto result = pipetune::createBypassDspPipeline(
+      {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+  if (!check(result.pipeline != nullptr, result.error) ||
+      !check(result.pipeline->sampleRate() == 48000.0F,
+             "bypass pipeline must report its prepared sample rate") ||
+      !check(result.pipeline->maxChannels() == 2,
+             "bypass pipeline must report its prepared channel count") ||
+      !check(result.pipeline->maxFrames() == 64,
+             "bypass pipeline must report its prepared frame count") ||
+      !check(result.pipeline->activePluginCount() == 0,
+             "bypass pipeline must not contain native DSP nodes") ||
+      !check(result.pipeline->latencyFrames() == 0,
+             "bypass pipeline must not add latency")) {
+    return false;
+  }
+
+  auto samples =
+      std::vector<float>{0.75F, -0.25F, 0.125F, -0.5F, 0.25F, -0.125F};
+  const auto original = samples;
+  if (!check(result.pipeline->process(samples, 2, 3, 1.5) ==
+                 pipetune::ProcessStatus::ok,
+             "bypass pipeline processing failed") ||
+      !check(samples == original,
+             "bypass pipeline must leave every PCM sample unchanged")) {
+    return false;
+  }
+
+  auto invalid = std::vector<float>{0.5F};
+  return check(result.pipeline->process(invalid, 2, 1, 1.5) ==
+                   pipetune::ProcessStatus::invalidBuffer,
+               "bypass pipeline must retain runtime buffer validation");
+}
+
+static bool testCanonicalPreset(const std::filesystem::path &directory) {
+  const auto path = writePreset(
+      directory, "canonical.effetune_preset",
+      R"json({
+        "name": "Native pipeline",
+        "pipeline": [
+          {"name":"Section","enabled":false,"parameters":{}},
+          {"name":"Volume","enabled":true,"parameters":{"vl":24},"channel":"A"},
+          {"name":"Section","enabled":true,"parameters":{}},
+          {"name":"Future DSP","enabled":true,"parameters":{}},
+          {"name":"IR Reverb","enabled":true,"parameters":{}},
+          {"name":"Room EQ","enabled":true,"parameters":{}},
+          {"name":"Volume","enabled":true,"parameters":{"vl":-6},"channel":"A"}
+        ],
+        "timestamp": 1
+      })json");
+  const auto result =
+      pipetune::loadDspPipeline(path, {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+  if (!check(result.pipeline != nullptr, result.error)) {
+    return false;
+  }
+  if (!check(result.warnings.size() == 3, "canonical preset must report three skipped DSPs") ||
+      !check(result.pipeline->activePluginCount() == 1,
+             "disabled sections must omit their DSP nodes")) {
+    return false;
+  }
+
+  auto samples = std::vector<float>{1.0F, -0.5F, 0.25F, -1.0F, 0.5F, -0.25F};
+  if (!check(result.pipeline->process(samples, 2, 3, 0.0) == pipetune::ProcessStatus::ok,
+             "canonical preset processing failed")) {
+    return false;
+  }
+  const auto gain = std::pow(10.0F, -6.0F / 20.0F);
+  const auto expected = std::vector<float>{gain, -0.5F * gain, 0.25F * gain,
+                                           -gain, 0.5F * gain, -0.25F * gain};
+  for (std::size_t index = 0; index < samples.size(); ++index) {
+    if (!check(approximately(samples[index], expected[index]),
+               "canonical preset PCM output differs from EffeTune DSP output")) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool testLegacyPreset(const std::filesystem::path &directory) {
+  const auto path = writePreset(
+      directory, "legacy.effetune_preset",
+      R"json({"plugins":[{"nm":"Polarity Inversion","en":true,"ch":"A"}]})json");
+  const auto result =
+      pipetune::loadDspPipeline(path, {.sampleRate = 44100.0F, .maxChannels = 1, .maxFrames = 32});
+  if (!check(result.pipeline != nullptr, result.error)) {
+    return false;
+  }
+  auto samples = std::vector<float>{0.75F, -0.25F};
+  if (!check(result.pipeline->process(samples, 1, 2, 1.0) == pipetune::ProcessStatus::ok,
+             "legacy preset processing failed")) {
+    return false;
+  }
+  return check(samples == std::vector<float>({-0.75F, 0.25F}),
+               "legacy short-form parameters must be applied");
+}
+
+static bool containsWarning(const std::vector<pipetune::PipelineWarning> &warnings,
+                            std::string_view expected) {
+  return std::ranges::any_of(warnings, [expected](const auto &warning) {
+    return warning.pluginName == expected;
+  });
+}
+
+static bool testEffeTune24Pipeline(const std::filesystem::path &directory) {
+  const auto path = writePreset(
+      directory, "effetune-2.4.effetune_preset",
+      R"json({
+        "pipeline": [
+          {"name":"SBC Codec Simulator","enabled":true,"parameters":{"bp":35}},
+          {"name":"Cassette Artifacts","enabled":true,"parameters":{"dg":"Consumer"}},
+          {"name":"G.726 Simulator","enabled":true,"parameters":{"br":"32"}},
+          {"name":"GSM-FR Simulator","enabled":true,"parameters":{"tc":1}},
+          {"name":"MP3 Codec Simulator","enabled":true,"parameters":{"br":"64"}},
+          {"name":"Tape Artifacts","enabled":true,"parameters":{"sp":"15"}},
+          {"name":"Tube Simulator","enabled":true,"parameters":{"tp":"12AX7"}},
+          {"name":"AM Radio Simulator","enabled":true,"parameters":{"rd":true}},
+          {"name":"FM Radio Simulator","enabled":true,"parameters":{"rd":true}},
+          {"name":"SW Radio Simulator","enabled":true,"parameters":{"rd":true,"mo":"USB","bf":125}},
+          {"name":"FIR Crossover","enabled":true,"parameters":{}},
+          {"name":"5Band FIR PEQ","enabled":true,"parameters":{}},
+          {"name":"Group Delay EQ","enabled":true,"parameters":{}},
+          {"name":"Room EQ","enabled":true,"parameters":{}},
+          {"name":"IR Reverb","enabled":true,"parameters":{}}
+        ]
+      })json");
+  const auto result = pipetune::loadDspPipeline(
+      path,
+      {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+  if (!check(result.pipeline != nullptr, result.error) ||
+      !check(result.pipeline->activePluginCount() == 10,
+             "EffeTune 2.4 non-asset DSP nodes must become active") ||
+      !check(result.warnings.size() == 5,
+             "EffeTune asset-dependent DSP nodes must be omitted") ||
+      !check(containsWarning(result.warnings, "FIR Crossover") &&
+                 containsWarning(result.warnings, "5Band FIR PEQ") &&
+                 containsWarning(result.warnings, "Group Delay EQ") &&
+                 containsWarning(result.warnings, "Room EQ") &&
+                 containsWarning(result.warnings, "IR Reverb"),
+             "every omitted asset-dependent DSP must be identified")) {
+    return false;
+  }
+
+  auto samples = std::vector<float>(128u, 0.0F);
+  return check(result.pipeline->process(samples, 2, 64, 0.0) ==
+                   pipetune::ProcessStatus::ok,
+               "EffeTune 2.4 DSP nodes must process audio") &&
+         check(std::ranges::all_of(samples, [](float value) {
+                 return std::isfinite(value);
+               }),
+               "EffeTune 2.4 DSP output must remain finite");
+}
+
+static bool testTubeSimulatorLatency(const std::filesystem::path &directory) {
+  const auto path = writePreset(
+      directory, "tube-simulator.effetune_preset",
+      R"json({"pipeline":[{"name":"Tube Simulator","enabled":true,"parameters":{}}]})json");
+  const auto result = pipetune::loadDspPipeline(
+      path,
+      {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+  return check(result.pipeline != nullptr, result.error) &&
+         check(result.pipeline->activePluginCount() == 1,
+               "Tube Simulator must become active at 48 kHz") &&
+         check(result.pipeline->latencyFrames() == 64,
+               "Tube Simulator must report its 64-frame processing latency");
+}
+
+static bool channelsApproximatelyEqual(std::span<const float> samples,
+                                       std::uint32_t firstChannel,
+                                       std::uint32_t secondChannel,
+                                       std::uint32_t frameCount) {
+  const auto firstOffset = static_cast<std::size_t>(firstChannel) * frameCount;
+  const auto secondOffset = static_cast<std::size_t>(secondChannel) * frameCount;
+  for (auto frame = std::uint32_t{0}; frame < frameCount; ++frame) {
+    if (!approximately(samples[firstOffset + frame],
+                       samples[secondOffset + frame], 2.0e-5F)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool testBalanceChannelPairs(const std::filesystem::path &directory) {
+  static constexpr auto frameCount = std::uint32_t{512};
+  const auto run = [&](std::string_view filename, std::string_view plugin,
+                       std::string_view parameters) {
+    const auto path = writePreset(
+        directory, filename,
+        "{\"pipeline\":[{\"name\":\"" + std::string(plugin) +
+            "\",\"enabled\":true,\"channel\":\"A\",\"parameters\":" +
+            std::string(parameters) + "}]}");
+    const auto result = pipetune::loadDspPipeline(
+        path,
+        {.sampleRate = 48000.0F, .maxChannels = 4, .maxFrames = frameCount});
+    if (!check(result.pipeline != nullptr, result.error)) {
+      return false;
+    }
+    auto samples = std::vector<float>(4u * frameCount);
+    for (auto channel = std::uint32_t{0}; channel < 4u; ++channel) {
+      for (auto frame = std::uint32_t{0}; frame < frameCount; ++frame) {
+        samples[static_cast<std::size_t>(channel) * frameCount + frame] =
+            static_cast<float>(static_cast<int>(frame % 29u) - 14) * 0.025F;
+      }
+    }
+    if (!check(result.pipeline->process(samples, 4u, frameCount, 0.0) ==
+                   pipetune::ProcessStatus::ok,
+               "balance DSP must process four-channel audio")) {
+      return false;
+    }
+    return check(channelsApproximatelyEqual(samples, 0u, 2u, frameCount) &&
+                     channelsApproximatelyEqual(samples, 1u, 3u, frameCount) &&
+                     !channelsApproximatelyEqual(samples, 0u, 1u, frameCount),
+                 "balance DSP must affect and apply the same rule to every "
+                 "channel pair");
+  };
+
+  return run("stereo-balance-pairs.effetune_preset", "Stereo Balance",
+             R"json({"bl":0.5})json") &&
+         run("multiband-balance-pairs.effetune_preset", "Multiband Balance",
+             R"json({"bands":[{"balance":100},{"balance":100},{"balance":100},{"balance":100},{"balance":100}]})json");
+}
+
+static bool testRawLegacyPipeline(const std::filesystem::path &directory) {
+  const auto path = writePreset(
+      directory, "raw-legacy.effetune_preset",
+      R"json([{"nm":"Volume","en":true,"vl":6,"ch":"A"}])json");
+  const auto result =
+      pipetune::loadDspPipeline(path, {.sampleRate = 96000.0F, .maxChannels = 1, .maxFrames = 32});
+  if (!check(result.pipeline != nullptr, result.error)) {
+    return false;
+  }
+  auto samples = std::vector<float>{0.25F};
+  if (!check(result.pipeline->process(samples, 1, 1, 2.0) == pipetune::ProcessStatus::ok,
+             "raw legacy pipeline processing failed")) {
+    return false;
+  }
+  return check(approximately(samples[0], 0.25F * std::pow(10.0F, 6.0F / 20.0F)),
+               "raw legacy pipeline parameters must be applied");
+}
+
+static bool testRejectedInputs(const std::filesystem::path &directory) {
+  const auto wrongExtension =
+      writePreset(directory, "wrong.effetune-preset", R"json({"pipeline":[]})json");
+  const auto wrongResult = pipetune::loadDspPipeline(
+      wrongExtension, {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+  if (!check(wrongResult.pipeline == nullptr,
+             "the unrequested .effetune-preset extension must be rejected")) {
+    return false;
+  }
+
+  const auto badBus = writePreset(
+      directory, "bad-bus.effetune_preset",
+      R"json({"pipeline":[{"name":"Volume","enabled":true,"parameters":{},"inputBus":5}]})json");
+  const auto badBusResult =
+      pipetune::loadDspPipeline(badBus, {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+  if (!check(badBusResult.pipeline == nullptr, "an active DSP with an invalid bus must fail")) {
+    return false;
+  }
+
+  const auto malformed =
+      writePreset(directory, "malformed.effetune_preset", R"json({"pipeline":[)json");
+  const auto malformedResult = pipetune::loadDspPipeline(
+      malformed, {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+  if (!check(malformedResult.pipeline == nullptr, "malformed JSON must fail")) {
+    return false;
+  }
+
+  const auto valid =
+      writePreset(directory, "valid.effetune_preset", R"json({"pipeline":[]})json");
+  const auto invalidRate =
+      pipetune::loadDspPipeline(valid, {.sampleRate = 31999.0F, .maxChannels = 2, .maxFrames = 64});
+  const auto invalidChannels =
+      pipetune::loadDspPipeline(valid, {.sampleRate = 48000.0F, .maxChannels = 9, .maxFrames = 64});
+  return check(invalidRate.pipeline == nullptr, "sample rates below 32 kHz must fail") &&
+         check(invalidChannels.pipeline == nullptr, "more than eight channels must fail");
+}
+
+static bool testRuntimeBounds(const std::filesystem::path &directory) {
+  const auto path =
+      writePreset(directory, "bounds.effetune_preset", R"json({"pipeline":[]})json");
+  const auto result =
+      pipetune::loadDspPipeline(path, {.sampleRate = 384000.0F, .maxChannels = 8, .maxFrames = 32});
+  if (!check(result.pipeline != nullptr, result.error)) {
+    return false;
+  }
+  auto samples = std::vector<float>(32, 0.25F);
+  if (!check(result.pipeline->sampleRate() == 384000.0F,
+             "pipeline must report its prepared sample rate") ||
+      !check(result.pipeline->process(samples, 8, 4, 0.0) == pipetune::ProcessStatus::ok,
+             "maximum supported channel/rate configuration must process") ||
+      !check(std::ranges::all_of(samples, [](float value) { return value == 0.25F; }),
+             "an empty pipeline must be transparent")) {
+    return false;
+  }
+  auto oversized = std::vector<float>(8u * 33u, 0.25F);
+  return check(result.pipeline->process(oversized, 8, 33, 0.0) ==
+                   pipetune::ProcessStatus::invalidBuffer,
+               "processing beyond the prepared frame count must fail safely");
+}
+
+static bool testRetainedRecipeRebuild(
+    const std::filesystem::path &directory) {
+  const auto path = writePreset(
+      directory, "retained.effetune_preset",
+      R"json({"pipeline":[{"name":"Volume","enabled":true,"parameters":{"vl":-6},"channel":"A"}]})json");
+  auto loaded = pipetune::loadDspPipeline(
+      path,
+      {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+  if (!check(loaded.pipeline != nullptr, loaded.error)) {
+    return false;
+  }
+  std::filesystem::remove(path);
+  auto rebuilt = pipetune::rebuildDspPipeline(
+      *loaded.pipeline,
+      {.sampleRate = 96000.0F, .maxChannels = 2, .maxFrames = 64});
+  return check(rebuilt.pipeline != nullptr, rebuilt.error) &&
+         check(rebuilt.pipeline->sampleRate() == 96000.0F,
+               "rebuild must use the requested rate") &&
+         check(rebuilt.pipeline->activePluginCount() == 1,
+               "rebuild must retain the preset recipe after file removal");
+}
+
+int main() {
+  const auto directory =
+      std::filesystem::temp_directory_path() /
+      ("pipetune-preset-test-" + std::to_string(static_cast<long long>(getpid())));
+  std::filesystem::create_directories(directory);
+
+  const auto passed =
+      testBypassPipeline() && testCanonicalPreset(directory) &&
+      testLegacyPreset(directory) && testEffeTune24Pipeline(directory) &&
+      testTubeSimulatorLatency(directory) &&
+      testBalanceChannelPairs(directory) &&
+      testRawLegacyPipeline(directory) && testRejectedInputs(directory) &&
+      testRuntimeBounds(directory) && testRetainedRecipeRebuild(directory);
+  std::filesystem::remove_all(directory);
+  return passed ? 0 : 1;
+}

@@ -1,0 +1,576 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: PipeTune GTK\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-07-31 00:00+0900\n"
+"PO-Revision-Date: 2026-07-31 00:00+0900\n"
+"Last-Translator: PipeTune contributors\n"
+"Language-Team: Portuguese\n"
+"Language: pt\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#, brace-format
+msgid "{0}  •  Fallback"
+msgstr "{0}  •  Alternativa"
+
+#, brace-format
+msgid "{0}  •  Load —"
+msgstr "{0}  •  Carga —"
+
+#, brace-format
+msgid "{0}  •  Load {1}%"
+msgstr "{0}  •  Carga {1}%"
+
+#, brace-format
+msgid "{0} — availability not reported"
+msgstr "{0} — disponibilidade não comunicada"
+
+#, brace-format
+msgid "{0} — availability unknown"
+msgstr "{0} — disponibilidade desconhecida"
+
+#, brace-format
+msgid "{0} — available"
+msgstr "{0} — disponível"
+
+#, brace-format
+msgid "{0} — unavailable"
+msgstr "{0} — indisponível"
+
+#, brace-format
+msgid "{0} · {1} kHz · {2}"
+msgstr "{0} · {1} kHz · {2}"
+
+#, brace-format
+msgid "{0} ({1})"
+msgstr "{0} ({1})"
+
+#, brace-format
+msgid "{0} channel"
+msgid_plural "{0} channels"
+msgstr[0] "{0} canal"
+msgstr[1] "{0} canais"
+
+#, brace-format
+msgid "{0} frames/s"
+msgstr "{0} fotogramas/s"
+
+#, brace-format
+msgid "{0} h ago"
+msgstr "há {0} h"
+
+#, brace-format
+msgid "{0} min ago"
+msgstr "há {0} min"
+
+#, brace-format
+msgid "{0} ms ago"
+msgstr "há {0} ms"
+
+#, brace-format
+msgid "{0} s ago"
+msgstr "há {0} s"
+
+#, brace-format
+msgid "{0}; CPU: {1}"
+msgstr "{0}; CPU: {1}"
+
+msgid "32-bit floating-point PCM (planar)"
+msgstr "PCM de vírgula flutuante de 32 bits (planar)"
+
+msgid "Action Log"
+msgstr "Registo de ações"
+
+#, brace-format
+msgid "Action Log ({0})"
+msgstr "Registo de ações ({0})"
+
+msgid "Active plugins"
+msgstr "Plugins ativos"
+
+msgid "Advanced"
+msgstr "Avançado"
+
+msgid "All"
+msgstr "Tudo"
+
+msgid "All settings saved"
+msgstr "Todas as definições guardadas"
+
+msgid "Apply"
+msgstr "Aplicar"
+
+msgid "Automatic"
+msgstr "Automático"
+
+msgid "Automatic — follow PipeWire graph sampling frequency"
+msgstr "Automático — seguir a frequência de amostragem do grafo PipeWire"
+
+msgid "Baseline"
+msgstr "Estado inicial"
+
+msgid "Bypass"
+msgstr "Ignorar"
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Cannot apply UI language"
+msgstr "Não é possível aplicar o idioma da interface"
+
+msgid "Cannot load startup configuration"
+msgstr "Não é possível carregar a configuração de arranque"
+
+msgid "Cannot prepare preset"
+msgstr "Não é possível preparar a predefinição"
+
+msgid "Cannot resolve preset"
+msgstr "Não é possível resolver a predefinição"
+
+msgid "Cannot save settings"
+msgstr "Não é possível guardar as definições"
+
+msgid "Cannot use saved language preference"
+msgstr "Não é possível usar a preferência de idioma guardada"
+
+msgid "Changing DSP backend"
+msgstr "A alterar o motor DSP"
+
+msgid "Changing DSP backend failed"
+msgstr "Falha ao alterar o motor DSP"
+
+msgid "Changing processing mode"
+msgstr "A alterar o modo de processamento"
+
+msgid "Changing processing mode failed"
+msgstr "Falha ao alterar o modo de processamento"
+
+msgid "Changing sampling-frequency policy"
+msgstr "A alterar a política de frequência de amostragem"
+
+msgid "Changing sampling-frequency policy failed"
+msgstr "Falha ao alterar a política de frequência de amostragem"
+
+msgid "Choose a preset before enabling DSP processing"
+msgstr "Escolha uma predefinição antes de ativar o processamento DSP"
+
+msgid "Choose a standard or saved EffeTune preset…"
+msgstr "Escolha uma predefinição EffeTune padrão ou guardada…"
+
+msgid "Choose an EffeTune preset"
+msgstr "Escolha uma predefinição EffeTune"
+
+msgid "Choose bypass, Automatic + Suggest, and Scalar + Auto SIMD."
+msgstr "Escolha Ignorar, Automático + Sugerir e Scalar + SIMD automático."
+
+msgid "Choose the language used by PipeTune GTK."
+msgstr "Escolha o idioma usado pelo PipeTune GTK."
+
+msgid "Clear"
+msgstr "Limpar"
+
+msgid "Close"
+msgstr "Fechar"
+
+msgid "Configuration"
+msgstr "Configuração"
+
+#, brace-format
+msgid "Configured {0}  •  Effective {1}"
+msgstr "Configurado {0}  •  Efetivo {1}"
+
+msgid "Configured backend"
+msgstr "Motor configurado"
+
+msgid "Configured SIMD"
+msgstr "SIMD configurado"
+
+msgid "Connected"
+msgstr "Ligado"
+
+msgid "Connected · changing sampling frequency"
+msgstr "Ligado · a alterar a frequência de amostragem"
+
+msgid "Connected and monitoring"
+msgstr "Ligado e a monitorizar"
+
+msgid "Connected to PipeTune"
+msgstr "Ligado ao PipeTune"
+
+msgid "Connecting"
+msgstr "A ligar"
+
+msgid "Connecting to PipeTune"
+msgstr "A ligar ao PipeTune"
+
+msgid "Connecting to the control service…"
+msgstr "A ligar ao serviço de controlo…"
+
+msgid "Connecting…"
+msgstr "A ligar…"
+
+msgid "Control"
+msgstr "Controlo"
+
+msgid "Control service unavailable"
+msgstr "Serviço de controlo indisponível"
+
+msgid "Control socket unavailable"
+msgstr "Socket de controlo indisponível"
+
+msgid "Copy"
+msgstr "Copiar"
+
+msgid "Custom preset file"
+msgstr "Ficheiro de predefinição personalizado"
+
+msgid "Defaults are being applied live; use Apply to save them"
+msgstr "Os valores padrão estão a ser aplicados em direto; use Aplicar para os guardar"
+
+msgid "Defaults selected"
+msgstr "Valores padrão selecionados"
+
+msgid "Disconnected"
+msgstr "Desligado"
+
+msgid "Disconnected · settings are read-only"
+msgstr "Desligado · as definições são só de leitura"
+
+msgid "DSP"
+msgstr "DSP"
+
+msgid "DSP / Performance"
+msgstr "DSP / Desempenho"
+
+msgid "DSP backend"
+msgstr "Motor DSP"
+
+msgid "DSP backend changed"
+msgstr "Motor DSP alterado"
+
+msgid "DSP Engine"
+msgstr "Motor DSP"
+
+msgid "DSP processing load; graph capped at 100%."
+msgstr "Carga de processamento DSP; gráfico limitado a 100%."
+
+msgid "DSP sampling frequency"
+msgstr "Frequência de amostragem DSP"
+
+#, brace-format
+msgid "DSP sampling frequency {0}  •  PipeWire graph sampling frequency {1}"
+msgstr "Frequência de amostragem DSP {0}  •  Frequência de amostragem do grafo PipeWire {1}"
+
+msgid "Effective backend"
+msgstr "Motor efetivo"
+
+msgid "Effective backend unavailable"
+msgstr "Motor efetivo indisponível"
+
+msgid "EffeTune DSP control"
+msgstr "Controlo DSP EffeTune"
+
+msgid "EffeTune presets"
+msgstr "Predefinições EffeTune"
+
+msgid "Enable DSP processing"
+msgstr "Ativar o processamento DSP"
+
+msgid "English"
+msgstr "Inglês"
+
+msgid "Errors"
+msgstr "Erros"
+
+msgid "Finishing rollback…"
+msgstr "A concluir a reversão…"
+
+msgid "Fixed"
+msgstr "Fixa"
+
+msgid "Fixed sampling frequency"
+msgstr "Frequência de amostragem fixa"
+
+msgid "Force"
+msgstr "Forçar"
+
+msgid "Force — request the fixed graph sampling frequency"
+msgstr "Forçar — pedir a frequência de amostragem fixa do grafo"
+
+msgid "Input / Sampling Frequencies"
+msgstr "Entrada / Frequências de amostragem"
+
+msgid "Input channels"
+msgstr "Canais de entrada"
+
+msgid "Input format"
+msgstr "Formato de entrada"
+
+msgid "Input sampling frequency"
+msgstr "Frequência de amostragem de entrada"
+
+msgid "Language"
+msgstr "Idioma"
+
+msgid "Last input"
+msgstr "Última entrada"
+
+msgid "Later"
+msgstr "Mais tarde"
+
+msgid "Live Configuration"
+msgstr "Configuração em direto"
+
+msgid "Live enforcement"
+msgstr "Aplicação em direto"
+
+msgid "Live fixed sampling frequency"
+msgstr "Frequência de amostragem fixa em direto"
+
+msgid "Live preview active · changes are not saved"
+msgstr "Pré-visualização em direto ativa · as alterações não estão guardadas"
+
+msgid "Live preview failed · adjust a setting to retry"
+msgstr "Falha na pré-visualização em direto · ajuste uma definição para tentar novamente"
+
+msgid "Live sampling-frequency mode"
+msgstr "Modo de frequência de amostragem em direto"
+
+msgid "Live settings changed elsewhere · reopen this dialog"
+msgstr "As definições em direto mudaram noutro local · reabra esta caixa de diálogo"
+
+msgid "Live settings changed externally"
+msgstr "As definições em direto mudaram externamente"
+
+msgid "Live settings match the saved configuration"
+msgstr "As definições em direto correspondem à configuração guardada"
+
+msgid "Live status subscription established"
+msgstr "Subscrição do estado em direto estabelecida"
+
+msgid "Load"
+msgstr "Carga"
+
+msgid "Measured frame rate"
+msgstr "Taxa de fotogramas medida"
+
+msgid "Native backend"
+msgstr "Motor nativo"
+
+msgid "Never"
+msgstr "Nunca"
+
+msgid "None"
+msgstr "Nenhum"
+
+msgid "Open PipeTune"
+msgstr "Abrir o PipeTune"
+
+#, brace-format
+msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
+msgstr "Sobrecarga {0}  •  Subcarga {1}  •  Processamento {2}"
+
+msgid "Overrun frames"
+msgstr "Fotogramas de sobrecarga"
+
+msgid "PCM data rate"
+msgstr "Taxa de dados PCM"
+
+msgid "Pending dialog settings will be reapplied"
+msgstr "As definições pendentes da caixa de diálogo serão reaplicadas"
+
+msgid "PipeTune disconnected"
+msgstr "PipeTune desligado"
+
+msgid "PipeTune reconnected"
+msgstr "PipeTune ligado novamente"
+
+msgid "PipeTune setup completed"
+msgstr "Configuração do PipeTune concluída"
+
+msgid "PipeTune setup failed"
+msgstr "Falha na configuração do PipeTune"
+
+msgid "PipeTune Status"
+msgstr "Estado do PipeTune"
+
+#, brace-format
+msgid "PipeTune: {0}"
+msgstr "PipeTune: {0}"
+
+msgid "PipeTune: active"
+msgstr "PipeTune: ativo"
+
+msgid "PipeTune: attention required"
+msgstr "PipeTune: requer atenção"
+
+msgid "PipeTune: connecting"
+msgstr "PipeTune: a ligar"
+
+msgid "PipeTune: disconnected"
+msgstr "PipeTune: desligado"
+
+msgid "PipeWire enforcement"
+msgstr "Aplicação PipeWire"
+
+msgid "PipeWire graph sampling frequency"
+msgstr "Frequência de amostragem do grafo PipeWire"
+
+msgid "Preset"
+msgstr "Predefinição"
+
+msgid "Preset library"
+msgstr "Biblioteca de predefinições"
+
+msgid "Preset required"
+msgstr "Predefinição necessária"
+
+msgid "Preset warnings"
+msgstr "Avisos da predefinição"
+
+msgid "Processing"
+msgstr "Processamento"
+
+msgid "Processing errors"
+msgstr "Erros de processamento"
+
+msgid "Processing mode changed"
+msgstr "Modo de processamento alterado"
+
+msgid "Processing time"
+msgstr "Tempo de processamento"
+
+msgid "Quit"
+msgstr "Sair"
+
+msgid "Restart now"
+msgstr "Reiniciar agora"
+
+msgid "Restart PipeTune GTK to use the selected language."
+msgstr "Reinicie o PipeTune GTK para usar o idioma selecionado."
+
+msgid "Restart to apply UI language?"
+msgstr "Reiniciar para aplicar o idioma da interface?"
+
+msgid "Restore defaults"
+msgstr "Restaurar valores padrão"
+
+msgid "Restore Defaults"
+msgstr "Restaurar valores padrão"
+
+msgid "Restoring the live settings captured when the dialog opened"
+msgstr "A restaurar as definições em direto capturadas ao abrir a caixa de diálogo"
+
+msgid "Restoring the previous live settings…"
+msgstr "A restaurar as definições em direto anteriores…"
+
+msgid "Rollback requested"
+msgstr "Reversão pedida"
+
+msgid "Sampling frequencies unavailable"
+msgstr "Frequências de amostragem indisponíveis"
+
+msgid "Sampling frequency"
+msgstr "Frequência de amostragem"
+
+msgid "Sampling Frequency"
+msgstr "Frequência de amostragem"
+
+msgid "Sampling-frequency enforcement"
+msgstr "Aplicação da frequência de amostragem"
+
+msgid "Sampling-frequency mode"
+msgstr "Modo de frequência de amostragem"
+
+msgid "Sampling-frequency policy changed"
+msgstr "Política de frequência de amostragem alterada"
+
+msgid "Saved Configuration"
+msgstr "Configuração guardada"
+
+#, brace-format
+msgid "Saved in EffeTune · {0}"
+msgstr "Guardado no EffeTune · {0}"
+
+msgid "Saving all settings"
+msgstr "A guardar todas as definições"
+
+msgid "Scalar"
+msgstr "Scalar"
+
+msgid "Setting up PipeTune for this user…"
+msgstr "Configurando o PipeTune para este usuário…"
+
+msgid "Settings updated"
+msgstr "Definições atualizadas"
+
+msgid "SIMD variant"
+msgstr "Variante SIMD"
+
+msgid "Some preset sources are unavailable"
+msgstr "Algumas fontes de predefinições estão indisponíveis"
+
+#, brace-format
+msgid "Standard · {0} · {1}"
+msgstr "Padrão · {0} · {1}"
+
+msgid "Startup configuration path unavailable"
+msgstr "Caminho da configuração de arranque indisponível"
+
+msgid "Suggest"
+msgstr "Sugerir"
+
+msgid "Suggest — let PipeWire choose the graph sampling frequency"
+msgstr "Sugerir — deixar o PipeWire escolher a frequência de amostragem do grafo"
+
+#, brace-format
+msgid "Switching — {0}"
+msgstr "A mudar — {0}"
+
+msgid "System"
+msgstr "Sistema"
+
+msgid "System default"
+msgstr "Padrão do sistema"
+
+msgid "The UI language change will take effect after PipeTune GTK restarts."
+msgstr "A alteração do idioma da interface terá efeito depois de reiniciar o PipeTune GTK."
+
+msgid "Turn off to pass audio through without an EffeTune preset."
+msgstr "Desative para deixar passar o áudio sem uma predefinição EffeTune."
+
+msgid "unavailable"
+msgstr "indisponível"
+
+msgid "Unavailable"
+msgstr "Indisponível"
+
+msgid "Underrun frames"
+msgstr "Fotogramas de subcarga"
+
+msgid "unknown"
+msgstr "desconhecido"
+
+msgid "Unknown"
+msgstr "Desconhecido"
+
+msgid "Unknown sample format"
+msgstr "Formato de amostra desconhecido"
+
+msgid "Updating settings"
+msgstr "A atualizar as definições"
+
+msgid "Updating settings failed"
+msgstr "Falha ao atualizar as definições"
+
+msgid "Versions"
+msgstr "Versões"
+
+msgid "Waiting for live PipeTune state…"
+msgstr "À espera do estado em direto do PipeTune…"
+
+msgid "Warnings"
+msgstr "Avisos"

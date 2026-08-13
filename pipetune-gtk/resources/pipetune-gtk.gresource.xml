@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/net/kekyo/pipetune-gtk/icons">
+    <file alias="pipetune.svg">packaging/icons/hicolor/scalable/apps/pipetune.svg</file>
+  </gresource>
+  <gresource prefix="/net/kekyo/pipetune-gtk/ui">
+    <file alias="main-window.ui" compressed="true">resources/main-window.ui</file>
+    <file alias="style.css" compressed="true">resources/style.css</file>
+  </gresource>
+</gresources>

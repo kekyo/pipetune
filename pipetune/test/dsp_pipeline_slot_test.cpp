@@ -1,0 +1,284 @@
+/* pipetune - Engine and User Interface for Applied EffeTune DSP on a Linux Desktop
+ * Copyright (c) Kouji Matsui. (@kekyo@mi.kekyo.net)
+ * Under MIT.
+ * https://github.com/kekyo/pipetune/
+ */
+#include "dsp_pipeline_slot.h"
+
+#include "pipetune/dsp_backend.h"
+#include "pipetune/dsp_pipeline.h"
+
+#include <atomic>
+#include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <unistd.h>
+#include <vector>
+
+static bool check(bool condition, std::string_view message) {
+  if (!condition) {
+    std::cerr << message << '\n';
+  }
+  return condition;
+}
+
+static std::filesystem::path writeVolumePreset(
+    const std::filesystem::path &directory, std::string_view name,
+    int decibels) {
+  const auto path = directory / name;
+  auto stream = std::ofstream(path, std::ios::binary);
+  stream << R"json({"pipeline":[{"name":"Volume","enabled":true,"parameters":{"vl":)json"
+         << decibels << R"json(},"channel":"A"}]})json";
+  return path;
+}
+
+static std::unique_ptr<pipetune::DspPipeline> loadPipeline(
+    const std::filesystem::path &path) {
+  auto loaded = pipetune::loadDspPipeline(
+      path, {.sampleRate = 48000.0F, .maxChannels = 1, .maxFrames = 32});
+  if (loaded.pipeline == nullptr) {
+    std::cerr << loaded.error << '\n';
+  }
+  return std::move(loaded.pipeline);
+}
+
+static bool approximately(float actual, float expected) {
+  return std::abs(actual - expected) <= 1.0e-6F;
+}
+
+static bool testReplacementChangesPcm(
+    const std::filesystem::path &positivePath,
+    const std::filesystem::path &negativePath) {
+  auto initial = loadPipeline(positivePath);
+  auto replacement = loadPipeline(negativePath);
+  if (initial == nullptr || replacement == nullptr) {
+    return false;
+  }
+  auto slot = pipetune::DspPipelineSlot(std::move(initial));
+  auto samples = std::vector<float>{0.25F};
+  const auto initialResult =
+      slot.processWithGeneration(samples, 1, 1, 0.0);
+  if (!check(initialResult.status == pipetune::ProcessStatus::ok,
+             "initial slot processing failed") ||
+      !check(initialResult.generation == 0,
+             "initial pipeline generation must be zero") ||
+      !check(approximately(samples[0],
+                           0.25F * std::pow(10.0F, 6.0F / 20.0F)),
+             "initial slot PCM differs") ||
+      !check(slot.performanceCounters().processedFrames == 1,
+             "initial DSP frame count differs") ||
+      !check(slot.performanceCounters().processingNanoseconds > 0,
+             "initial DSP processing time was not measured")) {
+    return false;
+  }
+
+  const auto initialCounters = slot.performanceCounters();
+  slot.replace(std::move(replacement));
+  samples[0] = 0.25F;
+  const auto replacementResult =
+      slot.processWithGeneration(samples, 1, 1, 0.1);
+  return check(replacementResult.status == pipetune::ProcessStatus::ok,
+               "replacement slot processing failed") &&
+         check(replacementResult.generation == 1,
+               "replacement pipeline generation must advance") &&
+         check(approximately(samples[0],
+                             0.25F * std::pow(10.0F, -6.0F / 20.0F)),
+               "replacement slot PCM differs") &&
+         check(slot.activePluginCount() == 1,
+               "slot must report replacement plugin count") &&
+         check(slot.performanceCounters().processedFrames == 2,
+               "DSP frame count must survive pipeline replacement") &&
+         check(slot.performanceCounters().processingNanoseconds >=
+                   initialCounters.processingNanoseconds,
+               "DSP processing time must survive pipeline replacement");
+}
+
+static bool testBypassDoesNotReportDspWork() {
+  auto created = pipetune::createBypassDspPipeline(
+      {.sampleRate = 48000.0F, .maxChannels = 1, .maxFrames = 32});
+  if (!check(created.pipeline != nullptr, created.error)) {
+    return false;
+  }
+  auto slot = pipetune::DspPipelineSlot(std::move(created.pipeline));
+  auto samples = std::vector<float>(32, 0.25F);
+  if (!check(slot.process(samples, 1, 32, 0.0) ==
+                 pipetune::ProcessStatus::ok,
+             "bypass slot processing failed")) {
+    return false;
+  }
+  const auto counters = slot.performanceCounters();
+  return check(counters.processedFrames == 0 &&
+                   counters.processingNanoseconds == 0,
+               "bypass must not be counted as EffeTune DSP work");
+}
+
+static bool testConcurrentReplacementProducesOnlyCompletePipelines(
+    const std::filesystem::path &positivePath,
+    const std::filesystem::path &negativePath) {
+  auto initial = loadPipeline(positivePath);
+  auto replacement = loadPipeline(negativePath);
+  if (initial == nullptr || replacement == nullptr) {
+    return false;
+  }
+  auto slot = pipetune::DspPipelineSlot(std::move(initial));
+  auto started = std::atomic<bool>{false};
+  auto replaced = std::atomic<bool>{false};
+  auto observedReplacement = std::atomic<bool>{false};
+  auto failed = std::atomic<bool>{false};
+  const auto positive = 0.25F * std::pow(10.0F, 6.0F / 20.0F);
+  const auto negative = 0.25F * std::pow(10.0F, -6.0F / 20.0F);
+
+  auto processor = std::thread([&] {
+    started.store(true, std::memory_order_release);
+    for (auto iteration = std::uint32_t{0}; iteration < 1000000;
+         ++iteration) {
+      auto samples = std::vector<float>{0.25F};
+      const auto result = slot.processWithGeneration(
+          samples, 1, 1,
+          static_cast<double>(iteration) / 48000.0);
+      const auto generationMatches =
+          (result.generation == 0 &&
+           approximately(samples[0], positive)) ||
+          (result.generation == 1 &&
+           approximately(samples[0], negative));
+      if (result.status != pipetune::ProcessStatus::ok ||
+          !generationMatches) {
+        failed.store(true, std::memory_order_relaxed);
+        break;
+      }
+      if (replaced.load(std::memory_order_acquire) &&
+          approximately(samples[0], negative)) {
+        observedReplacement.store(true, std::memory_order_release);
+        break;
+      }
+    }
+  });
+
+  while (!started.load(std::memory_order_acquire)) {
+    std::this_thread::yield();
+  }
+  slot.replace(std::move(replacement));
+  replaced.store(true, std::memory_order_release);
+  processor.join();
+  return check(!failed.load(std::memory_order_relaxed),
+               "concurrent replacement produced invalid PCM") &&
+         check(observedReplacement.load(std::memory_order_acquire),
+               "processor did not observe the replacement pipeline");
+}
+
+static bool testStagedReplacementCanCommitAndRollback(
+    const std::filesystem::path &positivePath,
+    const std::filesystem::path &negativePath) {
+  auto initial = loadPipeline(positivePath);
+  auto replacement = loadPipeline(negativePath);
+  if (initial == nullptr || replacement == nullptr) {
+    return false;
+  }
+  auto slot = pipetune::DspPipelineSlot(std::move(initial));
+  slot.stageReplacement(std::move(replacement));
+  auto samples = std::vector<float>{0.25F};
+  if (!check(slot.hasStagedReplacement(),
+             "staged replacement must retain rollback state") ||
+      !check(slot.process(samples, 1, 1, 0.0) ==
+                 pipetune::ProcessStatus::ok &&
+                 approximately(samples[0],
+                               0.25F * std::pow(10.0F, -6.0F / 20.0F)),
+             "staged replacement must become active")) {
+    return false;
+  }
+
+  slot.rollbackStaged();
+  samples[0] = 0.25F;
+  if (!check(!slot.hasStagedReplacement(),
+             "rollback must close the transaction") ||
+      !check(slot.process(samples, 1, 1, 0.1) ==
+                 pipetune::ProcessStatus::ok &&
+                 approximately(samples[0],
+                               0.25F * std::pow(10.0F, 6.0F / 20.0F)),
+             "rollback must restore the exact previous pipeline")) {
+    return false;
+  }
+
+  auto rebuilt = slot.rebuildActive(
+      {.sampleRate = 96000.0F, .maxChannels = 1, .maxFrames = 32});
+  if (!check(rebuilt.pipeline != nullptr, rebuilt.error) ||
+      !check(rebuilt.pipeline->sampleRate() == 96000.0F,
+             "slot rebuild must use its retained recipe")) {
+    return false;
+  }
+  slot.stageReplacement(std::move(rebuilt.pipeline));
+  slot.commitStaged();
+  return check(!slot.hasStagedReplacement(),
+               "commit must release rollback state");
+}
+
+static bool testBackendReplacementPreservesCounters(
+    const std::filesystem::path &presetPath) {
+  const auto backends = pipetune::discoverDspBackends();
+  if (!check(backends.scalar.backend != nullptr, backends.scalar.error) ||
+      !check(backends.simd.backend != nullptr, backends.simd.error)) {
+    return false;
+  }
+  auto initial = pipetune::loadDspPipeline(
+      presetPath,
+      {.sampleRate = 48000.0F, .maxChannels = 1, .maxFrames = 32},
+      backends.scalar.backend);
+  if (!check(initial.pipeline != nullptr, initial.error)) {
+    return false;
+  }
+  auto slot = pipetune::DspPipelineSlot(std::move(initial.pipeline));
+  auto samples = std::vector<float>{0.25F};
+  if (!check(slot.process(samples, 1, 1, 0.0) ==
+                 pipetune::ProcessStatus::ok,
+             "scalar pipeline processing failed before backend switch")) {
+    return false;
+  }
+  const auto before = slot.performanceCounters();
+  auto replacement = slot.rebuildActive(
+      {.sampleRate = 48000.0F, .maxChannels = 1, .maxFrames = 32},
+      backends.simd.backend);
+  if (!check(replacement.pipeline != nullptr, replacement.error) ||
+      !check(replacement.pipeline->backendKind() ==
+                 pipetune::DspBackendKind::simd,
+             "backend rebuild must use SIMD")) {
+    return false;
+  }
+  slot.replace(std::move(replacement.pipeline));
+  samples[0] = 0.25F;
+  return check(slot.backendKind() == pipetune::DspBackendKind::simd,
+               "slot must expose its effective replacement backend") &&
+         check(slot.process(samples, 1, 1, 0.1) ==
+                   pipetune::ProcessStatus::ok,
+               "SIMD pipeline processing failed after backend switch") &&
+         check(slot.performanceCounters().processedFrames ==
+                   before.processedFrames + 1,
+               "backend switch must preserve cumulative DSP frames") &&
+         check(slot.performanceCounters().processingNanoseconds >=
+                   before.processingNanoseconds,
+               "backend switch must preserve cumulative DSP time");
+}
+
+int main() {
+  const auto directory =
+      std::filesystem::temp_directory_path() /
+      ("pipetune-slot-test-" + std::to_string(static_cast<long long>(getpid())));
+  std::filesystem::create_directories(directory);
+  const auto positive =
+      writeVolumePreset(directory, "positive.effetune_preset", 6);
+  const auto negative =
+      writeVolumePreset(directory, "negative.effetune_preset", -6);
+  const auto passed = testReplacementChangesPcm(positive, negative) &&
+                      testBypassDoesNotReportDspWork() &&
+                      testConcurrentReplacementProducesOnlyCompletePipelines(
+                          positive, negative) &&
+                      testStagedReplacementCanCommitAndRollback(
+                          positive, negative) &&
+                      testBackendReplacementPreservesCounters(positive);
+  std::filesystem::remove_all(directory);
+  return passed ? 0 : 1;
+}

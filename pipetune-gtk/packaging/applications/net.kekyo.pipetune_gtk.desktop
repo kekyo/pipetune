@@ -1,0 +1,17 @@
+[Desktop Entry]
+Version=1.5
+Type=Application
+Name=PipeTune
+Name[ja]=PipeTune
+GenericName=Audio DSP Control
+GenericName[ja]=オーディオDSPコントロール
+Comment=Control PipeTune audio processing
+Comment[ja]=PipeTuneのオーディオ処理を制御します
+TryExec=pipetune-gtk
+Exec=pipetune-gtk
+Icon=pipetune
+Terminal=false
+Categories=AudioVideo;Audio;Settings;
+StartupNotify=true
+StartupWMClass=Pipetune-gtk
+X-GNOME-UsesNotifications=true
