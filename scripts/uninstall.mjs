@@ -1,5 +1,6 @@
 import {
   existsSync,
+  lstatSync,
   mkdtempSync,
   readFileSync,
   renameSync,
@@ -76,24 +77,37 @@ const reconstructManifest = (
       fail("CMake created an empty install manifest");
     }
     const targetRoot =
-      destinationRoot.length === 0
-        ? parse(stagingRoot).root
-        : resolve(destinationRoot);
-    const installedPaths = stagedPaths.map((stagedPath) => {
-      if (!isAbsolute(stagedPath)) {
-        fail(`CMake manifest contains a relative staged path: ${stagedPath}`);
+      destinationRoot.length === 0 ? undefined : resolve(destinationRoot);
+    const installedPaths = stagedPaths.map((installedPath) => {
+      // CMake copies below DESTDIR but records paths relative to the target root.
+      if (!isAbsolute(installedPath)) {
+        fail(`CMake manifest contains a relative path: ${installedPath}`);
       }
-      const normalizedStagedPath = resolve(stagedPath);
-      const relativePath = relative(stagingRoot, normalizedStagedPath);
+      const normalizedInstalledPath = resolve(installedPath);
+      const relativePath = relative(
+        parse(normalizedInstalledPath).root,
+        normalizedInstalledPath,
+      );
       if (
         relativePath.length === 0 ||
         relativePath === ".." ||
         relativePath.startsWith(`..${sep}`) ||
         isAbsolute(relativePath)
       ) {
-        fail(`Staged install path escaped its temporary root: ${stagedPath}`);
+        fail(`CMake manifest contains an invalid path: ${installedPath}`);
       }
-      return join(targetRoot, relativePath);
+      const stagedPath = join(stagingRoot, relativePath);
+      try {
+        lstatSync(stagedPath);
+      } catch (error) {
+        if (error?.code === "ENOENT") {
+          fail(`CMake did not stage its manifest entry: ${installedPath}`);
+        }
+        throw error;
+      }
+      return targetRoot === undefined
+        ? normalizedInstalledPath
+        : join(targetRoot, relativePath);
     });
     writeFileSync(temporaryManifest, `${installedPaths.join("\n")}\n`);
     renameSync(temporaryManifest, manifestPath);

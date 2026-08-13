@@ -66,7 +66,10 @@ if [ -n "$PIPETUNE_TEST_RECONSTRUCT_MANIFEST" ] && [ -n "\${DESTDIR:-}" ]; then
   mkdir -p "$(dirname "$executable")" "$(dirname "$icon")"
   printf 'staged pipetune\\n' >"$executable"
   printf 'staged icon\\n' >"$icon"
-  printf '%s\\n%s\\n' "$executable" "$icon" >"$PIPETUNE_TEST_RECONSTRUCT_MANIFEST"
+  printf '%s\\n%s\\n' \
+    "$PIPETUNE_TEST_RECONSTRUCT_PREFIX/bin/pipetune" \
+    "$PIPETUNE_TEST_RECONSTRUCT_PREFIX/share/PipeTune icons/pipetune.svg" \
+    >"$PIPETUNE_TEST_RECONSTRUCT_MANIFEST"
 fi
 `,
   );
