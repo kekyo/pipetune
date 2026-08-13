@@ -1,3 +1,8 @@
+/* pipetune - Engine and User Interface for Applied EffeTune DSP on a Linux Desktop
+ * Copyright (c) Kouji Matsui. (@kekyo@mi.kekyo.net)
+ * Under MIT.
+ * https://github.com/kekyo/pipetune/
+ */
 #ifndef PIPETUNE_ACTIVE_PRESET_FILE_MONITOR_H
 #define PIPETUNE_ACTIVE_PRESET_FILE_MONITOR_H
 

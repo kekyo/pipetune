@@ -31,4 +31,11 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}"
       "${PIPETUNE_PACKAGE_MAKE_EXECUTABLE}")
   set_tests_properties(pipetune_makefile_install PROPERTIES TIMEOUT 10)
+  add_test(
+    NAME pipetune_source_license_headers
+    COMMAND
+      "${PIPETUNE_PACKAGE_NODE_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/test/source-license-headers.mjs"
+      "${CMAKE_CURRENT_SOURCE_DIR}")
+  set_tests_properties(pipetune_source_license_headers PROPERTIES TIMEOUT 10)
 endif()
