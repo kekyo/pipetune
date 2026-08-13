@@ -35,7 +35,7 @@ struct PipeWirePipelineOptions {
   std::string initialConfigurationError;
   /** User-only control socket path, or empty to disable live control. */
   std::filesystem::path controlSocketPath;
-  /** Initial filter and DSP rate in hertz. */
+  /** Initial filter and DSP rate in hertz; fixed policies require fixedRate. */
   std::uint32_t dspSampleRate;
   /** Initial automatic/fixed graph-rate policy. */
   SampleRatePolicy ratePolicy;
@@ -93,10 +93,12 @@ struct PipeWireRunResult {
  * Publishes a WirePlumber-recognized input/output filter node pair.
  *
  * The supplied DSP pipeline must have been prepared for the same sample rate,
- * at least channelCount channels, and at least maxFrames frames. Ownership is
- * retained for the complete run so control requests can replace the pipeline.
- * WirePlumber owns target selection and volume policy. This function blocks
- * according to mode and does not allocate in PipeWire process callbacks.
+ * at least channelCount channels, and at least maxFrames frames. A fixed rate
+ * policy additionally requires dspSampleRate to equal ratePolicy.fixedRate.
+ * Ownership is retained for the complete run so control requests can replace
+ * the pipeline. WirePlumber owns target selection and volume policy. This
+ * function blocks according to mode and does not allocate in PipeWire process
+ * callbacks.
  *
  * @param pipeline Owned prepared native EffeTune pipeline.
  * @param options PipeWire stream and bridge configuration.

@@ -3,6 +3,8 @@
 
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
+#include "pipetune/startup_config.h"
+#include "startup_pipeline.h"
 
 #include <yyjson.h>
 
@@ -57,6 +59,37 @@ static void reportReadyToParent(void *userData) {
   do {
     result = write(descriptor, &marker, 1);
   } while (result < 0 && errno == EINTR);
+}
+
+static bool testMismatchedFixedDspRateIsRejected() {
+  auto created = pipetune::createBypassDspPipeline(
+      {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+  if (!check(created.pipeline != nullptr, created.error)) {
+    return false;
+  }
+  const auto result = pipetune::runPipeWirePipeline(
+      std::move(created.pipeline),
+      {.filterName = "pipetune_invalid_fixed_rate_test",
+       .filterDescription = "PipeTune invalid fixed-rate test",
+       .initialPresetPath = {},
+       .initialConfigurationError = {},
+       .controlSocketPath = {},
+       .dspSampleRate = 48000,
+       .ratePolicy =
+           {.mode = pipetune::SampleRateMode::fixed,
+            .fixedRate = 96000,
+            .enforcement =
+                pipetune::SampleRateEnforcement::force},
+       .channelCount = 2,
+       .maxFrames = 64,
+       .ringCapacityFrames = 64,
+       .readyCallback = nullptr,
+       .readyUserData = nullptr},
+      pipetune::PipeWireRunMode::untilReady);
+  return check(!result.success &&
+                   result.error ==
+                       "fixed DSP sample rate must match the configured rate",
+               "a fixed policy must reject a different initial DSP rate");
 }
 
 static bool responseHasLivePreset(std::string_view response,
@@ -141,7 +174,9 @@ static bool testOrderlySignalShutdown(
     std::string_view processId,
     const std::filesystem::path &initialPresetPath,
     const std::filesystem::path &replacementPresetPath,
-    const std::filesystem::path &socketPath) {
+    const std::filesystem::path &socketPath,
+    std::uint32_t initialDspSampleRate,
+    pipetune::SampleRatePolicy initialRatePolicy) {
   auto descriptors = std::array<int, 2>{-1, -1};
   if (!check(pipe(descriptors.data()) == 0,
              "cannot create readiness pipe for signal test")) {
@@ -163,12 +198,8 @@ static bool testOrderlySignalShutdown(
          .initialPresetPath = initialPresetPath,
          .initialConfigurationError = {},
          .controlSocketPath = socketPath,
-         .dspSampleRate = 48000,
-         .ratePolicy =
-             {.mode = pipetune::SampleRateMode::fixed,
-              .fixedRate = 48000,
-              .enforcement =
-                  pipetune::SampleRateEnforcement::suggest},
+         .dspSampleRate = initialDspSampleRate,
+         .ratePolicy = initialRatePolicy,
          .channelCount = 2,
          .maxFrames = 8192,
          .ringCapacityFrames = 16384,
@@ -204,9 +235,15 @@ static bool testOrderlySignalShutdown(
              "initial status request failed") ||
       !check(parsedStatus.valid, parsedStatus.error) ||
       !check(parsedStatus.status.inputSampleFormat == "F32P" &&
-                 parsedStatus.status.inputSampleRate == 48000 &&
-                 parsedStatus.status.inputChannelCount == 2,
-             "initial status does not report the negotiated input format")) {
+                 parsedStatus.status.inputSampleRate ==
+                     initialDspSampleRate &&
+                 parsedStatus.status.dspSampleRate ==
+                     initialDspSampleRate &&
+                 parsedStatus.status.inputChannelCount == 2 &&
+                 parsedStatus.status.configuredRatePolicy ==
+                     initialRatePolicy &&
+                 !parsedStatus.status.rateTransitioning,
+             "fixed-rate startup does not report its configured DSP format")) {
     kill(child, SIGTERM);
     auto childStatus = 0;
     waitpid(child, &childStatus, 0);
@@ -424,6 +461,9 @@ static bool testOrderlySignalShutdown(
 }
 
 int main() {
+  if (!testMismatchedFixedDspRateIsRejected()) {
+    return 1;
+  }
   if (!pipeWireSessionIsAvailable()) {
     std::cout << "PipeWire session socket is unavailable; skipping integration test\n";
     return 77;
@@ -448,17 +488,39 @@ int main() {
     ]})json";
   }
   const auto socketPath = directory / "control.sock";
-
-  auto signalPipeline = pipetune::loadDspPipeline(
-      presetPath, {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 8192});
-  if (!check(signalPipeline.pipeline != nullptr, signalPipeline.error)) {
+  const auto configPath = directory / "environment";
+  const auto startupRatePolicy = pipetune::SampleRatePolicy{
+      .mode = pipetune::SampleRateMode::fixed,
+      .fixedRate = 192000,
+      .enforcement = pipetune::SampleRateEnforcement::suggest};
+  const auto savedConfig = pipetune::saveStartupConfig(
+      configPath,
+      {.presetFound = true,
+       .presetPath = presetPath,
+       .ratePolicy = startupRatePolicy,
+       .dspBackend = pipetune::DspBackendKind::scalar,
+       .dspSimdVariant = pipetune::DspSimdVariant::automatic});
+  if (!check(savedConfig.empty(), savedConfig)) {
     std::filesystem::remove_all(directory);
     return 1;
   }
 
+  auto signalPipeline = pipetune::prepareStartupPipeline(
+      configPath,
+      {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 8192});
+  if (!check(signalPipeline.pipeline != nullptr, signalPipeline.error) ||
+      !check(signalPipeline.pipeline->sampleRate() == 192000.0F,
+             "fixed-rate startup did not prepare the configured DSP rate")) {
+    std::filesystem::remove_all(directory);
+    return 1;
+  }
+  const auto initialDspSampleRate = static_cast<std::uint32_t>(
+      signalPipeline.pipeline->sampleRate());
+
   if (!testOrderlySignalShutdown(
           std::move(signalPipeline.pipeline), processId, presetPath,
-          replacementPresetPath, socketPath)) {
+          replacementPresetPath, socketPath, initialDspSampleRate,
+          signalPipeline.ratePolicy)) {
     std::filesystem::remove_all(directory);
     return 1;
   }

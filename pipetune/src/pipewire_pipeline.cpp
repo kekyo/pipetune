@@ -1782,6 +1782,10 @@ static std::string validateOptions(const DspPipeline &pipeline,
   if (!sampleRatePolicyIsValid(options.ratePolicy)) {
     return "sample-rate policy is invalid";
   }
+  if (options.ratePolicy.mode == SampleRateMode::fixed &&
+      options.dspSampleRate != options.ratePolicy.fixedRate) {
+    return "fixed DSP sample rate must match the configured rate";
+  }
   if (options.channelCount == 0 || options.channelCount > 8) {
     return "PipeWire channel count must be between one and eight";
   }

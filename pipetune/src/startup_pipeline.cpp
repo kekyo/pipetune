@@ -7,6 +7,16 @@
 
 namespace pipetune {
 
+static PipelineBuildOptions startupBuildOptions(
+    const PipelineBuildOptions &options,
+    const SampleRatePolicy &ratePolicy) {
+  auto resolved = options;
+  if (ratePolicy.mode == SampleRateMode::fixed) {
+    resolved.sampleRate = static_cast<float>(ratePolicy.fixedRate);
+  }
+  return resolved;
+}
+
 static StartupPipelineResult
 prepareBypass(const PipelineBuildOptions &options,
               SampleRatePolicy ratePolicy, std::string configurationError,
@@ -70,24 +80,26 @@ prepareStartupPipeline(const std::filesystem::path &configPath,
                          std::move(backends), selection);
   }
   const auto &config = configured.config;
+  const auto optionsForRate =
+      startupBuildOptions(options, config.ratePolicy);
   const auto selection =
       selectDspBackend(config.dspBackend, config.dspSimdVariant, backends);
   if (!config.presetFound) {
-    return prepareBypass(options, config.ratePolicy, {}, std::move(backends),
-                         selection);
+    return prepareBypass(optionsForRate, config.ratePolicy, {},
+                         std::move(backends), selection);
   }
   if (selection.effectiveBackend == nullptr) {
     return prepareBypass(
-        options, config.ratePolicy,
+        optionsForRate, config.ratePolicy,
         "cannot load configured preset: " + selection.error,
         std::move(backends), selection);
   }
 
-  auto loaded = loadDspPipeline(config.presetPath, options,
+  auto loaded = loadDspPipeline(config.presetPath, optionsForRate,
                                 selection.effectiveBackend);
   if (loaded.pipeline == nullptr) {
     return prepareBypass(
-        options, config.ratePolicy,
+        optionsForRate, config.ratePolicy,
         "cannot load configured preset: " + loaded.error,
         std::move(backends), selection);
   }

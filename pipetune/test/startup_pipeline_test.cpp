@@ -43,6 +43,9 @@ static bool testIntentionalBypass(const std::filesystem::path &configPath) {
                      .enforcement =
                          pipetune::SampleRateEnforcement::force},
              "startup rate policy must be returned in bypass mode") ||
+      !check(prepared.pipeline->sampleRate() == 384000.0F,
+             "fixed-rate startup bypass must be prepared at the configured "
+             "DSP rate") ||
       !check(prepared.pipeline->activePluginCount() == 0,
              "startup bypass must not contain DSP nodes")) {
     return false;
@@ -84,6 +87,9 @@ static bool testConfiguredPreset(const std::filesystem::path &configPath,
                      .enforcement =
                          pipetune::SampleRateEnforcement::force},
              "loading a preset must preserve the startup rate policy") ||
+      !check(prepared.pipeline->sampleRate() == 384000.0F,
+             "fixed-rate startup preset must be prepared at the configured "
+             "DSP rate") ||
       !check(prepared.pipeline->activePluginCount() == 1,
              "configured preset must prepare its DSP node") ||
       !check(prepared.configuredDspBackend ==

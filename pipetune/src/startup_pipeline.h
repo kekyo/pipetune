@@ -56,7 +56,8 @@ struct StartupPipelineResult {
  * a configuration diagnostic.
  *
  * @param configPath Startup configuration file path.
- * @param options Maximum processing format for the prepared pipeline.
+ * @param options Automatic-mode initial rate and maximum processing format.
+ * A fixed configured policy replaces options.sampleRate before construction.
  * @return Prepared startup pipeline and diagnostics.
  */
 StartupPipelineResult
@@ -70,7 +71,8 @@ prepareStartupPipeline(const std::filesystem::path &configPath,
  * callers that will retain it for live backend switching.
  *
  * @param configPath Startup configuration file path.
- * @param options Maximum processing format for the prepared pipeline.
+ * @param options Automatic-mode initial rate and maximum processing format.
+ * A fixed configured policy replaces options.sampleRate before construction.
  * @param backends Independently discovered scalar and SIMD backends.
  * @return Prepared startup pipeline and diagnostics.
  */

@@ -271,6 +271,8 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
               << " (\"" << warning.pluginName
               << "\") was skipped: " << warning.reason << '\n';
   }
+  const auto initialDspSampleRate = static_cast<std::uint32_t>(
+      prepared.pipeline->sampleRate());
 
   const auto socket = pipetune::resolveControlSocketPath({});
   if (!socket.error.empty()) {
@@ -284,7 +286,7 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
        .initialPresetPath = prepared.activePresetPath,
        .initialConfigurationError = prepared.configurationError,
        .controlSocketPath = socket.path,
-       .dspSampleRate = kInitialSampleRate,
+       .dspSampleRate = initialDspSampleRate,
        .ratePolicy = prepared.ratePolicy,
        .channelCount = 2,
        .maxFrames = kMaximumProcessFrames,
@@ -525,9 +527,11 @@ int main(int argc, char **argv) {
     std::cerr << "pipetune: warning: " << selected.error
               << "; using scalar DSP backend\n";
   }
+  const auto initialDspSampleRate = pipetune::dspSampleRateForPolicy(
+      parsed.options.ratePolicy, kInitialSampleRate);
   auto loaded = pipetune::loadDspPipeline(
       presetPath,
-      {.sampleRate = static_cast<float>(kInitialSampleRate),
+      {.sampleRate = static_cast<float>(initialDspSampleRate),
        .maxChannels = parsed.options.channelCount,
        .maxFrames = kMaximumProcessFrames},
       selected.effectiveBackend);
@@ -561,7 +565,7 @@ int main(int argc, char **argv) {
        .initialPresetPath = presetPath,
        .initialConfigurationError = {},
        .controlSocketPath = controlSocket,
-       .dspSampleRate = kInitialSampleRate,
+       .dspSampleRate = initialDspSampleRate,
        .ratePolicy = parsed.options.ratePolicy,
        .channelCount = parsed.options.channelCount,
        .maxFrames = kMaximumProcessFrames,
