@@ -212,6 +212,40 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
                         .dspSimdVariant = *simdVariant},
             .error = {}};
   }
+  if (command == "set-dsp-idle") {
+    if (yyjson_obj_size(root) != 2) {
+      return requestError(
+          "set-dsp-idle request requires only command and "
+          "timeoutMilliseconds fields");
+    }
+    auto *timeoutValue = yyjson_obj_get(root, "timeoutMilliseconds");
+    auto policy = DspIdlePolicy{};
+    if (!yyjson_is_null(timeoutValue)) {
+      if (!yyjson_is_uint(timeoutValue) ||
+          yyjson_get_uint(timeoutValue) >
+              std::numeric_limits<std::uint32_t>::max()) {
+        return requestError(
+            "set-dsp-idle timeoutMilliseconds must be null or an integer");
+      }
+      policy.timeoutMilliseconds =
+          static_cast<std::uint32_t>(yyjson_get_uint(timeoutValue));
+      if (!dspIdlePolicyIsEnabled(policy)) {
+        return requestError(
+            "set-dsp-idle uses null to disable automatic suspension");
+      }
+    }
+    if (!dspIdlePolicyIsValid(policy)) {
+      return requestError(
+          "set-dsp-idle request contains an unsupported timeout");
+    }
+    return {.request = {.command = ControlCommand::setDspIdle,
+                        .presetPath = {},
+                        .ratePolicy = defaultSampleRatePolicy(),
+                        .dspBackend = DspBackendKind::scalar,
+                        .dspSimdVariant = DspSimdVariant::automatic,
+                        .dspIdlePolicy = policy},
+            .error = {}};
+  }
   if (command != "load") {
     return requestError("unsupported control command");
   }
@@ -292,6 +326,26 @@ makeSetDspBackendControlRequest(DspBackendKind kind,
                  dspBackendName(kind)) ||
       !addString(document.get(), root, "simdVariant",
                  dspSimdVariantName(simdVariant))) {
+    return {};
+  }
+  return writeDocument(document.get());
+}
+
+std::string makeSetDspIdleControlRequest(const DspIdlePolicy &policy) {
+  if (!dspIdlePolicyIsValid(policy)) {
+    return {};
+  }
+  yyjson_mut_val *root = nullptr;
+  auto document = createObjectDocument(root);
+  if (document == nullptr ||
+      !yyjson_mut_obj_add_str(document.get(), root, "command",
+                              "set-dsp-idle") ||
+      (dspIdlePolicyIsEnabled(policy)
+           ? !yyjson_mut_obj_add_uint(document.get(), root,
+                                      "timeoutMilliseconds",
+                                      policy.timeoutMilliseconds)
+           : !yyjson_mut_obj_add_null(document.get(), root,
+                                      "timeoutMilliseconds"))) {
     return {};
   }
   return writeDocument(document.get());
@@ -425,6 +479,36 @@ static bool sampleRateStatusIsConsistent(
          status.graphSampleRate == status.dspSampleRate;
 }
 
+static std::string_view dspActivityName(DspActivity activity) noexcept {
+  switch (activity) {
+  case DspActivity::bypassed:
+    return "bypassed";
+  case DspActivity::active:
+    return "active";
+  case DspActivity::draining:
+    return "draining";
+  case DspActivity::sleeping:
+    return "sleeping";
+  }
+  return {};
+}
+
+static bool dspIdleStatusIsConsistent(
+    const ControlRuntimeStatus &status) noexcept {
+  if (dspActivityName(status.dspActivity).empty() ||
+      !dspIdlePolicyIsValid(status.dspIdlePolicy)) {
+    return false;
+  }
+  if (status.processingMode == ProcessingMode::bypass) {
+    return status.dspActivity == DspActivity::bypassed;
+  }
+  if (status.dspActivity == DspActivity::bypassed) {
+    return false;
+  }
+  return dspIdlePolicyIsEnabled(status.dspIdlePolicy) ||
+         status.dspActivity == DspActivity::active;
+}
+
 static std::string makeControlStatusMessage(
     const ControlRuntimeStatus &status,
     std::span<const ControlWarning> warnings, bool statusEvent) {
@@ -432,6 +516,7 @@ static std::string makeControlStatusMessage(
        status.activePreset.empty()) ||
       (status.processingMode == ProcessingMode::bypass &&
        !status.activePreset.empty()) ||
+      !dspIdleStatusIsConsistent(status) ||
       !sampleRateStatusIsConsistent(status) ||
       !dspBackendStatusIsConsistent(status)) {
     return makeControlErrorResponse("cannot encode inconsistent control status");
@@ -447,6 +532,14 @@ static std::string makeControlStatusMessage(
        !yyjson_mut_obj_add_str(document.get(), root, "event", "status")) ||
       !yyjson_mut_obj_add_str(document.get(), root, "processingMode",
                               processingMode) ||
+      !addString(document.get(), root, "dspActivity",
+                 dspActivityName(status.dspActivity)) ||
+      (dspIdlePolicyIsEnabled(status.dspIdlePolicy)
+           ? !yyjson_mut_obj_add_uint(
+                 document.get(), root, "dspIdleTimeoutMilliseconds",
+                 status.dspIdlePolicy.timeoutMilliseconds)
+           : !yyjson_mut_obj_add_null(
+                 document.get(), root, "dspIdleTimeoutMilliseconds")) ||
       !addNullableString(document.get(), root, "preset",
                          status.activePreset) ||
       !addNullableString(document.get(), root, "configurationError",
@@ -672,6 +765,50 @@ static bool readProcessingMode(yyjson_val *object, ProcessingMode &mode) {
     return true;
   }
   return false;
+}
+
+static bool readDspActivity(yyjson_val *object,
+                            DspActivity &activity) {
+  auto *field = yyjson_obj_get(object, "dspActivity");
+  if (!yyjson_is_str(field)) {
+    return false;
+  }
+  const auto value =
+      std::string_view(yyjson_get_str(field), yyjson_get_len(field));
+  if (value == "bypassed") {
+    activity = DspActivity::bypassed;
+    return true;
+  }
+  if (value == "active") {
+    activity = DspActivity::active;
+    return true;
+  }
+  if (value == "draining") {
+    activity = DspActivity::draining;
+    return true;
+  }
+  if (value == "sleeping") {
+    activity = DspActivity::sleeping;
+    return true;
+  }
+  return false;
+}
+
+static bool readDspIdlePolicy(yyjson_val *object,
+                              DspIdlePolicy &policy) {
+  auto *field = yyjson_obj_get(object, "dspIdleTimeoutMilliseconds");
+  if (yyjson_is_null(field)) {
+    policy = {};
+    return true;
+  }
+  if (!yyjson_is_uint(field) ||
+      yyjson_get_uint(field) >
+          std::numeric_limits<std::uint32_t>::max()) {
+    return false;
+  }
+  policy.timeoutMilliseconds =
+      static_cast<std::uint32_t>(yyjson_get_uint(field));
+  return dspIdlePolicyIsEnabled(policy) && dspIdlePolicyIsValid(policy);
 }
 
 static bool readDspBackendKindField(yyjson_val *object, const char *key,
@@ -971,6 +1108,8 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       .inputLastReceivedUnixMilliseconds = 0,
   };
   if (!readProcessingMode(root, status.processingMode) ||
+      !readDspActivity(root, status.dspActivity) ||
+      !readDspIdlePolicy(root, status.dspIdlePolicy) ||
       !readNullableStringField(root, "preset", status.activePreset) ||
       !readNullableStringField(root, "configurationError",
                                status.configurationError) ||
@@ -1023,6 +1162,7 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
        status.activePreset.empty()) ||
       (status.processingMode == ProcessingMode::bypass &&
        !status.activePreset.empty()) ||
+      !dspIdleStatusIsConsistent(status) ||
       !sampleRateStatusIsConsistent(status) ||
       !dspBackendStatusIsConsistent(status)) {
     return responseError(

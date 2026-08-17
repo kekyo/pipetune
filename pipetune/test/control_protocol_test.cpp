@@ -88,6 +88,15 @@ static bool testRequests() {
       pipetune::makeSetDspBackendControlRequest(
           pipetune::DspBackendKind::simd,
           pipetune::DspSimdVariant::x86_64_v3));
+  const auto setDspIdleIgnore = pipetune::parseControlRequest(
+      pipetune::makeSetDspIdleControlRequest(
+          {.timeoutMilliseconds = 0}));
+  const auto setDspIdleMinimum = pipetune::parseControlRequest(
+      pipetune::makeSetDspIdleControlRequest(
+          {.timeoutMilliseconds = 100}));
+  const auto setDspIdleMaximum = pipetune::parseControlRequest(
+      pipetune::makeSetDspIdleControlRequest(
+          {.timeoutMilliseconds = 5000}));
   return check(setAutomaticRate.error.empty(), setAutomaticRate.error) &&
          check(setAutomaticRate.request.command ==
                        pipetune::ControlCommand::setRate &&
@@ -113,11 +122,32 @@ static bool testRequests() {
                        pipetune::DspBackendKind::simd &&
                    setDspBackend.request.dspSimdVariant ==
                        pipetune::DspSimdVariant::x86_64_v3,
-               "set-dsp-backend request differs");
+               "set-dsp-backend request differs") &&
+         check(setDspIdleIgnore.error.empty(),
+               setDspIdleIgnore.error) &&
+         check(setDspIdleIgnore.request.command ==
+                       pipetune::ControlCommand::setDspIdle &&
+                   setDspIdleIgnore.request.dspIdlePolicy.timeoutMilliseconds ==
+                       0,
+               "set-dsp-idle ignore request differs") &&
+         check(setDspIdleMinimum.error.empty(),
+               setDspIdleMinimum.error) &&
+         check(setDspIdleMinimum.request.command ==
+                       pipetune::ControlCommand::setDspIdle &&
+                   setDspIdleMinimum.request.dspIdlePolicy.timeoutMilliseconds ==
+                       100,
+               "set-dsp-idle minimum request differs") &&
+         check(setDspIdleMaximum.error.empty(),
+               setDspIdleMaximum.error) &&
+         check(setDspIdleMaximum.request.command ==
+                       pipetune::ControlCommand::setDspIdle &&
+                   setDspIdleMaximum.request.dspIdlePolicy.timeoutMilliseconds ==
+                       5000,
+               "set-dsp-idle maximum request differs");
 }
 
 static bool testRejectedRequests() {
-  constexpr auto inputs = std::array<std::string_view, 22>{
+  constexpr auto inputs = std::array<std::string_view, 28>{
       "",
       "[]",
       R"json({"command":"unknown"})json",
@@ -139,7 +169,13 @@ static bool testRejectedRequests() {
       R"json({"command":"set-dsp-backend","backend":"simd","extra":true})json",
       R"json({"command":"set-dsp-backend","backend":"simd","simdVariant":"avx2"})json",
       R"json({"command":"set-dsp-backend","backend":"scalar","simdVariant":"baseline"})json",
-      R"json({"command":"set-dsp-backend","backend":"simd","simdVariant":42})json"};
+      R"json({"command":"set-dsp-backend","backend":"simd","simdVariant":42})json",
+      R"json({"command":"set-dsp-idle"})json",
+      R"json({"command":"set-dsp-idle","timeoutMilliseconds":0})json",
+      R"json({"command":"set-dsp-idle","timeoutMilliseconds":99})json",
+      R"json({"command":"set-dsp-idle","timeoutMilliseconds":150})json",
+      R"json({"command":"set-dsp-idle","timeoutMilliseconds":5100})json",
+      R"json({"command":"set-dsp-idle","timeoutMilliseconds":"100"})json"};
   for (const auto input : inputs) {
     if (!check(!pipetune::parseControlRequest(input).error.empty(),
                "invalid control request must be rejected")) {
@@ -156,6 +192,8 @@ static bool testSuccessResponse() {
                                .reason = "not available"}};
   const auto response = pipetune::makeControlSuccessResponse(
       {.processingMode = pipetune::ProcessingMode::preset,
+       .dspActivity = pipetune::DspActivity::draining,
+       .dspIdlePolicy = {.timeoutMilliseconds = 2500},
        .activePreset = "/tmp/live.effetune_preset",
        .configurationError = {},
        .configurationRevision = 41,
@@ -235,6 +273,10 @@ static bool testSuccessResponse() {
       !check(parsed.status.processingMode ==
                  pipetune::ProcessingMode::preset,
              "parsed response processing mode differs") ||
+      !check(parsed.status.dspActivity ==
+                     pipetune::DspActivity::draining &&
+                 parsed.status.dspIdlePolicy.timeoutMilliseconds == 2500,
+             "parsed response DSP idle state differs") ||
       !check(parsed.status.activePreset ==
                  "/tmp/live.effetune_preset",
              "parsed response preset differs") ||
@@ -299,6 +341,11 @@ static bool testSuccessResponse() {
       std::string_view(
           yyjson_get_str(yyjson_obj_get(root, "processingMode"))) ==
           "preset" &&
+      std::string_view(
+          yyjson_get_str(yyjson_obj_get(root, "dspActivity"))) ==
+          "draining" &&
+      yyjson_get_uint(
+          yyjson_obj_get(root, "dspIdleTimeoutMilliseconds")) == 2500 &&
       std::string_view(yyjson_get_str(yyjson_obj_get(root, "preset"))) ==
           "/tmp/live.effetune_preset" &&
       yyjson_is_null(yyjson_obj_get(root, "configurationError")) &&
@@ -367,6 +414,8 @@ static bool testSuccessResponse() {
 static bool testStatusEvent() {
   const auto event = pipetune::makeControlStatusEvent(
       {.processingMode = pipetune::ProcessingMode::preset,
+       .dspActivity = pipetune::DspActivity::sleeping,
+       .dspIdlePolicy = {.timeoutMilliseconds = 100},
        .activePreset = "/tmp/event.effetune_preset",
        .configurationError = {},
        .configurationRevision = 42,
@@ -391,12 +440,22 @@ static bool testStatusEvent() {
        .rateError = "previous transition failed"});
   const auto parsed = pipetune::parseControlResponse(event);
   auto invalidTransition = event;
+  auto invalidDspActivity = event;
+  auto invalidDspIdleTimeout = event;
   auto missingRateError = event;
   auto missingRevision = event;
   if (!check(replaceOnce(invalidTransition,
                          R"json("rateTransitioning":true)json",
                          R"json("rateTransitioning":"true")json"),
              "cannot prepare invalid transition state") ||
+      !check(replaceOnce(invalidDspActivity,
+                         R"json("dspActivity":"sleeping")json",
+                         R"json("dspActivity":"idle")json"),
+             "cannot prepare invalid DSP activity") ||
+      !check(replaceOnce(invalidDspIdleTimeout,
+                         R"json("dspIdleTimeoutMilliseconds":100)json",
+                         R"json("dspIdleTimeoutMilliseconds":150)json"),
+             "cannot prepare invalid DSP idle timeout") ||
       !check(replaceOnce(missingRateError, "rateError",
                          "missingRateError"),
              "cannot prepare missing rate error") ||
@@ -412,6 +471,10 @@ static bool testStatusEvent() {
          check(parsed.status.processingMode ==
                    pipetune::ProcessingMode::preset,
                "status event processing mode differs") &&
+         check(parsed.status.dspActivity ==
+                       pipetune::DspActivity::sleeping &&
+                   parsed.status.dspIdlePolicy.timeoutMilliseconds == 100,
+               "status event DSP idle state differs") &&
          check(parsed.status.activePreset ==
                    "/tmp/event.effetune_preset",
                "status event preset differs") &&
@@ -448,6 +511,10 @@ static bool testStatusEvent() {
                "status event must not contain warnings") &&
          check(!pipetune::parseControlResponse(invalidTransition).valid,
                "non-boolean rate transition state must be rejected") &&
+         check(!pipetune::parseControlResponse(invalidDspActivity).valid,
+               "unsupported DSP activity must be rejected") &&
+         check(!pipetune::parseControlResponse(invalidDspIdleTimeout).valid,
+               "invalid DSP idle timeout must be rejected") &&
          check(!pipetune::parseControlResponse(missingRateError).valid,
                "missing rate error field must be rejected") &&
          check(!pipetune::parseControlResponse(missingRevision).valid,
@@ -457,6 +524,8 @@ static bool testStatusEvent() {
 static bool testBypassStatus() {
   const auto response = pipetune::makeControlSuccessResponse(
       {.processingMode = pipetune::ProcessingMode::bypass,
+       .dspActivity = pipetune::DspActivity::bypassed,
+       .dspIdlePolicy = {.timeoutMilliseconds = 0},
        .activePreset = {},
        .configurationError = "configured preset is unavailable",
        .activePluginCount = 0,
@@ -477,6 +546,10 @@ static bool testBypassStatus() {
       !check(parsed.status.processingMode ==
                  pipetune::ProcessingMode::bypass,
              "bypass response must preserve its processing mode") ||
+      !check(parsed.status.dspActivity ==
+                     pipetune::DspActivity::bypassed &&
+                 parsed.status.dspIdlePolicy.timeoutMilliseconds == 0,
+             "bypass response DSP idle state differs") ||
       !check(parsed.status.activePreset.empty(),
              "bypass response must not report an active preset") ||
       !check(parsed.status.configurationError ==
@@ -496,6 +569,11 @@ static bool testBypassStatus() {
       std::string_view(
           yyjson_get_str(yyjson_obj_get(root, "processingMode"))) ==
           "bypass" &&
+      std::string_view(
+          yyjson_get_str(yyjson_obj_get(root, "dspActivity"))) ==
+          "bypassed" &&
+      yyjson_is_null(
+          yyjson_obj_get(root, "dspIdleTimeoutMilliseconds")) &&
       yyjson_is_null(yyjson_obj_get(root, "preset")) &&
       std::string_view(
           yyjson_get_str(yyjson_obj_get(root, "configurationError"))) ==

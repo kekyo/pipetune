@@ -63,6 +63,10 @@ makeStatus(const pipetune::StartupConfig &config,
       .processingMode = config.presetFound
                             ? pipetune::ProcessingMode::preset
                             : pipetune::ProcessingMode::bypass,
+      .dspActivity = config.presetFound
+                         ? pipetune::DspActivity::active
+                         : pipetune::DspActivity::bypassed,
+      .dspIdlePolicy = config.dspIdlePolicy,
       .activePreset =
           config.presetFound ? config.presetPath.string() : std::string{},
       .configurationError = {},
@@ -176,6 +180,8 @@ static std::string commandName(pipetune::ControlCommand command) {
     return "setRate";
   case pipetune::ControlCommand::setDspBackend:
     return "setDspBackend";
+  case pipetune::ControlCommand::setDspIdle:
+    return "setDspIdle";
   case pipetune::ControlCommand::subscribe:
     return "subscribe";
   }
@@ -248,6 +254,9 @@ static pipetune::ControlMessageResult handleRequest(
     case pipetune::ControlCommand::setDspBackend:
       state.liveConfig.dspBackend = parsed.request.dspBackend;
       state.liveConfig.dspSimdVariant = parsed.request.dspSimdVariant;
+      break;
+    case pipetune::ControlCommand::setDspIdle:
+      state.liveConfig.dspIdlePolicy = parsed.request.dspIdlePolicy;
       break;
     case pipetune::ControlCommand::status:
     case pipetune::ControlCommand::subscribe:

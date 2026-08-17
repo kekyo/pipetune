@@ -33,6 +33,9 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
   return {.processingMode = state.bypassed
                                 ? pipetune::ProcessingMode::bypass
                                 : pipetune::ProcessingMode::preset,
+          .dspActivity = state.bypassed
+                             ? pipetune::DspActivity::bypassed
+                             : pipetune::DspActivity::active,
           .activePreset = state.bypassed ? std::string{}
                                          : state.activePreset,
           .configurationError = {},

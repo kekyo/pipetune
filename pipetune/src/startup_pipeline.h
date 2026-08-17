@@ -7,6 +7,7 @@
 #define PIPETUNE_STARTUP_PIPELINE_H
 
 #include "pipetune/dsp_backend.h"
+#include "pipetune/dsp_idle.h"
 #include "pipetune/dsp_pipeline.h"
 #include "pipetune/sample_rate.h"
 
@@ -28,6 +29,8 @@ struct StartupPipelineResult {
   std::filesystem::path activePresetPath;
   /** Persisted automatic/fixed graph-rate choice. */
   SampleRatePolicy ratePolicy = {};
+  /** Persisted automatic DSP suspension policy. */
+  DspIdlePolicy dspIdlePolicy = {};
   /** Recoverable configuration diagnostic reported while bypassing. */
   std::string configurationError;
   /** Non-fatal preset node diagnostics. */

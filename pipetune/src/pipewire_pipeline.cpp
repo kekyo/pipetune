@@ -120,6 +120,8 @@ struct PipeWireRuntime {
   std::uint32_t rateBridgeDspRate;
   bool silenceNextRateBridge;
   std::uint64_t processedInputFrames;
+  std::atomic<std::uint32_t> dspIdleTimeoutMilliseconds;
+  std::atomic<DspActivity> dspActivity;
   ProcessingMode processingMode;
   std::string activePreset;
   std::string configurationError;
@@ -196,6 +198,11 @@ struct PipeWireRuntime {
         inputStreamSampleRate(0), outputStreamSampleRate(0),
         graphSampleRate(0), rateBridgeStreamRate(0), rateBridgeDspRate(0),
         silenceNextRateBridge(false), processedInputFrames(0),
+        dspIdleTimeoutMilliseconds(
+            runtimeOptions.dspIdlePolicy.timeoutMilliseconds),
+        dspActivity(runtimeOptions.initialPresetPath.empty()
+                        ? DspActivity::bypassed
+                        : DspActivity::active),
         processingMode(runtimeOptions.initialPresetPath.empty()
                            ? ProcessingMode::bypass
                            : ProcessingMode::preset),
@@ -1261,6 +1268,12 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
                 std::to_string(ratePolicy.fixedRate) + " Hz";
   }
   return {.processingMode = runtime.processingMode,
+          .dspActivity =
+              runtime.dspActivity.load(std::memory_order_acquire),
+          .dspIdlePolicy =
+              {.timeoutMilliseconds =
+                   runtime.dspIdleTimeoutMilliseconds.load(
+                       std::memory_order_acquire)},
           .activePreset = runtime.activePreset,
           .configurationError = runtime.configurationError,
           .configurationRevision = runtime.configurationRevision.load(
@@ -1372,6 +1385,8 @@ static PresetActivationResult activatePreset(
   }
   runtime.pipeline.replace(std::move(loaded.pipeline));
   runtime.processingMode = ProcessingMode::preset;
+  runtime.dspActivity.store(DspActivity::active,
+                            std::memory_order_release);
   runtime.activePreset = presetPath.string();
   runtime.configurationError.clear();
   runtime.configurationRevision.fetch_add(1, std::memory_order_release);
@@ -1519,6 +1534,25 @@ static ControlMessageResult handleControlRequest(std::string_view message,
         makeControlSuccessResponse(controlStatus(runtime), warnings),
         switched.changed);
   }
+  if (request.request.command == ControlCommand::setDspIdle) {
+    const auto previous = runtime.dspIdleTimeoutMilliseconds.exchange(
+        request.request.dspIdlePolicy.timeoutMilliseconds,
+        std::memory_order_acq_rel);
+    const auto changed =
+        previous != request.request.dspIdlePolicy.timeoutMilliseconds;
+    runtime.dspActivity.store(
+        runtime.processingMode == ProcessingMode::preset
+            ? DspActivity::active
+            : DspActivity::bypassed,
+        std::memory_order_release);
+    if (changed) {
+      runtime.configurationRevision.fetch_add(1,
+                                              std::memory_order_release);
+    }
+    return closeControlResponse(
+        makeControlSuccessResponse(controlStatus(runtime), warnings),
+        changed);
+  }
   if (request.request.command == ControlCommand::bypass) {
     auto pipelineLock =
         std::unique_lock<std::mutex>(runtime.pipelineMutationMutex);
@@ -1542,6 +1576,8 @@ static ControlMessageResult handleControlRequest(std::string_view message,
     }
     runtime.pipeline.replace(std::move(created.pipeline));
     runtime.processingMode = ProcessingMode::bypass;
+    runtime.dspActivity.store(DspActivity::bypassed,
+                              std::memory_order_release);
     runtime.activePreset.clear();
     runtime.configurationError.clear();
     runtime.presetReloadPending = false;
@@ -1786,6 +1822,9 @@ static std::string validateOptions(const DspPipeline &pipeline,
   }
   if (!sampleRatePolicyIsValid(options.ratePolicy)) {
     return "sample-rate policy is invalid";
+  }
+  if (!dspIdlePolicyIsValid(options.dspIdlePolicy)) {
+    return "DSP idle policy is invalid";
   }
   if (options.ratePolicy.mode == SampleRateMode::fixed &&
       options.dspSampleRate != options.ratePolicy.fixedRate) {

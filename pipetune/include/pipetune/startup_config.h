@@ -7,6 +7,7 @@
 #define PIPETUNE_STARTUP_CONFIG_H
 
 #include "pipetune/dsp_backend.h"
+#include "pipetune/dsp_idle.h"
 #include "pipetune/sample_rate.h"
 
 #include <filesystem>
@@ -51,6 +52,8 @@ struct StartupConfig {
   DspBackendKind dspBackend = DspBackendKind::scalar;
   /** Automatic or pinned SIMD dispatch preference. */
   DspSimdVariant dspSimdVariant = DspSimdVariant::automatic;
+  /** Automatic DSP suspension policy after continuous silent input. */
+  DspIdlePolicy dspIdlePolicy = {};
 };
 
 /**
@@ -158,6 +161,16 @@ std::string saveDspBackendKind(const std::filesystem::path &configPath,
 std::string saveDspBackendSelection(
     const std::filesystem::path &configPath, DspBackendKind kind,
     DspSimdVariant simdVariant);
+
+/**
+ * Atomically stores an automatic DSP suspension policy.
+ *
+ * @param configPath Configuration file path.
+ * @param policy Ignore or 100 through 5000 ms in 100 ms steps.
+ * @return Empty on success, otherwise a human-readable diagnostic.
+ */
+std::string saveDspIdlePolicy(const std::filesystem::path &configPath,
+                              const DspIdlePolicy &policy);
 
 /**
  * Atomically replaces the startup configuration with PipeTune defaults.

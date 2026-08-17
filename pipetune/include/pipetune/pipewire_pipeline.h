@@ -6,6 +6,7 @@
 #ifndef PIPETUNE_PIPEWIRE_PIPELINE_H
 #define PIPETUNE_PIPEWIRE_PIPELINE_H
 
+#include "pipetune/dsp_idle.h"
 #include "pipetune/dsp_pipeline.h"
 #include "pipetune/sample_rate.h"
 
@@ -66,6 +67,8 @@ struct PipeWirePipelineOptions {
   /** Initial persisted automatic or pinned SIMD dispatch preference. */
   DspSimdVariant configuredDspSimdVariant =
       DspSimdVariant::automatic;
+  /** Initial persisted automatic DSP suspension policy. */
+  DspIdlePolicy dspIdlePolicy = {};
 };
 
 /**
