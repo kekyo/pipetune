@@ -438,6 +438,7 @@ if(BUILD_TESTING)
     COMMAND
       pipetune_effetune_backend_artifact_tests
       ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/dynamics/auto_leveler/golden/case-008.f32
+      ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/lofi/bluetooth_sbc_simulator/golden/case-001.f32
       ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/lofi/cassette_artifacts/golden/case-001.f32
       ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/lofi/tape_artifacts/golden/case-001.f32
       ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/lofi/vinyl_artifacts/golden/case-003.f32
@@ -957,5 +958,5 @@ if(BUILD_TESTING)
       $<TARGET_FILE:pipetune>
       $<TARGET_FILE:pipetune_effetune_backend_artifact_tests>)
   set_tests_properties(
-    pipetune_component_build PROPERTIES TIMEOUT 180)
+    pipetune_component_build PROPERTIES TIMEOUT 300)
 endif()

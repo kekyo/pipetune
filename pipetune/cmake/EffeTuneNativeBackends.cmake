@@ -147,6 +147,7 @@ function(
     "${EFFETUNE_DSP_DIR}/core/arena.cpp"
     "${EFFETUNE_DSP_DIR}/core/design_fft.cpp"
     "${EFFETUNE_DSP_DIR}/core/engine.cpp"
+    "${EFFETUNE_DSP_DIR}/core/graph.cpp"
     "${EFFETUNE_DSP_DIR}/core/partitioned_convolver.cpp"
     "${EFFETUNE_DSP_DIR}/core/registry.cpp"
     "${EFFETUNE_DSP_DIR}/core/telemetry.cpp")
@@ -171,6 +172,7 @@ function(
     ${TARGET_NAME}
     PUBLIC "${EFFETUNE_DSP_DIR}/include"
     PRIVATE
+      "${EFFETUNE_DSP_DIR}/bindings/generated"
       "${EFFETUNE_DSP_DIR}/core"
       "${EFFETUNE_DSP_DIR}/generated/cpp"
       "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../src")
@@ -255,6 +257,7 @@ function(
   set_property(
     SOURCE
       "${EFFETUNE_DSP_DIR}/plugins/dynamics/auto_leveler/kernel.cpp"
+      "${EFFETUNE_DSP_DIR}/plugins/lofi/bluetooth_sbc_simulator/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/lofi/cassette_artifacts/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/lofi/tape_artifacts/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/lofi/vinyl_artifacts/kernel.cpp"

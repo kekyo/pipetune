@@ -277,6 +277,7 @@ static bool loadRemainingSymbols(void *handle, DspBackendApi &api,
   PIPETUNE_LOAD_DSP_SYMBOL(telemetryCapacity, et_telemetry_capacity)
   PIPETUNE_LOAD_DSP_SYMBOL(telemetryRead, et_telemetry_read)
   PIPETUNE_LOAD_DSP_SYMBOL(pipelineConfigure, et_pipeline_configure)
+  PIPETUNE_LOAD_DSP_SYMBOL(pipelineLatency, et_pipeline_latency)
   PIPETUNE_LOAD_DSP_SYMBOL(pipelineProcess, et_pipeline_process)
 #undef PIPETUNE_LOAD_DSP_SYMBOL
   return true;

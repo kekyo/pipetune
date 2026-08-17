@@ -165,6 +165,13 @@ if (
             join(
               goldenRoot,
               "lofi",
+              "bluetooth_sbc_simulator",
+              "golden",
+              "case-001.f32",
+            ),
+            join(
+              goldenRoot,
+              "lofi",
               "cassette_artifacts",
               "golden",
               "case-001.f32",
