@@ -149,8 +149,8 @@ The two PipeWire streams use F32P PCM with one plane per channel:
 2. It copies one bounded block into preallocated planar scratch storage.
 3. A preallocated streaming converter changes negotiated PipeWire PCM to the
    configured DSP rate when those rates differ.
-4. Preset mode processes that block in place with EffeTune; bypass mode skips
-   the engine.
+4. Preset mode processes that block in place with EffeTune unless silent-input
+   suspension is already active; bypass mode skips the engine.
 5. A second streaming converter returns fixed-rate DSP output to the
    negotiated PipeWire PCM rate.
 6. The block is written to a preallocated single-producer/single-consumer
@@ -173,6 +173,28 @@ DSP destruction occurs in a PipeWire process callback. Preset construction
 happens on the control thread. A hazard-protected pipeline slot swaps a
 prepared pipeline atomically and defers reclamation until no real-time callback
 can still reference it.
+
+## Silent-input DSP suspension
+
+The optional idle policy is `ignore` or 100 through 5000 ms in 100 ms steps.
+Detection runs after input sample-rate conversion, at the DSP rate. A block is
+silent only when every channel sample is positive or negative floating-point
+zero; any other bit pattern, including a subnormal value, wakes the pipeline.
+A mixed block is treated as active so its first nonzero sample is never lost.
+
+After the first fully silent block, the active preset continues processing for
+the configured number of DSP frames. This tail-draining interval intentionally
+retains delay, reverb, and source-generator output. At the deadline, the
+current output receives a 5 ms fade to exact zero and the EffeTune engine is
+reset. Later silent blocks are zero-filled without entering the native DSP,
+and the cumulative DSP frame/time counters stop advancing. The first later
+nonzero block is processed immediately.
+
+Pipeline replacement, rate changes, backend changes, and idle-policy changes
+wake and reset the detector. Bypass has its own activity state and preserves
+PCM without using the idle controller. Policy, activity, and generation are
+published from one lock-free atomic word so a stale real-time callback cannot
+overwrite a newer control-thread policy or bypass transition.
 
 ## Sample-rate negotiation and transitions
 
@@ -271,13 +293,15 @@ Supported commands are:
 - load and atomically activate another `.effetune_preset`;
 - bypass DSP and activate transparent pass-through;
 - set an Automatic or fixed sample-rate policy;
-- set the scalar or SIMD native DSP backend; and
+- set the scalar or SIMD native DSP backend;
+- set or ignore the silent-input DSP timeout; and
 - subscribe to an initial status event and later publications.
 
-Status contains processing mode, active preset, input telemetry, DSP and graph
-rates, transition state, DSP performance counters, configured and effective
-backend variants, availability, fallback, and diagnostics. It contains no
-physical output, default-sink, or volume state.
+Status contains processing mode, independent DSP activity, active preset,
+input telemetry, the idle policy, DSP and graph rates, transition state, DSP
+performance counters, configured and effective backend variants,
+availability, fallback, and diagnostics. It contains no physical output,
+default-sink, or volume state.
 
 The subscriber server uses an `eventfd` wakeup and bounded, coalescing output
 per client. Preset activation and relevant PipeWire state transitions request a
@@ -303,13 +327,16 @@ path `$XDG_CONFIG_HOME/pipetune/environment`. Supported assignments are:
 - `PIPETUNE_PRESET` with an absolute preset path;
 - `PIPETUNE_RATE` with `automatic` or a supported fixed rate;
 - `PIPETUNE_RATE_ENFORCEMENT` with `suggest` or `force`;
-- `PIPETUNE_DSP_BACKEND` with `scalar` or `simd`; and
-- `PIPETUNE_DSP_SIMD_VARIANT` with `auto` or an applicable fixed tier.
+- `PIPETUNE_DSP_BACKEND` with `scalar` or `simd`;
+- `PIPETUNE_DSP_SIMD_VARIANT` with `auto` or an applicable fixed tier; and
+- `PIPETUNE_DSP_IDLE_TIMEOUT` with `ignore` or 100 through 5000 ms in
+  100 ms steps.
 
 An absent preset selects bypass. Missing rate assignments select
 Automatic-and-suggest. Missing backend assignments select scalar with
-automatic SIMD dispatch preference. Preset, rate, and backend updates use one
-atomic writer and preserve the other selections. Obsolete or unknown
+automatic SIMD dispatch preference. A missing idle assignment selects
+`ignore`. Preset, rate, backend, and idle updates use one atomic writer and
+preserve the other selections. Obsolete or unknown
 assignments are rejected; `pipetune config reset` replaces such a file without
 first parsing it.
 
@@ -340,8 +367,8 @@ autostart override through its reserved backup.
 
 `pipetune-gtk` is a single-instance `GtkApplication`. Its GIO client keeps one
 asynchronous subscription connection and uses separate asynchronous requests
-for preset, bypass, rate-policy, and DSP-backend changes. There is no output
-device UI or output control request.
+for preset, bypass, rate-policy, DSP-backend, and DSP-idle changes. There is no
+output device UI or output control request.
 
 During primary application startup, a separate GIO subprocess client invokes
 the installed CLI as `pipetune setup --no-launch-gtk`. Control subscription
@@ -365,12 +392,14 @@ Runtime counters and cumulative native EffeTune processing time are published
 once per second. The GUI derives a per-frame interval average and divides it by
 the frame duration implied by the negotiated input rate to show DSP Load. The
 graph is capped at 100%, while overload text retains the actual value. A retry
-timer reconnects a lost subscription; status itself is not polled.
+timer reconnects a lost subscription; status itself is not polled. Sleeping
+DSP activity replaces the Load percentage with `Suspended`.
 
-The settings transaction applies live changes in rate, backend, then processing
-order. Apply persists the complete confirmed snapshot. Cancel restores the
-captured live baseline before hiding the window. The Advanced default is
-bypass, Automatic-and-suggest, scalar, and automatic SIMD preference.
+The settings transaction applies live changes in rate, backend, idle policy,
+then processing order. Apply persists the complete confirmed snapshot. Cancel
+restores the captured live baseline before hiding the window. The Advanced
+default is bypass, Automatic-and-suggest, scalar, automatic SIMD preference,
+and ignored silent-input suspension.
 
 The tray backend discovers a StatusNotifierItem host first. If none is
 available on X11, it uses the `GtkStatusIcon` and XEmbed compatibility path. A

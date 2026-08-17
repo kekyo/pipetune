@@ -35,6 +35,7 @@ application remains available through the desktop system tray.
   and applies the DSP pipeline to desktop audio.
 - Automatically negotiates the sampling rate with the PipeWire graph, or computes the DSP at specified rates of 44.1, 48, 96, 192, or 384 kHz.
 - The DSP performs computations entirely in native code. You can choose between Scalar (for compatibility), automatic SIMD selection, or CPU-verified implementations for specific instruction sets.
+- Automatically suspends DSP work after a selectable period of silent input while allowing effect tails to finish first.
 - A GTK application that resides in the system tray allows you to manage various DSP states and settings.
 - Operation is also possible via CLI commands.
 
@@ -137,6 +138,10 @@ saves, and failures.
 
 Use the `Enable DSP processing` switch under `Processing` to easily turn DSP
 processing on or off (bypass mode).
+
+The `DSP` page can also suspend DSP work automatically after continuous
+silent input. Its duration control accepts 0.1 through 5.0 seconds in 0.1
+second steps.
 
 If the PipeTune daemon cannot be reached, the UI controls become read-only and
 normal operation resumes after reconnection.
@@ -279,6 +284,34 @@ requirements or library validation at startup, PipeTune falls back to an
 available lower SIMD tier or Scalar and reports the actual variant and reason
 in the status display.
 
+## Suspending DSP during silence
+
+Turn on `Suspend DSP on silence` on the `DSP` page to avoid continuing
+EffeTune calculations when an application, such as a paused browser video,
+keeps sending silent PCM. `Silence duration` selects 0.1 through 5.0 seconds
+in 0.1 second steps. Turning the switch off selects `ignore`, which is the
+default and keeps processing silent input as before. The last selected
+duration remains visible while the switch is off and is reused when it is
+turned on again; the first selection is 1.0 second.
+
+PipeTune checks the PCM after input sample-rate conversion. During the
+selected silent interval it continues running the complete preset, so delay,
+reverb, and generated effect output can finish. It then fades the result to
+zero over 5 ms, resets the DSP state, emits zero PCM, and stops invoking
+EffeTune. The first block containing any nonzero sample wakes the DSP and is
+processed immediately. Effects that generate sound from otherwise silent
+input, such as vinyl-noise simulations, are also stopped after the selected
+interval when this option is enabled.
+
+The status pane keeps the preset processing mode unchanged and reports DSP
+activity separately. While the silent interval is being processed it shows
+`Draining`; after DSP work stops, the Load display shows `Suspended` instead
+of a percentage.
+
+The saved environment assignment is
+`PIPETUNE_DSP_IDLE_TIMEOUT=ignore` or an integer number of milliseconds from
+`100` through `5000` in `100` ms steps.
+
 ## Resetting PipeTune configuration
 
 `Restore Defaults` on the `Advanced` page of the PipeTune settings window
@@ -287,6 +320,7 @@ previews the following state without saving it:
 - DSP changes to bypass mode
 - PCM rate is `Automatic` and the PipeWire request is `Suggest`
 - Native DSP backend is `Scalar`
+- Automatic DSP suspension is `Ignore`
 
 Use `Apply` to save the defaults or `Cancel` to restore the previous live
 settings. This GTK operation does not restart the service.

@@ -60,6 +60,8 @@ not supported by this MVP.
 - Keeps the previous DSP pipeline active and publishes a diagnostic when an
   automatic preset reload fails.
 - Rebuilds and atomically switches an active preset between DSP backends.
+- Suspends preset DSP work after configurable continuous silent input while
+  preserving a bounded effect-tail interval.
 - Switches live and future startup processing to explicit DSP bypass.
 - Publishes initial and changed runtime state to same-user local subscribers.
 - Starts the managed daemon without a preset and passes audio through unchanged.
@@ -165,11 +167,11 @@ Inspect or replace the running pipeline:
 ```
 
 The status response includes the processing mode, active preset when
-applicable, native DSP count, configured and effective DSP backends, backend
-availability and fallback diagnostics, configured and negotiated PCM rates,
-transition state, configuration diagnostics, input telemetry, and audio bridge
-error counters. A live replacement made directly with `--load-preset` is not
-persisted.
+applicable, independent DSP activity, native DSP count, configured and
+effective DSP backends, backend availability and fallback diagnostics,
+configured and negotiated PCM rates, transition state, configuration
+diagnostics, input telemetry, and audio bridge error counters. A live
+replacement made directly with `--load-preset` is not persisted.
 
 The active preset path is monitored after it is loaded. A valid in-place edit,
 atomic replacement, or recreation builds a complete pipeline and atomically
@@ -270,6 +272,8 @@ PIPETUNE_RATE_ENFORCEMENT=suggest
 ```
 
 The absent preset assignment selects DSP bypass. Scalar is the reset backend.
+The absent DSP idle assignment selects `ignore`, so silent input continues to
+run the DSP.
 After persistence, the command
 waits for `systemctl --user try-restart pipetune.service`. A running service
 therefore restarts immediately with the defaults, while an inactive service
@@ -455,7 +459,7 @@ $XDG_CONFIG_HOME/pipetune/environment
 
 When `XDG_CONFIG_HOME` is unset, it resolves to
 `~/.config/pipetune/environment`. It can store an absolute preset path, the PCM
-rate policy, and the native DSP backend selection:
+rate policy, native DSP backend selection, and silent-input suspension policy:
 
 ```text
 PIPETUNE_PRESET="/home/user/My Presets/foo.effetune_preset"
@@ -463,14 +467,15 @@ PIPETUNE_RATE=192000
 PIPETUNE_RATE_ENFORCEMENT=force
 PIPETUNE_DSP_BACKEND=simd
 PIPETUNE_DSP_SIMD_VARIANT=auto
+PIPETUNE_DSP_IDLE_TIMEOUT=1000
 ```
 
 An absent file or absent `PIPETUNE_PRESET` means bypass. An invalid
 configuration or unusable startup preset is reported in daemon status, but the
 daemon still starts in bypass so the audio path remains available. The GUI and
-CLI atomically preserve and update the preset, rate, backend, and SIMD variant
-selections in this same file. Output-device selection and master volume remain
-ordinary WirePlumber state and are never stored here.
+CLI atomically preserve and update the preset, rate, backend, SIMD variant,
+and DSP idle selections in this same file. Output-device selection and master
+volume remain ordinary WirePlumber state and are never stored here.
 
 An absent `PIPETUNE_RATE` or `PIPETUNE_RATE_ENFORCEMENT` uses the
 Automatic-and-suggest default. `PIPETUNE_RATE` accepts `automatic`, `44100`,
@@ -484,6 +489,13 @@ the other accepted values are `baseline`, `x86-64-v3`, `x86-64-v4`, and
 through usable lower tiers. An unusable pinned tier falls back to scalar
 during managed startup and retains the diagnostic in status. Failure of the
 mandatory scalar backend keeps the daemon available in bypass mode.
+
+An absent `PIPETUNE_DSP_IDLE_TIMEOUT` selects `ignore`, which does not detect
+silent input. The assignment accepts `ignore` or `100` through `5000`
+milliseconds in `100` millisecond steps. With a timeout, exact-zero PCM after
+input sample-rate conversion enters a tail-draining interval. PipeTune then
+fades to zero over 5 ms, resets the engine, and skips EffeTune calls until the
+first block containing a nonzero sample.
 
 `pipetune config reset` is also the recovery path for an `environment` file
 containing unsupported or obsolete assignments because it replaces the file
