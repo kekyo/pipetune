@@ -301,6 +301,19 @@ ProcessStatus DspPipeline::process(std::span<float> planarSamples, std::uint32_t
   return ProcessStatus::ok;
 }
 
+ProcessStatus DspPipeline::reset() noexcept {
+  if (implementation_ == nullptr) {
+    return ProcessStatus::dspError;
+  }
+  if (implementation_->bypass) {
+    return ProcessStatus::ok;
+  }
+  const auto &api = dspBackendApi(*implementation_->backend);
+  return api.engineReset(implementation_->engine) == ET_OK
+             ? ProcessStatus::ok
+             : ProcessStatus::dspError;
+}
+
 std::uint32_t DspPipeline::maxChannels() const noexcept {
   return implementation_ == nullptr ? 0 : implementation_->maxChannels;
 }

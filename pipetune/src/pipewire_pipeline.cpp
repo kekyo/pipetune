@@ -8,6 +8,7 @@
 #include "active_preset_file_monitor.h"
 #include "audio_bridge.h"
 #include "dsp_backend_runtime.h"
+#include "dsp_idle_runtime_state.h"
 #include "dsp_pipeline_slot.h"
 #include "filter_graph_properties.h"
 #include "input_telemetry.h"
@@ -120,8 +121,7 @@ struct PipeWireRuntime {
   std::uint32_t rateBridgeDspRate;
   bool silenceNextRateBridge;
   std::uint64_t processedInputFrames;
-  std::atomic<std::uint32_t> dspIdleTimeoutMilliseconds;
-  std::atomic<DspActivity> dspActivity;
+  DspIdleRuntimeState dspIdleState;
   ProcessingMode processingMode;
   std::string activePreset;
   std::string configurationError;
@@ -198,11 +198,10 @@ struct PipeWireRuntime {
         inputStreamSampleRate(0), outputStreamSampleRate(0),
         graphSampleRate(0), rateBridgeStreamRate(0), rateBridgeDspRate(0),
         silenceNextRateBridge(false), processedInputFrames(0),
-        dspIdleTimeoutMilliseconds(
-            runtimeOptions.dspIdlePolicy.timeoutMilliseconds),
-        dspActivity(runtimeOptions.initialPresetPath.empty()
-                        ? DspActivity::bypassed
-                        : DspActivity::active),
+        dspIdleState(runtimeOptions.dspIdlePolicy,
+                     runtimeOptions.initialPresetPath.empty()
+                         ? DspActivity::bypassed
+                         : DspActivity::active),
         processingMode(runtimeOptions.initialPresetPath.empty()
                            ? ProcessingMode::bypass
                            : ProcessingMode::preset),
@@ -646,6 +645,10 @@ static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
       return false;
     }
     runtime.pipeline.replace(std::move(rebuilt.pipeline));
+    runtime.dspIdleState.replaceActivity(
+        runtime.processingMode == ProcessingMode::preset
+            ? DspActivity::active
+            : DspActivity::bypassed);
     runtime.dspSampleRate.store(bridgeRates.dspSampleRate,
                                 std::memory_order_release);
     runtime.processedInputFrames = 0;
@@ -850,9 +853,12 @@ static bool processStreamInputBlock(PipeWireRuntime &runtime,
         runtime.dspSampleRate.load(std::memory_order_relaxed);
     const auto timeSeconds =
         static_cast<double>(runtime.processedInputFrames) / sampleRate;
-    const auto processed = runtime.pipeline.processWithGeneration(
+    const auto idleState = runtime.dspIdleState.load();
+    const auto processed = runtime.pipeline.processWithIdle(
         dspScratch, runtime.options.channelCount, dspFrameCount,
-        timeSeconds);
+        timeSeconds, idleState.policy);
+    static_cast<void>(runtime.dspIdleState.tryReplaceActivity(
+        idleState, processed.activity));
     if (processed.status != ProcessStatus::ok) {
       runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
     }
@@ -1267,13 +1273,10 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
                 " Hz instead of the forced " +
                 std::to_string(ratePolicy.fixedRate) + " Hz";
   }
+  const auto idleState = runtime.dspIdleState.load();
   return {.processingMode = runtime.processingMode,
-          .dspActivity =
-              runtime.dspActivity.load(std::memory_order_acquire),
-          .dspIdlePolicy =
-              {.timeoutMilliseconds =
-                   runtime.dspIdleTimeoutMilliseconds.load(
-                       std::memory_order_acquire)},
+          .dspActivity = idleState.activity,
+          .dspIdlePolicy = idleState.policy,
           .activePreset = runtime.activePreset,
           .configurationError = runtime.configurationError,
           .configurationRevision = runtime.configurationRevision.load(
@@ -1385,8 +1388,7 @@ static PresetActivationResult activatePreset(
   }
   runtime.pipeline.replace(std::move(loaded.pipeline));
   runtime.processingMode = ProcessingMode::preset;
-  runtime.dspActivity.store(DspActivity::active,
-                            std::memory_order_release);
+  runtime.dspIdleState.replaceActivity(DspActivity::active);
   runtime.activePreset = presetPath.string();
   runtime.configurationError.clear();
   runtime.configurationRevision.fetch_add(1, std::memory_order_release);
@@ -1522,6 +1524,10 @@ static ControlMessageResult handleControlRequest(std::string_view message,
                                   false);
     }
     if (switched.changed) {
+      runtime.dspIdleState.replaceActivity(
+          runtime.processingMode == ProcessingMode::preset
+              ? DspActivity::active
+              : DspActivity::bypassed);
       runtime.configurationRevision.fetch_add(1,
                                               std::memory_order_release);
     }
@@ -1535,16 +1541,11 @@ static ControlMessageResult handleControlRequest(std::string_view message,
         switched.changed);
   }
   if (request.request.command == ControlCommand::setDspIdle) {
-    const auto previous = runtime.dspIdleTimeoutMilliseconds.exchange(
-        request.request.dspIdlePolicy.timeoutMilliseconds,
-        std::memory_order_acq_rel);
-    const auto changed =
-        previous != request.request.dspIdlePolicy.timeoutMilliseconds;
-    runtime.dspActivity.store(
+    const auto changed = runtime.dspIdleState.replacePolicy(
+        request.request.dspIdlePolicy,
         runtime.processingMode == ProcessingMode::preset
             ? DspActivity::active
-            : DspActivity::bypassed,
-        std::memory_order_release);
+            : DspActivity::bypassed);
     if (changed) {
       runtime.configurationRevision.fetch_add(1,
                                               std::memory_order_release);
@@ -1576,8 +1577,7 @@ static ControlMessageResult handleControlRequest(std::string_view message,
     }
     runtime.pipeline.replace(std::move(created.pipeline));
     runtime.processingMode = ProcessingMode::bypass;
-    runtime.dspActivity.store(DspActivity::bypassed,
-                              std::memory_order_release);
+    runtime.dspIdleState.replaceActivity(DspActivity::bypassed);
     runtime.activePreset.clear();
     runtime.configurationError.clear();
     runtime.presetReloadPending = false;
@@ -1668,6 +1668,10 @@ static void rateChangeRequested(void *data, std::uint64_t) {
       return;
     }
     runtime.pipeline.replace(std::move(rebuilt.pipeline));
+    runtime.dspIdleState.replaceActivity(
+        runtime.processingMode == ProcessingMode::preset
+            ? DspActivity::active
+            : DspActivity::bypassed);
     runtime.dspSampleRate.store(requested.fixedRate,
                                 std::memory_order_release);
     runtime.processedInputFrames = 0;
