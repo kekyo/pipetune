@@ -27,6 +27,12 @@ This separation preserves one known compatibility path while allowing
 PipeTune to select the highest usable optimized implementation or a
 user-pinned tier. One pipeline always uses exactly one implementation.
 
+The private backend source set follows EffeTune 2.5.0, including the graph core
+translation unit and generated graph-capacity contract required by its engine.
+PipeTune's loader surface remains the routed pipeline API and now includes
+`et_pipeline_latency`; PipeTune does not expose Graph v1 as a preset format or
+control API.
+
 ## Architecture policy
 
 The package contents and dispatch tiers are:
@@ -82,6 +88,10 @@ and validates:
 - every kernel name and parameter-layout hash;
 - each kernel's parameter-byte capacity; and
 - every external-asset capacity.
+
+The pinned EffeTune 2.5.0 contract contains 92 kernels. A backend from an
+earlier release is rejected even though the numeric ABI version remains one,
+because its required symbols and complete catalog do not match.
 
 The scalar backend is mandatory. If it cannot be validated, a managed daemon
 starts in pass-through mode and reports the error; a direct preset run fails.
@@ -260,9 +270,9 @@ checks its ABI and catalog, compares each CPU-runnable SIMD PFFFT impulse
 transform with scalar within tolerance, and processes equivalent preset
 pipelines through the runnable variants. It compares the actual packaged
 libraries, including standalone Release builds, with EffeTune's official Auto
-Leveler, Cassette Artifacts, Tape Artifacts, and Vinyl Artifacts golden cases
-to preserve source-specific floating-point policy. It also runs the existing
-EffeTune native DSP tests and JavaScript/native parity corpus.
+Leveler, Bluetooth SBC, Cassette Artifacts, Tape Artifacts, and Vinyl Artifacts
+golden cases to preserve source-specific floating-point policy. It also runs
+the existing EffeTune native DSP tests and JavaScript/native parity corpus.
 
 These tests establish compatibility for covered inputs, not universal
 floating-point identity. Scalar remains the recovery backend when a user or

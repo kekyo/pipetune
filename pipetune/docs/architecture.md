@@ -226,6 +226,13 @@ The generated catalog packs JSON parameters into the exact native ABI expected
 by EffeTune. Tests compare those packed parameters with EffeTune's JavaScript
 packer and compare native PCM output with EffeTune's parity corpus.
 
+The pinned EffeTune 2.5.0 registry contains 92 native kernels. PipeTune can
+therefore load the nine effects added in that release: Auto Filter, Auto Pan,
+Chorus, Frequency Shifter, Phaser, Pitch Shifter HQ, Rotary Speaker, Bandwidth
+Extender, and Phase Select EQ. The expanded Tube Simulator parameters include
+the 6L6GC and KT88 power-tube models, the 300B and 2A3 single-ended models, and
+their single-ended circuit controls.
+
 At load time, `src/dsp_pipeline.cpp`:
 
 1. bounds the input to 8 MiB and parses it with vendored yyjson;
@@ -234,7 +241,18 @@ At load time, `src/dsp_pipeline.cpp`:
 4. omits disabled nodes;
 5. warns and omits unknown or external-asset-dependent nodes;
 6. creates up to 96 native DSP instances; and
-7. configures one EffeTune engine for the complete graph.
+7. configures one EffeTune engine for the complete routed pipeline; and
+8. reads the configured pipeline latency from EffeTune's native ABI.
+
+EffeTune 2.5 computes latency per channel while configuring the pipeline. It
+delays shorter additive-merge and output paths so channels remain aligned, and
+reports the resulting aggregate through `et_pipeline_latency`. PipeTune uses
+that value directly instead of estimating latency from individual nodes.
+
+PipeTune continues to consume EffeTune app pipeline documents rather than the
+experimental Graph v1 document format. EffeTune's desktop Pipeline Analyzer
+and OpenHome playback control are also outside PipeTune's filter and control
+surfaces.
 
 Invalid JSON, invalid routing, invalid known-DSP parameters, or native engine
 errors reject the complete load. A failed live load leaves the previous
