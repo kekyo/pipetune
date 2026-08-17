@@ -20,6 +20,10 @@
 #include <unistd.h>
 #include <vector>
 
+#if defined(__SSE__) || defined(_M_X64)
+#include <immintrin.h>
+#endif
+
 static bool check(bool condition, std::string_view message) {
   if (!condition) {
     std::cerr << message << '\n';
@@ -115,6 +119,41 @@ static bool testBypassDoesNotReportDspWork() {
   return check(counters.processedFrames == 0 &&
                    counters.processingNanoseconds == 0,
                "bypass must not be counted as EffeTune DSP work");
+}
+
+static bool testNativeProcessingEnablesDenormalFlush(
+    const std::filesystem::path &presetPath) {
+#if defined(__SSE__) || defined(_M_X64)
+  auto pipeline = loadPipeline(presetPath);
+  if (pipeline == nullptr) {
+    return false;
+  }
+  auto slot = pipetune::DspPipelineSlot(std::move(pipeline));
+  auto samples = std::vector<float>{0.25F};
+  constexpr auto denormalModeMask = static_cast<unsigned int>(
+      _MM_FLUSH_ZERO_MASK | _MM_DENORMALS_ZERO_MASK);
+  const auto originalControl = _mm_getcsr();
+  const auto disabledControl = originalControl & ~denormalModeMask;
+  _mm_setcsr(disabledControl);
+  const auto status = slot.process(samples, 1, 1, 0.0);
+  const auto configuredControl = _mm_getcsr();
+  _mm_setcsr(originalControl);
+  constexpr auto exceptionStatusMask =
+      static_cast<unsigned int>(_MM_EXCEPT_MASK);
+
+  return check(status == pipetune::ProcessStatus::ok,
+               "native processing failed while configuring denormal mode") &&
+         check((configuredControl & denormalModeMask) == denormalModeMask,
+               "native processing must enable FTZ and DAZ") &&
+         check((configuredControl &
+                ~(denormalModeMask | exceptionStatusMask)) ==
+                   (disabledControl &
+                    ~(denormalModeMask | exceptionStatusMask)),
+               "native processing must preserve unrelated MXCSR state");
+#else
+  static_cast<void>(presetPath);
+  return true;
+#endif
 }
 
 static bool testConcurrentReplacementProducesOnlyCompletePipelines(
@@ -274,6 +313,7 @@ int main() {
       writeVolumePreset(directory, "negative.effetune_preset", -6);
   const auto passed = testReplacementChangesPcm(positive, negative) &&
                       testBypassDoesNotReportDspWork() &&
+                      testNativeProcessingEnablesDenormalFlush(positive) &&
                       testConcurrentReplacementProducesOnlyCompletePipelines(
                           positive, negative) &&
                       testStagedReplacementCanCommitAndRollback(

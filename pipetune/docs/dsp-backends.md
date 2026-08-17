@@ -263,6 +263,15 @@ For decisions about another backend variant:
 Debug builds, virtual machines, emulation, and thermally throttled systems are
 useful for correctness but not for selecting optimization policy.
 
+## Denormal handling
+
+Immediately before an active native pipeline is processed on x86, PipeTune
+enables flush-to-zero and denormals-are-zero in the current audio thread's
+MXCSR register while preserving its other control and status bits. Recursive
+DSP can otherwise retain inaudible subnormal tails after input stops and spend
+substantially more CPU time processing them. Bypass processing and non-x86
+platforms are unchanged.
+
 ## Numerical verification
 
 The complete test suite loads every architecture-applicable shared library,

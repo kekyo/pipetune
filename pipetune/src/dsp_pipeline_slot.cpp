@@ -10,7 +10,25 @@
 #include <stdexcept>
 #include <utility>
 
+#if defined(__SSE__) || defined(_M_X64)
+#include <immintrin.h>
+#endif
+
 namespace pipetune {
+
+static void enableDspDenormalFlush() noexcept {
+#if defined(__SSE__) || defined(_M_X64)
+  // Recursive DSP can retain inaudible subnormal tails after input stops.
+  // Configure only the current processing thread and preserve all other MXCSR
+  // control and status bits.
+  constexpr auto denormalModeMask = static_cast<unsigned int>(
+      _MM_FLUSH_ZERO_MASK | _MM_DENORMALS_ZERO_MASK);
+  const auto control = _mm_getcsr();
+  if ((control & denormalModeMask) != denormalModeMask) {
+    _mm_setcsr(control | denormalModeMask);
+  }
+#endif
+}
 
 DspPipelineSlot::DspPipelineSlot(
     std::unique_ptr<DspPipeline> initialPipeline)
@@ -54,6 +72,9 @@ DspPipelineProcessResult DspPipelineSlot::processWithGeneration(
   }
 
   const auto usesNativeDsp = selected->usesNativeDsp();
+  if (usesNativeDsp) {
+    enableDspDenormalFlush();
+  }
   const auto startedAt =
       usesNativeDsp ? std::chrono::steady_clock::now()
                     : std::chrono::steady_clock::time_point{};
