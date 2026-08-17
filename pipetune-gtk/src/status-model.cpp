@@ -9,6 +9,7 @@
 #include "status-text.h"
 
 #include "pipetune/dsp_backend.h"
+#include "pipetune/dsp_idle.h"
 #include "pipetune/sample_rate.h"
 
 #include <algorithm>
@@ -173,7 +174,38 @@ static std::string effectiveVariantText(
                       : std::string(name);
 }
 
+static std::string dspActivityText(pipetune::DspActivity activity) {
+  switch (activity) {
+  case pipetune::DspActivity::bypassed:
+    return translate("Bypass");
+  case pipetune::DspActivity::active:
+    return translate("Active");
+  case pipetune::DspActivity::draining:
+    return translate("Draining");
+  case pipetune::DspActivity::sleeping:
+    return translate("Suspended");
+  }
+  return translate("Unknown");
+}
+
+static std::string dspIdlePolicyText(
+    const pipetune::DspIdlePolicy &policy) {
+  if (!pipetune::dspIdlePolicyIsEnabled(policy)) {
+    return translate("Ignore");
+  }
+  return fixedDecimal(
+             static_cast<double>(policy.timeoutMilliseconds) / 1000.0,
+             1) +
+         " s";
+}
+
 static StatusItem dspLoadItem(const ApplicationState &state) {
+  if (state.connection == ControlConnectionState::connected &&
+      state.hasRuntimeStatus &&
+      state.runtime.dspActivity == pipetune::DspActivity::sleeping) {
+    return textItem("dsp.load", translate("Load"),
+                    translate("Suspended"));
+  }
   if (state.connection != ControlConnectionState::connected ||
       !state.hasRuntimeStatus || !state.dspTiming.hasAverage ||
       !std::isfinite(state.dspTiming.nanosecondsPerFrame) ||
@@ -338,6 +370,9 @@ std::vector<StatusSection> buildStatusSections(
                        backendText(saved.dspBackend)),
               textItem("saved.simd-variant", translate("SIMD variant"),
                        simdVariantText(saved.dspSimdVariant)),
+              textItem("saved.dsp-idle",
+                       translate("Silence suspension"),
+                       dspIdlePolicyText(saved.dspIdlePolicy)),
           },
   });
   sections.push_back({
@@ -429,6 +464,11 @@ std::vector<StatusSection> buildStatusSections(
                   state.runtime.dspBackendFallback
                       ? StatusSeverity::warning
                       : unavailable),
+              textItem(
+                  "dsp.activity", translate("DSP activity"),
+                  connected ? dspActivityText(state.runtime.dspActivity)
+                            : "—",
+                  unavailable),
               dspTimeItem(state),
               dspLoadItem(state),
               textItem(

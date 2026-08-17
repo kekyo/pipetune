@@ -330,6 +330,11 @@ static int inspectConfig(const std::filesystem::path &path) {
       << jsonString(pipetune::dspBackendName(config.dspBackend))
       << ",\"dspSimdVariant\":"
       << jsonString(pipetune::dspSimdVariantName(config.dspSimdVariant))
+      << ",\"dspIdleTimeoutMilliseconds\":"
+      << (pipetune::dspIdlePolicyIsEnabled(config.dspIdlePolicy)
+              ? std::to_string(
+                    config.dspIdlePolicy.timeoutMilliseconds)
+              : "null")
       << "}\n";
   return 0;
 }

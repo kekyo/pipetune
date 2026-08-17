@@ -87,6 +87,9 @@ msgstr "操作日志"
 msgid "Action Log ({0})"
 msgstr "操作日志（{0}）"
 
+msgid "Active"
+msgstr "活动中"
+
 msgid "Active plugins"
 msgstr "活动插件"
 
@@ -152,6 +155,12 @@ msgstr "正在更改采样频率策略"
 
 msgid "Changing sampling-frequency policy failed"
 msgstr "更改采样频率策略失败"
+
+msgid "Changing silence suspension"
+msgstr "正在更改静音暂停"
+
+msgid "Changing silence suspension failed"
+msgstr "更改静音暂停失败"
 
 msgid "Choose a preset before enabling DSP processing"
 msgstr "启用 DSP 处理前请选择预设"
@@ -238,11 +247,17 @@ msgstr "已断开连接"
 msgid "Disconnected · settings are read-only"
 msgstr "已断开连接 · 设置为只读"
 
+msgid "Draining"
+msgstr "处理尾音中"
+
 msgid "DSP"
 msgstr "DSP"
 
 msgid "DSP / Performance"
 msgstr "DSP / 性能"
+
+msgid "DSP activity"
+msgstr "DSP 活动状态"
 
 msgid "DSP backend"
 msgstr "DSP 后端"
@@ -298,6 +313,9 @@ msgstr "强制"
 
 msgid "Force — request the fixed graph sampling frequency"
 msgstr "强制 — 请求固定图采样频率"
+
+msgid "Ignore"
+msgstr "忽略"
 
 msgid "Input / Sampling Frequencies"
 msgstr "输入 / 采样频率"
@@ -500,11 +518,23 @@ msgstr "正在保存所有设置"
 msgid "Scalar"
 msgstr "Scalar"
 
+msgid "seconds"
+msgstr "秒"
+
 msgid "Setting up PipeTune for this user…"
 msgstr "正在为此用户设置 PipeTune…"
 
 msgid "Settings updated"
 msgstr "设置已更新"
+
+msgid "Silence duration"
+msgstr "静音持续时间"
+
+msgid "Silence suspension"
+msgstr "静音暂停"
+
+msgid "Silence suspension changed"
+msgstr "已更改静音暂停"
 
 msgid "SIMD variant"
 msgstr "SIMD 变体"
@@ -524,6 +554,15 @@ msgstr "建议"
 
 msgid "Suggest — let PipeWire choose the graph sampling frequency"
 msgstr "建议 — 让 PipeWire 选择图采样频率"
+
+msgid "Suspend DSP on silence"
+msgstr "静音时暂停 DSP"
+
+msgid "Suspend DSP work after continuous silent input while allowing effect tails for the selected duration."
+msgstr "输入持续静音后暂停 DSP 运算，并在所选时长内继续处理效果尾音。"
+
+msgid "Suspended"
+msgstr "已暂停"
 
 #, brace-format
 msgid "Switching — {0}"

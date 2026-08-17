@@ -51,6 +51,8 @@ export interface StartupConfigSnapshot {
   readonly dspBackend: string;
   /** Automatic or pinned SIMD variant. */
   readonly dspSimdVariant: string;
+  /** Automatic DSP suspension timeout, or null when ignored. */
+  readonly dspIdleTimeoutMilliseconds: number | null;
 }
 
 /**

@@ -121,6 +121,10 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
           builder, "rateEnforcementCombo", GTK_TYPE_COMBO_BOX_TEXT),
       .dspBackendCombo = requiredWidget(
           builder, "dspBackendCombo", GTK_TYPE_COMBO_BOX_TEXT),
+      .dspIdleEnabledSwitch = requiredWidget(
+          builder, "dspIdleEnabledSwitch", GTK_TYPE_SWITCH),
+      .dspIdleTimeoutSpin = requiredWidget(
+          builder, "dspIdleTimeoutSpin", GTK_TYPE_SPIN_BUTTON),
       .languageCombo = requiredWidget(
           builder, "languageCombo", GTK_TYPE_COMBO_BOX_TEXT),
       .languageRestartNotice = requiredWidget(

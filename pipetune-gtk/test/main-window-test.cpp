@@ -11,6 +11,7 @@
 #include <gtk/gtk.h>
 
 #include <array>
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -22,6 +23,10 @@ static bool check(bool condition, std::string_view message) {
     std::cerr << message << '\n';
   }
   return condition;
+}
+
+static bool approximately(double actual, double expected) {
+  return std::abs(actual - expected) < 0.000001;
 }
 
 static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
@@ -59,6 +64,10 @@ static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
                "rate enforcement combo-box type differs") &&
          check(GTK_IS_COMBO_BOX_TEXT(ui.dspBackendCombo),
                "DSP backend combo-box type differs") &&
+         check(GTK_IS_SWITCH(ui.dspIdleEnabledSwitch),
+               "DSP idle switch type differs") &&
+         check(GTK_IS_SPIN_BUTTON(ui.dspIdleTimeoutSpin),
+               "DSP idle timeout spin-button type differs") &&
          check(GTK_IS_COMBO_BOX_TEXT(ui.languageCombo),
                "language combo-box type differs") &&
          check(GTK_IS_LABEL(ui.languageRestartNotice),
@@ -87,6 +96,27 @@ static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
                "cancel button type differs") &&
          check(GTK_IS_BUTTON(ui.applyButton),
                "global apply button type differs");
+}
+
+static bool checkDspIdleControls(
+    const pipetune_gtk::MainWindowUi &ui) {
+  auto *spin = GTK_SPIN_BUTTON(ui.dspIdleTimeoutSpin);
+  auto *adjustment = gtk_spin_button_get_adjustment(spin);
+  return check(
+             approximately(gtk_adjustment_get_lower(adjustment), 0.1),
+             "DSP idle timeout minimum differs") &&
+         check(approximately(gtk_adjustment_get_upper(adjustment), 5.0),
+               "DSP idle timeout maximum differs") &&
+         check(
+             approximately(gtk_adjustment_get_step_increment(adjustment),
+                           0.1),
+             "DSP idle timeout step differs") &&
+         check(approximately(gtk_spin_button_get_value(spin), 1.0),
+               "DSP idle timeout initial value differs") &&
+         check(gtk_spin_button_get_digits(spin) == 1,
+               "DSP idle timeout precision differs") &&
+         check(gtk_spin_button_get_numeric(spin) != FALSE,
+               "DSP idle timeout must accept numeric input only");
 }
 
 static bool checkVersionLinks(const pipetune_gtk::MainWindowUi &ui) {
@@ -297,6 +327,7 @@ int main(int argc, char **argv) {
   const auto valid =
       check(ui.builder != nullptr, "main window builder is unavailable") &&
       checkWidgetTypes(ui) && checkSettingsPages(ui) &&
+      checkDspIdleControls(ui) &&
       checkLanguageChoices(ui) &&
       checkRestoreDefaultsDescription(ui) && checkVersionLinks(ui) &&
       checkLoadMeterHost(ui) &&

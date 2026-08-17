@@ -83,6 +83,9 @@ msgstr ""
 msgid "Action Log ({0})"
 msgstr ""
 
+msgid "Active"
+msgstr ""
+
 msgid "Active plugins"
 msgstr ""
 
@@ -147,6 +150,12 @@ msgid "Changing sampling-frequency policy"
 msgstr ""
 
 msgid "Changing sampling-frequency policy failed"
+msgstr ""
+
+msgid "Changing silence suspension"
+msgstr ""
+
+msgid "Changing silence suspension failed"
 msgstr ""
 
 msgid "Choose a preset before enabling DSP processing"
@@ -234,10 +243,16 @@ msgstr ""
 msgid "Disconnected · settings are read-only"
 msgstr ""
 
+msgid "Draining"
+msgstr ""
+
 msgid "DSP"
 msgstr ""
 
 msgid "DSP / Performance"
+msgstr ""
+
+msgid "DSP activity"
 msgstr ""
 
 msgid "DSP backend"
@@ -293,6 +308,9 @@ msgid "Force"
 msgstr ""
 
 msgid "Force — request the fixed graph sampling frequency"
+msgstr ""
+
+msgid "Ignore"
 msgstr ""
 
 msgid "Input / Sampling Frequencies"
@@ -496,10 +514,22 @@ msgstr ""
 msgid "Scalar"
 msgstr ""
 
+msgid "seconds"
+msgstr ""
+
 msgid "Setting up PipeTune for this user…"
 msgstr ""
 
 msgid "Settings updated"
+msgstr ""
+
+msgid "Silence duration"
+msgstr ""
+
+msgid "Silence suspension"
+msgstr ""
+
+msgid "Silence suspension changed"
 msgstr ""
 
 msgid "SIMD variant"
@@ -519,6 +549,15 @@ msgid "Suggest"
 msgstr ""
 
 msgid "Suggest — let PipeWire choose the graph sampling frequency"
+msgstr ""
+
+msgid "Suspend DSP on silence"
+msgstr ""
+
+msgid "Suspend DSP work after continuous silent input while allowing effect tails for the selected duration."
+msgstr ""
+
+msgid "Suspended"
 msgstr ""
 
 #, brace-format

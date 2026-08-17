@@ -399,7 +399,7 @@ describe('PipeTune GTK dialog', () => {
     const controlsByPage = [
       ['processingEnabledSwitch', 'presetCombo', 'presetChooser'],
       ['rateCombo', 'rateEnforcementCombo'],
-      ['dspBackendCombo'],
+      ['dspBackendCombo', 'dspIdleEnabledSwitch', 'dspIdleTimeoutSpin'],
       [
         'languageCombo',
         'restoreDefaultsButton',
@@ -544,6 +544,29 @@ describe('PipeTune GTK dialog', () => {
     await selectComboItem('dspBackendCombo', 0);
     await waitForCommands(['set-dsp-backend']);
     await waitForLabel('status-dsp-backend', 'Scalar');
+    const dspIdle = await getElement('dspIdleEnabledSwitch', 'switch');
+    const dspIdleTimeout = await getElement('dspIdleTimeoutSpin', 'spinButton');
+    expect(await dspIdle.isChecked()).toBe(false);
+    expect(await dspIdleTimeout.value()).toBe(1);
+    await dspIdle.toggle();
+    await waitForCommands(['set-dsp-idle']);
+    await dspIdleTimeout.setValue(2.5);
+    await toPass(
+      async () => {
+        expect(await session?.readRequests()).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              command: 'set-dsp-idle',
+              timeoutMilliseconds: 2500,
+            }),
+          ])
+        );
+      },
+      {
+        timeoutMs: 10_000,
+        message: 'The 2.5 second DSP idle policy was not applied live.',
+      }
+    );
     await selectSettingsPage(0);
     const processing = await getElement('processingEnabledSwitch', 'switch');
     await processing.toggle();
@@ -561,12 +584,65 @@ describe('PipeTune GTK dialog', () => {
       rateEnforcement: 'force',
       dspBackend: 'scalar',
       dspSimdVariant: 'auto',
+      dspIdleTimeoutMilliseconds: 2500,
     });
     expect(await session.app.getWindowCount()).toBeGreaterThan(0);
     const requests = await session.readRequests();
     expect(requests.map((request) => request.command)).toEqual(
       expect.arrayContaining(['set-rate', 'set-dsp-backend', 'bypass'])
     );
+  });
+
+  it('retains the selected silence duration while suspension is off', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await selectSettingsPage(2);
+    await session.clearRequests();
+    const enabled = await getElement('dspIdleEnabledSwitch', 'switch');
+    const timeout = await getElement('dspIdleTimeoutSpin', 'spinButton');
+    expect(await enabled.isChecked()).toBe(false);
+    expect(await timeout.value()).toBe(1);
+
+    await enabled.toggle();
+    await waitForCommands(['set-dsp-idle']);
+    await timeout.setValue(2.5);
+    await toPass(async () => {
+      expect(await session?.readRequests()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ timeoutMilliseconds: 2500 }),
+        ])
+      );
+    });
+    await enabled.toggle();
+    await toPass(async () => {
+      expect(await session?.readRequests()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            command: 'set-dsp-idle',
+            timeoutMilliseconds: null,
+          }),
+        ])
+      );
+    });
+    expect(await timeout.value()).toBe(2.5);
+    expect((await timeout.info()).states).not.toContain('sensitive');
+
+    const beforeReenable = (await session.readRequests()).filter(
+      (request) =>
+        request.command === 'set-dsp-idle' &&
+        request.timeoutMilliseconds === 2500
+    ).length;
+    await enabled.toggle();
+    await toPass(async () => {
+      const requests = await session?.readRequests();
+      expect(
+        requests?.filter(
+          (request) =>
+            request.command === 'set-dsp-idle' &&
+            request.timeoutMilliseconds === 2500
+        ).length
+      ).toBe(beforeReenable + 1);
+    });
   });
 
   it('refreshes the active snapshot when an EffeTune saved preset changes', async () => {
@@ -800,6 +876,7 @@ describe('PipeTune GTK dialog', () => {
       rateEnforcement: 'suggest',
       dspBackend: 'scalar',
       dspSimdVariant: 'auto',
+      dspIdleTimeoutMilliseconds: null,
     });
   });
 

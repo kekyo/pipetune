@@ -88,6 +88,9 @@ msgstr "कार्रवाई लॉग"
 msgid "Action Log ({0})"
 msgstr "कार्रवाई लॉग ({0})"
 
+msgid "Active"
+msgstr "सक्रिय"
+
 msgid "Active plugins"
 msgstr "सक्रिय प्लगइन"
 
@@ -153,6 +156,12 @@ msgstr "नमूनाकरण आवृत्ति नीति बदली
 
 msgid "Changing sampling-frequency policy failed"
 msgstr "नमूनाकरण आवृत्ति नीति बदलना विफल रहा"
+
+msgid "Changing silence suspension"
+msgstr "मौन पर निलंबन बदला जा रहा है"
+
+msgid "Changing silence suspension failed"
+msgstr "मौन पर निलंबन बदलना विफल रहा"
 
 msgid "Choose a preset before enabling DSP processing"
 msgstr "DSP प्रोसेसिंग चालू करने से पहले प्रीसेट चुनें"
@@ -239,11 +248,17 @@ msgstr "डिस्कनेक्टेड"
 msgid "Disconnected · settings are read-only"
 msgstr "डिस्कनेक्टेड · सेटिंग केवल पढ़ने योग्य हैं"
 
+msgid "Draining"
+msgstr "इफ़ेक्ट टेल जारी है"
+
 msgid "DSP"
 msgstr "DSP"
 
 msgid "DSP / Performance"
 msgstr "DSP / प्रदर्शन"
+
+msgid "DSP activity"
+msgstr "DSP गतिविधि"
 
 msgid "DSP backend"
 msgstr "DSP बैकएंड"
@@ -299,6 +314,9 @@ msgstr "बलपूर्वक"
 
 msgid "Force — request the fixed graph sampling frequency"
 msgstr "बलपूर्वक — निश्चित ग्राफ़ नमूनाकरण आवृत्ति का अनुरोध करें"
+
+msgid "Ignore"
+msgstr "अनदेखा करें"
 
 msgid "Input / Sampling Frequencies"
 msgstr "इनपुट / नमूनाकरण आवृत्तियाँ"
@@ -501,11 +519,23 @@ msgstr "सभी सेटिंग सहेजी जा रही हैं"
 msgid "Scalar"
 msgstr "Scalar"
 
+msgid "seconds"
+msgstr "सेकंड"
+
 msgid "Setting up PipeTune for this user…"
 msgstr "इस उपयोगकर्ता के लिए PipeTune सेट अप किया जा रहा है…"
 
 msgid "Settings updated"
 msgstr "सेटिंग अपडेट की गईं"
+
+msgid "Silence duration"
+msgstr "मौन अवधि"
+
+msgid "Silence suspension"
+msgstr "मौन पर निलंबन"
+
+msgid "Silence suspension changed"
+msgstr "मौन पर निलंबन बदल दिया गया"
 
 msgid "SIMD variant"
 msgstr "SIMD प्रकार"
@@ -525,6 +555,15 @@ msgstr "सुझाव"
 
 msgid "Suggest — let PipeWire choose the graph sampling frequency"
 msgstr "सुझाव — PipeWire को ग्राफ़ नमूनाकरण आवृत्ति चुनने दें"
+
+msgid "Suspend DSP on silence"
+msgstr "मौन होने पर DSP निलंबित करें"
+
+msgid "Suspend DSP work after continuous silent input while allowing effect tails for the selected duration."
+msgstr "लगातार मौन इनपुट के बाद DSP कार्य निलंबित करें और चुनी गई अवधि तक इफ़ेक्ट टेल जारी रहने दें।"
+
+msgid "Suspended"
+msgstr "निलंबित"
 
 #, brace-format
 msgid "Switching — {0}"

@@ -88,6 +88,9 @@ msgstr "Journal des actions"
 msgid "Action Log ({0})"
 msgstr "Journal des actions ({0})"
 
+msgid "Active"
+msgstr "Actif"
+
 msgid "Active plugins"
 msgstr "Greffons actifs"
 
@@ -153,6 +156,12 @@ msgstr "Changement de la politique de fréquence d'échantillonnage"
 
 msgid "Changing sampling-frequency policy failed"
 msgstr "Échec du changement de la politique de fréquence d'échantillonnage"
+
+msgid "Changing silence suspension"
+msgstr "Modification de la suspension en cas de silence"
+
+msgid "Changing silence suspension failed"
+msgstr "Échec de la modification de la suspension en cas de silence"
 
 msgid "Choose a preset before enabling DSP processing"
 msgstr "Choisissez un préréglage avant d'activer le traitement DSP"
@@ -239,11 +248,17 @@ msgstr "Déconnecté"
 msgid "Disconnected · settings are read-only"
 msgstr "Déconnecté · les paramètres sont en lecture seule"
 
+msgid "Draining"
+msgstr "Traitement de la traîne"
+
 msgid "DSP"
 msgstr "DSP"
 
 msgid "DSP / Performance"
 msgstr "DSP / Performances"
+
+msgid "DSP activity"
+msgstr "Activité DSP"
 
 msgid "DSP backend"
 msgstr "Moteur DSP"
@@ -299,6 +314,9 @@ msgstr "Forcer"
 
 msgid "Force — request the fixed graph sampling frequency"
 msgstr "Forcer — demander la fréquence d'échantillonnage fixe du graphe"
+
+msgid "Ignore"
+msgstr "Ignorer"
 
 msgid "Input / Sampling Frequencies"
 msgstr "Entrée / Fréquences d'échantillonnage"
@@ -501,11 +519,23 @@ msgstr "Enregistrement de tous les paramètres"
 msgid "Scalar"
 msgstr "Scalar"
 
+msgid "seconds"
+msgstr "secondes"
+
 msgid "Setting up PipeTune for this user…"
 msgstr "Configuration de PipeTune pour cet utilisateur…"
 
 msgid "Settings updated"
 msgstr "Paramètres mis à jour"
+
+msgid "Silence duration"
+msgstr "Durée du silence"
+
+msgid "Silence suspension"
+msgstr "Suspension en cas de silence"
+
+msgid "Silence suspension changed"
+msgstr "Suspension en cas de silence modifiée"
 
 msgid "SIMD variant"
 msgstr "Variante SIMD"
@@ -525,6 +555,15 @@ msgstr "Suggérer"
 
 msgid "Suggest — let PipeWire choose the graph sampling frequency"
 msgstr "Suggérer — laisser PipeWire choisir la fréquence d'échantillonnage du graphe"
+
+msgid "Suspend DSP on silence"
+msgstr "Suspendre le DSP en cas de silence"
+
+msgid "Suspend DSP work after continuous silent input while allowing effect tails for the selected duration."
+msgstr "Suspend le traitement DSP après une entrée silencieuse continue tout en laissant les traînes d’effets se poursuivre pendant la durée sélectionnée."
+
+msgid "Suspended"
+msgstr "Suspendu"
 
 #, brace-format
 msgid "Switching — {0}"

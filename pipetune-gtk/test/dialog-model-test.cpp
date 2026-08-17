@@ -38,7 +38,51 @@ static pipetune::StartupConfig baseConfig() {
       .ratePolicy = pipetune::defaultSampleRatePolicy(),
       .dspBackend = pipetune::DspBackendKind::scalar,
       .dspSimdVariant = pipetune::DspSimdVariant::automatic,
+      .dspIdlePolicy = {},
   };
+}
+
+static bool testDspIdleLiveApplyAndCancel() {
+  const auto saved = baseConfig();
+  auto transaction =
+      pipetune_gtk::beginSettingsTransaction(saved, saved, 1, true);
+  auto desired = saved;
+  desired.dspIdlePolicy = {.timeoutMilliseconds = 2500};
+  pipetune_gtk::editSettingsTransaction(transaction, desired);
+  if (!check(pipetune_gtk::nextSettingsOperation(transaction) ==
+                 pipetune_gtk::SettingsOperation::dspIdle,
+             "DSP idle policy must have its own live operation") ||
+      !check(pipetune_gtk::beginSettingsOperation(
+                 transaction, pipetune_gtk::SettingsOperation::dspIdle),
+             "DSP idle operation must start")) {
+    return false;
+  }
+  pipetune_gtk::completeSettingsOperation(transaction, true, desired, 2,
+                                          {});
+  if (!check(pipetune_gtk::settingsTransactionCanApply(transaction),
+             "confirmed DSP idle policy must enable Apply")) {
+    return false;
+  }
+  pipetune_gtk::requestSettingsCancel(transaction);
+  if (!check(pipetune_gtk::nextSettingsOperation(transaction) ==
+                 pipetune_gtk::SettingsOperation::dspIdle,
+             "Cancel must restore the DSP idle policy")) {
+    return false;
+  }
+  pipetune_gtk::beginSettingsOperation(
+      transaction, pipetune_gtk::SettingsOperation::dspIdle);
+  pipetune_gtk::completeSettingsOperation(
+      transaction, true, transaction.baselineLive, 3, {});
+
+  auto status = pipetune::ControlRuntimeStatus{};
+  status.processingMode = pipetune::ProcessingMode::bypass;
+  status.dspIdlePolicy = {.timeoutMilliseconds = 1700};
+  const auto mapped = pipetune_gtk::startupConfigFromRuntime(status);
+  return check(
+             pipetune_gtk::settingsTransactionShouldClose(transaction),
+             "DSP idle rollback must permit Cancel to close") &&
+         check(mapped.dspIdlePolicy.timeoutMilliseconds == 1700,
+               "runtime DSP idle policy must enter the transaction");
 }
 
 static bool testLiveCoalescingApplyAndCancel() {
@@ -224,7 +268,8 @@ static bool testStaleStatusAndRestoreRecovery() {
        .presetPath = {},
        .ratePolicy = pipetune::defaultSampleRatePolicy(),
        .dspBackend = pipetune::DspBackendKind::scalar,
-       .dspSimdVariant = pipetune::DspSimdVariant::automatic});
+       .dspSimdVariant = pipetune::DspSimdVariant::automatic,
+       .dspIdlePolicy = {}});
   return check(!transaction.conflict,
                "Restore defaults must recover an external conflict") &&
          check(pipetune_gtk::nextSettingsOperation(transaction) ==
@@ -254,6 +299,7 @@ static bool testStructuredStatusModel() {
   state.connection = pipetune_gtk::ControlConnectionState::connected;
   state.hasRuntimeStatus = true;
   state.runtime.processingMode = pipetune::ProcessingMode::preset;
+  state.runtime.dspActivity = pipetune::DspActivity::active;
   state.runtime.activePreset = "/tmp/live.effetune_preset";
   state.runtime.activePluginCount = 4;
   state.runtime.inputSampleFormat = "F32P";
@@ -332,6 +378,13 @@ static bool testStructuredStatusModel() {
       findItem(*performance, "errors.processing");
   const auto *processingTime =
       findItem(*performance, "dsp.processing-time");
+  const auto *activity = findItem(*performance, "dsp.activity");
+  const auto *savedConfiguration =
+      findSection(sections, "saved-configuration");
+  const auto *savedIdle = savedConfiguration == nullptr
+                              ? nullptr
+                              : findItem(*savedConfiguration,
+                                         "saved.dsp-idle");
   if (!check(load != nullptr && load->numericValue.has_value() &&
                  *load->numericValue == 19.2 && load->unit == "%" &&
                  load->minimum == 0.0 && load->maximum == 100.0 &&
@@ -342,6 +395,10 @@ static bool testStructuredStatusModel() {
                  processingTime->displayKind ==
                      pipetune_gtk::StatusDisplayKind::text,
              "other numeric status rows must remain text") ||
+      !check(activity != nullptr && activity->value == "Active",
+             "DSP activity must be reported separately from the preset") ||
+      !check(savedIdle != nullptr && savedIdle->value == "Ignore",
+             "saved DSP idle policy must be visible") ||
       !check(overrun != nullptr && overrun->value == "1" &&
                  underrun != nullptr && underrun->value == "2" &&
                  processing != nullptr && processing->value == "3",
@@ -378,6 +435,25 @@ static bool testStatusLevelPresentation() {
   if (!check(load != nullptr, "DSP load item is unavailable")) {
     return false;
   }
+
+  state.runtime.dspActivity = pipetune::DspActivity::sleeping;
+  state.runtime.dspIdlePolicy = {.timeoutMilliseconds = 1000};
+  const auto suspendedSections = pipetune_gtk::buildStatusSections(
+      state, baseConfig(), 1704164645012ULL);
+  const auto *suspendedPerformance =
+      findSection(suspendedSections, "dsp-performance");
+  const auto *suspended = suspendedPerformance == nullptr
+                              ? nullptr
+                              : findItem(*suspendedPerformance, "dsp.load");
+  if (!check(suspended != nullptr && suspended->value == "Suspended" &&
+                 suspended->displayKind ==
+                     pipetune_gtk::StatusDisplayKind::text &&
+                 !suspended->numericValue.has_value(),
+             "sleeping DSP load must be presented as Suspended")) {
+    return false;
+  }
+  state.runtime.dspActivity = pipetune::DspActivity::active;
+  state.runtime.dspIdlePolicy = {};
 
   struct LevelCase {
     double value;
@@ -521,6 +597,7 @@ static bool testActionLogHistory() {
 
 int main() {
   return testLiveCoalescingApplyAndCancel() &&
+                 testDspIdleLiveApplyAndCancel() &&
                  testFailuresDisconnectAndConflict() &&
                  testStaleStatusAndRestoreRecovery() &&
                  testStructuredStatusModel() &&

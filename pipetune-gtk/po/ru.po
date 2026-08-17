@@ -89,6 +89,9 @@ msgstr "Журнал действий"
 msgid "Action Log ({0})"
 msgstr "Журнал действий ({0})"
 
+msgid "Active"
+msgstr "Активен"
+
 msgid "Active plugins"
 msgstr "Активные плагины"
 
@@ -154,6 +157,12 @@ msgstr "Изменение политики частоты дискретиза�
 
 msgid "Changing sampling-frequency policy failed"
 msgstr "Не удалось изменить политику частоты дискретизации"
+
+msgid "Changing silence suspension"
+msgstr "Изменение приостановки при тишине"
+
+msgid "Changing silence suspension failed"
+msgstr "Не удалось изменить приостановку при тишине"
 
 msgid "Choose a preset before enabling DSP processing"
 msgstr "Выберите предустановку перед включением обработки DSP"
@@ -240,11 +249,17 @@ msgstr "Отключено"
 msgid "Disconnected · settings are read-only"
 msgstr "Отключено · настройки доступны только для чтения"
 
+msgid "Draining"
+msgstr "Обработка хвоста"
+
 msgid "DSP"
 msgstr "DSP"
 
 msgid "DSP / Performance"
 msgstr "DSP / Производительность"
+
+msgid "DSP activity"
+msgstr "Активность DSP"
 
 msgid "DSP backend"
 msgstr "Бэкенд DSP"
@@ -300,6 +315,9 @@ msgstr "Принудительно"
 
 msgid "Force — request the fixed graph sampling frequency"
 msgstr "Принудительно — запросить фиксированную частоту дискретизации графа"
+
+msgid "Ignore"
+msgstr "Игнорировать"
 
 msgid "Input / Sampling Frequencies"
 msgstr "Вход / Частоты дискретизации"
@@ -502,11 +520,23 @@ msgstr "Сохранение всех настроек"
 msgid "Scalar"
 msgstr "Scalar"
 
+msgid "seconds"
+msgstr "секунды"
+
 msgid "Setting up PipeTune for this user…"
 msgstr "Настройка PipeTune для этого пользователя…"
 
 msgid "Settings updated"
 msgstr "Настройки обновлены"
+
+msgid "Silence duration"
+msgstr "Длительность тишины"
+
+msgid "Silence suspension"
+msgstr "Приостановка при тишине"
+
+msgid "Silence suspension changed"
+msgstr "Приостановка при тишине изменена"
 
 msgid "SIMD variant"
 msgstr "Вариант SIMD"
@@ -526,6 +556,15 @@ msgstr "Предлагать"
 
 msgid "Suggest — let PipeWire choose the graph sampling frequency"
 msgstr "Предлагать — позволить PipeWire выбрать частоту дискретизации графа"
+
+msgid "Suspend DSP on silence"
+msgstr "Приостанавливать DSP при тишине"
+
+msgid "Suspend DSP work after continuous silent input while allowing effect tails for the selected duration."
+msgstr "Приостанавливает обработку DSP после непрерывного беззвучного входа, сохраняя хвосты эффектов в течение выбранного времени."
+
+msgid "Suspended"
+msgstr "Приостановлен"
 
 #, brace-format
 msgid "Switching — {0}"

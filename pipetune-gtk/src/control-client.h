@@ -166,6 +166,19 @@ void setControlDspBackendAsync(ControlClient *client,
                                ControlClientReplyCallback callback,
                                void *userData);
 
+/**
+ * Requests a live automatic DSP suspension policy change.
+ *
+ * @param client Client used for the request.
+ * @param policy Ignore or a valid continuous-silence timeout.
+ * @param callback Non-null completion callback.
+ * @param userData Opaque callback argument.
+ */
+void setControlDspIdleAsync(ControlClient *client,
+                            const pipetune::DspIdlePolicy &policy,
+                            ControlClientReplyCallback callback,
+                            void *userData);
+
 } // namespace pipetune_gtk
 
 #endif

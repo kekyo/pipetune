@@ -92,6 +92,9 @@ msgstr "سجل الإجراءات"
 msgid "Action Log ({0})"
 msgstr "سجل الإجراءات ({0})"
 
+msgid "Active"
+msgstr "نشط"
+
 msgid "Active plugins"
 msgstr "الإضافات النشطة"
 
@@ -157,6 +160,12 @@ msgstr "جارٍ تغيير سياسة تردد أخذ العينات"
 
 msgid "Changing sampling-frequency policy failed"
 msgstr "فشل تغيير سياسة تردد أخذ العينات"
+
+msgid "Changing silence suspension"
+msgstr "جارٍ تغيير تعليق DSP عند الصمت"
+
+msgid "Changing silence suspension failed"
+msgstr "فشل تغيير تعليق DSP عند الصمت"
 
 msgid "Choose a preset before enabling DSP processing"
 msgstr "اختر إعدادًا مسبقًا قبل تمكين معالجة DSP"
@@ -243,11 +252,17 @@ msgstr "غير متصل"
 msgid "Disconnected · settings are read-only"
 msgstr "غير متصل · الإعدادات للقراءة فقط"
 
+msgid "Draining"
+msgstr "معالجة الذيل"
+
 msgid "DSP"
 msgstr "DSP"
 
 msgid "DSP / Performance"
 msgstr "DSP / الأداء"
+
+msgid "DSP activity"
+msgstr "نشاط DSP"
 
 msgid "DSP backend"
 msgstr "واجهة DSP الخلفية"
@@ -303,6 +318,9 @@ msgstr "فرض"
 
 msgid "Force — request the fixed graph sampling frequency"
 msgstr "فرض — اطلب تردد أخذ العينات الثابت للمخطط"
+
+msgid "Ignore"
+msgstr "تجاهل"
 
 msgid "Input / Sampling Frequencies"
 msgstr "الإدخال / ترددات أخذ العينات"
@@ -505,11 +523,23 @@ msgstr "جارٍ حفظ جميع الإعدادات"
 msgid "Scalar"
 msgstr "Scalar"
 
+msgid "seconds"
+msgstr "ثوانٍ"
+
 msgid "Setting up PipeTune for this user…"
 msgstr "جارٍ إعداد PipeTune لهذا المستخدم…"
 
 msgid "Settings updated"
 msgstr "تم تحديث الإعدادات"
+
+msgid "Silence duration"
+msgstr "مدة الصمت"
+
+msgid "Silence suspension"
+msgstr "تعليق DSP عند الصمت"
+
+msgid "Silence suspension changed"
+msgstr "تم تغيير تعليق DSP عند الصمت"
 
 msgid "SIMD variant"
 msgstr "متغير SIMD"
@@ -529,6 +559,15 @@ msgstr "اقتراح"
 
 msgid "Suggest — let PipeWire choose the graph sampling frequency"
 msgstr "اقتراح — دع PipeWire يختار تردد أخذ العينات للمخطط"
+
+msgid "Suspend DSP on silence"
+msgstr "تعليق DSP عند الصمت"
+
+msgid "Suspend DSP work after continuous silent input while allowing effect tails for the selected duration."
+msgstr "تعليق عمل DSP بعد استمرار الإدخال الصامت مع السماح بذيول المؤثرات طوال المدة المحددة."
+
+msgid "Suspended"
+msgstr "معلّق"
 
 #, brace-format
 msgid "Switching — {0}"

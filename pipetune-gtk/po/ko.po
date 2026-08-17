@@ -87,6 +87,9 @@ msgstr "작업 로그"
 msgid "Action Log ({0})"
 msgstr "작업 로그({0})"
 
+msgid "Active"
+msgstr "활성"
+
 msgid "Active plugins"
 msgstr "활성 플러그인"
 
@@ -152,6 +155,12 @@ msgstr "샘플링 주파수 정책 변경 중"
 
 msgid "Changing sampling-frequency policy failed"
 msgstr "샘플링 주파수 정책 변경 실패"
+
+msgid "Changing silence suspension"
+msgstr "무음 시 일시 중단 변경 중"
+
+msgid "Changing silence suspension failed"
+msgstr "무음 시 일시 중단 변경 실패"
 
 msgid "Choose a preset before enabling DSP processing"
 msgstr "DSP 처리를 활성화하기 전에 프리셋을 선택하세요"
@@ -238,11 +247,17 @@ msgstr "연결 끊김"
 msgid "Disconnected · settings are read-only"
 msgstr "연결 끊김 · 설정은 읽기 전용입니다"
 
+msgid "Draining"
+msgstr "잔향 처리 중"
+
 msgid "DSP"
 msgstr "DSP"
 
 msgid "DSP / Performance"
 msgstr "DSP / 성능"
+
+msgid "DSP activity"
+msgstr "DSP 활동"
 
 msgid "DSP backend"
 msgstr "DSP 백엔드"
@@ -298,6 +313,9 @@ msgstr "강제"
 
 msgid "Force — request the fixed graph sampling frequency"
 msgstr "강제 — 고정 그래프 샘플링 주파수 요청"
+
+msgid "Ignore"
+msgstr "무시"
 
 msgid "Input / Sampling Frequencies"
 msgstr "입력 / 샘플링 주파수"
@@ -500,11 +518,23 @@ msgstr "모든 설정 저장 중"
 msgid "Scalar"
 msgstr "Scalar"
 
+msgid "seconds"
+msgstr "초"
+
 msgid "Setting up PipeTune for this user…"
 msgstr "이 사용자를 위해 PipeTune을 설정하는 중…"
 
 msgid "Settings updated"
 msgstr "설정을 업데이트했습니다"
+
+msgid "Silence duration"
+msgstr "무음 지속 시간"
+
+msgid "Silence suspension"
+msgstr "무음 시 일시 중단"
+
+msgid "Silence suspension changed"
+msgstr "무음 시 일시 중단 변경됨"
 
 msgid "SIMD variant"
 msgstr "SIMD 변형"
@@ -524,6 +554,15 @@ msgstr "제안"
 
 msgid "Suggest — let PipeWire choose the graph sampling frequency"
 msgstr "제안 — PipeWire가 그래프 샘플링 주파수를 선택하도록 허용"
+
+msgid "Suspend DSP on silence"
+msgstr "무음 시 DSP 일시 중단"
+
+msgid "Suspend DSP work after continuous silent input while allowing effect tails for the selected duration."
+msgstr "입력 무음이 계속되면 선택한 시간 동안 효과의 잔향을 처리한 후 DSP 작업을 일시 중단합니다."
+
+msgid "Suspended"
+msgstr "일시 중단됨"
 
 #, brace-format
 msgid "Switching — {0}"
