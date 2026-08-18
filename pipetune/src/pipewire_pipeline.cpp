@@ -14,6 +14,7 @@
 #include "input_telemetry.h"
 #include "pipewire_buffer_io.h"
 #include "pipewire_latency.h"
+#include "pipewire_stream_flags.h"
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
 #include "sample_rate_converter.h"
@@ -1250,18 +1251,8 @@ static std::string connectStream(PipeWireRuntime &runtime, pw_stream *stream,
           : buildAutomaticFormatParameter(builder, runtime.options,
                                           preferredRate);
   const spa_pod *parameters[] = {format};
-  auto flags = PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS;
-  if (direction == PW_DIRECTION_INPUT) {
-    flags |= PW_STREAM_FLAG_ASYNC;
-  } else {
-    flags |= PW_STREAM_FLAG_TRIGGER;
-  }
-  if (autoconnect) {
-    flags |= PW_STREAM_FLAG_AUTOCONNECT;
-  }
-  if (!reconnect) {
-    flags |= PW_STREAM_FLAG_DONT_RECONNECT;
-  }
+  const auto flags =
+      makePipeWireStreamFlags(direction, autoconnect, reconnect);
   const auto result =
       pw_stream_connect(stream, direction, PW_ID_ANY,
                         static_cast<pw_stream_flags>(flags), parameters, 1);
