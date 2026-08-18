@@ -34,6 +34,29 @@ struct SampleRateBridgeRates {
 SampleRateBridgeRates resolveSampleRateBridgeRates(
     const SampleRatePolicy &policy, std::uint32_t streamSampleRate) noexcept;
 
+/** Result of measuring a complete input-to-output conversion bridge. */
+struct SampleRateBridgeDelayMeasurement {
+  /** Startup delay in PipeWire stream frames. */
+  std::uint32_t delayFrames;
+  /** Converter error code, or zero on success. */
+  int error;
+};
+
+/**
+ * Measures the stable startup delay of a round-trip sample-rate bridge.
+ *
+ * The measurement uses the same streaming converter implementation as the
+ * runtime and includes one stream-frame reserve for rounding. Equal rates
+ * bypass conversion and have no delay.
+ *
+ * @param streamSampleRate PipeWire PCM rate in hertz.
+ * @param dspSampleRate EffeTune processing rate in hertz.
+ * @return Measured stream-frame delay and converter status.
+ */
+SampleRateBridgeDelayMeasurement measureSampleRateBridgeDelay(
+    std::uint32_t streamSampleRate,
+    std::uint32_t dspSampleRate) noexcept;
+
 /** Result of one bounded streaming sample-rate conversion call. */
 struct SampleRateConversionResult {
   /** Frames consumed from the selected input interval. */

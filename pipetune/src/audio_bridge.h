@@ -14,6 +14,14 @@
 
 namespace pipetune {
 
+/** Result of one ring read with an optional intentional silence prefix. */
+struct DelayedAudioReadResult {
+  /** Frames removed from the ring. */
+  std::uint32_t queuedFrames;
+  /** Leading frames available to the output transition controller. */
+  std::uint32_t availableFrames;
+};
+
 /**
  * Transfers planar PCM between one producer and one consumer without blocking.
  *
@@ -69,6 +77,27 @@ public:
                      std::uint64_t expectedGeneration) noexcept;
 
   /**
+   * Prepends intentional silence, then removes queued frames for the tail.
+   *
+   * The silence prefix does not consume queued PCM and is not included in
+   * underrunFrames(). An unavailable tail after the prefix is counted as an
+   * underrun. An incorrectly shaped buffer or an oversized prefix is rejected
+   * without changing the ring or output buffer.
+   *
+   * @param planarSamples Contiguous channel-major output PCM.
+   * @param frameCount Number of requested frames in each channel.
+   * @param expectedGeneration Active DSP pipeline generation. Queued frames
+   * from any other generation are consumed as silence.
+   * @param silencePrefixFrames Intentional leading silence, at most frameCount.
+   * @return Queued frames consumed and total leading frames available to the
+   * output transition controller, including intentional silence.
+   */
+  DelayedAudioReadResult readWithSilencePrefix(
+      std::span<float> planarSamples, std::uint32_t frameCount,
+      std::uint64_t expectedGeneration,
+      std::uint32_t silencePrefixFrames) noexcept;
+
+  /**
    * Discards all frames that were fully queued before this call.
    *
    * The consumer must be stopped while this function runs. The producer may
@@ -97,6 +126,38 @@ private:
   alignas(64) std::atomic<std::uint64_t> writeFrame_;
   std::atomic<std::uint64_t> overrunFrames_;
   std::atomic<std::uint64_t> underrunFrames_;
+};
+
+/** Maintains a measured startup delay across arbitrary output block sizes. */
+class AudioBridgeLatencyController final {
+public:
+  /** Creates a controller with no configured delay. */
+  AudioBridgeLatencyController() noexcept;
+
+  /**
+   * Selects a delay and starts a fresh delay interval.
+   *
+   * @param latencyFrames Measured delay in output stream frames.
+   */
+  void configure(std::uint32_t latencyFrames) noexcept;
+
+  /** Restarts the configured delay interval. */
+  void reset() noexcept;
+
+  /**
+   * Consumes the portion of the delay covered by one output block.
+   *
+   * @param frameCount Frames available in the output block.
+   * @return Frames at the beginning of the block that must remain silent.
+   */
+  std::uint32_t consumePrefixFrames(std::uint32_t frameCount) noexcept;
+
+  /** Returns the configured delay in output stream frames. */
+  std::uint32_t latencyFrames() const noexcept;
+
+private:
+  std::uint32_t latencyFrames_;
+  std::uint32_t remainingFrames_;
 };
 
 /**
