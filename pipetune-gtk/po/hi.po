@@ -269,6 +269,9 @@ msgstr "DSP बैकएंड बदला गया"
 msgid "DSP Engine"
 msgstr "DSP इंजन"
 
+msgid "DSP latency"
+msgstr "DSP विलंबता"
+
 msgid "DSP processing load; graph capped at 100%."
 msgstr "DSP प्रोसेसिंग लोड; ग्राफ़ 100% पर सीमित है।"
 

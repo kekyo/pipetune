@@ -270,6 +270,9 @@ msgstr "Бэкенд DSP изменён"
 msgid "DSP Engine"
 msgstr "Движок DSP"
 
+msgid "DSP latency"
+msgstr "Задержка DSP"
+
 msgid "DSP processing load; graph capped at 100%."
 msgstr "Нагрузка обработки DSP; график ограничен 100%."
 

@@ -273,6 +273,9 @@ msgstr "تم تغيير واجهة DSP الخلفية"
 msgid "DSP Engine"
 msgstr "محرك DSP"
 
+msgid "DSP latency"
+msgstr "زمن انتقال DSP"
+
 msgid "DSP processing load; graph capped at 100%."
 msgstr "حمل معالجة DSP؛ الرسم محدود عند 100%."
 

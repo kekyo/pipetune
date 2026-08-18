@@ -349,6 +349,10 @@ std::size_t DspPipelineSlot::activePluginCount() const noexcept {
   return active_.load(std::memory_order_acquire)->activePluginCount();
 }
 
+std::uint32_t DspPipelineSlot::activeLatencyFrames() const noexcept {
+  return active_.load(std::memory_order_acquire)->latencyFrames();
+}
+
 std::optional<DspBackendKind>
 DspPipelineSlot::backendKind() const noexcept {
   return active_.load(std::memory_order_acquire)->backendKind();

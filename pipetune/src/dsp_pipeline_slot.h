@@ -184,6 +184,9 @@ public:
   /** Returns the active pipeline's enabled native DSP count. */
   std::size_t activePluginCount() const noexcept;
 
+  /** Returns the active pipeline's aggregate latency in DSP frames. */
+  std::uint32_t activeLatencyFrames() const noexcept;
+
   /** Returns the active native backend, or no value for bypass. */
   std::optional<DspBackendKind> backendKind() const noexcept;
 

@@ -60,6 +60,14 @@ static std::filesystem::path writeDelayPreset(
   return path;
 }
 
+static std::filesystem::path writeTubeSimulatorPreset(
+    const std::filesystem::path &directory) {
+  const auto path = directory / "tube-simulator.effetune_preset";
+  auto stream = std::ofstream(path, std::ios::binary);
+  stream << R"json({"pipeline":[{"name":"Tube Simulator","enabled":true,"parameters":{}}]})json";
+  return path;
+}
+
 static std::unique_ptr<pipetune::DspPipeline> loadPipeline(
     const std::filesystem::path &path) {
   auto loaded = pipetune::loadDspPipeline(
@@ -141,6 +149,24 @@ static bool testBypassDoesNotReportDspWork() {
   return check(counters.processedFrames == 0 &&
                    counters.processingNanoseconds == 0,
                "bypass must not be counted as EffeTune DSP work");
+}
+
+static bool testActivePipelineLatencyTracksReplacement(
+    const std::filesystem::path &latencyPresetPath,
+    const std::filesystem::path &zeroLatencyPresetPath) {
+  auto initial = loadPipeline(latencyPresetPath);
+  auto replacement = loadPipeline(zeroLatencyPresetPath);
+  if (initial == nullptr || replacement == nullptr) {
+    return false;
+  }
+  auto slot = pipetune::DspPipelineSlot(std::move(initial));
+  if (!check(slot.activeLatencyFrames() == 64,
+             "slot must expose the active aggregate DSP latency")) {
+    return false;
+  }
+  slot.replace(std::move(replacement));
+  return check(slot.activeLatencyFrames() == 0,
+               "slot latency must follow pipeline replacement");
 }
 
 static bool allApproximately(std::span<const float> samples,
@@ -516,8 +542,11 @@ int main() {
       writeVolumePreset(directory, "negative.effetune_preset", -6);
   const auto dcOffset = writeDcOffsetPreset(directory);
   const auto delay = writeDelayPreset(directory);
+  const auto tubeSimulator = writeTubeSimulatorPreset(directory);
   const auto passed = testReplacementChangesPcm(positive, negative) &&
                       testBypassDoesNotReportDspWork() &&
+                      testActivePipelineLatencyTracksReplacement(
+                          tubeSimulator, positive) &&
                       testIdleSuspensionFadesGeneratedOutputAndStopsDsp(
                           dcOffset) &&
                       testStaleDspActivityCannotOverwriteControlState() &&

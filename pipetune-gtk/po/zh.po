@@ -268,6 +268,9 @@ msgstr "DSP 后端已更改"
 msgid "DSP Engine"
 msgstr "DSP 引擎"
 
+msgid "DSP latency"
+msgstr "DSP 延迟"
+
 msgid "DSP processing load; graph capped at 100%."
 msgstr "DSP 处理负载；图表上限为 100%。"
 

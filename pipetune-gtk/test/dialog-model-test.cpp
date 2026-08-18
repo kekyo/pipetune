@@ -302,6 +302,7 @@ static bool testStructuredStatusModel() {
   state.runtime.dspActivity = pipetune::DspActivity::active;
   state.runtime.activePreset = "/tmp/live.effetune_preset";
   state.runtime.activePluginCount = 4;
+  state.runtime.dspLatencyFrames = 64;
   state.runtime.inputSampleFormat = "F32P";
   state.runtime.inputSampleRate = 200000;
   state.runtime.inputChannelCount = 2;
@@ -378,6 +379,7 @@ static bool testStructuredStatusModel() {
       findItem(*performance, "errors.processing");
   const auto *processingTime =
       findItem(*performance, "dsp.processing-time");
+  const auto *latency = findItem(*performance, "dsp.latency");
   const auto *activity = findItem(*performance, "dsp.activity");
   const auto *savedConfiguration =
       findSection(sections, "saved-configuration");
@@ -395,6 +397,11 @@ static bool testStructuredStatusModel() {
                  processingTime->displayKind ==
                      pipetune_gtk::StatusDisplayKind::text,
              "other numeric status rows must remain text") ||
+      !check(latency != nullptr &&
+                 latency->value == "64 frames · 0.33 ms" &&
+                 latency->numericValue == 64.0 &&
+                 latency->unit == "frames",
+             "aggregate DSP latency presentation differs") ||
       !check(activity != nullptr && activity->value == "Active",
              "DSP activity must be reported separately from the preset") ||
       !check(savedIdle != nullptr && savedIdle->value == "Ignore",

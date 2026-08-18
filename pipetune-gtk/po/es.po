@@ -269,6 +269,9 @@ msgstr "Motor DSP cambiado"
 msgid "DSP Engine"
 msgstr "Motor DSP"
 
+msgid "DSP latency"
+msgstr "Latencia DSP"
+
 msgid "DSP processing load; graph capped at 100%."
 msgstr "Carga de procesamiento DSP; gráfico limitado al 100 %."
 

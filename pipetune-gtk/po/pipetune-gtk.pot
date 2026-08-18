@@ -264,6 +264,9 @@ msgstr ""
 msgid "DSP Engine"
 msgstr ""
 
+msgid "DSP latency"
+msgstr ""
+
 msgid "DSP processing load; graph capped at 100%."
 msgstr ""
 

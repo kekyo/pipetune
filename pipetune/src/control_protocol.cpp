@@ -549,6 +549,8 @@ static std::string makeControlStatusMessage(
                                status.configurationRevision) ||
       !yyjson_mut_obj_add_uint(document.get(), root, "activePluginCount",
                                status.activePluginCount) ||
+      !yyjson_mut_obj_add_uint(document.get(), root, "dspLatencyFrames",
+                               status.dspLatencyFrames) ||
       !yyjson_mut_obj_add_uint(document.get(), root, "overrunFrames",
                                status.overrunFrames) ||
       !yyjson_mut_obj_add_uint(document.get(), root, "underrunFrames",
@@ -1117,6 +1119,8 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
                         status.configurationRevision) ||
       !readSizeField(root, "activePluginCount",
                      status.activePluginCount) ||
+      !readUint32Field(root, "dspLatencyFrames",
+                       status.dspLatencyFrames) ||
       !readCounterField(root, "overrunFrames", status.overrunFrames) ||
       !readCounterField(root, "underrunFrames", status.underrunFrames) ||
       !readCounterField(root, "processingErrors",

@@ -241,6 +241,26 @@ static StatusItem dspTimeItem(const ApplicationState &state) {
       "µs/frame", 0.0, microseconds, StatusSeverity::normal);
 }
 
+static StatusItem dspLatencyItem(const ApplicationState &state) {
+  if (state.connection != ControlConnectionState::connected ||
+      !state.hasRuntimeStatus) {
+    return textItem("dsp.latency", translate("DSP latency"), "—",
+                    StatusSeverity::warning);
+  }
+  const auto frames = state.runtime.dspLatencyFrames;
+  auto value = std::to_string(frames) + " frames";
+  if (state.runtime.dspSampleRate != 0) {
+    const auto milliseconds =
+        static_cast<double>(frames) * 1000.0 /
+        static_cast<double>(state.runtime.dspSampleRate);
+    value += " · " + fixedDecimal(milliseconds, 2) + " ms";
+  }
+  return numericTextItem(
+      "dsp.latency", translate("DSP latency"), std::move(value),
+      static_cast<double>(frames), "frames", 0.0,
+      static_cast<double>(frames), StatusSeverity::normal);
+}
+
 static StatusSeverity nonzeroSeverity(std::uint64_t value) {
   return value == 0 ? StatusSeverity::normal : StatusSeverity::warning;
 }
@@ -469,6 +489,7 @@ std::vector<StatusSection> buildStatusSections(
                   connected ? dspActivityText(state.runtime.dspActivity)
                             : "—",
                   unavailable),
+              dspLatencyItem(state),
               dspTimeItem(state),
               dspLoadItem(state),
               textItem(

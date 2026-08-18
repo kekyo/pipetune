@@ -128,6 +128,8 @@ struct ControlRuntimeStatus {
   std::uint64_t configurationRevision = 0;
   /** Number of enabled native DSP nodes. */
   std::size_t activePluginCount;
+  /** Aggregate latency introduced by the active DSP pipeline, in frames. */
+  std::uint32_t dspLatencyFrames = 0;
   /** Input frames discarded because the bridge was full. */
   std::uint64_t overrunFrames;
   /** Output frames replaced by silence because the bridge was empty. */

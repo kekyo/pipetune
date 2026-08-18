@@ -1282,6 +1282,7 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .configurationRevision = runtime.configurationRevision.load(
               std::memory_order_acquire),
           .activePluginCount = runtime.pipeline.activePluginCount(),
+          .dspLatencyFrames = runtime.pipeline.activeLatencyFrames(),
           .overrunFrames = runtime.ring.overrunFrames(),
           .underrunFrames = runtime.ring.underrunFrames(),
           .processingErrors =

@@ -198,6 +198,7 @@ static bool testSuccessResponse() {
        .configurationError = {},
        .configurationRevision = 41,
        .activePluginCount = 7,
+       .dspLatencyFrames = 64,
        .overrunFrames = 11,
        .underrunFrames = 12,
        .processingErrors = 13,
@@ -284,6 +285,8 @@ static bool testSuccessResponse() {
              "parsed response configuration revision differs") ||
       !check(parsed.status.activePluginCount == 7,
              "parsed response plugin count differs") ||
+      !check(parsed.status.dspLatencyFrames == 64,
+             "parsed response DSP latency differs") ||
       !check(parsed.status.overrunFrames == 11 &&
                  parsed.status.underrunFrames == 12 &&
                  parsed.status.processingErrors == 13,
@@ -351,6 +354,7 @@ static bool testSuccessResponse() {
       yyjson_is_null(yyjson_obj_get(root, "configurationError")) &&
       yyjson_get_uint(yyjson_obj_get(root, "configurationRevision")) == 41 &&
       yyjson_get_uint(yyjson_obj_get(root, "activePluginCount")) == 7 &&
+      yyjson_get_uint(yyjson_obj_get(root, "dspLatencyFrames")) == 64 &&
       yyjson_get_uint(yyjson_obj_get(root, "overrunFrames")) == 11 &&
       yyjson_get_uint(yyjson_obj_get(root, "underrunFrames")) == 12 &&
       yyjson_get_uint(yyjson_obj_get(root, "processingErrors")) == 13 &&
@@ -420,6 +424,7 @@ static bool testStatusEvent() {
        .configurationError = {},
        .configurationRevision = 42,
        .activePluginCount = 2,
+       .dspLatencyFrames = 128,
        .overrunFrames = 21,
        .underrunFrames = 22,
        .processingErrors = 23,
@@ -482,6 +487,8 @@ static bool testStatusEvent() {
                "status event configuration revision differs") &&
          check(parsed.status.activePluginCount == 2,
                "status event plugin count differs") &&
+         check(parsed.status.dspLatencyFrames == 128,
+               "status event DSP latency differs") &&
          check(parsed.status.overrunFrames == 21 &&
                    parsed.status.underrunFrames == 22 &&
                    parsed.status.processingErrors == 23,
