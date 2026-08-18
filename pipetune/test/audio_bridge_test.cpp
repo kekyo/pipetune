@@ -66,6 +66,53 @@ static bool testUnderrunSilence() {
          check(ring.underrunFrames() == 2, "missing frames must be counted once per frame");
 }
 
+static bool testMeasuredBridgeDelayPreservesQueuedAudio() {
+  auto ring = pipetune::PlanarAudioRing(1, 8);
+  auto latency = pipetune::AudioBridgeLatencyController{};
+  latency.configure(3);
+  const auto input = std::vector<float>{1.0F, 2.0F, 3.0F, 4.0F};
+  if (!check(ring.write(input, 4, 7) == 4,
+             "bridge delay input must be queued")) {
+    return false;
+  }
+
+  auto first = std::vector<float>(2, -1.0F);
+  const auto firstRead = ring.readWithSilencePrefix(
+      first, 2, 7, latency.consumePrefixFrames(2));
+  if (!check(firstRead.queuedFrames == 0 &&
+                 firstRead.availableFrames == 2 &&
+                 first == std::vector<float>({0.0F, 0.0F}),
+             "the first bridge block must be an intentional delay") ||
+      !check(ring.underrunFrames() == 0,
+             "intentional bridge delay must not count as underrun")) {
+    return false;
+  }
+
+  auto second = std::vector<float>(4, -1.0F);
+  const auto secondRead = ring.readWithSilencePrefix(
+      second, 4, 7, latency.consumePrefixFrames(4));
+  if (!check(secondRead.queuedFrames == 3 &&
+                 secondRead.availableFrames == 4 &&
+                 second ==
+                     std::vector<float>({0.0F, 1.0F, 2.0F, 3.0F}),
+             "bridge delay must expire without consuming queued PCM") ||
+      !check(ring.underrunFrames() == 0,
+             "available PCM after the delay must not underrun")) {
+    return false;
+  }
+
+  latency.reset();
+  auto reset = std::vector<float>(3, -1.0F);
+  const auto resetRead = ring.readWithSilencePrefix(
+      reset, 3, 7, latency.consumePrefixFrames(3));
+  return check(resetRead.queuedFrames == 0 &&
+                   resetRead.availableFrames == 3 &&
+                   reset == std::vector<float>({0.0F, 0.0F, 0.0F}),
+               "bridge reset must restore the measured delay") &&
+         check(ring.underrunFrames() == 0,
+               "reset bridge delay must remain intentional");
+}
+
 static bool testOverrunDropsNewestTail() {
   auto ring = pipetune::PlanarAudioRing(2, 4);
   const auto first = std::vector<float>{1.0F, 2.0F, 3.0F, 11.0F, 12.0F, 13.0F};
@@ -294,6 +341,7 @@ static bool testDisconnectedOutputDoesNotReplayOldSample() {
 
 int main() {
   const auto passed = testPlanarWraparound() && testUnderrunSilence() &&
+                      testMeasuredBridgeDelayPreservesQueuedAudio() &&
                       testOverrunDropsNewestTail() &&
                       testMalformedBufferIsRejected() &&
                       testQueuedAudioCanBeDiscardedBeforeChangingOutput() &&

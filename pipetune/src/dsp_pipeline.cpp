@@ -11,14 +11,12 @@
 #include <yyjson.h>
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <limits>
 #include <memory>
 #include <span>
 #include <string>
@@ -67,7 +65,6 @@ struct ActiveNode {
   std::uint8_t inputBus;
   std::uint8_t outputBus;
   std::int8_t channelSpec;
-  std::uint32_t latency;
 };
 
 struct JsonDocumentDeleter {
@@ -254,20 +251,6 @@ static std::vector<std::uint8_t> buildDescriptor(std::span<const ActiveNode> nod
   return descriptor;
 }
 
-static std::uint32_t calculateLatency(std::span<const ActiveNode> nodes) {
-  auto busLatency = std::array<std::uint32_t, 5>{};
-  for (const auto &node : nodes) {
-    const auto inputLatency = busLatency[node.inputBus];
-    const auto maximum = std::numeric_limits<std::uint32_t>::max();
-    const auto routed =
-        node.latency > maximum - inputLatency ? maximum : inputLatency + node.latency;
-    if (node.inputBus == node.outputBus || routed > busLatency[node.outputBus]) {
-      busLatency[node.outputBus] = routed;
-    }
-  }
-  return busLatency[0];
-}
-
 static yyjson_val *findPipelineRoot(yyjson_val *root) {
   if (yyjson_is_arr(root)) {
     return root;
@@ -316,6 +299,19 @@ ProcessStatus DspPipeline::process(std::span<float> planarSamples, std::uint32_t
   }
   std::memcpy(planarSamples.data(), arena, byteCount);
   return ProcessStatus::ok;
+}
+
+ProcessStatus DspPipeline::reset() noexcept {
+  if (implementation_ == nullptr) {
+    return ProcessStatus::dspError;
+  }
+  if (implementation_->bypass) {
+    return ProcessStatus::ok;
+  }
+  const auto &api = dspBackendApi(*implementation_->backend);
+  return api.engineReset(implementation_->engine) == ET_OK
+             ? ProcessStatus::ok
+             : ProcessStatus::dspError;
 }
 
 std::uint32_t DspPipeline::maxChannels() const noexcept {
@@ -506,9 +502,7 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
     activeNodes.push_back({.instance = instance,
                            .inputBus = inputBus,
                            .outputBus = outputBus,
-                           .channelSpec = channelSpec,
-                           .latency = api.instanceLatency(
-                               implementation->engine, instance)});
+                           .channelSpec = channelSpec});
   }
 
   const auto descriptor = buildDescriptor(activeNodes);
@@ -517,7 +511,8 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
   if (descriptorStatus != ET_OK) {
     return loadError("EffeTune rejected the native pipeline descriptor", std::move(warnings));
   }
-  implementation->latencyFrames = calculateLatency(activeNodes);
+  implementation->latencyFrames =
+      api.pipelineLatency(implementation->engine);
   implementation->activePluginCount = activeNodes.size();
 
   auto pipeline = std::unique_ptr<DspPipeline>(new DspPipeline(std::move(implementation)));

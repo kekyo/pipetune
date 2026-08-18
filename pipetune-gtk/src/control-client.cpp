@@ -524,4 +524,12 @@ void setControlDspBackendAsync(ControlClient *client,
       callback, userData);
 }
 
+void setControlDspIdleAsync(ControlClient *client,
+                            const pipetune::DspIdlePolicy &policy,
+                            ControlClientReplyCallback callback,
+                            void *userData) {
+  startRequest(client, pipetune::makeSetDspIdleControlRequest(policy),
+               callback, userData);
+}
+
 } // namespace pipetune_gtk

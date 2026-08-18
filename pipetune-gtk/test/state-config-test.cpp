@@ -26,6 +26,7 @@ static pipetune::ControlResponseParseResult statusResponse(
   return pipetune::parseControlResponse(
       pipetune::makeControlSuccessResponse(
           {.processingMode = pipetune::ProcessingMode::preset,
+           .dspActivity = pipetune::DspActivity::active,
            .activePreset = "/tmp/active.effetune_preset",
            .configurationError = std::string(configurationError),
            .activePluginCount = 4,

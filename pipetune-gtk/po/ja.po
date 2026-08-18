@@ -87,6 +87,9 @@ msgstr "操作ログ"
 msgid "Action Log ({0})"
 msgstr "操作ログ（{0}）"
 
+msgid "Active"
+msgstr "動作中"
+
 msgid "Active plugins"
 msgstr "有効なプラグイン"
 
@@ -152,6 +155,12 @@ msgstr "サンプリング周波数ポリシーを変更中"
 
 msgid "Changing sampling-frequency policy failed"
 msgstr "サンプリング周波数ポリシーの変更に失敗しました"
+
+msgid "Changing silence suspension"
+msgstr "無音時の休止を変更中"
+
+msgid "Changing silence suspension failed"
+msgstr "無音時の休止の変更に失敗しました"
 
 msgid "Choose a preset before enabling DSP processing"
 msgstr "DSP処理を有効にする前にプリセットを選択してください"
@@ -238,11 +247,17 @@ msgstr "未接続"
 msgid "Disconnected · settings are read-only"
 msgstr "未接続 · 設定は読み取り専用です"
 
+msgid "Draining"
+msgstr "残響処理中"
+
 msgid "DSP"
 msgstr "DSP"
 
 msgid "DSP / Performance"
 msgstr "DSP / パフォーマンス"
+
+msgid "DSP activity"
+msgstr "DSP動作状態"
 
 msgid "DSP backend"
 msgstr "DSPバックエンド"
@@ -252,6 +267,9 @@ msgstr "DSPバックエンドを変更しました"
 
 msgid "DSP Engine"
 msgstr "DSPエンジン"
+
+msgid "DSP latency"
+msgstr "DSPレイテンシー"
 
 msgid "DSP processing load; graph capped at 100%."
 msgstr "DSP処理負荷（グラフの上限は100%）。"
@@ -298,6 +316,9 @@ msgstr "強制"
 
 msgid "Force — request the fixed graph sampling frequency"
 msgstr "強制 — グラフの固定サンプリング周波数を要求"
+
+msgid "Ignore"
+msgstr "無視"
 
 msgid "Input / Sampling Frequencies"
 msgstr "入力 / サンプリング周波数"
@@ -500,11 +521,23 @@ msgstr "すべての設定を保存中"
 msgid "Scalar"
 msgstr "スカラー"
 
+msgid "seconds"
+msgstr "秒"
+
 msgid "Setting up PipeTune for this user…"
 msgstr "このユーザー向けに PipeTune をセットアップしています…"
 
 msgid "Settings updated"
 msgstr "設定を更新しました"
+
+msgid "Silence duration"
+msgstr "無音時間"
+
+msgid "Silence suspension"
+msgstr "無音時の休止"
+
+msgid "Silence suspension changed"
+msgstr "無音時の休止を変更しました"
 
 msgid "SIMD variant"
 msgstr "SIMDバリアント"
@@ -524,6 +557,15 @@ msgstr "提案"
 
 msgid "Suggest — let PipeWire choose the graph sampling frequency"
 msgstr "提案 — PipeWireにグラフのサンプリング周波数の選択を任せる"
+
+msgid "Suspend DSP on silence"
+msgstr "無音時にDSPを休止"
+
+msgid "Suspend DSP work after continuous silent input while allowing effect tails for the selected duration."
+msgstr "入力の無音が続いたら、選択した時間だけエフェクトの残響を処理してからDSP演算を休止します。"
+
+msgid "Suspended"
+msgstr "休止中"
 
 #, brace-format
 msgid "Switching — {0}"

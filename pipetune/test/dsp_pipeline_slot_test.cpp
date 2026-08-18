@@ -4,21 +4,28 @@
  * https://github.com/kekyo/pipetune/
  */
 #include "dsp_pipeline_slot.h"
+#include "dsp_idle_runtime_state.h"
 
 #include "pipetune/dsp_backend.h"
 #include "pipetune/dsp_pipeline.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <unistd.h>
 #include <vector>
+
+#if defined(__SSE__) || defined(_M_X64)
+#include <immintrin.h>
+#endif
 
 static bool check(bool condition, std::string_view message) {
   if (!condition) {
@@ -37,10 +44,34 @@ static std::filesystem::path writeVolumePreset(
   return path;
 }
 
+static std::filesystem::path writeDcOffsetPreset(
+    const std::filesystem::path &directory) {
+  const auto path = directory / "dc-offset.effetune_preset";
+  auto stream = std::ofstream(path, std::ios::binary);
+  stream << R"json({"pipeline":[{"name":"DC Offset","enabled":true,"parameters":{"of":0.5},"channel":"A"}]})json";
+  return path;
+}
+
+static std::filesystem::path writeDelayPreset(
+    const std::filesystem::path &directory) {
+  const auto path = directory / "delay.effetune_preset";
+  auto stream = std::ofstream(path, std::ios::binary);
+  stream << R"json({"pipeline":[{"name":"Delay","enabled":true,"parameters":{"pd":0,"ds":1,"dp":0,"hd":20000,"ld":20,"mx":100,"fb":0,"pp":0},"channel":"A"}]})json";
+  return path;
+}
+
+static std::filesystem::path writeTubeSimulatorPreset(
+    const std::filesystem::path &directory) {
+  const auto path = directory / "tube-simulator.effetune_preset";
+  auto stream = std::ofstream(path, std::ios::binary);
+  stream << R"json({"pipeline":[{"name":"Tube Simulator","enabled":true,"parameters":{}}]})json";
+  return path;
+}
+
 static std::unique_ptr<pipetune::DspPipeline> loadPipeline(
     const std::filesystem::path &path) {
   auto loaded = pipetune::loadDspPipeline(
-      path, {.sampleRate = 48000.0F, .maxChannels = 1, .maxFrames = 32});
+      path, {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 32});
   if (loaded.pipeline == nullptr) {
     std::cerr << loaded.error << '\n';
   }
@@ -106,15 +137,252 @@ static bool testBypassDoesNotReportDspWork() {
   }
   auto slot = pipetune::DspPipelineSlot(std::move(created.pipeline));
   auto samples = std::vector<float>(32, 0.25F);
-  if (!check(slot.process(samples, 1, 32, 0.0) ==
-                 pipetune::ProcessStatus::ok,
-             "bypass slot processing failed")) {
+  const auto result = slot.processWithIdle(
+      samples, 1, 32, 0.0, {.timeoutMilliseconds = 100});
+  if (!check(result.status == pipetune::ProcessStatus::ok,
+             "bypass slot processing failed") ||
+      !check(result.activity == pipetune::DspActivity::bypassed,
+             "bypass slot must report bypassed activity")) {
     return false;
   }
   const auto counters = slot.performanceCounters();
   return check(counters.processedFrames == 0 &&
                    counters.processingNanoseconds == 0,
                "bypass must not be counted as EffeTune DSP work");
+}
+
+static bool testActivePipelineLatencyTracksReplacement(
+    const std::filesystem::path &latencyPresetPath,
+    const std::filesystem::path &zeroLatencyPresetPath) {
+  auto initial = loadPipeline(latencyPresetPath);
+  auto replacement = loadPipeline(zeroLatencyPresetPath);
+  if (initial == nullptr || replacement == nullptr) {
+    return false;
+  }
+  auto slot = pipetune::DspPipelineSlot(std::move(initial));
+  if (!check(slot.activeLatencyFrames() == 64,
+             "slot must expose the active aggregate DSP latency")) {
+    return false;
+  }
+  slot.replace(std::move(replacement));
+  return check(slot.activeLatencyFrames() == 0,
+               "slot latency must follow pipeline replacement");
+}
+
+static bool allApproximately(std::span<const float> samples,
+                             float expected) {
+  for (const auto sample : samples) {
+    if (!approximately(sample, expected)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool testIdleSuspensionFadesGeneratedOutputAndStopsDsp(
+    const std::filesystem::path &presetPath) {
+  auto pipeline = loadPipeline(presetPath);
+  if (pipeline == nullptr) {
+    return false;
+  }
+  auto slot = pipetune::DspPipelineSlot(std::move(pipeline));
+  constexpr auto policy =
+      pipetune::DspIdlePolicy{.timeoutMilliseconds = 100};
+  auto samples = std::vector<float>(32, 0.0F);
+  auto result = pipetune::DspIdleProcessResult{};
+
+  for (auto block = std::uint32_t{0}; block < 150; ++block) {
+    std::fill(samples.begin(), samples.end(), 0.0F);
+    result = slot.processWithIdle(
+        samples, 1, 32, static_cast<double>(block * 32) / 48000.0,
+        policy);
+    if (!check(result.status == pipetune::ProcessStatus::ok,
+               "DSP failed during the silence allowance") ||
+        !check(result.activity == pipetune::DspActivity::draining,
+               "silent DSP must drain before the timeout")) {
+      return false;
+    }
+  }
+  if (!check(allApproximately(samples, 0.5F),
+             "source-generating DSP must remain audible through the timeout") ||
+      !check(slot.performanceCounters().processedFrames == 4800,
+             "DSP work before the timeout differs")) {
+    return false;
+  }
+
+  std::fill(samples.begin(), samples.end(), 0.0F);
+  result = slot.processWithIdle(samples, 1, 32, 0.1, policy);
+  if (!check(result.status == pipetune::ProcessStatus::ok &&
+                 result.activity == pipetune::DspActivity::draining,
+             "DSP must drain while applying the suspension fade") ||
+      !check(approximately(samples.front(), 0.5F) &&
+                 samples.back() > 0.0F &&
+                 samples.back() < samples.front(),
+             "DSP suspension fade did not attenuate generated output")) {
+    return false;
+  }
+
+  for (auto block = std::uint32_t{0}; block < 7; ++block) {
+    std::fill(samples.begin(), samples.end(), 0.0F);
+    result = slot.processWithIdle(
+        samples, 1, 32,
+        0.1 + static_cast<double>((block + 1) * 32) / 48000.0,
+        policy);
+  }
+  if (!check(result.status == pipetune::ProcessStatus::ok &&
+                 result.activity == pipetune::DspActivity::sleeping,
+             "DSP did not suspend after the fade") ||
+      !check(approximately(samples.back(), 0.0F),
+             "suspension fade must end at exact silence")) {
+    return false;
+  }
+
+  const auto sleepingCounters = slot.performanceCounters();
+  std::fill(samples.begin(), samples.end(), -0.0F);
+  result = slot.processWithIdle(samples, 1, 32, 0.2, policy);
+  if (!check(result.status == pipetune::ProcessStatus::ok &&
+                 result.activity == pipetune::DspActivity::sleeping,
+             "signed zero must keep DSP suspended") ||
+      !check(slot.performanceCounters().processedFrames ==
+                 sleepingCounters.processedFrames,
+             "suspended silence must not invoke native DSP") ||
+      !check(allApproximately(samples, 0.0F),
+             "suspended DSP must produce exact silence")) {
+    return false;
+  }
+
+  samples.resize(64);
+  std::fill(samples.begin(), samples.end(), 0.0F);
+  samples[32] = std::numeric_limits<float>::denorm_min();
+  result = slot.processWithIdle(samples, 2, 32, 0.3, policy);
+  return check(result.status == pipetune::ProcessStatus::ok &&
+                   result.activity == pipetune::DspActivity::active,
+               "non-zero subnormal input must wake DSP") &&
+         check(slot.performanceCounters().processedFrames ==
+                   sleepingCounters.processedFrames + 32,
+               "the first non-zero block must be processed after wake") &&
+         check(allApproximately(samples, 0.5F),
+               "the waking block must not be discarded");
+}
+
+static bool testStaleDspActivityCannotOverwriteControlState() {
+  auto state = pipetune::DspIdleRuntimeState(
+      {.timeoutMilliseconds = 100}, pipetune::DspActivity::active);
+  const auto processingSnapshot = state.load();
+  const auto policyChanged = state.replacePolicy(
+      {}, pipetune::DspActivity::active);
+  if (!check(policyChanged,
+             "DSP idle runtime policy change was not reported") ||
+      !check(!state.tryReplaceActivity(
+                  processingSnapshot, pipetune::DspActivity::sleeping),
+             "stale DSP callback overwrote a newer policy")) {
+    return false;
+  }
+  const auto ignored = state.load();
+  if (!check(!pipetune::dspIdlePolicyIsEnabled(ignored.policy) &&
+                 ignored.activity == pipetune::DspActivity::active,
+             "policy replacement did not remain internally consistent")) {
+    return false;
+  }
+
+  const auto beforeBypass = state.load();
+  state.replaceActivity(pipetune::DspActivity::bypassed);
+  return check(!state.tryReplaceActivity(
+                   beforeBypass, pipetune::DspActivity::draining),
+               "stale DSP callback overwrote explicit bypass") &&
+         check(state.load().activity == pipetune::DspActivity::bypassed,
+               "explicit bypass activity was not retained");
+}
+
+static bool testIgnoredIdlePolicyKeepsDspActive(
+    const std::filesystem::path &presetPath) {
+  auto pipeline = loadPipeline(presetPath);
+  if (pipeline == nullptr) {
+    return false;
+  }
+  auto slot = pipetune::DspPipelineSlot(std::move(pipeline));
+  auto samples = std::vector<float>(32, 0.0F);
+  const auto result = slot.processWithIdle(samples, 1, 32, 0.0, {});
+  return check(result.status == pipetune::ProcessStatus::ok &&
+                   result.activity == pipetune::DspActivity::active,
+               "ignored idle policy must keep DSP active") &&
+         check(slot.performanceCounters().processedFrames == 32,
+               "ignored idle policy must invoke native DSP") &&
+         check(allApproximately(samples, 0.5F),
+               "ignored idle policy must preserve generated output");
+}
+
+static bool testEngineResetClearsDelayState(
+    const std::filesystem::path &presetPath) {
+  auto reference = loadPipeline(presetPath);
+  auto resetPipeline = loadPipeline(presetPath);
+  if (reference == nullptr || resetPipeline == nullptr) {
+    return false;
+  }
+  auto referenceSamples = std::vector<float>(32, 0.0F);
+  auto resetSamples = std::vector<float>(32, 0.0F);
+  referenceSamples[0] = 1.0F;
+  resetSamples[0] = 1.0F;
+  if (!check(reference->process(referenceSamples, 1, 32, 0.0) ==
+                 pipetune::ProcessStatus::ok &&
+                 resetPipeline->process(resetSamples, 1, 32, 0.0) ==
+                     pipetune::ProcessStatus::ok,
+             "delay setup processing failed") ||
+      !check(resetPipeline->reset() == pipetune::ProcessStatus::ok,
+             "native engine reset failed")) {
+    return false;
+  }
+  std::fill(referenceSamples.begin(), referenceSamples.end(), 0.0F);
+  std::fill(resetSamples.begin(), resetSamples.end(), 0.0F);
+  if (!check(reference->process(referenceSamples, 1, 32, 32.0 / 48000.0) ==
+                 pipetune::ProcessStatus::ok &&
+                 resetPipeline->process(resetSamples, 1, 32,
+                                        32.0 / 48000.0) ==
+                     pipetune::ProcessStatus::ok,
+             "delay verification processing failed")) {
+    return false;
+  }
+  const auto referencePeak = *std::max_element(referenceSamples.begin(),
+                                                referenceSamples.end());
+  return check(referencePeak > 0.9F,
+               "delay reference did not retain its impulse") &&
+         check(allApproximately(resetSamples, 0.0F),
+               "engine reset must clear retained delay audio");
+}
+
+static bool testNativeProcessingEnablesDenormalFlush(
+    const std::filesystem::path &presetPath) {
+#if defined(__SSE__) || defined(_M_X64)
+  auto pipeline = loadPipeline(presetPath);
+  if (pipeline == nullptr) {
+    return false;
+  }
+  auto slot = pipetune::DspPipelineSlot(std::move(pipeline));
+  auto samples = std::vector<float>{0.25F};
+  constexpr auto denormalModeMask = static_cast<unsigned int>(
+      _MM_FLUSH_ZERO_MASK | _MM_DENORMALS_ZERO_MASK);
+  const auto originalControl = _mm_getcsr();
+  const auto disabledControl = originalControl & ~denormalModeMask;
+  _mm_setcsr(disabledControl);
+  const auto status = slot.process(samples, 1, 1, 0.0);
+  const auto configuredControl = _mm_getcsr();
+  _mm_setcsr(originalControl);
+  constexpr auto exceptionStatusMask =
+      static_cast<unsigned int>(_MM_EXCEPT_MASK);
+
+  return check(status == pipetune::ProcessStatus::ok,
+               "native processing failed while configuring denormal mode") &&
+         check((configuredControl & denormalModeMask) == denormalModeMask,
+               "native processing must enable FTZ and DAZ") &&
+         check((configuredControl &
+                ~(denormalModeMask | exceptionStatusMask)) ==
+                   (disabledControl &
+                    ~(denormalModeMask | exceptionStatusMask)),
+               "native processing must preserve unrelated MXCSR state");
+#else
+  static_cast<void>(presetPath);
+  return true;
+#endif
 }
 
 static bool testConcurrentReplacementProducesOnlyCompletePipelines(
@@ -272,8 +540,19 @@ int main() {
       writeVolumePreset(directory, "positive.effetune_preset", 6);
   const auto negative =
       writeVolumePreset(directory, "negative.effetune_preset", -6);
+  const auto dcOffset = writeDcOffsetPreset(directory);
+  const auto delay = writeDelayPreset(directory);
+  const auto tubeSimulator = writeTubeSimulatorPreset(directory);
   const auto passed = testReplacementChangesPcm(positive, negative) &&
                       testBypassDoesNotReportDspWork() &&
+                      testActivePipelineLatencyTracksReplacement(
+                          tubeSimulator, positive) &&
+                      testIdleSuspensionFadesGeneratedOutputAndStopsDsp(
+                          dcOffset) &&
+                      testStaleDspActivityCannotOverwriteControlState() &&
+                      testIgnoredIdlePolicyKeepsDspActive(dcOffset) &&
+                      testEngineResetClearsDelayState(delay) &&
+                      testNativeProcessingEnablesDenormalFlush(positive) &&
                       testConcurrentReplacementProducesOnlyCompletePipelines(
                           positive, negative) &&
                       testStagedReplacementCanCommitAndRollback(

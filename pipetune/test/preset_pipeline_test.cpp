@@ -6,6 +6,7 @@
 #include "pipetune/dsp_pipeline.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -141,9 +142,9 @@ static bool containsWarning(const std::vector<pipetune::PipelineWarning> &warnin
   });
 }
 
-static bool testEffeTune24Pipeline(const std::filesystem::path &directory) {
+static bool testEffeTune25Pipeline(const std::filesystem::path &directory) {
   const auto path = writePreset(
-      directory, "effetune-2.4.effetune_preset",
+      directory, "effetune-2.5.effetune_preset",
       R"json({
         "pipeline": [
           {"name":"SBC Codec Simulator","enabled":true,"parameters":{"bp":35}},
@@ -156,6 +157,15 @@ static bool testEffeTune24Pipeline(const std::filesystem::path &directory) {
           {"name":"AM Radio Simulator","enabled":true,"parameters":{"rd":true}},
           {"name":"FM Radio Simulator","enabled":true,"parameters":{"rd":true}},
           {"name":"SW Radio Simulator","enabled":true,"parameters":{"rd":true,"mo":"USB","bf":125}},
+          {"name":"Auto Filter","enabled":true,"parameters":{}},
+          {"name":"Auto Pan","enabled":true,"parameters":{}},
+          {"name":"Chorus","enabled":true,"parameters":{}},
+          {"name":"Frequency Shifter","enabled":true,"parameters":{}},
+          {"name":"Phaser","enabled":true,"parameters":{}},
+          {"name":"Pitch Shifter HQ","enabled":true,"parameters":{}},
+          {"name":"Rotary Speaker","enabled":true,"parameters":{}},
+          {"name":"Bandwidth Extender","enabled":true,"parameters":{}},
+          {"name":"Phase Select EQ","enabled":true,"parameters":{}},
           {"name":"FIR Crossover","enabled":true,"parameters":{}},
           {"name":"5Band FIR PEQ","enabled":true,"parameters":{}},
           {"name":"Group Delay EQ","enabled":true,"parameters":{}},
@@ -167,8 +177,8 @@ static bool testEffeTune24Pipeline(const std::filesystem::path &directory) {
       path,
       {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
   if (!check(result.pipeline != nullptr, result.error) ||
-      !check(result.pipeline->activePluginCount() == 10,
-             "EffeTune 2.4 non-asset DSP nodes must become active") ||
+      !check(result.pipeline->activePluginCount() == 19,
+             "EffeTune 2.5 non-asset DSP nodes must become active") ||
       !check(result.warnings.size() == 5,
              "EffeTune asset-dependent DSP nodes must be omitted") ||
       !check(containsWarning(result.warnings, "FIR Crossover") &&
@@ -183,11 +193,48 @@ static bool testEffeTune24Pipeline(const std::filesystem::path &directory) {
   auto samples = std::vector<float>(128u, 0.0F);
   return check(result.pipeline->process(samples, 2, 64, 0.0) ==
                    pipetune::ProcessStatus::ok,
-               "EffeTune 2.4 DSP nodes must process audio") &&
+               "EffeTune 2.5 DSP nodes must process audio") &&
          check(std::ranges::all_of(samples, [](float value) {
                  return std::isfinite(value);
                }),
-               "EffeTune 2.4 DSP output must remain finite");
+               "EffeTune 2.5 DSP output must remain finite");
+}
+
+static bool testTubeSimulator25Models(const std::filesystem::path &directory) {
+  struct TubeModelCase {
+    std::string_view name;
+    std::string_view parameters;
+  };
+  static constexpr std::array cases = {
+      TubeModelCase{"6l6gc", R"json({"os":"Power","pt":"6L6GC"})json"},
+      TubeModelCase{"kt88", R"json({"os":"Power","pt":"KT88"})json"},
+      TubeModelCase{
+          "300b",
+          R"json({"tp":"Bypass","os":"SingleEnded","sd":"300B"})json"},
+      TubeModelCase{
+          "2a3",
+          R"json({"os":"SingleEnded","sd":"2A3","sb":350,"sr":900,"sp":"5.0"})json"}};
+
+  for (const auto &testCase : cases) {
+    const auto preset =
+        "{\"pipeline\":[{\"name\":\"Tube Simulator\",\"enabled\":true,"
+        "\"parameters\":" +
+        std::string(testCase.parameters) + "}]}";
+    const auto path = writePreset(
+        directory,
+        "tube-simulator-" + std::string(testCase.name) +
+            ".effetune_preset",
+        preset);
+    const auto result = pipetune::loadDspPipeline(
+        path,
+        {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+    if (!check(result.pipeline != nullptr, result.error) ||
+        !check(result.pipeline->activePluginCount() == 1,
+               "every EffeTune 2.5 Tube Simulator model must become active")) {
+      return false;
+    }
+  }
+  return true;
 }
 
 static bool testTubeSimulatorLatency(const std::filesystem::path &directory) {
@@ -202,6 +249,34 @@ static bool testTubeSimulatorLatency(const std::filesystem::path &directory) {
                "Tube Simulator must become active at 48 kHz") &&
          check(result.pipeline->latencyFrames() == 64,
                "Tube Simulator must report its 64-frame processing latency");
+}
+
+static bool testChannelLatencyCompensation(
+    const std::filesystem::path &directory) {
+  static constexpr auto frameCount = std::uint32_t{128};
+  const auto path = writePreset(
+      directory, "channel-latency-compensation.effetune_preset",
+      R"json({"pipeline":[{"name":"Tube Simulator","enabled":true,"channel":"L","parameters":{}}]})json");
+  const auto result = pipetune::loadDspPipeline(
+      path,
+      {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = frameCount});
+  if (!check(result.pipeline != nullptr, result.error) ||
+      !check(result.pipeline->latencyFrames() == 64,
+             "channel-routed Tube Simulator must report pipeline latency")) {
+    return false;
+  }
+
+  auto samples = std::vector<float>(2u * frameCount, 0.0F);
+  samples[frameCount] = 1.0F;
+  if (!check(result.pipeline->process(samples, 2u, frameCount, 0.0) ==
+                 pipetune::ProcessStatus::ok,
+             "channel-latency compensation pipeline must process audio")) {
+    return false;
+  }
+  return check(approximately(samples[frameCount], 0.0F),
+               "the zero-latency channel must not precede the DSP channel") &&
+         check(approximately(samples[frameCount + 64u], 1.0F),
+               "the zero-latency channel must align with pipeline latency");
 }
 
 static bool channelsApproximatelyEqual(std::span<const float> samples,
@@ -367,8 +442,10 @@ int main() {
 
   const auto passed =
       testBypassPipeline() && testCanonicalPreset(directory) &&
-      testLegacyPreset(directory) && testEffeTune24Pipeline(directory) &&
+      testLegacyPreset(directory) && testEffeTune25Pipeline(directory) &&
+      testTubeSimulator25Models(directory) &&
       testTubeSimulatorLatency(directory) &&
+      testChannelLatencyCompensation(directory) &&
       testBalanceChannelPairs(directory) &&
       testRawLegacyPipeline(directory) && testRejectedInputs(directory) &&
       testRuntimeBounds(directory) && testRetainedRecipeRebuild(directory);

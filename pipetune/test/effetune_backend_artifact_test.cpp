@@ -243,17 +243,25 @@ static std::uint32_t findKernelIndex(const BackendApi &api,
   return count;
 }
 
-static void checkEffeTune24Catalog(const BackendApi &api) {
-  static constexpr std::array<std::string_view, 7> addedTypes = {
-      "BluetoothSBCSimulatorPlugin", "CassetteArtifactsPlugin",
-      "G726ADPCMSimulatorPlugin",    "GSMFullRateSimulatorPlugin",
-      "MP3CodecSimulatorPlugin",     "TapeArtifactsPlugin",
-      "TubeSimulatorPlugin"};
-  check(api.kernelCount() == 83u,
-        "EffeTune 2.4 backend catalog must contain 83 kernels");
+static void checkEffeTune25Catalog(const BackendApi &api) {
+  static constexpr std::array<std::string_view, 9> addedTypes = {
+      "AutoFilterPlugin",       "AutoPanPlugin",
+      "ChorusPlugin",           "FrequencyShifterPlugin",
+      "PhaserPlugin",           "PitchShifterHQPlugin",
+      "RotarySpeakerPlugin",    "BandwidthExtenderPlugin",
+      "PhaseSelectEqPlugin"};
+  check(api.kernelCount() == 92u,
+        "EffeTune 2.5 backend catalog must contain 92 kernels");
   for (const auto typeName : addedTypes) {
     check(findKernelIndex(api, typeName) < api.kernelCount(),
-          "EffeTune 2.4 backend catalog must contain every new kernel");
+          "EffeTune 2.5 backend catalog must contain every new kernel");
+  }
+  const auto tubeIndex = findKernelIndex(api, "TubeSimulatorPlugin");
+  check(tubeIndex < api.kernelCount(),
+        "EffeTune 2.5 backend catalog must retain Tube Simulator");
+  if (tubeIndex < api.kernelCount()) {
+    check(api.kernelParamsHash(tubeIndex) == 0x07986b4bu,
+          "EffeTune 2.5 Tube Simulator must use its expanded parameter layout");
   }
 }
 
@@ -562,6 +570,7 @@ static void checkAllAbiSymbols(void *handle) {
       "et_telemetry_capacity",
       "et_telemetry_read",
       "et_pipeline_configure",
+      "et_pipeline_latency",
       "et_pipeline_process"};
   for (const char *name : names) {
     dlerror();
@@ -630,10 +639,11 @@ static bool cpuSupports(std::uint32_t variant) {
 }
 
 int main(int argc, char **argv) {
-  if (argc < 7) {
+  if (argc < 8) {
     std::fprintf(stderr,
                  "usage: effetune_backend_artifact_test "
-                 "AUTO_LEVELER_GOLDEN_F32 CASSETTE_GOLDEN_F32 "
+                 "AUTO_LEVELER_GOLDEN_F32 BLUETOOTH_SBC_GOLDEN_F32 "
+                 "CASSETTE_GOLDEN_F32 "
                  "TAPE_GOLDEN_F32 VINYL_GOLDEN_F32 "
                  "SCALAR_SO SIMD_SO [ISA_SIMD_SO...]\n");
     return 2;
@@ -641,6 +651,8 @@ int main(int argc, char **argv) {
 
   static constexpr std::array autoLevelerParameters = {
       -20.0F, 1000.0F, 12.0F, -36.0F, 1.0F, 10.0F, -96.0F};
+  static constexpr std::array bluetoothSbcParameters = {
+      35.0F, 0.0F, 3.0F, 0.0F, 100.0F, 0.0F};
   static constexpr std::array cassetteParameters = {
       2.0F, 0.0F, 1.0F, 0.0F, 9.0F, 0.25F,
       -60.5F, 2.0F, 2.0F, 0.0F, 0.0F, 100.0F};
@@ -653,15 +665,18 @@ int main(int argc, char **argv) {
       GoldenCase{"Auto Leveler", "AutoLevelerPlugin", 48000.0F, 1093u,
                  6u, 96u, 0xeffe7a59u, autoLevelerParameters, 2.0e-5F,
                  readGoldenAudio(argv[1], "Auto Leveler")},
+      GoldenCase{"Bluetooth SBC", "BluetoothSBCSimulatorPlugin", 48000.0F,
+                 4097u, 2u, 128u, 0xeffe7a5eu, bluetoothSbcParameters,
+                 2.0e-5F, readGoldenAudio(argv[2], "Bluetooth SBC")},
       GoldenCase{"Cassette Artifacts", "CassetteArtifactsPlugin", 48000.0F,
                  12000u, 2u, 127u, 0xeffe7a5eu, cassetteParameters, 1.0e-5F,
-                 readGoldenAudio(argv[2], "Cassette Artifacts")},
+                 readGoldenAudio(argv[3], "Cassette Artifacts")},
       GoldenCase{"Tape Artifacts", "TapeArtifactsPlugin", 48000.0F, 12000u,
                  2u, 127u, 0xeffe7a5eu, tapeParameters, 1.0e-5F,
-                 readGoldenAudio(argv[3], "Tape Artifacts")},
+                 readGoldenAudio(argv[4], "Tape Artifacts")},
       GoldenCase{"Vinyl Artifacts", "VinylArtifactsPlugin", 48000.0F,
                  2049u, 4u, 65u, 0xeffe7a5cu, vinylParameters, 1.0e-5F,
-                 readGoldenAudio(argv[4], "Vinyl Artifacts")}};
+                 readGoldenAudio(argv[5], "Vinyl Artifacts")}};
   for (const auto &testCase : goldenCases) {
     check(testCase.expected.size() ==
               static_cast<std::size_t>(testCase.frameCount) *
@@ -669,7 +684,7 @@ int main(int argc, char **argv) {
           "official golden size must match its case dimensions");
   }
   auto loaded = std::vector<std::pair<std::uint32_t, BackendApi>>{};
-  for (auto index = 5; index < argc; ++index) {
+  for (auto index = 6; index < argc; ++index) {
     const auto path = std::filesystem::path(argv[index]);
     const auto variant = expectedVariant(path);
     if (!cpuSupports(variant)) {
@@ -694,7 +709,7 @@ int main(int argc, char **argv) {
                 PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
             "scalar backend must report its concrete variant");
       checkAllAbiSymbols(scalar.handle);
-      checkEffeTune24Catalog(scalar);
+      checkEffeTune25Catalog(scalar);
       checkTubeRuntimeContract(scalar);
       const auto scalarSpectrum = renderImpulseSpectrum(scalar);
       checkGoldenCases(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,

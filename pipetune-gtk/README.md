@@ -42,7 +42,7 @@ unrelated values into one line. Its always-expanded sections are:
 
 Together they display the daemon connection, live and saved processing
 choices, input format and rates, DSP backend, processing time and load, error
-counters, and diagnostics. Long values
+counters, DSP activity, and diagnostics. Long values
 are ellipsized in the row and remain available in a tooltip. **Load** is a
 horizontal level meter below the connection summary,
 outside the scrolling status rows. Its left edge matches the heading and
@@ -51,6 +51,9 @@ summary labels so it clears the status icon. It grows with the status pane from
 The meter uses 11 restrained-saturation hue steps from teal through muted red.
 Its graphical fill is capped at 100%, while the text preserves the measured
 value above 100% so overload remains explicit.
+When the daemon suspends DSP work after silent input, the meter reads
+`Suspended` instead of retaining an earlier percentage. Processing mode and
+the selected preset remain visible independently from the DSP activity state.
 Numeric status items retain their value, unit, and range separately from their
 text presentation, allowing other bounded measurements to adopt the same
 component later without changing status acquisition.
@@ -64,8 +67,9 @@ button remains. When several fields differ, requests are serialized in this
 dependency order:
 
 1. sample-rate policy;
-2. DSP backend; and
-3. processing mode or preset.
+2. DSP backend;
+3. silence-suspension policy; and
+4. processing mode or preset.
 
 The global **Apply** button becomes available only after the daemon has
 confirmed every requested live change. It atomically writes the complete
@@ -158,6 +162,23 @@ backend change rebuilds and atomically replaces the active preset pipeline.
 DSP histories reset during replacement, and a discontinuity or brief silence
 is allowed.
 
+## DSP suspension during silence
+
+The DSP page's `Suspend DSP on silence` switch controls whether preset work
+stops after continuous silent input. Its spin button selects 0.1 through 5.0
+seconds in 0.1 second steps and initially shows 1.0 second. Turning the switch
+off selects `ignore`; the spin button becomes insensitive but retains its last
+selection for the next enable operation.
+
+PipeTune detects exact-zero PCM after input sample-rate conversion. Signed
+zero is silent; every other floating-point bit pattern wakes or keeps the DSP
+active. The complete preset continues running for the selected duration so
+retained delay, reverb, and source-generated output can be emitted. PipeTune
+then applies a 5 ms fade to exact zero, resets the EffeTune engine, and emits
+zero PCM without invoking DSP. The first later block containing a nonzero
+sample is processed immediately. The status model distinguishes Active,
+Draining, Suspended, and Bypass without changing the selected processing mode.
+
 ## Sample rate
 
 The DSP sampling frequency drop-down contains Automatic followed by 44.1, 48,
@@ -189,14 +210,18 @@ stores `automatic` or one of the five fixed rates, and
 `PIPETUNE_RATE_ENFORCEMENT` stores `suggest`
 or `force`. `PIPETUNE_DSP_BACKEND` stores `scalar` or `simd`, and
 `PIPETUNE_DSP_SIMD_VARIANT` stores `auto`, `baseline`, `x86-64-v3`,
-`x86-64-v4`, or `sve`. Missing rate assignments use Automatic-and-suggest, a
-missing backend assignment uses Scalar, and a missing SIMD variant uses Auto. Apply
+`x86-64-v4`, or `sve`. `PIPETUNE_DSP_IDLE_TIMEOUT` stores `ignore` or an
+integer from `100` through `5000` milliseconds in `100` millisecond steps.
+Missing rate assignments use Automatic-and-suggest, a missing backend
+assignment uses Scalar, a missing SIMD variant uses Auto, and a missing DSP
+idle assignment uses `ignore`. Apply
 replaces this file atomically while retaining restrictive directory and file
 permissions.
 
 The Advanced page's Restore Defaults selects bypass, Automatic with Suggest,
-and Scalar with an Auto SIMD preference. It does not restart
-the service and does not write the environment file until Apply succeeds.
+Scalar with an Auto SIMD preference, and ignored silence suspension. It does
+not restart the service and does not write the environment file until Apply
+succeeds.
 
 ## Status subscription
 
@@ -242,6 +267,8 @@ protocol, and runs the dialog under Xvfb. The scenarios verify:
 - the persistent status pane, all four settings pages, and minimum geometry;
 - the DSP Load meter's accessible range, measured value, responsive
   right-aligned width, rendered fill, and hue;
+- the silence-suspension range, live preview, retained disabled value, and
+  persistence;
 - immediate live changes followed by one dialog-wide atomic Apply;
 - rollback before hide through Escape and title-bar close;
 - live default restoration without persistence before Apply;

@@ -7,6 +7,7 @@
 #define PIPETUNE_CONTROL_PROTOCOL_H
 
 #include "pipetune/dsp_backend.h"
+#include "pipetune/dsp_idle.h"
 #include "pipetune/sample_rate.h"
 
 #include <array>
@@ -35,6 +36,8 @@ enum class ControlCommand {
   setRate,
   /** Rebuild the active preset with another native DSP backend. */
   setDspBackend,
+  /** Replace the automatic DSP suspension policy. */
+  setDspIdle,
   /** Keep the connection open and publish status changes. */
   subscribe
 };
@@ -53,6 +56,8 @@ struct ControlRequest {
   DspBackendKind dspBackend = DspBackendKind::scalar;
   /** Requested SIMD dispatch preference for setDspBackend. */
   DspSimdVariant dspSimdVariant = DspSimdVariant::automatic;
+  /** Requested automatic suspension policy for setDspIdle. */
+  DspIdlePolicy dspIdlePolicy = {};
 };
 
 /**
@@ -111,6 +116,10 @@ struct ControlDspVariantAvailability {
 struct ControlRuntimeStatus {
   /** Current PCM processing mode. */
   ProcessingMode processingMode;
+  /** Current preset DSP activity independently from processingMode. */
+  DspActivity dspActivity = DspActivity::bypassed;
+  /** Configured automatic DSP suspension policy. */
+  DspIdlePolicy dspIdlePolicy = {};
   /** Active preset path, or empty while processingMode is bypass. */
   std::string activePreset;
   /** Startup configuration diagnostic, or empty when configuration is valid. */
@@ -119,6 +128,8 @@ struct ControlRuntimeStatus {
   std::uint64_t configurationRevision = 0;
   /** Number of enabled native DSP nodes. */
   std::size_t activePluginCount;
+  /** Aggregate latency introduced by the active DSP pipeline, in frames. */
+  std::uint32_t dspLatencyFrames = 0;
   /** Input frames discarded because the bridge was full. */
   std::uint64_t overrunFrames;
   /** Output frames replaced by silence because the bridge was empty. */
@@ -283,6 +294,14 @@ std::string makeSetDspBackendControlRequest(DspBackendKind kind);
 std::string
 makeSetDspBackendControlRequest(DspBackendKind kind,
                                 DspSimdVariant simdVariant);
+
+/**
+ * Returns a JSON automatic DSP suspension request.
+ *
+ * @param policy Ignore or 100 through 5000 ms in 100 ms steps.
+ * @return Encoded request, or an empty string for invalid input or failure.
+ */
+std::string makeSetDspIdleControlRequest(const DspIdlePolicy &policy);
 
 /**
  * Returns a JSON live-preset request without framing newline.

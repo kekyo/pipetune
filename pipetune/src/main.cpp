@@ -301,7 +301,8 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
        .dspBackends = std::move(prepared.dspBackends),
        .configuredDspBackend = prepared.configuredDspBackend,
        .configuredDspSimdVariant =
-           prepared.configuredDspSimdVariant},
+           prepared.configuredDspSimdVariant,
+       .dspIdlePolicy = prepared.dspIdlePolicy},
       pipetune::PipeWireRunMode::untilInterrupted);
   if (!result.success) {
     std::cerr << "pipetune: " << result.error << '\n';

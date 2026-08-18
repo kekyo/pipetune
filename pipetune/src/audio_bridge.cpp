@@ -80,24 +80,38 @@ std::uint32_t PlanarAudioRing::write(std::span<const float> planarSamples,
 std::uint32_t PlanarAudioRing::read(std::span<float> planarSamples,
                                     std::uint32_t frameCount,
                                     std::uint64_t expectedGeneration) noexcept {
-  if (planarSamples.size() != static_cast<std::size_t>(channelCount_) * frameCount) {
-    return 0;
+  return readWithSilencePrefix(planarSamples, frameCount,
+                               expectedGeneration, 0)
+      .queuedFrames;
+}
+
+DelayedAudioReadResult PlanarAudioRing::readWithSilencePrefix(
+    std::span<float> planarSamples, std::uint32_t frameCount,
+    std::uint64_t expectedGeneration,
+    std::uint32_t silencePrefixFrames) noexcept {
+  if (planarSamples.size() !=
+          static_cast<std::size_t>(channelCount_) * frameCount ||
+      silencePrefixFrames > frameCount) {
+    return {};
   }
 
   const auto readFrame = readFrame_.load(std::memory_order_relaxed);
   const auto writeFrame = writeFrame_.load(std::memory_order_acquire);
   const auto queuedFrames =
       std::min<std::uint64_t>(writeFrame - readFrame, capacityFrames_);
-  const auto copiedFrames =
-      std::min(frameCount, static_cast<std::uint32_t>(queuedFrames));
+  const auto requestedQueuedFrames = frameCount - silencePrefixFrames;
+  const auto copiedFrames = std::min(
+      requestedQueuedFrames, static_cast<std::uint32_t>(queuedFrames));
 
   for (auto channel = std::uint32_t{0}; channel < channelCount_; ++channel) {
     const auto source = std::span<const float>(samples_).subspan(
         static_cast<std::size_t>(channel) * capacityFrames_, capacityFrames_);
     auto destination = planarSamples.subspan(
         static_cast<std::size_t>(channel) * frameCount, frameCount);
-    copyFromRing(source, destination.first(copiedFrames), readFrame, copiedFrames);
-    std::fill(destination.begin() + copiedFrames, destination.end(), 0.0F);
+    std::fill(destination.begin(), destination.end(), 0.0F);
+    copyFromRing(source,
+                 destination.subspan(silencePrefixFrames, copiedFrames),
+                 readFrame, copiedFrames);
   }
   for (auto frame = std::uint32_t{0}; frame < copiedFrames; ++frame) {
     if (generations_[(readFrame + frame) % capacityFrames_] ==
@@ -105,14 +119,15 @@ std::uint32_t PlanarAudioRing::read(std::span<float> planarSamples,
       continue;
     }
     for (auto channel = std::uint32_t{0}; channel < channelCount_; ++channel) {
-      planarSamples[static_cast<std::size_t>(channel) * frameCount + frame] =
-          0.0F;
+      planarSamples[static_cast<std::size_t>(channel) * frameCount +
+                    silencePrefixFrames + frame] = 0.0F;
     }
   }
   readFrame_.store(readFrame + copiedFrames, std::memory_order_release);
-  underrunFrames_.fetch_add(frameCount - copiedFrames,
+  underrunFrames_.fetch_add(requestedQueuedFrames - copiedFrames,
                             std::memory_order_relaxed);
-  return copiedFrames;
+  return {.queuedFrames = copiedFrames,
+          .availableFrames = silencePrefixFrames + copiedFrames};
 }
 
 std::uint32_t PlanarAudioRing::discardQueuedFrames() noexcept {
@@ -137,6 +152,30 @@ std::uint64_t PlanarAudioRing::overrunFrames() const noexcept {
 
 std::uint64_t PlanarAudioRing::underrunFrames() const noexcept {
   return underrunFrames_.load(std::memory_order_relaxed);
+}
+
+AudioBridgeLatencyController::AudioBridgeLatencyController() noexcept
+    : latencyFrames_(0), remainingFrames_(0) {}
+
+void AudioBridgeLatencyController::configure(
+    std::uint32_t latencyFrames) noexcept {
+  latencyFrames_ = latencyFrames;
+  remainingFrames_ = latencyFrames;
+}
+
+void AudioBridgeLatencyController::reset() noexcept {
+  remainingFrames_ = latencyFrames_;
+}
+
+std::uint32_t AudioBridgeLatencyController::consumePrefixFrames(
+    std::uint32_t frameCount) noexcept {
+  const auto prefixFrames = std::min(frameCount, remainingFrames_);
+  remainingFrames_ -= prefixFrames;
+  return prefixFrames;
+}
+
+std::uint32_t AudioBridgeLatencyController::latencyFrames() const noexcept {
+  return latencyFrames_;
 }
 
 AudioTransitionSilencer::AudioTransitionSilencer(

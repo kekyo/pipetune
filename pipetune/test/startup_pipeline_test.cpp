@@ -73,8 +73,11 @@ static bool testConfiguredPreset(const std::filesystem::path &configPath,
   const auto saved = pipetune::saveStartupPreset(configPath, presetPath);
   const auto savedBackend = pipetune::saveDspBackendKind(
       configPath, pipetune::DspBackendKind::simd);
+  const auto savedDspIdle = pipetune::saveDspIdlePolicy(
+      configPath, {.timeoutMilliseconds = 300});
   if (!check(saved.empty(), saved) ||
-      !check(savedBackend.empty(), savedBackend)) {
+      !check(savedBackend.empty(), savedBackend) ||
+      !check(savedDspIdle.empty(), savedDspIdle)) {
     return false;
   }
   const auto prepared = pipetune::prepareStartupPipeline(
@@ -97,6 +100,8 @@ static bool testConfiguredPreset(const std::filesystem::path &configPath,
              "DSP rate") ||
       !check(prepared.pipeline->activePluginCount() == 1,
              "configured preset must prepare its DSP node") ||
+      !check(prepared.dspIdlePolicy.timeoutMilliseconds == 300,
+             "configured DSP idle policy must reach the runtime") ||
       !check(prepared.configuredDspBackend ==
                      pipetune::DspBackendKind::simd &&
                  prepared.effectiveDspBackend ==

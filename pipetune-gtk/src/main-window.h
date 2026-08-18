@@ -56,6 +56,10 @@ struct MainWindowUi {
   GtkWidget *rateEnforcementCombo = nullptr;
   /** Scalar compatibility or SIMD acceleration backend drop-down. */
   GtkWidget *dspBackendCombo = nullptr;
+  /** Enables automatic DSP suspension after continuous silence. */
+  GtkWidget *dspIdleEnabledSwitch = nullptr;
+  /** Selects the continuous-silence duration in seconds. */
+  GtkWidget *dspIdleTimeoutSpin = nullptr;
   /** Supported presentation-language drop-down. */
   GtkWidget *languageCombo = nullptr;
   /** Inline notice that a restart is required to apply a language change. */

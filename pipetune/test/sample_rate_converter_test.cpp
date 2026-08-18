@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <iostream>
 #include <numbers>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -67,6 +68,102 @@ static bool testEqualRatesPassThroughExactly() {
          check(output[0] == 2.0F && output[1] == 3.0F &&
                    output[2] == 12.0F && output[3] == 13.0F,
                "equal-rate PCM must pass through exactly");
+}
+
+struct RoundTripDeficit {
+  std::uint32_t maximumFrames;
+  int error;
+};
+
+static RoundTripDeficit measureObservedRoundTripDeficit(
+    std::uint32_t streamSampleRate, std::uint32_t dspSampleRate,
+    std::uint32_t blockFrames) {
+  constexpr auto maximumFrames = std::uint32_t{8192};
+  constexpr auto totalFrames = std::uint32_t{16384};
+  auto inputConverter =
+      pipetune::PlanarSampleRateConverter(1, maximumFrames);
+  auto outputConverter =
+      pipetune::PlanarSampleRateConverter(1, maximumFrames);
+  auto error = inputConverter.configure(streamSampleRate, dspSampleRate);
+  if (error == 0) {
+    error = outputConverter.configure(dspSampleRate, streamSampleRate);
+  }
+  if (error != 0) {
+    return {.maximumFrames = 0, .error = error};
+  }
+
+  auto input = std::vector<float>(blockFrames, 0.0F);
+  auto dsp = std::vector<float>(maximumFrames, 0.0F);
+  auto output = std::vector<float>(maximumFrames, 0.0F);
+  auto consumedStreamFrames = std::uint64_t{0};
+  auto generatedStreamFrames = std::uint64_t{0};
+  auto maximumDeficit = std::uint64_t{0};
+  while (consumedStreamFrames < totalFrames) {
+    const auto currentBlock = static_cast<std::uint32_t>(
+        std::min<std::uint64_t>(blockFrames,
+                                totalFrames - consumedStreamFrames));
+    auto inputOffset = std::uint32_t{0};
+    while (inputOffset < currentBlock) {
+      const auto converted = inputConverter.process(
+          std::span<const float>(input).first(currentBlock), currentBlock,
+          inputOffset, currentBlock - inputOffset, dsp, maximumFrames);
+      if (converted.error != 0 ||
+          (converted.inputFramesUsed == 0 &&
+           converted.outputFramesGenerated == 0)) {
+        return {.maximumFrames = 0,
+                .error = converted.error == 0 ? -1 : converted.error};
+      }
+      inputOffset += converted.inputFramesUsed;
+      auto dspOffset = std::uint32_t{0};
+      while (dspOffset < converted.outputFramesGenerated) {
+        const auto restored = outputConverter.process(
+            std::span<const float>(dsp).first(
+                converted.outputFramesGenerated),
+            converted.outputFramesGenerated, dspOffset,
+            converted.outputFramesGenerated - dspOffset, output,
+            maximumFrames);
+        if (restored.error != 0 ||
+            (restored.inputFramesUsed == 0 &&
+             restored.outputFramesGenerated == 0)) {
+          return {.maximumFrames = 0,
+                  .error = restored.error == 0 ? -1 : restored.error};
+        }
+        dspOffset += restored.inputFramesUsed;
+        generatedStreamFrames += restored.outputFramesGenerated;
+      }
+    }
+    consumedStreamFrames += currentBlock;
+    if (consumedStreamFrames > generatedStreamFrames) {
+      maximumDeficit = std::max(
+          maximumDeficit,
+          consumedStreamFrames - generatedStreamFrames);
+    }
+  }
+  return {.maximumFrames = static_cast<std::uint32_t>(maximumDeficit),
+          .error = 0};
+}
+
+static bool testRoundTripDelayIsMeasuredAndBounded() {
+  const auto passthrough =
+      pipetune::measureSampleRateBridgeDelay(48000, 48000);
+  const auto upsampled =
+      pipetune::measureSampleRateBridgeDelay(48000, 192000);
+  const auto observed32 =
+      measureObservedRoundTripDeficit(48000, 192000, 32);
+  const auto observed113 =
+      measureObservedRoundTripDeficit(48000, 192000, 113);
+  return check(passthrough.error == 0 && passthrough.delayFrames == 0,
+               "equal-rate bridge must have no fixed delay") &&
+         check(upsampled.error == 0 && upsampled.delayFrames != 0,
+               "rate-converting bridge delay must be measured") &&
+         check(observed32.error == 0 && observed113.error == 0,
+               "round-trip delay observation failed") &&
+         check(upsampled.delayFrames >= observed32.maximumFrames &&
+                   upsampled.delayFrames >= observed113.maximumFrames,
+               "measured bridge delay must cover streaming chunking") &&
+         check(upsampled.delayFrames <= observed32.maximumFrames + 1 &&
+                   upsampled.delayFrames <= observed113.maximumFrames + 1,
+               "bridge delay must contain at most one rounding reserve frame");
 }
 
 static bool testStreamingUpsamplingPreservesSignal() {
@@ -159,6 +256,7 @@ static bool testStreamingDownsamplingPreservesSignal() {
 
 int main() {
   return testIndependentFixedDspRate() && testEqualRatesPassThroughExactly() &&
+                 testRoundTripDelayIsMeasuredAndBounded() &&
                  testStreamingUpsamplingPreservesSignal() &&
                  testStreamingDownsamplingPreservesSignal()
              ? 0

@@ -26,6 +26,8 @@ constexpr auto kDspBackendAssignment =
     std::string_view{"PIPETUNE_DSP_BACKEND="};
 constexpr auto kDspSimdVariantAssignment =
     std::string_view{"PIPETUNE_DSP_SIMD_VARIANT="};
+constexpr auto kDspIdleTimeoutAssignment =
+    std::string_view{"PIPETUNE_DSP_IDLE_TIMEOUT="};
 constexpr auto kRateAssignment = std::string_view{"PIPETUNE_RATE="};
 constexpr auto kRateEnforcementAssignment =
     std::string_view{"PIPETUNE_RATE_ENFORCEMENT="};
@@ -122,6 +124,27 @@ static bool parseConfiguredRate(std::string_view value,
   return true;
 }
 
+static bool parseDspIdlePolicy(std::string_view value,
+                               DspIdlePolicy &policy) {
+  if (value == "ignore") {
+    policy = {};
+    return true;
+  }
+  auto timeoutMilliseconds = std::uint32_t{0};
+  const auto parsed = std::from_chars(
+      value.data(), value.data() + value.size(), timeoutMilliseconds);
+  const auto candidate =
+      DspIdlePolicy{.timeoutMilliseconds = timeoutMilliseconds};
+  if (parsed.ec != std::errc{} ||
+      parsed.ptr != value.data() + value.size() ||
+      !dspIdlePolicyIsValid(candidate) ||
+      !dspIdlePolicyIsEnabled(candidate)) {
+    return false;
+  }
+  policy = candidate;
+  return true;
+}
+
 static std::string readConfig(const std::filesystem::path &configPath,
                               std::string &contents, bool &found) {
   auto stream = std::ifstream(configPath, std::ios::binary);
@@ -195,6 +218,16 @@ std::string saveStartupConfig(const std::filesystem::path &configPath,
   }
   contents += std::string(kDspSimdVariantAssignment) +
               std::string(simdVariantName) + "\n";
+  if (!dspIdlePolicyIsValid(config.dspIdlePolicy)) {
+    return "DSP idle policy is invalid";
+  }
+  contents += std::string(kDspIdleTimeoutAssignment);
+  if (dspIdlePolicyIsEnabled(config.dspIdlePolicy)) {
+    contents +=
+        std::to_string(config.dspIdlePolicy.timeoutMilliseconds) + "\n";
+  } else {
+    contents += "ignore\n";
+  }
   if (!sampleRatePolicyIsValid(config.ratePolicy)) {
     return "sample-rate policy is invalid";
   }
@@ -297,6 +330,7 @@ loadStartupConfig(const std::filesystem::path &configPath) {
   auto config = StartupConfig{};
   auto dspBackendFound = false;
   auto dspSimdVariantFound = false;
+  auto dspIdleTimeoutFound = false;
   auto rateFound = false;
   auto enforcementFound = false;
   auto offset = std::size_t{0};
@@ -349,6 +383,17 @@ loadStartupConfig(const std::filesystem::path &configPath) {
         }
         config.dspSimdVariant = *parsed;
         dspSimdVariantFound = true;
+      } else if (line.starts_with(kDspIdleTimeoutAssignment)) {
+        if (dspIdleTimeoutFound) {
+          return fail("startup configuration contains duplicate "
+                      "PIPETUNE_DSP_IDLE_TIMEOUT assignments");
+        }
+        if (!parseDspIdlePolicy(
+                line.substr(kDspIdleTimeoutAssignment.size()),
+                config.dspIdlePolicy)) {
+          return fail("DSP idle timeout assignment is invalid");
+        }
+        dspIdleTimeoutFound = true;
       } else if (line.starts_with(kRateAssignment)) {
         if (rateFound) {
           return fail("startup configuration contains duplicate "
@@ -447,6 +492,19 @@ std::string saveDspBackendSelection(
   return saveStartupConfig(configPath, configured.config);
 }
 
+std::string saveDspIdlePolicy(const std::filesystem::path &configPath,
+                              const DspIdlePolicy &policy) {
+  if (!dspIdlePolicyIsValid(policy)) {
+    return "DSP idle policy is invalid";
+  }
+  auto configured = loadStartupConfig(configPath);
+  if (!configured.error.empty()) {
+    return configured.error;
+  }
+  configured.config.dspIdlePolicy = policy;
+  return saveStartupConfig(configPath, configured.config);
+}
+
 std::string resetStartupConfig(const std::filesystem::path &configPath) {
   return saveStartupConfig(
       configPath,
@@ -454,7 +512,8 @@ std::string resetStartupConfig(const std::filesystem::path &configPath) {
        .presetPath = {},
        .ratePolicy = defaultSampleRatePolicy(),
        .dspBackend = DspBackendKind::scalar,
-       .dspSimdVariant = DspSimdVariant::automatic});
+       .dspSimdVariant = DspSimdVariant::automatic,
+       .dspIdlePolicy = {}});
 }
 
 } // namespace pipetune

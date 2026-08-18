@@ -6,6 +6,7 @@
 #ifndef PIPETUNE_DSP_PIPELINE_SLOT_H
 #define PIPETUNE_DSP_PIPELINE_SLOT_H
 
+#include "pipetune/dsp_idle.h"
 #include "pipetune/dsp_pipeline.h"
 
 #include <atomic>
@@ -23,6 +24,16 @@ struct DspPipelineProcessResult {
   ProcessStatus status;
   /** Generation of the pipeline that processed the PCM. */
   std::uint64_t generation;
+};
+
+/** Result of processing PCM with automatic DSP suspension. */
+struct DspIdleProcessResult {
+  /** Processing status from the selected pipeline. */
+  ProcessStatus status = ProcessStatus::invalidBuffer;
+  /** Generation of the selected pipeline. */
+  std::uint64_t generation = 0;
+  /** DSP activity after processing this block. */
+  DspActivity activity = DspActivity::bypassed;
 };
 
 /**
@@ -84,6 +95,28 @@ public:
   processWithGeneration(std::span<float> planarSamples,
                         std::uint32_t channelCount, std::uint32_t frameCount,
                         double timeSeconds) noexcept;
+
+  /**
+   * Processes PCM while suspending native DSP after continuous silent input.
+   *
+   * Silence is detected from the exact sample bits before DSP processing.
+   * Source-generated audio and effect tails continue through the configured
+   * allowance, then fade to zero before the native engine is reset. A fully
+   * silent block while sleeping does not invoke the native engine. The first
+   * block containing a non-zero sample wakes and invokes DSP immediately.
+   * This function performs no allocation, locking, or object destruction.
+   *
+   * @param planarSamples Contiguous channel-major samples.
+   * @param channelCount Number of channels represented by the buffer.
+   * @param frameCount Number of frames in each channel.
+   * @param timeSeconds Monotonic stream time in seconds.
+   * @param policy Valid automatic DSP suspension policy.
+   * @return Processing status, pipeline generation, and resulting activity.
+   */
+  DspIdleProcessResult
+  processWithIdle(std::span<float> planarSamples,
+                  std::uint32_t channelCount, std::uint32_t frameCount,
+                  double timeSeconds, const DspIdlePolicy &policy) noexcept;
 
   /** Returns the currently active DSP pipeline generation. */
   std::uint64_t activeGeneration() const noexcept;
@@ -151,6 +184,9 @@ public:
   /** Returns the active pipeline's enabled native DSP count. */
   std::size_t activePluginCount() const noexcept;
 
+  /** Returns the active pipeline's aggregate latency in DSP frames. */
+  std::uint32_t activeLatencyFrames() const noexcept;
+
   /** Returns the active native backend, or no value for bypass. */
   std::optional<DspBackendKind> backendKind() const noexcept;
 
@@ -161,6 +197,18 @@ public:
   DspPerformanceCounters performanceCounters() const noexcept;
 
 private:
+  struct ProtectedPipelineSelection {
+    DspPipeline *pipeline;
+    std::uint64_t generation;
+  };
+
+  ProtectedPipelineSelection protectActive() noexcept;
+  ProcessStatus processProtected(DspPipeline &pipeline,
+                                 std::span<float> planarSamples,
+                                 std::uint32_t channelCount,
+                                 std::uint32_t frameCount,
+                                 double timeSeconds) noexcept;
+  void releaseActive() noexcept;
   void activate(DspPipeline *pipeline) noexcept;
   void reclaimSuperseded();
 
@@ -172,6 +220,12 @@ private:
   std::atomic<std::uint64_t> activationSequence_;
   std::atomic<std::uint64_t> processedFrames_;
   std::atomic<std::uint64_t> processingNanoseconds_;
+  DspIdlePolicy idlePolicy_;
+  std::uint64_t idleGeneration_;
+  float idleSampleRate_;
+  std::uint64_t silentInputFrames_;
+  bool idleConfigured_;
+  bool idleSleeping_;
 };
 
 } // namespace pipetune

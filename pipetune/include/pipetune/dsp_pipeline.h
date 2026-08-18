@@ -103,6 +103,17 @@ public:
   ProcessStatus process(std::span<float> planarSamples, std::uint32_t channelCount,
                         std::uint32_t frameCount, double timeSeconds) noexcept;
 
+  /**
+   * Clears retained DSP state while preserving the prepared pipeline.
+   *
+   * Filter, delay, tail, source-generator, and telemetry histories are reset.
+   * The pipeline layout and configured parameters remain available for the
+   * next process() call. This function performs no allocation.
+   *
+   * @return Processing status from the native EffeTune engine.
+   */
+  ProcessStatus reset() noexcept;
+
   /** Returns the sample rate supplied at construction. */
   float sampleRate() const noexcept;
   /** Returns the maximum channel count supplied at construction. */

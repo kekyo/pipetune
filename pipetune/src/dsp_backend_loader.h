@@ -61,6 +61,7 @@ struct DspBackendApi {
   decltype(&et_telemetry_capacity) telemetryCapacity = nullptr;
   decltype(&et_telemetry_read) telemetryRead = nullptr;
   decltype(&et_pipeline_configure) pipelineConfigure = nullptr;
+  decltype(&et_pipeline_latency) pipelineLatency = nullptr;
   decltype(&et_pipeline_process) pipelineProcess = nullptr;
 };
 

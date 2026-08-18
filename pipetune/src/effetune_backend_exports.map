@@ -42,6 +42,7 @@ PIPETUNE_EFFETUNE_BACKEND_1 {
     et_telemetry_capacity;
     et_telemetry_read;
     et_pipeline_configure;
+    et_pipeline_latency;
     et_pipeline_process;
   local:
     *;

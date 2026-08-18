@@ -26,6 +26,7 @@
 #include "user-setup-client.h"
 
 #include "pipetune/control_socket.h"
+#include "pipetune/dsp_idle.h"
 #include "pipetune/startup_config.h"
 #include "pipetune/version.h"
 
@@ -37,6 +38,7 @@
 
 #include <array>
 #include <cerrno>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -110,6 +112,7 @@ struct GtkRuntime {
   std::vector<SampleRateChoice> rateChoices;
   std::vector<std::string> rateEnforcementChoices;
   std::vector<DspBackendChoice> dspBackendChoices;
+  std::uint32_t dspIdleTimeoutSelectionMilliseconds;
   std::map<std::string, StatusRowWidgets> statusRows;
   StatusLevelMeterWidgets statusLoadMeter;
   ActionLog actionLog;
@@ -204,6 +207,7 @@ static pipetune::StartupConfig defaultStartupConfig() {
       .ratePolicy = pipetune::defaultSampleRatePolicy(),
       .dspBackend = pipetune::DspBackendKind::scalar,
       .dspSimdVariant = pipetune::DspSimdVariant::automatic,
+      .dspIdlePolicy = {},
   };
 }
 
@@ -569,6 +573,8 @@ static UiMessage settingsOperationName(SettingsOperation operation) {
     return localizedMessage("Changing sampling-frequency policy", {});
   case SettingsOperation::dspBackend:
     return localizedMessage("Changing DSP backend", {});
+  case SettingsOperation::dspIdle:
+    return localizedMessage("Changing silence suspension", {});
   case SettingsOperation::processing:
     return localizedMessage("Changing processing mode", {});
   case SettingsOperation::none:
@@ -583,6 +589,8 @@ static UiMessage settingsOperationSuccess(SettingsOperation operation) {
     return localizedMessage("Sampling-frequency policy changed", {});
   case SettingsOperation::dspBackend:
     return localizedMessage("DSP backend changed", {});
+  case SettingsOperation::dspIdle:
+    return localizedMessage("Silence suspension changed", {});
   case SettingsOperation::processing:
     return localizedMessage("Processing mode changed", {});
   case SettingsOperation::none:
@@ -597,6 +605,8 @@ static UiMessage settingsOperationFailure(SettingsOperation operation) {
     return localizedMessage("Changing sampling-frequency policy failed", {});
   case SettingsOperation::dspBackend:
     return localizedMessage("Changing DSP backend failed", {});
+  case SettingsOperation::dspIdle:
+    return localizedMessage("Changing silence suspension failed", {});
   case SettingsOperation::processing:
     return localizedMessage("Changing processing mode failed", {});
   case SettingsOperation::none:
@@ -760,6 +770,25 @@ static void renderDspControls(GtkRuntime *runtime) {
   runtime->dspBackendChoices = backend.choices;
   setComboBoxActive(runtime->ui.dspBackendCombo,
                     backend.activeIndex);
+  const auto idleEnabled =
+      pipetune::dspIdlePolicyIsEnabled(settings.dspIdlePolicy);
+  if (idleEnabled) {
+    runtime->dspIdleTimeoutSelectionMilliseconds =
+        settings.dspIdlePolicy.timeoutMilliseconds;
+  }
+  auto *idleSwitch = GTK_SWITCH(runtime->ui.dspIdleEnabledSwitch);
+  if ((gtk_switch_get_active(idleSwitch) != FALSE) != idleEnabled) {
+    gtk_switch_set_active(idleSwitch, idleEnabled ? TRUE : FALSE);
+  }
+  const auto timeoutSeconds =
+      static_cast<double>(runtime->dspIdleTimeoutSelectionMilliseconds) /
+      1000.0;
+  if (gtk_spin_button_get_value(
+          GTK_SPIN_BUTTON(runtime->ui.dspIdleTimeoutSpin)) !=
+      timeoutSeconds) {
+    gtk_spin_button_set_value(
+        GTK_SPIN_BUTTON(runtime->ui.dspIdleTimeoutSpin), timeoutSeconds);
+  }
 }
 
 static gint uiLanguageComboIndex(UiLanguage language) noexcept {
@@ -834,6 +863,14 @@ static void renderSettingsControls(GtkRuntime *runtime) {
       editable && rateSettings.ratePolicy.mode ==
                       pipetune::SampleRateMode::fixed);
   gtk_widget_set_sensitive(runtime->ui.dspBackendCombo, editable);
+  gtk_widget_set_sensitive(runtime->ui.dspIdleEnabledSwitch, editable);
+  const auto &dspSettings = runtime->transactionReady
+                                ? runtime->transaction.desiredLive
+                                : runtime->savedConfig;
+  gtk_widget_set_sensitive(
+      runtime->ui.dspIdleTimeoutSpin,
+      editable &&
+          pipetune::dspIdlePolicyIsEnabled(dspSettings.dspIdlePolicy));
   gtk_widget_set_sensitive(runtime->ui.languageCombo,
                            runtime->dialogActive &&
                                !runtime->userSetupPending);
@@ -1032,6 +1069,57 @@ static void onDspBackendChanged(GtkComboBox *combo,
   auto desired = runtime->transaction.desiredLive;
   desired.dspBackend = choice.kind;
   desired.dspSimdVariant = choice.simdVariant;
+  editDesiredSettings(runtime, desired);
+}
+
+static void onDspIdleEnabledChanged(GObject *object, GParamSpec *,
+                                    gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (runtime->updatingControls || !controlsAreEditable(*runtime)) {
+    return;
+  }
+  auto timeout = runtime->dspIdleTimeoutSelectionMilliseconds;
+  const auto selected = pipetune::DspIdlePolicy{
+      .timeoutMilliseconds = timeout,
+  };
+  if (!pipetune::dspIdlePolicyIsValid(selected) ||
+      !pipetune::dspIdlePolicyIsEnabled(selected)) {
+    timeout = pipetune::kDspIdleTimeoutDefaultMilliseconds;
+    runtime->dspIdleTimeoutSelectionMilliseconds = timeout;
+  }
+  const auto enabled =
+      gtk_switch_get_active(GTK_SWITCH(object)) != FALSE;
+  auto desired = runtime->transaction.desiredLive;
+  desired.dspIdlePolicy = {
+      .timeoutMilliseconds =
+          enabled ? timeout
+                  : pipetune::kDspIdleTimeoutIgnoredMilliseconds,
+  };
+  editDesiredSettings(runtime, desired);
+}
+
+static void onDspIdleTimeoutChanged(GtkSpinButton *spin,
+                                    gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (runtime->updatingControls || !controlsAreEditable(*runtime)) {
+    return;
+  }
+  const auto timeout = static_cast<std::uint32_t>(std::lround(
+      gtk_spin_button_get_value(spin) * 1000.0));
+  const auto policy = pipetune::DspIdlePolicy{
+      .timeoutMilliseconds = timeout,
+  };
+  if (!pipetune::dspIdlePolicyIsValid(policy) ||
+      !pipetune::dspIdlePolicyIsEnabled(policy)) {
+    return;
+  }
+  runtime->dspIdleTimeoutSelectionMilliseconds = timeout;
+  if (gtk_switch_get_active(
+          GTK_SWITCH(runtime->ui.dspIdleEnabledSwitch)) == FALSE) {
+    return;
+  }
+  auto desired = runtime->transaction.desiredLive;
+  desired.dspIdlePolicy = policy;
   editDesiredSettings(runtime, desired);
 }
 
@@ -1588,6 +1676,10 @@ static void dispatchSettingsOperation(
                               target.dspSimdVariant,
                               onSettingsOperationReply, runtime);
     return;
+  case SettingsOperation::dspIdle:
+    setControlDspIdleAsync(runtime->controlClient, target.dspIdlePolicy,
+                           onSettingsOperationReply, runtime);
+    return;
   case SettingsOperation::processing:
     if (target.presetFound) {
       loadControlPresetAsync(runtime->controlClient, target.presetPath,
@@ -1758,6 +1850,10 @@ static void connectMainWindowSignals(GtkRuntime *runtime) {
                    G_CALLBACK(onRateEnforcementChanged), runtime);
   g_signal_connect(runtime->ui.dspBackendCombo, "changed",
                    G_CALLBACK(onDspBackendChanged), runtime);
+  g_signal_connect(runtime->ui.dspIdleEnabledSwitch, "notify::active",
+                   G_CALLBACK(onDspIdleEnabledChanged), runtime);
+  g_signal_connect(runtime->ui.dspIdleTimeoutSpin, "value-changed",
+                   G_CALLBACK(onDspIdleTimeoutChanged), runtime);
   g_signal_connect(runtime->ui.languageCombo, "changed",
                    G_CALLBACK(onLanguageChanged), runtime);
   g_signal_connect(runtime->ui.processingEnabledSwitch, "notify::active",
@@ -2159,6 +2255,8 @@ static ApplicationRunResult runApplication(int argc, char **argv) {
       .rateChoices = {},
       .rateEnforcementChoices = {},
       .dspBackendChoices = {},
+      .dspIdleTimeoutSelectionMilliseconds =
+          pipetune::kDspIdleTimeoutDefaultMilliseconds,
       .statusRows = {},
       .statusLoadMeter = {},
       .actionLog = createActionLog(kActionLogCapacity),

@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <climits>
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 
@@ -180,6 +181,93 @@ SampleRateConversionResult PlanarSampleRateConverter::process(
   return {.inputFramesUsed = inputFramesUsed,
           .outputFramesGenerated = outputFramesGenerated,
           .error = 0};
+}
+
+SampleRateBridgeDelayMeasurement measureSampleRateBridgeDelay(
+    std::uint32_t streamSampleRate,
+    std::uint32_t dspSampleRate) noexcept {
+  if (streamSampleRate == 0 || dspSampleRate == 0) {
+    return {.delayFrames = 0, .error = -1};
+  }
+  if (streamSampleRate == dspSampleRate) {
+    return {.delayFrames = 0, .error = 0};
+  }
+
+  constexpr auto maximumFrames = std::uint32_t{8192};
+  constexpr auto probeBlockFrames = std::uint32_t{32};
+  constexpr auto totalProbeFrames = std::uint32_t{16384};
+  try {
+    auto inputConverter =
+        PlanarSampleRateConverter(1, maximumFrames);
+    auto outputConverter =
+        PlanarSampleRateConverter(1, maximumFrames);
+    auto error = inputConverter.configure(streamSampleRate, dspSampleRate);
+    if (error == 0) {
+      error = outputConverter.configure(dspSampleRate, streamSampleRate);
+    }
+    if (error != 0) {
+      return {.delayFrames = 0, .error = error};
+    }
+
+    auto input = std::vector<float>(probeBlockFrames, 0.0F);
+    auto dsp = std::vector<float>(maximumFrames, 0.0F);
+    auto output = std::vector<float>(maximumFrames, 0.0F);
+    auto consumedStreamFrames = std::uint64_t{0};
+    auto generatedStreamFrames = std::uint64_t{0};
+    auto maximumDeficit = std::uint64_t{0};
+    while (consumedStreamFrames < totalProbeFrames) {
+      const auto currentBlock = static_cast<std::uint32_t>(
+          std::min<std::uint64_t>(
+              probeBlockFrames,
+              totalProbeFrames - consumedStreamFrames));
+      auto inputOffset = std::uint32_t{0};
+      while (inputOffset < currentBlock) {
+        const auto converted = inputConverter.process(
+            std::span<const float>(input).first(currentBlock), currentBlock,
+            inputOffset, currentBlock - inputOffset, dsp, maximumFrames);
+        if (converted.error != 0 ||
+            (converted.inputFramesUsed == 0 &&
+             converted.outputFramesGenerated == 0)) {
+          return {.delayFrames = 0,
+                  .error = converted.error == 0 ? -1 : converted.error};
+        }
+        inputOffset += converted.inputFramesUsed;
+
+        auto dspOffset = std::uint32_t{0};
+        while (dspOffset < converted.outputFramesGenerated) {
+          const auto restored = outputConverter.process(
+              std::span<const float>(dsp).first(
+                  converted.outputFramesGenerated),
+              converted.outputFramesGenerated, dspOffset,
+              converted.outputFramesGenerated - dspOffset, output,
+              maximumFrames);
+          if (restored.error != 0 ||
+              (restored.inputFramesUsed == 0 &&
+               restored.outputFramesGenerated == 0)) {
+            return {.delayFrames = 0,
+                    .error = restored.error == 0 ? -1 : restored.error};
+          }
+          dspOffset += restored.inputFramesUsed;
+          generatedStreamFrames += restored.outputFramesGenerated;
+        }
+      }
+      consumedStreamFrames += currentBlock;
+      if (consumedStreamFrames > generatedStreamFrames) {
+        maximumDeficit = std::max(
+            maximumDeficit,
+            consumedStreamFrames - generatedStreamFrames);
+      }
+    }
+    if (maximumDeficit >= UINT32_MAX) {
+      return {.delayFrames = 0, .error = -1};
+    }
+    return {
+        .delayFrames = static_cast<std::uint32_t>(maximumDeficit) + 1,
+        .error = 0,
+    };
+  } catch (...) {
+    return {.delayFrames = 0, .error = -1};
+  }
 }
 
 } // namespace pipetune

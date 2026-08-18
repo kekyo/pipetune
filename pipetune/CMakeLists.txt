@@ -220,6 +220,7 @@ add_library(
   src/filter_graph_properties.cpp
   src/input_telemetry.cpp
   src/pipewire_buffer_io.cpp
+  src/pipewire_latency.cpp
   src/pipewire_pipeline.cpp
   src/process_runner.cpp
   src/rate_command.cpp
@@ -438,6 +439,7 @@ if(BUILD_TESTING)
     COMMAND
       pipetune_effetune_backend_artifact_tests
       ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/dynamics/auto_leveler/golden/case-008.f32
+      ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/lofi/bluetooth_sbc_simulator/golden/case-001.f32
       ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/lofi/cassette_artifacts/golden/case-001.f32
       ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/lofi/tape_artifacts/golden/case-001.f32
       ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/lofi/vinyl_artifacts/golden/case-003.f32
@@ -804,6 +806,61 @@ if(BUILD_TESTING)
     COMMAND pipetune_pipewire_buffer_io_tests)
 
   add_executable(
+    pipetune_pipewire_latency_tests
+    test/pipewire_latency_test.cpp)
+  target_include_directories(pipetune_pipewire_latency_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_pipewire_latency_tests
+    PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE)
+  if(MSVC)
+    target_compile_options(pipetune_pipewire_latency_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_pipewire_latency_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_pipewire_latency_tests
+    COMMAND pipetune_pipewire_latency_tests)
+
+  add_executable(
+    pipetune_pipewire_stream_flags_tests
+    test/pipewire_stream_flags_test.cpp)
+  target_include_directories(
+    pipetune_pipewire_stream_flags_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_pipewire_stream_flags_tests PRIVATE PkgConfig::PIPEWIRE)
+  if(MSVC)
+    target_compile_options(
+      pipetune_pipewire_stream_flags_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_pipewire_stream_flags_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_pipewire_stream_flags_tests
+    COMMAND pipetune_pipewire_stream_flags_tests)
+
+  add_executable(
+    pipetune_pipewire_pre_0_3_73_stream_flags_tests
+    test/pipewire_stream_flags_test.cpp)
+  target_include_directories(
+    pipetune_pipewire_pre_0_3_73_stream_flags_tests PRIVATE
+    test/fixtures/pipewire-pre-0.3.73 src)
+  if(MSVC)
+    target_compile_options(
+      pipetune_pipewire_pre_0_3_73_stream_flags_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_pipewire_pre_0_3_73_stream_flags_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_pipewire_pre_0_3_73_stream_flags_tests
+    COMMAND pipetune_pipewire_pre_0_3_73_stream_flags_tests)
+
+  add_executable(
     pipetune_sample_rate_converter_tests
     test/sample_rate_converter_test.cpp)
   target_include_directories(
@@ -957,5 +1014,5 @@ if(BUILD_TESTING)
       $<TARGET_FILE:pipetune>
       $<TARGET_FILE:pipetune_effetune_backend_artifact_tests>)
   set_tests_properties(
-    pipetune_component_build PROPERTIES TIMEOUT 180)
+    pipetune_component_build PROPERTIES TIMEOUT 900)
 endif()
