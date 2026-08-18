@@ -13,6 +13,7 @@
 #include "filter_graph_properties.h"
 #include "input_telemetry.h"
 #include "pipewire_buffer_io.h"
+#include "pipewire_latency.h"
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
 #include "sample_rate_converter.h"
@@ -22,6 +23,7 @@
 #include <spa/param/audio/raw-utils.h>
 #include <spa/param/buffers.h>
 #include <spa/param/format.h>
+#include <spa/param/latency-utils.h>
 #include <spa/pod/builder.h>
 
 #include <algorithm>
@@ -103,6 +105,7 @@ struct PipeWireRuntime {
   PipeWireRunMode mode;
   PlanarAudioRing ring;
   AudioBridgeLatencyController bridgeLatency;
+  PipeWireLatencyState latencyState;
   AudioTransitionSilencer outputTransitionSilencer;
   PlanarSampleRateConverter inputRateConverter;
   PlanarSampleRateConverter outputRateConverter;
@@ -118,6 +121,7 @@ struct PipeWireRuntime {
   std::atomic<std::uint32_t> inputStreamSampleRate;
   std::atomic<std::uint32_t> outputStreamSampleRate;
   std::atomic<std::uint32_t> graphSampleRate;
+  std::atomic<std::uint32_t> pipeWireDspLatencyFrames;
   std::uint32_t rateBridgeStreamRate;
   std::uint32_t rateBridgeDspRate;
   bool silenceNextRateBridge;
@@ -149,6 +153,7 @@ struct PipeWireRuntime {
   pw_stream *inputStream;
   pw_stream *outputStream;
   spa_source *rateChangeSource;
+  spa_source *latencyUpdateSource;
   spa_source *timeoutSource;
   spa_source *interruptSource;
   spa_source *terminateSource;
@@ -176,6 +181,7 @@ struct PipeWireRuntime {
         mode(runtimeMode),
         ring(runtimeOptions.channelCount, runtimeOptions.ringCapacityFrames),
         bridgeLatency(),
+        latencyState(),
         outputTransitionSilencer(0),
         inputRateConverter(runtimeOptions.channelCount,
                            runtimeOptions.maxFrames),
@@ -198,7 +204,9 @@ struct PipeWireRuntime {
         rateBridgeReady(false), inputFormatNegotiated(false),
         dspSampleRate(runtimeOptions.dspSampleRate),
         inputStreamSampleRate(0), outputStreamSampleRate(0),
-        graphSampleRate(0), rateBridgeStreamRate(0), rateBridgeDspRate(0),
+        graphSampleRate(0),
+        pipeWireDspLatencyFrames(pipeline.activeLatencyFrames()),
+        rateBridgeStreamRate(0), rateBridgeDspRate(0),
         silenceNextRateBridge(false), processedInputFrames(0),
         dspIdleState(runtimeOptions.dspIdlePolicy,
                      runtimeOptions.initialPresetPath.empty()
@@ -225,9 +233,10 @@ struct PipeWireRuntime {
         rateRequestError(), rateError(), presetFileMonitor(), controlServer(),
         mainLoop(nullptr),
         context(nullptr), core(nullptr), inputStream(nullptr),
-        outputStream(nullptr), rateChangeSource(nullptr), timeoutSource(nullptr),
-        interruptSource(nullptr), terminateSource(nullptr), inputEvents{},
-        outputEvents{}, inputListener{}, outputListener{},
+        outputStream(nullptr), rateChangeSource(nullptr),
+        latencyUpdateSource(nullptr), timeoutSource(nullptr),
+        interruptSource(nullptr), terminateSource(nullptr),
+        inputEvents{}, outputEvents{}, inputListener{}, outputListener{},
         inputContext{this, true}, outputContext{this, false},
         inputListenerInstalled(false), outputListenerInstalled(false),
         inputReady(false), outputReady(false), inputFormatReady(false),
@@ -267,6 +276,9 @@ struct PipeWireRuntime {
       auto *loop = pw_main_loop_get_loop(mainLoop);
       if (rateChangeSource != nullptr) {
         pw_loop_destroy_source(loop, rateChangeSource);
+      }
+      if (latencyUpdateSource != nullptr) {
+        pw_loop_destroy_source(loop, latencyUpdateSource);
       }
       if (timeoutSource != nullptr) {
         pw_loop_destroy_source(loop, timeoutSource);
@@ -373,6 +385,102 @@ static void failRuntime(PipeWireRuntime &runtime, std::string message) {
   if (runtime.mainLoop != nullptr) {
     pw_main_loop_quit(runtime.mainLoop);
   }
+}
+
+static bool publishPipeWireLatencyDirection(
+    PipeWireRuntime &runtime, spa_direction direction,
+    bool includeProcessLatency) {
+  auto *stream = direction == SPA_DIRECTION_OUTPUT
+                     ? runtime.outputStream
+                     : runtime.inputStream;
+  if (stream == nullptr) {
+    return true;
+  }
+
+  auto storage = std::array<std::uint8_t, 1024>{};
+  auto builder = spa_pod_builder{};
+  spa_pod_builder_init(&builder, storage.data(), storage.size());
+  auto parameters = std::array<const spa_pod *, 2>{};
+  auto parameterCount = std::uint32_t{0};
+  const auto latency = runtime.latencyState.propagatedLatency(direction);
+  parameters[parameterCount] =
+      spa_latency_build(&builder, SPA_PARAM_Latency, &latency);
+  if (parameters[parameterCount] == nullptr) {
+    failRuntime(runtime, "cannot build PipeWire Latency parameter");
+    return false;
+  }
+  ++parameterCount;
+  if (includeProcessLatency) {
+    // pw_stream exposes ProcessLatency starting with PipeWire 1.4. Latency is
+    // published alongside it so older versions still receive the total delay.
+    const auto processLatency = runtime.latencyState.processLatency();
+    parameters[parameterCount] = spa_process_latency_build(
+        &builder, SPA_PARAM_ProcessLatency, &processLatency);
+    if (parameters[parameterCount] == nullptr) {
+      failRuntime(runtime,
+                  "cannot build PipeWire ProcessLatency parameter");
+      return false;
+    }
+    ++parameterCount;
+  }
+
+  const auto result =
+      pw_stream_update_params(stream, parameters.data(), parameterCount);
+  if (result < 0) {
+    failRuntime(runtime,
+                systemError("cannot update PipeWire latency", result));
+    return false;
+  }
+  return true;
+}
+
+static bool publishPipeWireLatencies(PipeWireRuntime &runtime) {
+  const auto inputRate =
+      runtime.inputStreamSampleRate.load(std::memory_order_acquire);
+  const auto outputRate =
+      runtime.outputStreamSampleRate.load(std::memory_order_acquire);
+  if (!runtime.inputFormatReady || !runtime.outputFormatReady ||
+      !runtime.rateBridgeReady.load(std::memory_order_acquire) ||
+      inputRate == 0 || inputRate != outputRate) {
+    return true;
+  }
+  const auto processLatency = calculatePipeWireProcessLatency(
+      runtime.pipeWireDspLatencyFrames.load(std::memory_order_acquire),
+      runtime.dspSampleRate.load(std::memory_order_acquire),
+      runtime.bridgeLatency.latencyFrames(), inputRate);
+  if (!processLatency.valid) {
+    failRuntime(runtime, "cannot represent PipeWire processing latency");
+    return false;
+  }
+  runtime.latencyState.setProcessLatencyFrames(processLatency.frames);
+  return publishPipeWireLatencyDirection(
+             runtime, SPA_DIRECTION_INPUT, true) &&
+         publishPipeWireLatencyDirection(
+             runtime, SPA_DIRECTION_OUTPUT, true);
+}
+
+static void latencyUpdateRequested(void *data, std::uint64_t) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  static_cast<void>(publishPipeWireLatencies(runtime));
+}
+
+static void requestPipeWireLatencyUpdate(
+    PipeWireRuntime &runtime) noexcept {
+  if (runtime.mainLoop == nullptr || runtime.latencyUpdateSource == nullptr) {
+    return;
+  }
+  const auto result = pw_loop_signal_event(
+      pw_main_loop_get_loop(runtime.mainLoop), runtime.latencyUpdateSource);
+  if (result < 0) {
+    runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
+  }
+}
+
+static void refreshPipeWireDspLatency(
+    PipeWireRuntime &runtime) noexcept {
+  runtime.pipeWireDspLatencyFrames.store(
+      runtime.pipeline.activeLatencyFrames(), std::memory_order_release);
+  requestPipeWireLatencyUpdate(runtime);
 }
 
 static void completeRuntime(PipeWireRuntime &runtime) {
@@ -649,6 +757,8 @@ static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
       return false;
     }
     runtime.pipeline.replace(std::move(rebuilt.pipeline));
+    runtime.pipeWireDspLatencyFrames.store(
+        runtime.pipeline.activeLatencyFrames(), std::memory_order_release);
     runtime.dspIdleState.replaceActivity(
         runtime.processingMode == ProcessingMode::preset
             ? DspActivity::active
@@ -698,11 +808,27 @@ static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
 
 static void streamParameterChanged(void *data, std::uint32_t id,
                                    const spa_pod *parameter) {
+  auto &context = *static_cast<StreamCallbackContext *>(data);
+  auto &runtime = *context.runtime;
+  if (id == SPA_PARAM_Latency) {
+    const auto update = runtime.latencyState.updatePortLatency(parameter);
+    if (update.valid) {
+      static_cast<void>(publishPipeWireLatencyDirection(
+          runtime, update.direction, false));
+    }
+    return;
+  }
+  if (id == SPA_PARAM_ProcessLatency) {
+    // PipeTune owns this value. A differing server-side reset is answered on
+    // the main loop with the latest DSP and bridge latency.
+    if (!runtime.latencyState.processLatencyMatches(parameter)) {
+      requestPipeWireLatencyUpdate(runtime);
+    }
+    return;
+  }
   if (id != SPA_PARAM_Format) {
     return;
   }
-  auto &context = *static_cast<StreamCallbackContext *>(data);
-  auto &runtime = *context.runtime;
   if (parameter == nullptr) {
     const auto sampleRate = transitionSampleRate(runtime);
     if (context.input) {
@@ -770,6 +896,9 @@ static void streamParameterChanged(void *data, std::uint32_t id,
                                         std::memory_order_release);
   } else {
     runtime.outputFormatReady = true;
+  }
+  if (!publishPipeWireLatencies(runtime)) {
+    return;
   }
   requestControlStatusUpdate(runtime);
   finishReadinessCheck(runtime);
@@ -1166,6 +1295,7 @@ static void destroyAudioStreams(PipeWireRuntime &runtime) {
   runtime.inputStreamSampleRate.store(0, std::memory_order_release);
   runtime.outputStreamSampleRate.store(0, std::memory_order_release);
   runtime.graphSampleRate.store(0, std::memory_order_release);
+  runtime.latencyState = PipeWireLatencyState{};
   runtime.inputAlwaysProcess = true;
   runtime.inputFormatNegotiated.store(false, std::memory_order_release);
 }
@@ -1434,6 +1564,7 @@ static PresetActivationResult activatePreset(
                         .reason = std::move(warning.reason)});
   }
   runtime.pipeline.replace(std::move(loaded.pipeline));
+  refreshPipeWireDspLatency(runtime);
   runtime.processingMode = ProcessingMode::preset;
   runtime.dspIdleState.replaceActivity(DspActivity::active);
   runtime.activePreset = presetPath.string();
@@ -1571,6 +1702,7 @@ static ControlMessageResult handleControlRequest(std::string_view message,
                                   false);
     }
     if (switched.changed) {
+      refreshPipeWireDspLatency(runtime);
       runtime.dspIdleState.replaceActivity(
           runtime.processingMode == ProcessingMode::preset
               ? DspActivity::active
@@ -1623,6 +1755,7 @@ static ControlMessageResult handleControlRequest(std::string_view message,
                                   false);
     }
     runtime.pipeline.replace(std::move(created.pipeline));
+    refreshPipeWireDspLatency(runtime);
     runtime.processingMode = ProcessingMode::bypass;
     runtime.dspIdleState.replaceActivity(DspActivity::bypassed);
     runtime.activePreset.clear();
@@ -1715,6 +1848,7 @@ static void rateChangeRequested(void *data, std::uint64_t) {
       return;
     }
     runtime.pipeline.replace(std::move(rebuilt.pipeline));
+    refreshPipeWireDspLatency(runtime);
     runtime.dspIdleState.replaceActivity(
         runtime.processingMode == ProcessingMode::preset
             ? DspActivity::active
@@ -1780,6 +1914,14 @@ static bool createMainLoop(PipeWireRuntime &runtime) {
   if (runtime.rateChangeSource == nullptr) {
     failRuntime(runtime,
                 systemError("cannot create PipeWire rate-change event", -errno));
+    return false;
+  }
+  runtime.latencyUpdateSource =
+      pw_loop_add_event(pw_main_loop_get_loop(runtime.mainLoop),
+                        latencyUpdateRequested, &runtime);
+  if (runtime.latencyUpdateSource == nullptr) {
+    failRuntime(runtime,
+                systemError("cannot create PipeWire latency event", -errno));
     return false;
   }
   return true;

@@ -220,6 +220,7 @@ add_library(
   src/filter_graph_properties.cpp
   src/input_telemetry.cpp
   src/pipewire_buffer_io.cpp
+  src/pipewire_latency.cpp
   src/pipewire_pipeline.cpp
   src/process_runner.cpp
   src/rate_command.cpp
@@ -803,6 +804,24 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_pipewire_buffer_io_tests
     COMMAND pipetune_pipewire_buffer_io_tests)
+
+  add_executable(
+    pipetune_pipewire_latency_tests
+    test/pipewire_latency_test.cpp)
+  target_include_directories(pipetune_pipewire_latency_tests PRIVATE src)
+  target_link_libraries(
+    pipetune_pipewire_latency_tests
+    PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE)
+  if(MSVC)
+    target_compile_options(pipetune_pipewire_latency_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_pipewire_latency_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_pipewire_latency_tests
+    COMMAND pipetune_pipewire_latency_tests)
 
   add_executable(
     pipetune_sample_rate_converter_tests
