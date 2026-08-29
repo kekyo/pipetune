@@ -347,10 +347,10 @@ journalctl --user -u pipetune.service
 
 ## 制約
 
-現在のバージョンでは、FIR Crossover、5Band FIR PEQ、Group Delay EQ、Room EQ、
-IR Reverbは使用できません。これらのDSPに必要な畳み込みアセットはEffeTuneによって
-別途生成または保存され、`.effetune_preset`ファイルには含まれないため、PipeTuneから
-読み込むことができません。
+現在のバージョンでは、FIR Crossover、5Band FIR PEQ、Group Delay EQ、
+Group Delay PEQ、Room EQ、IR Reverbは使用できません。これらのDSPに必要な畳み込み
+アセットはEffeTuneによって別途生成または保存され、`.effetune_preset`ファイルには
+含まれないため、PipeTuneから読み込むことができません。
 
 ## ライセンス
 
