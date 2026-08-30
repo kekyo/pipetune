@@ -63,6 +63,12 @@ struct GeneratedFirPath {
   std::uint32_t channel;
 };
 
+static std::string assetIndexedKey(char prefix, std::size_t index) {
+  auto key = std::string(1u, prefix);
+  key += std::to_string(index);
+  return key;
+}
+
 static yyjson_val *assetObjectMember(yyjson_val *object,
                                      std::string_view key) {
   if (!yyjson_is_obj(object)) {
@@ -466,11 +472,11 @@ static GeneratedFirAsset designFirCrossover(
   auto frequencies = std::array<double, 3>{2000.0, 4000.0, 8000.0};
   auto slopes = std::array<double, 3>{24.0, 24.0, 24.0};
   for (auto index = std::size_t{0}; index < frequencies.size(); ++index) {
-    const auto key = "f" + std::to_string(index + 1u);
+    const auto key = assetIndexedKey('f', index + 1u);
     frequencies[index] =
         assetNumber(parameters, key, 10.0, maximumFrequency,
                     std::clamp(frequencies[index], 10.0, maximumFrequency));
-    const auto slopeKey = "s" + std::to_string(index + 1u);
+    const auto slopeKey = assetIndexedKey('s', index + 1u);
     const auto requestedSlope = static_cast<std::uint32_t>(std::abs(std::round(
         assetNumber(parameters, slopeKey, -384.0, 384.0, -24.0))));
     slopes[index] = std::ranges::find(allowedSlopes, requestedSlope) ==
@@ -1069,7 +1075,7 @@ static GeneratedFirAsset designGroupDelayEq(
   auto delays = std::array<double, 15>{};
   auto hasDelay = false;
   for (auto index = std::size_t{0}; index < delays.size(); ++index) {
-    delays[index] = assetNumber(parameters, "d" + std::to_string(index),
+    delays[index] = assetNumber(parameters, assetIndexedKey('d', index),
                                 -limit, limit, 0.0);
     hasDelay = hasDelay || delays[index] != 0.0;
   }

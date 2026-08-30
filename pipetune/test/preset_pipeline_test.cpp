@@ -214,7 +214,7 @@ static bool testGeneratedAssetDsp(const std::filesystem::path &directory) {
   static constexpr std::array cases = {
       GeneratedAssetCase{
           "fir-crossover.effetune_preset", "FIR Crossover",
-          R"json({"lt":"0","bc":2,"pm":"min","tp":8192,"f1":1200,"s1":-48})json",
+          R"json({"lt":"0","bc":4,"pm":"min","tp":8192,"f1":500,"s1":-48,"f2":1500,"s2":-72,"f3":5000,"s3":-96})json",
           16u, 0u, true, false},
       GeneratedAssetCase{
           "five-band-fir-peq.effetune_preset", "5Band FIR PEQ",
@@ -222,8 +222,8 @@ static bool testGeneratedAssetDsp(const std::filesystem::path &directory) {
           2u, 0u, false, true},
       GeneratedAssetCase{
           "group-delay-eq.effetune_preset", "Group Delay EQ",
-          R"json({"lt":"0","tp":4096,"d7":2})json", 2u, 2048u, false,
-          false},
+          R"json({"lt":"0","tp":4096,"d0":-1,"d7":2,"d14":1})json",
+          2u, 2048u, false, false},
       GeneratedAssetCase{
           "group-delay-peq.effetune_preset", "Group Delay PEQ",
           R"json({"lt":"0","tp":4096,"t0":"pk","f0":1000,"d0":2,"q0":1,"e0":true})json",
