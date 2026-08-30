@@ -347,10 +347,18 @@ journalctl --user -u pipetune.service
 
 ## 制約
 
-現在のバージョンでは、FIR Crossover、5Band FIR PEQ、Group Delay EQ、
-Group Delay PEQ、Room EQ、IR Reverbは使用できません。これらのDSPに必要な畳み込み
-アセットはEffeTuneによって別途生成または保存され、`.effetune_preset`ファイルには
-含まれないため、PipeTuneから読み込むことができません。
+FIR Crossover、5Band FIR PEQ、Group Delay EQ、Group Delay PEQに対応しています。
+PipeTuneは、プリセットのパラメータと現在のサンプリング周波数から、これらのDSPに
+必要な畳み込み係数を再生成します。FIR Crossoverには4、6、または8チャンネルの
+出力バスが必要です。それ以外のチャンネル構成では、警告を表示してDSPを除外します。
+
+Room EQとIR Reverbには対応していません。Room EQプリセットが参照する測定データは、
+EffeTuneの
+[measurement store](https://github.com/Frieve-A/effetune/blob/7d8db4dbe44f63fa004c993490976699dd621839/js/measurement-store/client.js#L72)
+を介して解決されます。IR Reverbは、EffeTuneの
+[IR library](https://github.com/Frieve-A/effetune/blob/7d8db4dbe44f63fa004c993490976699dd621839/plugins/reverb/ir_reverb.js#L766-L794)
+を介してコンテンツ識別子を解決します。必要なPCMデータは`.effetune_preset`に含まれないため、
+PipeTuneはこれらのDSPを警告付きで除外します。
 
 ## ライセンス
 

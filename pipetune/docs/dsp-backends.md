@@ -33,6 +33,18 @@ PipeTune's loader surface remains the routed pipeline API and now includes
 `et_pipeline_latency`; PipeTune does not expose Graph v1 as a preset format or
 control API.
 
+Generated convolution assets cross a PipeTune-owned copy ABI instead of
+EffeTune's
+[asset-begin implementation](https://github.com/Frieve-A/effetune/blob/7d8db4dbe44f63fa004c993490976699dd621839/dsp/core/abi.cpp#L170-L185),
+which narrows its staging pointer to a 32-bit return value. At build time CMake
+copies EffeTune's `core/abi.cpp` into the generated build tree and applies
+`patches/effetune/abi-engine-access.patch` with zero fuzz. The patch only
+includes a PipeTune engine-access definition; coefficient generation and the
+copy-and-commit bridge remain separate PipeTune source files. No source below
+`deps/` is modified, no native pointer is narrowed into an EffeTune integer
+handle, and an incompatible future `abi.cpp` causes the build to fail while
+applying the patch.
+
 ## Architecture policy
 
 The package contents and dispatch tiers are:
@@ -174,7 +186,8 @@ PFFFT acceleration and compiler auto-vectorization affect different DSP work:
 | DSP work | Expected SIMD opportunity | Limiting factors |
 | --- | --- | --- |
 | Spectrum Analyzer and Spectrogram FFTs | High, direct PFFFT consumer | FFT runs at the analyzer cadence, so whole-pipeline gain is diluted between frames |
-| FIR Crossover, 5Band FIR PEQ, Group Delay EQ, Group Delay PEQ, IR Reverb, and Room EQ convolution | High, direct PFFFT consumer | PipeTune currently omits nodes that require external assets |
+| FIR Crossover, 5Band FIR PEQ, Group Delay EQ, and Group Delay PEQ design and convolution | High, direct PFFFT consumer | Design runs while loading or rebuilding the preset; steady-state convolution cost depends on taps and channels |
+| IR Reverb and Room EQ convolution | High when an asset is available | PipeTune omits these nodes because the preset does not contain their stored PCM source |
 | Large sample-independent transforms, buffer mixing, matrixing, and analyzer preparation | Medium to high auto-vectorization potential | Often memory-bandwidth limited; inexpensive nodes have little absolute cost |
 | Pitch shifting and long window/ring-buffer operations | Medium, sometimes high aggregate potential | Wrap branches, square roots, interpolation, and state handling inhibit parts of each loop |
 | Multiband split/combine, saturation, and dynamics | Medium aggregate potential | Filters and envelopes have sample-to-sample dependencies |

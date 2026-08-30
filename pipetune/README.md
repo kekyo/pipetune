@@ -43,8 +43,10 @@ not supported by this MVP.
   exactly `.effetune_preset`.
 - Builds every enabled DSP found in the checked-out EffeTune native registry,
   including bus and channel routing.
-- Skips unknown DSPs and DSPs that require external assets, with a warning for
-  each omitted node.
+- Generates and stages convolution coefficients for FIR Crossover, 5Band FIR
+  PEQ, Group Delay EQ, and Group Delay PEQ from their preset parameters.
+- Skips unknown DSPs and unresolved stored-asset DSPs, with a warning for each
+  omitted node.
 - Publishes a WirePlumber 0.5 smart-filter pair and a WirePlumber 0.4 endpoint
   contract with the same transparent playback behavior.
 - Keeps PipeTune's internal processing nodes out of desktop input and output

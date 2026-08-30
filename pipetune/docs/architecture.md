@@ -249,11 +249,11 @@ by EffeTune. Tests compare those packed parameters with EffeTune's JavaScript
 packer and compare native PCM output with EffeTune's parity corpus.
 
 The pinned EffeTune 2.6.0 registry contains 94 native kernels. PipeTune can load
-MD Simulator and all nine effects added in 2.5.0. Group Delay PEQ is present in
-the catalog but is omitted because its convolution asset is not carried by the
-preset. The updated Tube Simulator includes output-transformer magnetics, and
-Phase Select EQ accepts left/right balance selection alongside frequency and
-phase.
+MD Simulator and all nine effects added in 2.5.0. It regenerates and stages the
+convolution assets for FIR Crossover, 5Band FIR PEQ, Group Delay EQ, and Group
+Delay PEQ from their serialized design parameters. The updated Tube Simulator
+includes output-transformer magnetics, and Phase Select EQ accepts left/right
+balance selection alongside frequency and phase.
 
 At load time, `src/dsp_pipeline.cpp`:
 
@@ -261,10 +261,12 @@ At load time, `src/dsp_pipeline.cpp`:
 2. accepts the canonical `pipeline` array and EffeTune's legacy forms;
 3. applies enabled section, bus, and channel routing;
 4. omits disabled nodes;
-5. warns and omits unknown or external-asset-dependent nodes;
-6. creates up to 96 native DSP instances; and
-7. configures one EffeTune engine for the complete routed pipeline; and
-8. reads the configured pipeline latency from EffeTune's native ABI.
+5. regenerates supported FIR assets and warns for unknown or unresolved
+   stored-asset nodes;
+6. creates up to 96 native DSP instances;
+7. copies generated assets through PipeTune's pointer-safe backend extension;
+8. configures one EffeTune engine for the complete routed pipeline; and
+9. reads the configured pipeline latency from EffeTune's native ABI.
 
 EffeTune 2.6 computes latency per channel while configuring the pipeline. It
 delays shorter additive-merge and output paths so channels remain aligned, and
@@ -410,9 +412,14 @@ later explicit activation presents the existing singleton window.
 
 - Stereo is the managed-service layout. Direct runs accept one through eight
   channels, but no live channel-layout control is provided.
-- FIR Crossover, 5Band FIR PEQ, Group Delay EQ, Group Delay PEQ, Room EQ, and
-  IR Reverb require convolution assets that are generated or stored separately
-  by EffeTune. Those assets are not carried by `.effetune_preset` files, so the
-  nodes are omitted with warnings.
+- FIR Crossover requires a 4, 6, or 8 channel output bus. PipeTune omits it
+  with a warning when the active layout is incompatible.
+- Room EQ and IR Reverb remain unresolved stored-asset DSPs. Room EQ opens
+  EffeTune's browser-backed
+  [measurement store](https://github.com/Frieve-A/effetune/blob/7d8db4dbe44f63fa004c993490976699dd621839/plugins/eq/room_eq.js#L1572-L1605),
+  while IR Reverb looks up its serialized identifier in the
+  [IR library](https://github.com/Frieve-A/effetune/blob/7d8db4dbe44f63fa004c993490976699dd621839/plugins/reverb/ir_reverb.js#L766-L794).
+  Their source PCM is not carried by `.effetune_preset`, so PipeTune omits the
+  nodes with warnings.
 - PipeTune does not provide a machine-wide service shared by multiple logged-in
   users.

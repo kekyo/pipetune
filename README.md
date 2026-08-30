@@ -382,10 +382,18 @@ journalctl --user -u pipetune.service
 
 ## Limitations
 
-FIR Crossover, 5Band FIR PEQ, Group Delay EQ, Group Delay PEQ, Room EQ, and IR
-Reverb are not supported in the current version. These DSPs require
-convolution assets that are generated or stored separately by EffeTune and are
-not included in `.effetune_preset` files, so PipeTune cannot load them.
+FIR Crossover, 5Band FIR PEQ, Group Delay EQ, and Group Delay PEQ are
+supported. PipeTune regenerates their convolution coefficients from the preset
+parameters and the active sample rate. FIR Crossover requires a 4, 6, or 8
+channel output bus and is omitted with a warning on other layouts.
+
+Room EQ and IR Reverb remain unsupported. A Room EQ preset references
+measurement data that EffeTune resolves through its
+[measurement store](https://github.com/Frieve-A/effetune/blob/7d8db4dbe44f63fa004c993490976699dd621839/js/measurement-store/client.js#L72),
+and IR Reverb resolves a content identifier through its
+[IR library](https://github.com/Frieve-A/effetune/blob/7d8db4dbe44f63fa004c993490976699dd621839/plugins/reverb/ir_reverb.js#L766-L794).
+The required PCM is not contained in `.effetune_preset`, so PipeTune omits
+these nodes with warnings.
 
 ## License
 
