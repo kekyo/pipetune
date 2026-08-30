@@ -7,16 +7,20 @@
 
 #include "dsp_backend_loader.h"
 #include "dsp_catalog.h"
+#include "generated_fir_asset.h"
 
 #include <yyjson.h>
 
 #include <algorithm>
+#include <array>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <span>
 #include <string>
@@ -85,8 +89,8 @@ static std::string validateBuildOptions(const PipelineBuildOptions &options) {
       options.sampleRate > 384000.0F) {
     return "sample rate must be between 32000 and 384000 Hz";
   }
-  if (options.maxChannels == 0 || options.maxChannels > 8) {
-    return "maximum channel count must be between one and eight";
+  if (options.maxChannels == 0 || options.maxChannels > 16) {
+    return "maximum channel count must be between one and sixteen";
   }
   if (options.maxFrames < 32) {
     return "maximum frame count must be at least 32";
@@ -216,15 +220,66 @@ static bool parseChannel(yyjson_val *value, std::int8_t &output) {
     output = 1;
     return true;
   }
-  if (channel.size() == 1 && channel[0] >= '3' && channel[0] <= '8') {
-    output = static_cast<std::int8_t>(channel[0] - '1');
+  auto channelNumber = std::uint32_t{0};
+  const auto parsed = std::from_chars(
+      channel.data(), channel.data() + channel.size(), channelNumber);
+  if (parsed.ec == std::errc{} &&
+      parsed.ptr == channel.data() + channel.size() &&
+      channelNumber >= 3u && channelNumber <= 16u) {
+    output = static_cast<std::int8_t>(channelNumber - 1u);
     return true;
   }
-  if (channel == "34" || channel == "56" || channel == "78") {
-    output = static_cast<std::int8_t>(16 + (channel[0] - '1') / 2);
+  static constexpr auto channelPairs = std::array<std::string_view, 7>{
+      "34", "56", "78", "910", "1112", "1314", "1516"};
+  const auto pair = std::ranges::find(channelPairs, channel);
+  if (pair != channelPairs.end()) {
+    output = static_cast<std::int8_t>(
+        17u + static_cast<std::uint32_t>(
+                  std::distance(channelPairs.begin(), pair)));
     return true;
   }
   return false;
+}
+
+static std::uint32_t selectedProcessingChannels(std::int8_t channelSpec,
+                                                std::uint32_t maxChannels) {
+  if (channelSpec == -2) {
+    return maxChannels;
+  }
+  if (channelSpec == -1 || channelSpec >= 16) {
+    return std::min(maxChannels, 2u);
+  }
+  return 1u;
+}
+
+static bool replacePackedParameter(PackedParameters &packed,
+                                   std::string_view key, float value) {
+  const auto elements = packed.definition->elements;
+  const auto match = std::ranges::find(elements, key,
+                                       &ParameterElement::directKey);
+  if (match == elements.end()) {
+    return false;
+  }
+  packed.floats[static_cast<std::size_t>(
+      std::distance(elements.begin(), match))] = value;
+  return true;
+}
+
+static float packedHeadBlock(std::uint32_t headBlock) {
+  switch (headBlock) {
+  case 0u:
+    return 0.0F;
+  case 128u:
+    return 1.0F;
+  case 256u:
+    return 2.0F;
+  case 512u:
+    return 3.0F;
+  case 1024u:
+    return 4.0F;
+  default:
+    return 1.0F;
+  }
 }
 
 static void writeUint32(std::span<std::uint8_t> bytes, std::size_t offset, std::uint32_t value) {
@@ -445,13 +500,14 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
            .reason = "not available in EffeTune's native DSP registry"});
       continue;
     }
-    if (definition->requiresExternalAssets) {
+    if (!node.enabled || (insideSection && !sectionEnabled)) {
+      continue;
+    }
+    const auto generatedAssetDsp = supportsGeneratedFirAsset(node.name);
+    if (definition->requiresExternalAssets && !generatedAssetDsp) {
       warnings.push_back({.nodeIndex = index,
                           .pluginName = std::string(node.name),
                           .reason = "requires external asset loading"});
-      continue;
-    }
-    if (!node.enabled || (insideSection && !sectionEnabled)) {
       continue;
     }
     if (activeNodes.size() >= kMaximumInstances) {
@@ -471,15 +527,50 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
                        std::move(warnings));
     }
 
+    auto packed = packDspParameters(*definition, node.parameters);
+    if (!packed.error.empty()) {
+      return loadError(nodeError(index, packed.error), std::move(warnings));
+    }
+    auto generatedAsset = GeneratedFirAsset{};
+    if (generatedAssetDsp) {
+      auto processingChannels =
+          selectedProcessingChannels(channelSpec, options.maxChannels);
+      if (node.name == "FIR Crossover") {
+        processingChannels = options.maxChannels;
+        channelSpec = -2;
+      }
+      generatedAsset = designGeneratedFirAsset(
+          node.name, node.parameters, options.sampleRate, processingChannels,
+          api);
+      if (!generatedAsset.omissionReason.empty()) {
+        warnings.push_back({.nodeIndex = index,
+                            .pluginName = std::string(node.name),
+                            .reason = generatedAsset.omissionReason});
+        continue;
+      }
+      if (!generatedAsset.error.empty()) {
+        return loadError(nodeError(index, generatedAsset.error),
+                         std::move(warnings));
+      }
+      if (!replacePackedParameter(
+              packed, "lt", packedHeadBlock(generatedAsset.info.head_block)) ||
+          !replacePackedParameter(
+              packed, "fd",
+              static_cast<float>(generatedAsset.filterDelaySamples)) ||
+          (node.name == "FIR Crossover" &&
+           !replacePackedParameter(
+               packed, "bc", static_cast<float>(generatedAsset.bandCount)))) {
+        return loadError(
+            nodeError(index, "generated FIR parameters do not match the native catalog"),
+            std::move(warnings));
+      }
+    }
+
     const auto instance =
         api.instanceCreate(implementation->engine, definition->typeName.data());
     if (instance == 0) {
       return loadError(nodeError(index, "cannot create native DSP instance"),
                        std::move(warnings));
-    }
-    auto packed = packDspParameters(*definition, node.parameters);
-    if (!packed.error.empty()) {
-      return loadError(nodeError(index, packed.error), std::move(warnings));
     }
     const auto floatStatus =
         api.instanceSetParams(
@@ -497,6 +588,17 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
       if (byteStatus != ET_OK) {
         return loadError(nodeError(index, "native DSP rejected structured parameters"),
                          std::move(warnings));
+      }
+    }
+    if (generatedAssetDsp && !generatedAsset.payload.empty()) {
+      const auto assetStatus = api.instanceAssetCopy(
+          implementation->engine, instance, 0u, &generatedAsset.info,
+          generatedAsset.payload.data(), generatedAsset.payload.size(),
+          generatedAsset.formatTag);
+      if (assetStatus != ET_OK) {
+        return loadError(
+            nodeError(index, "native DSP rejected the generated FIR asset"),
+            std::move(warnings));
       }
     }
     activeNodes.push_back({.instance = instance,

@@ -6,6 +6,7 @@
 #include "audio_bridge.h"
 
 #include <cstdint>
+#include <exception>
 #include <iostream>
 #include <span>
 #include <string_view>
@@ -339,6 +340,49 @@ static bool testDisconnectedOutputDoesNotReplayOldSample() {
                "a disconnected output must resume from silence");
 }
 
+static bool testSixteenChannelAudioBridge() {
+  constexpr auto channelCount = std::uint32_t{16};
+  constexpr auto frameCount = std::uint32_t{2};
+  auto input = std::vector<float>(channelCount * frameCount, 0.0F);
+  for (auto channel = std::uint32_t{0}; channel < channelCount; ++channel) {
+    input[channel * frameCount] = static_cast<float>(channel + 1u);
+    input[channel * frameCount + 1u] =
+        static_cast<float>((channel + 1u) * 10u);
+  }
+
+  try {
+    auto ring = pipetune::PlanarAudioRing(channelCount, 4u);
+    auto output = std::vector<float>(input.size(), 0.0F);
+    if (!check(ring.write(input, frameCount, 0u) == frameCount,
+               "a 16-channel block must fit in the audio ring") ||
+        !check(ring.read(output, frameCount, 0u) == frameCount,
+               "a 16-channel block must be readable") ||
+        !check(output == input,
+               "the audio ring must preserve all 16 planar channels")) {
+      return false;
+    }
+  } catch (const std::exception &error) {
+    return check(false, error.what());
+  }
+
+  auto transition = pipetune::AudioTransitionSilencer(3u);
+  transition.start(1u, 0u);
+  auto transitioned = std::vector<float>(channelCount * frameCount, 1.0F);
+  if (!check(transition.apply(transitioned, channelCount, frameCount,
+                              frameCount, 3u, 1u, 0u) == 1u,
+             "a transition must cover every channel in its silence frame")) {
+    return false;
+  }
+  for (auto channel = std::uint32_t{0}; channel < channelCount; ++channel) {
+    if (!check(transitioned[channel * frameCount] == 0.0F &&
+                   transitioned[channel * frameCount + 1u] == 1.0F,
+               "transition silence must affect every planar channel")) {
+      return false;
+    }
+  }
+  return true;
+}
+
 int main() {
   const auto passed = testPlanarWraparound() && testUnderrunSilence() &&
                       testMeasuredBridgeDelayPreservesQueuedAudio() &&
@@ -350,6 +394,7 @@ int main() {
                       testStreamRestartIsSmoothedAroundSilence() &&
                       testUnderrunBoundariesAreSmoothed() &&
                       testLateAudioAfterUnderrunIsDiscarded() &&
-                      testDisconnectedOutputDoesNotReplayOldSample();
+                      testDisconnectedOutputDoesNotReplayOldSample() &&
+                      testSixteenChannelAudioBridge();
   return passed ? 0 : 1;
 }

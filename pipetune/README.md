@@ -41,10 +41,12 @@ not supported by this MVP.
 
 - Loads canonical and legacy EffeTune preset JSON from files whose extension is
   exactly `.effetune_preset`.
-- Builds every enabled DSP found in the checked-out EffeTune native registry,
-  including bus and channel routing.
-- Skips unknown DSPs and DSPs that require external assets, with a warning for
-  each omitted node.
+- Builds every enabled DSP in the pinned EffeTune 2.7.0 native registry,
+  including bus and channel routing through 16 planar channels.
+- Generates and stages convolution coefficients for FIR Crossover, 5Band FIR
+  PEQ, Group Delay EQ, and Group Delay PEQ from their preset parameters.
+- Skips unknown DSPs and unresolved stored-asset DSPs, with a warning for each
+  omitted node.
 - Publishes a WirePlumber 0.5 smart-filter pair and a WirePlumber 0.4 endpoint
   contract with the same transparent playback behavior.
 - Keeps PipeTune's internal processing nodes out of desktop input and output
@@ -71,7 +73,7 @@ not supported by this MVP.
 
 The default rate policy is Automatic: PipeTune follows the graph rate
 negotiated for its two filter nodes. Stereo remains the default channel
-layout, and direct runs accept one through eight channels. PipeWire performs
+layout, and direct runs accept one through sixteen channels. PipeWire performs
 any conversion required by applications or the selected device.
 
 ## Requirements

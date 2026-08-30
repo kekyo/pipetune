@@ -33,6 +33,8 @@ EffeTune DSPは完全ネイティブコンパイルされたバイナリで計�
   DSPパイプラインを適用できます。
 - `.effetune_preset`拡張子の標準形式および旧形式のEffeTuneプリセットファイルを
   読み込み、DSPパイプラインをデスクトップ音声へ適用します。
+- EffeTune 2.7.0のネイティブDSP契約に対応し、CLIの直接実行では
+  1〜16チャンネルのプレーナー音声を処理出来ます。
 - PipeWireグラフとのサンプリング周波数の自動交渉、または44.1、48、96、192、384 kHzの指定周波数でDSPを計算します。
 - DSPは完全ネイティブコードで計算を処理します。互換性重視のScalar、SIMD自動選択、CPU検証済みの命令セット別実装を選択出来ます。
 - 入力の無音が設定時間続いた場合、エフェクトの残響を処理してからDSP演算を自動的に休止出来ます。
@@ -347,10 +349,18 @@ journalctl --user -u pipetune.service
 
 ## 制約
 
-現在のバージョンでは、FIR Crossover、5Band FIR PEQ、Group Delay EQ、
-Group Delay PEQ、Room EQ、IR Reverbは使用できません。これらのDSPに必要な畳み込み
-アセットはEffeTuneによって別途生成または保存され、`.effetune_preset`ファイルには
-含まれないため、PipeTuneから読み込むことができません。
+FIR Crossover、5Band FIR PEQ、Group Delay EQ、Group Delay PEQに対応しています。
+PipeTuneは、プリセットのパラメータと現在のサンプリング周波数から、これらのDSPに
+必要な畳み込み係数を再生成します。FIR Crossoverには4〜16の偶数チャンネルの
+出力バスが必要です。それ以外のチャンネル構成では、警告を表示してDSPを除外します。
+
+Room EQとIR Reverbには対応していません。Room EQプリセットが参照する測定データは、
+EffeTuneの
+[measurement store](https://github.com/Frieve-A/effetune/blob/bedc6c662a6edc88c9644b7e00cec9122a250cfb/js/measurement-store/client.js#L71)
+を介して解決されます。IR Reverbは、EffeTuneの
+[IR library](https://github.com/Frieve-A/effetune/blob/bedc6c662a6edc88c9644b7e00cec9122a250cfb/plugins/reverb/ir_reverb.js#L766-L802)
+を介してコンテンツ識別子を解決します。必要なPCMデータは`.effetune_preset`に含まれないため、
+PipeTuneはこれらのDSPを警告付きで除外します。
 
 ## ライセンス
 

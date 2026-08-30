@@ -45,7 +45,7 @@ struct PipeWirePipelineOptions {
   std::uint32_t dspSampleRate;
   /** Initial automatic/fixed graph-rate policy. */
   SampleRatePolicy ratePolicy;
-  /** Fixed planar channel count, from one through eight. */
+  /** Fixed planar channel count, from one through sixteen. */
   std::uint32_t channelCount;
   /** Largest DSP block processed in one call; must be at least 32. */
   std::uint32_t maxFrames;

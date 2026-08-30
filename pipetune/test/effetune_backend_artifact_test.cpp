@@ -243,28 +243,36 @@ static std::uint32_t findKernelIndex(const BackendApi &api,
   return count;
 }
 
-static void checkEffeTune26Catalog(const BackendApi &api) {
+static void checkEffeTune27Catalog(const BackendApi &api) {
   static constexpr std::array<std::string_view, 2> addedTypes = {
       "GroupDelayPEQPlugin", "MDSimulatorPlugin"};
   check(api.kernelCount() == 94u,
-        "EffeTune 2.6 backend catalog must contain 94 kernels");
+        "EffeTune 2.7 backend catalog must contain 94 kernels");
   for (const auto typeName : addedTypes) {
     check(findKernelIndex(api, typeName) < api.kernelCount(),
-          "EffeTune 2.6 backend catalog must contain every new kernel");
+          "EffeTune 2.7 backend catalog must retain the 2.6 kernels");
   }
   const auto phaseSelectIndex = findKernelIndex(api, "PhaseSelectEqPlugin");
   check(phaseSelectIndex < api.kernelCount(),
-        "EffeTune 2.6 backend catalog must retain Phase Select EQ");
+        "EffeTune 2.7 backend catalog must retain Phase Select EQ");
   if (phaseSelectIndex < api.kernelCount()) {
     check(api.kernelParamsHash(phaseSelectIndex) == 0x51c6d77au,
-          "EffeTune 2.6 Phase Select EQ must use its expanded parameter layout");
+          "EffeTune 2.7 Phase Select EQ must retain its parameter layout");
   }
   const auto tubeIndex = findKernelIndex(api, "TubeSimulatorPlugin");
   check(tubeIndex < api.kernelCount(),
-        "EffeTune 2.6 backend catalog must retain Tube Simulator");
+        "EffeTune 2.7 backend catalog must retain Tube Simulator");
   if (tubeIndex < api.kernelCount()) {
     check(api.kernelParamsHash(tubeIndex) == 0x07986b4bu,
-          "EffeTune 2.6 Tube Simulator must retain its parameter layout");
+          "EffeTune 2.7 Tube Simulator must retain its parameter layout");
+  }
+  const auto multiChannelPanelIndex =
+      findKernelIndex(api, "MultiChannelPanelPlugin");
+  check(multiChannelPanelIndex < api.kernelCount(),
+        "EffeTune 2.7 backend catalog must retain Multi Channel Panel");
+  if (multiChannelPanelIndex < api.kernelCount()) {
+    check(api.kernelParamsHash(multiChannelPanelIndex) == 0x9d3d18b9u,
+          "EffeTune 2.7 Multi Channel Panel must expose 16-channel parameters");
   }
 }
 
@@ -534,6 +542,7 @@ static void checkAllAbiSymbols(void *handle) {
       "et_abi_version",
       "et_build_flags",
       "pipetune_effetune_backend_variant",
+      "pipetune_effetune_instance_asset_copy_v1",
       "et_kernel_count",
       "et_kernel_name",
       "et_kernel_params_hash",
@@ -663,7 +672,7 @@ int main(int argc, char **argv) {
       1.0F, 0.0F, 0.0F, 6.0F, 0.15625F, -62.5F, 0.0F, 100.0F};
   static constexpr std::array vinylParameters = {
       120.0F, 0.0F, 2000.0F, 0.0F, 0.0F, 0.0F,
-      100.0F, 0.0F, 200.0F, 100.0F, 0.0F, 100.0F};
+      100.0F, 10.0F, 200.0F, 100.0F, 0.0F, 100.0F};
   auto goldenCases = std::array{
       GoldenCase{"Auto Leveler", "AutoLevelerPlugin", 48000.0F, 1093u,
                  6u, 96u, 0xeffe7a59u, autoLevelerParameters, 2.0e-5F,
@@ -712,7 +721,7 @@ int main(int argc, char **argv) {
                 PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
             "scalar backend must report its concrete variant");
       checkAllAbiSymbols(scalar.handle);
-      checkEffeTune26Catalog(scalar);
+      checkEffeTune27Catalog(scalar);
       checkTubeRuntimeContract(scalar);
       const auto scalarSpectrum = renderImpulseSpectrum(scalar);
       checkGoldenCases(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,

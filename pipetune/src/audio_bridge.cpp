@@ -39,8 +39,8 @@ PlanarAudioRing::PlanarAudioRing(std::uint32_t channelCount, std::uint32_t capac
       generations_(capacityFrames, 0),
       readFrame_(0), writeFrame_(0), overrunFrames_(0),
       underrunFrames_(0) {
-  if (channelCount == 0 || channelCount > 8) {
-    throw std::invalid_argument("channel count must be between one and eight");
+  if (channelCount == 0 || channelCount > 16) {
+    throw std::invalid_argument("channel count must be between one and sixteen");
   }
   if (capacityFrames == 0) {
     throw std::invalid_argument("frame capacity must be positive");

@@ -562,9 +562,9 @@ CommandLineParseResult parseCommandLine(
       return parseError(std::move(options), "duplicate option: --channels");
     }
     auto channels = std::uint32_t{0};
-    if (!parseUnsigned(value, channels) || channels == 0 || channels > 8) {
+    if (!parseUnsigned(value, channels) || channels == 0 || channels > 16) {
       return parseError(std::move(options),
-                        "--channels must be an integer from 1 through 8");
+                        "--channels must be an integer from 1 through 16");
     }
     sawChannels = true;
     options.channelCount = channels;
@@ -646,7 +646,7 @@ std::string_view commandLineUsage() noexcept {
          "                    Replace the preset in a running PipeTune process.\n"
          "  --status          Print the running PipeTune process status as JSON.\n"
          "  --socket PATH     Use this control socket instead of the XDG default.\n"
-         "  --channels COUNT  Use 1 through 8 planar channels (default: 2).\n"
+         "  --channels COUNT  Use 1 through 16 planar channels (default: 2).\n"
          "  --dsp-backend BACKEND\n"
          "                    Use scalar or simd for this direct run.\n"
          "  --dsp-variant VARIANT\n"

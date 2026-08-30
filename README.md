@@ -33,6 +33,8 @@ application remains available through the desktop system tray.
 - You can load EffeTune preset files to apply a DSP pipeline to the audio output of the entire Linux system.
 - Loads standard and legacy EffeTune preset files with the `.effetune_preset` extension
   and applies the DSP pipeline to desktop audio.
+- Supports the EffeTune 2.7.0 native DSP contract, including direct runs with
+  1 through 16 planar channels.
 - Automatically negotiates the sampling rate with the PipeWire graph, or computes the DSP at specified rates of 44.1, 48, 96, 192, or 384 kHz.
 - The DSP performs computations entirely in native code. You can choose between Scalar (for compatibility), automatic SIMD selection, or CPU-verified implementations for specific instruction sets.
 - Automatically suspends DSP work after a selectable period of silent input while allowing effect tails to finish first.
@@ -382,10 +384,18 @@ journalctl --user -u pipetune.service
 
 ## Limitations
 
-FIR Crossover, 5Band FIR PEQ, Group Delay EQ, Group Delay PEQ, Room EQ, and IR
-Reverb are not supported in the current version. These DSPs require
-convolution assets that are generated or stored separately by EffeTune and are
-not included in `.effetune_preset` files, so PipeTune cannot load them.
+FIR Crossover, 5Band FIR PEQ, Group Delay EQ, and Group Delay PEQ are
+supported. PipeTune regenerates their convolution coefficients from the preset
+parameters and the active sample rate. FIR Crossover requires an even output
+bus from 4 through 16 channels and is omitted with a warning on other layouts.
+
+Room EQ and IR Reverb remain unsupported. A Room EQ preset references
+measurement data that EffeTune resolves through its
+[measurement store](https://github.com/Frieve-A/effetune/blob/bedc6c662a6edc88c9644b7e00cec9122a250cfb/js/measurement-store/client.js#L71),
+and IR Reverb resolves a content identifier through its
+[IR library](https://github.com/Frieve-A/effetune/blob/bedc6c662a6edc88c9644b7e00cec9122a250cfb/plugins/reverb/ir_reverb.js#L766-L802).
+The required PCM is not contained in `.effetune_preset`, so PipeTune omits
+these nodes with warnings.
 
 ## License
 

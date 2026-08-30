@@ -76,7 +76,7 @@ static std::string_view usage() {
          "\n"
          "Options:\n"
          "  --sample-rate HZ       DSP sample rate (default: 48000).\n"
-         "  --channels COUNT       Planar channels, 1 through 8 (default: 2).\n"
+         "  --channels COUNT       Planar channels, 1 through 16 (default: 2).\n"
          "  --frames COUNT         Frames per block, at least 32 "
          "(default: 256).\n"
          "  --warmup-blocks COUNT  Untimed blocks per backend "
@@ -151,9 +151,9 @@ static ParseResult parseArguments(
               "--sample-rate must be between 32000 and 384000";
         }
       } else if (argument == "--channels") {
-        valid = parseUnsigned(value, 1, 8, result.options.channels);
+        valid = parseUnsigned(value, 1, 16, result.options.channels);
         if (!valid) {
-          result.error = "--channels must be between 1 and 8";
+          result.error = "--channels must be between 1 and 16";
         }
       } else if (argument == "--frames") {
         valid = parseUnsigned(value, 32, 8192, result.options.frames);

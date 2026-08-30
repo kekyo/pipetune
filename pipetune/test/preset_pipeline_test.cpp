@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <numbers>
 #include <span>
 #include <string>
 #include <string_view>
@@ -179,14 +180,11 @@ static bool testEffeTune26Pipeline(const std::filesystem::path &directory) {
       path,
       {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
   if (!check(result.pipeline != nullptr, result.error) ||
-      !check(result.pipeline->activePluginCount() == 20,
-             "EffeTune 2.6 non-asset DSP nodes must become active") ||
-      !check(result.warnings.size() == 6,
-             "EffeTune asset-dependent DSP nodes must be omitted") ||
+      !check(result.pipeline->activePluginCount() == 23,
+             "EffeTune generated-asset DSP nodes must become active") ||
+      !check(result.warnings.size() == 3,
+             "only unresolved and incompatible asset DSP nodes must be omitted") ||
       !check(containsWarning(result.warnings, "FIR Crossover") &&
-                 containsWarning(result.warnings, "5Band FIR PEQ") &&
-                 containsWarning(result.warnings, "Group Delay EQ") &&
-                 containsWarning(result.warnings, "Group Delay PEQ") &&
                  containsWarning(result.warnings, "Room EQ") &&
                  containsWarning(result.warnings, "IR Reverb"),
              "every omitted asset-dependent DSP must be identified")) {
@@ -201,6 +199,111 @@ static bool testEffeTune26Pipeline(const std::filesystem::path &directory) {
                  return std::isfinite(value);
                }),
                "EffeTune 2.6 DSP output must remain finite");
+}
+
+static bool testGeneratedAssetDsp(const std::filesystem::path &directory) {
+  struct GeneratedAssetCase {
+    std::string_view filename;
+    std::string_view plugin;
+    std::string_view parameters;
+    std::uint32_t channels;
+    std::uint32_t expectedLatency;
+    bool expectAdditionalChannelOutput;
+    bool expectGainIncrease;
+  };
+  static constexpr std::array cases = {
+      GeneratedAssetCase{
+          "fir-crossover.effetune_preset", "FIR Crossover",
+          R"json({"lt":"0","bc":4,"pm":"min","tp":8192,"f1":500,"s1":-48,"f2":1500,"s2":-72,"f3":5000,"s3":-96})json",
+          16u, 0u, true, false},
+      GeneratedAssetCase{
+          "five-band-fir-peq.effetune_preset", "5Band FIR PEQ",
+          R"json({"lt":"0","pm":"min","tp":8192,"f2":1000,"g2":6,"q2":1,"t2":"pk","e2":true})json",
+          2u, 0u, false, true},
+      GeneratedAssetCase{
+          "group-delay-eq.effetune_preset", "Group Delay EQ",
+          R"json({"lt":"0","tp":4096,"d0":-1,"d7":2,"d14":1})json",
+          2u, 2048u, false, false},
+      GeneratedAssetCase{
+          "group-delay-peq.effetune_preset", "Group Delay PEQ",
+          R"json({"lt":"0","tp":4096,"t0":"pk","f0":1000,"d0":2,"q0":1,"e0":true})json",
+          2u, 2048u, false, false}};
+
+  for (const auto &testCase : cases) {
+    const auto preset =
+        "{\"pipeline\":[{\"name\":\"" + std::string(testCase.plugin) +
+        "\",\"enabled\":true,\"channel\":\"A\",\"parameters\":" +
+        std::string(testCase.parameters) + "}]}";
+    const auto path = writePreset(directory, testCase.filename, preset);
+    const auto result = pipetune::loadDspPipeline(
+        path,
+        {.sampleRate = 48000.0F,
+         .maxChannels = testCase.channels,
+         .maxFrames = 128u});
+    if (!check(result.pipeline != nullptr, result.error) ||
+        !check(result.pipeline->activePluginCount() == 1u,
+               "generated-asset DSP must become active") ||
+        !check(result.warnings.empty(),
+               "generated-asset DSP must not be reported as omitted") ||
+        !check(result.pipeline->latencyFrames() == testCase.expectedLatency,
+               "generated-asset DSP must report its designed latency")) {
+      return false;
+    }
+
+    auto inputEnergy = 0.0;
+    auto outputEnergy = 0.0;
+    auto additionalChannelEnergy = 0.0;
+    for (auto block = std::uint32_t{0}; block < 48u; ++block) {
+      auto samples = std::vector<float>(testCase.channels * 128u, 0.0F);
+      for (auto frame = std::uint32_t{0}; frame < 128u; ++frame) {
+        const auto sample = static_cast<float>(
+            std::sin(2.0 * std::numbers::pi * 1000.0 *
+                     static_cast<double>(block * 128u + frame) / 48000.0));
+        samples[frame] = sample;
+        samples[128u + frame] = sample * 0.5F;
+      }
+      if (!check(result.pipeline->process(samples, testCase.channels, 128u,
+                                          block * 128.0 / 48000.0) ==
+                     pipetune::ProcessStatus::ok,
+                 "generated-asset DSP must process audio") ||
+          !check(std::ranges::all_of(samples, [](float value) {
+                   return std::isfinite(value);
+                 }),
+                 "generated-asset DSP output must remain finite")) {
+        return false;
+      }
+      if (block >= 32u) {
+        for (auto frame = std::uint32_t{0}; frame < 128u; ++frame) {
+          const auto sample = std::sin(
+              2.0 * std::numbers::pi * 1000.0 *
+              static_cast<double>(block * 128u + frame) / 48000.0);
+          inputEnergy += sample * sample * 1.25;
+        }
+        for (const auto sample : samples) {
+          outputEnergy += static_cast<double>(sample) * sample;
+        }
+        for (auto channel = std::uint32_t{2}; channel < testCase.channels;
+             ++channel) {
+          for (auto frame = std::uint32_t{0}; frame < 128u; ++frame) {
+            const auto sample = samples[channel * 128u + frame];
+            additionalChannelEnergy +=
+                static_cast<double>(sample) * sample;
+          }
+        }
+      }
+    }
+    if (!check(outputEnergy > 0.01,
+               "generated-asset DSP must produce audible output after preparation") ||
+        (testCase.expectAdditionalChannelOutput &&
+         !check(additionalChannelEnergy > inputEnergy * 0.001,
+                "FIR Crossover must route filtered audio to additional output channels")) ||
+        (testCase.expectGainIncrease &&
+         !check(outputEnergy > inputEnergy * 1.5,
+                "5Band FIR PEQ must apply the requested 1 kHz gain"))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 static bool testTubeSimulator25Models(const std::filesystem::path &directory) {
@@ -387,32 +490,136 @@ static bool testRejectedInputs(const std::filesystem::path &directory) {
   const auto invalidRate =
       pipetune::loadDspPipeline(valid, {.sampleRate = 31999.0F, .maxChannels = 2, .maxFrames = 64});
   const auto invalidChannels =
-      pipetune::loadDspPipeline(valid, {.sampleRate = 48000.0F, .maxChannels = 9, .maxFrames = 64});
+      pipetune::loadDspPipeline(valid, {.sampleRate = 48000.0F, .maxChannels = 17, .maxFrames = 64});
   return check(invalidRate.pipeline == nullptr, "sample rates below 32 kHz must fail") &&
-         check(invalidChannels.pipeline == nullptr, "more than eight channels must fail");
+         check(invalidChannels.pipeline == nullptr, "more than sixteen channels must fail");
 }
 
 static bool testRuntimeBounds(const std::filesystem::path &directory) {
   const auto path =
       writePreset(directory, "bounds.effetune_preset", R"json({"pipeline":[]})json");
   const auto result =
-      pipetune::loadDspPipeline(path, {.sampleRate = 384000.0F, .maxChannels = 8, .maxFrames = 32});
+      pipetune::loadDspPipeline(path, {.sampleRate = 384000.0F, .maxChannels = 16, .maxFrames = 32});
   if (!check(result.pipeline != nullptr, result.error)) {
     return false;
   }
-  auto samples = std::vector<float>(32, 0.25F);
+  auto samples = std::vector<float>(64, 0.25F);
   if (!check(result.pipeline->sampleRate() == 384000.0F,
              "pipeline must report its prepared sample rate") ||
-      !check(result.pipeline->process(samples, 8, 4, 0.0) == pipetune::ProcessStatus::ok,
+      !check(result.pipeline->process(samples, 16, 4, 0.0) == pipetune::ProcessStatus::ok,
              "maximum supported channel/rate configuration must process") ||
       !check(std::ranges::all_of(samples, [](float value) { return value == 0.25F; }),
              "an empty pipeline must be transparent")) {
     return false;
   }
-  auto oversized = std::vector<float>(8u * 33u, 0.25F);
-  return check(result.pipeline->process(oversized, 8, 33, 0.0) ==
+  auto oversized = std::vector<float>(16u * 33u, 0.25F);
+  return check(result.pipeline->process(oversized, 16, 33, 0.0) ==
                    pipetune::ProcessStatus::invalidBuffer,
                "processing beyond the prepared frame count must fail safely");
+}
+
+static bool testEffeTune27Multichannel(
+    const std::filesystem::path &directory) {
+  constexpr auto channelCount = std::uint32_t{16};
+  constexpr auto frameCount = std::uint32_t{32};
+  const auto routedPath = writePreset(
+      directory, "effetune-2.7-routes.effetune_preset",
+      R"json({"pipeline":[
+        {"name":"Polarity Inversion","enabled":true,"parameters":{},"channel":"9"},
+        {"name":"Polarity Inversion","enabled":true,"parameters":{},"channel":"1516"}
+      ]})json");
+  const auto routed = pipetune::loadDspPipeline(
+      routedPath,
+      {.sampleRate = 48000.0F,
+       .maxChannels = channelCount,
+       .maxFrames = frameCount});
+  if (!check(routed.pipeline != nullptr, routed.error)) {
+    return false;
+  }
+  auto routedSamples =
+      std::vector<float>(channelCount * frameCount, 1.0F);
+  if (!check(routed.pipeline->process(routedSamples, channelCount, frameCount,
+                                      0.0) ==
+                 pipetune::ProcessStatus::ok,
+             "EffeTune 2.7 channel selections must process")) {
+    return false;
+  }
+  for (auto channel = std::uint32_t{0}; channel < channelCount; ++channel) {
+    const auto expected = channel == 8u || channel >= 14u ? -1.0F : 1.0F;
+    const auto samples = std::span<const float>(routedSamples).subspan(
+        channel * frameCount, frameCount);
+    if (!check(std::ranges::all_of(samples, [expected](float sample) {
+                 return sample == expected;
+               }),
+               "EffeTune 2.7 must route channels 9 and 15/16")) {
+      return false;
+    }
+  }
+
+  const auto panelPath = writePreset(
+      directory, "effetune-2.7-panel.effetune_preset",
+      R"json({"pipeline":[{"name":"MultiChannel Panel","enabled":true,"parameters":{
+        "m":[false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,true]
+      },"channel":"A"}]})json");
+  const auto panel = pipetune::loadDspPipeline(
+      panelPath,
+      {.sampleRate = 48000.0F,
+       .maxChannels = channelCount,
+       .maxFrames = frameCount});
+  if (!check(panel.pipeline != nullptr, panel.error)) {
+    return false;
+  }
+  auto panelSamples = std::vector<float>(channelCount * frameCount, 1.0F);
+  if (!check(panel.pipeline->process(panelSamples, channelCount, frameCount,
+                                     0.0) ==
+                 pipetune::ProcessStatus::ok,
+             "EffeTune 2.7 Multi Channel Panel must process 16 channels")) {
+    return false;
+  }
+  for (auto channel = std::uint32_t{0}; channel < channelCount; ++channel) {
+    const auto expected = channel == 15u ? 0.0F : 1.0F;
+    const auto samples = std::span<const float>(panelSamples).subspan(
+        channel * frameCount, frameCount);
+    if (!check(std::ranges::all_of(samples, [expected](float sample) {
+                 return sample == expected;
+               }),
+               "Multi Channel Panel must apply channel 16 parameters")) {
+      return false;
+    }
+  }
+
+  const auto matrixPath = writePreset(
+      directory, "effetune-2.7-matrix.effetune_preset",
+      R"json({"pipeline":[{"name":"Matrix","enabled":true,"parameters":{"mx":"f0"},"channel":"A"}]})json");
+  const auto matrix = pipetune::loadDspPipeline(
+      matrixPath,
+      {.sampleRate = 48000.0F,
+       .maxChannels = channelCount,
+       .maxFrames = frameCount});
+  if (!check(matrix.pipeline != nullptr, matrix.error)) {
+    return false;
+  }
+  auto matrixSamples = std::vector<float>(channelCount * frameCount, 0.0F);
+  std::fill(matrixSamples.begin() + 15u * frameCount, matrixSamples.end(),
+            0.25F);
+  if (!check(matrix.pipeline->process(matrixSamples, channelCount, frameCount,
+                                      0.0) ==
+                 pipetune::ProcessStatus::ok,
+             "EffeTune 2.7 Matrix must process hexadecimal routes")) {
+    return false;
+  }
+  for (auto channel = std::uint32_t{0}; channel < channelCount; ++channel) {
+    const auto expected = channel == 0u ? 0.25F : 0.0F;
+    const auto samples = std::span<const float>(matrixSamples).subspan(
+        channel * frameCount, frameCount);
+    if (!check(std::ranges::all_of(samples, [expected](float sample) {
+                 return sample == expected;
+               }),
+               "Matrix route f0 must send channel 16 to channel 1")) {
+      return false;
+    }
+  }
+  return true;
 }
 
 static bool testRetainedRecipeRebuild(
@@ -446,12 +653,14 @@ int main() {
   const auto passed =
       testBypassPipeline() && testCanonicalPreset(directory) &&
       testLegacyPreset(directory) && testEffeTune26Pipeline(directory) &&
+      testGeneratedAssetDsp(directory) &&
       testTubeSimulator25Models(directory) &&
       testTubeSimulatorLatency(directory) &&
       testChannelLatencyCompensation(directory) &&
       testBalanceChannelPairs(directory) &&
       testRawLegacyPipeline(directory) && testRejectedInputs(directory) &&
-      testRuntimeBounds(directory) && testRetainedRecipeRebuild(directory);
+      testRuntimeBounds(directory) && testEffeTune27Multichannel(directory) &&
+      testRetainedRecipeRebuild(directory);
   std::filesystem::remove_all(directory);
   return passed ? 0 : 1;
 }
