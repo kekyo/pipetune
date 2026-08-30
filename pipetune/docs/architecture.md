@@ -248,8 +248,10 @@ The generated catalog packs JSON parameters into the exact native ABI expected
 by EffeTune. Tests compare those packed parameters with EffeTune's JavaScript
 packer and compare native PCM output with EffeTune's parity corpus.
 
-The pinned EffeTune 2.6.0 registry contains 94 native kernels. PipeTune can load
-MD Simulator and all nine effects added in 2.5.0. It regenerates and stages the
+The pinned EffeTune 2.7.0 registry contains 94 native kernels. PipeTune supports
+its 16-channel Multi Channel Panel layout, individual channels through 16,
+paired routes through 15/16, and hexadecimal Matrix routes. It can load MD
+Simulator and all nine effects added in 2.5.0. It regenerates and stages the
 convolution assets for FIR Crossover, 5Band FIR PEQ, Group Delay EQ, and Group
 Delay PEQ from their serialized design parameters. The updated Tube Simulator
 includes output-transformer magnetics, and Phase Select EQ accepts left/right
@@ -268,7 +270,7 @@ At load time, `src/dsp_pipeline.cpp`:
 8. configures one EffeTune engine for the complete routed pipeline; and
 9. reads the configured pipeline latency from EffeTune's native ABI.
 
-EffeTune 2.6 computes latency per channel while configuring the pipeline. It
+EffeTune 2.7 computes latency per channel while configuring the pipeline. It
 delays shorter additive-merge and output paths so channels remain aligned, and
 reports the resulting aggregate through `et_pipeline_latency`. PipeTune uses
 that value directly instead of estimating latency from individual nodes.
@@ -410,15 +412,15 @@ later explicit activation presents the existing singleton window.
 
 ## Known limits
 
-- Stereo is the managed-service layout. Direct runs accept one through eight
+- Stereo is the managed-service layout. Direct runs accept one through sixteen
   channels, but no live channel-layout control is provided.
-- FIR Crossover requires a 4, 6, or 8 channel output bus. PipeTune omits it
-  with a warning when the active layout is incompatible.
+- FIR Crossover requires an even output bus from 4 through 16 channels.
+  PipeTune omits it with a warning when the active layout is incompatible.
 - Room EQ and IR Reverb remain unresolved stored-asset DSPs. Room EQ opens
   EffeTune's browser-backed
-  [measurement store](https://github.com/Frieve-A/effetune/blob/7d8db4dbe44f63fa004c993490976699dd621839/plugins/eq/room_eq.js#L1572-L1605),
+  [measurement store](https://github.com/Frieve-A/effetune/blob/bedc6c662a6edc88c9644b7e00cec9122a250cfb/plugins/eq/room_eq.js#L1593-L1629),
   while IR Reverb looks up its serialized identifier in the
-  [IR library](https://github.com/Frieve-A/effetune/blob/7d8db4dbe44f63fa004c993490976699dd621839/plugins/reverb/ir_reverb.js#L766-L794).
+  [IR library](https://github.com/Frieve-A/effetune/blob/bedc6c662a6edc88c9644b7e00cec9122a250cfb/plugins/reverb/ir_reverb.js#L766-L802).
   Their source PCM is not carried by `.effetune_preset`, so PipeTune omits the
   nodes with warnings.
 - PipeTune does not provide a machine-wide service shared by multiple logged-in

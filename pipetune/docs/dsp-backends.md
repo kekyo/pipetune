@@ -27,7 +27,7 @@ This separation preserves one known compatibility path while allowing
 PipeTune to select the highest usable optimized implementation or a
 user-pinned tier. One pipeline always uses exactly one implementation.
 
-The private backend source set follows EffeTune 2.6.0, including the graph core
+The private backend source set follows EffeTune 2.7.0, including the graph core
 translation unit and generated graph-capacity contract required by its engine.
 PipeTune's loader surface remains the routed pipeline API and now includes
 `et_pipeline_latency`; PipeTune does not expose Graph v1 as a preset format or
@@ -35,7 +35,7 @@ control API.
 
 Generated convolution assets cross a PipeTune-owned copy ABI instead of
 EffeTune's
-[asset-begin implementation](https://github.com/Frieve-A/effetune/blob/7d8db4dbe44f63fa004c993490976699dd621839/dsp/core/abi.cpp#L170-L185),
+[asset-begin implementation](https://github.com/Frieve-A/effetune/blob/bedc6c662a6edc88c9644b7e00cec9122a250cfb/dsp/core/abi.cpp#L170-L185),
 which narrows its staging pointer to a 32-bit return value. At build time CMake
 copies EffeTune's `core/abi.cpp` into the generated build tree and applies
 `patches/effetune/abi-engine-access.patch` with zero fuzz. The patch only
@@ -101,7 +101,7 @@ and validates:
 - each kernel's parameter-byte capacity; and
 - every external-asset capacity.
 
-The pinned EffeTune 2.6.0 contract contains 94 kernels. A backend from an
+The pinned EffeTune 2.7.0 contract contains 94 kernels. A backend from an
 earlier release is rejected even though the numeric ABI version remains one,
 because its required symbols and complete catalog do not match.
 
