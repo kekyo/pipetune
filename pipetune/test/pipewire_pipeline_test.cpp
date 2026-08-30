@@ -97,6 +97,60 @@ static bool testMismatchedFixedDspRateIsRejected() {
                "a fixed policy must reject a different initial DSP rate");
 }
 
+static bool testSixteenChannelPipeWireBounds() {
+  auto accepted = pipetune::createBypassDspPipeline(
+      {.sampleRate = 48000.0F, .maxChannels = 16, .maxFrames = 64});
+  if (!check(accepted.pipeline != nullptr, accepted.error)) {
+    return false;
+  }
+  const auto acceptedResult = pipetune::runPipeWirePipeline(
+      std::move(accepted.pipeline),
+      {.filterName = "pipetune_sixteen_channel_validation_test",
+       .filterDescription = "PipeTune 16-channel validation test",
+       .initialPresetPath = {},
+       .initialConfigurationError = {},
+       .controlSocketPath = {},
+       .dspSampleRate = 96000,
+       .ratePolicy = pipetune::defaultSampleRatePolicy(),
+       .channelCount = 16,
+       .maxFrames = 64,
+       .ringCapacityFrames = 64,
+       .readyCallback = nullptr,
+       .readyUserData = nullptr},
+      pipetune::PipeWireRunMode::untilReady);
+  if (!check(!acceptedResult.success &&
+                 acceptedResult.error ==
+                     "DSP pipeline format does not cover the requested PipeWire format",
+             "16 channels must pass channel validation before format validation")) {
+    return false;
+  }
+
+  auto rejected = pipetune::createBypassDspPipeline(
+      {.sampleRate = 48000.0F, .maxChannels = 16, .maxFrames = 64});
+  if (!check(rejected.pipeline != nullptr, rejected.error)) {
+    return false;
+  }
+  const auto rejectedResult = pipetune::runPipeWirePipeline(
+      std::move(rejected.pipeline),
+      {.filterName = "pipetune_channel_limit_validation_test",
+       .filterDescription = "PipeTune channel-limit validation test",
+       .initialPresetPath = {},
+       .initialConfigurationError = {},
+       .controlSocketPath = {},
+       .dspSampleRate = 48000,
+       .ratePolicy = pipetune::defaultSampleRatePolicy(),
+       .channelCount = 17,
+       .maxFrames = 64,
+       .ringCapacityFrames = 64,
+       .readyCallback = nullptr,
+       .readyUserData = nullptr},
+      pipetune::PipeWireRunMode::untilReady);
+  return check(!rejectedResult.success &&
+                   rejectedResult.error ==
+                       "PipeWire channel count must be between one and sixteen",
+               "PipeWire must reject more than 16 channels");
+}
+
 static bool responseHasLivePreset(std::string_view response,
                                   const std::filesystem::path &presetPath,
                                   std::size_t expectedWarningCount) {
@@ -466,7 +520,8 @@ static bool testOrderlySignalShutdown(
 }
 
 int main() {
-  if (!testMismatchedFixedDspRateIsRejected()) {
+  if (!testMismatchedFixedDspRateIsRejected() ||
+      !testSixteenChannelPipeWireBounds()) {
     return 1;
   }
   if (!pipeWireSessionIsAvailable()) {

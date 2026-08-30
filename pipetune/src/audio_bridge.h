@@ -34,7 +34,7 @@ public:
   /**
    * Creates an empty ring.
    *
-   * @param channelCount Number of planar channels, from one through eight.
+   * @param channelCount Number of planar channels, from one through sixteen.
    * @param capacityFrames Maximum number of frames retained by the ring.
    * @throws std::invalid_argument if either argument is outside its range.
    */
@@ -239,8 +239,8 @@ private:
                        std::uint32_t fadeFrames) noexcept;
 
   std::uint64_t observedGeneration_;
-  std::array<float, 8> lastOutputSamples_;
-  std::array<float, 8> fadeStartSamples_;
+  std::array<float, 16> lastOutputSamples_;
+  std::array<float, 16> fadeStartSamples_;
   Phase phase_;
   std::uint32_t remainingFrames_;
   std::uint32_t pendingSilenceFrames_;

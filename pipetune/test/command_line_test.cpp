@@ -46,13 +46,13 @@ static bool testRunDefaults() {
 
 static bool testExplicitOptions() {
   constexpr auto arguments = std::array<std::string_view, 11>{
-      "--check", "--channels", "8", "--socket", "/tmp/pipetune.sock",
+      "--check", "--channels", "16", "--socket", "/tmp/pipetune.sock",
       "--dsp-backend", "simd", "--dsp-variant", "x86-64-v4",
       "--preset", "studio.effetune_preset"};
   const auto result = pipetune::parseCommandLine(arguments);
   return check(result.error.empty(), result.error) &&
          check(result.options.checkOnly, "--check must select readiness mode") &&
-         check(result.options.channelCount == 8, "explicit channels differ") &&
+         check(result.options.channelCount == 16, "explicit channels differ") &&
          check(result.options.controlSocketPath == "/tmp/pipetune.sock",
                "explicit control socket differs") &&
          check(result.options.dspBackend ==
@@ -367,6 +367,10 @@ static bool testInformationalActions() {
                    std::string_view::npos,
                "usage must explain configuration reset") &&
          check(pipetune::commandLineUsage().find(
+                   "1 through 16 planar channels") !=
+                   std::string_view::npos,
+               "usage must describe the EffeTune 2.7 channel range") &&
+         check(pipetune::commandLineUsage().find(
                    "Reset Bypass, PCM rate, and DSP backend.") !=
                    std::string_view::npos,
                "usage must describe every reset selection");
@@ -378,7 +382,7 @@ static bool testRejectedArguments() {
   constexpr auto legacyRate =
       std::array<std::string_view, 4>{"--preset", "x.effetune_preset", "--rate", "31999"};
   constexpr auto badChannels =
-      std::array<std::string_view, 4>{"--preset", "x.effetune_preset", "--channels", "9"};
+      std::array<std::string_view, 4>{"--preset", "x.effetune_preset", "--channels", "17"};
   constexpr auto duplicate = std::array<std::string_view, 4>{
       "--preset", "x.effetune_preset", "--preset", "y.effetune_preset"};
   constexpr auto unknown =

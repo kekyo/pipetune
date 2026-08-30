@@ -116,6 +116,18 @@ static float packElement(yyjson_val *value, const ParameterElement &element,
   return static_cast<float>(number);
 }
 
+static bool parseMatrixChannel(char value, std::uint8_t &output) {
+  if (value >= '0' && value <= '9') {
+    output = static_cast<std::uint8_t>(value - '0');
+    return true;
+  }
+  if (value >= 'a' && value <= 'f') {
+    output = static_cast<std::uint8_t>(value - 'a' + 10);
+    return true;
+  }
+  return false;
+}
+
 static std::vector<std::uint8_t> packMatrixRoutes(const StructuredParameter &structured,
                                                   yyjson_val *parameters, std::string &error) {
   auto source = structured.defaultValue;
@@ -136,15 +148,16 @@ static std::vector<std::uint8_t> packMatrixRoutes(const StructuredParameter &str
     if (offset + 1 >= source.size()) {
       break;
     }
-    const auto input = source[offset];
-    const auto output = source[offset + 1];
-    if (input >= '0' && input <= '8' && output >= '0' && output <= '8') {
+    auto input = std::uint8_t{0};
+    auto output = std::uint8_t{0};
+    if (parseMatrixChannel(source[offset], input) &&
+        parseMatrixChannel(source[offset + 1], output)) {
       if (routes.size() / 3u >= structured.maxItems) {
         error = "structured parameter capacity exceeded";
         return {};
       }
-      routes.push_back(static_cast<std::uint8_t>(input - '0'));
-      routes.push_back(static_cast<std::uint8_t>(output - '0'));
+      routes.push_back(input);
+      routes.push_back(output);
       routes.push_back(phase);
     }
     offset += 2;

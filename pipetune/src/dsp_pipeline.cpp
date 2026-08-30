@@ -12,6 +12,8 @@
 #include <yyjson.h>
 
 #include <algorithm>
+#include <array>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -87,8 +89,8 @@ static std::string validateBuildOptions(const PipelineBuildOptions &options) {
       options.sampleRate > 384000.0F) {
     return "sample rate must be between 32000 and 384000 Hz";
   }
-  if (options.maxChannels == 0 || options.maxChannels > 8) {
-    return "maximum channel count must be between one and eight";
+  if (options.maxChannels == 0 || options.maxChannels > 16) {
+    return "maximum channel count must be between one and sixteen";
   }
   if (options.maxFrames < 32) {
     return "maximum frame count must be at least 32";
@@ -218,12 +220,22 @@ static bool parseChannel(yyjson_val *value, std::int8_t &output) {
     output = 1;
     return true;
   }
-  if (channel.size() == 1 && channel[0] >= '3' && channel[0] <= '8') {
-    output = static_cast<std::int8_t>(channel[0] - '1');
+  auto channelNumber = std::uint32_t{0};
+  const auto parsed = std::from_chars(
+      channel.data(), channel.data() + channel.size(), channelNumber);
+  if (parsed.ec == std::errc{} &&
+      parsed.ptr == channel.data() + channel.size() &&
+      channelNumber >= 3u && channelNumber <= 16u) {
+    output = static_cast<std::int8_t>(channelNumber - 1u);
     return true;
   }
-  if (channel == "34" || channel == "56" || channel == "78") {
-    output = static_cast<std::int8_t>(16 + (channel[0] - '1') / 2);
+  static constexpr auto channelPairs = std::array<std::string_view, 7>{
+      "34", "56", "78", "910", "1112", "1314", "1516"};
+  const auto pair = std::ranges::find(channelPairs, channel);
+  if (pair != channelPairs.end()) {
+    output = static_cast<std::int8_t>(
+        17u + static_cast<std::uint32_t>(
+                  std::distance(channelPairs.begin(), pair)));
     return true;
   }
   return false;

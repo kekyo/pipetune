@@ -662,6 +662,12 @@ static spa_audio_info_raw makeRawFormat(const PipeWirePipelineOptions &options,
     info.position[7] = SPA_AUDIO_CHANNEL_SR;
     break;
   default:
+    // Numbered multichannel buses use PipeWire AUX positions to preserve
+    // their explicit planar order beyond the standard surround layouts.
+    for (auto channel = std::uint32_t{0}; channel < options.channelCount;
+         ++channel) {
+      info.position[channel] = SPA_AUDIO_CHANNEL_AUX0 + channel;
+    }
     break;
   }
   return info;
@@ -2014,8 +2020,8 @@ static std::string validateOptions(const DspPipeline &pipeline,
       options.dspSampleRate != options.ratePolicy.fixedRate) {
     return "fixed DSP sample rate must match the configured rate";
   }
-  if (options.channelCount == 0 || options.channelCount > 8) {
-    return "PipeWire channel count must be between one and eight";
+  if (options.channelCount == 0 || options.channelCount > 16) {
+    return "PipeWire channel count must be between one and sixteen";
   }
   if (options.maxFrames < 32 ||
       options.maxFrames > static_cast<std::uint32_t>(INT_MAX) / kSampleBytes) {

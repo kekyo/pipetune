@@ -445,9 +445,9 @@ static GeneratedFirAsset designFirCrossover(
     yyjson_val *parameters, float requestedSampleRate,
     std::uint32_t processingChannels, const DspBackendApi &api) {
   auto result = GeneratedFirAsset{};
-  if (processingChannels != 4u && processingChannels != 6u &&
-      processingChannels != 8u) {
-    result.omissionReason = "requires a 4, 6, or 8 channel output bus";
+  if (processingChannels < 4u || processingChannels > 16u ||
+      processingChannels % 2u != 0u) {
+    result.omissionReason = "requires an even channel output bus from 4 through 16";
     return result;
   }
   static constexpr std::array allowedTaps = {

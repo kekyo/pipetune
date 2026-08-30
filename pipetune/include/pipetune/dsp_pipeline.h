@@ -25,7 +25,7 @@ namespace pipetune {
 struct PipelineBuildOptions {
   /** Processing sample rate in hertz, from 32000 through 384000. */
   float sampleRate;
-  /** Maximum planar channel count, from one through eight. */
+  /** Maximum planar channel count, from one through sixteen. */
   std::uint32_t maxChannels;
   /** Maximum frame count accepted by one process call; must be at least 32. */
   std::uint32_t maxFrames;

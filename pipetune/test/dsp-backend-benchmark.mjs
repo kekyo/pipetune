@@ -22,9 +22,19 @@ if (
   help.status !== 0 ||
   !help.stdout.includes("pipetune-dsp-benchmark") ||
   !help.stdout.includes("--measure-blocks") ||
+  !help.stdout.includes("1 through 16") ||
   !help.stdout.includes("every available backend variant")
 ) {
   fail("DSP backend benchmark help differs", help);
+}
+
+const sixteenChannels = spawnSync(
+  benchmark,
+  ["--channels", "16", "--help"],
+  { encoding: "utf8" },
+);
+if (sixteenChannels.status !== 0) {
+  fail("DSP backend benchmark must accept sixteen channels", sixteenChannels);
 }
 
 const measured = spawnSync(
@@ -97,4 +107,16 @@ if (
   !invalid.stderr.includes("at least 32")
 ) {
   fail("DSP backend benchmark must reject invalid frame counts", invalid);
+}
+
+const invalidChannels = spawnSync(
+  benchmark,
+  ["--channels", "17", preset],
+  { encoding: "utf8" },
+);
+if (
+  invalidChannels.status === 0 ||
+  !invalidChannels.stderr.includes("between 1 and 16")
+) {
+  fail("DSP backend benchmark must reject seventeen channels", invalidChannels);
 }
