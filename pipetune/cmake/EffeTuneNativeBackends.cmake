@@ -48,6 +48,23 @@ function(
   endif()
 endfunction()
 
+# EffeTune accesses MXCSR directly on native x86. GCC's i686 baseline does not
+# enable those SSE instructions, so scope the required option to engine.cpp and
+# leave the scalar backend's floating-point and vectorization policy unchanged.
+function(
+  pipetune_configure_effetune_mxcsr_source
+  SOURCE_PATH
+  NATIVE_PROCESSOR)
+  if(NATIVE_PROCESSOR MATCHES "^(i[3-6]86|x86)$")
+    set_property(
+      SOURCE "${SOURCE_PATH}"
+      ${ARGN}
+      APPEND
+      PROPERTY COMPILE_OPTIONS
+               "$<$<COMPILE_LANG_AND_ID:CXX,GNU>:-msse>")
+  endif()
+endfunction()
+
 function(
   pipetune_configure_native_variant_target
   TARGET_NAME
@@ -244,6 +261,9 @@ function(
     native_processor
     "${CMAKE_SYSTEM_PROCESSOR}"
     "${CMAKE_SIZEOF_VOID_P}")
+  pipetune_configure_effetune_mxcsr_source(
+    "${EFFETUNE_DSP_DIR}/core/engine.cpp"
+    "${native_processor}")
 
   set(registry_source "${EFFETUNE_DSP_DIR}/core/registry.cpp")
   set_property(

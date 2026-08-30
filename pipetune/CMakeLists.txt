@@ -148,6 +148,10 @@ pipetune_resolve_native_processor(
 add_subdirectory(
   "${PIPETUNE_EFFETUNE_DIR}/dsp"
   "${CMAKE_CURRENT_BINARY_DIR}/effetune-dsp")
+pipetune_configure_effetune_mxcsr_source(
+  "${PIPETUNE_EFFETUNE_DIR}/dsp/core/engine.cpp"
+  "${PIPETUNE_NATIVE_PROCESSOR}"
+  TARGET_DIRECTORY effetune_dsp_core)
 pipetune_configure_effetune_portability_target(
   effetune_dsp_core
   "${PIPETUNE_NATIVE_PROCESSOR}")

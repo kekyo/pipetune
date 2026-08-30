@@ -54,6 +54,34 @@ function(assert_target_uses_32bit_portability_option BUILD_DIRECTORY TARGET_PATH
   endif()
 endfunction()
 
+function(assert_target_uses_engine_mxcsr_option BUILD_DIRECTORY TARGET_PATH)
+  set(flags_path "${BUILD_DIRECTORY}/${TARGET_PATH}/flags.make")
+  if(NOT EXISTS "${flags_path}")
+    message(FATAL_ERROR "Missing generated target flags: ${flags_path}")
+  endif()
+  file(READ "${flags_path}" flags)
+  string(
+    REGEX MATCH
+    "engine\\.cpp\\.o_OPTIONS = [^\n]*-msse( |\n|$)"
+    engine_match
+    "${flags}")
+  if(NOT engine_match)
+    message(
+      FATAL_ERROR
+      "Expected ${TARGET_PATH} to enable SSE for EffeTune's MXCSR access")
+  endif()
+  string(
+    REGEX MATCH
+    "CXX_FLAGS = [^\n]*-msse( |\n|$)"
+    target_match
+    "${flags}")
+  if(target_match)
+    message(
+      FATAL_ERROR
+      "Expected ${TARGET_PATH} to keep SSE scoped to EffeTune's engine source")
+  endif()
+endfunction()
+
 assert_native_processor("x86_64" "8" "x86_64")
 assert_native_processor("AMD64" "8" "amd64")
 assert_native_processor("x86_64" "4" "i686")
@@ -110,6 +138,9 @@ endif()
 assert_target_uses_32bit_portability_option(
   "${fixture_build}"
   "effetune-dsp/CMakeFiles/effetune_dsp_core.dir")
+assert_target_uses_engine_mxcsr_option(
+  "${fixture_build}"
+  "effetune-dsp/CMakeFiles/effetune_dsp_core.dir")
 assert_target_uses_32bit_portability_option(
   "${fixture_build}"
   "effetune-dsp/CMakeFiles/effetune_dsp_tube_simulator_tests.dir")
@@ -120,6 +151,9 @@ foreach(
     pipetune_effetune_dsp_simd_shared
     pipetune_effetune_dsp_x86_64_v3_shared)
   assert_target_uses_32bit_portability_option(
+    "${fixture_build}"
+    "CMakeFiles/${target_name}.dir")
+  assert_target_uses_engine_mxcsr_option(
     "${fixture_build}"
     "CMakeFiles/${target_name}.dir")
 endforeach()
