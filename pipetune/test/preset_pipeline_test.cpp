@@ -208,23 +208,26 @@ static bool testGeneratedAssetDsp(const std::filesystem::path &directory) {
     std::string_view parameters;
     std::uint32_t channels;
     std::uint32_t expectedLatency;
+    bool expectAdditionalChannelOutput;
+    bool expectGainIncrease;
   };
   static constexpr std::array cases = {
       GeneratedAssetCase{
           "fir-crossover.effetune_preset", "FIR Crossover",
           R"json({"lt":"0","bc":2,"pm":"min","tp":8192,"f1":1200,"s1":-48})json",
-          4u, 0u},
+          4u, 0u, true, false},
       GeneratedAssetCase{
           "five-band-fir-peq.effetune_preset", "5Band FIR PEQ",
           R"json({"lt":"0","pm":"min","tp":8192,"f2":1000,"g2":6,"q2":1,"t2":"pk","e2":true})json",
-          2u, 0u},
+          2u, 0u, false, true},
       GeneratedAssetCase{
           "group-delay-eq.effetune_preset", "Group Delay EQ",
-          R"json({"lt":"0","tp":4096,"d7":2})json", 2u, 2048u},
+          R"json({"lt":"0","tp":4096,"d7":2})json", 2u, 2048u, false,
+          false},
       GeneratedAssetCase{
           "group-delay-peq.effetune_preset", "Group Delay PEQ",
           R"json({"lt":"0","tp":4096,"t0":"pk","f0":1000,"d0":2,"q0":1,"e0":true})json",
-          2u, 2048u}};
+          2u, 2048u, false, false}};
 
   for (const auto &testCase : cases) {
     const auto preset =
@@ -247,7 +250,9 @@ static bool testGeneratedAssetDsp(const std::filesystem::path &directory) {
       return false;
     }
 
+    auto inputEnergy = 0.0;
     auto outputEnergy = 0.0;
+    auto additionalChannelEnergy = 0.0;
     for (auto block = std::uint32_t{0}; block < 48u; ++block) {
       auto samples = std::vector<float>(testCase.channels * 128u, 0.0F);
       for (auto frame = std::uint32_t{0}; frame < 128u; ++frame) {
@@ -268,13 +273,33 @@ static bool testGeneratedAssetDsp(const std::filesystem::path &directory) {
         return false;
       }
       if (block >= 32u) {
+        for (auto frame = std::uint32_t{0}; frame < 128u; ++frame) {
+          const auto sample = std::sin(
+              2.0 * std::numbers::pi * 1000.0 *
+              static_cast<double>(block * 128u + frame) / 48000.0);
+          inputEnergy += sample * sample * 1.25;
+        }
         for (const auto sample : samples) {
           outputEnergy += static_cast<double>(sample) * sample;
+        }
+        for (auto channel = std::uint32_t{2}; channel < testCase.channels;
+             ++channel) {
+          for (auto frame = std::uint32_t{0}; frame < 128u; ++frame) {
+            const auto sample = samples[channel * 128u + frame];
+            additionalChannelEnergy +=
+                static_cast<double>(sample) * sample;
+          }
         }
       }
     }
     if (!check(outputEnergy > 0.01,
-               "generated-asset DSP must produce audible output after preparation")) {
+               "generated-asset DSP must produce audible output after preparation") ||
+        (testCase.expectAdditionalChannelOutput &&
+         !check(additionalChannelEnergy > inputEnergy * 0.001,
+                "FIR Crossover must route filtered audio to additional output channels")) ||
+        (testCase.expectGainIncrease &&
+         !check(outputEnergy > inputEnergy * 1.5,
+                "5Band FIR PEQ must apply the requested 1 kHz gain"))) {
       return false;
     }
   }

@@ -176,6 +176,7 @@ add_library(
   src/dsp_backend.cpp
   src/dsp_catalog.cpp
   src/dsp_pipeline.cpp
+  src/generated_fir_asset.cpp
   src/sample_rate.cpp
   src/startup_config.cpp
   src/startup_pipeline.cpp

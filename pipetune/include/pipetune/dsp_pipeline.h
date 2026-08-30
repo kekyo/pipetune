@@ -195,7 +195,8 @@ struct PipelineLoadResult {
 /**
  * Loads a formal `.effetune_preset` file and prepares its supported native DSPs.
  *
- * Unknown DSPs and DSPs requiring external assets are omitted with warnings.
+ * Unknown DSPs and unresolved stored-asset DSPs are omitted with warnings.
+ * Supported generated FIR assets are rebuilt at the requested sample rate.
  * Disabled nodes, including nodes gated by a disabled Section, are omitted
  * without warnings.
  *
