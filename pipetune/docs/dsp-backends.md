@@ -27,7 +27,7 @@ This separation preserves one known compatibility path while allowing
 PipeTune to select the highest usable optimized implementation or a
 user-pinned tier. One pipeline always uses exactly one implementation.
 
-The private backend source set follows EffeTune 2.5.0, including the graph core
+The private backend source set follows EffeTune 2.6.0, including the graph core
 translation unit and generated graph-capacity contract required by its engine.
 PipeTune's loader surface remains the routed pipeline API and now includes
 `et_pipeline_latency`; PipeTune does not expose Graph v1 as a preset format or
@@ -89,7 +89,7 @@ and validates:
 - each kernel's parameter-byte capacity; and
 - every external-asset capacity.
 
-The pinned EffeTune 2.5.0 contract contains 92 kernels. A backend from an
+The pinned EffeTune 2.6.0 contract contains 94 kernels. A backend from an
 earlier release is rejected even though the numeric ABI version remains one,
 because its required symbols and complete catalog do not match.
 
@@ -174,7 +174,7 @@ PFFFT acceleration and compiler auto-vectorization affect different DSP work:
 | DSP work | Expected SIMD opportunity | Limiting factors |
 | --- | --- | --- |
 | Spectrum Analyzer and Spectrogram FFTs | High, direct PFFFT consumer | FFT runs at the analyzer cadence, so whole-pipeline gain is diluted between frames |
-| FIR Crossover, 5Band FIR PEQ, Group Delay EQ, IR Reverb, and Room EQ convolution | High, direct PFFFT consumer | PipeTune currently omits nodes that require external assets |
+| FIR Crossover, 5Band FIR PEQ, Group Delay EQ, Group Delay PEQ, IR Reverb, and Room EQ convolution | High, direct PFFFT consumer | PipeTune currently omits nodes that require external assets |
 | Large sample-independent transforms, buffer mixing, matrixing, and analyzer preparation | Medium to high auto-vectorization potential | Often memory-bandwidth limited; inexpensive nodes have little absolute cost |
 | Pitch shifting and long window/ring-buffer operations | Medium, sometimes high aggregate potential | Wrap branches, square roots, interpolation, and state handling inhibit parts of each loop |
 | Multiband split/combine, saturation, and dynamics | Medium aggregate potential | Filters and envelopes have sample-to-sample dependencies |
@@ -182,10 +182,10 @@ PFFFT acceleration and compiler auto-vectorization affect different DSP work:
 | Volume, mute, polarity, simple routing, and meters | Technically vectorizable but usually low impact | Their scalar cost is already small |
 
 Only Spectrum Analyzer, Spectrogram, the partitioned convolver used by FIR
-Crossover, 5Band FIR PEQ, Group Delay EQ, IR Reverb, and Room EQ, and the
-design-time FFT API call PFFFT directly in the current native code. Other gains
-must come from compiler vectorization or secondary effects such as better
-instruction scheduling.
+Crossover, 5Band FIR PEQ, Group Delay EQ, Group Delay PEQ, IR Reverb, and Room
+EQ, and the design-time FFT API call PFFFT directly in the current native code.
+Other gains must come from compiler vectorization or secondary effects such as
+better instruction scheduling.
 
 Telemetry-rate behavior is unchanged by this work. In particular, selecting
 telemetry rate zero does not newly stop analyzer processing.

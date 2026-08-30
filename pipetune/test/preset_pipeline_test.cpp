@@ -142,9 +142,9 @@ static bool containsWarning(const std::vector<pipetune::PipelineWarning> &warnin
   });
 }
 
-static bool testEffeTune25Pipeline(const std::filesystem::path &directory) {
+static bool testEffeTune26Pipeline(const std::filesystem::path &directory) {
   const auto path = writePreset(
-      directory, "effetune-2.5.effetune_preset",
+      directory, "effetune-2.6.effetune_preset",
       R"json({
         "pipeline": [
           {"name":"SBC Codec Simulator","enabled":true,"parameters":{"bp":35}},
@@ -166,9 +166,11 @@ static bool testEffeTune25Pipeline(const std::filesystem::path &directory) {
           {"name":"Rotary Speaker","enabled":true,"parameters":{}},
           {"name":"Bandwidth Extender","enabled":true,"parameters":{}},
           {"name":"Phase Select EQ","enabled":true,"parameters":{}},
+          {"name":"MD Simulator","enabled":true,"parameters":{"md":"LP2 (132 kbps)"}},
           {"name":"FIR Crossover","enabled":true,"parameters":{}},
           {"name":"5Band FIR PEQ","enabled":true,"parameters":{}},
           {"name":"Group Delay EQ","enabled":true,"parameters":{}},
+          {"name":"Group Delay PEQ","enabled":true,"parameters":{}},
           {"name":"Room EQ","enabled":true,"parameters":{}},
           {"name":"IR Reverb","enabled":true,"parameters":{}}
         ]
@@ -177,13 +179,14 @@ static bool testEffeTune25Pipeline(const std::filesystem::path &directory) {
       path,
       {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
   if (!check(result.pipeline != nullptr, result.error) ||
-      !check(result.pipeline->activePluginCount() == 19,
-             "EffeTune 2.5 non-asset DSP nodes must become active") ||
-      !check(result.warnings.size() == 5,
+      !check(result.pipeline->activePluginCount() == 20,
+             "EffeTune 2.6 non-asset DSP nodes must become active") ||
+      !check(result.warnings.size() == 6,
              "EffeTune asset-dependent DSP nodes must be omitted") ||
       !check(containsWarning(result.warnings, "FIR Crossover") &&
                  containsWarning(result.warnings, "5Band FIR PEQ") &&
                  containsWarning(result.warnings, "Group Delay EQ") &&
+                 containsWarning(result.warnings, "Group Delay PEQ") &&
                  containsWarning(result.warnings, "Room EQ") &&
                  containsWarning(result.warnings, "IR Reverb"),
              "every omitted asset-dependent DSP must be identified")) {
@@ -193,11 +196,11 @@ static bool testEffeTune25Pipeline(const std::filesystem::path &directory) {
   auto samples = std::vector<float>(128u, 0.0F);
   return check(result.pipeline->process(samples, 2, 64, 0.0) ==
                    pipetune::ProcessStatus::ok,
-               "EffeTune 2.5 DSP nodes must process audio") &&
+               "EffeTune 2.6 DSP nodes must process audio") &&
          check(std::ranges::all_of(samples, [](float value) {
                  return std::isfinite(value);
                }),
-               "EffeTune 2.5 DSP output must remain finite");
+               "EffeTune 2.6 DSP output must remain finite");
 }
 
 static bool testTubeSimulator25Models(const std::filesystem::path &directory) {
@@ -442,7 +445,7 @@ int main() {
 
   const auto passed =
       testBypassPipeline() && testCanonicalPreset(directory) &&
-      testLegacyPreset(directory) && testEffeTune25Pipeline(directory) &&
+      testLegacyPreset(directory) && testEffeTune26Pipeline(directory) &&
       testTubeSimulator25Models(directory) &&
       testTubeSimulatorLatency(directory) &&
       testChannelLatencyCompensation(directory) &&
