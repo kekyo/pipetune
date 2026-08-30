@@ -63,6 +63,8 @@ struct DspBackendApi {
   decltype(&et_pipeline_configure) pipelineConfigure = nullptr;
   decltype(&et_pipeline_latency) pipelineLatency = nullptr;
   decltype(&et_pipeline_process) pipelineProcess = nullptr;
+  decltype(&pipetune_effetune_instance_asset_copy_v1) instanceAssetCopy =
+      nullptr;
 };
 
 struct DspBackendLoadContext {

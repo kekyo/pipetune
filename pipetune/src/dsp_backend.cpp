@@ -279,6 +279,8 @@ static bool loadRemainingSymbols(void *handle, DspBackendApi &api,
   PIPETUNE_LOAD_DSP_SYMBOL(pipelineConfigure, et_pipeline_configure)
   PIPETUNE_LOAD_DSP_SYMBOL(pipelineLatency, et_pipeline_latency)
   PIPETUNE_LOAD_DSP_SYMBOL(pipelineProcess, et_pipeline_process)
+  PIPETUNE_LOAD_DSP_SYMBOL(instanceAssetCopy,
+                           pipetune_effetune_instance_asset_copy_v1)
 #undef PIPETUNE_LOAD_DSP_SYMBOL
   return true;
 }

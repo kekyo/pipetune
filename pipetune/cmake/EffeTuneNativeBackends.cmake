@@ -156,11 +156,12 @@ function(
   VARIANT_ID
   NATIVE_PROCESSOR
   EFFETUNE_DSP_DIR
+  EFFETUNE_ABI_SOURCE
   OUTPUT_DIRECTORY)
   set(
     effetune_production_sources
     "${EFFETUNE_DSP_DIR}/core/allocation_guard.cpp"
-    "${EFFETUNE_DSP_DIR}/core/abi.cpp"
+    "${EFFETUNE_ABI_SOURCE}"
     "${EFFETUNE_DSP_DIR}/core/arena.cpp"
     "${EFFETUNE_DSP_DIR}/core/design_fft.cpp"
     "${EFFETUNE_DSP_DIR}/core/engine.cpp"
@@ -179,12 +180,18 @@ function(
 
   set(backend_abi_source
       "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../src/effetune_backend_abi.c")
+  set(backend_asset_bridge_source
+      "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../src/effetune_backend_asset_bridge.cpp")
   set(backend_export_map
       "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../src/effetune_backend_exports.map")
   add_library(
     ${TARGET_NAME} SHARED
     ${effetune_production_sources}
-    "${backend_abi_source}")
+    "${backend_abi_source}"
+    "${backend_asset_bridge_source}")
+  add_dependencies(
+    ${TARGET_NAME}
+    pipetune_effetune_backend_abi_source)
   target_include_directories(
     ${TARGET_NAME}
     PUBLIC "${EFFETUNE_DSP_DIR}/include"
@@ -244,6 +251,52 @@ function(
       "LINKER:--version-script=${backend_export_map}")
 endfunction()
 
+# Copies EffeTune's file-local engine registry ABI into the build tree and
+# applies the smallest PipeTune integration hook as a normal unified diff.
+function(
+  pipetune_prepare_effetune_backend_abi
+  EFFETUNE_DSP_DIR
+  OUTPUT_VARIABLE)
+  find_program(PIPETUNE_PATCH_EXECUTABLE patch REQUIRED)
+  set(source_abi "${EFFETUNE_DSP_DIR}/core/abi.cpp")
+  set(abi_patch
+      "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../patches/effetune/abi-engine-access.patch")
+  set(generated_directory
+      "${CMAKE_CURRENT_BINARY_DIR}/generated/effetune-backend/core")
+  set(generated_abi "${generated_directory}/abi.cpp")
+  set(working_abi "${generated_directory}/abi.cpp.work")
+  add_custom_command(
+    OUTPUT "${generated_abi}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${generated_directory}"
+    COMMAND "${CMAKE_COMMAND}" -E copy "${source_abi}" "${working_abi}"
+    COMMAND
+      "${PIPETUNE_PATCH_EXECUTABLE}"
+      --batch
+      --forward
+      --fuzz=0
+      --reject-file=-
+      --input
+      "${abi_patch}"
+      "${working_abi}"
+    COMMAND
+      "${CMAKE_COMMAND}" -E copy_if_different
+      "${working_abi}"
+      "${generated_abi}"
+    DEPENDS
+      "${source_abi}"
+      "${abi_patch}"
+      "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../src/effetune_backend_engine_access.inc"
+      "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../src/effetune_backend_engine_access.h"
+    BYPRODUCTS "${working_abi}"
+    COMMENT "Applying PipeTune's native EffeTune ABI bridge patch"
+    VERBATIM)
+  add_custom_target(
+    pipetune_effetune_backend_abi_source
+    DEPENDS "${generated_abi}")
+  set_source_files_properties("${generated_abi}" PROPERTIES GENERATED TRUE)
+  set(${OUTPUT_VARIABLE} "${generated_abi}" PARENT_SCOPE)
+endfunction()
+
 # Builds PipeTune-owned native shared artifacts from an unmodified EffeTune
 # source tree and returns the architecture-applicable target list.
 function(
@@ -264,6 +317,9 @@ function(
   pipetune_configure_effetune_mxcsr_source(
     "${EFFETUNE_DSP_DIR}/core/engine.cpp"
     "${native_processor}")
+  pipetune_prepare_effetune_backend_abi(
+    "${EFFETUNE_DSP_DIR}"
+    generated_abi_source)
 
   set(registry_source "${EFFETUNE_DSP_DIR}/core/registry.cpp")
   set_property(
@@ -303,6 +359,7 @@ function(
     PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR
     "${native_processor}"
     "${EFFETUNE_DSP_DIR}"
+    "${generated_abi_source}"
     "${OUTPUT_DIRECTORY}")
   pipetune_add_native_shared_backend(
     pipetune_effetune_dsp_simd_shared
@@ -312,6 +369,7 @@ function(
     PIPETUNE_EFFETUNE_BACKEND_VARIANT_SIMD_BASELINE
     "${native_processor}"
     "${EFFETUNE_DSP_DIR}"
+    "${generated_abi_source}"
     "${OUTPUT_DIRECTORY}")
 
   set(
@@ -333,6 +391,7 @@ function(
       PIPETUNE_EFFETUNE_BACKEND_VARIANT_X86_64_V3
       "${native_processor}"
       "${EFFETUNE_DSP_DIR}"
+      "${generated_abi_source}"
       "${OUTPUT_DIRECTORY}")
     list(APPEND backend_targets pipetune_effetune_dsp_x86_64_v3_shared)
   endif()
@@ -351,6 +410,7 @@ function(
       PIPETUNE_EFFETUNE_BACKEND_VARIANT_X86_64_V4
       "${native_processor}"
       "${EFFETUNE_DSP_DIR}"
+      "${generated_abi_source}"
       "${OUTPUT_DIRECTORY}")
     list(APPEND backend_targets pipetune_effetune_dsp_x86_64_v4_shared)
   endif()
@@ -369,6 +429,7 @@ function(
       PIPETUNE_EFFETUNE_BACKEND_VARIANT_ARM64_SVE
       "${native_processor}"
       "${EFFETUNE_DSP_DIR}"
+      "${generated_abi_source}"
       "${OUTPUT_DIRECTORY}")
     list(APPEND backend_targets pipetune_effetune_dsp_arm64_sve_shared)
   endif()

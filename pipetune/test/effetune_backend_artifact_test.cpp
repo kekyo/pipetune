@@ -534,6 +534,7 @@ static void checkAllAbiSymbols(void *handle) {
       "et_abi_version",
       "et_build_flags",
       "pipetune_effetune_backend_variant",
+      "pipetune_effetune_instance_asset_copy_v1",
       "et_kernel_count",
       "et_kernel_name",
       "et_kernel_params_hash",

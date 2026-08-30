@@ -6,6 +6,8 @@
 #ifndef PIPETUNE_EFFETUNE_BACKEND_ABI_H
 #define PIPETUNE_EFFETUNE_BACKEND_ABI_H
 
+#include <effetune/abi.h>
+
 #include <stdint.h>
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -43,6 +45,50 @@ enum {
  */
 PIPETUNE_EFFETUNE_BACKEND_EXPORT uint32_t
 pipetune_effetune_backend_variant(void);
+
+/**
+ * Describes one native EffeTune instance asset transfer.
+ */
+typedef struct pipetune_effetune_asset_info_v1 {
+  /** Number of planar coefficient channels in the payload. */
+  uint32_t channels;
+  /** Number of coefficient frames per channel. */
+  uint32_t frames;
+  /** EffeTune impulse-response topology value. */
+  uint32_t topology;
+  /** Requested convolution head-block size. */
+  uint32_t head_block;
+  /** Convolution sample-rate divider. */
+  uint32_t rate_divider;
+  /** Number of matrix path records in the payload. */
+  uint32_t path_count;
+  /** Number of distinct matrix inputs. */
+  uint32_t input_count;
+  /** Number of audio channels processed by the instance. */
+  uint32_t processing_channels;
+  /** Conservative native allocation footprint in bytes. */
+  uint32_t footprint_bytes;
+  /** Exact payload byte count. */
+  uint32_t byte_size;
+} pipetune_effetune_asset_info_v1;
+
+/**
+ * Copies and commits one complete asset without exposing a native pointer.
+ *
+ * @param engine Native EffeTune engine handle.
+ * @param instance Native EffeTune instance handle.
+ * @param slot Asset slot to replace.
+ * @param info Validated transfer metadata.
+ * @param payload Complete asset payload owned by the caller.
+ * @param payload_bytes Exact readable payload size.
+ * @param format_tag EffeTune asset format identifier.
+ * @return `ET_OK` on success, otherwise an EffeTune status code.
+ */
+PIPETUNE_EFFETUNE_BACKEND_EXPORT et_status
+pipetune_effetune_instance_asset_copy_v1(
+    et_engine engine, et_instance instance, uint32_t slot,
+    const pipetune_effetune_asset_info_v1 *info, const uint8_t *payload,
+    uint64_t payload_bytes, uint32_t format_tag);
 
 #ifdef __cplusplus
 }
