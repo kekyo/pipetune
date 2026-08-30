@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <numbers>
 #include <span>
 #include <string>
 #include <string_view>
@@ -179,14 +180,11 @@ static bool testEffeTune26Pipeline(const std::filesystem::path &directory) {
       path,
       {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
   if (!check(result.pipeline != nullptr, result.error) ||
-      !check(result.pipeline->activePluginCount() == 20,
-             "EffeTune 2.6 non-asset DSP nodes must become active") ||
-      !check(result.warnings.size() == 6,
-             "EffeTune asset-dependent DSP nodes must be omitted") ||
+      !check(result.pipeline->activePluginCount() == 23,
+             "EffeTune generated-asset DSP nodes must become active") ||
+      !check(result.warnings.size() == 3,
+             "only unresolved and incompatible asset DSP nodes must be omitted") ||
       !check(containsWarning(result.warnings, "FIR Crossover") &&
-                 containsWarning(result.warnings, "5Band FIR PEQ") &&
-                 containsWarning(result.warnings, "Group Delay EQ") &&
-                 containsWarning(result.warnings, "Group Delay PEQ") &&
                  containsWarning(result.warnings, "Room EQ") &&
                  containsWarning(result.warnings, "IR Reverb"),
              "every omitted asset-dependent DSP must be identified")) {
@@ -201,6 +199,86 @@ static bool testEffeTune26Pipeline(const std::filesystem::path &directory) {
                  return std::isfinite(value);
                }),
                "EffeTune 2.6 DSP output must remain finite");
+}
+
+static bool testGeneratedAssetDsp(const std::filesystem::path &directory) {
+  struct GeneratedAssetCase {
+    std::string_view filename;
+    std::string_view plugin;
+    std::string_view parameters;
+    std::uint32_t channels;
+    std::uint32_t expectedLatency;
+  };
+  static constexpr std::array cases = {
+      GeneratedAssetCase{
+          "fir-crossover.effetune_preset", "FIR Crossover",
+          R"json({"lt":"0","bc":2,"pm":"min","tp":8192,"f1":1200,"s1":-48})json",
+          4u, 0u},
+      GeneratedAssetCase{
+          "five-band-fir-peq.effetune_preset", "5Band FIR PEQ",
+          R"json({"lt":"0","pm":"min","tp":8192,"f2":1000,"g2":6,"q2":1,"t2":"pk","e2":true})json",
+          2u, 0u},
+      GeneratedAssetCase{
+          "group-delay-eq.effetune_preset", "Group Delay EQ",
+          R"json({"lt":"0","tp":4096,"d7":2})json", 2u, 2048u},
+      GeneratedAssetCase{
+          "group-delay-peq.effetune_preset", "Group Delay PEQ",
+          R"json({"lt":"0","tp":4096,"t0":"pk","f0":1000,"d0":2,"q0":1,"e0":true})json",
+          2u, 2048u}};
+
+  for (const auto &testCase : cases) {
+    const auto preset =
+        "{\"pipeline\":[{\"name\":\"" + std::string(testCase.plugin) +
+        "\",\"enabled\":true,\"channel\":\"A\",\"parameters\":" +
+        std::string(testCase.parameters) + "}]}";
+    const auto path = writePreset(directory, testCase.filename, preset);
+    const auto result = pipetune::loadDspPipeline(
+        path,
+        {.sampleRate = 48000.0F,
+         .maxChannels = testCase.channels,
+         .maxFrames = 128u});
+    if (!check(result.pipeline != nullptr, result.error) ||
+        !check(result.pipeline->activePluginCount() == 1u,
+               "generated-asset DSP must become active") ||
+        !check(result.warnings.empty(),
+               "generated-asset DSP must not be reported as omitted") ||
+        !check(result.pipeline->latencyFrames() == testCase.expectedLatency,
+               "generated-asset DSP must report its designed latency")) {
+      return false;
+    }
+
+    auto outputEnergy = 0.0;
+    for (auto block = std::uint32_t{0}; block < 48u; ++block) {
+      auto samples = std::vector<float>(testCase.channels * 128u, 0.0F);
+      for (auto frame = std::uint32_t{0}; frame < 128u; ++frame) {
+        const auto sample = static_cast<float>(
+            std::sin(2.0 * std::numbers::pi * 1000.0 *
+                     static_cast<double>(block * 128u + frame) / 48000.0));
+        samples[frame] = sample;
+        samples[128u + frame] = sample * 0.5F;
+      }
+      if (!check(result.pipeline->process(samples, testCase.channels, 128u,
+                                          block * 128.0 / 48000.0) ==
+                     pipetune::ProcessStatus::ok,
+                 "generated-asset DSP must process audio") ||
+          !check(std::ranges::all_of(samples, [](float value) {
+                   return std::isfinite(value);
+                 }),
+                 "generated-asset DSP output must remain finite")) {
+        return false;
+      }
+      if (block >= 32u) {
+        for (const auto sample : samples) {
+          outputEnergy += static_cast<double>(sample) * sample;
+        }
+      }
+    }
+    if (!check(outputEnergy > 0.01,
+               "generated-asset DSP must produce audible output after preparation")) {
+      return false;
+    }
+  }
+  return true;
 }
 
 static bool testTubeSimulator25Models(const std::filesystem::path &directory) {
@@ -446,6 +524,7 @@ int main() {
   const auto passed =
       testBypassPipeline() && testCanonicalPreset(directory) &&
       testLegacyPreset(directory) && testEffeTune26Pipeline(directory) &&
+      testGeneratedAssetDsp(directory) &&
       testTubeSimulator25Models(directory) &&
       testTubeSimulatorLatency(directory) &&
       testChannelLatencyCompensation(directory) &&
