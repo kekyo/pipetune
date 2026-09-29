@@ -64,6 +64,16 @@ const numberLiteral = value => {
 
 const identifier = value => value.replaceAll(/[^A-Za-z0-9_]/gu, '_');
 
+// These kernels observe audio without modifying it. Metered audio processors
+// must remain executable, so telemetry or category membership is insufficient.
+const visualizationOnlyTypes = new Set([
+  'LevelMeterPlugin',
+  'OscilloscopePlugin',
+  'SpectrogramPlugin',
+  'SpectrumAnalyzerPlugin',
+  'StereoMeterPlugin'
+]);
+
 const nativeAssetCapacity = asset => {
   if (asset.capacity === '32 MiB convolution cap') {
     return 32 * 1024 * 1024;
@@ -169,7 +179,8 @@ const generateCatalog = () => {
       `  ${structured},`,
       `  ${spec.byteCapacity}u,`,
       `  std::array<std::uint32_t, 32>{${assetCapacities.map(value => `${value}u`).join(', ')}},`,
-      `  ${spec.assets.length > 0 ? 'true' : 'false'}`,
+      `  ${spec.assets.length > 0 ? 'true' : 'false'},`,
+      `  ${visualizationOnlyTypes.has(entry.type) ? 'true' : 'false'}`,
       '};',
       ''
     );

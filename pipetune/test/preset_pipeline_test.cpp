@@ -4,6 +4,7 @@
  * https://github.com/kekyo/pipetune/
  */
 #include "pipetune/dsp_pipeline.h"
+#include "pipetune/dsp_backend.h"
 
 #include <algorithm>
 #include <array>
@@ -622,6 +623,112 @@ static bool testEffeTune27Multichannel(
   return true;
 }
 
+static bool testAnalyzerExecutionRemoved(const std::filesystem::path &directory) {
+  for (const auto name : {"Level Meter", "Oscilloscope", "Spectrogram",
+                          "Spectrum Analyzer", "Stereo Meter"}) {
+    const auto path = writePreset(directory, "removed-analyzer.effetune_preset",
+        "{\"pipeline\":[{\"name\":\"" + std::string(name) + "\"}]}");
+    const auto loaded = pipetune::loadDspPipeline(
+        path, {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+    if (!check(loaded.pipeline != nullptr, loaded.error) ||
+        !check(loaded.pipeline->activePluginCount() == 0,
+               "visualization-only DSP execution must be removed")) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool testVisualizationPresets(const std::filesystem::path &directory) {
+  const auto visualizers = std::array{
+      "Level Meter", "Oscilloscope", "Spectrogram", "Spectrum Analyzer", "Stereo Meter"};
+  auto nodes = std::string{};
+  for (auto index = 0u; index < 100u; ++index) {
+    if (!nodes.empty()) nodes += ',';
+    nodes += "{\"name\":\"" + std::string(visualizers[index % visualizers.size()]) +
+        "\",\"parameters\":{\"mn\":{},\"cl\":\"Normal\"},\"inputBus\":0,\"outputBus\":1}";
+  }
+  const auto only = writePreset(directory, "visualizers.effetune_preset",
+                                "{\"pipeline\":[" + nodes + "]}");
+  auto loaded = pipetune::loadDspPipeline(
+      only, {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+  if (!check(loaded.pipeline != nullptr, loaded.error) ||
+      !check(loaded.warnings.empty(), "visualizers must not produce warnings") ||
+      !check(loaded.pipeline->activePluginCount() == 0 &&
+                 loaded.pipeline->latencyFrames() == 0,
+             "visualizers must not consume processing nodes or add latency")) {
+    return false;
+  }
+  auto samples = std::vector<float>{0.5F, -0.25F, 0.125F, -0.5F};
+  const auto original = samples;
+  if (!check(loaded.pipeline->process(samples, 2, 2, 0.0) == pipetune::ProcessStatus::ok &&
+                 samples == original,
+             "a visualization-only preset must pass audio without copying other buses")) {
+    return false;
+  }
+
+  const auto effects = std::string(R"json(
+    {"name":"Compressor","parameters":{}},
+    {"name":"Auto Leveler","parameters":{}},
+    {"name":"Transient Shaper","parameters":{}},
+    {"name":"Multiband Transient","parameters":{}},
+    {"name":"Power Amp Sag","parameters":{}},
+    {"name":"Volume","parameters":{"vl":-6}},
+    {"name":"Volume","parameters":{"vl":-12},"inputBus":1,"outputBus":0}
+  )json");
+  const auto sections = std::string(R"json(
+    {"name":"Section","enabled":false},
+    {"name":"Mute"},
+    {"name":"Section","enabled":true},
+  )json");
+  const auto mixed = writePreset(directory, "mixed-visualizers.effetune_preset",
+      "{\"pipeline\":[" + sections + nodes + "," + effects + "]}");
+  const auto reference = writePreset(directory, "audio-effects.effetune_preset",
+      "{\"pipeline\":[" + sections + effects + "]}");
+  auto actual = pipetune::loadDspPipeline(
+      mixed, {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+  auto expected = pipetune::loadDspPipeline(
+      reference, {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+  if (!check(actual.pipeline != nullptr, actual.error) ||
+      !check(expected.pipeline != nullptr, expected.error) ||
+      !check(actual.warnings.empty() && actual.pipeline->activePluginCount() == 7,
+             "audio processors with meters must remain active")) {
+    return false;
+  }
+  std::filesystem::remove(mixed);
+  const auto backends = pipetune::discoverDspBackends();
+  for (const auto rate : {48000.0F, 96000.0F}) {
+    const auto backend = rate == 96000.0F && backends.simd.backend != nullptr
+        ? backends.simd.backend : backends.scalar.backend;
+    actual = pipetune::rebuildDspPipeline(*actual.pipeline,
+        {.sampleRate = rate, .maxChannels = 2, .maxFrames = 64}, backend);
+    expected = pipetune::rebuildDspPipeline(*expected.pipeline,
+        {.sampleRate = rate, .maxChannels = 2, .maxFrames = 64}, backend);
+    if (!check(actual.pipeline != nullptr, actual.error) ||
+        !check(expected.pipeline != nullptr, expected.error) ||
+        !check(actual.warnings.empty() && actual.pipeline->activePluginCount() == 7 &&
+                   actual.pipeline->latencyFrames() == expected.pipeline->latencyFrames(),
+               "rebuild must preserve only the audio processors")) {
+      return false;
+    }
+    for (auto block = 0u; block < 100u; ++block) {
+      auto input = std::vector<float>(128);
+      for (auto index = 0u; index < input.size(); ++index) {
+        input[index] = 0.2F * std::sin(static_cast<float>(block * 64u + index) * 0.1F);
+      }
+      auto referenceAudio = input;
+      const auto time = static_cast<double>(block * 64u) / rate;
+      if (!check(actual.pipeline->process(input, 2, 64, time) == pipetune::ProcessStatus::ok &&
+                     expected.pipeline->process(referenceAudio, 2, 64, time) == pipetune::ProcessStatus::ok &&
+                     input == referenceAudio,
+                 "mixed presets must render exactly like their audio-processing nodes")) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 static bool testRetainedRecipeRebuild(
     const std::filesystem::path &directory) {
   const auto path = writePreset(
@@ -651,6 +758,7 @@ int main() {
   std::filesystem::create_directories(directory);
 
   const auto passed =
+      testAnalyzerExecutionRemoved(directory) && testVisualizationPresets(directory) &&
       testBypassPipeline() && testCanonicalPreset(directory) &&
       testLegacyPreset(directory) && testEffeTune26Pipeline(directory) &&
       testGeneratedAssetDsp(directory) &&

@@ -518,7 +518,8 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
            .reason = "not available in EffeTune's native DSP registry"});
       continue;
     }
-    if (!node.enabled || (insideSection && !sectionEnabled)) {
+    if (!node.enabled || (insideSection && !sectionEnabled) ||
+        definition->visualizationOnly) {
       continue;
     }
     const auto crosstalk = node.name == "Crosstalk Cancellation";

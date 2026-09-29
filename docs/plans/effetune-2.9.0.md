@@ -158,3 +158,12 @@ PipeTune側の主な変更対象:
 - `pipetune/cmake/EffeTuneNativeBackends.cmake`、`pipetune/CMakeLists.txt`
 - `pipetune/test/preset_pipeline_test.cpp`、`pipetune/test/effetune_backend_artifact_test.cpp`と既存の再構築・パッケージ検証
 - `prereq.sh`、`README.md`、`README_ja.md`、`pipetune/docs/dsp-backends.md`
+
+## 実行記録
+
+2026-09-29、実装開始。
+
+- 2.8.0の基準Debug全体テスト: 145/145成功、233.27秒。
+- 手順1の全体RED: 可視化専用DSPが有効ノードに残ることを検出した。同じ実行の単独ビルド検証で、ソース変更後にCMakeを再構成しなかったため、screw-upの解決バージョンと実行ファイルの表示が一致しなかった。以後、変更後の検証前にCMakeを再構成する。製品のバージョン処理は変更しない。
+- ホストPythonは3.12.3。既存13個の前提イメージも、各コンテナ内でPython 3.11.2〜3.14.4を実行できることを確認した。今回の依存追加のための再生成は不要だが、新規イメージでも導入されるよう`prereq.sh`へ明示する。
+- 検証ログは`artifacts/verification/effetune-2.9.0/`に保存する。

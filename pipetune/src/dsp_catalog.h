@@ -56,6 +56,8 @@ struct DspDefinition {
   std::uint32_t paramBytesCapacity;
   std::array<std::uint32_t, 32> assetCapacities;
   bool requiresExternalAssets;
+  // Observation-only kernels are registered but never instantiated by presets.
+  bool visualizationOnly;
 };
 
 struct PackedParameters {
