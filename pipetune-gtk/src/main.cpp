@@ -948,7 +948,9 @@ static void beginRollbackAndClose(GtkRuntime *runtime,
   runtime->languageRestartRequired =
       runtime->uiLanguage != runtime->presentationLanguage;
   runtime->closeAfterRollback = true;
-  runtime->quitAfterRollback = quitWhenComplete;
+  runtime->quitAfterRollback =
+      quitWhenComplete ||
+      runtime->trayAvailability != TrayBackendAvailabilityState::available;
   if (!runtime->transactionReady) {
     hideAfterRollback(runtime);
     return;
@@ -1921,8 +1923,18 @@ static void requestQuit(GtkRuntime *runtime) {
 
 static void onTrayAvailabilityChanged(
     GtkRuntime *runtime, TrayBackendAvailabilityState availability) {
-  if (!runtime->shuttingDown) {
-    runtime->trayAvailability = availability;
+  if (runtime->shuttingDown) {
+    return;
+  }
+  const auto previous = runtime->trayAvailability;
+  runtime->trayAvailability = availability;
+  if (previous == TrayBackendAvailabilityState::available &&
+      availability == TrayBackendAvailabilityState::unavailable) {
+    if (runtime->closeAfterRollback) {
+      runtime->quitAfterRollback = true;
+    } else if (!runtime->dialogActive) {
+      presentWindow(runtime, std::nullopt);
+    }
   }
 }
 

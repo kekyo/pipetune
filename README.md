@@ -33,8 +33,7 @@ application remains available through the desktop system tray.
 - You can load EffeTune preset files to apply a DSP pipeline to the audio output of the entire Linux system.
 - Loads standard and legacy EffeTune preset files with the `.effetune_preset` extension
   and applies the DSP pipeline to desktop audio.
-- Supports the EffeTune 2.8.0 native DSP contract, including direct runs with
-  1 through 16 planar channels.
+- Implemented EffeTune 2.9.0 DSP engine.
 - Automatically negotiates the sampling rate with the PipeWire graph, or computes the DSP at specified rates of 44.1, 48, 96, 192, or 384 kHz.
 - The DSP performs computations entirely in native code. You can choose between Scalar (for compatibility), automatic SIMD selection, or CPU-verified implementations for specific instruction sets.
 - Automatically suspends DSP work after a selectable period of silent input while allowing effect tails to finish first.
@@ -120,6 +119,9 @@ usable.
 
 Open the PipeTune settings window by double-clicking the system tray icon or
 selecting `Open` from its menu.
+PipeTune GTK starts hidden at desktop login and registers its icon when the
+tray becomes available. If the tray later disappears without a replacement,
+the settings window opens so you can still control PipeTune.
 
 ## PipeTune settings window
 
@@ -388,13 +390,13 @@ PipeTune can apply EffeTune's Crosstalk Cancellation to stereo speaker playback.
 In EffeTune, measure both speakers at each ear position, assign all four paths,
 and save the preset. The two paths for each ear must belong to the same
 single-point measurement. See the
-[EffeTune instructions](https://github.com/Frieve-A/effetune/blob/v2.8.0/docs/plugins/spatial.md#crosstalk-cancellation).
+[EffeTune instructions](https://github.com/Frieve-A/effetune/blob/v2.9.0/docs/plugins/spatial.md#crosstalk-cancellation).
 
 PipeTune automatically reads `measurement-backups/<measurement-ID>.json`
 beside EffeTune's saved preset collection. The directory is
 `$XDG_CONFIG_HOME/effetune`, or `~/.config/effetune` when unset.
-EffeTune 2.8.0 desktop automatically
-[backs up measurements as JSON](https://github.com/Frieve-A/effetune/blob/v2.8.0/electron/measurement-backup-ipc.cjs)
+EffeTune 2.9.0 desktop automatically
+[backs up measurements as JSON](https://github.com/Frieve-A/effetune/blob/v2.9.0/electron/measurement-backup-ipc.cjs)
 there. When moving a preset to another computer, copy its referenced measurement
 JSON files too. For browser measurements, export JSON including the impulse
 responses and place it there using the original measurement ID as the filename.
@@ -411,8 +413,17 @@ Added latency is the selected Latency plus half the tap count, in samples.
 
 FIR Crossover, 5Band FIR PEQ, Group Delay EQ, and Group Delay PEQ are
 supported. PipeTune regenerates their convolution coefficients from the preset
-parameters and the active sample rate. FIR Crossover requires an even output
-bus from 4 through 16 channels and is omitted with a warning on other layouts.
+parameters and the active sample rate. FIR Crossover follows the preset's Ch
+selection: two selected channels pass through unchanged with zero added latency;
+an even selection from 4 through 16 channels splits the input stereo pair into
+frequency bands. Select All to use a multichannel bus; the default stereo pair
+and other stereo-pair selections pass through even on a wider bus. Mono and
+odd channel selections are omitted with a warning.
+
+Level Meter, Note Spectrogram, Oscilloscope, Spectrogram, Spectrum Analyzer,
+and Stereo Meter are ignored without warnings. They add no processing nodes,
+latency, or transfers between buses. Effects that also change the sound remain
+active even when they include a visualizer.
 
 Room EQ and IR Reverb remain unsupported. A Room EQ preset references
 measurement data that EffeTune resolves through its

@@ -1,5 +1,36 @@
 include_guard(GLOBAL)
 
+# GNU as uses @ for ARM comments, so adapt only the generated ELF directives.
+# Keep the upstream generator and its binary-model validation authoritative.
+function(pipetune_configure_effetune_note_models NATIVE_PROCESSOR)
+  if(NOT NATIVE_PROCESSOR MATCHES "^(arm|armv[5-8].*)$")
+    return()
+  endif()
+  find_program(PIPETUNE_NOTE_MODEL_NPX_EXECUTABLE npx REQUIRED)
+  set(template "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../tools/arm-note-model.fc")
+  get_target_property(model_sources effetune_note_models SOURCES)
+  set(adapted_sources)
+  foreach(source IN LISTS model_sources)
+    if(source MATCHES "\\.S$")
+      set(adapted "${source}.arm.S")
+      add_custom_command(
+        OUTPUT "${adapted}"
+        COMMAND "${PIPETUNE_NOTE_MODEL_NPX_EXECUTABLE}"
+                --yes --package=funcity-cli@1.5.0 --package=funcity@1.5.0
+                --package=commander@12.1.0
+                funcity --no-rc -D "input=${source}" -D "output=${adapted}"
+                run -i "${template}"
+        DEPENDS "${source}" "${template}"
+        COMMENT "Adapting Note Spectrogram model assembly for ARM"
+        VERBATIM)
+      list(APPEND adapted_sources "${adapted}")
+    else()
+      list(APPEND adapted_sources "${source}")
+    endif()
+  endforeach()
+  set_property(TARGET effetune_note_models PROPERTY SOURCES "${adapted_sources}")
+endfunction()
+
 # Resolves the target processor while accounting for a compiler ABI that is
 # narrower than the host kernel reported by CMAKE_SYSTEM_PROCESSOR.
 function(
@@ -200,7 +231,8 @@ function(
       "${EFFETUNE_DSP_DIR}/core"
       "${EFFETUNE_DSP_DIR}/generated/cpp"
       "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../src")
-  target_link_libraries(${TARGET_NAME} PRIVATE ${PFFFT_TARGET})
+  target_link_libraries(
+    ${TARGET_NAME} PRIVATE ${PFFFT_TARGET} effetune_note_models)
   target_compile_definitions(
     ${TARGET_NAME}
     PRIVATE

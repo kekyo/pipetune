@@ -4,6 +4,7 @@
  * https://github.com/kekyo/pipetune/
  */
 #include "pipetune/dsp_pipeline.h"
+#include "pipetune/dsp_backend.h"
 
 #include <algorithm>
 #include <array>
@@ -180,12 +181,11 @@ static bool testEffeTune26Pipeline(const std::filesystem::path &directory) {
       path,
       {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
   if (!check(result.pipeline != nullptr, result.error) ||
-      !check(result.pipeline->activePluginCount() == 23,
+      !check(result.pipeline->activePluginCount() == 24,
              "EffeTune generated-asset DSP nodes must become active") ||
-      !check(result.warnings.size() == 3,
-             "only unresolved and incompatible asset DSP nodes must be omitted") ||
-      !check(containsWarning(result.warnings, "FIR Crossover") &&
-                 containsWarning(result.warnings, "Room EQ") &&
+      !check(result.warnings.size() == 2,
+             "only unresolved asset DSP nodes must be omitted") ||
+      !check(containsWarning(result.warnings, "Room EQ") &&
                  containsWarning(result.warnings, "IR Reverb"),
              "every omitted asset-dependent DSP must be identified")) {
     return false;
@@ -301,6 +301,151 @@ static bool testGeneratedAssetDsp(const std::filesystem::path &directory) {
          !check(outputEnergy > inputEnergy * 1.5,
                 "5Band FIR PEQ must apply the requested 1 kHz gain"))) {
       return false;
+    }
+  }
+  return true;
+}
+
+static bool testFirCrossoverRouting(const std::filesystem::path &directory) {
+  const auto discovered = pipetune::discoverDspBackends();
+  auto backends = std::vector<std::shared_ptr<const pipetune::DspBackend>>{
+      discovered.scalar.backend};
+  for (const auto &variant : discovered.simdVariants) {
+    if (variant.backend != nullptr) backends.push_back(variant.backend);
+  }
+  for (const auto &backend : backends) {
+    if (!check(backend != nullptr, "FIR tests require the scalar backend")) return false;
+    for (const auto channels : {2u, 4u, 6u, 8u, 16u}) {
+      for (const auto selection : {"", "34", "A"}) {
+        if (channels == 2u && std::string_view(selection) == "34") continue;
+        if (channels != 2u && std::string_view(selection) == "A") continue;
+        for (const auto transfer : {false, true}) {
+          const auto routing = transfer ? ",\"inputBus\":0,\"outputBus\":1" : "";
+          const auto returnNode = transfer ?
+              ",{\"name\":\"Volume\",\"channel\":\"A\",\"parameters\":{},\"inputBus\":1,\"outputBus\":0}" : "";
+          const auto path = writePreset(directory, "fir-pair.effetune_preset",
+              "{\"pipeline\":[{\"name\":\"FIR Crossover\",\"channel\":\"" +
+              std::string(selection) + "\",\"parameters\":{\"pm\":\"lin\",\"tp\":8192,\"lt\":\"128\",\"bc\":4}" + routing + "}" + returnNode + "]}");
+          const auto result = pipetune::loadDspPipeline(path,
+              {.sampleRate = 48000.0F, .maxChannels = channels, .maxFrames = 64}, backend);
+          if (!check(result.pipeline != nullptr, result.error) ||
+              !check(result.warnings.empty(), "stereo FIR must not warn") ||
+              !check(result.pipeline->activePluginCount() == (transfer ? 2u : 1u),
+                     "stereo FIR must retain its routing node") ||
+              !check(result.pipeline->latencyFrames() == 0, "stereo FIR must have zero latency")) return false;
+          auto samples = std::vector<float>(channels * 64u);
+          for (auto index = std::size_t{0}; index < samples.size(); ++index)
+            samples[index] = static_cast<float>(static_cast<int>(index % 19u) - 9) / 32.0F;
+          const auto original = samples;
+          if (!check(result.pipeline->process(samples, channels, 64, 0.0) == pipetune::ProcessStatus::ok,
+                     "stereo FIR routing must process audio")) return false;
+          const auto first = std::string_view(selection) == "34" ? 2u : 0u;
+          for (auto channel = 0u; channel < channels; ++channel) {
+            const auto gain = transfer && channel >= first && channel < first + 2u ? 2.0F : 1.0F;
+            for (auto frame = 0u; frame < 64u; ++frame)
+              if (!check(samples[channel * 64u + frame] == gain * original[channel * 64u + frame],
+                         "stereo FIR must preserve PCM and the selected bus transfer")) return false;
+          }
+        }
+      }
+    }
+    for (const auto channels : {1u, 3u, 4u}) {
+      const auto path = writePreset(directory, "fir-invalid-width.effetune_preset",
+          "{\"pipeline\":[{\"name\":\"FIR Crossover\",\"channel\":\"" +
+          std::string(channels == 4u ? "1" : "A") + "\",\"parameters\":{}}]}");
+      const auto result = pipetune::loadDspPipeline(path,
+          {.sampleRate = 48000.0F, .maxChannels = channels, .maxFrames = 64}, backend);
+      if (!check(result.pipeline != nullptr, result.error) ||
+          !check(result.warnings.size() == 1 && containsWarning(result.warnings, "FIR Crossover"),
+                 "mono and odd FIR widths must warn") ||
+          !check(result.pipeline->activePluginCount() == 0 && result.pipeline->latencyFrames() == 0,
+                 "unsupported FIR widths must omit the node")) return false;
+    }
+  }
+  return true;
+}
+
+static bool testFirCrossoverBands(const std::filesystem::path &directory) {
+  const auto path = writePreset(directory, "fir-bands.effetune_preset", R"json(
+    {"pipeline":[{"name":"FIR Crossover","channel":"A","parameters":
+      {"pm":"lin","tp":8192,"lt":"128","bc":4,"f1":500,"f2":2000,"f3":8000,"s1":-96,"s2":-96,"s3":-96}}]})json");
+  const auto source = pipetune::loadDspPipeline(path,
+      {.sampleRate = 48000.0F, .maxChannels = 4, .maxFrames = 128});
+  if (!check(source.pipeline != nullptr, source.error)) return false;
+  std::filesystem::remove(path);
+  const auto discovered = pipetune::discoverDspBackends();
+  auto backends = std::vector<std::shared_ptr<const pipetune::DspBackend>>{discovered.scalar.backend};
+  for (const auto &variant : discovered.simdVariants) {
+    if (variant.backend != nullptr) backends.push_back(variant.backend);
+  }
+  for (const auto &backend : backends) {
+    const auto stereo = pipetune::rebuildDspPipeline(*source.pipeline,
+        {.sampleRate = 96000.0F, .maxChannels = 2, .maxFrames = 128}, backend);
+    if (!check(stereo.pipeline != nullptr, stereo.error) ||
+        !check(stereo.warnings.empty() && stereo.pipeline->latencyFrames() == 0,
+               "rebuild to stereo must discard crossover latency")) return false;
+    auto impulse = std::vector<float>(256u, 0.0F);
+    impulse[0] = 1.0F;
+    impulse[128] = -0.5F;
+    const auto expected = impulse;
+    if (!check(stereo.pipeline->process(impulse, 2, 128, 0.0) == pipetune::ProcessStatus::ok && impulse == expected,
+               "rebuilt stereo FIR must pass an impulse unchanged")) return false;
+    for (const auto channels : {4u, 6u, 8u, 16u}) {
+      const auto rate = channels == 6u ? 96000.0F : 48000.0F;
+      const auto bands = std::min(channels / 2u, 4u);
+      const auto frequencies = std::array{100.0, 1000.0, 4000.0, 16000.0};
+      for (auto band = 0u; band < bands; ++band) {
+        const auto result = pipetune::rebuildDspPipeline(*stereo.pipeline,
+            {.sampleRate = rate, .maxChannels = channels, .maxFrames = 128}, backend);
+        if (!check(result.pipeline != nullptr, result.error) ||
+            !check(result.warnings.empty() && result.pipeline->activePluginCount() == 1,
+                   "multichannel FIR must regenerate its asset after stereo rebuild") ||
+            !check(result.pipeline->latencyFrames() == 4224u,
+                   "linear FIR must report head block plus filter delay")) return false;
+        auto energy = std::array<double, 16>{};
+        for (auto block = 0u; block < 160u; ++block) {
+          auto samples = std::vector<float>(channels * 128u, 0.25F);
+          for (auto frame = 0u; frame < 128u; ++frame) {
+            const auto value = static_cast<float>(std::sin(2.0 * std::numbers::pi * frequencies[band] *
+                (block * 128u + frame) / rate));
+            samples[frame] = value;
+            samples[128u + frame] = value * 0.5F;
+          }
+          if (!check(result.pipeline->process(samples, channels, 128, block * 128.0 / rate) == pipetune::ProcessStatus::ok,
+                     "multichannel FIR must process frequency probes")) return false;
+          if (block >= 128u) {
+            for (auto channel = 0u; channel < channels; ++channel)
+              for (auto frame = 0u; frame < 128u; ++frame)
+                energy[channel] += static_cast<double>(samples[channel * 128u + frame]) * samples[channel * 128u + frame];
+          }
+        }
+        if (!check(energy[band * 2u] > 100.0, "FIR must retain the requested frequency in its band") ||
+            !check(std::abs(energy[band * 2u + 1u] / energy[band * 2u] - 0.25) < 0.001,
+                   "FIR must retain independent left and right gains")) return false;
+        for (auto channel = 0u; channel < channels; ++channel) {
+          if (channel / 2u != band &&
+              !check(energy[channel] < energy[band * 2u] * 0.01,
+                     "FIR must reject other bands and clear unused output channels")) return false;
+        }
+      }
+    }
+  }
+  // Wait in sample frames for asset preparation before measuring the impulse.
+  for (auto block = 0u; block < 200u; ++block) {
+    auto silence = std::vector<float>(512u, 0.0F);
+    if (!check(source.pipeline->process(silence, 4, 128, block * 128.0 / 48000.0) == pipetune::ProcessStatus::ok,
+               "FIR impulse preparation must process silence")) return false;
+  }
+  for (auto block = 0u; block < 64u; ++block) {
+    auto impulse = std::vector<float>(512u, 0.0F);
+    if (block == 0u) { impulse[0] = 1.0F; impulse[128] = -0.5F; }
+    if (!check(source.pipeline->process(impulse, 4, 128, (200u + block) * 128.0 / 48000.0) == pipetune::ProcessStatus::ok,
+               "FIR impulse must process")) return false;
+    for (auto frame = 0u; frame < 128u; ++frame) {
+      const auto expected = block * 128u + frame == 4224u ? 1.0F : 0.0F;
+      if (!check(approximately(impulse[frame] + impulse[256u + frame], expected, 1.0e-4F) &&
+                 approximately(impulse[128u + frame] + impulse[384u + frame], expected * -0.5F, 1.0e-4F),
+                 "linear FIR bands must reconstruct the input impulse at the reported delay")) return false;
     }
   }
   return true;
@@ -622,6 +767,96 @@ static bool testEffeTune27Multichannel(
   return true;
 }
 
+static bool testVisualizationPresets(const std::filesystem::path &directory) {
+  const auto visualizers = std::array{
+      "Level Meter", "Oscilloscope", "Spectrogram", "Spectrum Analyzer", "Stereo Meter", "Note Spectrogram"};
+  auto nodes = std::string{};
+  for (auto index = 0u; index < 100u; ++index) {
+    if (!nodes.empty()) nodes += ',';
+    nodes += "{\"name\":\"" + std::string(visualizers[index % visualizers.size()]) +
+        "\",\"parameters\":{\"mn\":{},\"cl\":\"Normal\"},\"inputBus\":0,\"outputBus\":1}";
+  }
+  const auto only = writePreset(directory, "visualizers.effetune_preset",
+                                "{\"pipeline\":[" + nodes + "]}");
+  auto loaded = pipetune::loadDspPipeline(
+      only, {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+  if (!check(loaded.pipeline != nullptr, loaded.error) ||
+      !check(loaded.warnings.empty(), "visualizers must not produce warnings") ||
+      !check(loaded.pipeline->activePluginCount() == 0 &&
+                 loaded.pipeline->latencyFrames() == 0,
+             "visualizers must not consume processing nodes or add latency")) {
+    return false;
+  }
+  auto samples = std::vector<float>{0.5F, -0.25F, 0.125F, -0.5F};
+  const auto original = samples;
+  if (!check(loaded.pipeline->process(samples, 2, 2, 0.0) == pipetune::ProcessStatus::ok &&
+                 samples == original,
+             "a visualization-only preset must pass audio without copying other buses")) {
+    return false;
+  }
+
+  const auto effects = std::string(R"json(
+    {"name":"Compressor","parameters":{}},
+    {"name":"Auto Leveler","parameters":{}},
+    {"name":"Transient Shaper","parameters":{}},
+    {"name":"Multiband Transient","parameters":{}},
+    {"name":"Power Amp Sag","parameters":{}},
+    {"name":"Volume","parameters":{"vl":-6}},
+    {"name":"Volume","parameters":{"vl":-12},"inputBus":1,"outputBus":0}
+  )json");
+  const auto sections = std::string(R"json(
+    {"name":"Section","enabled":false},
+    {"name":"Mute"},
+    {"name":"Section","enabled":true},
+  )json");
+  const auto mixed = writePreset(directory, "mixed-visualizers.effetune_preset",
+      "{\"pipeline\":[" + sections + nodes + "," + effects + "]}");
+  const auto reference = writePreset(directory, "audio-effects.effetune_preset",
+      "{\"pipeline\":[" + sections + effects + "]}");
+  auto actual = pipetune::loadDspPipeline(
+      mixed, {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+  auto expected = pipetune::loadDspPipeline(
+      reference, {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+  if (!check(actual.pipeline != nullptr, actual.error) ||
+      !check(expected.pipeline != nullptr, expected.error) ||
+      !check(actual.warnings.empty() && actual.pipeline->activePluginCount() == 7,
+             "audio processors with meters must remain active")) {
+    return false;
+  }
+  std::filesystem::remove(mixed);
+  const auto backends = pipetune::discoverDspBackends();
+  for (const auto rate : {48000.0F, 96000.0F}) {
+    const auto backend = rate == 96000.0F && backends.simd.backend != nullptr
+        ? backends.simd.backend : backends.scalar.backend;
+    actual = pipetune::rebuildDspPipeline(*actual.pipeline,
+        {.sampleRate = rate, .maxChannels = 2, .maxFrames = 64}, backend);
+    expected = pipetune::rebuildDspPipeline(*expected.pipeline,
+        {.sampleRate = rate, .maxChannels = 2, .maxFrames = 64}, backend);
+    if (!check(actual.pipeline != nullptr, actual.error) ||
+        !check(expected.pipeline != nullptr, expected.error) ||
+        !check(actual.warnings.empty() && actual.pipeline->activePluginCount() == 7 &&
+                   actual.pipeline->latencyFrames() == expected.pipeline->latencyFrames(),
+               "rebuild must preserve only the audio processors")) {
+      return false;
+    }
+    for (auto block = 0u; block < 100u; ++block) {
+      auto input = std::vector<float>(128);
+      for (auto index = 0u; index < input.size(); ++index) {
+        input[index] = 0.2F * std::sin(static_cast<float>(block * 64u + index) * 0.1F);
+      }
+      auto referenceAudio = input;
+      const auto time = static_cast<double>(block * 64u) / rate;
+      if (!check(actual.pipeline->process(input, 2, 64, time) == pipetune::ProcessStatus::ok &&
+                     expected.pipeline->process(referenceAudio, 2, 64, time) == pipetune::ProcessStatus::ok &&
+                     input == referenceAudio,
+                 "mixed presets must render exactly like their audio-processing nodes")) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 static bool testRetainedRecipeRebuild(
     const std::filesystem::path &directory) {
   const auto path = writePreset(
@@ -651,6 +886,8 @@ int main() {
   std::filesystem::create_directories(directory);
 
   const auto passed =
+      testFirCrossoverRouting(directory) && testFirCrossoverBands(directory) &&
+      testVisualizationPresets(directory) &&
       testBypassPipeline() && testCanonicalPreset(directory) &&
       testLegacyPreset(directory) && testEffeTune26Pipeline(directory) &&
       testGeneratedAssetDsp(directory) &&

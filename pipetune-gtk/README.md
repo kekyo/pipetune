@@ -246,8 +246,11 @@ compatibility with those notification areas is a project requirement.
 
 Closing the window hides it while a tray host is available. The tray icon
 opens and presents the window, and its menu provides Open PipeTune and Quit
-actions. A `--hidden` start remains unmapped regardless of tray discovery, so
-desktop-session autostart does not open a GTK window. In a session without a
+actions. A `--hidden` start remains unmapped while tray discovery runs or no
+host has been available, so desktop-session autostart does not open a GTK
+window while waiting for a tray host. The tray icon registers when a host
+starts or restarts. If an established tray disappears and no other tray host
+is available, the settings window opens. In a session that has never had a
 tray host, run `pipetune-gtk` normally to present the existing instance.
 
 ## End-to-end tests

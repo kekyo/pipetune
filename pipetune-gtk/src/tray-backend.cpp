@@ -14,6 +14,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -150,6 +151,12 @@ struct TrayBackendImplementation {
   GCancellable *cancellable;
   guint itemRegistrationId;
   guint menuRegistrationId;
+  guint watcherId;
+  guint hostSignalId;
+  guint hostPropertiesId;
+  std::string watcherOwner;
+  std::string registeredOwner;
+  std::uint64_t watcherRevision;
   GtkStatusIcon *statusIcon;
   GtkWidget *statusMenu;
   gulong embeddedSignalId;
@@ -160,13 +167,24 @@ struct TrayBackendImplementation {
         iconState(options.iconState), colorMode(options.colorMode),
         tooltip(options.tooltip),
         destroyed(false), connection(nullptr),
-        cancellable(g_cancellable_new()), itemRegistrationId(0),
-        menuRegistrationId(0), statusIcon(nullptr), statusMenu(nullptr),
+        cancellable(nullptr), itemRegistrationId(0),
+        menuRegistrationId(0), watcherId(0), hostSignalId(0),
+        hostPropertiesId(0), watcherOwner(), registeredOwner(),
+        watcherRevision(0), statusIcon(nullptr), statusMenu(nullptr),
         embeddedSignalId(0) {}
 
   ~TrayBackendImplementation() {
-    g_object_unref(cancellable);
+    g_clear_object(&cancellable);
   }
+};
+
+struct DiscoveryRequest {
+  std::shared_ptr<TrayBackendImplementation> implementation;
+  std::string owner;
+  std::uint64_t revision;
+  GCancellable *cancellable;
+
+  ~DiscoveryRequest() { g_object_unref(cancellable); }
 };
 
 struct TrayBackendState {
@@ -701,6 +719,10 @@ constexpr auto kDbusMenuVtable = GDBusInterfaceVTable{
 
 static bool registerStatusNotifierObjects(
     TrayBackendImplementation *implementation) {
+  if (implementation->itemRegistrationId != 0 &&
+      implementation->menuRegistrationId != 0) {
+    return true;
+  }
   auto *error = static_cast<GError *>(nullptr);
   implementation->itemRegistrationId =
       g_dbus_connection_register_object(
@@ -884,6 +906,10 @@ static void createFallbackBackend(
   if (implementation->destroyed) {
     return;
   }
+  implementation->registeredOwner.clear();
+  if (implementation->kind == TrayBackendKind::xembed) {
+    return;
+  }
   const auto selected = selectTrayBackendKind({
       .hasStatusNotifierItem = false,
       .hasXEmbed = canUseXEmbed(),
@@ -897,21 +923,35 @@ static void createFallbackBackend(
                   TrayBackendAvailabilityState::unavailable);
 }
 
+static bool isCurrentDiscovery(const DiscoveryRequest &request) {
+  const auto &implementation = *request.implementation;
+  return !implementation.destroyed &&
+         implementation.watcherRevision == request.revision &&
+         implementation.watcherOwner == request.owner;
+}
+
+static DiscoveryRequest *createDiscoveryRequest(
+    const std::shared_ptr<TrayBackendImplementation> &implementation) {
+  return new DiscoveryRequest{
+      .implementation = implementation,
+      .owner = implementation->watcherOwner,
+      .revision = implementation->watcherRevision,
+      .cancellable = G_CANCELLABLE(g_object_ref(implementation->cancellable)),
+  };
+}
+
 static void onStatusNotifierRegistered(GObject *source,
                                        GAsyncResult *result,
                                        gpointer userData) {
-  auto holder = std::unique_ptr<
-      std::shared_ptr<TrayBackendImplementation>>(
-      static_cast<std::shared_ptr<TrayBackendImplementation> *>(
-          userData));
-  auto implementation = *holder;
+  auto request = std::unique_ptr<DiscoveryRequest>(
+      static_cast<DiscoveryRequest *>(userData));
   auto *error = static_cast<GError *>(nullptr);
   auto *reply = g_dbus_connection_call_finish(
       G_DBUS_CONNECTION(source), result, &error);
   if (reply != nullptr) {
     g_variant_unref(reply);
   }
-  if (implementation->destroyed) {
+  if (!isCurrentDiscovery(*request)) {
     if (error != nullptr) {
       g_error_free(error);
     }
@@ -921,12 +961,15 @@ static void onStatusNotifierRegistered(GObject *source,
     std::cerr << "pipetune-gtk: cannot register with SNI watcher: "
               << error->message << '\n';
     g_error_free(error);
-    unregisterStatusNotifierObjects(implementation.get());
-    createFallbackBackend(implementation.get());
+    unregisterStatusNotifierObjects(request->implementation.get());
+    createFallbackBackend(request->implementation.get());
     return;
   }
+  auto *implementation = request->implementation.get();
+  destroyXEmbedBackend(implementation);
+  implementation->registeredOwner = request->owner;
   implementation->kind = TrayBackendKind::statusNotifierItem;
-  setAvailability(implementation.get(),
+  setAvailability(implementation,
                   TrayBackendAvailabilityState::available);
 }
 
@@ -938,27 +981,24 @@ static void registerStatusNotifier(
     return;
   }
   g_dbus_connection_call(
-      implementation->connection, kStatusNotifierWatcherService,
+      implementation->connection, implementation->watcherOwner.c_str(),
       kStatusNotifierWatcherPath, kStatusNotifierWatcherInterface,
       "RegisterStatusNotifierItem",
       g_variant_new("(s)", kStatusNotifierItemPath), nullptr,
       G_DBUS_CALL_FLAGS_NONE, -1, implementation->cancellable,
       onStatusNotifierRegistered,
-      new std::shared_ptr<TrayBackendImplementation>(implementation));
+      createDiscoveryRequest(implementation));
 }
 
 static void onStatusNotifierHostProperty(GObject *source,
                                          GAsyncResult *result,
                                          gpointer userData) {
-  auto holder = std::unique_ptr<
-      std::shared_ptr<TrayBackendImplementation>>(
-      static_cast<std::shared_ptr<TrayBackendImplementation> *>(
-          userData));
-  auto implementation = *holder;
+  auto request = std::unique_ptr<DiscoveryRequest>(
+      static_cast<DiscoveryRequest *>(userData));
   auto *error = static_cast<GError *>(nullptr);
   auto *reply = g_dbus_connection_call_finish(
       G_DBUS_CONNECTION(source), result, &error);
-  if (implementation->destroyed) {
+  if (!isCurrentDiscovery(*request)) {
     if (reply != nullptr) {
       g_variant_unref(reply);
     }
@@ -974,7 +1014,7 @@ static void onStatusNotifierHostProperty(GObject *source,
     if (error != nullptr) {
       g_error_free(error);
     }
-    createFallbackBackend(implementation.get());
+    createFallbackBackend(request->implementation.get());
     return;
   }
   auto *property = static_cast<GVariant *>(nullptr);
@@ -983,74 +1023,124 @@ static void onStatusNotifierHostProperty(GObject *source,
   g_variant_unref(property);
   g_variant_unref(reply);
   if (!available) {
-    createFallbackBackend(implementation.get());
+    createFallbackBackend(request->implementation.get());
     return;
   }
-  registerStatusNotifier(implementation);
+  if (request->implementation->registeredOwner == request->owner &&
+      request->implementation->kind == TrayBackendKind::statusNotifierItem) {
+    return;
+  }
+  registerStatusNotifier(request->implementation);
 }
 
 static void queryStatusNotifierHost(
     const std::shared_ptr<TrayBackendImplementation> &implementation) {
   g_dbus_connection_call(
-      implementation->connection, kStatusNotifierWatcherService,
+      implementation->connection, implementation->watcherOwner.c_str(),
       kStatusNotifierWatcherPath, "org.freedesktop.DBus.Properties",
       "Get",
       g_variant_new("(ss)", kStatusNotifierWatcherInterface,
                     "IsStatusNotifierHostRegistered"),
       G_VARIANT_TYPE("(v)"), G_DBUS_CALL_FLAGS_NONE, -1,
       implementation->cancellable, onStatusNotifierHostProperty,
-      new std::shared_ptr<TrayBackendImplementation>(implementation));
-}
-
-static void onStatusNotifierNameOwner(GObject *source,
-                                      GAsyncResult *result,
-                                      gpointer userData) {
-  auto holder = std::unique_ptr<
-      std::shared_ptr<TrayBackendImplementation>>(
-      static_cast<std::shared_ptr<TrayBackendImplementation> *>(
-          userData));
-  auto implementation = *holder;
-  auto *error = static_cast<GError *>(nullptr);
-  auto *reply = g_dbus_connection_call_finish(
-      G_DBUS_CONNECTION(source), result, &error);
-  if (implementation->destroyed) {
-    if (reply != nullptr) {
-      g_variant_unref(reply);
-    }
-    if (error != nullptr) {
-      g_error_free(error);
-    }
-    return;
-  }
-  if (reply == nullptr || error != nullptr) {
-    if (reply != nullptr) {
-      g_variant_unref(reply);
-    }
-    if (error != nullptr) {
-      g_error_free(error);
-    }
-    createFallbackBackend(implementation.get());
-    return;
-  }
-  auto hasOwner = gboolean{FALSE};
-  g_variant_get(reply, "(b)", &hasOwner);
-  g_variant_unref(reply);
-  if (hasOwner == FALSE) {
-    createFallbackBackend(implementation.get());
-    return;
-  }
-  queryStatusNotifierHost(implementation);
+      createDiscoveryRequest(implementation));
 }
 
 static void discoverStatusNotifier(
     const std::shared_ptr<TrayBackendImplementation> &implementation) {
-  g_dbus_connection_call(
-      implementation->connection, "org.freedesktop.DBus",
-      "/org/freedesktop/DBus", "org.freedesktop.DBus", "NameHasOwner",
-      g_variant_new("(s)", kStatusNotifierWatcherService),
-      G_VARIANT_TYPE("(b)"), G_DBUS_CALL_FLAGS_NONE, -1,
-      implementation->cancellable, onStatusNotifierNameOwner,
-      new std::shared_ptr<TrayBackendImplementation>(implementation));
+  ++implementation->watcherRevision;
+  if (implementation->cancellable != nullptr) {
+    g_cancellable_cancel(implementation->cancellable);
+    g_clear_object(&implementation->cancellable);
+  }
+  if (implementation->watcherOwner.empty()) {
+    createFallbackBackend(implementation.get());
+    return;
+  }
+  implementation->cancellable = g_cancellable_new();
+  queryStatusNotifierHost(implementation);
+}
+
+static std::shared_ptr<TrayBackendImplementation>
+lockWatcherBackend(gpointer userData) {
+  return static_cast<std::weak_ptr<TrayBackendImplementation> *>(userData)
+      ->lock();
+}
+
+static void freeWatcherBackend(gpointer userData) {
+  delete static_cast<std::weak_ptr<TrayBackendImplementation> *>(userData);
+}
+
+static void onWatcherAppeared(GDBusConnection *, const gchar *,
+                              const gchar *owner, gpointer userData) {
+  auto implementation = lockWatcherBackend(userData);
+  if (implementation == nullptr || implementation->destroyed) {
+    return;
+  }
+  implementation->watcherOwner = owner;
+  discoverStatusNotifier(implementation);
+}
+
+static void onWatcherVanished(GDBusConnection *, const gchar *,
+                              gpointer userData) {
+  auto implementation = lockWatcherBackend(userData);
+  if (implementation == nullptr || implementation->destroyed) {
+    return;
+  }
+  implementation->watcherOwner.clear();
+  discoverStatusNotifier(implementation);
+}
+
+static void onWatcherHostChanged(GDBusConnection *, const gchar *sender,
+                                 const gchar *, const gchar *interfaceName,
+                                 const gchar *signalName,
+                                 GVariant *parameters, gpointer userData) {
+  auto implementation = lockWatcherBackend(userData);
+  if (implementation == nullptr || implementation->destroyed ||
+      sender == nullptr || implementation->watcherOwner != sender) {
+    return;
+  }
+
+  auto hostLost = false;
+  if (std::strcmp(interfaceName, kStatusNotifierWatcherInterface) == 0) {
+    if (std::strcmp(signalName, "StatusNotifierHostUnregistered") == 0) {
+      hostLost = true;
+    } else if (std::strcmp(signalName, "StatusNotifierHostRegistered") != 0) {
+      return;
+    }
+  } else {
+    const char *changedInterface = nullptr;
+    auto *changed = static_cast<GVariant *>(nullptr);
+    auto *invalidated = static_cast<GVariant *>(nullptr);
+    g_variant_get(parameters, "(&s@a{sv}@as)", &changedInterface,
+                  &changed, &invalidated);
+    auto registered = gboolean{FALSE};
+    auto relevant =
+        std::strcmp(changedInterface, kStatusNotifierWatcherInterface) == 0;
+    if (relevant) {
+      relevant = g_variant_lookup(changed, "IsStatusNotifierHostRegistered",
+                                  "b", &registered) != FALSE;
+      hostLost = relevant && registered == FALSE;
+      auto iterator = GVariantIter{};
+      g_variant_iter_init(&iterator, invalidated);
+      const char *property = nullptr;
+      while (g_variant_iter_next(&iterator, "&s", &property)) {
+        if (std::strcmp(property, "IsStatusNotifierHostRegistered") == 0) {
+          relevant = true;
+          hostLost = true;
+        }
+      }
+    }
+    g_variant_unref(changed);
+    g_variant_unref(invalidated);
+    if (!relevant) {
+      return;
+    }
+  }
+  if (hostLost) {
+    createFallbackBackend(implementation.get());
+  }
+  discoverStatusNotifier(implementation);
 }
 
 TrayBackendState *createTrayBackend(TrayBackendOptions options) {
@@ -1066,7 +1156,24 @@ TrayBackendState *createTrayBackend(TrayBackendOptions options) {
     createFallbackBackend(implementation.get());
     return state;
   }
-  discoverStatusNotifier(implementation);
+  implementation->hostSignalId = g_dbus_connection_signal_subscribe(
+      implementation->connection, kStatusNotifierWatcherService,
+      kStatusNotifierWatcherInterface, nullptr, kStatusNotifierWatcherPath,
+      nullptr, G_DBUS_SIGNAL_FLAGS_NONE, onWatcherHostChanged,
+      new std::weak_ptr<TrayBackendImplementation>(implementation),
+      freeWatcherBackend);
+  implementation->hostPropertiesId = g_dbus_connection_signal_subscribe(
+      implementation->connection, kStatusNotifierWatcherService,
+      "org.freedesktop.DBus.Properties", "PropertiesChanged",
+      kStatusNotifierWatcherPath, kStatusNotifierWatcherInterface,
+      G_DBUS_SIGNAL_FLAGS_NONE, onWatcherHostChanged,
+      new std::weak_ptr<TrayBackendImplementation>(implementation),
+      freeWatcherBackend);
+  implementation->watcherId = g_bus_watch_name_on_connection(
+      implementation->connection, kStatusNotifierWatcherService,
+      G_BUS_NAME_WATCHER_FLAGS_NONE, onWatcherAppeared, onWatcherVanished,
+      new std::weak_ptr<TrayBackendImplementation>(implementation),
+      freeWatcherBackend);
   return state;
 }
 
@@ -1114,7 +1221,21 @@ void destroyTrayBackend(TrayBackendState *state) {
   implementation->destroyed = true;
   implementation->availability =
       TrayBackendAvailabilityState::unavailable;
-  g_cancellable_cancel(implementation->cancellable);
+  if (implementation->cancellable != nullptr) {
+    g_cancellable_cancel(implementation->cancellable);
+    g_clear_object(&implementation->cancellable);
+  }
+  if (implementation->watcherId != 0) {
+    g_bus_unwatch_name(implementation->watcherId);
+  }
+  if (implementation->hostSignalId != 0) {
+    g_dbus_connection_signal_unsubscribe(implementation->connection,
+                                         implementation->hostSignalId);
+  }
+  if (implementation->hostPropertiesId != 0) {
+    g_dbus_connection_signal_unsubscribe(implementation->connection,
+                                         implementation->hostPropertiesId);
+  }
   unregisterStatusNotifierObjects(implementation.get());
   destroyXEmbedBackend(implementation.get());
   g_clear_object(&implementation->connection);

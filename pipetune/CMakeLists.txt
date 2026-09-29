@@ -145,9 +145,12 @@ pipetune_resolve_native_processor(
   PIPETUNE_NATIVE_PROCESSOR
   "${CMAKE_SYSTEM_PROCESSOR}"
   "${CMAKE_SIZEOF_VOID_P}")
+set(CMAKE_PROJECT_effetune_dsp_INCLUDE
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EffeTuneNoteModels.cmake")
 add_subdirectory(
   "${PIPETUNE_EFFETUNE_DIR}/dsp"
   "${CMAKE_CURRENT_BINARY_DIR}/effetune-dsp")
+unset(CMAKE_PROJECT_effetune_dsp_INCLUDE)
 pipetune_configure_effetune_mxcsr_source(
   "${PIPETUNE_EFFETUNE_DIR}/dsp/core/engine.cpp"
   "${PIPETUNE_NATIVE_PROCESSOR}"

@@ -518,7 +518,8 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
            .reason = "not available in EffeTune's native DSP registry"});
       continue;
     }
-    if (!node.enabled || (insideSection && !sectionEnabled)) {
+    if (!node.enabled || (insideSection && !sectionEnabled) ||
+        definition->visualizationOnly) {
       continue;
     }
     const auto crosstalk = node.name == "Crosstalk Cancellation";
@@ -569,12 +570,8 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
     }
     auto generatedAsset = GeneratedFirAsset{};
     if (generatedAssetDsp) {
-      auto processingChannels =
+      const auto processingChannels =
           selectedProcessingChannels(channelSpec, options.maxChannels);
-      if (node.name == "FIR Crossover") {
-        processingChannels = options.maxChannels;
-        channelSpec = -2;
-      }
       generatedAsset = crosstalk ? designCrosstalkAsset(measured, node.parameters, options.sampleRate, processingChannels) : designGeneratedFirAsset(
           node.name, node.parameters, options.sampleRate, processingChannels,
           api);
@@ -588,14 +585,15 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
         return loadError(nodeError(index, generatedAsset.error),
                          std::move(warnings));
       }
-      if (!replacePackedParameter(
-              packed, "lt", packedHeadBlock(generatedAsset.info.head_block)) ||
-          !replacePackedParameter(
-              packed, "fd",
-              static_cast<float>(generatedAsset.filterDelaySamples)) ||
-          (node.name == "FIR Crossover" &&
+      if (!generatedAsset.payload.empty() &&
+          (!replacePackedParameter(
+               packed, "lt", packedHeadBlock(generatedAsset.info.head_block)) ||
            !replacePackedParameter(
-               packed, "bc", static_cast<float>(generatedAsset.bandCount)))) {
+               packed, "fd",
+               static_cast<float>(generatedAsset.filterDelaySamples)) ||
+           (node.name == "FIR Crossover" &&
+            !replacePackedParameter(
+                packed, "bc", static_cast<float>(generatedAsset.bandCount))))) {
         return loadError(
             nodeError(index, "generated FIR parameters do not match the native catalog"),
             std::move(warnings));

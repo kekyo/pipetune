@@ -733,6 +733,26 @@ if(BUILD_TESTING)
     COMMAND pipetune_gtk_tray_backend_tests)
 
   add_executable(
+    pipetune_gtk_tray_watcher_lifecycle_tests
+    test/tray-watcher-lifecycle-test.cpp)
+  target_link_libraries(
+    pipetune_gtk_tray_watcher_lifecycle_tests
+    PRIVATE pipetune_gtk_ui_core)
+  if(MSVC)
+    target_compile_options(
+      pipetune_gtk_tray_watcher_lifecycle_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      pipetune_gtk_tray_watcher_lifecycle_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(
+    NAME pipetune_gtk_tray_watcher_lifecycle_tests
+    COMMAND pipetune_gtk_tray_watcher_lifecycle_tests)
+  set_tests_properties(
+    pipetune_gtk_tray_watcher_lifecycle_tests PROPERTIES TIMEOUT 90)
+
+  add_executable(
     pipetune_gtk_main_window_tests
     test/main-window-test.cpp)
   target_link_libraries(
@@ -823,6 +843,23 @@ if(BUILD_TESTING)
       ${PIPETUNE_GTK_GDBUS})
   set_tests_properties(
     pipetune_gtk_application_lifecycle PROPERTIES TIMEOUT 60)
+
+  add_test(
+    NAME pipetune_gtk_autostart
+    COMMAND
+      ${PIPETUNE_GTK_DBUS_RUN_SESSION}
+      --config-file=${CMAKE_CURRENT_SOURCE_DIR}/test/dbus-session.conf --
+      ${PIPETUNE_GTK_XVFB_RUN} -a
+      ${PIPETUNE_GTK_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/autostart.mjs
+      $<TARGET_FILE:pipetune-gtk>
+      $<TARGET_FILE:pipetune_gtk_user_setup_helper>
+      $<TARGET_FILE:pipetune_gtk_tray_watcher_lifecycle_tests>
+      ${CMAKE_COMMAND}
+      ${CMAKE_BINARY_DIR}
+      ${PIPETUNE_GTK_AUTOSTART_DIR})
+  set_tests_properties(
+    pipetune_gtk_autostart PROPERTIES TIMEOUT 60)
 
   add_test(
     NAME pipetune_gtk_desktop_launch

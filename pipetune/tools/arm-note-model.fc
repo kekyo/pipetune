@@ -1,0 +1,5 @@
+{{
+set fs (require 'node:fs/promises')
+set source (fs.readFile input 'utf8')
+fs.writeFile output (replace (regex '@(progbits|object)$' 'gm') '%$1' source) 'utf8'
+}}

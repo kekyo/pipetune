@@ -217,7 +217,8 @@ struct PipelineLoadResult {
  * Unknown DSPs and unresolved stored-asset DSPs are omitted with warnings.
  * Supported generated FIR assets are rebuilt at the requested sample rate.
  * Disabled nodes, including nodes gated by a disabled Section, are omitted
- * without warnings.
+ * without warnings. Visualization-only analyzers are also omitted without
+ * warnings, active nodes, added latency, or transfers between buses.
  *
  * @param context Measurement storage used during preparation and rebuilds.
  * @param presetPath Preset path with the exact `.effetune_preset` extension.

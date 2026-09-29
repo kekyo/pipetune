@@ -33,8 +33,7 @@ EffeTune DSPは完全ネイティブコンパイルされたバイナリで計�
   DSPパイプラインを適用できます。
 - `.effetune_preset`拡張子の標準形式および旧形式のEffeTuneプリセットファイルを
   読み込み、DSPパイプラインをデスクトップ音声へ適用します。
-- EffeTune 2.8.0のネイティブDSP契約に対応し、CLIの直接実行では
-  1〜16チャンネルのプレーナー音声を処理出来ます。
+- EffeTune 2.9.0 DSPエンジンを実装しています。
 - PipeWireグラフとのサンプリング周波数の自動交渉、または44.1、48、96、192、384 kHzの指定周波数でDSPを計算します。
 - DSPは完全ネイティブコードで計算を処理します。互換性重視のScalar、SIMD自動選択、CPU検証済みの命令セット別実装を選択出来ます。
 - 入力の無音が設定時間続いた場合、エフェクトの残響を処理してからDSP演算を自動的に休止出来ます。
@@ -117,6 +116,9 @@ pipetune setup
 ![System tray](./images/system-tray.png)
 
 システムトレイアイコンをダブルクリックするか、あるいはメニューから"Open"を選択することで、PipeTune設定ウインドウを表示出来ます。
+PipeTune GTKはデスクトップへのログイン時にウインドウを表示せずに起動し、
+システムトレイが利用可能になるとアイコンを登録します。
+その後トレイが失われ、代わりのトレイもない場合は、操作を続けられるよう設定ウインドウを表示します。
 
 ## PipeTune設定ウインドウ
 
@@ -352,13 +354,13 @@ journalctl --user -u pipetune.service
 EffeTuneで設定したCrosstalk Cancellationを、ステレオスピーカー再生に適用できます。
 EffeTuneで左右それぞれの耳位置から左右スピーカーを測定し、4経路を割り当てて
 プリセットを保存してください。各耳の2経路は同じ単一ポイント測定から選択します。
-測定と設定方法は[EffeTuneの説明](https://github.com/Frieve-A/effetune/blob/v2.8.0/docs/i18n/ja/plugins/spatial.md#crosstalk-cancellation)を参照してください。
+測定と設定方法は[EffeTuneの説明](https://github.com/Frieve-A/effetune/blob/v2.9.0/docs/i18n/ja/plugins/spatial.md#crosstalk-cancellation)を参照してください。
 
 PipeTuneは保存済みプリセットと同じEffeTune設定ディレクトリの
 `measurement-backups/<測定ID>.json`を自動で読み込みます。
 設定ディレクトリは`$XDG_CONFIG_HOME/effetune`、未設定なら`~/.config/effetune`です。
-デスクトップ版EffeTune 2.8.0は、測定をこの場所へ
-[JSONとして自動バックアップ](https://github.com/Frieve-A/effetune/blob/v2.8.0/electron/measurement-backup-ipc.cjs)します。
+デスクトップ版EffeTune 2.9.0は、測定をこの場所へ
+[JSONとして自動バックアップ](https://github.com/Frieve-A/effetune/blob/v2.9.0/electron/measurement-backup-ipc.cjs)します。
 プリセットだけを別のPCへコピーする場合は、参照される測定JSONもコピーしてください。
 ブラウザ版ではIRを含む測定JSONをエクスポートし、元の測定IDをファイル名として
 同じ場所に配置できます。
@@ -374,8 +376,15 @@ PipeTuneは保存済みプリセットと同じEffeTune設定ディレクトリ�
 
 FIR Crossover、5Band FIR PEQ、Group Delay EQ、Group Delay PEQに対応しています。
 PipeTuneは、プリセットのパラメータと現在のサンプリング周波数から、これらのDSPに
-必要な畳み込み係数を再生成します。FIR Crossoverには4〜16の偶数チャンネルの
-出力バスが必要です。それ以外のチャンネル構成では、警告を表示してDSPを除外します。
+必要な畳み込み係数を再生成します。FIR CrossoverはプリセットのCh指定に従います。
+処理対象が2chなら音声を加工せず、追加遅延もありません。4〜16の偶数chなら、
+入力のステレオペアを周波数帯域に分割します。多チャンネルのバスで分割するには
+Allを選択してください。既定のステレオペアや別のステレオペアを選択した場合は、
+バスの幅にかかわらず無加工で通過します。単一chや奇数chの指定では警告付きで除外します。
+
+Level Meter、Note Spectrogram、Oscilloscope、Spectrogram、Spectrum Analyzer、
+Stereo Meterは警告なしで無視します。有効DSP数や遅延には含めず、バス間の転送も
+行いません。表示機能に加えて音声を加工するDSPは、引き続き処理します。
 
 Room EQとIR Reverbには対応していません。Room EQプリセットが参照する測定データは、
 EffeTuneの
