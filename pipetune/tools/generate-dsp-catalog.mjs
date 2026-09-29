@@ -69,6 +69,7 @@ const identifier = value => value.replaceAll(/[^A-Za-z0-9_]/gu, '_');
 const visualizationOnlyTypes = new Set([
   'LevelMeterPlugin',
   'NoteSpectrogramPlugin',
+  'PitchMeterPlugin',
   'OscilloscopePlugin',
   'SpectrogramPlugin',
   'SpectrumAnalyzerPlugin',

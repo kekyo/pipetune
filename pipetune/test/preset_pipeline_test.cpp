@@ -769,12 +769,12 @@ static bool testEffeTune27Multichannel(
 
 static bool testVisualizationPresets(const std::filesystem::path &directory) {
   const auto visualizers = std::array{
-      "Level Meter", "Oscilloscope", "Spectrogram", "Spectrum Analyzer", "Stereo Meter", "Note Spectrogram"};
+      "Level Meter", "Oscilloscope", "Spectrogram", "Spectrum Analyzer", "Stereo Meter", "Note Spectrogram", "Pitch Meter"};
   auto nodes = std::string{};
   for (auto index = 0u; index < 100u; ++index) {
     if (!nodes.empty()) nodes += ',';
     nodes += "{\"name\":\"" + std::string(visualizers[index % visualizers.size()]) +
-        "\",\"parameters\":{\"mn\":{},\"cl\":\"Normal\"},\"inputBus\":0,\"outputBus\":1}";
+        "\",\"parameters\":{\"mn\":{},\"cl\":\"Normal\",\"hq\":true},\"inputBus\":0,\"outputBus\":1}";
   }
   const auto only = writePreset(directory, "visualizers.effetune_preset",
                                 "{\"pipeline\":[" + nodes + "]}");
@@ -857,6 +857,33 @@ static bool testVisualizationPresets(const std::filesystem::path &directory) {
   return true;
 }
 
+static bool testEffeTune210Pipeline(const std::filesystem::path &directory) {
+  for (const auto name : {"Spatial Mapper", "TV Audio Simulator"}) {
+    const auto path = writePreset(directory, "effetune-2.10.effetune_preset",
+        "{\"pipeline\":[{\"name\":\"" + std::string(name) + "\"}]}");
+    auto loaded = pipetune::loadDspPipeline(
+        path, {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 128});
+    if (!check(loaded.pipeline != nullptr, loaded.error) ||
+        !check(loaded.warnings.empty() && loaded.pipeline->activePluginCount() == 1,
+               "EffeTune 2.10 audio processors must execute without warnings") ||
+        !check(loaded.pipeline->latencyFrames() > 0,
+               "EffeTune 2.10 audio processors must report their latency")) return false;
+    auto energy = 0.0;
+    for (auto block = 0u; block < 64u; ++block) {
+      auto samples = std::vector<float>(256);
+      for (auto i = 0u; i < samples.size(); ++i)
+        samples[i] = 0.2F * std::sin(static_cast<float>(block * 128u + i) * 0.1F);
+      if (!check(loaded.pipeline->process(samples, 2, 128,
+                  static_cast<double>(block * 128u) / 48000.0) == pipetune::ProcessStatus::ok,
+                 "EffeTune 2.10 preset processing failed")) return false;
+      for (const auto sample : samples) energy += sample * sample;
+    }
+    if (!check(std::isfinite(energy) && energy > 0.01,
+               "EffeTune 2.10 processors must render finite audible output")) return false;
+  }
+  return true;
+}
+
 static bool testRetainedRecipeRebuild(
     const std::filesystem::path &directory) {
   const auto path = writePreset(
@@ -887,7 +914,7 @@ int main() {
 
   const auto passed =
       testFirCrossoverRouting(directory) && testFirCrossoverBands(directory) &&
-      testVisualizationPresets(directory) &&
+      testVisualizationPresets(directory) && testEffeTune210Pipeline(directory) &&
       testBypassPipeline() && testCanonicalPreset(directory) &&
       testLegacyPreset(directory) && testEffeTune26Pipeline(directory) &&
       testGeneratedAssetDsp(directory) &&

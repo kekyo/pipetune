@@ -368,6 +368,7 @@ function(
       "${EFFETUNE_DSP_DIR}/plugins/lofi/bluetooth_sbc_simulator/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/lofi/cassette_artifacts/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/lofi/tape_artifacts/kernel.cpp"
+      "${EFFETUNE_DSP_DIR}/plugins/lofi/tv_audio_simulator/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/lofi/vinyl_artifacts/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/restoration/click_remover/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/restoration/clip_restorer/kernel.cpp"
