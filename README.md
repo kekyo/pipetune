@@ -33,7 +33,7 @@ application remains available through the desktop system tray.
 - You can load EffeTune preset files to apply a DSP pipeline to the audio output of the entire Linux system.
 - Loads standard and legacy EffeTune preset files with the `.effetune_preset` extension
   and applies the DSP pipeline to desktop audio.
-- Implemented EffeTune 2.9.0 DSP engine.
+- Implemented EffeTune 2.10.0 DSP engine.
 - Automatically negotiates the sampling rate with the PipeWire graph, or computes the DSP at specified rates of 44.1, 48, 96, 192, or 384 kHz.
 - The DSP performs computations entirely in native code. You can choose between Scalar (for compatibility), automatic SIMD selection, or CPU-verified implementations for specific instruction sets.
 - Automatically suspends DSP work after a selectable period of silent input while allowing effect tails to finish first.
@@ -380,58 +380,10 @@ journalctl --user -u pipetune.service
 
 ## More information
 
+- [Detail information](docs/en/details.md)
 - [Daemon operation and developer documentation](pipetune/README.md)
 - [GTK application behavior](pipetune-gtk/README.md)
 - [Native DSP backends and benchmarking](pipetune/docs/dsp-backends.md)
-
-## Crosstalk Cancellation
-
-PipeTune can apply EffeTune's Crosstalk Cancellation to stereo speaker playback.
-In EffeTune, measure both speakers at each ear position, assign all four paths,
-and save the preset. The two paths for each ear must belong to the same
-single-point measurement. See the
-[EffeTune instructions](https://github.com/Frieve-A/effetune/blob/v2.9.0/docs/plugins/spatial.md#crosstalk-cancellation).
-
-PipeTune automatically reads `measurement-backups/<measurement-ID>.json`
-beside EffeTune's saved preset collection. The directory is
-`$XDG_CONFIG_HOME/effetune`, or `~/.config/effetune` when unset.
-EffeTune 2.9.0 desktop automatically
-[backs up measurements as JSON](https://github.com/Frieve-A/effetune/blob/v2.9.0/electron/measurement-backup-ipc.cjs)
-there. When moving a preset to another computer, copy its referenced measurement
-JSON files too. For browser measurements, export JSON including the impulse
-responses and place it there using the original measurement ID as the filename.
-
-The service watches referenced measurements for updates, deletion, and recovery,
-even while GTK is closed, and rebuilds filters when the processing sample rate
-changes. Missing or invalid measurements, or a non-stereo channel selection,
-omit only this effect with a warning. Check that the backup contains impulse
-responses and that the preset references the correct measurement IDs.
-Use this effect at the measured listening position with speakers, not headphones.
-Added latency is the selected Latency plus half the tap count, in samples.
-
-## Limitations
-
-FIR Crossover, 5Band FIR PEQ, Group Delay EQ, and Group Delay PEQ are
-supported. PipeTune regenerates their convolution coefficients from the preset
-parameters and the active sample rate. FIR Crossover follows the preset's Ch
-selection: two selected channels pass through unchanged with zero added latency;
-an even selection from 4 through 16 channels splits the input stereo pair into
-frequency bands. Select All to use a multichannel bus; the default stereo pair
-and other stereo-pair selections pass through even on a wider bus. Mono and
-odd channel selections are omitted with a warning.
-
-Level Meter, Note Spectrogram, Oscilloscope, Spectrogram, Spectrum Analyzer,
-and Stereo Meter are ignored without warnings. They add no processing nodes,
-latency, or transfers between buses. Effects that also change the sound remain
-active even when they include a visualizer.
-
-Room EQ and IR Reverb remain unsupported. A Room EQ preset references
-measurement data that EffeTune resolves through its
-[measurement store](https://github.com/Frieve-A/effetune/blob/bedc6c662a6edc88c9644b7e00cec9122a250cfb/js/measurement-store/client.js#L71),
-and IR Reverb resolves a content identifier through its
-[IR library](https://github.com/Frieve-A/effetune/blob/bedc6c662a6edc88c9644b7e00cec9122a250cfb/plugins/reverb/ir_reverb.js#L766-L802).
-The required PCM is not contained in `.effetune_preset`, so PipeTune omits
-these nodes with warnings.
 
 ## License
 

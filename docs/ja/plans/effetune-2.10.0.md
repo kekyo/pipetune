@@ -4,7 +4,7 @@
 
 EffeTuneの参照をv2.9.0 (`71a48971165e8608740f49075bb95ef403534d8f`) から公式v2.10.0 (`abca7ff96f48f9cacace4d3c6aef5c4d3407bd8f`) へ更新し、追加・変更されたネイティブDSPをPipeTuneのプリセット実行環境で扱えるようにする。上流DSPライブラリの版は0.9.0から0.10.0になる。アプリ版とDSPライブラリ版を区別する。
 
-2026-09-29、PipeTune HEAD `c9cdbf4`のコード、上流の両タグ間の差分、公式リリースとタグ固定の文書・APIコメントを調査した。本書は実装前の計画であり、2.10.0への参照更新や製品コード変更、ビルド・実行検証はまだ行っていない。
+2026-09-29、PipeTune HEAD `c9cdbf4`のコード、上流の両タグ間の差分、公式リリースとタグ固定の文書・APIコメントを調査して本計画を作成した。以下の設計と実施手順は計画作成時の内容であり、承認後の実装・検証結果は末尾の実行記録に記載する。
 
 基本方針は、Spatial MapperとTV Audio Simulatorを音声加工DSPとして実行し、Pitch Meterは既存の可視化専用DSPと同様に無警告で無視すること。これは現在のPipeTuneが持つ「音声を加工しない解析DSPは実行しない」という方針を継続する設計である。
 
@@ -121,7 +121,7 @@ Spectrogram / Spectrum Analyzerの`hq`を含むカタログとバックエンド
 
 ### 4. 配布検証と利用者向け説明
 
-英日README、`pipetune/README.md`、`pipetune/docs/dsp-backends.md`、必要な公開APIコメントを更新する。内容は対応DSP、解析7種類の無視、Spatial Mapperの処理幅と遅延・出力配置、TV Audio Simulatorのレート・チャンネル・無音時停止に絞る。既存の2.8.0 / 2.9.0対応計画は履歴として維持する。
+英日README、`pipetune/README.md`、`pipetune/docs/dsp-backends.md`、`pipetune/docs/architecture.md`の現行版・登録数、必要な公開APIコメントを更新する。内容は対応DSP、解析7種類の無視、Spatial Mapperの処理幅と遅延・出力配置、TV Audio Simulatorのレート・チャンネル・無音時停止に絞る。既存の2.8.0 / 2.9.0対応計画は履歴として維持する。
 
 クリーンRelease、Debug/Release全体テスト、コンポーネント単独ビルド、一時DESTDIRへのインストール、13構成のパッケージ生成・インストール・起動確認を行う。GTK既存E2Eも全体実行に含める。今回アニメーションUIは追加しない。
 
@@ -147,16 +147,16 @@ Spectrogram / Spectrum Analyzerの`hq`を含むカタログとバックエンド
 
 ## 最終完了条件
 
-- [ ] 指定の公式v2.10.0を参照し、外部ソースを変更していない。
-- [ ] CLI/GTKがEffeTune 2.10.0を表示し、各バックエンドが103カーネルの契約を満たす。
-- [ ] Spatial Mapperのパラメータ、音声、ルーティング、遅延が検証され、実行条件が説明されている。
-- [ ] TV Audio Simulatorのgolden、対応レート、チャンネル、無音時停止と復帰が検証されている。
-- [ ] Pitch Meterを含む解析7種類が実行ノード・遅延・上限に含まれず、無警告で無視される。
-- [ ] Spectrogram / Spectrum Analyzerの新パラメータ契約がバックエンドと一致する。
-- [ ] プリセット再読込、レート変更、Scalar/SIMD切替と既存DSPの全体回帰に成功する。
-- [ ] クリーンビルド、Debug/Release全体テスト、単独ビルド、インストール、GTK E2Eが成功する。
-- [ ] 13構成のパッケージ検証結果と実行可能ISAでの音声比較結果を区別して記録する。
-- [ ] 利用者文書が対応条件・制限を説明し、本書に実行記録と条件照合が追記されている。
+- [x] 指定の公式v2.10.0を参照し、外部ソースを変更していない。
+- [x] CLI/GTKがEffeTune 2.10.0を表示し、各バックエンドが103カーネルの契約を満たす。
+- [x] Spatial Mapperのパラメータ、音声、ルーティング、遅延が検証され、実行条件が説明されている。
+- [x] TV Audio Simulatorのgolden、対応レート、チャンネル、無音時停止と復帰が検証されている。
+- [x] Pitch Meterを含む解析7種類が実行ノード・遅延・上限に含まれず、無警告で無視される。
+- [x] Spectrogram / Spectrum Analyzerの新パラメータ契約がバックエンドと一致する。
+- [x] プリセット再読込、レート変更、Scalar/SIMD切替と既存DSPの全体回帰に成功する。
+- [x] クリーンビルド、Debug/Release全体テスト、単独ビルド、インストール、GTK E2Eが成功する。
+- [x] 13構成のパッケージ検証結果と実行可能ISAでの音声比較結果を区別して記録する。
+- [x] 利用者文書が対応条件・制限を説明し、本書に実行記録と条件照合が追記されている。
 
 ## 参照
 
@@ -190,9 +190,9 @@ Spectrogram / Spectrum Analyzerの`hq`を含むカタログとバックエンド
 - [x] 段階ごとの成果物、検証、コミットと完了条件を定義した。
 - [x] 未実施の実行検証と、調査済みの事実を区別した。
 
-製品実装の完了条件は未達成。本書のみの変更であるため、計画作成時のビルド・テストは実行しない。
+計画作成時点では製品実装は未着手。本書のみの変更だったため、計画作成時にはビルド・テストを実行していない。承認後の実装結果は以下に記録する。
 
-## 実行記録
+## 実行記録（2026-09-29〜2026-09-30）
 
 - 基準の2.9.0: `make test`で148/148成功（611.17秒）。ログは`artifacts/verification/effetune-2.10.0/baseline.log`。以降もテストを選別せず、全体をCTestの並列実行で検証する。
 - 段階1 RED: 全148件中3件が期待どおり失敗（120.14秒）。103カーネルの登録とPitch Meterの無警告除外が旧版では成立せず、単独Releaseバックエンドでも同じカタログ不足を確認した。ログは`step1-red.log`。
@@ -201,3 +201,27 @@ Spectrogram / Spectrum Analyzerの`hq`を含むカタログとバックエンド
 - 公式システムプリセットの完全な行列を持つ検証用ファイルを`presets/`へ保存。6ch/12chはDSPの番号付きPCM出力を検証した。実スピーカーの配置・配線はこの環境では検証していないため、物理的な5.1/7.1.4接続を保証しない。
 - 段階2のRelease計測: 48/192 kHz、2/6/12/16chの8構成をScalar/baseline/x86-64-v3で実行した。最大16入力のTransparentを含む。48 kHzのScalarは659〜1,840 ns/frame、192 kHzは531〜1,728 ns/frame。計測プロセス全体の最大RSSは17,044〜31,304 KiB（ライブラリ・複数バックエンドを含む）。結果は`spatial-*.json`と`spatial-*.memory.txt`。このホストでの短い計測であり、他CPUや実デバイスの性能保証ではない。
 - 段階3: 全体151/151成功（125.56秒、`step3.log`）。TV Audio Simulatorの全6公式goldenをScalar/baseline/x86-64-v3で比較し、NICAM受信状態変更も再現。全8レートと8規格、mono/pair/Allのdry経路、無音時の出力・フレーム単位のフェード・sleep・reset後の復帰、32 kHzの失敗と固定48 kHzによる起動回復、新規2DSPを含むライブSIMD切替と失敗時の状態保持を確認した。追加テストのメンバ名・includeの記述誤りを修正した後に全体実行し、製品側の修正は不要だった。段階3の完了条件を満たした。
+- 段階4のホスト検証: 実装コミット`292d8af`、`19be984`、`fe2698e`と本段階の文書・公開コメント更新を対象に、Debug全151件（215.10秒）とRelease全150件（208.44秒）が成功。Debug固有の上流allocation guardが1件の差となる。Releaseは空の`build/effetune-2.10-release`から構成し、最終変更後にも再ビルドした。両スイートにコンポーネント単独ビルド、インストール配置、GTK E2Eを含む。ログは`final-debug-build.log`、`final-debug.log`、`release-build.log`、`final-release.log`。
+- ホスト検証コマンド: 各ビルドディレクトリを`cmake -S . -B <build> -DCMAKE_BUILD_TYPE=<Debug|Release> -DBUILD_TESTING=ON`で構成し、`cmake --build <build> --parallel 8`、`ctest --test-dir <build> --output-on-failure --parallel 6`を実行した。テストの選別は行っていない。
+- 一時DESTDIRへReleaseを`cmake --install build/effetune-2.10-release --prefix /usr`でインストールし、配置先のCLI/GTKがともに`EffeTune DSP 2.10.0`を表示して正常終了した。ホストのシステム領域へはインストールしていない。ログは`final-install.log`。
+- 段階4の計画補正: 最終文書検索で`pipetune/docs/architecture.md`の現行版・登録数が2.8.0/99のままだと判明した。当初の文書対象から漏れていたため、この1行を更新対象に追加した。Crosstalkの設計由来を示すv2.8.0参照は現行版の表記とは異なるため維持した。既に生成済みのパッケージは、既存のステージへ最終文書を反映して同じ`dpkg-deb --root-owner-group --build`で再梱包し、インストール検証をやり直す。コード・ビルド条件の変更はない。
+- 配布検証: `./build_package_all.sh --jobs 6`が正常終了し、下記13構成のReleaseパッケージ生成、メタデータ・依存関係・配置・ELF検証、新規コンテナへのインストール、CLI/GTKの版表示を確認した。ログは`packages.log`。ビルドで既存の`screw-up`経路から得たPipeTune版は2.9.5で、リリース番号の手動更新は行っていない。
+- 同梱文書の最終確認: 先行して生成した9パッケージの設計説明を再梱包し、全13構成でインストールと起動を再検証した。コマンドは`PIPETUNE_VERIFY_REFRESH_DOCS=1 node artifacts/verification/effetune-2.10.0/verify-installed.mjs`。ログは`final-installed.log`と`*-installed.log`。変更は文書のみのため、DSPの再コンパイルやホスト全体テストの追加実行は不要と判断した。
+- インストール済みDSPの実行: 各対象のベンチマーク実行ファイルをコンテナ内の`/usr/bin`へ配置し、ビルドディレクトリの共有ライブラリではなく`/usr/lib/pipetune`の配布ライブラリを使用した。Pitch Meter・Spatial Mapper・TV Audio Simulatorを含むプリセットを48 kHz、2ch/6chで処理し、有効ノード数2、警告による除外0、有限・非ゼロの出力を確認した。13対象×2幅の26構成、利用可能バックエンドを合わせて72回の実行が成功した。結果は`installed-results.json`と各対象の`*-2.json` / `*-6.json`。
+
+| 配布対象 | アーキテクチャ | 生成・インストール・起動・新DSP実行 |
+| --- | --- | --- |
+| Debian bookworm | x86_64、i686、arm64、armv7l | 全4構成成功 |
+| Debian trixie | x86_64、i686、arm64、armv7l、riscv64 | 全5構成成功 |
+| Ubuntu 24.04 | x86_64、arm64 | 全2構成成功 |
+| Ubuntu 26.04 | x86_64、arm64 | 全2構成成功 |
+
+| アーキテクチャ | 実行したバックエンド | 実行環境 |
+| --- | --- | --- |
+| x86_64 / i686 | Scalar、baseline、x86-64-v3 | ホストCPU上のコンテナ |
+| arm64 | Scalar、baseline、SVE | QEMUによるコンテナ実行 |
+| armv7l / riscv64 | Scalar、baseline | QEMUによるコンテナ実行 |
+
+ホストの全体テストでは、Scalar/baseline/x86-64-v3による新規13ケースと既存8ケースの公式golden音声比較を実行した。上記の配布物実行はロード・処理の確認であり、他アーキテクチャで全goldenを比較したという意味ではない。x86-64-v4はビルド・配布とELF検証まで成功したが、ホストCPUが非対応のため実行していない。実スピーカーの5.1/7.1.4配線と各実機CPUでのリアルタイム性能も未検証である。
+
+最終成果物は`artifacts/deb/`の13パッケージ。検証ディレクトリの`verification-manifest.json`に、実装・完了コミット、上流参照、全体テスト結果、配布物のSHA-256と実行構成を記録した。`git diff --check`は成功し、`deps/effetune`は指定の公式コミットを参照して変更なし。最終完了条件10項目を上記の証拠と照合し、すべて満たした。段階4を含む本計画の実装は完了した。

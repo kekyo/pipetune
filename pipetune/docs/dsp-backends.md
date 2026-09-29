@@ -27,7 +27,7 @@ This separation preserves one known compatibility path while allowing
 PipeTune to select the highest usable optimized implementation or a
 user-pinned tier. One pipeline always uses exactly one implementation.
 
-The private backend source set follows EffeTune 2.9.0, including the graph core
+The private backend source set follows EffeTune 2.10.0, including the graph core
 translation unit and generated graph-capacity contract required by its engine.
 PipeTune's loader surface remains the routed pipeline API and now includes
 `et_pipeline_latency`; PipeTune does not expose Graph v1 as a preset format or
@@ -49,12 +49,12 @@ applying the patch.
 
 Every private backend links the upstream `effetune_note_models` target. Its
 three models total 5,779,072 bytes (about 5.51 MiB) per shared library. The
-[upstream model build](https://github.com/Frieve-A/effetune/blob/v2.9.0/dsp/plugins/analyzer/note_spectrogram/models.cmake)
+[upstream model build](https://github.com/Frieve-A/effetune/blob/v2.10.0/dsp/plugins/analyzer/note_spectrogram/models.cmake)
 requires Python 3.10 or later to validate the data and generate the embedding.
 Python and separate model files are not runtime dependencies.
 
 For 32-bit Arm, the
-[upstream generator](https://github.com/Frieve-A/effetune/blob/v2.9.0/dsp/plugins/analyzer/note_spectrogram/embed_models.py)
+[upstream generator](https://github.com/Frieve-A/effetune/blob/v2.10.0/dsp/plugins/analyzer/note_spectrogram/embed_models.py)
 emits ELF directives with `@progbits` and `@object`, while GNU Arm assembly uses
 `@` for comments. PipeTune compiles a build-tree copy with those directive
 suffixes changed to `%progbits` and `%object`. The conversion uses npm/npx,
@@ -62,7 +62,7 @@ suffixes changed to `%progbits` and `%object`. The conversion uses npm/npx,
 keeps the CLI usable with bookworm's Node 18. The upstream sources, binary
 models, validation, and original generated files are preserved.
 
-Level Meter, Note Spectrogram, Oscilloscope, Spectrogram, Spectrum Analyzer,
+Level Meter, Note Spectrogram, Pitch Meter, Oscilloscope, Spectrogram, Spectrum Analyzer,
 and Stereo Meter remain in the validated backend catalog but are excluded
 from preset execution. They consume no active-node slots, add no latency,
 and perform no bus transfers. Their exclusion is silent and does not apply
@@ -125,9 +125,23 @@ and validates:
 - each kernel's parameter-byte capacity; and
 - every external-asset capacity.
 
-The pinned EffeTune 2.9.0 contract contains 100 kernels. A backend from an
+The pinned EffeTune 2.10.0 contract contains 103 kernels. A backend from an
 earlier release is rejected even though the numeric ABI version remains one,
 because its required symbols and complete catalog do not match.
+
+This count includes seven visualization-only analyzers excluded from preset
+execution and does not mean every registered effect is available without
+assets. Spatial Mapper and TV Audio Simulator need no external assets.
+Spectrogram and Spectrum Analyzer include the upstream `hq` parameter in
+their validated layouts even though PipeTune omits their execution.
+
+TV Audio Simulator uses the same source-specific `-ffp-contract=off` policy
+as the [upstream native build](https://github.com/Frieve-A/effetune/blob/v2.10.0/dsp/CMakeLists.txt).
+Artifact tests load every CPU-applicable private backend and compare all seven
+Spatial Mapper and six TV Audio Simulator golden cases, including their input
+stimuli and parameter events. Spatial Mapper's goldens originate from the
+[promoted native implementation](https://github.com/Frieve-A/effetune/blob/v2.10.0/dsp/plugins/spatial/spatial_mapper/golden/case-001.json);
+independent preset tests also check routing, polarity, silence, and actual delay.
 
 The scalar backend is mandatory. If it cannot be validated, a managed daemon
 starts in pass-through mode and reports the error; a direct preset run fails.
