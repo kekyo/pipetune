@@ -120,6 +120,9 @@ usable.
 
 Open the PipeTune settings window by double-clicking the system tray icon or
 selecting `Open` from its menu.
+PipeTune GTK starts hidden at desktop login and registers its icon when the
+tray becomes available. If the tray later disappears without a replacement,
+the settings window opens so you can still control PipeTune.
 
 ## PipeTune settings window
 

@@ -12,7 +12,10 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
+
+#include <unistd.h>
 
 static constexpr char kWatcherName[] = "org.kde.StatusNotifierWatcher";
 static constexpr char kWatcherPath[] = "/StatusNotifierWatcher";
@@ -30,6 +33,7 @@ struct Watcher {
   guint objectId = 0;
   bool hostRegistered = true;
   bool holdRegistration = false;
+  bool reportRegistrations = false;
   unsigned int hostQueries = 0;
   GDBusMethodInvocation *pendingRegistration = nullptr;
   std::vector<std::string> registeredItems;
@@ -72,6 +76,9 @@ static void onRegisterItem(GDBusConnection *, const gchar *sender,
         G_DBUS_METHOD_INVOCATION(g_object_ref(invocation));
   } else {
     g_dbus_method_invocation_return_value(invocation, nullptr);
+    if (watcher->reportRegistrations) {
+      std::cout << "registered\n" << std::flush;
+    }
   }
 }
 
@@ -206,7 +213,60 @@ static void setHost(Watcher &watcher, bool registered,
   }
 }
 
-int main() {
+static int serveWatcher() {
+  const auto *address = g_getenv("DBUS_SESSION_BUS_ADDRESS");
+  if (address == nullptr) {
+    std::cerr << "Session bus address is unavailable\n";
+    return 1;
+  }
+  auto watcher = std::unique_ptr<Watcher>{};
+  try {
+    watcher = createWatcher(address, true);
+    watcher->reportRegistrations = true;
+    changeName(*watcher, true);
+    auto *loop = g_main_loop_new(nullptr, FALSE);
+    auto *input = g_io_channel_unix_new(STDIN_FILENO);
+    const auto sourceId = g_io_add_watch(
+        input, static_cast<GIOCondition>(G_IO_IN | G_IO_HUP),
+        [](GIOChannel *source, GIOCondition condition,
+           gpointer userData) -> gboolean {
+          auto *mainLoop = static_cast<GMainLoop *>(userData);
+          if ((condition & G_IO_HUP) != 0) {
+            g_main_loop_quit(mainLoop);
+            return G_SOURCE_CONTINUE;
+          }
+          auto *line = static_cast<gchar *>(nullptr);
+          if (g_io_channel_read_line(source, &line, nullptr, nullptr,
+                                     nullptr) == G_IO_STATUS_NORMAL &&
+              line != nullptr && std::string_view(line) == "quit\n") {
+            g_main_loop_quit(mainLoop);
+          }
+          g_free(line);
+          return G_SOURCE_CONTINUE;
+        },
+        loop);
+    std::cout << "ready\n" << std::flush;
+    g_main_loop_run(loop);
+    g_source_remove(sourceId);
+    g_io_channel_unref(input);
+    g_main_loop_unref(loop);
+    changeName(*watcher, false);
+    destroyWatcher(watcher);
+    return 0;
+  } catch (const std::exception &exception) {
+    std::cerr << exception.what() << '\n';
+    destroyWatcher(watcher);
+    return 1;
+  }
+}
+
+int main(int argc, char **argv) {
+  if (argc == 2 && std::string_view(argv[1]) == "--serve") {
+    return serveWatcher();
+  }
+  if (argc != 1) {
+    return 1;
+  }
   auto *bus = g_test_dbus_new(G_TEST_DBUS_NONE);
   g_test_dbus_up(bus);
   auto *application = g_application_new(

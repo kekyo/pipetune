@@ -854,6 +854,7 @@ if(BUILD_TESTING)
       ${CMAKE_CURRENT_SOURCE_DIR}/test/autostart.mjs
       $<TARGET_FILE:pipetune-gtk>
       $<TARGET_FILE:pipetune_gtk_user_setup_helper>
+      $<TARGET_FILE:pipetune_gtk_tray_watcher_lifecycle_tests>
       ${CMAKE_COMMAND}
       ${CMAKE_BINARY_DIR}
       ${PIPETUNE_GTK_AUTOSTART_DIR})

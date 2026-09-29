@@ -1,15 +1,24 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
-const [executable, setupHelper, cmake, buildDirectory, autostartDirectory] =
-  process.argv.slice(2);
+const [
+  executable,
+  setupHelper,
+  watcherExecutable,
+  cmake,
+  buildDirectory,
+  autostartDirectory,
+] = process.argv.slice(2);
 if (
   executable === undefined ||
   setupHelper === undefined ||
+  watcherExecutable === undefined ||
   cmake === undefined ||
   buildDirectory === undefined ||
   autostartDirectory === undefined
@@ -100,6 +109,8 @@ const expectHidden = async () => {
 };
 
 let launchedProcessId;
+let watcher;
+let watcherExited;
 try {
   await Promise.all([
     mkdir(stage),
@@ -149,7 +160,50 @@ try {
   await execute(executable, ['--quit']);
   await waitForExit();
   launchedProcessId = undefined;
+
+  watcher = spawn(watcherExecutable, ['--serve'], {
+    env: environment,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  watcherExited = once(watcher, 'exit');
+  const watcherLines = createInterface({ input: watcher.stdout })[
+    Symbol.asyncIterator
+  ]();
+  let watcherError = '';
+  watcher.stderr.setEncoding('utf8');
+  watcher.stderr.on('data', (chunk) => {
+    watcherError += chunk;
+  });
+  const expectWatcherLine = async (expected) => {
+    const line = await watcherLines.next();
+    if (line.done || line.value !== expected) {
+      throw new Error(
+        `Watcher sent ${String(line.value)} instead of ${expected}: ${watcherError}`
+      );
+    }
+  };
+  await expectWatcherLine('ready');
+  await execute('gio', ['launch', desktopFile]);
+  await execute('gdbus', ['wait', '--session', '--timeout', '10', busName]);
+  launchedProcessId = await processId();
+  await expectWatcherLine('registered');
+  await expectHidden();
+
+  watcher.stdin.write('quit\n');
+  const [watcherCode] = await watcherExited;
+  watcher = undefined;
+  if (watcherCode !== 0) {
+    throw new Error(`Watcher exited with ${watcherCode}: ${watcherError}`);
+  }
+  await expectWindowCount(1);
+  await execute(executable, ['--quit']);
+  await waitForExit();
+  launchedProcessId = undefined;
 } finally {
+  if (watcher !== undefined) {
+    watcher.kill('SIGTERM');
+    await watcherExited;
+  }
   if (launchedProcessId !== undefined) {
     try {
       process.kill(launchedProcessId, 'SIGTERM');
