@@ -449,6 +449,9 @@ if(BUILD_TESTING)
       ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/lofi/cassette_artifacts/golden/case-001.f32
       ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/lofi/tape_artifacts/golden/case-001.f32
       ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/lofi/vinyl_artifacts/golden/case-003.f32
+      ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/restoration/click_remover/golden/case-006.f32
+      ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/restoration/clip_restorer/golden/case-001.f32
+      ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/restoration/noise_reduction/golden/case-003.f32
       ${PIPETUNE_DSP_BACKEND_ARTIFACT_TEST_ARGS})
 
   add_test(NAME pipetune_cli_help COMMAND pipetune --help)
