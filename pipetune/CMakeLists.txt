@@ -178,6 +178,7 @@ add_library(
   src/dsp_pipeline.cpp
   src/generated_fir_asset.cpp
   src/measurement_store.cpp
+  src/crosstalk_fir.cpp
   src/sample_rate.cpp
   src/startup_config.cpp
   src/startup_pipeline.cpp
@@ -321,6 +322,13 @@ if(BUILD_TESTING)
   target_include_directories(pipetune_measurement_store_tests PRIVATE src)
   target_link_libraries(pipetune_measurement_store_tests PRIVATE pipetune_core)
   add_test(NAME pipetune_measurement_store_tests COMMAND pipetune_measurement_store_tests)
+  add_executable(pipetune_crosstalk_parity_runner test/crosstalk_parity_runner.cpp)
+  target_link_libraries(pipetune_crosstalk_parity_runner PRIVATE pipetune_core)
+  add_test(NAME pipetune_crosstalk_parity
+    COMMAND ${PIPETUNE_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/crosstalk-parity.mjs
+      $<TARGET_FILE:pipetune_crosstalk_parity_runner>
+      ${PIPETUNE_EFFETUNE_DIR})
   set(PIPETUNE_DSP_BACKEND_COPY_COMMANDS)
   foreach(PIPETUNE_DSP_BACKEND_TARGET IN LISTS PIPETUNE_DSP_BACKEND_TARGETS)
     list(

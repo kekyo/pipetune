@@ -18,6 +18,7 @@
 namespace pipetune {
 
 struct DspBackendApi;
+struct CrosstalkMeasurements;
 
 struct GeneratedFirAsset {
   std::vector<std::uint8_t> payload;
@@ -28,6 +29,10 @@ struct GeneratedFirAsset {
   std::string omissionReason;
   std::string error;
 };
+
+GeneratedFirAsset designCrosstalkAsset(const CrosstalkMeasurements &measurements,
+                                      yyjson_val *parameters, float sampleRate,
+                                      std::uint32_t processingChannels);
 
 bool supportsGeneratedFirAsset(std::string_view displayName) noexcept;
 

@@ -8,6 +8,8 @@
 #include "dsp_backend_loader.h"
 #include "dsp_catalog.h"
 #include "generated_fir_asset.h"
+#include "measurement_store.h"
+#include <cstdlib>
 
 #include <yyjson.h>
 
@@ -47,6 +49,8 @@ struct DspPipeline::Impl {
   std::uint32_t latencyFrames = 0;
   std::size_t activePluginCount = 0;
   std::shared_ptr<const std::string> presetRecipe;
+  PipelineLoadContext loadContext;
+  std::vector<std::filesystem::path> measurementFiles;
 
   ~Impl() {
     if (engine != 0 && backend != nullptr) {
@@ -54,6 +58,17 @@ struct DspPipeline::Impl {
     }
   }
 };
+
+PipelineLoadContext defaultPipelineLoadContext() {
+  const auto *xdg = std::getenv("XDG_CONFIG_HOME");
+  const auto *home = std::getenv("HOME");
+  const auto directory = resolveEffeTuneDirectory(xdg == nullptr ? "" : xdg, home == nullptr ? "" : home);
+  return {directory.empty() ? std::filesystem::path{} : directory / "measurement-backups"};
+}
+
+std::span<const std::filesystem::path> DspPipeline::measurementFiles() const noexcept {
+  return implementation_->measurementFiles;
+}
 
 struct PresetNode {
   std::string_view name;
@@ -427,7 +442,8 @@ createBypassDspPipeline(const PipelineBuildOptions &options) {
 PipelineLoadResult DspPipeline::buildFromRecipe(
     std::shared_ptr<const std::string> presetRecipe,
     const PipelineBuildOptions &options,
-    std::shared_ptr<const DspBackend> backend) {
+    std::shared_ptr<const DspBackend> backend,
+    const PipelineLoadContext &context) {
   const auto validation = validateBuildOptions(options);
   if (!validation.empty()) {
     return loadError(validation);
@@ -453,6 +469,8 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
   implementation->sampleRate = options.sampleRate;
   implementation->maxChannels = options.maxChannels;
   implementation->maxFrames = options.maxFrames;
+  implementation->loadContext = context;
+  auto measurementStore = MeasurementStore{context.measurementDirectory, {}};
   implementation->presetRecipe = std::move(presetRecipe);
   implementation->backend = std::move(backend);
   const auto &api = dspBackendApi(*implementation->backend);
@@ -503,7 +521,25 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
     if (!node.enabled || (insideSection && !sectionEnabled)) {
       continue;
     }
-    const auto generatedAssetDsp = supportsGeneratedFirAsset(node.name);
+    const auto crosstalk = node.name == "Crosstalk Cancellation";
+    auto measured = CrosstalkMeasurements{};
+    if (crosstalk) {
+      auto ids = std::array<std::string, 4>{};
+      constexpr auto keys = std::array{"ll", "lr", "rl", "rr"};
+      for (std::size_t slot = 0; slot < keys.size(); ++slot) {
+        auto *value = yyjson_obj_get(node.parameters, keys[slot]);
+        if (yyjson_is_str(value)) ids[slot].assign(yyjson_get_str(value), yyjson_get_len(value));
+      }
+      measured = loadCrosstalkMeasurements(measurementStore, ids);
+      for (const auto &file : measured.files) {
+        if (std::ranges::find(implementation->measurementFiles, file) == implementation->measurementFiles.end()) implementation->measurementFiles.push_back(file);
+      }
+      if (!measured.error.empty()) {
+        warnings.push_back({.nodeIndex = index, .pluginName = std::string(node.name), .reason = measured.error});
+        continue;
+      }
+    }
+    const auto generatedAssetDsp = crosstalk || supportsGeneratedFirAsset(node.name);
     if (definition->requiresExternalAssets && !generatedAssetDsp) {
       warnings.push_back({.nodeIndex = index,
                           .pluginName = std::string(node.name),
@@ -539,7 +575,7 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
         processingChannels = options.maxChannels;
         channelSpec = -2;
       }
-      generatedAsset = designGeneratedFirAsset(
+      generatedAsset = crosstalk ? designCrosstalkAsset(measured, node.parameters, options.sampleRate, processingChannels) : designGeneratedFirAsset(
           node.name, node.parameters, options.sampleRate, processingChannels,
           api);
       if (!generatedAsset.omissionReason.empty()) {
@@ -618,23 +654,26 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
   implementation->activePluginCount = activeNodes.size();
 
   auto pipeline = std::unique_ptr<DspPipeline>(new DspPipeline(std::move(implementation)));
-  return {.pipeline = std::move(pipeline), .warnings = std::move(warnings), .error = {}};
+  auto files = std::vector<std::filesystem::path>(pipeline->measurementFiles().begin(), pipeline->measurementFiles().end());
+  return {.pipeline = std::move(pipeline), .warnings = std::move(warnings), .measurementFiles = std::move(files), .error = {}};
 }
 
 PipelineLoadResult loadDspPipeline(const std::filesystem::path &presetPath,
-                                   const PipelineBuildOptions &options) {
+                                   const PipelineBuildOptions &options,
+                                   const PipelineLoadContext &context) {
   auto backend = loadDspBackend(DspBackendKind::scalar);
   if (backend.backend == nullptr) {
     return loadError("scalar DSP backend is unavailable: " +
                      backend.error);
   }
-  return loadDspPipeline(presetPath, options, std::move(backend.backend));
+  return loadDspPipeline(presetPath, options, std::move(backend.backend), context);
 }
 
 PipelineLoadResult
 loadDspPipeline(const std::filesystem::path &presetPath,
                 const PipelineBuildOptions &options,
-                std::shared_ptr<const DspBackend> backend) {
+                std::shared_ptr<const DspBackend> backend,
+                const PipelineLoadContext &context) {
   if (presetPath.extension() != ".effetune_preset") {
     return loadError("preset path must use the exact .effetune_preset extension");
   }
@@ -666,7 +705,7 @@ loadDspPipeline(const std::filesystem::path &presetPath,
   }
   return DspPipeline::buildFromRecipe(
       std::make_shared<const std::string>(std::move(contents)), options,
-      std::move(backend));
+      std::move(backend), context);
 }
 
 PipelineLoadResult
@@ -693,7 +732,7 @@ rebuildDspPipeline(const DspPipeline &source,
             .error = std::move(created.error)};
   }
   return DspPipeline::buildFromRecipe(
-      source.implementation_->presetRecipe, options, std::move(backend));
+      source.implementation_->presetRecipe, options, std::move(backend), source.implementation_->loadContext);
 }
 
 } // namespace pipetune

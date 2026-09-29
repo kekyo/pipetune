@@ -70,6 +70,18 @@ class DspPipelineSlot;
 struct PipelineCreateResult;
 struct PipelineLoadResult;
 
+/** Non-audio resources used when preparing a preset. */
+struct PipelineLoadContext {
+  /** Directory containing EffeTune's measurement backup JSON files. */
+  std::filesystem::path measurementDirectory;
+};
+
+/**
+ * Resolves measurement storage from XDG_CONFIG_HOME and HOME.
+ * @return Context with an empty directory when neither variable is available.
+ */
+PipelineLoadContext defaultPipelineLoadContext();
+
 /**
  * Owns one prepared EffeTune native DSP pipeline.
  *
@@ -124,6 +136,8 @@ public:
   std::uint32_t latencyFrames() const noexcept;
   /** Returns the number of enabled, supported native DSP nodes. */
   std::size_t activePluginCount() const noexcept;
+  /** Returns referenced measurement files, including missing files. */
+  std::span<const std::filesystem::path> measurementFiles() const noexcept;
   /** Returns the native backend in use, or no value for a bypass pipeline. */
   std::optional<DspBackendKind> backendKind() const noexcept;
   /** Returns the concrete native variant, or no value for a bypass pipeline. */
@@ -134,7 +148,8 @@ private:
   static PipelineLoadResult
   buildFromRecipe(std::shared_ptr<const std::string> presetRecipe,
                   const PipelineBuildOptions &options,
-                  std::shared_ptr<const DspBackend> backend);
+                  std::shared_ptr<const DspBackend> backend,
+                  const PipelineLoadContext &context);
   bool usesNativeDsp() const noexcept;
   std::unique_ptr<Impl> implementation_;
 
@@ -144,11 +159,13 @@ private:
   friend PipelineCreateResult
   createBypassDspPipeline(const PipelineBuildOptions &options);
   friend PipelineLoadResult loadDspPipeline(const std::filesystem::path &presetPath,
-                                            const PipelineBuildOptions &options);
+                                            const PipelineBuildOptions &options,
+                                            const PipelineLoadContext &context);
   friend PipelineLoadResult
   loadDspPipeline(const std::filesystem::path &presetPath,
                   const PipelineBuildOptions &options,
-                  std::shared_ptr<const DspBackend> backend);
+                  std::shared_ptr<const DspBackend> backend,
+                  const PipelineLoadContext &context);
   friend PipelineLoadResult
   rebuildDspPipeline(const DspPipeline &source,
                      const PipelineBuildOptions &options);
@@ -188,6 +205,8 @@ struct PipelineLoadResult {
   std::unique_ptr<DspPipeline> pipeline;
   /** Non-fatal omitted-node diagnostics. */
   std::vector<PipelineWarning> warnings;
+  /** Referenced backup paths, including unavailable measurements. */
+  std::vector<std::filesystem::path> measurementFiles = {};
   /** Fatal load or construction diagnostic. */
   std::string error;
 };
@@ -200,16 +219,19 @@ struct PipelineLoadResult {
  * Disabled nodes, including nodes gated by a disabled Section, are omitted
  * without warnings.
  *
+ * @param context Measurement storage used during preparation and rebuilds.
  * @param presetPath Preset path with the exact `.effetune_preset` extension.
  * @param options Maximum processing format for the prepared native engine.
  * @return A pipeline or a fatal diagnostic, plus any non-fatal warnings.
  */
 PipelineLoadResult loadDspPipeline(const std::filesystem::path &presetPath,
-                                   const PipelineBuildOptions &options);
+                                   const PipelineBuildOptions &options,
+                                   const PipelineLoadContext &context = defaultPipelineLoadContext());
 
 /**
  * Loads a preset with an explicitly selected, validated DSP backend.
  *
+ * @param context Measurement storage used during preparation and rebuilds.
  * @param presetPath Preset path with the exact `.effetune_preset` extension.
  * @param options Maximum processing format for the prepared native engine.
  * @param backend Backend whose library must outlive the prepared engine.
@@ -218,7 +240,8 @@ PipelineLoadResult loadDspPipeline(const std::filesystem::path &presetPath,
 PipelineLoadResult
 loadDspPipeline(const std::filesystem::path &presetPath,
                 const PipelineBuildOptions &options,
-                std::shared_ptr<const DspBackend> backend);
+                std::shared_ptr<const DspBackend> backend,
+                const PipelineLoadContext &context = defaultPipelineLoadContext());
 
 /**
  * Rebuilds a pipeline at another rate from its retained preset recipe.
