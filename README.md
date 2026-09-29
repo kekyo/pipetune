@@ -33,7 +33,7 @@ application remains available through the desktop system tray.
 - You can load EffeTune preset files to apply a DSP pipeline to the audio output of the entire Linux system.
 - Loads standard and legacy EffeTune preset files with the `.effetune_preset` extension
   and applies the DSP pipeline to desktop audio.
-- Supports the EffeTune 2.7.0 native DSP contract, including direct runs with
+- Supports the EffeTune 2.8.0 native DSP contract, including direct runs with
   1 through 16 planar channels.
 - Automatically negotiates the sampling rate with the PipeWire graph, or computes the DSP at specified rates of 44.1, 48, 96, 192, or 384 kHz.
 - The DSP performs computations entirely in native code. You can choose between Scalar (for compatibility), automatic SIMD selection, or CPU-verified implementations for specific instruction sets.
@@ -381,6 +381,31 @@ journalctl --user -u pipetune.service
 - [Daemon operation and developer documentation](pipetune/README.md)
 - [GTK application behavior](pipetune-gtk/README.md)
 - [Native DSP backends and benchmarking](pipetune/docs/dsp-backends.md)
+
+## Crosstalk Cancellation
+
+PipeTune can apply EffeTune's Crosstalk Cancellation to stereo speaker playback.
+In EffeTune, measure both speakers at each ear position, assign all four paths,
+and save the preset. The two paths for each ear must belong to the same
+single-point measurement. See the
+[EffeTune instructions](https://github.com/Frieve-A/effetune/blob/v2.8.0/docs/plugins/spatial.md#crosstalk-cancellation).
+
+PipeTune automatically reads `measurement-backups/<measurement-ID>.json`
+beside EffeTune's saved preset collection. The directory is
+`$XDG_CONFIG_HOME/effetune`, or `~/.config/effetune` when unset.
+EffeTune 2.8.0 desktop automatically
+[backs up measurements as JSON](https://github.com/Frieve-A/effetune/blob/v2.8.0/electron/measurement-backup-ipc.cjs)
+there. When moving a preset to another computer, copy its referenced measurement
+JSON files too. For browser measurements, export JSON including the impulse
+responses and place it there using the original measurement ID as the filename.
+
+The service watches referenced measurements for updates, deletion, and recovery,
+even while GTK is closed, and rebuilds filters when the processing sample rate
+changes. Missing or invalid measurements, or a non-stereo channel selection,
+omit only this effect with a warning. Check that the backup contains impulse
+responses and that the preset references the correct measurement IDs.
+Use this effect at the measured listening position with speakers, not headphones.
+Added latency is the selected Latency plus half the tap count, in samples.
 
 ## Limitations
 

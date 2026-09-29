@@ -33,7 +33,7 @@ EffeTune DSPは完全ネイティブコンパイルされたバイナリで計�
   DSPパイプラインを適用できます。
 - `.effetune_preset`拡張子の標準形式および旧形式のEffeTuneプリセットファイルを
   読み込み、DSPパイプラインをデスクトップ音声へ適用します。
-- EffeTune 2.7.0のネイティブDSP契約に対応し、CLIの直接実行では
+- EffeTune 2.8.0のネイティブDSP契約に対応し、CLIの直接実行では
   1〜16チャンネルのプレーナー音声を処理出来ます。
 - PipeWireグラフとのサンプリング周波数の自動交渉、または44.1、48、96、192、384 kHzの指定周波数でDSPを計算します。
 - DSPは完全ネイティブコードで計算を処理します。互換性重視のScalar、SIMD自動選択、CPU検証済みの命令セット別実装を選択出来ます。
@@ -346,6 +346,29 @@ journalctl --user -u pipetune.service
 - [デーモンの操作方法と開発者向けドキュメント (英語)](pipetune/README.md)
 - [GTKアプリケーションの動作 (英語)](pipetune-gtk/README.md)
 - [ネイティブDSPバックエンドとベンチマーク (英語)](pipetune/docs/dsp-backends.md)
+
+## Crosstalk Cancellation
+
+EffeTuneで設定したCrosstalk Cancellationを、ステレオスピーカー再生に適用できます。
+EffeTuneで左右それぞれの耳位置から左右スピーカーを測定し、4経路を割り当てて
+プリセットを保存してください。各耳の2経路は同じ単一ポイント測定から選択します。
+測定と設定方法は[EffeTuneの説明](https://github.com/Frieve-A/effetune/blob/v2.8.0/docs/i18n/ja/plugins/spatial.md#crosstalk-cancellation)を参照してください。
+
+PipeTuneは保存済みプリセットと同じEffeTune設定ディレクトリの
+`measurement-backups/<測定ID>.json`を自動で読み込みます。
+設定ディレクトリは`$XDG_CONFIG_HOME/effetune`、未設定なら`~/.config/effetune`です。
+デスクトップ版EffeTune 2.8.0は、測定をこの場所へ
+[JSONとして自動バックアップ](https://github.com/Frieve-A/effetune/blob/v2.8.0/electron/measurement-backup-ipc.cjs)します。
+プリセットだけを別のPCへコピーする場合は、参照される測定JSONもコピーしてください。
+ブラウザ版ではIRを含む測定JSONをエクスポートし、元の測定IDをファイル名として
+同じ場所に配置できます。
+
+測定JSONの更新・削除・復旧はサービスが監視し、GTKを閉じていても反映します。
+動作サンプリング周波数が変わった場合はフィルターを再生成します。
+測定が欠落・不正な場合やステレオ以外を選択した場合は、このDSPだけを警告付きで
+除外します。波形を含む測定バックアップがあることと、プリセットの測定IDを確認してください。
+ヘッドホン用ではなく、測定した聴取位置で使用する機能です。
+追加遅延はLatencyの指定値とタップ数の半分の合計（サンプル数）です。
 
 ## 制約
 

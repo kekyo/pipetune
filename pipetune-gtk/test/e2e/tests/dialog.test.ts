@@ -765,6 +765,7 @@ describe('PipeTune GTK dialog', () => {
     await selectComboItem('dspBackendCombo', 4);
     await waitForCommands(['set-dsp-backend']);
     await waitForLabel('status-errors-configuration', 'E2E stale status');
+    await session.publishStatus();
     await waitForLabel('status-errors-configuration', 'None');
 
     const apply = await getElement('applyButton', 'button');
@@ -786,6 +787,7 @@ describe('PipeTune GTK dialog', () => {
     await selectComboItem('rateCombo', 3);
     await waitForCommands(['set-rate']);
     await waitForLabel('status-errors-configuration', 'E2E stale status');
+    await session.publishStatus();
     await waitForLabel('status-errors-configuration', 'None');
     await waitForLabel('status-rates-fixed', '96 kHz');
     await toPass(

@@ -177,6 +177,8 @@ add_library(
   src/dsp_catalog.cpp
   src/dsp_pipeline.cpp
   src/generated_fir_asset.cpp
+  src/measurement_store.cpp
+  src/crosstalk_fir.cpp
   src/sample_rate.cpp
   src/startup_config.cpp
   src/startup_pipeline.cpp
@@ -316,6 +318,17 @@ install(
   DESTINATION "${PIPETUNE_DOCUMENTATION_DIR}")
 
 if(BUILD_TESTING)
+  add_executable(pipetune_measurement_store_tests test/measurement_store_test.cpp)
+  target_include_directories(pipetune_measurement_store_tests PRIVATE src)
+  target_link_libraries(pipetune_measurement_store_tests PRIVATE pipetune_core)
+  add_test(NAME pipetune_measurement_store_tests COMMAND pipetune_measurement_store_tests)
+  add_executable(pipetune_crosstalk_parity_runner test/crosstalk_parity_runner.cpp)
+  target_link_libraries(pipetune_crosstalk_parity_runner PRIVATE pipetune_core)
+  add_test(NAME pipetune_crosstalk_parity
+    COMMAND ${PIPETUNE_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/crosstalk-parity.mjs
+      $<TARGET_FILE:pipetune_crosstalk_parity_runner>
+      ${PIPETUNE_EFFETUNE_DIR})
   set(PIPETUNE_DSP_BACKEND_COPY_COMMANDS)
   foreach(PIPETUNE_DSP_BACKEND_TARGET IN LISTS PIPETUNE_DSP_BACKEND_TARGETS)
     list(
@@ -449,6 +462,9 @@ if(BUILD_TESTING)
       ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/lofi/cassette_artifacts/golden/case-001.f32
       ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/lofi/tape_artifacts/golden/case-001.f32
       ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/lofi/vinyl_artifacts/golden/case-003.f32
+      ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/restoration/click_remover/golden/case-006.f32
+      ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/restoration/clip_restorer/golden/case-001.f32
+      ${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/restoration/noise_reduction/golden/case-003.f32
       ${PIPETUNE_DSP_BACKEND_ARTIFACT_TEST_ARGS})
 
   add_test(NAME pipetune_cli_help COMMAND pipetune --help)
@@ -1020,5 +1036,5 @@ if(BUILD_TESTING)
       $<TARGET_FILE:pipetune>
       $<TARGET_FILE:pipetune_effetune_backend_artifact_tests>)
   set_tests_properties(
-    pipetune_component_build PROPERTIES TIMEOUT 900)
+    pipetune_component_build PROPERTIES TIMEOUT 1800)
 endif()

@@ -190,6 +190,9 @@ if (
               "golden",
               "case-003.f32",
             ),
+            join(goldenRoot, "restoration", "click_remover", "golden", "case-006.f32"),
+            join(goldenRoot, "restoration", "clip_restorer", "golden", "case-001.f32"),
+            join(goldenRoot, "restoration", "noise_reduction", "golden", "case-003.f32"),
           ];
           const artifactCheck = run(
             backendArtifactTest,

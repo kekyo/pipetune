@@ -243,36 +243,38 @@ static std::uint32_t findKernelIndex(const BackendApi &api,
   return count;
 }
 
-static void checkEffeTune27Catalog(const BackendApi &api) {
-  static constexpr std::array<std::string_view, 2> addedTypes = {
-      "GroupDelayPEQPlugin", "MDSimulatorPlugin"};
-  check(api.kernelCount() == 94u,
-        "EffeTune 2.7 backend catalog must contain 94 kernels");
+static void checkEffeTune28Catalog(const BackendApi &api) {
+  static constexpr std::array<std::string_view, 7> addedTypes = {
+      "GroupDelayPEQPlugin", "MDSimulatorPlugin", "ClickRemoverPlugin",
+      "ClipRestorerPlugin", "HumRemoverPlugin", "NoiseReductionPlugin",
+      "CrosstalkCancellationPlugin"};
+  check(api.kernelCount() == 99u,
+        "EffeTune 2.8 backend catalog must contain 99 kernels");
   for (const auto typeName : addedTypes) {
     check(findKernelIndex(api, typeName) < api.kernelCount(),
-          "EffeTune 2.7 backend catalog must retain the 2.6 kernels");
+          "EffeTune 2.8 backend catalog must retain the 2.6 kernels");
   }
   const auto phaseSelectIndex = findKernelIndex(api, "PhaseSelectEqPlugin");
   check(phaseSelectIndex < api.kernelCount(),
-        "EffeTune 2.7 backend catalog must retain Phase Select EQ");
+        "EffeTune 2.8 backend catalog must retain Phase Select EQ");
   if (phaseSelectIndex < api.kernelCount()) {
     check(api.kernelParamsHash(phaseSelectIndex) == 0x51c6d77au,
-          "EffeTune 2.7 Phase Select EQ must retain its parameter layout");
+          "EffeTune 2.8 Phase Select EQ must retain its parameter layout");
   }
   const auto tubeIndex = findKernelIndex(api, "TubeSimulatorPlugin");
   check(tubeIndex < api.kernelCount(),
-        "EffeTune 2.7 backend catalog must retain Tube Simulator");
+        "EffeTune 2.8 backend catalog must retain Tube Simulator");
   if (tubeIndex < api.kernelCount()) {
     check(api.kernelParamsHash(tubeIndex) == 0x07986b4bu,
-          "EffeTune 2.7 Tube Simulator must retain its parameter layout");
+          "EffeTune 2.8 Tube Simulator must retain its parameter layout");
   }
   const auto multiChannelPanelIndex =
       findKernelIndex(api, "MultiChannelPanelPlugin");
   check(multiChannelPanelIndex < api.kernelCount(),
-        "EffeTune 2.7 backend catalog must retain Multi Channel Panel");
+        "EffeTune 2.8 backend catalog must retain Multi Channel Panel");
   if (multiChannelPanelIndex < api.kernelCount()) {
     check(api.kernelParamsHash(multiChannelPanelIndex) == 0x9d3d18b9u,
-          "EffeTune 2.7 Multi Channel Panel must expose 16-channel parameters");
+          "EffeTune 2.8 Multi Channel Panel must expose 16-channel parameters");
   }
 }
 
@@ -409,7 +411,8 @@ static std::vector<float> renderGoldenCase(const BackendApi &api,
   auto audio = std::vector<float>{};
   auto instance = et_instance{0};
   const auto prepared = api.enginePrepare(
-      engine, testCase.sampleRate, testCase.channelCount, testCase.blockSize,
+      engine, testCase.sampleRate, testCase.channelCount,
+      std::max(testCase.blockSize, std::uint32_t{32}),
       telemetryBytes);
   if (prepared != ET_OK) {
     std::fprintf(stderr, "EffeTune backend artifact check failed: %s test "
@@ -651,12 +654,13 @@ static bool cpuSupports(std::uint32_t variant) {
 }
 
 int main(int argc, char **argv) {
-  if (argc < 8) {
+  if (argc < 11) {
     std::fprintf(stderr,
                  "usage: effetune_backend_artifact_test "
                  "AUTO_LEVELER_GOLDEN_F32 BLUETOOTH_SBC_GOLDEN_F32 "
                  "CASSETTE_GOLDEN_F32 "
                  "TAPE_GOLDEN_F32 VINYL_GOLDEN_F32 "
+                 "CLICK_GOLDEN_F32 CLIP_GOLDEN_F32 NOISE_GOLDEN_F32 "
                  "SCALAR_SO SIMD_SO [ISA_SIMD_SO...]\n");
     return 2;
   }
@@ -673,6 +677,9 @@ int main(int argc, char **argv) {
   static constexpr std::array vinylParameters = {
       120.0F, 0.0F, 2000.0F, 0.0F, 0.0F, 0.0F,
       100.0F, 10.0F, 200.0F, 100.0F, 0.0F, 100.0F};
+  static constexpr std::array clickParameters = {50.0F, 1.0F};
+  static constexpr std::array clipParameters = {-6.0F, 0.0F};
+  static constexpr std::array noiseParameters = {12.0F, 0.0F, 50.0F, 50.0F, 100.0F};
   auto goldenCases = std::array{
       GoldenCase{"Auto Leveler", "AutoLevelerPlugin", 48000.0F, 1093u,
                  6u, 96u, 0xeffe7a59u, autoLevelerParameters, 2.0e-5F,
@@ -688,7 +695,16 @@ int main(int argc, char **argv) {
                  readGoldenAudio(argv[4], "Tape Artifacts")},
       GoldenCase{"Vinyl Artifacts", "VinylArtifactsPlugin", 48000.0F,
                  2049u, 4u, 65u, 0xeffe7a5cu, vinylParameters, 1.0e-5F,
-                 readGoldenAudio(argv[5], "Vinyl Artifacts")}};
+                 readGoldenAudio(argv[5], "Vinyl Artifacts")},
+      GoldenCase{"Click Remover", "ClickRemoverPlugin", 48000.0F,
+                 4096u, 1u, 63u, 0xeffe7a5bu, clickParameters, 2.0e-6F,
+                 readGoldenAudio(argv[6], "Click Remover")},
+      GoldenCase{"Clip Restorer", "ClipRestorerPlugin", 96000.0F,
+                 4096u, 2u, 113u, 0xeffe7a5eu, clipParameters, 2.0e-6F,
+                 readGoldenAudio(argv[7], "Clip Restorer")},
+      GoldenCase{"Noise Reduction", "NoiseReductionPlugin", 44100.0F,
+                 8192u, 1u, 1u, 0xeffe7a5cu, noiseParameters, 2.0e-5F,
+                 readGoldenAudio(argv[8], "Noise Reduction")}};
   for (const auto &testCase : goldenCases) {
     check(testCase.expected.size() ==
               static_cast<std::size_t>(testCase.frameCount) *
@@ -696,7 +712,7 @@ int main(int argc, char **argv) {
           "official golden size must match its case dimensions");
   }
   auto loaded = std::vector<std::pair<std::uint32_t, BackendApi>>{};
-  for (auto index = 6; index < argc; ++index) {
+  for (auto index = 9; index < argc; ++index) {
     const auto path = std::filesystem::path(argv[index]);
     const auto variant = expectedVariant(path);
     if (!cpuSupports(variant)) {
@@ -721,7 +737,7 @@ int main(int argc, char **argv) {
                 PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
             "scalar backend must report its concrete variant");
       checkAllAbiSymbols(scalar.handle);
-      checkEffeTune27Catalog(scalar);
+      checkEffeTune28Catalog(scalar);
       checkTubeRuntimeContract(scalar);
       const auto scalarSpectrum = renderImpulseSpectrum(scalar);
       checkGoldenCases(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,

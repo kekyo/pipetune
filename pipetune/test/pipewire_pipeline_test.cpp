@@ -228,6 +228,60 @@ static bool replacePresetContents(const std::filesystem::path &path,
   return !error;
 }
 
+static bool testCrosstalkReload(const std::filesystem::path &socketPath,
+                                const std::filesystem::path &presetPath) {
+  const auto root = presetPath.parent_path() / "effetune" / "measurement-backups";
+  const auto preset = R"json({"pipeline":[
+    {"name":"Volume","enabled":true,"parameters":{}},
+    {"name":"Crosstalk Cancellation","enabled":true,"parameters":{
+      "ll":"ear-l::ch=left","rl":"ear-l::ch=right",
+      "lr":"ear-r::ch=left","rr":"ear-r::ch=right","tp":1024}}
+  ]})json";
+  if (!replacePresetContents(presetPath, preset)) return false;
+  const auto omitted = waitForStatus(socketPath, [](const auto &status) {
+    return status.activePluginCount == 1 && status.configurationError.find("measurement") != std::string::npos;
+  });
+  if (!check(omitted.has_value(), "missing Crosstalk measurements must be reported")) return false;
+  std::filesystem::create_directories(root);
+  for (const auto &id : {std::string("ear-l"), std::string("ear-r")}) {
+    const auto left = id == "ear-l" ? "AACAPwAAAAA=" : "AAAAPwAAAAA=";
+    const auto right = id == "ear-l" ? "AAAAPwAAAAA=" : "AACAPwAAAAA=";
+    const auto json = "{\"id\":\"" + id + "\",\"outputChannels\":[\"left\",\"right\"],"
+        "\"points\":[{\"pointId\":0,\"channels\":["
+        "{\"channel\":\"left\",\"irId\":0,\"ir\":{\"stored\":true}},"
+        "{\"channel\":\"right\",\"irId\":1,\"ir\":{\"stored\":true}}]}],"
+        "\"impulseResponses\":["
+        "{\"measurementId\":\"" + id + "\",\"pointId\":0,\"channel\":\"left\",\"data\":\"" + left + "\","
+        "\"sampleRate\":48000,\"trimStartSamples\":0,\"onsetIndex\":0,\"outputTimeReference\":\"file\"},"
+        "{\"measurementId\":\"" + id + "\",\"pointId\":1,\"channel\":\"right\",\"data\":\"" + right + "\","
+        "\"sampleRate\":48000,\"trimStartSamples\":0,\"onsetIndex\":0,\"outputTimeReference\":\"file\"}]}";
+    if (!replacePresetContents(root / (id + ".json"), json)) return false;
+  }
+  const auto active = waitForStatus(socketPath, [&omitted](const auto &status) {
+    return status.activePluginCount == 2 && status.configurationError.empty() &&
+        status.configurationRevision > omitted->configurationRevision;
+  });
+  if (!check(active.has_value(), "measurement creation must activate Crosstalk without GTK")) return false;
+  const auto source = root / "ear-l.json";
+  const auto backup = root / "ear-l.saved";
+  std::filesystem::rename(source, backup);
+  const auto removed = waitForStatus(socketPath, [&active](const auto &status) {
+    return status.activePluginCount == 1 && !status.configurationError.empty() &&
+        status.configurationRevision > active->configurationRevision;
+  });
+  if (!check(removed.has_value(), "measurement deletion must omit only Crosstalk")) return false;
+  std::filesystem::rename(backup, source);
+  const auto recovered = waitForStatus(socketPath, [&removed](const auto &status) {
+    return status.activePluginCount == 2 && status.configurationError.empty() &&
+        status.configurationRevision > removed->configurationRevision;
+  });
+  if (!check(recovered.has_value(), "measurement restoration must recover Crosstalk")) return false;
+  if (!replacePresetContents(presetPath, R"json({"pipeline":[{"name":"Volume","enabled":true,"parameters":{}}]})json")) return false;
+  return check(waitForStatus(socketPath, [](const auto &status) {
+    return status.activePluginCount == 1 && status.configurationError.empty();
+  }).has_value(), "preset switching must remove measurement dependencies");
+}
+
 static bool testOrderlySignalShutdown(
     std::unique_ptr<pipetune::DspPipeline> pipeline,
     std::string_view processId,
@@ -474,6 +528,13 @@ static bool testOrderlySignalShutdown(
     return false;
   }
 
+  if (!testCrosstalkReload(socketPath, replacementPresetPath)) {
+    kill(child, SIGTERM);
+    auto childStatus = 0;
+    waitpid(child, &childStatus, 0);
+    return false;
+  }
+
   const auto inactive = waitForInactiveGraph(socketPath);
   if (!check(inactive.has_value(),
              "PipeWire filter graph did not become idle") ||
@@ -533,6 +594,7 @@ int main() {
   const auto directory =
       std::filesystem::temp_directory_path() / ("pipetune-pipewire-test-" + processId);
   std::filesystem::create_directories(directory);
+  setenv("XDG_CONFIG_HOME", directory.c_str(), 1);
   const auto presetPath = directory / "empty.effetune_preset";
   {
     auto preset = std::ofstream(presetPath, std::ios::binary);

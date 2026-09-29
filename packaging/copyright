@@ -20,6 +20,13 @@ Copyright:
 License: MIT
 Comment: Permission management is derived from WirePlumber policy-dsp.lua.
 
+Files: pipetune/src/crosstalk_fir.cpp
+Copyright:
+ 2026 Kouji Matsui
+ 2025-2026 Yoshiyuki Kobayashi
+License: MIT
+Comment: Native adaptation of the EffeTune 2.8.0 cancellation design algorithm.
+
 Files: deps/effetune/*
 Copyright: 2025-2026 Yoshiyuki Kobayashi
 License: MIT

@@ -248,7 +248,7 @@ The generated catalog packs JSON parameters into the exact native ABI expected
 by EffeTune. Tests compare those packed parameters with EffeTune's JavaScript
 packer and compare native PCM output with EffeTune's parity corpus.
 
-The pinned EffeTune 2.7.0 registry contains 94 native kernels. PipeTune supports
+The pinned EffeTune 2.8.0 registry contains 99 native kernels. PipeTune supports
 its 16-channel Multi Channel Panel layout, individual channels through 16,
 paired routes through 15/16, and hexadecimal Matrix routes. It can load MD
 Simulator and all nine effects added in 2.5.0. It regenerates and stages the
@@ -256,6 +256,17 @@ convolution assets for FIR Crossover, 5Band FIR PEQ, Group Delay EQ, and Group
 Delay PEQ from their serialized design parameters. The updated Tube Simulator
 includes output-transformer magnetics, and Phase Select EQ accepts left/right
 balance selection alongside frequency and phase.
+
+Crosstalk Cancellation resolves the four measurement IDs against
+`measurement-backups` in the shared EffeTune configuration directory. It
+validates and decodes the exported float32 responses, then designs true-stereo
+filters in double precision following the
+[v2.8.0 design contract](https://github.com/Frieve-A/effetune/blob/v2.8.0/js/crosstalk-cancellation/design-core.js).
+The retained recipe keeps its measurement directory across rate/backend rebuilds.
+The active preset monitor also watches referenced JSON files, including missing
+files and their existing ancestors, so backup creation and replacement trigger
+preparation away from the audio thread. Invalid measurements omit that node and
+are reported through the existing warning/status paths.
 
 At load time, `src/dsp_pipeline.cpp`:
 

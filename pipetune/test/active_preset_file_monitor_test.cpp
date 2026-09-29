@@ -6,6 +6,7 @@
 #include "active_preset_file_monitor.h"
 
 #include <chrono>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -121,6 +122,29 @@ int main() {
                            "replacement active preset update");
   }
 
+  if (passed) {
+    const auto measurement = directory / "effetune" / "measurement-backups" / "ear.json";
+    const auto unrelated = directory / "unrelated.json";
+    const auto files = std::array{measurement};
+    passed = check(created.monitor->setPaths(second, files).empty(), "watch missing measurement parents");
+    std::filesystem::create_directories(measurement.parent_path());
+    passed = passed && check(writeFile(measurement, "first measurement"), "create measurement") &&
+        waitForChange(*created.monitor, second, "measurement directory and file creation");
+    passed = passed && check(replaceFile(measurement, "new measurement"), "replace measurement") &&
+        waitForChange(*created.monitor, second, "atomic measurement replacement");
+    passed = passed && check(writeFile(measurement, "in place"), "write measurement") &&
+        waitForChange(*created.monitor, second, "measurement write");
+    std::filesystem::remove_all(measurement.parent_path());
+    passed = passed && waitForChange(*created.monitor, second, "measurement directory removal");
+    std::filesystem::create_directories(measurement.parent_path());
+    writeFile(measurement, "restored");
+    passed = passed && waitForChange(*created.monitor, second, "measurement recovery");
+    writeFile(unrelated, "unrelated");
+    passed = passed && check(!created.monitor->consume().changed, "ignore unrelated files");
+    passed = passed && check(created.monitor->setPath(first).empty(), "replace dependency set");
+    writeFile(measurement, "old dependency");
+    passed = passed && check(!created.monitor->consume().changed, "ignore previous preset dependencies");
+  }
   created.monitor.reset();
   std::filesystem::remove_all(directory);
   return passed ? 0 : 1;

@@ -6,6 +6,7 @@
 #include "generated_fir_asset.h"
 
 #include "dsp_backend_loader.h"
+#include "crosstalk_fir.h"
 
 #include <algorithm>
 #include <array>
@@ -246,7 +247,7 @@ static std::uint64_t estimateGeneratedFirFootprint(
     std::uint32_t inputCount, std::uint64_t payloadBytes) {
   // Keep this upper bound aligned with EffeTune's ir-plugin-contract.js so the
   // native kernel can reserve every partition before the real-time path starts.
-  const auto paths = topology == kMonoTopology ? processingChannels : pathCount;
+  const auto paths = topology == kMonoTopology ? processingChannels : topology == 3u ? 4u : pathCount;
   const auto inputs = topology == kMatrixTopology ? inputCount
                                                    : processingChannels;
   const auto latency = headBlock;
@@ -1182,6 +1183,26 @@ static GeneratedFirAsset designGroupDelayPeq(
       result, channels, sampleRate, kMonoTopology,
       std::span<const GeneratedFirPath>{}, processingChannels, 0u,
       assetHeadBlock(parameters)));
+  return result;
+}
+
+GeneratedFirAsset designCrosstalkAsset(const CrosstalkMeasurements &measurements,
+                                      yyjson_val *parameters, float sampleRate,
+                                      std::uint32_t processingChannels) {
+  auto result = GeneratedFirAsset{};
+  if (processingChannels != 2u) {
+    result.omissionReason = "Crosstalk Cancellation requires a stereo channel selection";
+    return result;
+  }
+  const auto designed = designCrosstalkFir(measurements, parameters, sampleRate);
+  if (!designed.error.empty()) {
+    result.omissionReason = designed.error;
+    return result;
+  }
+  result.filterDelaySamples = static_cast<std::uint32_t>(designed.channels.front().size() / 2u);
+  static_cast<void>(buildGeneratedFirPayload(result, designed.channels,
+      static_cast<std::uint32_t>(sampleRate), 3u, {}, 2u, 0u, assetHeadBlock(parameters)));
+  if (!result.error.empty()) { result.omissionReason = std::move(result.error); result.error.clear(); }
   return result;
 }
 

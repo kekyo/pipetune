@@ -337,6 +337,9 @@ function(
       "${EFFETUNE_DSP_DIR}/plugins/lofi/cassette_artifacts/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/lofi/tape_artifacts/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/lofi/vinyl_artifacts/kernel.cpp"
+      "${EFFETUNE_DSP_DIR}/plugins/restoration/click_remover/kernel.cpp"
+      "${EFFETUNE_DSP_DIR}/plugins/restoration/clip_restorer/kernel.cpp"
+      "${EFFETUNE_DSP_DIR}/plugins/restoration/noise_reduction/kernel.cpp"
     APPEND
     PROPERTY COMPILE_OPTIONS
              "$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-ffp-contract=off>")

@@ -25,7 +25,6 @@ struct FakeDaemonState {
   std::uint64_t configurationRevision;
   std::optional<std::pair<pipetune::StartupConfig, std::uint64_t>>
       stalePublication;
-  std::uint32_t stalePublicationCount;
   bool staleStatusAfterChange;
   std::filesystem::path requestLogPath;
   std::string rejectedCommand;
@@ -142,9 +141,7 @@ static pipetune::ControlRuntimeStatus snapshotStatus(
   if (publication && state.stalePublication.has_value()) {
     config = state.stalePublication->first;
     revision = state.stalePublication->second;
-    if (--state.stalePublicationCount == 0) {
-      state.stalePublication.reset();
-    }
+    // Keep the event observable until the test explicitly publishes current state.
     stale = true;
   }
   auto status = makeStatus(config, revision);
@@ -265,7 +262,6 @@ static pipetune::ControlMessageResult handleRequest(
     ++state.configurationRevision;
     if (state.staleStatusAfterChange) {
       state.stalePublication = previous;
-      state.stalePublicationCount = 2;
     }
   }
   return closeResponse(
@@ -371,7 +367,6 @@ int main(int argc, char **argv) {
       .liveConfig = loaded.config,
       .configurationRevision = 1,
       .stalePublication = std::nullopt,
-      .stalePublicationCount = 0,
       .staleStatusAfterChange =
           environmentValue("PIPETUNE_E2E_STALE_STATUS_AFTER_CHANGE") == "1",
       .requestLogPath = environmentValue("PIPETUNE_E2E_REQUEST_LOG"),
@@ -396,7 +391,11 @@ int main(int argc, char **argv) {
     if (input == "publish-status") {
       {
         auto lock = std::scoped_lock(state.mutex);
-        ++state.manualStatusSequence;
+        if (state.stalePublication.has_value()) {
+          state.stalePublication.reset();
+        } else {
+          ++state.manualStatusSequence;
+        }
       }
       pipetune::publishControlStatus(started.server.get());
     }
