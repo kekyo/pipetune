@@ -10,6 +10,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <utility>
 #include <vector>
 
 int main(int argc, char **argv) {
@@ -24,10 +25,13 @@ int main(int argc, char **argv) {
   input.read(reinterpret_cast<char *>(expected.data()), expected.size() * sizeof(float));
   if (!input) return 2;
   const auto options = pipetune::PipelineBuildOptions{rate, 2u, 128u};
+  const auto initialOptions = pipetune::PipelineBuildOptions{
+      rate == 48000.0F ? 96000.0F : 48000.0F, 2u, 128u};
   for (const auto kind : {pipetune::DspBackendKind::scalar, pipetune::DspBackendKind::simd}) {
     auto backend = pipetune::loadDspBackend(kind);
     if (!backend.backend) { std::cerr << backend.error; return 1; }
-    auto loaded = pipetune::loadDspPipeline(argv[1], options, backend.backend, {argv[2]});
+    auto loaded = pipetune::loadDspPipeline(
+        argv[1], argc == 10 ? options : initialOptions, backend.backend, {argv[2]});
     if (argc == 10) {
       const auto expectWarning = std::string_view(argv[9]) == "skip";
       if (!loaded.pipeline || loaded.pipeline->activePluginCount() != 0u || loaded.warnings.empty() == expectWarning) {
@@ -40,6 +44,11 @@ int main(int argc, char **argv) {
       for (const auto &warning : loaded.warnings) std::cerr << warning.reason << '\n';
       return 1;
     }
+    // Compare the rendered result after a real rate change. The rebuild must
+    // retain the measurement directory and redesign its filters at the new rate.
+    auto rebuilt = pipetune::rebuildDspPipeline(*loaded.pipeline, options);
+    if (!rebuilt.pipeline || rebuilt.pipeline->activePluginCount() != 1u || !rebuilt.warnings.empty()) return 1;
+    loaded = std::move(rebuilt);
     if (loaded.pipeline->latencyFrames() != head + taps / 2u || loaded.measurementFiles.size() != 2u) {
       std::cerr << "Crosstalk latency/dependencies differ\n"; return 1;
     }
@@ -68,9 +77,6 @@ int main(int argc, char **argv) {
         }
       }
     }
-    // Rebuilding must retain the measurement directory, even without GTK.
-    auto rebuilt = pipetune::rebuildDspPipeline(*loaded.pipeline, options);
-    if (!rebuilt.pipeline || rebuilt.pipeline->activePluginCount() != 1u || !rebuilt.warnings.empty()) return 1;
   }
   return 0;
 }
