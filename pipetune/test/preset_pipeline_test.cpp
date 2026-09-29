@@ -623,22 +623,6 @@ static bool testEffeTune27Multichannel(
   return true;
 }
 
-static bool testAnalyzerExecutionRemoved(const std::filesystem::path &directory) {
-  for (const auto name : {"Level Meter", "Oscilloscope", "Spectrogram",
-                          "Spectrum Analyzer", "Stereo Meter"}) {
-    const auto path = writePreset(directory, "removed-analyzer.effetune_preset",
-        "{\"pipeline\":[{\"name\":\"" + std::string(name) + "\"}]}");
-    const auto loaded = pipetune::loadDspPipeline(
-        path, {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
-    if (!check(loaded.pipeline != nullptr, loaded.error) ||
-        !check(loaded.pipeline->activePluginCount() == 0,
-               "visualization-only DSP execution must be removed")) {
-      return false;
-    }
-  }
-  return true;
-}
-
 static bool testVisualizationPresets(const std::filesystem::path &directory) {
   const auto visualizers = std::array{
       "Level Meter", "Oscilloscope", "Spectrogram", "Spectrum Analyzer", "Stereo Meter"};
@@ -758,7 +742,7 @@ int main() {
   std::filesystem::create_directories(directory);
 
   const auto passed =
-      testAnalyzerExecutionRemoved(directory) && testVisualizationPresets(directory) &&
+      testVisualizationPresets(directory) &&
       testBypassPipeline() && testCanonicalPreset(directory) &&
       testLegacyPreset(directory) && testEffeTune26Pipeline(directory) &&
       testGeneratedAssetDsp(directory) &&
