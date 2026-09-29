@@ -452,9 +452,14 @@ static GeneratedFirAsset designFirCrossover(
     yyjson_val *parameters, float requestedSampleRate,
     std::uint32_t processingChannels, const DspBackendApi &api) {
   auto result = GeneratedFirAsset{};
+  // EffeTune 2.9 passes stereo through without a convolution asset.
+  if (processingChannels == 2u) {
+    return result;
+  }
   if (processingChannels < 4u || processingChannels > 16u ||
       processingChannels % 2u != 0u) {
-    result.omissionReason = "requires an even channel output bus from 4 through 16";
+    result.omissionReason =
+        "requires two channels or an even channel selection from 4 through 16";
     return result;
   }
   static constexpr std::array allowedTaps = {
