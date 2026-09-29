@@ -41,7 +41,7 @@ not supported by this MVP.
 
 - Loads canonical and legacy EffeTune preset JSON from files whose extension is
   exactly `.effetune_preset`.
-- Builds every enabled DSP in the pinned EffeTune 2.7.0 native registry,
+- Builds every enabled DSP in the pinned EffeTune 2.8.0 native registry,
   including bus and channel routing through 16 planar channels.
 - Generates and stages convolution coefficients for FIR Crossover, 5Band FIR
   PEQ, Group Delay EQ, and Group Delay PEQ from their preset parameters.
