@@ -177,6 +177,7 @@ add_library(
   src/dsp_catalog.cpp
   src/dsp_pipeline.cpp
   src/generated_fir_asset.cpp
+  src/measurement_store.cpp
   src/sample_rate.cpp
   src/startup_config.cpp
   src/startup_pipeline.cpp
@@ -316,6 +317,10 @@ install(
   DESTINATION "${PIPETUNE_DOCUMENTATION_DIR}")
 
 if(BUILD_TESTING)
+  add_executable(pipetune_measurement_store_tests test/measurement_store_test.cpp)
+  target_include_directories(pipetune_measurement_store_tests PRIVATE src)
+  target_link_libraries(pipetune_measurement_store_tests PRIVATE pipetune_core)
+  add_test(NAME pipetune_measurement_store_tests COMMAND pipetune_measurement_store_tests)
   set(PIPETUNE_DSP_BACKEND_COPY_COMMANDS)
   foreach(PIPETUNE_DSP_BACKEND_TARGET IN LISTS PIPETUNE_DSP_BACKEND_TARGETS)
     list(

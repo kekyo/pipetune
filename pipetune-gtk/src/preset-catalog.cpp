@@ -4,6 +4,7 @@
  * https://github.com/kekyo/pipetune/
  */
 #include "preset-catalog.h"
+#include <pipetune/effetune_paths.h>
 
 #include <yyjson.h>
 
@@ -416,20 +417,9 @@ static PresetChoicePathResult materializeSavedPreset(
 EffeTuneUserPresetPathResult resolveEffeTuneUserPresetPath(
     std::string_view xdgConfigHome,
     const std::filesystem::path &homeDirectory) {
-  if (!xdgConfigHome.empty()) {
-    return {
-        .path = std::filesystem::path(std::string(xdgConfigHome)) /
-                "effetune" / "effetune_presets.json",
-        .error = {}};
-  }
-  if (homeDirectory.empty()) {
-    return {
-        .path = {},
-        .error = "HOME is required when XDG_CONFIG_HOME is unset"};
-  }
-  return {.path = homeDirectory / ".config" / "effetune" /
-                  "effetune_presets.json",
-          .error = {}};
+  const auto directory = pipetune::resolveEffeTuneDirectory(xdgConfigHome, homeDirectory);
+  if (directory.empty()) return {.path = {}, .error = "HOME is required when XDG_CONFIG_HOME is unset"};
+  return {.path = directory / "effetune_presets.json", .error = {}};
 }
 
 EffeTunePresetCatalogResult loadEffeTunePresetCatalog(
