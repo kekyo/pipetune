@@ -41,8 +41,10 @@ libgtk-3-dev
 libpipewire-0.3-dev
 libsamplerate0-dev
 nodejs
+npm
 pipewire
 pkg-config
+python3
 systemd
 wireplumber
 EOF

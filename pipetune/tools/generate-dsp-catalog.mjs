@@ -68,6 +68,7 @@ const identifier = value => value.replaceAll(/[^A-Za-z0-9_]/gu, '_');
 // must remain executable, so telemetry or category membership is insufficient.
 const visualizationOnlyTypes = new Set([
   'LevelMeterPlugin',
+  'NoteSpectrogramPlugin',
   'OscilloscopePlugin',
   'SpectrogramPlugin',
   'SpectrumAnalyzerPlugin',

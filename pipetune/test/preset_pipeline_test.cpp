@@ -625,7 +625,7 @@ static bool testEffeTune27Multichannel(
 
 static bool testVisualizationPresets(const std::filesystem::path &directory) {
   const auto visualizers = std::array{
-      "Level Meter", "Oscilloscope", "Spectrogram", "Spectrum Analyzer", "Stereo Meter"};
+      "Level Meter", "Oscilloscope", "Spectrogram", "Spectrum Analyzer", "Stereo Meter", "Note Spectrogram"};
   auto nodes = std::string{};
   for (auto index = 0u; index < 100u; ++index) {
     if (!nodes.empty()) nodes += ',';
