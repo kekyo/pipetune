@@ -27,7 +27,7 @@ This separation preserves one known compatibility path while allowing
 PipeTune to select the highest usable optimized implementation or a
 user-pinned tier. One pipeline always uses exactly one implementation.
 
-The private backend source set follows EffeTune 2.8.0, including the graph core
+The private backend source set follows EffeTune 2.9.0, including the graph core
 translation unit and generated graph-capacity contract required by its engine.
 PipeTune's loader surface remains the routed pipeline API and now includes
 `et_pipeline_latency`; PipeTune does not expose Graph v1 as a preset format or
@@ -44,6 +44,30 @@ copy-and-commit bridge remain separate PipeTune source files. No source below
 `deps/` is modified, no native pointer is narrowed into an EffeTune integer
 handle, and an incompatible future `abi.cpp` causes the build to fail while
 applying the patch.
+
+## Embedded analysis models
+
+Every private backend links the upstream `effetune_note_models` target. Its
+three models total 5,779,072 bytes (about 5.51 MiB) per shared library. The
+[upstream model build](https://github.com/Frieve-A/effetune/blob/v2.9.0/dsp/plugins/analyzer/note_spectrogram/models.cmake)
+requires Python 3.10 or later to validate the data and generate the embedding.
+Python and separate model files are not runtime dependencies.
+
+For 32-bit Arm, the
+[upstream generator](https://github.com/Frieve-A/effetune/blob/v2.9.0/dsp/plugins/analyzer/note_spectrogram/embed_models.py)
+emits ELF directives with `@progbits` and `@object`, while GNU Arm assembly uses
+`@` for comments. PipeTune compiles a build-tree copy with those directive
+suffixes changed to `%progbits` and `%object`. The conversion uses npm/npx,
+`funcity-cli@1.5.0`, `funcity@1.5.0`, and `commander@12.1.0`; the last pin
+keeps the CLI usable with bookworm's Node 18. The upstream sources, binary
+models, validation, and original generated files are preserved.
+
+Level Meter, Note Spectrogram, Oscilloscope, Spectrogram, Spectrum Analyzer,
+and Stereo Meter remain in the validated backend catalog but are excluded
+from preset execution. They consume no active-node slots, add no latency,
+and perform no bus transfers. Their exclusion is silent and does not apply
+to effects that also modify audio. The catalog count is not a count of
+user-executable effects; unresolved asset effects can also be omitted.
 
 ## Architecture policy
 
@@ -101,7 +125,7 @@ and validates:
 - each kernel's parameter-byte capacity; and
 - every external-asset capacity.
 
-The pinned EffeTune 2.8.0 contract contains 99 kernels. A backend from an
+The pinned EffeTune 2.9.0 contract contains 100 kernels. A backend from an
 earlier release is rejected even though the numeric ABI version remains one,
 because its required symbols and complete catalog do not match.
 
