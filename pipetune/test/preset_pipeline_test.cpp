@@ -857,6 +857,95 @@ static bool testVisualizationPresets(const std::filesystem::path &directory) {
   return true;
 }
 
+static bool testSpatialMapper(const std::filesystem::path &directory) {
+  struct SpatialCase {
+    float rate;
+    std::uint32_t channels;
+    std::string_view bands;
+    std::string_view selection;
+    bool mapped;
+    bool transfer;
+    std::uint32_t latency;
+  };
+  const auto cases = std::array{
+      SpatialCase{44100, 1, "8", "All", false, false, 2560},
+      SpatialCase{48000, 2, "16", "", false, false, 2560},
+      SpatialCase{96000, 6, "24", "All", false, false, 5120},
+      SpatialCase{192000, 12, "32", "All", false, false, 10240},
+      SpatialCase{384000, 16, "48", "All", false, false, 20480},
+      SpatialCase{48000, 6, "24", "All", true, false, 2560},
+      SpatialCase{48000, 12, "48", "All", true, false, 2560},
+      SpatialCase{48000, 16, "8", "All", true, false, 2560},
+      SpatialCase{48000, 6, "16", "34", false, false, 2560},
+      SpatialCase{48000, 6, "32", "3", false, false, 2560},
+      SpatialCase{48000, 6, "24", "All", false, true, 2560}};
+  const auto discovered = pipetune::discoverDspBackends();
+  auto backends = std::vector<std::shared_ptr<const pipetune::DspBackend>>{
+      discovered.scalar.backend};
+  for (const auto &variant : discovered.simdVariants)
+    if (variant.backend != nullptr) backends.push_back(variant.backend);
+  for (const auto &backend : backends) {
+    for (const auto &testCase : cases) {
+      auto matrix = std::string{};
+      if (testCase.mapped) {
+        // Route all three components identically: their sum must reproduce
+        // the input with the requested polarity and gain, independent of the split.
+        for (auto i = 0u; i < 256u; ++i) {
+          if (i != 0) matrix += ',';
+          matrix += i == (testCase.channels - 1u) * 16u ? "-0.5" : "0";
+        }
+      }
+      const auto matrices = testCase.mapped ?
+          ",\"ep\":false,\"dm\":[" + matrix + "],\"fm\":[" + matrix +
+          "],\"rm\":[" + matrix + "]" : "";
+      const auto routing = testCase.transfer ? ",\"inputBus\":0,\"outputBus\":1" : "";
+      const auto returnNode = testCase.transfer ?
+          ",{\"name\":\"Volume\",\"channel\":\"All\",\"inputBus\":1,\"outputBus\":0}" : "";
+      const auto path = writePreset(directory, "spatial.effetune_preset",
+          "{\"pipeline\":[{\"name\":\"Spatial Mapper\",\"channel\":\"" +
+          std::string(testCase.selection) + "\",\"parameters\":{\"ic\":" + std::string(testCase.mapped ? "2" : "16") + ",\"bd\":\"" +
+          std::string(testCase.bands) + "\"" + matrices + "}" + routing + "}" + returnNode + "]}");
+      auto loaded = pipetune::loadDspPipeline(path,
+          {.sampleRate = testCase.rate, .maxChannels = testCase.channels, .maxFrames = 257}, backend);
+      if (!check(loaded.pipeline != nullptr, loaded.error) ||
+          !check(loaded.warnings.empty() && loaded.pipeline->latencyFrames() == testCase.latency,
+                 "Spatial Mapper must report sample-rate-dependent latency")) return false;
+      const auto frames = testCase.latency + 4099u;
+      for (auto start = 0u; start < frames;) {
+        const auto count = std::min(257u, frames - start);
+        auto samples = std::vector<float>(testCase.channels * count);
+        for (auto ch = 0u; ch < testCase.channels; ++ch)
+          for (auto i = 0u; i < count; ++i)
+            samples[ch * count + i] = start + i == 173u ? (ch + 1u) * 0.01F : 0.0F;
+        if (!check(loaded.pipeline->process(samples, testCase.channels, count,
+                    static_cast<double>(start) / testCase.rate) == pipetune::ProcessStatus::ok,
+                   "Spatial Mapper must process complete and partial blocks")) return false;
+        for (auto ch = 0u; ch < testCase.channels; ++ch) {
+          auto gain = (ch + 1u) * 0.01F;
+          if (testCase.mapped) {
+            if (ch < 2u) gain = 0.0F;
+            if (ch == testCase.channels - 1u) gain = -0.005F;
+          }
+          if (testCase.transfer) gain *= 2.0F;
+          for (auto i = 0u; i < count; ++i) {
+            const auto expected = start + i == testCase.latency + 173u ? gain : 0.0F;
+            if (!check(approximately(samples[ch * count + i], expected, 3.0e-5F),
+                       "Spatial Mapper PCM routing, polarity, silence or delay differs")) return false;
+          }
+        }
+        start += count;
+      }
+      const auto nextRate = testCase.rate == 48000.0F ? 96000.0F : 48000.0F;
+      auto rebuilt = pipetune::rebuildDspPipeline(*loaded.pipeline,
+          {.sampleRate = nextRate, .maxChannels = testCase.channels, .maxFrames = 257}, backend);
+      if (!check(rebuilt.pipeline != nullptr, rebuilt.error) ||
+          !check(rebuilt.pipeline->latencyFrames() == (nextRate == 48000.0F ? 2560u : 5120u),
+                 "Spatial Mapper rebuild must refresh its latency")) return false;
+    }
+  }
+  return true;
+}
+
 static bool testEffeTune210Pipeline(const std::filesystem::path &directory) {
   for (const auto name : {"Spatial Mapper", "TV Audio Simulator"}) {
     const auto path = writePreset(directory, "effetune-2.10.effetune_preset",
@@ -914,7 +1003,7 @@ int main() {
 
   const auto passed =
       testFirCrossoverRouting(directory) && testFirCrossoverBands(directory) &&
-      testVisualizationPresets(directory) && testEffeTune210Pipeline(directory) &&
+      testVisualizationPresets(directory) && testEffeTune210Pipeline(directory) && testSpatialMapper(directory) &&
       testBypassPipeline() && testCanonicalPreset(directory) &&
       testLegacyPreset(directory) && testEffeTune26Pipeline(directory) &&
       testGeneratedAssetDsp(directory) &&
