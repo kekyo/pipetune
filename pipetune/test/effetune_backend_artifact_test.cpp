@@ -843,6 +843,8 @@ int main(int argc, char **argv) {
                        goldenCases);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "spatial/spatial_mapper/golden", 7u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "lofi/tv_audio_simulator/golden", 6u);
 
       for (auto index = std::size_t{1}; index < loaded.size(); ++index) {
         const auto expected = loaded[index].first;
@@ -862,6 +864,7 @@ int main(int argc, char **argv) {
         checkTubeRuntimeContract(simd);
         checkGoldenCases(simd, expected, goldenCases);
         checkMetadataGoldens(simd, expected, pluginRoot / "spatial/spatial_mapper/golden", 7u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "lofi/tv_audio_simulator/golden", 6u);
 
         const auto simdSpectrum = renderImpulseSpectrum(simd);
         check(scalarSpectrum.size() == simdSpectrum.size(),
