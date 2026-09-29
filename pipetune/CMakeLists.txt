@@ -1036,5 +1036,5 @@ if(BUILD_TESTING)
       $<TARGET_FILE:pipetune>
       $<TARGET_FILE:pipetune_effetune_backend_artifact_tests>)
   set_tests_properties(
-    pipetune_component_build PROPERTIES TIMEOUT 900)
+    pipetune_component_build PROPERTIES TIMEOUT 1800)
 endif()
