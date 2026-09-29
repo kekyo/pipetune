@@ -825,6 +825,22 @@ if(BUILD_TESTING)
     pipetune_gtk_application_lifecycle PROPERTIES TIMEOUT 60)
 
   add_test(
+    NAME pipetune_gtk_autostart
+    COMMAND
+      ${PIPETUNE_GTK_DBUS_RUN_SESSION}
+      --config-file=${CMAKE_CURRENT_SOURCE_DIR}/test/dbus-session.conf --
+      ${PIPETUNE_GTK_XVFB_RUN} -a
+      ${PIPETUNE_GTK_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/autostart.mjs
+      $<TARGET_FILE:pipetune-gtk>
+      $<TARGET_FILE:pipetune_gtk_user_setup_helper>
+      ${CMAKE_COMMAND}
+      ${CMAKE_BINARY_DIR}
+      ${PIPETUNE_GTK_AUTOSTART_DIR})
+  set_tests_properties(
+    pipetune_gtk_autostart PROPERTIES TIMEOUT 60)
+
+  add_test(
     NAME pipetune_gtk_desktop_launch
     COMMAND
       ${PIPETUNE_GTK_DBUS_RUN_SESSION}
