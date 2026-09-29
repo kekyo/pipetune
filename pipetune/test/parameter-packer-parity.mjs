@@ -73,6 +73,9 @@ for (const spec of loadParamSpecs(path.join(effetuneRoot, 'dsp/plugins'))) {
     cases.push({ type: spec.type, parameters: makeContainerParameters(spec) });
   }
 }
+for (const matrix of [[], [0, -0.5], Array.from({ length: 256 }, (_, i) => (i - 128) / 128)]) {
+  cases.push({ type: 'SpatialMapperPlugin', parameters: { dm: matrix, fm: matrix, rm: matrix } });
+}
 const integerSpec = loadParamSpecs(path.join(effetuneRoot, 'dsp/plugins')).find(spec =>
   spec.fields.some(field =>
     field.kind === 'int' && field.min <= 1 && field.max >= 1 && !field.defaults.includes(1)

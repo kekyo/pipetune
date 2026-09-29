@@ -6,6 +6,7 @@
 #include <effetune/abi.h>
 
 #include "effetune_backend_abi.h"
+#include "dsp_catalog.h"
 
 #include <dlfcn.h>
 
@@ -23,6 +24,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <numbers>
 #include <span>
 #include <string>
 #include <string_view>
@@ -243,38 +245,39 @@ static std::uint32_t findKernelIndex(const BackendApi &api,
   return count;
 }
 
-static void checkEffeTune29Catalog(const BackendApi &api) {
-  static constexpr std::array<std::string_view, 8> addedTypes = {
+static void checkEffeTune210Catalog(const BackendApi &api) {
+  static constexpr std::array<std::string_view, 11> addedTypes = {
       "GroupDelayPEQPlugin", "MDSimulatorPlugin", "ClickRemoverPlugin",
       "ClipRestorerPlugin", "HumRemoverPlugin", "NoiseReductionPlugin",
-      "CrosstalkCancellationPlugin", "NoteSpectrogramPlugin"};
-  check(api.kernelCount() == 100u,
-        "EffeTune 2.9 backend catalog must contain 100 kernels");
+      "CrosstalkCancellationPlugin", "NoteSpectrogramPlugin",
+      "PitchMeterPlugin", "SpatialMapperPlugin", "TVAudioSimulatorPlugin"};
+  check(api.kernelCount() == 103u,
+        "EffeTune 2.10 backend catalog must contain 103 kernels");
   for (const auto typeName : addedTypes) {
     check(findKernelIndex(api, typeName) < api.kernelCount(),
-          "EffeTune 2.9 backend catalog must contain every required kernel");
+          "EffeTune 2.10 backend catalog must contain every required kernel");
   }
   const auto phaseSelectIndex = findKernelIndex(api, "PhaseSelectEqPlugin");
   check(phaseSelectIndex < api.kernelCount(),
-        "EffeTune 2.9 backend catalog must retain Phase Select EQ");
+        "EffeTune 2.10 backend catalog must retain Phase Select EQ");
   if (phaseSelectIndex < api.kernelCount()) {
     check(api.kernelParamsHash(phaseSelectIndex) == 0x51c6d77au,
-          "EffeTune 2.9 Phase Select EQ must retain its parameter layout");
+          "EffeTune 2.10 Phase Select EQ must retain its parameter layout");
   }
   const auto tubeIndex = findKernelIndex(api, "TubeSimulatorPlugin");
   check(tubeIndex < api.kernelCount(),
-        "EffeTune 2.9 backend catalog must retain Tube Simulator");
+        "EffeTune 2.10 backend catalog must retain Tube Simulator");
   if (tubeIndex < api.kernelCount()) {
     check(api.kernelParamsHash(tubeIndex) == 0x07986b4bu,
-          "EffeTune 2.9 Tube Simulator must retain its parameter layout");
+          "EffeTune 2.10 Tube Simulator must retain its parameter layout");
   }
   const auto multiChannelPanelIndex =
       findKernelIndex(api, "MultiChannelPanelPlugin");
   check(multiChannelPanelIndex < api.kernelCount(),
-        "EffeTune 2.9 backend catalog must retain Multi Channel Panel");
+        "EffeTune 2.10 backend catalog must retain Multi Channel Panel");
   if (multiChannelPanelIndex < api.kernelCount()) {
     check(api.kernelParamsHash(multiChannelPanelIndex) == 0x9d3d18b9u,
-          "EffeTune 2.9 Multi Channel Panel must expose 16-channel parameters");
+          "EffeTune 2.10 Multi Channel Panel must expose 16-channel parameters");
   }
 }
 
@@ -321,6 +324,11 @@ static void checkTubeRuntimeContract(const BackendApi &api) {
   api.engineDestroy(engine);
 }
 
+struct GoldenEvent {
+  std::uint32_t frame;
+  std::vector<float> parameters;
+};
+
 struct GoldenCase {
   const char *name;
   const char *typeName;
@@ -332,6 +340,8 @@ struct GoldenCase {
   std::span<const float> parameters;
   float tolerance;
   std::vector<float> expected;
+  std::string_view stimulus = "noise";
+  std::vector<GoldenEvent> events = {};
 };
 
 static std::vector<float> readGoldenAudio(const std::filesystem::path &path,
@@ -386,6 +396,32 @@ static std::vector<float> seededNoiseInput(std::uint32_t frameCount,
     sample = static_cast<float>(uniform * 2.0 - 1.0);
   }
   return input;
+}
+
+static std::vector<float> goldenInput(const GoldenCase &testCase) {
+  if (testCase.stimulus == "noise")
+    return seededNoiseInput(testCase.frameCount, testCase.channelCount, testCase.seed);
+  auto audio = std::vector<float>(testCase.frameCount * testCase.channelCount, 0.0F);
+  for (auto ch = 0u; ch < testCase.channelCount; ++ch) {
+    for (auto frame = 0u; frame < testCase.frameCount; ++frame) {
+      auto value = 0.0;
+      if (testCase.stimulus == "imp") {
+        value = frame == 0u || frame == 1000u + ch ? 1.0 : 0.0;
+      } else if (testCase.stimulus == "sin1k") {
+        value = std::sin(2.0 * std::numbers::pi * 1000.0 * frame / testCase.sampleRate) * std::pow(10.0, -6.0 / 20.0);
+      } else if (testCase.stimulus == "sweep") {
+        const auto rate = std::log(std::min(20000.0, testCase.sampleRate * 0.45) / 20.0) /
+            (testCase.frameCount / static_cast<double>(testCase.sampleRate));
+        value = std::sin(2.0 * std::numbers::pi * 20.0 *
+            std::expm1(rate * frame / testCase.sampleRate) / rate) * std::pow(10.0, -12.0 / 20.0);
+      } else {
+        check(false, "golden stimulus must be implemented");
+        return {};
+      }
+      audio[ch * testCase.frameCount + frame] = static_cast<float>(value);
+    }
+  }
+  return audio;
 }
 
 static std::vector<float> renderGoldenCase(const BackendApi &api,
@@ -444,16 +480,27 @@ static std::vector<float> renderGoldenCase(const BackendApi &api,
       ++failures;
     }
     if (seeded == ET_OK && staged == ET_OK) {
-      const auto input = seededNoiseInput(
-          testCase.frameCount, testCase.channelCount, testCase.seed);
+      const auto input = goldenInput(testCase);
+      if (input.size() != testCase.expected.size()) {
+        api.instanceDestroy(engine, instance);
+        api.engineDestroy(engine);
+        return {};
+      }
+      auto eventIndex = std::size_t{0};
       audio = input;
       auto block = std::vector<float>(
           static_cast<std::size_t>(testCase.channelCount) *
           testCase.blockSize);
       for (auto startFrame = std::uint32_t{0};
            startFrame < testCase.frameCount;) {
-        const auto blockFrames =
-            std::min(testCase.blockSize, testCase.frameCount - startFrame);
+        while (eventIndex < testCase.events.size() && testCase.events[eventIndex].frame == startFrame) {
+          const auto &parameters = testCase.events[eventIndex++].parameters;
+          check(api.instanceSetParams(engine, instance, parameters.data(),
+                    static_cast<std::uint32_t>(parameters.size()), api.kernelParamsHash(kernelIndex), 0u) == ET_OK,
+                "golden parameter events must be accepted at their frame boundary");
+        }
+        const auto nextEvent = eventIndex < testCase.events.size() ? testCase.events[eventIndex].frame : testCase.frameCount;
+        const auto blockFrames = std::min(testCase.blockSize, nextEvent - startFrame);
         for (auto channel = std::uint32_t{0};
              channel < testCase.channelCount;
              ++channel) {
@@ -530,6 +577,57 @@ static void checkGoldenCase(const BackendApi &api, std::uint32_t variant,
                  static_cast<double>(maximumDifference),
                  static_cast<double>(testCase.tolerance));
     ++failures;
+  }
+}
+
+static void checkMetadataGoldens(const BackendApi &api, std::uint32_t variant,
+                                  const std::filesystem::path &directory,
+                                  std::uint32_t caseCount) {
+  for (auto number = 1u; number <= caseCount; ++number) {
+    const auto path = directory / ("case-00" + std::to_string(number) + ".json");
+    auto *document = yyjson_read_file(path.c_str(), 0, nullptr, nullptr);
+    check(document != nullptr, "official golden metadata must load");
+    if (document == nullptr) continue;
+    auto *root = yyjson_doc_get_root(document);
+    const auto *type = yyjson_get_str(yyjson_obj_get(root, "type"));
+    const auto *definition = pipetune::findDspByTypeName(type);
+    check(definition != nullptr, "golden DSP must exist in the native catalog");
+    if (definition == nullptr) {
+      yyjson_doc_free(document);
+      continue;
+    }
+    auto parameters = pipetune::packDspParameters(*definition, yyjson_obj_get(root, "params"));
+    check(parameters.error.empty(), "golden parameters must pack");
+    const auto integer = [root](const char *key) {
+      return static_cast<std::uint32_t>(yyjson_get_uint(yyjson_obj_get(root, key)));
+    };
+    auto testCase = GoldenCase{
+        yyjson_get_str(yyjson_obj_get(root, "id")), type,
+        static_cast<float>(integer("sampleRate")), integer("frameCount"),
+        integer("channels"), integer("blockSize"),
+        std::stoull(yyjson_get_str(yyjson_obj_get(root, "seed")), nullptr, 0),
+        parameters.floats,
+        static_cast<float>(yyjson_get_num(yyjson_obj_get(yyjson_obj_get(root, "tolerance"), "abs"))),
+        readGoldenAudio(directory / yyjson_get_str(yyjson_obj_get(root, "binary")), type)};
+    testCase.stimulus = yyjson_get_str(yyjson_obj_get(root, "stimulus"));
+    auto staged = parameters.floats;
+    auto *events = yyjson_obj_get(root, "events");
+    for (auto i = std::size_t{0}; i < yyjson_arr_size(events); ++i) {
+      auto *event = yyjson_arr_get(events, i);
+      auto *changes = yyjson_obj_get(event, "params");
+      const auto packed = pipetune::packDspParameters(*definition, changes);
+      check(packed.error.empty(), "golden parameter event must pack");
+      for (auto field = std::size_t{0}; field < definition->elements.size(); ++field) {
+        const auto &element = definition->elements[field];
+        const auto key = element.arrayKey.empty() ? element.directKey : element.arrayKey;
+        if (yyjson_obj_getn(changes, key.data(), key.size()) != nullptr)
+          staged[field] = packed.floats[field];
+      }
+      testCase.events.push_back({
+          static_cast<std::uint32_t>(yyjson_get_uint(yyjson_obj_get(event, "frame"))), staged});
+    }
+    checkGoldenCase(api, variant, testCase);
+    yyjson_doc_free(document);
   }
 }
 
@@ -711,6 +809,7 @@ int main(int argc, char **argv) {
                   testCase.channelCount,
           "official golden size must match its case dimensions");
   }
+  const auto pluginRoot = std::filesystem::path(argv[1]).parent_path().parent_path().parent_path().parent_path();
   auto loaded = std::vector<std::pair<std::uint32_t, BackendApi>>{};
   for (auto index = 9; index < argc; ++index) {
     const auto path = std::filesystem::path(argv[index]);
@@ -737,11 +836,15 @@ int main(int argc, char **argv) {
                 PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
             "scalar backend must report its concrete variant");
       checkAllAbiSymbols(scalar.handle);
-      checkEffeTune29Catalog(scalar);
+      checkEffeTune210Catalog(scalar);
       checkTubeRuntimeContract(scalar);
       const auto scalarSpectrum = renderImpulseSpectrum(scalar);
       checkGoldenCases(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                        goldenCases);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "spatial/spatial_mapper/golden", 7u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "lofi/tv_audio_simulator/golden", 6u);
 
       for (auto index = std::size_t{1}; index < loaded.size(); ++index) {
         const auto expected = loaded[index].first;
@@ -760,6 +863,8 @@ int main(int argc, char **argv) {
         checkCatalogsMatch(scalar, simd);
         checkTubeRuntimeContract(simd);
         checkGoldenCases(simd, expected, goldenCases);
+        checkMetadataGoldens(simd, expected, pluginRoot / "spatial/spatial_mapper/golden", 7u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "lofi/tv_audio_simulator/golden", 6u);
 
         const auto simdSpectrum = renderImpulseSpectrum(simd);
         check(scalarSpectrum.size() == simdSpectrum.size(),

@@ -531,6 +531,74 @@ static bool testBackendReplacementPreservesCounters(
                "backend switch must preserve cumulative DSP time");
 }
 
+static bool testTvIdlePolicy(const std::filesystem::path &directory) {
+  const auto path = directory / "tv-idle.effetune_preset";
+  {
+    auto file = std::ofstream(path);
+    file << R"json({"pipeline":[{"name":"TV Audio Simulator","parameters":{"rd":false},"channel":"All"}]})json";
+  }
+  const auto backends = pipetune::discoverDspBackends();
+  for (const auto rate : {48000.0F, 96000.0F}) {
+    const auto backend = rate == 48000.0F || backends.simd.backend == nullptr ?
+        backends.scalar.backend : backends.simd.backend;
+    auto loaded = pipetune::loadDspPipeline(path,
+        {.sampleRate = rate, .maxChannels = 2, .maxFrames = 128}, backend);
+    auto reference = pipetune::loadDspPipeline(path,
+        {.sampleRate = rate, .maxChannels = 2, .maxFrames = 128}, backend);
+    if (!check(loaded.pipeline != nullptr, loaded.error) ||
+        !check(reference.pipeline != nullptr, reference.error)) return false;
+    auto slot = pipetune::DspPipelineSlot(std::move(loaded.pipeline));
+    auto ignored = pipetune::DspPipelineSlot(std::move(reference.pipeline));
+    const auto timeout = static_cast<std::uint32_t>(rate / 10.0F);
+    const auto fade = static_cast<std::uint32_t>(rate / 200.0F);
+    auto energy = 0.0;
+    for (auto start = 0u; start < timeout * 2u; start += 128u) {
+      auto audio = std::vector<float>(256, 0.0F);
+      auto expected = audio;
+      const auto actual = slot.processWithIdle(audio, 2, 128, start / static_cast<double>(rate),
+                                               {.timeoutMilliseconds = 100});
+      const auto continued = ignored.processWithIdle(expected, 2, 128, start / static_cast<double>(rate), {});
+      if (!check(actual.status == pipetune::ProcessStatus::ok && continued.status == pipetune::ProcessStatus::ok &&
+                     continued.activity == pipetune::DspActivity::active,
+                 "TV idle processing must succeed and ignore must stay active")) return false;
+      for (auto ch = 0u; ch < 2; ++ch) {
+        for (auto i = 0u; i < 128; ++i) {
+          const auto position = start + i;
+          const auto gain = position < timeout ? 1.0F : position >= timeout + fade ? 0.0F :
+              static_cast<float>(timeout + fade - position - 1u) / static_cast<float>(fade - 1u);
+          if (!check(approximately(audio[ch * 128u + i], expected[ch * 128u + i] * gain),
+                     "TV receiver noise must follow the exact idle fade")) return false;
+          energy += expected[ch * 128u + i] * expected[ch * 128u + i];
+        }
+      }
+      if (start >= timeout + fade &&
+          !check(actual.activity == pipetune::DspActivity::sleeping,
+                 "TV receiver must sleep after its input silence timeout")) return false;
+    }
+    const auto counters = slot.performanceCounters();
+    if (!check(std::isfinite(energy) && energy > 1.0e-6,
+               "broadcast off must generate receiver noise on silent input") ||
+        !check(counters.processedFrames < ignored.performanceCounters().processedFrames,
+               "sleep must stop TV DSP calls")) return false;
+    auto audio = std::vector<float>(256, 0.0F);
+    audio[0] = 0.25F;
+    const auto awake = slot.processWithIdle(audio, 2, 128, 1.0, {.timeoutMilliseconds = 100});
+    auto fresh = pipetune::loadDspPipeline(path,
+        {.sampleRate = rate, .maxChannels = 2, .maxFrames = 128}, backend);
+    if (!check(fresh.pipeline != nullptr, fresh.error)) return false;
+    auto expected = std::vector<float>(256, 0.0F);
+    expected[0] = 0.25F;
+    if (!check(fresh.pipeline->process(expected, 2, 128, 1.0) == pipetune::ProcessStatus::ok &&
+                   awake.status == pipetune::ProcessStatus::ok && awake.activity == pipetune::DspActivity::active &&
+                   slot.performanceCounters().processedFrames == counters.processedFrames + 128,
+                 "TV must resume processing on the first nonzero input block")) return false;
+    for (auto i = 0u; i < audio.size(); ++i)
+      if (!check(approximately(audio[i], expected[i]),
+                 "TV wake must have reset its receiver and random histories")) return false;
+  }
+  return true;
+}
+
 int main() {
   const auto directory =
       std::filesystem::temp_directory_path() /
@@ -543,7 +611,7 @@ int main() {
   const auto dcOffset = writeDcOffsetPreset(directory);
   const auto delay = writeDelayPreset(directory);
   const auto tubeSimulator = writeTubeSimulatorPreset(directory);
-  const auto passed = testReplacementChangesPcm(positive, negative) &&
+  const auto passed = testTvIdlePolicy(directory) && testReplacementChangesPcm(positive, negative) &&
                       testBypassDoesNotReportDspWork() &&
                       testActivePipelineLatencyTracksReplacement(
                           tubeSimulator, positive) &&

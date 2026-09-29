@@ -201,6 +201,32 @@ static bool testDegradedBypass(const std::filesystem::path &configPath,
                "an invalid startup configuration must report its diagnostic");
 }
 
+static bool testTvUnsupportedStartupRate(const std::filesystem::path &directory) {
+  const auto presetPath = directory / "tv.effetune_preset";
+  const auto configPath = directory / "tv-environment";
+  {
+    auto preset = std::ofstream(presetPath);
+    preset << R"json({"pipeline":[{"name":"TV Audio Simulator"}]})json";
+  }
+  if (!check(pipetune::saveStartupPreset(configPath, presetPath).empty(),
+             "TV startup preset must be saved")) return false;
+  const auto unsupported = pipetune::prepareStartupPipeline(
+      configPath, {.sampleRate = 32000.0F, .maxChannels = 2, .maxFrames = 128});
+  if (!check(unsupported.pipeline != nullptr && unsupported.activePresetPath.empty() &&
+                 !unsupported.configurationError.empty() && unsupported.pipeline->activePluginCount() == 0,
+             "unsupported automatic TV rate must start in diagnosed bypass")) return false;
+  if (!check(pipetune::saveSampleRatePolicy(configPath,
+                 {.mode = pipetune::SampleRateMode::fixed, .fixedRate = 48000,
+                  .enforcement = pipetune::SampleRateEnforcement::suggest}).empty(),
+             "supported fixed TV rate must be saved")) return false;
+  const auto supported = pipetune::prepareStartupPipeline(
+      configPath, {.sampleRate = 32000.0F, .maxChannels = 2, .maxFrames = 128});
+  return check(supported.pipeline != nullptr && supported.configurationError.empty() &&
+                   supported.activePresetPath == presetPath && supported.pipeline->activePluginCount() == 1 &&
+                   supported.pipeline->sampleRate() == 48000.0F,
+               "a supported fixed rate must recover TV startup processing");
+}
+
 int main() {
   const auto directory =
       std::filesystem::temp_directory_path() /
@@ -211,6 +237,7 @@ int main() {
   const auto presetPath = directory / "configured.effetune_preset";
   const auto missingPreset = directory / "missing.effetune_preset";
   const auto passed =
+      testTvUnsupportedStartupRate(directory) &&
       testIntentionalBypass(configPath) &&
       testConfiguredPreset(configPath, presetPath) &&
       testConfiguredSimdFallback(configPath, presetPath) &&

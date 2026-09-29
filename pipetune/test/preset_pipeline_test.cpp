@@ -769,12 +769,12 @@ static bool testEffeTune27Multichannel(
 
 static bool testVisualizationPresets(const std::filesystem::path &directory) {
   const auto visualizers = std::array{
-      "Level Meter", "Oscilloscope", "Spectrogram", "Spectrum Analyzer", "Stereo Meter", "Note Spectrogram"};
+      "Level Meter", "Oscilloscope", "Spectrogram", "Spectrum Analyzer", "Stereo Meter", "Note Spectrogram", "Pitch Meter"};
   auto nodes = std::string{};
   for (auto index = 0u; index < 100u; ++index) {
     if (!nodes.empty()) nodes += ',';
     nodes += "{\"name\":\"" + std::string(visualizers[index % visualizers.size()]) +
-        "\",\"parameters\":{\"mn\":{},\"cl\":\"Normal\"},\"inputBus\":0,\"outputBus\":1}";
+        "\",\"parameters\":{\"mn\":{},\"cl\":\"Normal\",\"hq\":true},\"inputBus\":0,\"outputBus\":1}";
   }
   const auto only = writePreset(directory, "visualizers.effetune_preset",
                                 "{\"pipeline\":[" + nodes + "]}");
@@ -857,6 +857,191 @@ static bool testVisualizationPresets(const std::filesystem::path &directory) {
   return true;
 }
 
+static bool testSpatialMapper(const std::filesystem::path &directory) {
+  struct SpatialCase {
+    float rate;
+    std::uint32_t channels;
+    std::string_view bands;
+    std::string_view selection;
+    bool mapped;
+    bool transfer;
+    std::uint32_t latency;
+  };
+  const auto cases = std::array{
+      SpatialCase{44100, 1, "8", "All", false, false, 2560},
+      SpatialCase{48000, 2, "16", "", false, false, 2560},
+      SpatialCase{96000, 6, "24", "All", false, false, 5120},
+      SpatialCase{192000, 12, "32", "All", false, false, 10240},
+      SpatialCase{384000, 16, "48", "All", false, false, 20480},
+      SpatialCase{48000, 6, "24", "All", true, false, 2560},
+      SpatialCase{48000, 12, "48", "All", true, false, 2560},
+      SpatialCase{48000, 16, "8", "All", true, false, 2560},
+      SpatialCase{48000, 6, "16", "34", false, false, 2560},
+      SpatialCase{48000, 6, "32", "3", false, false, 2560},
+      SpatialCase{48000, 6, "24", "All", false, true, 2560}};
+  const auto discovered = pipetune::discoverDspBackends();
+  auto backends = std::vector<std::shared_ptr<const pipetune::DspBackend>>{
+      discovered.scalar.backend};
+  for (const auto &variant : discovered.simdVariants)
+    if (variant.backend != nullptr) backends.push_back(variant.backend);
+  for (const auto &backend : backends) {
+    for (const auto &testCase : cases) {
+      auto matrix = std::string{};
+      if (testCase.mapped) {
+        // Route all three components identically: their sum must reproduce
+        // the input with the requested polarity and gain, independent of the split.
+        for (auto i = 0u; i < 256u; ++i) {
+          if (i != 0) matrix += ',';
+          matrix += i == (testCase.channels - 1u) * 16u ? "-0.5" : "0";
+        }
+      }
+      const auto matrices = testCase.mapped ?
+          ",\"ep\":false,\"dm\":[" + matrix + "],\"fm\":[" + matrix +
+          "],\"rm\":[" + matrix + "]" : "";
+      const auto routing = testCase.transfer ? ",\"inputBus\":0,\"outputBus\":1" : "";
+      const auto returnNode = testCase.transfer ?
+          ",{\"name\":\"Volume\",\"channel\":\"All\",\"inputBus\":1,\"outputBus\":0}" : "";
+      const auto path = writePreset(directory, "spatial.effetune_preset",
+          "{\"pipeline\":[{\"name\":\"Spatial Mapper\",\"channel\":\"" +
+          std::string(testCase.selection) + "\",\"parameters\":{\"ic\":" + std::string(testCase.mapped ? "2" : "16") + ",\"bd\":\"" +
+          std::string(testCase.bands) + "\"" + matrices + "}" + routing + "}" + returnNode + "]}");
+      auto loaded = pipetune::loadDspPipeline(path,
+          {.sampleRate = testCase.rate, .maxChannels = testCase.channels, .maxFrames = 257}, backend);
+      if (!check(loaded.pipeline != nullptr, loaded.error) ||
+          !check(loaded.warnings.empty() && loaded.pipeline->latencyFrames() == testCase.latency,
+                 "Spatial Mapper must report sample-rate-dependent latency")) return false;
+      const auto frames = testCase.latency + 4099u;
+      for (auto start = 0u; start < frames;) {
+        const auto count = std::min(257u, frames - start);
+        auto samples = std::vector<float>(testCase.channels * count);
+        for (auto ch = 0u; ch < testCase.channels; ++ch)
+          for (auto i = 0u; i < count; ++i)
+            samples[ch * count + i] = start + i == 173u ? (ch + 1u) * 0.01F : 0.0F;
+        if (!check(loaded.pipeline->process(samples, testCase.channels, count,
+                    static_cast<double>(start) / testCase.rate) == pipetune::ProcessStatus::ok,
+                   "Spatial Mapper must process complete and partial blocks")) return false;
+        for (auto ch = 0u; ch < testCase.channels; ++ch) {
+          auto gain = (ch + 1u) * 0.01F;
+          if (testCase.mapped) {
+            if (ch < 2u) gain = 0.0F;
+            if (ch == testCase.channels - 1u) gain = -0.005F;
+          }
+          if (testCase.transfer) gain *= 2.0F;
+          for (auto i = 0u; i < count; ++i) {
+            const auto expected = start + i == testCase.latency + 173u ? gain : 0.0F;
+            if (!check(approximately(samples[ch * count + i], expected, 3.0e-5F),
+                       "Spatial Mapper PCM routing, polarity, silence or delay differs")) return false;
+          }
+        }
+        start += count;
+      }
+      const auto nextRate = testCase.rate == 48000.0F ? 96000.0F : 48000.0F;
+      auto rebuilt = pipetune::rebuildDspPipeline(*loaded.pipeline,
+          {.sampleRate = nextRate, .maxChannels = testCase.channels, .maxFrames = 257}, backend);
+      if (!check(rebuilt.pipeline != nullptr, rebuilt.error) ||
+          !check(rebuilt.pipeline->latencyFrames() == (nextRate == 48000.0F ? 2560u : 5120u),
+                 "Spatial Mapper rebuild must refresh its latency")) return false;
+    }
+  }
+  return true;
+}
+
+static bool testTvAudioSimulator(const std::filesystem::path &directory) {
+  const auto rates = std::array{44100.0F, 48000.0F, 88200.0F, 96000.0F,
+                                176400.0F, 192000.0F, 352800.0F, 384000.0F};
+  const auto standards = std::array{"M/EIA-J", "M/BTSC", "M/A2", "B/G A2",
+                                   "B/G NICAM", "I NICAM", "D/K Mono", "L AM"};
+  const auto backends = pipetune::discoverDspBackends();
+  for (auto i = std::size_t{0}; i < rates.size(); ++i) {
+    const auto path = writePreset(directory, "tv.effetune_preset",
+        "{\"pipeline\":[{\"name\":\"TV Audio Simulator\",\"parameters\":{\"ss\":\"" +
+        std::string(standards[i]) + "\",\"tx\":\"" + (i % 2 == 0 ? "Dual" : "Mono") +
+        "\",\"sm\":\"" + (i % 2 == 0 ? "Sub" : "Main") + "\"},\"channel\":\"All\"}]}");
+    auto loaded = pipetune::loadDspPipeline(path,
+        {.sampleRate = rates[i], .maxChannels = 2, .maxFrames = 127});
+    if (!check(loaded.pipeline != nullptr, loaded.error) ||
+        !check(loaded.warnings.empty() && loaded.pipeline->activePluginCount() == 1,
+               "TV Audio Simulator must load every supported rate and standard")) return false;
+    const auto latency = loaded.pipeline->latencyFrames();
+    if (!check(latency > 0, "TV Audio Simulator must expose its conversion latency")) return false;
+    auto energy = 0.0;
+    for (auto block = 0u; block < 64u; ++block) {
+      auto audio = std::vector<float>(254);
+      for (auto j = 0u; j < audio.size(); ++j)
+        audio[j] = 0.1F * std::sin(static_cast<float>(block * 127u + j) * 0.05F);
+      if (!check(loaded.pipeline->process(audio, 2, 127,
+                  static_cast<double>(block * 127u) / rates[i]) == pipetune::ProcessStatus::ok,
+                 "TV Audio Simulator must process its supported rates")) return false;
+      for (const auto value : audio) energy += value * value;
+    }
+    if (!check(std::isfinite(energy) && energy > 0.001,
+               "TV Audio Simulator standards must produce finite nonzero audio")) return false;
+    const auto backend = backends.simd.backend != nullptr ? backends.simd.backend : backends.scalar.backend;
+    const auto rebuilt = pipetune::rebuildDspPipeline(*loaded.pipeline,
+        {.sampleRate = rates[i], .maxChannels = 2, .maxFrames = 127}, backend);
+    if (!check(rebuilt.pipeline != nullptr, rebuilt.error) ||
+        !check(rebuilt.pipeline->latencyFrames() == latency,
+               "TV Audio Simulator backend rebuild must preserve latency")) return false;
+    const auto rejected = pipetune::rebuildDspPipeline(*loaded.pipeline,
+        {.sampleRate = 32000.0F, .maxChannels = 2, .maxFrames = 127});
+    if (!check(rejected.pipeline == nullptr && !rejected.error.empty() && rejected.warnings.empty(),
+               "unsupported TV rates must fail instead of silently omitting the effect") ||
+        !check(loaded.pipeline->sampleRate() == rates[i],
+               "failed TV rebuild must preserve the original pipeline")) return false;
+  }
+  // Mix zero keeps the dry path's delay. A pair selection also compensates
+  // untouched channels; All delegates the extra-channel behavior to the kernel.
+  for (const auto selection : {"All", "34", "3"}) {
+    const auto path = writePreset(directory, "tv-dry.effetune_preset",
+        "{\"pipeline\":[{\"name\":\"TV Audio Simulator\",\"parameters\":{\"mx\":0},\"channel\":\"" +
+        std::string(selection) + "\"}]}");
+    auto loaded = pipetune::loadDspPipeline(path,
+        {.sampleRate = 48000.0F, .maxChannels = 6, .maxFrames = 128});
+    if (!check(loaded.pipeline != nullptr, loaded.error)) return false;
+    const auto latency = loaded.pipeline->latencyFrames();
+    for (auto start = 0u; start < latency + 256u; start += 128u) {
+      auto audio = std::vector<float>(6u * 128u, 0.0F);
+      if (start == 0) for (auto ch = 0u; ch < 6; ++ch) audio[ch * 128u + 11] = 0.1F;
+      if (!check(loaded.pipeline->process(audio, 6, 128, static_cast<double>(start) / 48000.0) ==
+                     pipetune::ProcessStatus::ok, "TV dry-path routing failed")) return false;
+      for (auto ch = 0u; ch < 6; ++ch) {
+        const auto delay = std::string_view(selection) == "All" && ch >= 2u ? 0u : latency;
+        for (auto frame = 0u; frame < 128; ++frame)
+          if (!check(approximately(audio[ch * 128u + frame], start + frame == delay + 11u ? 0.1F : 0.0F),
+                     "TV dry-path and extra-channel latency must match the selected route")) return false;
+      }
+    }
+  }
+  return true;
+}
+
+static bool testEffeTune210Pipeline(const std::filesystem::path &directory) {
+  for (const auto name : {"Spatial Mapper", "TV Audio Simulator"}) {
+    const auto path = writePreset(directory, "effetune-2.10.effetune_preset",
+        "{\"pipeline\":[{\"name\":\"" + std::string(name) + "\"}]}");
+    auto loaded = pipetune::loadDspPipeline(
+        path, {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 128});
+    if (!check(loaded.pipeline != nullptr, loaded.error) ||
+        !check(loaded.warnings.empty() && loaded.pipeline->activePluginCount() == 1,
+               "EffeTune 2.10 audio processors must execute without warnings") ||
+        !check(loaded.pipeline->latencyFrames() > 0,
+               "EffeTune 2.10 audio processors must report their latency")) return false;
+    auto energy = 0.0;
+    for (auto block = 0u; block < 64u; ++block) {
+      auto samples = std::vector<float>(256);
+      for (auto i = 0u; i < samples.size(); ++i)
+        samples[i] = 0.2F * std::sin(static_cast<float>(block * 128u + i) * 0.1F);
+      if (!check(loaded.pipeline->process(samples, 2, 128,
+                  static_cast<double>(block * 128u) / 48000.0) == pipetune::ProcessStatus::ok,
+                 "EffeTune 2.10 preset processing failed")) return false;
+      for (const auto sample : samples) energy += sample * sample;
+    }
+    if (!check(std::isfinite(energy) && energy > 0.01,
+               "EffeTune 2.10 processors must render finite audible output")) return false;
+  }
+  return true;
+}
+
 static bool testRetainedRecipeRebuild(
     const std::filesystem::path &directory) {
   const auto path = writePreset(
@@ -887,7 +1072,7 @@ int main() {
 
   const auto passed =
       testFirCrossoverRouting(directory) && testFirCrossoverBands(directory) &&
-      testVisualizationPresets(directory) &&
+      testVisualizationPresets(directory) && testEffeTune210Pipeline(directory) && testSpatialMapper(directory) && testTvAudioSimulator(directory) &&
       testBypassPipeline() && testCanonicalPreset(directory) &&
       testLegacyPreset(directory) && testEffeTune26Pipeline(directory) &&
       testGeneratedAssetDsp(directory) &&

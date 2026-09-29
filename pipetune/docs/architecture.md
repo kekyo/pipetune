@@ -248,7 +248,7 @@ The generated catalog packs JSON parameters into the exact native ABI expected
 by EffeTune. Tests compare those packed parameters with EffeTune's JavaScript
 packer and compare native PCM output with EffeTune's parity corpus.
 
-The pinned EffeTune 2.8.0 registry contains 99 native kernels. PipeTune supports
+The pinned EffeTune 2.10.0 registry contains 103 native kernels. PipeTune supports
 its 16-channel Multi Channel Panel layout, individual channels through 16,
 paired routes through 15/16, and hexadecimal Matrix routes. It can load MD
 Simulator and all nine effects added in 2.5.0. It regenerates and stages the

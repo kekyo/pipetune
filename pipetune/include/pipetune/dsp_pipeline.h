@@ -23,7 +23,9 @@ namespace pipetune {
  * Describes the maximum audio format for a native DSP pipeline.
  */
 struct PipelineBuildOptions {
-  /** Processing sample rate in hertz, from 32000 through 384000. */
+  /** Processing sample rate in hertz, from 32000 through 384000.
+   * Individual DSPs may support only a subset and reject preparation.
+   */
   float sampleRate;
   /** Maximum planar channel count, from one through sixteen. */
   std::uint32_t maxChannels;
@@ -219,6 +221,8 @@ struct PipelineLoadResult {
  * Disabled nodes, including nodes gated by a disabled Section, are omitted
  * without warnings. Visualization-only analyzers are also omitted without
  * warnings, active nodes, added latency, or transfers between buses.
+ * This includes Pitch Meter. The selected processing width is preserved for
+ * Spatial Mapper; presets do not enlarge the prepared stream's channel count.
  *
  * @param context Measurement storage used during preparation and rebuilds.
  * @param presetPath Preset path with the exact `.effetune_preset` extension.

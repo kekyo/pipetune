@@ -437,7 +437,7 @@ if(BUILD_TESTING)
       src
       "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
   target_link_libraries(
-    pipetune_effetune_backend_artifact_tests PRIVATE "${CMAKE_DL_LIBS}")
+    pipetune_effetune_backend_artifact_tests PRIVATE pipetune_core "${CMAKE_DL_LIBS}")
   add_dependencies(
     pipetune_effetune_backend_artifact_tests
     ${PIPETUNE_DSP_BACKEND_TARGETS})

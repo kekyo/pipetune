@@ -10,6 +10,7 @@
 #include "pipetune/dsp_pipeline.h"
 
 #include <filesystem>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -200,6 +201,43 @@ static bool testUnavailableSimdPreservesState(
                "startup SIMD fallback runtime state differs");
 }
 
+static bool testNewDspLiveSwitch(const std::filesystem::path &directory,
+                                  const pipetune::DspBackends &backends) {
+  const auto path = directory / "new-dsp.effetune_preset";
+  {
+    auto file = std::ofstream(path);
+    file << R"json({"pipeline":[{"name":"Spatial Mapper"},{"name":"TV Audio Simulator"}]})json";
+  }
+  const auto options = pipetune::PipelineBuildOptions{
+      .sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 128};
+  auto loaded = pipetune::loadDspPipeline(path, options, backends.scalar.backend);
+  if (!check(loaded.pipeline != nullptr, loaded.error)) return false;
+  const auto latency = loaded.pipeline->latencyFrames();
+  auto slot = pipetune::DspPipelineSlot(std::move(loaded.pipeline));
+  auto state = pipetune::makeDspBackendRuntimeState(backends, pipetune::DspBackendKind::scalar);
+  std::filesystem::remove(path);
+  const auto switched = pipetune::switchDspBackend(
+      slot, state, pipetune::DspBackendKind::simd, options, false);
+  if (!check(switched.changed && switched.error.empty() && switched.warnings.empty() &&
+                 slot.activePluginCount() == 2 && slot.activeLatencyFrames() == latency,
+             "new DSPs must rebuild from the retained recipe during a live SIMD switch")) return false;
+  const auto generation = slot.activeGeneration();
+  const auto failed = pipetune::switchDspBackend(slot, state, pipetune::DspBackendKind::scalar,
+      {.sampleRate = 32000.0F, .maxChannels = 2, .maxFrames = 128}, false);
+  if (!check(!failed.changed && !failed.error.empty() && slot.activeGeneration() == generation &&
+                 slot.backendKind() == pipetune::DspBackendKind::simd && slot.activeLatencyFrames() == latency,
+             "unsupported TV rate must preserve the live pipeline and backend")) return false;
+  auto energy = 0.0;
+  for (auto block = 0u; block < 64u; ++block) {
+    auto audio = std::vector<float>(256, 0.1F);
+    if (!check(slot.process(audio, 2, 128, block * 128.0 / 48000.0) == pipetune::ProcessStatus::ok,
+               "preserved new DSP pipeline must remain usable")) return false;
+    for (const auto value : audio) energy += value * value;
+  }
+  return check(std::isfinite(energy) && energy > 0.0,
+               "preserved new DSP pipeline must still produce audio");
+}
+
 int main() {
   const auto backends = pipetune::discoverDspBackends();
   if (!check(backends.scalar.backend != nullptr, backends.scalar.error) ||
@@ -212,7 +250,7 @@ int main() {
        std::to_string(static_cast<long long>(getpid())));
   std::filesystem::create_directories(directory);
   const auto preset = writePreset(directory);
-  const auto passed = testLiveSwitch(preset, backends) &&
+  const auto passed = testNewDspLiveSwitch(directory, backends) && testLiveSwitch(preset, backends) &&
                       testUnavailableSimdPreservesState(preset, backends);
   std::filesystem::remove_all(directory);
   return passed ? 0 : 1;
