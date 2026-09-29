@@ -1568,8 +1568,14 @@ static PresetActivationResult activatePreset(
   runtime.configurationError.clear();
   runtime.configurationRevision.fetch_add(1, std::memory_order_release);
   runtime.presetReloadPending = false;
-  if (!automaticReload && runtime.presetFileMonitor != nullptr) {
-    const auto monitorError = runtime.presetFileMonitor->setPath(presetPath);
+  if (automaticReload) {
+    for (const auto &warning : warnings) {
+      if (!runtime.configurationError.empty()) runtime.configurationError += "\n";
+      runtime.configurationError += "Skipped " + warning.pluginName + ": " + warning.reason;
+    }
+  }
+  if (runtime.presetFileMonitor != nullptr) {
+    const auto monitorError = runtime.presetFileMonitor->setPaths(presetPath, runtime.pipeline.measurementFiles());
     if (!monitorError.empty()) {
       runtime.configurationError = monitorError;
     }
@@ -1882,6 +1888,10 @@ static bool createControlServer(PipeWireRuntime &runtime) {
     return false;
   }
   runtime.presetFileMonitor = std::move(monitored.monitor);
+  if (!runtime.activePreset.empty()) {
+    const auto error = runtime.presetFileMonitor->setPaths(runtime.activePreset, runtime.pipeline.measurementFiles());
+    if (!error.empty()) { failRuntime(runtime, error); return false; }
+  }
   auto started = startControlServer(
       runtime.options.controlSocketPath,
       {.handler = handleControlRequest,

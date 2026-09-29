@@ -181,6 +181,9 @@ public:
   /** Returns whether a rollback-capable replacement is staged. */
   bool hasStagedReplacement() const noexcept;
 
+  /** Returns referenced measurement files. Call only on the replacement thread. */
+  std::span<const std::filesystem::path> measurementFiles() const noexcept;
+
   /** Returns the active pipeline's enabled native DSP count. */
   std::size_t activePluginCount() const noexcept;
 

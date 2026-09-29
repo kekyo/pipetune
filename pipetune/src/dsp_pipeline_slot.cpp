@@ -345,6 +345,10 @@ bool DspPipelineSlot::hasStagedReplacement() const noexcept {
   return stagedPrevious_ != nullptr;
 }
 
+std::span<const std::filesystem::path> DspPipelineSlot::measurementFiles() const noexcept {
+  return active_.load(std::memory_order_acquire)->measurementFiles();
+}
+
 std::size_t DspPipelineSlot::activePluginCount() const noexcept {
   return active_.load(std::memory_order_acquire)->activePluginCount();
 }

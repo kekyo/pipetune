@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <span>
 
 namespace pipetune {
 
@@ -30,6 +31,14 @@ public:
 
   int descriptor() const noexcept;
   std::string setPath(const std::filesystem::path &path);
+  /**
+   * Monitors a preset and its measurement dependencies, including absent files.
+   * @param path Primary preset path reported by consume().
+   * @param dependencies Referenced measurement JSON files.
+   * @return Empty on success, otherwise a monitoring diagnostic.
+   */
+  std::string setPaths(const std::filesystem::path &path,
+                       std::span<const std::filesystem::path> dependencies);
   void clear() noexcept;
   ActivePresetFileMonitorEvent consume();
 
