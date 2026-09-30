@@ -6,6 +6,7 @@
 #include "pipetune/dsp_pipeline.h"
 
 #include "dsp_backend_loader.h"
+#include "bass_management_config.h"
 #include "dsp_catalog.h"
 #include "generated_fir_asset.h"
 #include "measurement_store.h"
@@ -39,6 +40,12 @@ constexpr auto kPipelineDescriptorVersion = std::uint32_t{1};
 constexpr auto kPipelineDescriptorHeaderBytes = std::size_t{8};
 constexpr auto kPipelineDescriptorNodeBytes = std::size_t{12};
 
+struct RetainedParameterBytes {
+  et_instance instance;
+  std::uint32_t hash;
+  std::vector<std::uint8_t> bytes;
+};
+
 struct DspPipeline::Impl {
   std::shared_ptr<const DspBackend> backend;
   et_engine engine = 0;
@@ -48,9 +55,11 @@ struct DspPipeline::Impl {
   std::uint32_t maxFrames = 0;
   std::uint32_t latencyFrames = 0;
   std::size_t activePluginCount = 0;
+  std::vector<PresetEntry> presetEntries;
   std::shared_ptr<const std::string> presetRecipe;
   PipelineLoadContext loadContext;
   std::vector<std::filesystem::path> measurementFiles;
+  std::vector<RetainedParameterBytes> retainedParameterBytes;
 
   ~Impl() {
     if (engine != 0 && backend != nullptr) {
@@ -68,6 +77,10 @@ PipelineLoadContext defaultPipelineLoadContext() {
 
 std::span<const std::filesystem::path> DspPipeline::measurementFiles() const noexcept {
   return implementation_->measurementFiles;
+}
+
+std::span<const PresetEntry> DspPipeline::presetEntries() const noexcept {
+  return implementation_->presetEntries;
 }
 
 struct PresetNode {
@@ -379,9 +392,15 @@ ProcessStatus DspPipeline::reset() noexcept {
     return ProcessStatus::ok;
   }
   const auto &api = dspBackendApi(*implementation_->backend);
-  return api.engineReset(implementation_->engine) == ET_OK
-             ? ProcessStatus::ok
-             : ProcessStatus::dspError;
+  if (api.engineReset(implementation_->engine) != ET_OK) return ProcessStatus::dspError;
+  // Matrix resets its routes to the defaults. Re-stage the already packed
+  // bytes to preserve the preset without allocating on the audio thread.
+  for (const auto &parameters : implementation_->retainedParameterBytes) {
+    if (api.instanceSetParamBytes(implementation_->engine, parameters.instance,
+          parameters.bytes.data(), static_cast<std::uint32_t>(parameters.bytes.size()),
+          parameters.hash, 0u) != ET_OK) return ProcessStatus::dspError;
+  }
+  return ProcessStatus::ok;
 }
 
 std::uint32_t DspPipeline::maxChannels() const noexcept {
@@ -505,9 +524,12 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
       return loadError(std::move(normalizationError), std::move(warnings));
     }
 
+    auto &entry = implementation->presetEntries.emplace_back(
+        PresetEntry{std::string(node.name), PresetEntryState::ignored});
     if (node.name == "Section") {
       insideSection = true;
       sectionEnabled = node.enabled;
+      entry.state = node.enabled ? PresetEntryState::enabled : PresetEntryState::off;
       continue;
     }
     const auto *definition = findDspByDisplayName(node.name);
@@ -518,8 +540,11 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
            .reason = "not available in EffeTune's native DSP registry"});
       continue;
     }
-    if (!node.enabled || (insideSection && !sectionEnabled) ||
-        definition->visualizationOnly) {
+    if (definition->visualizationOnly) {
+      continue;
+    }
+    if (!node.enabled || (insideSection && !sectionEnabled)) {
+      entry.state = PresetEntryState::off;
       continue;
     }
     const auto crosstalk = node.name == "Crosstalk Cancellation";
@@ -540,7 +565,8 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
         continue;
       }
     }
-    const auto generatedAssetDsp = crosstalk || supportsGeneratedFirAsset(node.name);
+    const auto bassManagement = node.name == "Bass Management";
+    const auto generatedAssetDsp = bassManagement || crosstalk || supportsGeneratedFirAsset(node.name);
     if (definition->requiresExternalAssets && !generatedAssetDsp) {
       warnings.push_back({.nodeIndex = index,
                           .pluginName = std::string(node.name),
@@ -564,17 +590,40 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
                        std::move(warnings));
     }
 
+    if (node.name == "Bass Extender" &&
+        selectedProcessingChannels(channelSpec, options.maxChannels) > 2u) {
+      return loadError(
+          nodeError(index, "Bass Extender requires one or two selected processing channels"),
+          std::move(warnings));
+    }
+
     auto packed = packDspParameters(*definition, node.parameters);
     if (!packed.error.empty()) {
       return loadError(nodeError(index, packed.error), std::move(warnings));
+    }
+    auto bassConfig = BassManagementConfig{};
+    if (bassManagement) {
+      if (channelSpec != -2) {
+        return loadError(nodeError(index, "Bass Management requires an explicit All channel selection"),
+                         std::move(warnings));
+      }
+      bassConfig = decodeBassManagementConfig(packed, options.maxChannels);
+      if (!bassConfig.error.empty()) return loadError(nodeError(index, bassConfig.error), std::move(warnings));
     }
     auto generatedAsset = GeneratedFirAsset{};
     if (generatedAssetDsp) {
       const auto processingChannels =
           selectedProcessingChannels(channelSpec, options.maxChannels);
-      generatedAsset = crosstalk ? designCrosstalkAsset(measured, node.parameters, options.sampleRate, processingChannels) : designGeneratedFirAsset(
-          node.name, node.parameters, options.sampleRate, processingChannels,
-          api);
+      if (bassManagement) {
+        generatedAsset = designBassManagementAsset(
+            bassConfig, options.sampleRate, options.maxFrames, api);
+      } else if (crosstalk) {
+        generatedAsset = designCrosstalkAsset(
+            measured, node.parameters, options.sampleRate, processingChannels);
+      } else {
+        generatedAsset = designGeneratedFirAsset(
+            node.name, node.parameters, options.sampleRate, processingChannels, api);
+      }
       if (!generatedAsset.omissionReason.empty()) {
         warnings.push_back({.nodeIndex = index,
                             .pluginName = std::string(node.name),
@@ -585,7 +634,7 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
         return loadError(nodeError(index, generatedAsset.error),
                          std::move(warnings));
       }
-      if (!generatedAsset.payload.empty() &&
+      if (!bassManagement && !generatedAsset.payload.empty() &&
           (!replacePackedParameter(
                packed, "lt", packedHeadBlock(generatedAsset.info.head_block)) ||
            !replacePackedParameter(
@@ -623,6 +672,8 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
         return loadError(nodeError(index, "native DSP rejected structured parameters"),
                          std::move(warnings));
       }
+      implementation->retainedParameterBytes.push_back(
+          {instance, definition->hash, std::move(packed.bytes)});
     }
     if (generatedAssetDsp && !generatedAsset.payload.empty()) {
       const auto assetStatus = api.instanceAssetCopy(
@@ -631,7 +682,8 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
           generatedAsset.formatTag);
       if (assetStatus != ET_OK) {
         return loadError(
-            nodeError(index, "native DSP rejected the generated FIR asset"),
+            nodeError(index, bassManagement ? "Bass Management rejected the generated FIR asset" :
+                                             "native DSP rejected the generated FIR asset"),
             std::move(warnings));
       }
     }
@@ -639,6 +691,7 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
                            .inputBus = inputBus,
                            .outputBus = outputBus,
                            .channelSpec = channelSpec});
+    entry.state = PresetEntryState::enabled;
   }
 
   const auto descriptor = buildDescriptor(activeNodes);

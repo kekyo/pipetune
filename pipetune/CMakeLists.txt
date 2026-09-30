@@ -176,6 +176,7 @@ add_library(
   pipetune_core STATIC
   "${PIPETUNE_GENERATED_DIR}/version.cpp"
   src/audio_bridge.cpp
+  src/bass_management_config.cpp
   src/dsp_backend.cpp
   src/dsp_catalog.cpp
   src/dsp_pipeline.cpp
@@ -544,6 +545,34 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_preset_pipeline_tests
     COMMAND pipetune_preset_pipeline_tests)
+
+  add_executable(pipetune_attack_bass_tests test/attack_bass_test.cpp)
+  target_link_libraries(pipetune_attack_bass_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_attack_bass_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_attack_bass_tests COMMAND pipetune_attack_bass_tests)
+
+  add_executable(pipetune_effetune_211_regression_tests test/effetune_211_regression_test.cpp)
+  target_link_libraries(pipetune_effetune_211_regression_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_effetune_211_regression_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_effetune_211_regression_tests COMMAND pipetune_effetune_211_regression_tests)
+
+  add_executable(pipetune_input_latency_alignment_tests test/input_latency_alignment_test.cpp)
+  target_link_libraries(pipetune_input_latency_alignment_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_input_latency_alignment_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_input_latency_alignment_tests COMMAND pipetune_input_latency_alignment_tests)
+
+  add_executable(pipetune_bass_management_parity_runner test/bass_management_parity_runner.cpp)
+  target_include_directories(pipetune_bass_management_parity_runner PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_link_libraries(pipetune_bass_management_parity_runner PRIVATE pipetune_core)
+  target_compile_options(pipetune_bass_management_parity_runner PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_bass_management_parity
+    COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/bass-management-parity.mjs
+      $<TARGET_FILE:pipetune_bass_management_parity_runner> ${PIPETUNE_EFFETUNE_DIR})
+
+  add_executable(pipetune_bass_management_tests test/bass_management_test.cpp)
+  target_link_libraries(pipetune_bass_management_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_bass_management_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_bass_management_tests COMMAND pipetune_bass_management_tests)
 
   add_executable(
     pipetune_audio_bridge_tests

@@ -1384,6 +1384,9 @@ static ControlDspVariantAvailability controlDspVariantAvailability(
 }
 
 static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
+  // Preset entry strings belong to the pipeline. Retain it while copying
+  // status because rate renegotiation can replace it on the PipeWire thread.
+  auto pipelineLock = std::scoped_lock(runtime.pipelineMutationMutex);
   const auto input = snapshotInputTelemetry(
       runtime.inputTelemetry, currentMonotonicNanoseconds(),
       currentUnixMilliseconds());
@@ -1447,6 +1450,7 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
                 std::to_string(ratePolicy.fixedRate) + " Hz";
   }
   const auto idleState = runtime.dspIdleState.load();
+  const auto presetEntries = runtime.pipeline.presetEntries();
   return {.processingMode = runtime.processingMode,
           .dspActivity = idleState.activity,
           .dspIdlePolicy = idleState.policy,
@@ -1455,6 +1459,7 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .configurationRevision = runtime.configurationRevision.load(
               std::memory_order_acquire),
           .activePluginCount = runtime.pipeline.activePluginCount(),
+          .presetEntries = {presetEntries.begin(), presetEntries.end()},
           .dspLatencyFrames = runtime.pipeline.activeLatencyFrames(),
           .overrunFrames = runtime.ring.overrunFrames(),
           .underrunFrames = runtime.ring.underrunFrames(),
@@ -1769,6 +1774,7 @@ static ControlMessageResult handleControlRequest(std::string_view message,
     }
     runtime.configurationRevision.fetch_add(1,
                                             std::memory_order_release);
+    pipelineLock.unlock();
     return closeControlResponse(
         makeControlSuccessResponse(controlStatus(runtime), warnings), true);
   }

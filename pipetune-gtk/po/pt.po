@@ -269,6 +269,9 @@ msgstr "Motor DSP alterado"
 msgid "DSP Engine"
 msgstr "Motor DSP"
 
+msgid "DSP entry"
+msgstr "Entrada DSP"
+
 msgid "DSP latency"
 msgstr "Latência DSP"
 
@@ -297,6 +300,9 @@ msgstr "Predefinições EffeTune"
 msgid "Enable DSP processing"
 msgstr "Ativar o processamento DSP"
 
+msgid "Enabled"
+msgstr "Ativado"
+
 msgid "English"
 msgstr "Inglês"
 
@@ -320,6 +326,9 @@ msgstr "Forçar — pedir a frequência de amostragem fixa do grafo"
 
 msgid "Ignore"
 msgstr "Ignorar"
+
+msgid "Ignored"
+msgstr "Ignorado"
 
 msgid "Input / Sampling Frequencies"
 msgstr "Entrada / Frequências de amostragem"
@@ -387,6 +396,9 @@ msgstr "Nunca"
 msgid "None"
 msgstr "Nenhum"
 
+msgid "Off"
+msgstr "Desativado"
+
 msgid "Open PipeTune"
 msgstr "Abrir o PipeTune"
 
@@ -442,6 +454,9 @@ msgstr "Frequência de amostragem do grafo PipeWire"
 
 msgid "Preset"
 msgstr "Predefinição"
+
+msgid "Preset configuration"
+msgstr "Configuração do preset"
 
 msgid "Preset library"
 msgstr "Biblioteca de predefinições"
@@ -552,6 +567,9 @@ msgstr "Padrão · {0} · {1}"
 
 msgid "Startup configuration path unavailable"
 msgstr "Caminho da configuração de arranque indisponível"
+
+msgid "State"
+msgstr "Estado"
 
 msgid "Suggest"
 msgstr "Sugerir"

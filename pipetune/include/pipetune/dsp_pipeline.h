@@ -7,6 +7,7 @@
 #define PIPETUNE_DSP_PIPELINE_H
 
 #include "pipetune/dsp_backend.h"
+#include "pipetune/preset_entry.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -138,6 +139,8 @@ public:
   std::uint32_t latencyFrames() const noexcept;
   /** Returns the number of enabled, supported native DSP nodes. */
   std::size_t activePluginCount() const noexcept;
+  /** Returns all loaded preset entries in their original order. */
+  std::span<const PresetEntry> presetEntries() const noexcept;
   /** Returns referenced measurement files, including missing files. */
   std::span<const std::filesystem::path> measurementFiles() const noexcept;
   /** Returns the native backend in use, or no value for a bypass pipeline. */
@@ -221,7 +224,10 @@ struct PipelineLoadResult {
  * Disabled nodes, including nodes gated by a disabled Section, are omitted
  * without warnings. Visualization-only analyzers are also omitted without
  * warnings, active nodes, added latency, or transfers between buses.
- * This includes Pitch Meter. The selected processing width is preserved for
+ * This includes Pitch Meter and Chroma Spiral. Bass Extender requires one or
+ * two selected channels. Bass Management requires explicit All selection and
+ * valid subwoofer routes; its Linear filters are generated from the preset.
+ * The selected processing width is preserved for
  * Spatial Mapper; presets do not enlarge the prepared stream's channel count.
  *
  * @param context Measurement storage used during preparation and rebuilds.

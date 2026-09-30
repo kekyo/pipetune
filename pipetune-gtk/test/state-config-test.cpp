@@ -342,7 +342,50 @@ static bool testPeriodicRuntimeMeasurements() {
                "bypass must clear the DSP timing measurement");
 }
 
+static bool testPresetConfiguration() {
+  auto state = pipetune_gtk::initialApplicationState();
+  pipetune_gtk::applyControlResponse(state, bypassStatusResponse(), 1000);
+  if (!check(!state.presetEntries.has_value(),
+             "bypass without a loaded preset must not show a configuration")) {
+    return false;
+  }
+  auto loaded = statusResponse({}, {});
+  loaded.status.presetEntries = {
+      {"Volume", pipetune::PresetEntryState::enabled},
+      {"Volume", pipetune::PresetEntryState::off},
+      {"Spectrum Analyzer", pipetune::PresetEntryState::ignored}};
+  pipetune_gtk::applyControlResponse(state, loaded, 2000);
+  if (!check(state.presetEntries == loaded.status.presetEntries,
+             "confirmed presets must expose their complete configuration")) {
+    return false;
+  }
+  pipetune_gtk::applyControlResponse(state, bypassStatusResponse(), 3000);
+  if (!check(state.presetEntries == loaded.status.presetEntries,
+             "turning off global processing must retain the entry states")) {
+    return false;
+  }
+  pipetune_gtk::applyControlResponse(state,
+      pipetune::parseControlResponse(pipetune::makeControlErrorResponse("invalid preset")),
+      4000);
+  if (!check(state.presetEntries == loaded.status.presetEntries,
+             "a failed preset load must retain the last loaded configuration")) {
+    return false;
+  }
+  loaded.kind = pipetune::ControlResponseKind::statusEvent;
+  loaded.status.presetEntries[0].state = pipetune::PresetEntryState::off;
+  pipetune_gtk::applyControlResponse(state, loaded, 5000);
+  if (!check(state.presetEntries == loaded.status.presetEntries,
+             "automatic reload publications must refresh the entry states")) {
+    return false;
+  }
+  loaded.status.presetEntries.clear();
+  pipetune_gtk::applyControlResponse(state, loaded, 6000);
+  return check(state.presetEntries.has_value() && state.presetEntries->empty(),
+               "an empty loaded preset must replace the previous entries");
+}
+
 int main() {
+  if (!testPresetConfiguration()) return 1;
   return testApplicationState() && testInputRateState() &&
                  testPeriodicRuntimeMeasurements()
              ? 0

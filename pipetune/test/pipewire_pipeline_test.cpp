@@ -282,6 +282,92 @@ static bool testCrosstalkReload(const std::filesystem::path &socketPath,
   }).has_value(), "preset switching must remove measurement dependencies");
 }
 
+static bool testBassManagementLiveRejection(const std::filesystem::path &socketPath,
+                                           const std::filesystem::path &presetPath) {
+  const auto validPath = presetPath.parent_path() / "valid-bass.effetune_preset";
+  if (!writePresetContents(validPath,
+        R"({"pipeline":[{"name":"Bass Management","channel":"All","parameters":{"su":2,"ro":[1,3],"rt":[2]}}]})")) return false;
+  const auto loaded = pipetune::exchangeControlMessage(socketPath, pipetune::makeLoadPresetControlRequest(validPath));
+  auto active = pipetune::parseControlResponse(loaded.response);
+  if (!check(loaded.error.empty() && active.success && responseHasLivePreset(loaded.response, validPath, 0),
+             "Bass Management live load must activate without warnings")) return false;
+  for (const auto phase : {"Linear", "IIR", "Linear"}) {
+    const auto linear = std::string_view(phase) == "Linear";
+    const auto latency = linear ? 16512u : 0u;
+    const auto content = std::string(R"({"pipeline":[{"name":"Bass Management","channel":"All","parameters":{"ph":")") +
+        phase + R"(","tp":"32768","su":2,"ro":[1,3],"rt":[2]}}]})";
+    if (!replacePresetContents(validPath, content)) return false;
+    const auto reloaded = waitForStatus(socketPath, [&](const auto &status) {
+      return status.configurationRevision > active.status.configurationRevision &&
+             status.dspLatencyFrames == latency && status.configurationError.empty();
+    });
+    if (!check(reloaded.has_value(), "Bass Management IIR/Linear file reload must publish its new latency")) return false;
+    const auto rate = linear ? 96000u : 48000u;
+    const auto changed = pipetune::exchangeControlMessage(socketPath, pipetune::makeSetRateControlRequest(
+        {.mode = pipetune::SampleRateMode::fixed, .fixedRate = rate}));
+    active = pipetune::parseControlResponse(changed.response);
+    if (!check(changed.error.empty() && active.success && active.status.dspLatencyFrames == latency &&
+                   active.status.dspSampleRate == rate &&
+                   responseHasLivePreset(changed.response, validPath, 0),
+               "Bass Management rate rebuild must retain its FIR latency and preset")) return false;
+  }
+  const auto invalidPath = presetPath.parent_path() / "invalid-bass.effetune_preset";
+  if (!writePresetContents(invalidPath,
+        R"({"pipeline":[{"name":"Bass Management","channel":"All","parameters":{"su":8}}]})")) return false;
+  const auto rejected = pipetune::exchangeControlMessage(socketPath, pipetune::makeLoadPresetControlRequest(invalidPath));
+  const auto response = pipetune::inspectControlResponse(rejected.response);
+  const auto unchanged = pipetune::exchangeControlMessage(socketPath, pipetune::makeStatusControlRequest());
+  const auto parsed = pipetune::parseControlResponse(unchanged.response);
+  return check(rejected.error.empty() && !response.success &&
+                   rejected.response.find("Bass Management") != std::string::npos &&
+                   unchanged.error.empty() && parsed.success &&
+                   parsed.status.configurationRevision == active.status.configurationRevision &&
+                   responseHasLivePreset(unchanged.response, validPath, 0),
+               "invalid Bass Management live load must retain the previous preset and DSP count");
+}
+
+static bool testOversamplingReload(const std::filesystem::path &socketPath,
+                                   const std::filesystem::path &presetPath) {
+  const auto path = presetPath.parent_path() / "oversampling.effetune_preset";
+  for (const auto name : {"Saturation", "Dynamic Saturation", "Exciter", "Hard Clipping",
+                          "Harmonic Distortion", "Multiband Saturation"}) {
+    const auto prefix = "{\"pipeline\":[{\"name\":\"" + std::string(name) +
+        "\",\"channel\":\"All\",\"parameters\":{\"os\":";
+    if (!writePresetContents(path, prefix + "1}}]}")) return false;
+    const auto loaded = pipetune::exchangeControlMessage(socketPath, pipetune::makeLoadPresetControlRequest(path));
+    auto active = pipetune::parseControlResponse(loaded.response);
+    if (!check(loaded.error.empty() && active.success && responseHasLivePreset(loaded.response, path, 0),
+               "OS preset must activate without warnings")) return false;
+    for (const auto factor : {2u, 8u, 3u, 1u}) {
+      if (!replacePresetContents(path, prefix + std::to_string(factor) + "}}]}")) return false;
+      const auto updated = waitForStatus(socketPath, [&](const auto &status) {
+        return status.configurationRevision > active.status.configurationRevision &&
+            status.activePluginCount == 1u && status.configurationError.empty() &&
+            status.dspLatencyFrames == (factor == 2u || factor == 8u ? 64u : 0u);
+      });
+      if (!check(updated.has_value(), std::string(name) + " file reload must publish OS latency")) return false;
+      active.status = *updated;
+    }
+  }
+  const auto mp3 = std::string(R"({"pipeline":[{"name":"MP3 Codec Simulator","channel":"All","parameters":{"cr":")");
+  if (!writePresetContents(path, mp3 + "44.1 kHz (MPEG-1)\"}}]}")) return false;
+  const auto loaded = pipetune::exchangeControlMessage(socketPath, pipetune::makeLoadPresetControlRequest(path));
+  auto active = pipetune::parseControlResponse(loaded.response);
+  if (!check(loaded.error.empty() && active.success && responseHasLivePreset(loaded.response, path, 0),
+             "MP3 preset must activate without warnings")) return false;
+  for (const auto profile : {"22.05 kHz (MPEG-2)", "44.1 kHz (MPEG-1)"}) {
+    if (!replacePresetContents(path, mp3 + profile + "\"}}]}")) return false;
+    const auto updated = waitForStatus(socketPath, [&](const auto &status) {
+      return status.configurationRevision > active.status.configurationRevision &&
+          status.activePluginCount == 1u && status.configurationError.empty() &&
+          status.dspLatencyFrames == active.status.dspLatencyFrames;
+    });
+    if (!check(updated.has_value(), "MP3 profile reload must retain its fixed per-rate latency")) return false;
+    active.status = *updated;
+  }
+  return true;
+}
+
 static bool testOrderlySignalShutdown(
     std::unique_ptr<pipetune::DspPipeline> pipeline,
     std::string_view processId,
@@ -422,6 +508,11 @@ static bool testOrderlySignalShutdown(
   if (!check(load.error.empty(), load.error) ||
       !check(parsedLoad.valid, parsedLoad.error) ||
       !check(parsedLoad.success, "live preset request failed") ||
+      !check(parsedLoad.status.presetEntries ==
+                 std::vector<pipetune::PresetEntry>{
+                     {"Future DSP", pipetune::PresetEntryState::ignored},
+                     {"Volume", pipetune::PresetEntryState::enabled}},
+             "live status must report the loaded and ignored entries") ||
       !check(responseHasLivePreset(load.response, replacementPresetPath, 1),
              "live preset response does not report the active replacement")) {
     kill(child, SIGTERM);
@@ -450,7 +541,12 @@ static bool testOrderlySignalShutdown(
                    parsedLoad.status.configurationRevision;
       });
   if (!check(automaticallyReloaded.has_value(),
-             "active preset replacement was not loaded automatically")) {
+             "active preset replacement was not loaded automatically") ||
+      !check(automaticallyReloaded->presetEntries ==
+                 std::vector<pipetune::PresetEntry>{
+                     {"Volume", pipetune::PresetEntryState::enabled},
+                     {"Volume", pipetune::PresetEntryState::enabled}},
+             "automatic reload must replace the reported configuration")) {
     kill(child, SIGTERM);
     auto childStatus = 0;
     waitpid(child, &childStatus, 0);
@@ -474,6 +570,7 @@ static bool testOrderlySignalShutdown(
   if (!check(rejectedReload.has_value(),
              "malformed automatic reload did not report an error") ||
       !check(rejectedReload->activePluginCount == 2 &&
+                 rejectedReload->presetEntries == automaticallyReloaded->presetEntries &&
                  rejectedReload->activePreset ==
                      replacementPresetPath.string(),
              "malformed automatic reload changed the active preset")) {
@@ -528,7 +625,9 @@ static bool testOrderlySignalShutdown(
     return false;
   }
 
-  if (!testCrosstalkReload(socketPath, replacementPresetPath)) {
+  if (!testCrosstalkReload(socketPath, replacementPresetPath) ||
+      !testBassManagementLiveRejection(socketPath, replacementPresetPath) ||
+      !testOversamplingReload(socketPath, replacementPresetPath)) {
     kill(child, SIGTERM);
     auto childStatus = 0;
     waitpid(child, &childStatus, 0);

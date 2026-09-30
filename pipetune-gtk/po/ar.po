@@ -273,6 +273,9 @@ msgstr "تم تغيير واجهة DSP الخلفية"
 msgid "DSP Engine"
 msgstr "محرك DSP"
 
+msgid "DSP entry"
+msgstr "عنصر DSP"
+
 msgid "DSP latency"
 msgstr "زمن انتقال DSP"
 
@@ -301,6 +304,9 @@ msgstr "إعدادات EffeTune المسبقة"
 msgid "Enable DSP processing"
 msgstr "تمكين معالجة DSP"
 
+msgid "Enabled"
+msgstr "مفعّل"
+
 msgid "English"
 msgstr "الإنجليزية"
 
@@ -324,6 +330,9 @@ msgstr "فرض — اطلب تردد أخذ العينات الثابت للمخ
 
 msgid "Ignore"
 msgstr "تجاهل"
+
+msgid "Ignored"
+msgstr "متجاهَل"
 
 msgid "Input / Sampling Frequencies"
 msgstr "الإدخال / ترددات أخذ العينات"
@@ -391,6 +400,9 @@ msgstr "أبدًا"
 msgid "None"
 msgstr "لا شيء"
 
+msgid "Off"
+msgstr "متوقف"
+
 msgid "Open PipeTune"
 msgstr "فتح PipeTune"
 
@@ -446,6 +458,9 @@ msgstr "تردد أخذ العينات لمخطط PipeWire"
 
 msgid "Preset"
 msgstr "الإعداد المسبق"
+
+msgid "Preset configuration"
+msgstr "إعداد المسبَق"
 
 msgid "Preset library"
 msgstr "مكتبة الإعدادات المسبقة"
@@ -556,6 +571,9 @@ msgstr "قياسي · {0} · {1}"
 
 msgid "Startup configuration path unavailable"
 msgstr "مسار إعدادات بدء التشغيل غير متاح"
+
+msgid "State"
+msgstr "الحالة"
 
 msgid "Suggest"
 msgstr "اقتراح"

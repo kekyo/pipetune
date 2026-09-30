@@ -268,6 +268,9 @@ msgstr "DSPバックエンドを変更しました"
 msgid "DSP Engine"
 msgstr "DSPエンジン"
 
+msgid "DSP entry"
+msgstr "DSPエントリ"
+
 msgid "DSP latency"
 msgstr "DSPレイテンシー"
 
@@ -296,6 +299,9 @@ msgstr "EffeTuneプリセット"
 msgid "Enable DSP processing"
 msgstr "DSP処理を有効にする"
 
+msgid "Enabled"
+msgstr "有効"
+
 msgid "English"
 msgstr "English"
 
@@ -318,6 +324,9 @@ msgid "Force — request the fixed graph sampling frequency"
 msgstr "強制 — グラフの固定サンプリング周波数を要求"
 
 msgid "Ignore"
+msgstr "無視"
+
+msgid "Ignored"
 msgstr "無視"
 
 msgid "Input / Sampling Frequencies"
@@ -386,6 +395,9 @@ msgstr "なし"
 msgid "None"
 msgstr "なし"
 
+msgid "Off"
+msgstr "オフ"
+
 msgid "Open PipeTune"
 msgstr "PipeTuneを開く"
 
@@ -441,6 +453,9 @@ msgstr "PipeWireグラフのサンプリング周波数"
 
 msgid "Preset"
 msgstr "プリセット"
+
+msgid "Preset configuration"
+msgstr "プリセット構成"
 
 msgid "Preset library"
 msgstr "プリセットライブラリ"
@@ -551,6 +566,9 @@ msgstr "標準 · {0} · {1}"
 
 msgid "Startup configuration path unavailable"
 msgstr "起動設定のパスを利用できません"
+
+msgid "State"
+msgstr "有効状態"
 
 msgid "Suggest"
 msgstr "提案"

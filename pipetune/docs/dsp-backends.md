@@ -27,7 +27,7 @@ This separation preserves one known compatibility path while allowing
 PipeTune to select the highest usable optimized implementation or a
 user-pinned tier. One pipeline always uses exactly one implementation.
 
-The private backend source set follows EffeTune 2.10.0, including the graph core
+The private backend source set follows EffeTune 2.11.0, including the graph core
 translation unit and generated graph-capacity contract required by its engine.
 PipeTune's loader surface remains the routed pipeline API and now includes
 `et_pipeline_latency`; PipeTune does not expose Graph v1 as a preset format or
@@ -49,12 +49,12 @@ applying the patch.
 
 Every private backend links the upstream `effetune_note_models` target. Its
 three models total 5,779,072 bytes (about 5.51 MiB) per shared library. The
-[upstream model build](https://github.com/Frieve-A/effetune/blob/v2.10.0/dsp/plugins/analyzer/note_spectrogram/models.cmake)
+[upstream model build](https://github.com/Frieve-A/effetune/blob/v2.11.0/dsp/plugins/analyzer/note_spectrogram/models.cmake)
 requires Python 3.10 or later to validate the data and generate the embedding.
 Python and separate model files are not runtime dependencies.
 
 For 32-bit Arm, the
-[upstream generator](https://github.com/Frieve-A/effetune/blob/v2.10.0/dsp/plugins/analyzer/note_spectrogram/embed_models.py)
+[upstream generator](https://github.com/Frieve-A/effetune/blob/v2.11.0/dsp/plugins/analyzer/note_spectrogram/embed_models.py)
 emits ELF directives with `@progbits` and `@object`, while GNU Arm assembly uses
 `@` for comments. PipeTune compiles a build-tree copy with those directive
 suffixes changed to `%progbits` and `%object`. The conversion uses npm/npx,
@@ -125,23 +125,30 @@ and validates:
 - each kernel's parameter-byte capacity; and
 - every external-asset capacity.
 
-The pinned EffeTune 2.10.0 contract contains 103 kernels. A backend from an
+The pinned EffeTune 2.11.0 contract contains 107 kernels. A backend from an
 earlier release is rejected even though the numeric ABI version remains one,
 because its required symbols and complete catalog do not match.
 
-This count includes seven visualization-only analyzers excluded from preset
+This count includes eight visualization-only analyzers excluded from preset
 execution and does not mean every registered effect is available without
-assets. Spatial Mapper and TV Audio Simulator need no external assets.
+assets. Attack Tonal Balance, Bass Extender, Spatial Mapper, and TV Audio
+Simulator need no external assets. Bass Management IIR also needs no asset;
+PipeTune generates the necessary FIR assets for its Linear mode.
 Spectrogram and Spectrum Analyzer include the upstream `hq` parameter in
 their validated layouts even though PipeTune omits their execution.
 
-TV Audio Simulator uses the same source-specific `-ffp-contract=off` policy
-as the [upstream native build](https://github.com/Frieve-A/effetune/blob/v2.10.0/dsp/CMakeLists.txt).
+TV Audio Simulator and Attack Tonal Balance use the same source-specific `-ffp-contract=off` policy
+as the [upstream native build](https://github.com/Frieve-A/effetune/blob/v2.11.0/dsp/CMakeLists.txt).
 Artifact tests load every CPU-applicable private backend and compare all seven
 Spatial Mapper and six TV Audio Simulator golden cases, including their input
 stimuli and parameter events. Spatial Mapper's goldens originate from the
-[promoted native implementation](https://github.com/Frieve-A/effetune/blob/v2.10.0/dsp/plugins/spatial/spatial_mapper/golden/case-001.json);
+[promoted native implementation](https://github.com/Frieve-A/effetune/blob/v2.11.0/dsp/plugins/spatial/spatial_mapper/golden/case-001.json);
 independent preset tests also check routing, polarity, silence, and actual delay.
+The same shared-library tests cover all nine Attack Tonal Balance, ten Bass
+Extender, three Bass Management, and 104 changed saturation, Limiter, and MP3
+goldens. Bass Management's Linear golden uses a synthetic IR; separate tests
+compare generated coefficients and PCM with the official JavaScript design.
+Official tolerances are retained for every case.
 
 The scalar backend is mandatory. If it cannot be validated, a managed daemon
 starts in pass-through mode and reports the error; a direct preset run fails.
@@ -223,8 +230,9 @@ PFFFT acceleration and compiler auto-vectorization affect different DSP work:
 
 | DSP work | Expected SIMD opportunity | Limiting factors |
 | --- | --- | --- |
-| Spectrum Analyzer and Spectrogram FFTs | High, direct PFFFT consumer | FFT runs at the analyzer cadence, so whole-pipeline gain is diluted between frames |
-| FIR Crossover, 5Band FIR PEQ, Group Delay EQ, and Group Delay PEQ design and convolution | High, direct PFFFT consumer | Design runs while loading or rebuilding the preset; steady-state convolution cost depends on taps and channels |
+| Attack Tonal Balance, Spatial Mapper, Noise Reduction, Phase Select EQ, and spectral pitch/bandwidth processing | High, direct PFFFT consumers | Transform size, channel count, and non-FFT processing determine total cost |
+| Spectrum Analyzer, Spectrogram, Note Spectrogram, and Pitch Meter FFTs | High within their kernels | PipeTune omits these analyzers from preset execution |
+| Bass Management Linear, FIR Crossover, 5Band FIR PEQ, Group Delay EQ, and Group Delay PEQ design and convolution | High, direct PFFFT consumer | Design runs while loading or rebuilding the preset; steady-state convolution cost depends on taps and channels |
 | IR Reverb and Room EQ convolution | High when an asset is available | PipeTune omits these nodes because the preset does not contain their stored PCM source |
 | Large sample-independent transforms, buffer mixing, matrixing, and analyzer preparation | Medium to high auto-vectorization potential | Often memory-bandwidth limited; inexpensive nodes have little absolute cost |
 | Pitch shifting and long window/ring-buffer operations | Medium, sometimes high aggregate potential | Wrap branches, square roots, interpolation, and state handling inhibit parts of each loop |
@@ -232,11 +240,13 @@ PFFFT acceleration and compiler auto-vectorization affect different DSP work:
 | Biquads, recursive delays, algorithmic reverbs, resonators, and modulation | Low to medium | Feedback state usually prevents vectorization across time; channels or modes may still be parallel |
 | Volume, mute, polarity, simple routing, and meters | Technically vectorizable but usually low impact | Their scalar cost is already small |
 
-Only Spectrum Analyzer, Spectrogram, the partitioned convolver used by FIR
-Crossover, 5Band FIR PEQ, Group Delay EQ, Group Delay PEQ, IR Reverb, and Room
-EQ, and the design-time FFT API call PFFFT directly in the current native code.
-Other gains must come from compiler vectorization or secondary effects such as
-better instruction scheduling.
+Direct PFFFT consumers include the effects above, Pitch Shifter HQ, Bandwidth
+Extender, the partitioned convolver, and the design-time FFT API. Attack Tonal
+Balance uses [incremental PFFFT transforms](https://github.com/Frieve-A/effetune/blob/v2.11.0/dsp/plugins/dynamics/attack_tonal_balance/kernel.cpp).
+MP3 Codec Simulator's 2.11 [codec processing](https://github.com/Frieve-A/effetune/blob/v2.11.0/dsp/plugins/lofi/mp3_codec_simulator/kernel.cpp)
+has no direct PFFFT dependency; its performance depends on codec transforms,
+resampling, and compiler optimization. Gains elsewhere can come from compiler
+vectorization or instruction scheduling.
 
 Telemetry-rate behavior is unchanged by this work. In particular, selecting
 telemetry rate zero does not newly stop analyzer processing.

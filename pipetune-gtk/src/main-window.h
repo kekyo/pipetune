@@ -6,11 +6,14 @@
 #ifndef PIPETUNE_GTK_MAIN_WINDOW_H
 #define PIPETUNE_GTK_MAIN_WINDOW_H
 
+#include "pipetune/preset_entry.h"
+
 #include <gtk/gtk.h>
 
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace pipetune_gtk {
 
@@ -50,6 +53,12 @@ struct MainWindowUi {
   GtkWidget *presetCombo = nullptr;
   /** EffeTune preset file chooser. */
   GtkWidget *presetChooser = nullptr;
+  /** Configuration section hidden until a preset has been loaded. */
+  GtkWidget *presetConfigurationRow = nullptr;
+  /** Read-only preset entry name and state columns. */
+  GtkWidget *presetEntryView = nullptr;
+  /** Last rendered entries, avoiding model replacement on telemetry updates. */
+  std::optional<std::vector<pipetune::PresetEntry>> displayedPresetEntries = {};
   /** Automatic or fixed DSP sample-rate drop-down. */
   GtkWidget *rateCombo = nullptr;
   /** PipeWire graph-rate suggestion or force drop-down. */
@@ -165,6 +174,16 @@ void presentMainWindow(const MainWindowUi &ui,
  * height.
  */
 void setLogDrawerVisible(const MainWindowUi &ui, bool visible) noexcept;
+
+/**
+ * Displays the loaded preset configuration independently of global bypass.
+ *
+ * @param ui Window widgets and the last rendered configuration.
+ * @param entries Loaded entries in preset order, or no value before loading.
+ */
+void renderPresetConfiguration(
+    MainWindowUi &ui,
+    const std::optional<std::vector<pipetune::PresetEntry>> &entries);
 
 /**
  * Captures state owned by the current main-window presentation.

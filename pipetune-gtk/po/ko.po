@@ -268,6 +268,9 @@ msgstr "DSP 백엔드를 변경했습니다"
 msgid "DSP Engine"
 msgstr "DSP 엔진"
 
+msgid "DSP entry"
+msgstr "DSP 항목"
+
 msgid "DSP latency"
 msgstr "DSP 지연 시간"
 
@@ -296,6 +299,9 @@ msgstr "EffeTune 프리셋"
 msgid "Enable DSP processing"
 msgstr "DSP 처리 활성화"
 
+msgid "Enabled"
+msgstr "활성"
+
 msgid "English"
 msgstr "영어"
 
@@ -319,6 +325,9 @@ msgstr "강제 — 고정 그래프 샘플링 주파수 요청"
 
 msgid "Ignore"
 msgstr "무시"
+
+msgid "Ignored"
+msgstr "무시됨"
 
 msgid "Input / Sampling Frequencies"
 msgstr "입력 / 샘플링 주파수"
@@ -386,6 +395,9 @@ msgstr "없음"
 msgid "None"
 msgstr "없음"
 
+msgid "Off"
+msgstr "꺼짐"
+
 msgid "Open PipeTune"
 msgstr "PipeTune 열기"
 
@@ -441,6 +453,9 @@ msgstr "PipeWire 그래프 샘플링 주파수"
 
 msgid "Preset"
 msgstr "프리셋"
+
+msgid "Preset configuration"
+msgstr "프리셋 구성"
 
 msgid "Preset library"
 msgstr "프리셋 라이브러리"
@@ -551,6 +566,9 @@ msgstr "표준 · {0} · {1}"
 
 msgid "Startup configuration path unavailable"
 msgstr "시작 구성 경로를 사용할 수 없음"
+
+msgid "State"
+msgstr "상태"
 
 msgid "Suggest"
 msgstr "제안"

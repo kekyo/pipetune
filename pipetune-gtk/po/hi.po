@@ -269,6 +269,9 @@ msgstr "DSP बैकएंड बदला गया"
 msgid "DSP Engine"
 msgstr "DSP इंजन"
 
+msgid "DSP entry"
+msgstr "DSP प्रविष्टि"
+
 msgid "DSP latency"
 msgstr "DSP विलंबता"
 
@@ -297,6 +300,9 @@ msgstr "EffeTune प्रीसेट"
 msgid "Enable DSP processing"
 msgstr "DSP प्रोसेसिंग चालू करें"
 
+msgid "Enabled"
+msgstr "सक्रिय"
+
 msgid "English"
 msgstr "अंग्रेज़ी"
 
@@ -320,6 +326,9 @@ msgstr "बलपूर्वक — निश्चित ग्राफ़ �
 
 msgid "Ignore"
 msgstr "अनदेखा करें"
+
+msgid "Ignored"
+msgstr "अनदेखा"
 
 msgid "Input / Sampling Frequencies"
 msgstr "इनपुट / नमूनाकरण आवृत्तियाँ"
@@ -387,6 +396,9 @@ msgstr "कभी नहीं"
 msgid "None"
 msgstr "कोई नहीं"
 
+msgid "Off"
+msgstr "बंद"
+
 msgid "Open PipeTune"
 msgstr "PipeTune खोलें"
 
@@ -442,6 +454,9 @@ msgstr "PipeWire ग्राफ़ नमूनाकरण आवृत्त�
 
 msgid "Preset"
 msgstr "प्रीसेट"
+
+msgid "Preset configuration"
+msgstr "प्रीसेट कॉन्फ़िगरेशन"
 
 msgid "Preset library"
 msgstr "प्रीसेट लाइब्रेरी"
@@ -552,6 +567,9 @@ msgstr "मानक · {0} · {1}"
 
 msgid "Startup configuration path unavailable"
 msgstr "स्टार्टअप कॉन्फ़िगरेशन पथ अनुपलब्ध"
+
+msgid "State"
+msgstr "स्थिति"
 
 msgid "Suggest"
 msgstr "सुझाव"

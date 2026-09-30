@@ -264,6 +264,9 @@ msgstr ""
 msgid "DSP Engine"
 msgstr ""
 
+msgid "DSP entry"
+msgstr ""
+
 msgid "DSP latency"
 msgstr ""
 
@@ -292,6 +295,9 @@ msgstr ""
 msgid "Enable DSP processing"
 msgstr ""
 
+msgid "Enabled"
+msgstr ""
+
 msgid "English"
 msgstr ""
 
@@ -314,6 +320,9 @@ msgid "Force — request the fixed graph sampling frequency"
 msgstr ""
 
 msgid "Ignore"
+msgstr ""
+
+msgid "Ignored"
 msgstr ""
 
 msgid "Input / Sampling Frequencies"
@@ -382,6 +391,9 @@ msgstr ""
 msgid "None"
 msgstr ""
 
+msgid "Off"
+msgstr ""
+
 msgid "Open PipeTune"
 msgstr ""
 
@@ -436,6 +448,9 @@ msgid "PipeWire graph sampling frequency"
 msgstr ""
 
 msgid "Preset"
+msgstr ""
+
+msgid "Preset configuration"
 msgstr ""
 
 msgid "Preset library"
@@ -546,6 +561,9 @@ msgid "Standard · {0} · {1}"
 msgstr ""
 
 msgid "Startup configuration path unavailable"
+msgstr ""
+
+msgid "State"
 msgstr ""
 
 msgid "Suggest"

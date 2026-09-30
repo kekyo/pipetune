@@ -9,6 +9,7 @@
 #include "pipetune/control_protocol.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -97,6 +98,8 @@ struct ApplicationState {
   InputRateState inputRate;
   /** Native DSP timing baseline and most recent interval average. */
   DspTimingState dspTiming;
+  /** Last confirmed preset entries, retained during global bypass. */
+  std::optional<std::vector<pipetune::PresetEntry>> presetEntries = {};
 };
 
 /**

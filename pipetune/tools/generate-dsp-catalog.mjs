@@ -67,6 +67,7 @@ const identifier = value => value.replaceAll(/[^A-Za-z0-9_]/gu, '_');
 // These kernels observe audio without modifying it. Metered audio processors
 // must remain executable, so telemetry or category membership is insufficient.
 const visualizationOnlyTypes = new Set([
+  'ChromaSpiralPlugin',
   'LevelMeterPlugin',
   'NoteSpectrogramPlugin',
   'PitchMeterPlugin',

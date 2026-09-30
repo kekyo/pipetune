@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -89,6 +90,9 @@ struct BackendApi {
                                  std::uint32_t) = nullptr;
   et_status (*instanceProcess)(et_engine, et_instance, float *, std::uint32_t,
                                std::uint32_t, double) = nullptr;
+  decltype(&pipetune_effetune_instance_asset_copy_v1) instanceAssetCopy = nullptr;
+  decltype(&et_instance_asset_state) instanceAssetState = nullptr;
+  decltype(&et_instance_reset) instanceReset = nullptr;
   et_status (*instanceRuntimeEvent)(et_engine, et_instance,
                                     et_runtime_event_state *) = nullptr;
 };
@@ -153,6 +157,10 @@ static BackendApi loadBackend(const std::filesystem::path &path) {
       api.handle, "et_instance_process");
   api.instanceRuntimeEvent = loadFunction<decltype(api.instanceRuntimeEvent)>(
       api.handle, "et_instance_runtime_event");
+  api.instanceAssetCopy = loadFunction<decltype(api.instanceAssetCopy)>(
+      api.handle, "pipetune_effetune_instance_asset_copy_v1");
+  api.instanceAssetState = loadFunction<decltype(api.instanceAssetState)>(api.handle, "et_instance_asset_state");
+  api.instanceReset = loadFunction<decltype(api.instanceReset)>(api.handle, "et_instance_reset");
   return api;
 }
 
@@ -245,39 +253,41 @@ static std::uint32_t findKernelIndex(const BackendApi &api,
   return count;
 }
 
-static void checkEffeTune210Catalog(const BackendApi &api) {
-  static constexpr std::array<std::string_view, 11> addedTypes = {
+static void checkEffeTune211Catalog(const BackendApi &api) {
+  static constexpr std::array<std::string_view, 15> addedTypes = {
       "GroupDelayPEQPlugin", "MDSimulatorPlugin", "ClickRemoverPlugin",
       "ClipRestorerPlugin", "HumRemoverPlugin", "NoiseReductionPlugin",
       "CrosstalkCancellationPlugin", "NoteSpectrogramPlugin",
-      "PitchMeterPlugin", "SpatialMapperPlugin", "TVAudioSimulatorPlugin"};
-  check(api.kernelCount() == 103u,
-        "EffeTune 2.10 backend catalog must contain 103 kernels");
+      "PitchMeterPlugin", "SpatialMapperPlugin", "TVAudioSimulatorPlugin",
+      "AttackTonalBalancePlugin", "BassExtenderPlugin",
+      "BassManagementPlugin", "ChromaSpiralPlugin"};
+  check(api.kernelCount() == 107u,
+        "EffeTune 2.11 backend catalog must contain 107 kernels");
   for (const auto typeName : addedTypes) {
     check(findKernelIndex(api, typeName) < api.kernelCount(),
-          "EffeTune 2.10 backend catalog must contain every required kernel");
+          "EffeTune 2.11 backend catalog must contain every required kernel");
   }
   const auto phaseSelectIndex = findKernelIndex(api, "PhaseSelectEqPlugin");
   check(phaseSelectIndex < api.kernelCount(),
-        "EffeTune 2.10 backend catalog must retain Phase Select EQ");
+        "EffeTune 2.11 backend catalog must retain Phase Select EQ");
   if (phaseSelectIndex < api.kernelCount()) {
     check(api.kernelParamsHash(phaseSelectIndex) == 0x51c6d77au,
-          "EffeTune 2.10 Phase Select EQ must retain its parameter layout");
+          "EffeTune 2.11 Phase Select EQ must retain its parameter layout");
   }
   const auto tubeIndex = findKernelIndex(api, "TubeSimulatorPlugin");
   check(tubeIndex < api.kernelCount(),
-        "EffeTune 2.10 backend catalog must retain Tube Simulator");
+        "EffeTune 2.11 backend catalog must retain Tube Simulator");
   if (tubeIndex < api.kernelCount()) {
     check(api.kernelParamsHash(tubeIndex) == 0x07986b4bu,
-          "EffeTune 2.10 Tube Simulator must retain its parameter layout");
+          "EffeTune 2.11 Tube Simulator must retain its parameter layout");
   }
   const auto multiChannelPanelIndex =
       findKernelIndex(api, "MultiChannelPanelPlugin");
   check(multiChannelPanelIndex < api.kernelCount(),
-        "EffeTune 2.10 backend catalog must retain Multi Channel Panel");
+        "EffeTune 2.11 backend catalog must retain Multi Channel Panel");
   if (multiChannelPanelIndex < api.kernelCount()) {
     check(api.kernelParamsHash(multiChannelPanelIndex) == 0x9d3d18b9u,
-          "EffeTune 2.10 Multi Channel Panel must expose 16-channel parameters");
+          "EffeTune 2.11 Multi Channel Panel must expose 16-channel parameters");
   }
 }
 
@@ -342,6 +352,7 @@ struct GoldenCase {
   std::vector<float> expected;
   std::string_view stimulus = "noise";
   std::vector<GoldenEvent> events = {};
+  yyjson_val *asset = nullptr;
 };
 
 static std::vector<float> readGoldenAudio(const std::filesystem::path &path,
@@ -414,6 +425,15 @@ static std::vector<float> goldenInput(const GoldenCase &testCase) {
             (testCase.frameCount / static_cast<double>(testCase.sampleRate));
         value = std::sin(2.0 * std::numbers::pi * 20.0 *
             std::expm1(rate * frame / testCase.sampleRate) / rate) * std::pow(10.0, -12.0 / 20.0);
+      } else if (testCase.stimulus == "sq50") {
+        value = std::sin(2.0 * std::numbers::pi * 50.0 * frame / testCase.sampleRate) >= 0.0 ?
+            std::pow(10.0, -3.0 / 20.0) : -std::pow(10.0, -3.0 / 20.0);
+      } else if (testCase.stimulus == "fs") {
+        value = ((frame + ch) & 1u) == 0u ? 1.0 : -1.0;
+      } else if (testCase.stimulus == "step") {
+        value = frame < testCase.frameCount / 2u ? 0.0 : 0.5;
+      } else if (testCase.stimulus == "silence") {
+        value = 0.0;
       } else {
         check(false, "golden stimulus must be implemented");
         return {};
@@ -422,6 +442,72 @@ static std::vector<float> goldenInput(const GoldenCase &testCase) {
     }
   }
   return audio;
+}
+
+// Match tools/dsp-parity/runners.mjs and the native parity runner's preparation:
+// synthetic sparse IR, process until ACTIVE, then reset before the test signal.
+static bool prepareGoldenAsset(const BackendApi &api, et_engine engine,
+                                et_instance instance, const GoldenCase &testCase) {
+  auto *asset = testCase.asset;
+  if (!yyjson_is_obj(asset)) return true;
+  const auto integer = [](yyjson_val *object, const char *key) {
+    return static_cast<std::uint32_t>(yyjson_get_uint(yyjson_obj_get(object, key)));
+  };
+  auto *ir = yyjson_obj_get(asset, "ir");
+  const auto *kind = yyjson_get_str(yyjson_obj_get(ir, "kind"));
+  if (kind == nullptr || std::string_view(kind) != "sparse-decay-v1") return false;
+  auto info = pipetune_effetune_asset_info_v1{
+      .channels = integer(asset, "channels"), .frames = integer(asset, "frames"),
+      .topology = integer(asset, "topology"), .head_block = integer(asset, "headBlock"),
+      .rate_divider = integer(asset, "rateDivider"), .path_count = integer(asset, "pathCount"),
+      .input_count = integer(asset, "inputCount"), .processing_channels = testCase.channelCount,
+      .footprint_bytes = 32u * 1024u * 1024u, .byte_size = 0u};
+  auto samples = std::vector<float>(info.channels * info.frames, 0.0F);
+  auto state = integer(ir, "seed");
+  if (state == 0u) state = 0x49525631u;
+  const auto next = [&state]() { state = state * 1664525u + 1013904223u; return state; };
+  const auto direct = yyjson_get_num(yyjson_obj_get(ir, "directGain"));
+  const auto tail = yyjson_get_num(yyjson_obj_get(ir, "tailGain"));
+  for (auto channel = 0u; channel < info.channels; ++channel) {
+    const auto gain = 1.0 - channel * 0.12;
+    samples[channel * info.frames] = static_cast<float>(direct * gain);
+    for (auto tap = 1u; tap < integer(ir, "tapCount"); ++tap) {
+      const auto frame = 1u + next() % (info.frames - 1u);
+      const auto sign = (next() & 1u) == 0u ? 1.0 : -1.0;
+      auto &sample = samples[channel * info.frames + frame];
+      sample = static_cast<float>(sample + sign * tail * gain *
+          std::exp(-4.0 * frame / info.frames) / std::sqrt(tap + 1.0));
+    }
+    auto &last = samples[(channel + 1u) * info.frames - 1u];
+    last = static_cast<float>(last + tail * gain * 0.01);
+  }
+  auto bytes = std::vector<std::uint8_t>(32u + info.path_count * 12u + samples.size() * 4u, 0u);
+  const auto write = [&bytes](std::size_t offset, std::uint32_t value) {
+    for (auto i = 0u; i < 4u; ++i) bytes[offset + i] = static_cast<std::uint8_t>(value >> (8u * i));
+  };
+  write(0, 0x31415445u); write(4, info.channels); write(8, info.frames);
+  write(12, static_cast<std::uint32_t>(testCase.sampleRate));
+  write(16, info.topology); write(20, info.path_count);
+  auto offset = std::size_t{32u};
+  for (auto index = 0u; index < info.path_count; ++index) {
+    auto *path = yyjson_arr_get(yyjson_obj_get(asset, "paths"), index);
+    write(offset, integer(path, "input")); write(offset + 4u, integer(path, "output"));
+    write(offset + 8u, integer(path, "irChannel")); offset += 12u;
+  }
+  for (const auto sample : samples) { write(offset, std::bit_cast<std::uint32_t>(sample)); offset += 4u; }
+  info.byte_size = static_cast<std::uint32_t>(bytes.size());
+  const auto slot = integer(asset, "slot");
+  if (api.instanceAssetCopy(engine, instance, slot, &info, bytes.data(), bytes.size(),
+                            integer(asset, "format")) != ET_OK) return false;
+  const auto frames = std::max(32u, testCase.blockSize);
+  auto silence = std::vector<float>(testCase.channelCount * frames, 0.0F);
+  auto assetState = api.instanceAssetState(engine, instance, slot) & 0xffu;
+  for (auto calls = 0u; assetState == ET_ASSET_STATE_PREPARING && calls < 100000u; ++calls) {
+    std::fill(silence.begin(), silence.end(), 0.0F);
+    if (api.instanceProcess(engine, instance, silence.data(), testCase.channelCount, frames, 0.0) != ET_OK) return false;
+    assetState = api.instanceAssetState(engine, instance, slot) & 0xffu;
+  }
+  return assetState == ET_ASSET_STATE_ACTIVE && api.instanceReset(engine, instance) == ET_OK;
 }
 
 static std::vector<float> renderGoldenCase(const BackendApi &api,
@@ -480,6 +566,9 @@ static std::vector<float> renderGoldenCase(const BackendApi &api,
       ++failures;
     }
     if (seeded == ET_OK && staged == ET_OK) {
+      const auto assetReady = prepareGoldenAsset(api, engine, instance, testCase);
+      check(assetReady, "golden asset must copy, become ACTIVE and reset before processing");
+      if (!assetReady) { api.instanceDestroy(engine, instance); api.engineDestroy(engine); return {}; }
       const auto input = goldenInput(testCase);
       if (input.size() != testCase.expected.size()) {
         api.instanceDestroy(engine, instance);
@@ -578,13 +667,18 @@ static void checkGoldenCase(const BackendApi &api, std::uint32_t variant,
                  static_cast<double>(testCase.tolerance));
     ++failures;
   }
+  std::printf("variant=%u type=%s case=%s max_abs=%.9g tolerance=%.9g\n",
+              variant, testCase.typeName, testCase.name,
+              static_cast<double>(maximumDifference), static_cast<double>(testCase.tolerance));
 }
 
 static void checkMetadataGoldens(const BackendApi &api, std::uint32_t variant,
                                   const std::filesystem::path &directory,
                                   std::uint32_t caseCount) {
   for (auto number = 1u; number <= caseCount; ++number) {
-    const auto path = directory / ("case-00" + std::to_string(number) + ".json");
+    auto filename = std::array<char, 32>{};
+    std::snprintf(filename.data(), filename.size(), "case-%03u.json", number);
+    const auto path = directory / filename.data();
     auto *document = yyjson_read_file(path.c_str(), 0, nullptr, nullptr);
     check(document != nullptr, "official golden metadata must load");
     if (document == nullptr) continue;
@@ -598,6 +692,13 @@ static void checkMetadataGoldens(const BackendApi &api, std::uint32_t variant,
     }
     auto parameters = pipetune::packDspParameters(*definition, yyjson_obj_get(root, "params"));
     check(parameters.error.empty(), "golden parameters must pack");
+    // The official parity runner canonicalizes crossover controls and carries
+    // the canonical values between events, separately from the JSON packer.
+    const auto canonicalize = [type](auto &values) {
+      if (std::string_view(type) == "MultibandSaturationPlugin")
+        values[1] = std::max(values[0], values[1]);
+    };
+    canonicalize(parameters.floats);
     const auto integer = [root](const char *key) {
       return static_cast<std::uint32_t>(yyjson_get_uint(yyjson_obj_get(root, key)));
     };
@@ -609,6 +710,7 @@ static void checkMetadataGoldens(const BackendApi &api, std::uint32_t variant,
         parameters.floats,
         static_cast<float>(yyjson_get_num(yyjson_obj_get(yyjson_obj_get(root, "tolerance"), "abs"))),
         readGoldenAudio(directory / yyjson_get_str(yyjson_obj_get(root, "binary")), type)};
+    testCase.asset = yyjson_obj_get(root, "asset");
     testCase.stimulus = yyjson_get_str(yyjson_obj_get(root, "stimulus"));
     auto staged = parameters.floats;
     auto *events = yyjson_obj_get(root, "events");
@@ -619,10 +721,12 @@ static void checkMetadataGoldens(const BackendApi &api, std::uint32_t variant,
       check(packed.error.empty(), "golden parameter event must pack");
       for (auto field = std::size_t{0}; field < definition->elements.size(); ++field) {
         const auto &element = definition->elements[field];
-        const auto key = element.arrayKey.empty() ? element.directKey : element.arrayKey;
+        const auto key = !element.objectArrayKey.empty() ? element.objectArrayKey :
+                         !element.arrayKey.empty() ? element.arrayKey : element.directKey;
         if (yyjson_obj_getn(changes, key.data(), key.size()) != nullptr)
           staged[field] = packed.floats[field];
       }
+      canonicalize(staged);
       testCase.events.push_back({
           static_cast<std::uint32_t>(yyjson_get_uint(yyjson_obj_get(event, "frame"))), staged});
     }
@@ -836,7 +940,7 @@ int main(int argc, char **argv) {
                 PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
             "scalar backend must report its concrete variant");
       checkAllAbiSymbols(scalar.handle);
-      checkEffeTune210Catalog(scalar);
+      checkEffeTune211Catalog(scalar);
       checkTubeRuntimeContract(scalar);
       const auto scalarSpectrum = renderImpulseSpectrum(scalar);
       checkGoldenCases(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
@@ -845,6 +949,28 @@ int main(int argc, char **argv) {
                            pluginRoot / "spatial/spatial_mapper/golden", 7u);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "lofi/tv_audio_simulator/golden", 6u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "dynamics/attack_tonal_balance/golden", 9u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "saturation/bass_extender/golden", 10u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "basics/bass_management/golden", 3u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "saturation/saturation/golden", 16u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "saturation/dynamic_saturation/golden", 13u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "saturation/exciter/golden", 13u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "saturation/hard_clipping/golden", 16u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "saturation/harmonic_distortion/golden", 12u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "saturation/multiband_saturation/golden", 15u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "dynamics/brickwall_limiter/golden", 8u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "lofi/mp3_codec_simulator/golden", 11u);
 
       for (auto index = std::size_t{1}; index < loaded.size(); ++index) {
         const auto expected = loaded[index].first;
@@ -865,6 +991,17 @@ int main(int argc, char **argv) {
         checkGoldenCases(simd, expected, goldenCases);
         checkMetadataGoldens(simd, expected, pluginRoot / "spatial/spatial_mapper/golden", 7u);
         checkMetadataGoldens(simd, expected, pluginRoot / "lofi/tv_audio_simulator/golden", 6u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "dynamics/attack_tonal_balance/golden", 9u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "saturation/bass_extender/golden", 10u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "basics/bass_management/golden", 3u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "saturation/saturation/golden", 16u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "saturation/dynamic_saturation/golden", 13u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "saturation/exciter/golden", 13u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "saturation/hard_clipping/golden", 16u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "saturation/harmonic_distortion/golden", 12u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "saturation/multiband_saturation/golden", 15u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "dynamics/brickwall_limiter/golden", 8u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "lofi/mp3_codec_simulator/golden", 11u);
 
         const auto simdSpectrum = renderImpulseSpectrum(simd);
         check(scalarSpectrum.size() == simdSpectrum.size(),

@@ -531,6 +531,122 @@ static bool testBackendReplacementPreservesCounters(
                "backend switch must preserve cumulative DSP time");
 }
 
+static bool testAttackBassIdlePolicy(const std::filesystem::path &directory) {
+  const auto backends = pipetune::discoverDspBackends();
+  for (const auto name : {"Attack Tonal Balance", "Bass Extender"}) {
+    for (const auto &backend : {backends.scalar.backend, backends.simd.backend}) {
+      const auto path = directory / "attack-bass-idle.effetune_preset";
+      {
+        auto file = std::ofstream(path);
+        file << "{\"pipeline\":[{\"name\":\"" << name << "\",\"channel\":\"All\"}]}";
+      }
+      auto loaded = pipetune::loadDspPipeline(path,
+          {.sampleRate = 48000, .maxChannels = 2, .maxFrames = 128}, backend);
+      if (!check(loaded.pipeline != nullptr, loaded.error)) return false;
+      const auto latency = loaded.pipeline->latencyFrames();
+      auto slot = pipetune::DspPipelineSlot(std::move(loaded.pipeline));
+      for (auto start = 0u; start < latency + 8192u; start += 128u) {
+        auto audio = std::vector<float>(256u, 0.1F);
+        if (!check(slot.processWithIdle(audio, 2, 128, start / 48000.0,
+                       {.timeoutMilliseconds = 100}).status == pipetune::ProcessStatus::ok,
+                   "new DSP must run before the idle transition")) return false;
+      }
+      for (auto start = 0u; start < 9600u; start += 128u) {
+        auto audio = std::vector<float>(256u, 0.0F);
+        const auto result = slot.processWithIdle(audio, 2, 128, 2.0 + start / 48000.0,
+                                                 {.timeoutMilliseconds = 100});
+        if (!check(result.status == pipetune::ProcessStatus::ok,
+                   "new DSP must process the idle transition")) return false;
+        if (start >= 5040u &&
+            !check(result.activity == pipetune::DspActivity::sleeping && allApproximately(audio, 0.0F),
+                   "new DSP must reach silent sleep after timeout plus fade frames")) return false;
+      }
+      const auto before = slot.performanceCounters();
+      auto silence = std::vector<float>(256u, 0.0F);
+      if (!check(slot.processWithIdle(silence, 2, 128, 3.0, {.timeoutMilliseconds = 100}).activity ==
+                     pipetune::DspActivity::sleeping &&
+                     slot.performanceCounters().processedFrames == before.processedFrames,
+                 "sleep must skip native DSP processing")) return false;
+      auto fresh = pipetune::loadDspPipeline(path,
+          {.sampleRate = 48000, .maxChannels = 2, .maxFrames = 128}, backend);
+      if (!check(fresh.pipeline != nullptr, fresh.error)) return false;
+      auto energy = 0.0;
+      for (auto start = 0u; start < latency + 8192u; start += 128u) {
+        auto audio = std::vector<float>(256u);
+        for (auto i = 0u; i < audio.size(); ++i)
+          audio[i] = 0.1F * std::sin(static_cast<float>(start + i % 128u) * 0.013F);
+        auto expected = audio;
+        const auto result = slot.processWithIdle(audio, 2, 128, 4.0 + start / 48000.0,
+                                                 {.timeoutMilliseconds = 100});
+        if (!check(result.status == pipetune::ProcessStatus::ok &&
+                       result.activity == pipetune::DspActivity::active &&
+                       fresh.pipeline->process(expected, 2, 128, 4.0 + start / 48000.0) == pipetune::ProcessStatus::ok &&
+                       audio == expected,
+                   "waking DSP must clear its history and match fresh PCM beyond its latency")) return false;
+        for (const auto value : audio) energy += value * value;
+      }
+      if (!check(std::isfinite(energy) && energy > 0.01,
+                 "waking DSP must produce audible output after its analysis delay")) return false;
+    }
+  }
+  return true;
+}
+
+static bool testBassManagementIdlePolicy(const std::filesystem::path &directory) {
+  const auto backends = pipetune::discoverDspBackends();
+  for (const auto phase : {"IIR", "Linear"}) {
+    for (const auto &backend : {backends.scalar.backend, backends.simd.backend}) {
+      const auto path = directory / "bass-management-idle.effetune_preset";
+      {
+        auto file = std::ofstream(path);
+        file << R"({"pipeline":[{"name":"Bass Management","channel":"All","parameters":{"ph":")"
+             << phase << R"(","tp":"8192","su":2,"ro":[1,3],"rt":[2]}}]})";
+      }
+      auto loaded = pipetune::loadDspPipeline(path, {48000.0F, 2u, 128u}, backend);
+      auto reference = pipetune::loadDspPipeline(path, {48000.0F, 2u, 128u}, backend);
+      if (!check(loaded.pipeline != nullptr && reference.pipeline != nullptr,
+                 loaded.error + reference.error)) return false;
+      const auto latency = loaded.pipeline->latencyFrames();
+      auto slot = pipetune::DspPipelineSlot(std::move(loaded.pipeline));
+      // Prepare both convolvers before sleep. Waking preserves the prepared IR
+      // while resetting delay and filter history, unlike an unprepared new FIR.
+      for (auto start = 0u; start < 262144u; start += 128u) {
+        auto audio = std::vector<float>(256u, 0.1F);
+        auto expected = audio;
+        if (slot.processWithIdle(audio, 2, 128, start / 48000.0, {}).status != pipetune::ProcessStatus::ok ||
+            reference.pipeline->process(expected, 2, 128, start / 48000.0) != pipetune::ProcessStatus::ok) return false;
+      }
+      for (auto start = 0u; start < 9600u; start += 128u) {
+        auto audio = std::vector<float>(256u, 0.0F);
+        const auto result = slot.processWithIdle(audio, 2, 128, 6.0 + start / 48000.0, {.timeoutMilliseconds = 100});
+        if (!check(result.status == pipetune::ProcessStatus::ok,
+                   "Bass Management sleep transition failed")) return false;
+        if (start >= 5040u && !check(result.activity == pipetune::DspActivity::sleeping && allApproximately(audio, 0.0F),
+                                   "Bass Management must fade to silent sleep")) return false;
+      }
+      const auto before = slot.performanceCounters();
+      auto silence = std::vector<float>(256u, 0.0F);
+      if (!check(slot.processWithIdle(silence, 2, 128, 7.0, {.timeoutMilliseconds = 100}).activity ==
+                     pipetune::DspActivity::sleeping && slot.performanceCounters().processedFrames == before.processedFrames,
+                 "sleep must stop Bass Management DSP calls") ||
+          !check(reference.pipeline->reset() == pipetune::ProcessStatus::ok, "reference FIR reset failed")) return false;
+      auto subEnergy = 0.0;
+      for (auto start = 0u; start < latency + 8192u; start += 128u) {
+        auto audio = std::vector<float>(256u, 0.0F);
+        for (auto i = 0u; i < 128u; ++i) audio[i] = 0.1F * std::sin((start + i) * 0.002F);
+        auto expected = audio;
+        const auto result = slot.processWithIdle(audio, 2, 128, 8.0 + start / 48000.0, {.timeoutMilliseconds = 100});
+        if (!check(result.status == pipetune::ProcessStatus::ok && result.activity == pipetune::DspActivity::active &&
+                       reference.pipeline->process(expected, 2, 128, start / 48000.0) == pipetune::ProcessStatus::ok && audio == expected,
+                   "Bass Management wake must match a reset prepared FIR without stale history")) return false;
+        for (auto i = 128u; i < 256u; ++i) subEnergy += audio[i] * audio[i];
+      }
+      if (!check(subEnergy > 0.01, "Bass Management sub output must resume after wake")) return false;
+    }
+  }
+  return true;
+}
+
 static bool testTvIdlePolicy(const std::filesystem::path &directory) {
   const auto path = directory / "tv-idle.effetune_preset";
   {
@@ -611,7 +727,7 @@ int main() {
   const auto dcOffset = writeDcOffsetPreset(directory);
   const auto delay = writeDelayPreset(directory);
   const auto tubeSimulator = writeTubeSimulatorPreset(directory);
-  const auto passed = testTvIdlePolicy(directory) && testReplacementChangesPcm(positive, negative) &&
+  const auto passed = testBassManagementIdlePolicy(directory) && testAttackBassIdlePolicy(directory) && testTvIdlePolicy(directory) && testReplacementChangesPcm(positive, negative) &&
                       testBypassDoesNotReportDspWork() &&
                       testActivePipelineLatencyTracksReplacement(
                           tubeSimulator, positive) &&

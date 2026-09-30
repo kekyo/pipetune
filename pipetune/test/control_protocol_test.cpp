@@ -765,7 +765,48 @@ static bool testErrorResponse() {
                "parsed error diagnostic differs");
 }
 
+static bool testPresetEntries() {
+  auto status = pipetune::ControlRuntimeStatus{};
+  status.processingMode = pipetune::ProcessingMode::preset;
+  status.dspActivity = pipetune::DspActivity::active;
+  status.activePreset = "/tmp/entries.effetune_preset";
+  status.dspSampleRate = 48000;
+  status.activePluginCount = 1;
+  status.presetEntries = {{"Volume", pipetune::PresetEntryState::enabled},
+                          {"Volume", pipetune::PresetEntryState::off},
+                          {"スペクトラム", pipetune::PresetEntryState::ignored}};
+  for (const auto event : {false, true}) {
+    const auto encoded = event ? pipetune::makeControlStatusEvent(status)
+                               : pipetune::makeControlSuccessResponse(status, {});
+    const auto parsed = pipetune::parseControlResponse(encoded);
+    if (!check(parsed.valid && parsed.success, parsed.error) ||
+        !check(parsed.status.presetEntries == status.presetEntries,
+               "responses and subscriptions must preserve every preset entry")) {
+      return false;
+    }
+    const auto field = encoded.find("\"presetEntries\":[");
+    const auto begin = encoded.find('[', field);
+    const auto end = encoded.find(']', begin);
+    for (const auto invalid : {"null", "{}", "[{}]",
+                              "[{\"name\":3,\"state\":\"enabled\"}]",
+                              "[{\"name\":\"Volume\",\"state\":\"unknown\"}]"}) {
+      auto malformed = encoded;
+      malformed.replace(begin, end - begin + 1, invalid);
+      if (!check(!pipetune::parseControlResponse(malformed).valid,
+                 "malformed preset entry status must be rejected")) {
+        return false;
+      }
+    }
+  }
+  status.presetEntries.clear();
+  const auto empty = pipetune::parseControlResponse(
+      pipetune::makeControlSuccessResponse(status, {}));
+  return check(empty.valid && empty.status.presetEntries.empty(),
+               "an empty preset must round-trip without entries");
+}
+
 int main() {
+  if (!testPresetEntries()) return 1;
   return testRequests() && testRejectedRequests() && testSuccessResponse() &&
                  testStatusEvent() && testBypassStatus() &&
                  testDspBackendFallbackStatus() &&

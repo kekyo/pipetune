@@ -1,0 +1,13 @@
+{
+  "name": "Attack and tonal balance",
+  "pipeline": [
+    {
+      "name": "Attack Tonal Balance",
+      "channel": "All",
+      "parameters": {
+        "at": 6,
+        "tn": -6
+      }
+    }
+  ]
+}
