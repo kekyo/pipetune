@@ -119,6 +119,51 @@ static bool testCanonicalPreset(const std::filesystem::path &directory) {
   return true;
 }
 
+static bool testPresetEntries(const std::filesystem::path &directory) {
+  const auto path = writePreset(directory, "entries.effetune_preset", R"json({
+    "pipeline": [
+      {"name":"Volume","enabled":true,"parameters":{"vl":-6}},
+      {"nm":"Volume","en":0},
+      {"name":"Spectrum Analyzer","enabled":true},
+      {"name":"Pitch Meter","enabled":false},
+      {"name":"Future DSP","enabled":true},
+      {"name":"IR Reverb","enabled":true},
+      {"name":"Crosstalk Cancellation","enabled":true},
+      {"name":"Section","enabled":false},
+      {"name":"Volume","enabled":true},
+      {"name":"Section","enabled":true},
+      {"nm":"Volume"}
+    ]})json");
+  const auto loaded = pipetune::loadDspPipeline(
+      path, {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64},
+      {.measurementDirectory = directory / "missing-measurements"});
+  using State = pipetune::PresetEntryState;
+  const auto expected = std::vector<pipetune::PresetEntry>{
+      {"Volume", State::enabled}, {"Volume", State::off},
+      {"Spectrum Analyzer", State::ignored}, {"Pitch Meter", State::ignored},
+      {"Future DSP", State::ignored}, {"IR Reverb", State::ignored},
+      {"Crosstalk Cancellation", State::ignored}, {"Section", State::off},
+      {"Volume", State::off}, {"Section", State::enabled},
+      {"Volume", State::enabled}};
+  if (!check(loaded.pipeline != nullptr, loaded.error) ||
+      !check(std::ranges::equal(loaded.pipeline->presetEntries(), expected),
+             "loaded entries must preserve order and distinguish enabled, off and ignored") ||
+      !check(loaded.pipeline->activePluginCount() == 2,
+             "entry reporting must match the prepared DSPs")) {
+    return false;
+  }
+  std::filesystem::remove(path);
+  const auto rebuilt = pipetune::rebuildDspPipeline(
+      *loaded.pipeline, {.sampleRate = 96000.0F, .maxChannels = 2, .maxFrames = 64});
+  const auto bypass = pipetune::createBypassDspPipeline(
+      {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
+  return check(rebuilt.pipeline != nullptr, rebuilt.error) &&
+         check(std::ranges::equal(rebuilt.pipeline->presetEntries(), expected),
+               "recipe rebuilds must retain all entry states") &&
+         check(bypass.pipeline->presetEntries().empty(),
+               "an unloaded bypass pipeline must have no entries");
+}
+
 static bool testLegacyPreset(const std::filesystem::path &directory) {
   const auto path = writePreset(
       directory, "legacy.effetune_preset",
@@ -1153,7 +1198,7 @@ int main() {
   const auto bass = testEffeTune211Processor(directory, "Bass Extender");
   const auto bassWidth = testBassExtenderProcessingWidth(directory);
   const auto visualizers = testVisualizationPresets(directory);
-  const auto passed = attack && bass && bassWidth && visualizers &&
+  const auto passed = testPresetEntries(directory) && attack && bass && bassWidth && visualizers &&
       testFirCrossoverRouting(directory) && testFirCrossoverBands(directory) &&
       testEffeTune210Pipeline(directory) && testSpatialMapper(directory) && testTvAudioSimulator(directory) &&
       testBypassPipeline() && testCanonicalPreset(directory) &&

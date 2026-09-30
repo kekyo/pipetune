@@ -353,6 +353,10 @@ std::size_t DspPipelineSlot::activePluginCount() const noexcept {
   return active_.load(std::memory_order_acquire)->activePluginCount();
 }
 
+std::span<const PresetEntry> DspPipelineSlot::presetEntries() const noexcept {
+  return current_->presetEntries();
+}
+
 std::uint32_t DspPipelineSlot::activeLatencyFrames() const noexcept {
   return active_.load(std::memory_order_acquire)->latencyFrames();
 }

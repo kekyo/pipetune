@@ -1447,6 +1447,7 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
                 std::to_string(ratePolicy.fixedRate) + " Hz";
   }
   const auto idleState = runtime.dspIdleState.load();
+  const auto presetEntries = runtime.pipeline.presetEntries();
   return {.processingMode = runtime.processingMode,
           .dspActivity = idleState.activity,
           .dspIdlePolicy = idleState.policy,
@@ -1455,6 +1456,7 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .configurationRevision = runtime.configurationRevision.load(
               std::memory_order_acquire),
           .activePluginCount = runtime.pipeline.activePluginCount(),
+          .presetEntries = {presetEntries.begin(), presetEntries.end()},
           .dspLatencyFrames = runtime.pipeline.activeLatencyFrames(),
           .overrunFrames = runtime.ring.overrunFrames(),
           .underrunFrames = runtime.ring.underrunFrames(),

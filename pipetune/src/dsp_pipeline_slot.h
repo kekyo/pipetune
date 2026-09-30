@@ -184,6 +184,9 @@ public:
   /** Returns referenced measurement files. Call only on the replacement thread. */
   std::span<const std::filesystem::path> measurementFiles() const noexcept;
 
+  /** Returns active preset entries. Call only on the replacement thread. */
+  std::span<const PresetEntry> presetEntries() const noexcept;
+
   /** Returns the active pipeline's enabled native DSP count. */
   std::size_t activePluginCount() const noexcept;
 

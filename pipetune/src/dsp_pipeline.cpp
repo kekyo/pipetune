@@ -55,6 +55,7 @@ struct DspPipeline::Impl {
   std::uint32_t maxFrames = 0;
   std::uint32_t latencyFrames = 0;
   std::size_t activePluginCount = 0;
+  std::vector<PresetEntry> presetEntries;
   std::shared_ptr<const std::string> presetRecipe;
   PipelineLoadContext loadContext;
   std::vector<std::filesystem::path> measurementFiles;
@@ -76,6 +77,10 @@ PipelineLoadContext defaultPipelineLoadContext() {
 
 std::span<const std::filesystem::path> DspPipeline::measurementFiles() const noexcept {
   return implementation_->measurementFiles;
+}
+
+std::span<const PresetEntry> DspPipeline::presetEntries() const noexcept {
+  return implementation_->presetEntries;
 }
 
 struct PresetNode {
@@ -519,9 +524,12 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
       return loadError(std::move(normalizationError), std::move(warnings));
     }
 
+    auto &entry = implementation->presetEntries.emplace_back(
+        PresetEntry{std::string(node.name), PresetEntryState::ignored});
     if (node.name == "Section") {
       insideSection = true;
       sectionEnabled = node.enabled;
+      entry.state = node.enabled ? PresetEntryState::enabled : PresetEntryState::off;
       continue;
     }
     const auto *definition = findDspByDisplayName(node.name);
@@ -532,8 +540,11 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
            .reason = "not available in EffeTune's native DSP registry"});
       continue;
     }
-    if (!node.enabled || (insideSection && !sectionEnabled) ||
-        definition->visualizationOnly) {
+    if (definition->visualizationOnly) {
+      continue;
+    }
+    if (!node.enabled || (insideSection && !sectionEnabled)) {
+      entry.state = PresetEntryState::off;
       continue;
     }
     const auto crosstalk = node.name == "Crosstalk Cancellation";
@@ -680,6 +691,7 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
                            .inputBus = inputBus,
                            .outputBus = outputBus,
                            .channelSpec = channelSpec});
+    entry.state = PresetEntryState::enabled;
   }
 
   const auto descriptor = buildDescriptor(activeNodes);

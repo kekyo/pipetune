@@ -509,6 +509,18 @@ static bool dspIdleStatusIsConsistent(
          status.dspActivity == DspActivity::active;
 }
 
+static std::string_view presetEntryStateName(PresetEntryState state) noexcept {
+  switch (state) {
+  case PresetEntryState::enabled:
+    return "enabled";
+  case PresetEntryState::off:
+    return "off";
+  case PresetEntryState::ignored:
+    return "ignored";
+  }
+  return {};
+}
+
 static std::string makeControlStatusMessage(
     const ControlRuntimeStatus &status,
     std::span<const ControlWarning> warnings, bool statusEvent) {
@@ -614,6 +626,22 @@ static std::string makeControlStatusMessage(
       !addNullableString(document.get(), root, "dspBackendError",
                          status.dspBackendError)) {
     return makeControlErrorResponse("cannot encode control response");
+  }
+
+  auto *presetEntries =
+      yyjson_mut_obj_add_arr(document.get(), root, "presetEntries");
+  if (presetEntries == nullptr) {
+    return makeControlErrorResponse("cannot encode control response");
+  }
+  for (const auto &entry : status.presetEntries) {
+    auto *item = yyjson_mut_obj(document.get());
+    const auto state = presetEntryStateName(entry.state);
+    if (state.empty() || item == nullptr ||
+        !yyjson_mut_arr_append(presetEntries, item) ||
+        !addString(document.get(), item, "name", entry.name) ||
+        !addString(document.get(), item, "state", state)) {
+      return makeControlErrorResponse("cannot encode preset entries");
+    }
   }
 
   auto *backendArray =
@@ -1038,6 +1066,36 @@ static bool readUint32Field(yyjson_val *object, const char *key,
   return true;
 }
 
+static bool readPresetEntries(yyjson_val *root,
+                               std::vector<PresetEntry> &entries) {
+  auto *array = yyjson_obj_get(root, "presetEntries");
+  if (!yyjson_is_arr(array)) {
+    return false;
+  }
+  const auto count = yyjson_arr_size(array);
+  entries.reserve(count);
+  for (auto index = std::size_t{0}; index < count; ++index) {
+    auto *item = yyjson_arr_get(array, index);
+    auto entry = PresetEntry{};
+    auto state = std::string{};
+    if (!readStringField(item, "name", entry.name) ||
+        !readStringField(item, "state", state)) {
+      return false;
+    }
+    if (state == "enabled") {
+      entry.state = PresetEntryState::enabled;
+    } else if (state == "off") {
+      entry.state = PresetEntryState::off;
+    } else if (state == "ignored") {
+      entry.state = PresetEntryState::ignored;
+    } else {
+      return false;
+    }
+    entries.push_back(std::move(entry));
+  }
+  return true;
+}
+
 ControlResponseParseResult parseControlResponse(std::string_view json) {
   auto document =
       JsonDocument(yyjson_read(json.data(), json.size(), YYJSON_READ_NOFLAG));
@@ -1119,6 +1177,7 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
                         status.configurationRevision) ||
       !readSizeField(root, "activePluginCount",
                      status.activePluginCount) ||
+      !readPresetEntries(root, status.presetEntries) ||
       !readUint32Field(root, "dspLatencyFrames",
                        status.dspLatencyFrames) ||
       !readCounterField(root, "overrunFrames", status.overrunFrames) ||

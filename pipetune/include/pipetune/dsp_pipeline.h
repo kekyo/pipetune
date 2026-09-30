@@ -7,6 +7,7 @@
 #define PIPETUNE_DSP_PIPELINE_H
 
 #include "pipetune/dsp_backend.h"
+#include "pipetune/preset_entry.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -138,6 +139,8 @@ public:
   std::uint32_t latencyFrames() const noexcept;
   /** Returns the number of enabled, supported native DSP nodes. */
   std::size_t activePluginCount() const noexcept;
+  /** Returns all loaded preset entries in their original order. */
+  std::span<const PresetEntry> presetEntries() const noexcept;
   /** Returns referenced measurement files, including missing files. */
   std::span<const std::filesystem::path> measurementFiles() const noexcept;
   /** Returns the native backend in use, or no value for a bypass pipeline. */
