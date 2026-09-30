@@ -416,6 +416,8 @@ static std::vector<float> goldenInput(const GoldenCase &testCase) {
             (testCase.frameCount / static_cast<double>(testCase.sampleRate));
         value = std::sin(2.0 * std::numbers::pi * 20.0 *
             std::expm1(rate * frame / testCase.sampleRate) / rate) * std::pow(10.0, -12.0 / 20.0);
+      } else if (testCase.stimulus == "silence") {
+        value = 0.0;
       } else {
         check(false, "golden stimulus must be implemented");
         return {};
@@ -580,13 +582,18 @@ static void checkGoldenCase(const BackendApi &api, std::uint32_t variant,
                  static_cast<double>(testCase.tolerance));
     ++failures;
   }
+  std::printf("variant=%u type=%s case=%s max_abs=%.9g tolerance=%.9g\n",
+              variant, testCase.typeName, testCase.name,
+              static_cast<double>(maximumDifference), static_cast<double>(testCase.tolerance));
 }
 
 static void checkMetadataGoldens(const BackendApi &api, std::uint32_t variant,
                                   const std::filesystem::path &directory,
                                   std::uint32_t caseCount) {
   for (auto number = 1u; number <= caseCount; ++number) {
-    const auto path = directory / ("case-00" + std::to_string(number) + ".json");
+    auto filename = std::array<char, 32>{};
+    std::snprintf(filename.data(), filename.size(), "case-%03u.json", number);
+    const auto path = directory / filename.data();
     auto *document = yyjson_read_file(path.c_str(), 0, nullptr, nullptr);
     check(document != nullptr, "official golden metadata must load");
     if (document == nullptr) continue;
@@ -847,6 +854,10 @@ int main(int argc, char **argv) {
                            pluginRoot / "spatial/spatial_mapper/golden", 7u);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "lofi/tv_audio_simulator/golden", 6u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "dynamics/attack_tonal_balance/golden", 9u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "saturation/bass_extender/golden", 10u);
 
       for (auto index = std::size_t{1}; index < loaded.size(); ++index) {
         const auto expected = loaded[index].first;
@@ -867,6 +878,8 @@ int main(int argc, char **argv) {
         checkGoldenCases(simd, expected, goldenCases);
         checkMetadataGoldens(simd, expected, pluginRoot / "spatial/spatial_mapper/golden", 7u);
         checkMetadataGoldens(simd, expected, pluginRoot / "lofi/tv_audio_simulator/golden", 6u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "dynamics/attack_tonal_balance/golden", 9u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "saturation/bass_extender/golden", 10u);
 
         const auto simdSpectrum = renderImpulseSpectrum(simd);
         check(scalarSpectrum.size() == simdSpectrum.size(),

@@ -1,0 +1,12 @@
+{
+  "name": "Bass extension on the first pair",
+  "pipeline": [
+    {
+      "name": "Bass Extender",
+      "parameters": {
+        "am": 100,
+        "og": -6
+      }
+    }
+  ]
+}

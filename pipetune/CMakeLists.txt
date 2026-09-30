@@ -545,6 +545,11 @@ if(BUILD_TESTING)
     NAME pipetune_preset_pipeline_tests
     COMMAND pipetune_preset_pipeline_tests)
 
+  add_executable(pipetune_attack_bass_tests test/attack_bass_test.cpp)
+  target_link_libraries(pipetune_attack_bass_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_attack_bass_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_attack_bass_tests COMMAND pipetune_attack_bass_tests)
+
   add_executable(
     pipetune_audio_bridge_tests
     test/audio_bridge_test.cpp)
