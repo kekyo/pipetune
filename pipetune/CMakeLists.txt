@@ -176,6 +176,7 @@ add_library(
   pipetune_core STATIC
   "${PIPETUNE_GENERATED_DIR}/version.cpp"
   src/audio_bridge.cpp
+  src/bass_management_config.cpp
   src/dsp_backend.cpp
   src/dsp_catalog.cpp
   src/dsp_pipeline.cpp
@@ -549,6 +550,11 @@ if(BUILD_TESTING)
   target_link_libraries(pipetune_attack_bass_tests PRIVATE pipetune_core)
   target_compile_options(pipetune_attack_bass_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME pipetune_attack_bass_tests COMMAND pipetune_attack_bass_tests)
+
+  add_executable(pipetune_bass_management_tests test/bass_management_test.cpp)
+  target_link_libraries(pipetune_bass_management_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_bass_management_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_bass_management_tests COMMAND pipetune_bass_management_tests)
 
   add_executable(
     pipetune_audio_bridge_tests

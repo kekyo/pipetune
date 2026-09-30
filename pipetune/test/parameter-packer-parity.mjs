@@ -76,6 +76,16 @@ for (const spec of loadParamSpecs(path.join(effetuneRoot, 'dsp/plugins'))) {
 for (const matrix of [[], [0, -0.5], Array.from({ length: 256 }, (_, i) => (i - 128) / 128)]) {
   cases.push({ type: 'SpatialMapperPlugin', parameters: { dm: matrix, fm: matrix, rm: matrix } });
 }
+for (const mask of [-1, 0, 1, 1.5, 32768, 65535, 65536]) {
+  cases.push({
+    type: 'BassManagementPlugin',
+    parameters: {
+      su: mask, ro: [1, 2, 3], fc: [20, 300], sl: [24, 36, 48, 96],
+      rt: Array(16).fill(mask), ri: Array(16).fill(mask),
+      rt0: 32768, ri0: 0, ro15: 2, fc15: 45, sl15: 96, lo: true
+    }
+  });
+}
 const integerSpec = loadParamSpecs(path.join(effetuneRoot, 'dsp/plugins')).find(spec =>
   spec.fields.some(field =>
     field.kind === 'int' && field.min <= 1 && field.max >= 1 && !field.defaults.includes(1)

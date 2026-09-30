@@ -858,6 +858,8 @@ int main(int argc, char **argv) {
                            pluginRoot / "dynamics/attack_tonal_balance/golden", 9u);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "saturation/bass_extender/golden", 10u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "basics/bass_management/golden", 2u);
 
       for (auto index = std::size_t{1}; index < loaded.size(); ++index) {
         const auto expected = loaded[index].first;
@@ -880,6 +882,7 @@ int main(int argc, char **argv) {
         checkMetadataGoldens(simd, expected, pluginRoot / "lofi/tv_audio_simulator/golden", 6u);
         checkMetadataGoldens(simd, expected, pluginRoot / "dynamics/attack_tonal_balance/golden", 9u);
         checkMetadataGoldens(simd, expected, pluginRoot / "saturation/bass_extender/golden", 10u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "basics/bass_management/golden", 2u);
 
         const auto simdSpectrum = renderImpulseSpectrum(simd);
         check(scalarSpectrum.size() == simdSpectrum.size(),

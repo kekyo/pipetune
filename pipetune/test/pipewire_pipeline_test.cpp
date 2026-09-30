@@ -282,6 +282,30 @@ static bool testCrosstalkReload(const std::filesystem::path &socketPath,
   }).has_value(), "preset switching must remove measurement dependencies");
 }
 
+static bool testBassManagementLiveRejection(const std::filesystem::path &socketPath,
+                                           const std::filesystem::path &presetPath) {
+  const auto validPath = presetPath.parent_path() / "valid-bass.effetune_preset";
+  if (!writePresetContents(validPath,
+        R"({"pipeline":[{"name":"Bass Management","channel":"All","parameters":{"su":2,"ro":[1,3],"rt":[2]}}]})")) return false;
+  const auto loaded = pipetune::exchangeControlMessage(socketPath, pipetune::makeLoadPresetControlRequest(validPath));
+  const auto active = pipetune::parseControlResponse(loaded.response);
+  if (!check(loaded.error.empty() && active.success && responseHasLivePreset(loaded.response, validPath, 0),
+             "Bass Management live load must activate without warnings")) return false;
+  const auto invalidPath = presetPath.parent_path() / "invalid-bass.effetune_preset";
+  if (!writePresetContents(invalidPath,
+        R"({"pipeline":[{"name":"Bass Management","channel":"All","parameters":{"su":8}}]})")) return false;
+  const auto rejected = pipetune::exchangeControlMessage(socketPath, pipetune::makeLoadPresetControlRequest(invalidPath));
+  const auto response = pipetune::inspectControlResponse(rejected.response);
+  const auto unchanged = pipetune::exchangeControlMessage(socketPath, pipetune::makeStatusControlRequest());
+  const auto parsed = pipetune::parseControlResponse(unchanged.response);
+  return check(rejected.error.empty() && !response.success &&
+                   rejected.response.find("Bass Management") != std::string::npos &&
+                   unchanged.error.empty() && parsed.success &&
+                   parsed.status.configurationRevision == active.status.configurationRevision &&
+                   responseHasLivePreset(unchanged.response, validPath, 0),
+               "invalid Bass Management live load must retain the previous preset and DSP count");
+}
+
 static bool testOrderlySignalShutdown(
     std::unique_ptr<pipetune::DspPipeline> pipeline,
     std::string_view processId,
@@ -528,7 +552,8 @@ static bool testOrderlySignalShutdown(
     return false;
   }
 
-  if (!testCrosstalkReload(socketPath, replacementPresetPath)) {
+  if (!testCrosstalkReload(socketPath, replacementPresetPath) ||
+      !testBassManagementLiveRejection(socketPath, replacementPresetPath)) {
     kill(child, SIGTERM);
     auto childStatus = 0;
     waitpid(child, &childStatus, 0);

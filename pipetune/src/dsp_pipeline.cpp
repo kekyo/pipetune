@@ -6,6 +6,7 @@
 #include "pipetune/dsp_pipeline.h"
 
 #include "dsp_backend_loader.h"
+#include "bass_management_config.h"
 #include "dsp_catalog.h"
 #include "generated_fir_asset.h"
 #include "measurement_store.h"
@@ -541,7 +542,8 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
       }
     }
     const auto generatedAssetDsp = crosstalk || supportsGeneratedFirAsset(node.name);
-    if (definition->requiresExternalAssets && !generatedAssetDsp) {
+    const auto bassManagement = node.name == "Bass Management";
+    if (definition->requiresExternalAssets && !generatedAssetDsp && !bassManagement) {
       warnings.push_back({.nodeIndex = index,
                           .pluginName = std::string(node.name),
                           .reason = "requires external asset loading"});
@@ -574,6 +576,18 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
     auto packed = packDspParameters(*definition, node.parameters);
     if (!packed.error.empty()) {
       return loadError(nodeError(index, packed.error), std::move(warnings));
+    }
+    if (bassManagement) {
+      if (channelSpec != -2) {
+        return loadError(nodeError(index, "Bass Management requires an explicit All channel selection"),
+                         std::move(warnings));
+      }
+      const auto config = decodeBassManagementConfig(packed, options.maxChannels);
+      if (!config.error.empty()) return loadError(nodeError(index, config.error), std::move(warnings));
+      if (config.linear && !config.lowpassInputs.empty()) {
+        return loadError(nodeError(index, "Bass Management Linear FIR generation is not supported yet"),
+                         std::move(warnings));
+      }
     }
     auto generatedAsset = GeneratedFirAsset{};
     if (generatedAssetDsp) {
