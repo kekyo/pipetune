@@ -244,3 +244,11 @@ PipeTune側の主な対象は`pipetune/tools/generate-dsp-catalog.mjs`、`pipetu
 - [x] 調査済みの事実、ホスト側の設計方針、未実施の実行検証を区別した。
 
 計画作成時点では製品実装・サブモジュール参照は変更していない。本書だけの変更でビルドステップに影響しないため、計画作成時のビルド・テストは実施しない。
+
+## 実施記録
+
+- 段階1の基準: `make test`で2.10.0の151件を実行。150件が成功し、単独コンポーネントの版比較のみ失敗した。検証中にテストを追加したため、`screw-up format`の算出版がクリーン時の2.10.1から変更あり時の2.10.2へ変わったことが原因。変更を一時退避して作業ツリーを固定し、`ctest --test-dir build/test --output-on-failure -R '^pipetune_component_build$'`を再実行して成功した（131.92秒）。初回全体ログは`baseline-debug.log`、再確認は`baseline-component-recheck.log`。以降の全体検証中は作業ツリーを固定する。
+- 段階1のRED: 旧版共有ライブラリを使う別のテスト実行ファイルで、107カーネルと新規4登録、新規2加工DSPの無警告実行、Bass Extenderの処理幅拒否、解析8種類の無警告除外が失敗することを確認した。goldenファイル不足による失敗ではない。ログは`step1-red-artifact.log`と`step1-red-preset.log`。
+- 段階1の実装: 公式リモートのタグと一致する`e200e5151b919bcb2481626b2aa3a0295baa247f`へ参照を更新。Chroma Spiral分類、Attack Tonal Balanceの`-ffp-contract=off`、Bass Extenderの3ch以上の処理幅に対するノード名付きエラーを追加した。外部ソースの編集はない。
+- 段階1のGREEN: `cmake -S . -B build/test -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON`、`cmake --build build/test --parallel 12`、`ctest --test-dir build/test --output-on-failure --parallel 6`で全155件成功（132.65秒）。ログは`step1-build.log`と`step1-debug.log`。上流追加4nativeテスト、JSパッカー、共有バックエンド契約、単独Releaseビルド、GTK E2Eを含む。Scalar / baseline / x86-64-v3で共有ライブラリを実ロードした。x86-64-v4はビルドのみで、CPU非対応のため実行対象外。
+- CLI/GTKの`--version`はともに`EffeTune DSP 2.11.0`を表示。48 kHzのAttackは5,120 frames後のPCM再現、Bass Extenderは有限・非ゼロの加工結果を確認した。解析ノード100個を含むプリセットは無警告で除外され、PCM・遅延とバス動作が加工ノードのみの場合と一致する。段階1の完了条件を満たした。Bass Managementは計画どおり、この時点では外部アセット未対応警告で除外される。

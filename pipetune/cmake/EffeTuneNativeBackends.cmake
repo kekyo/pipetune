@@ -364,6 +364,7 @@ function(
   # shared backends to preserve the official golden outputs.
   set_property(
     SOURCE
+      "${EFFETUNE_DSP_DIR}/plugins/dynamics/attack_tonal_balance/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/dynamics/auto_leveler/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/lofi/bluetooth_sbc_simulator/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/lofi/cassette_artifacts/kernel.cpp"

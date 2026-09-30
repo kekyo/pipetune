@@ -564,6 +564,13 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
                        std::move(warnings));
     }
 
+    if (node.name == "Bass Extender" &&
+        selectedProcessingChannels(channelSpec, options.maxChannels) > 2u) {
+      return loadError(
+          nodeError(index, "Bass Extender requires one or two selected processing channels"),
+          std::move(warnings));
+    }
+
     auto packed = packDspParameters(*definition, node.parameters);
     if (!packed.error.empty()) {
       return loadError(nodeError(index, packed.error), std::move(warnings));

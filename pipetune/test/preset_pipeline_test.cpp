@@ -769,7 +769,7 @@ static bool testEffeTune27Multichannel(
 
 static bool testVisualizationPresets(const std::filesystem::path &directory) {
   const auto visualizers = std::array{
-      "Level Meter", "Oscilloscope", "Spectrogram", "Spectrum Analyzer", "Stereo Meter", "Note Spectrogram", "Pitch Meter"};
+      "Level Meter", "Oscilloscope", "Spectrogram", "Spectrum Analyzer", "Stereo Meter", "Note Spectrogram", "Pitch Meter", "Chroma Spiral"};
   auto nodes = std::string{};
   for (auto index = 0u; index < 100u; ++index) {
     if (!nodes.empty()) nodes += ',';
@@ -1042,6 +1042,69 @@ static bool testEffeTune210Pipeline(const std::filesystem::path &directory) {
   return true;
 }
 
+static bool testEffeTune211Processor(const std::filesystem::path &directory,
+                                    std::string_view name) {
+  const auto attack = name == "Attack Tonal Balance";
+  const auto path = writePreset(directory, "effetune-2.11.effetune_preset",
+      "{\"pipeline\":[{\"name\":\"" + std::string(name) + "\",\"channel\":\"All\"}]}");
+  auto loaded = pipetune::loadDspPipeline(path,
+      {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 127});
+  if (!check(loaded.pipeline != nullptr, loaded.error) ||
+      !check(loaded.warnings.empty() && loaded.pipeline->activePluginCount() == 1,
+             std::string(name) + " must execute without warnings") ||
+      !check(loaded.pipeline->latencyFrames() == (attack ? 5120u : 0u),
+             std::string(name) + " must report the documented latency")) return false;
+
+  auto energy = 0.0;
+  auto difference = 0.0;
+  // Render past the analysis delay with an irregular final block. Compare the
+  // neutral Attack output with delayed input, not just its silent prefix.
+  for (auto start = 0u; start < 24000u;) {
+    const auto count = std::min(127u, 24000u - start);
+    auto audio = std::vector<float>(2u * count);
+    for (auto ch = 0u; ch < 2u; ++ch)
+      for (auto i = 0u; i < count; ++i)
+        audio[ch * count + i] = 0.2F * std::sin(
+            2.0 * std::numbers::pi * 100.0 * (start + i) / 48000.0);
+    const auto input = audio;
+    if (!check(loaded.pipeline->process(audio, 2, count, start / 48000.0) ==
+                   pipetune::ProcessStatus::ok, "EffeTune 2.11 PCM processing failed")) return false;
+    for (auto ch = 0u; ch < 2u; ++ch) {
+      for (auto i = 0u; i < count; ++i) {
+        const auto value = audio[ch * count + i];
+        energy += value * value;
+        difference += std::abs(value - input[ch * count + i]);
+        if (attack) {
+          const auto frame = static_cast<int>(start + i) - 5120;
+          const auto expected = frame < 0 ? 0.0 : 0.2 * std::sin(
+              2.0 * std::numbers::pi * 100.0 * frame / 48000.0);
+          if (!check(approximately(value, expected, 2.0e-5F),
+                     "neutral Attack Tonal Balance must reproduce the delayed input")) return false;
+        }
+      }
+    }
+    start += count;
+  }
+  return check(std::isfinite(energy) && energy > 1.0,
+               "new processors must produce finite audible output after their latency") &&
+         check(attack || difference > 1.0,
+               "Bass Extender must add generated bass to the input");
+}
+
+static bool testBassExtenderProcessingWidth(const std::filesystem::path &directory) {
+  for (const auto channels : {3u, 4u, 16u}) {
+    const auto path = writePreset(directory, "bass-width.effetune_preset",
+        R"json({"pipeline":[{"name":"Bass Extender","channel":"All"}]})json");
+    const auto loaded = pipetune::loadDspPipeline(path,
+        {.sampleRate = 48000.0F, .maxChannels = channels, .maxFrames = 64});
+    if (!check(loaded.pipeline == nullptr && loaded.warnings.empty() &&
+                   loaded.error.find("Bass Extender") != std::string::npos &&
+                   loaded.error.find("one or two") != std::string::npos,
+               "Bass Extender must reject processing widths above two with a named error")) return false;
+  }
+  return true;
+}
+
 static bool testRetainedRecipeRebuild(
     const std::filesystem::path &directory) {
   const auto path = writePreset(
@@ -1070,9 +1133,13 @@ int main() {
       ("pipetune-preset-test-" + std::to_string(static_cast<long long>(getpid())));
   std::filesystem::create_directories(directory);
 
-  const auto passed =
+  const auto attack = testEffeTune211Processor(directory, "Attack Tonal Balance");
+  const auto bass = testEffeTune211Processor(directory, "Bass Extender");
+  const auto bassWidth = testBassExtenderProcessingWidth(directory);
+  const auto visualizers = testVisualizationPresets(directory);
+  const auto passed = attack && bass && bassWidth && visualizers &&
       testFirCrossoverRouting(directory) && testFirCrossoverBands(directory) &&
-      testVisualizationPresets(directory) && testEffeTune210Pipeline(directory) && testSpatialMapper(directory) && testTvAudioSimulator(directory) &&
+      testEffeTune210Pipeline(directory) && testSpatialMapper(directory) && testTvAudioSimulator(directory) &&
       testBypassPipeline() && testCanonicalPreset(directory) &&
       testLegacyPreset(directory) && testEffeTune26Pipeline(directory) &&
       testGeneratedAssetDsp(directory) &&
