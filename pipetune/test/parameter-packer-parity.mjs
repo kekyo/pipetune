@@ -76,6 +76,12 @@ for (const spec of loadParamSpecs(path.join(effetuneRoot, 'dsp/plugins'))) {
 for (const matrix of [[], [0, -0.5], Array.from({ length: 256 }, (_, i) => (i - 128) / 128)]) {
   cases.push({ type: 'SpatialMapperPlugin', parameters: { dm: matrix, fm: matrix, rm: matrix } });
 }
+for (const type of ['SaturationPlugin', 'DynamicSaturationPlugin', 'ExciterPlugin',
+  'HardClippingPlugin', 'HarmonicDistortionPlugin', 'MultibandSaturationPlugin']) {
+  for (const os of [0, 1, 2, 3, 4, 8, 16, 17]) {
+    cases.push({ type, parameters: { os } });
+  }
+}
 for (const mask of [-1, 0, 1, 1.5, 32768, 65535, 65536]) {
   cases.push({
     type: 'BassManagementPlugin',

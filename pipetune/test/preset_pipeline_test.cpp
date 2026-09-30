@@ -768,6 +768,22 @@ static bool testEffeTune27Multichannel(
 }
 
 static bool testVisualizationPresets(const std::filesystem::path &directory) {
+  for (const auto count : {1u, 100u}) {
+    auto chroma = std::string{};
+    for (auto index = 0u; index < count; ++index) {
+      if (index != 0u) chroma += ',';
+      chroma += R"({"name":"Chroma Spiral","parameters":{"invalid":{}},"inputBus":0,"outputBus":1})";
+    }
+    const auto path = writePreset(directory, "chroma.effetune_preset", "{\"pipeline\":[" + chroma + "]}");
+    auto result = pipetune::loadDspPipeline(path, {48000.0F, 2u, 64u});
+    if (!check(result.pipeline != nullptr, result.error) ||
+        !check(result.warnings.empty() && result.pipeline->activePluginCount() == 0u &&
+                   result.pipeline->latencyFrames() == 0u, "Chroma Spiral must be omitted before the node limit")) return false;
+    auto audio = std::vector<float>{0.1F, -0.2F, 0.3F, -0.4F};
+    const auto original = audio;
+    if (!check(result.pipeline->process(audio, 2, 2, 0.0) == pipetune::ProcessStatus::ok && audio == original,
+               "standalone Chroma Spiral must preserve PCM without bus copies")) return false;
+  }
   const auto visualizers = std::array{
       "Level Meter", "Oscilloscope", "Spectrogram", "Spectrum Analyzer", "Stereo Meter", "Note Spectrogram", "Pitch Meter", "Chroma Spiral"};
   auto nodes = std::string{};

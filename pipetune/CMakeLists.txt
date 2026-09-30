@@ -551,6 +551,11 @@ if(BUILD_TESTING)
   target_compile_options(pipetune_attack_bass_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME pipetune_attack_bass_tests COMMAND pipetune_attack_bass_tests)
 
+  add_executable(pipetune_effetune_211_regression_tests test/effetune_211_regression_test.cpp)
+  target_link_libraries(pipetune_effetune_211_regression_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_effetune_211_regression_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_effetune_211_regression_tests COMMAND pipetune_effetune_211_regression_tests)
+
   add_executable(pipetune_input_latency_alignment_tests test/input_latency_alignment_test.cpp)
   target_link_libraries(pipetune_input_latency_alignment_tests PRIVATE pipetune_core)
   target_compile_options(pipetune_input_latency_alignment_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)

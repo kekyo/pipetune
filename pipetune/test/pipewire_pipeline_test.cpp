@@ -326,6 +326,48 @@ static bool testBassManagementLiveRejection(const std::filesystem::path &socketP
                "invalid Bass Management live load must retain the previous preset and DSP count");
 }
 
+static bool testOversamplingReload(const std::filesystem::path &socketPath,
+                                   const std::filesystem::path &presetPath) {
+  const auto path = presetPath.parent_path() / "oversampling.effetune_preset";
+  for (const auto name : {"Saturation", "Dynamic Saturation", "Exciter", "Hard Clipping",
+                          "Harmonic Distortion", "Multiband Saturation"}) {
+    const auto prefix = "{\"pipeline\":[{\"name\":\"" + std::string(name) +
+        "\",\"channel\":\"All\",\"parameters\":{\"os\":";
+    if (!writePresetContents(path, prefix + "1}}]}")) return false;
+    const auto loaded = pipetune::exchangeControlMessage(socketPath, pipetune::makeLoadPresetControlRequest(path));
+    auto active = pipetune::parseControlResponse(loaded.response);
+    if (!check(loaded.error.empty() && active.success && responseHasLivePreset(loaded.response, path, 0),
+               "OS preset must activate without warnings")) return false;
+    for (const auto factor : {2u, 8u, 3u, 1u}) {
+      if (!replacePresetContents(path, prefix + std::to_string(factor) + "}}]}")) return false;
+      const auto updated = waitForStatus(socketPath, [&](const auto &status) {
+        return status.configurationRevision > active.status.configurationRevision &&
+            status.activePluginCount == 1u && status.configurationError.empty() &&
+            status.dspLatencyFrames == (factor == 2u || factor == 8u ? 64u : 0u);
+      });
+      if (!check(updated.has_value(), std::string(name) + " file reload must publish OS latency")) return false;
+      active.status = *updated;
+    }
+  }
+  const auto mp3 = std::string(R"({"pipeline":[{"name":"MP3 Codec Simulator","channel":"All","parameters":{"cr":")");
+  if (!writePresetContents(path, mp3 + "44.1 kHz (MPEG-1)\"}}]}")) return false;
+  const auto loaded = pipetune::exchangeControlMessage(socketPath, pipetune::makeLoadPresetControlRequest(path));
+  auto active = pipetune::parseControlResponse(loaded.response);
+  if (!check(loaded.error.empty() && active.success && responseHasLivePreset(loaded.response, path, 0),
+             "MP3 preset must activate without warnings")) return false;
+  for (const auto profile : {"22.05 kHz (MPEG-2)", "44.1 kHz (MPEG-1)"}) {
+    if (!replacePresetContents(path, mp3 + profile + "\"}}]}")) return false;
+    const auto updated = waitForStatus(socketPath, [&](const auto &status) {
+      return status.configurationRevision > active.status.configurationRevision &&
+          status.activePluginCount == 1u && status.configurationError.empty() &&
+          status.dspLatencyFrames == active.status.dspLatencyFrames;
+    });
+    if (!check(updated.has_value(), "MP3 profile reload must retain its fixed per-rate latency")) return false;
+    active.status = *updated;
+  }
+  return true;
+}
+
 static bool testOrderlySignalShutdown(
     std::unique_ptr<pipetune::DspPipeline> pipeline,
     std::string_view processId,
@@ -573,7 +615,8 @@ static bool testOrderlySignalShutdown(
   }
 
   if (!testCrosstalkReload(socketPath, replacementPresetPath) ||
-      !testBassManagementLiveRejection(socketPath, replacementPresetPath)) {
+      !testBassManagementLiveRejection(socketPath, replacementPresetPath) ||
+      !testOversamplingReload(socketPath, replacementPresetPath)) {
     kill(child, SIGTERM);
     auto childStatus = 0;
     waitpid(child, &childStatus, 0);

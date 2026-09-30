@@ -425,6 +425,13 @@ static std::vector<float> goldenInput(const GoldenCase &testCase) {
             (testCase.frameCount / static_cast<double>(testCase.sampleRate));
         value = std::sin(2.0 * std::numbers::pi * 20.0 *
             std::expm1(rate * frame / testCase.sampleRate) / rate) * std::pow(10.0, -12.0 / 20.0);
+      } else if (testCase.stimulus == "sq50") {
+        value = std::sin(2.0 * std::numbers::pi * 50.0 * frame / testCase.sampleRate) >= 0.0 ?
+            std::pow(10.0, -3.0 / 20.0) : -std::pow(10.0, -3.0 / 20.0);
+      } else if (testCase.stimulus == "fs") {
+        value = ((frame + ch) & 1u) == 0u ? 1.0 : -1.0;
+      } else if (testCase.stimulus == "step") {
+        value = frame < testCase.frameCount / 2u ? 0.0 : 0.5;
       } else if (testCase.stimulus == "silence") {
         value = 0.0;
       } else {
@@ -685,6 +692,13 @@ static void checkMetadataGoldens(const BackendApi &api, std::uint32_t variant,
     }
     auto parameters = pipetune::packDspParameters(*definition, yyjson_obj_get(root, "params"));
     check(parameters.error.empty(), "golden parameters must pack");
+    // The official parity runner canonicalizes crossover controls and carries
+    // the canonical values between events, separately from the JSON packer.
+    const auto canonicalize = [type](auto &values) {
+      if (std::string_view(type) == "MultibandSaturationPlugin")
+        values[1] = std::max(values[0], values[1]);
+    };
+    canonicalize(parameters.floats);
     const auto integer = [root](const char *key) {
       return static_cast<std::uint32_t>(yyjson_get_uint(yyjson_obj_get(root, key)));
     };
@@ -707,10 +721,12 @@ static void checkMetadataGoldens(const BackendApi &api, std::uint32_t variant,
       check(packed.error.empty(), "golden parameter event must pack");
       for (auto field = std::size_t{0}; field < definition->elements.size(); ++field) {
         const auto &element = definition->elements[field];
-        const auto key = element.arrayKey.empty() ? element.directKey : element.arrayKey;
+        const auto key = !element.objectArrayKey.empty() ? element.objectArrayKey :
+                         !element.arrayKey.empty() ? element.arrayKey : element.directKey;
         if (yyjson_obj_getn(changes, key.data(), key.size()) != nullptr)
           staged[field] = packed.floats[field];
       }
+      canonicalize(staged);
       testCase.events.push_back({
           static_cast<std::uint32_t>(yyjson_get_uint(yyjson_obj_get(event, "frame"))), staged});
     }
@@ -939,6 +955,22 @@ int main(int argc, char **argv) {
                            pluginRoot / "saturation/bass_extender/golden", 10u);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "basics/bass_management/golden", 3u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "saturation/saturation/golden", 16u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "saturation/dynamic_saturation/golden", 13u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "saturation/exciter/golden", 13u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "saturation/hard_clipping/golden", 16u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "saturation/harmonic_distortion/golden", 12u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "saturation/multiband_saturation/golden", 15u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "dynamics/brickwall_limiter/golden", 8u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "lofi/mp3_codec_simulator/golden", 11u);
 
       for (auto index = std::size_t{1}; index < loaded.size(); ++index) {
         const auto expected = loaded[index].first;
@@ -962,6 +994,14 @@ int main(int argc, char **argv) {
         checkMetadataGoldens(simd, expected, pluginRoot / "dynamics/attack_tonal_balance/golden", 9u);
         checkMetadataGoldens(simd, expected, pluginRoot / "saturation/bass_extender/golden", 10u);
         checkMetadataGoldens(simd, expected, pluginRoot / "basics/bass_management/golden", 3u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "saturation/saturation/golden", 16u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "saturation/dynamic_saturation/golden", 13u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "saturation/exciter/golden", 13u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "saturation/hard_clipping/golden", 16u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "saturation/harmonic_distortion/golden", 12u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "saturation/multiband_saturation/golden", 15u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "dynamics/brickwall_limiter/golden", 8u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "lofi/mp3_codec_simulator/golden", 11u);
 
         const auto simdSpectrum = renderImpulseSpectrum(simd);
         check(scalarSpectrum.size() == simdSpectrum.size(),
