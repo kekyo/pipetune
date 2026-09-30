@@ -508,6 +508,11 @@ static bool testOrderlySignalShutdown(
   if (!check(load.error.empty(), load.error) ||
       !check(parsedLoad.valid, parsedLoad.error) ||
       !check(parsedLoad.success, "live preset request failed") ||
+      !check(parsedLoad.status.presetEntries ==
+                 std::vector<pipetune::PresetEntry>{
+                     {"Future DSP", pipetune::PresetEntryState::ignored},
+                     {"Volume", pipetune::PresetEntryState::enabled}},
+             "live status must report the loaded and ignored entries") ||
       !check(responseHasLivePreset(load.response, replacementPresetPath, 1),
              "live preset response does not report the active replacement")) {
     kill(child, SIGTERM);
@@ -536,7 +541,12 @@ static bool testOrderlySignalShutdown(
                    parsedLoad.status.configurationRevision;
       });
   if (!check(automaticallyReloaded.has_value(),
-             "active preset replacement was not loaded automatically")) {
+             "active preset replacement was not loaded automatically") ||
+      !check(automaticallyReloaded->presetEntries ==
+                 std::vector<pipetune::PresetEntry>{
+                     {"Volume", pipetune::PresetEntryState::enabled},
+                     {"Volume", pipetune::PresetEntryState::enabled}},
+             "automatic reload must replace the reported configuration")) {
     kill(child, SIGTERM);
     auto childStatus = 0;
     waitpid(child, &childStatus, 0);
@@ -560,6 +570,7 @@ static bool testOrderlySignalShutdown(
   if (!check(rejectedReload.has_value(),
              "malformed automatic reload did not report an error") ||
       !check(rejectedReload->activePluginCount == 2 &&
+                 rejectedReload->presetEntries == automaticallyReloaded->presetEntries &&
                  rejectedReload->activePreset ==
                      replacementPresetPath.string(),
              "malformed automatic reload changed the active preset")) {

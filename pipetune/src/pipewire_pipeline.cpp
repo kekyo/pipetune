@@ -1384,6 +1384,9 @@ static ControlDspVariantAvailability controlDspVariantAvailability(
 }
 
 static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
+  // Preset entry strings belong to the pipeline. Retain it while copying
+  // status because rate renegotiation can replace it on the PipeWire thread.
+  auto pipelineLock = std::scoped_lock(runtime.pipelineMutationMutex);
   const auto input = snapshotInputTelemetry(
       runtime.inputTelemetry, currentMonotonicNanoseconds(),
       currentUnixMilliseconds());
@@ -1771,6 +1774,7 @@ static ControlMessageResult handleControlRequest(std::string_view message,
     }
     runtime.configurationRevision.fetch_add(1,
                                             std::memory_order_release);
+    pipelineLock.unlock();
     return closeControlResponse(
         makeControlSuccessResponse(controlStatus(runtime), warnings), true);
   }
