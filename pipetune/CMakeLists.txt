@@ -551,6 +551,14 @@ if(BUILD_TESTING)
   target_compile_options(pipetune_attack_bass_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME pipetune_attack_bass_tests COMMAND pipetune_attack_bass_tests)
 
+  add_executable(pipetune_bass_management_parity_runner test/bass_management_parity_runner.cpp)
+  target_include_directories(pipetune_bass_management_parity_runner PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_link_libraries(pipetune_bass_management_parity_runner PRIVATE pipetune_core)
+  target_compile_options(pipetune_bass_management_parity_runner PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_bass_management_parity
+    COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/bass-management-parity.mjs
+      $<TARGET_FILE:pipetune_bass_management_parity_runner> ${PIPETUNE_EFFETUNE_DIR})
+
   add_executable(pipetune_bass_management_tests test/bass_management_test.cpp)
   target_link_libraries(pipetune_bass_management_tests PRIVATE pipetune_core)
   target_compile_options(pipetune_bass_management_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)

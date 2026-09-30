@@ -150,7 +150,7 @@ static bool testNoFilters(const std::filesystem::path &path) {
   return true;
 }
 
-static bool testRejectedSettings(const std::filesystem::path &path) {
+static bool testSettingsValidation(const std::filesystem::path &path) {
   const auto parameters = std::array<std::string_view, 10>{
       R"({"su":16})", R"({"su":8,"ro":[0,0,0,3,1]})",
       R"({"su":8,"ro":[0,0,0,3,2]})", R"({"su":8,"ro":[0,0,0,3],"rt4":8})",
@@ -181,12 +181,31 @@ static bool testRejectedSettings(const std::filesystem::path &path) {
   }
   {
     auto file = std::ofstream(path);
-    file << R"({"pipeline":[{"name":"Bass Management","channel":"All","parameters":{"ph":"Linear","su":8,"ro":[1,0,0,3],"rt":[8]}}]})";
+    file << R"({"pipeline":[{"name":"Bass Management","channel":"All","parameters":{"ph":"Linear","su":8,"ro":[1,0,0,3],"rt":[8]}},{"name":"Attack Tonal Balance","channel":"All"}]})";
   }
-  const auto unsupported = pipetune::loadDspPipeline(path,
+  const auto linear = pipetune::loadDspPipeline(path,
       {.sampleRate = 48000, .maxChannels = 4, .maxFrames = 128});
-  return check(unsupported.pipeline == nullptr && unsupported.error.find("Bass Management Linear") != std::string::npos,
-               "Linear requiring FIR must fail explicitly until asset generation is supported");
+  if (!check(linear.pipeline != nullptr, linear.error) ||
+      !check(linear.warnings.empty() && linear.pipeline->latencyFrames() == 13440,
+             "Linear Bass Management FIR and downstream Attack delays must add")) return false;
+  for (auto start = 0u; start < 196608u; start += 128u) {
+    auto audio = std::vector<float>(512, 0.0F);
+    if (!check(linear.pipeline->process(audio, 4, 128, start / 48000.0) == pipetune::ProcessStatus::ok,
+               "Linear FIR preparation must process silence")) return false;
+  }
+  auto subEnergy = 0.0;
+  for (auto start = 0u; start < 32768u; start += 128u) {
+    auto audio = std::vector<float>(512, 0.0F);
+    if (start == 0) audio[17] = 1.0F;
+    if (!check(linear.pipeline->process(audio, 4, 128, (196608.0 + start) / 48000.0) == pipetune::ProcessStatus::ok,
+               "Linear Bass Management must process an impulse after preparation")) return false;
+    for (auto i = 0u; i < 128u; ++i) {
+      subEnergy += audio[384u + i] * audio[384u + i];
+      if (!check(std::abs(audio[i] + audio[384u + i] - (start + i == 13457u ? 1.0F : 0.0F)) < 2.0e-5F,
+                 "Linear high and low outputs must reconstruct the delayed input")) return false;
+    }
+  }
+  return check(subEnergy > 1.0e-5, "Linear FIR must become active and send filtered audio to the sub");
 }
 
 static bool testStereoSubsAndBypass(const std::filesystem::path &path) {
@@ -221,7 +240,7 @@ int main() {
   const auto path = std::filesystem::temp_directory_path() /
       ("pipetune-bass-management-" + std::to_string(getpid()) + ".effetune_preset");
   const auto passed = testIirRouting(path) && testLfeOverlap(path) &&
-      testNoFilters(path) && testRejectedSettings(path) && testStereoSubsAndBypass(path);
+      testNoFilters(path) && testSettingsValidation(path) && testStereoSubsAndBypass(path);
   std::filesystem::remove(path);
   return passed ? 0 : 1;
 }

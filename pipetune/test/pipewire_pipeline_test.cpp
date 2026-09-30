@@ -288,9 +288,29 @@ static bool testBassManagementLiveRejection(const std::filesystem::path &socketP
   if (!writePresetContents(validPath,
         R"({"pipeline":[{"name":"Bass Management","channel":"All","parameters":{"su":2,"ro":[1,3],"rt":[2]}}]})")) return false;
   const auto loaded = pipetune::exchangeControlMessage(socketPath, pipetune::makeLoadPresetControlRequest(validPath));
-  const auto active = pipetune::parseControlResponse(loaded.response);
+  auto active = pipetune::parseControlResponse(loaded.response);
   if (!check(loaded.error.empty() && active.success && responseHasLivePreset(loaded.response, validPath, 0),
              "Bass Management live load must activate without warnings")) return false;
+  for (const auto phase : {"Linear", "IIR", "Linear"}) {
+    const auto linear = std::string_view(phase) == "Linear";
+    const auto latency = linear ? 16512u : 0u;
+    const auto content = std::string(R"({"pipeline":[{"name":"Bass Management","channel":"All","parameters":{"ph":")") +
+        phase + R"(","tp":"32768","su":2,"ro":[1,3],"rt":[2]}}]})";
+    if (!replacePresetContents(validPath, content)) return false;
+    const auto reloaded = waitForStatus(socketPath, [&](const auto &status) {
+      return status.configurationRevision > active.status.configurationRevision &&
+             status.dspLatencyFrames == latency && status.configurationError.empty();
+    });
+    if (!check(reloaded.has_value(), "Bass Management IIR/Linear file reload must publish its new latency")) return false;
+    const auto rate = linear ? 96000u : 48000u;
+    const auto changed = pipetune::exchangeControlMessage(socketPath, pipetune::makeSetRateControlRequest(
+        {.mode = pipetune::SampleRateMode::fixed, .fixedRate = rate}));
+    active = pipetune::parseControlResponse(changed.response);
+    if (!check(changed.error.empty() && active.success && active.status.dspLatencyFrames == latency &&
+                   active.status.dspSampleRate == rate &&
+                   responseHasLivePreset(changed.response, validPath, 0),
+               "Bass Management rate rebuild must retain its FIR latency and preset")) return false;
+  }
   const auto invalidPath = presetPath.parent_path() / "invalid-bass.effetune_preset";
   if (!writePresetContents(invalidPath,
         R"({"pipeline":[{"name":"Bass Management","channel":"All","parameters":{"su":8}}]})")) return false;

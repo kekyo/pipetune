@@ -1,0 +1,32 @@
+{
+  "name": "Six channel surround with LFE/sub overlap (IIR)",
+  "pipeline": [
+    {
+      "name": "Bass Management",
+      "channel": "All",
+      "parameters": {
+        "ph": "IIR",
+        "su": 8,
+        "ro": [
+          1,
+          1,
+          1,
+          2,
+          1,
+          1
+        ],
+        "rt": [
+          8,
+          8,
+          8,
+          8,
+          8,
+          8
+        ],
+        "lo": true,
+        "lf": 120,
+        "hg": -6
+      }
+    }
+  ]
+}

@@ -6,6 +6,7 @@
 #include "generated_fir_asset.h"
 
 #include "dsp_backend_loader.h"
+#include "bass_management_config.h"
 #include "crosstalk_fir.h"
 
 #include <algorithm>
@@ -240,11 +241,11 @@ static std::uint64_t nextAssetPowerOfTwo(std::uint64_t value) {
   return result;
 }
 
-static std::uint64_t estimateGeneratedFirFootprint(
+static std::uint64_t estimateGeneratedFirConvolverBytes(
     std::uint32_t frames, std::uint32_t assetChannels,
     std::uint32_t topology, std::uint32_t processingChannels,
     std::uint32_t headBlock, std::uint32_t pathCount,
-    std::uint32_t inputCount, std::uint64_t payloadBytes) {
+    std::uint32_t inputCount) {
   // Keep this upper bound aligned with EffeTune's ir-plugin-contract.js so the
   // native kernel can reserve every partition before the real-time path starts.
   const auto paths = topology == kMonoTopology ? processingChannels : topology == 3u ? 4u : pathCount;
@@ -253,7 +254,7 @@ static std::uint64_t estimateGeneratedFirFootprint(
   const auto latency = headBlock;
   const auto head = headBlock == 0u ? std::uint32_t{128u} : headBlock;
   auto requiredRing = std::uint64_t{latency} + 4096u;
-  auto convolverBytes = std::uint64_t{512u};
+  auto convolverBytes = std::uint64_t{16u * 1024u};
   const auto addStage = [&](std::uint32_t block, std::uint32_t offset,
                             std::uint32_t end) {
     if (offset >= frames || end <= offset) {
@@ -286,6 +287,17 @@ static std::uint64_t estimateGeneratedFirFootprint(
         (assetChannels + inputs) * 128u * sizeof(float);
   }
   convolverBytes += inputs * sizeof(float);
+  return convolverBytes;
+}
+
+static std::uint64_t estimateGeneratedFirFootprint(
+    std::uint32_t frames, std::uint32_t assetChannels,
+    std::uint32_t topology, std::uint32_t processingChannels,
+    std::uint32_t headBlock, std::uint32_t pathCount,
+    std::uint32_t inputCount, std::uint64_t payloadBytes) {
+  const auto convolverBytes = estimateGeneratedFirConvolverBytes(
+      frames, assetChannels, topology, processingChannels, headBlock,
+      pathCount, inputCount);
   const auto kernelBeginBound =
       payloadBytes + static_cast<std::uint64_t>(frames) * assetChannels * 16u +
       2u * 1024u * 1024u;
@@ -448,6 +460,56 @@ static double generatedFirCrossoverLowWeight(double frequency, double cutoff,
   return 1.0 / (1.0 + std::exp(exponent));
 }
 
+static bool designGeneratedFirImpulse(
+    GeneratedFirFftPlan &plan, std::span<const double> magnitudes,
+    std::span<const double> window, bool minimumPhase,
+    std::vector<float> &channel, std::string &error) {
+  const auto fftSize = plan.size;
+  const auto taps = static_cast<std::uint32_t>(window.size());
+  auto real = std::vector<double>(fftSize / 2u + 1u, 0.0);
+  auto imaginary = std::vector<double>(fftSize / 2u + 1u, 0.0);
+  if (minimumPhase) {
+    auto filterPhase = std::vector<double>();
+    if (!generatedFirMinimumPhase(plan, magnitudes, filterPhase,
+                                  error)) {
+      return false;
+    }
+    for (auto bin = std::uint32_t{0}; bin <= fftSize / 2u; ++bin) {
+      real[bin] = magnitudes[bin] * std::cos(filterPhase[bin]);
+      imaginary[bin] =
+          magnitudes[bin] * std::sin(filterPhase[bin]);
+    }
+  } else {
+    for (auto bin = std::uint32_t{0}; bin <= fftSize / 2u; ++bin) {
+      switch (bin & 3u) {
+      case 0u:
+        real[bin] = magnitudes[bin];
+        break;
+      case 1u:
+        imaginary[bin] = -magnitudes[bin];
+        break;
+      case 2u:
+        real[bin] = -magnitudes[bin];
+        break;
+      default:
+        imaginary[bin] = magnitudes[bin];
+        break;
+      }
+    }
+  }
+  imaginary.front() = 0.0;
+  imaginary.back() = 0.0;
+  auto time = std::vector<double>();
+  if (!inverseGeneratedFirFft(plan, real, imaginary, time, error)) {
+    return false;
+  }
+  channel.resize(taps);
+  for (auto index = std::uint32_t{0}; index < taps; ++index) {
+    channel[index] = static_cast<float>(time[index] * window[index]);
+  }
+  return true;
+}
+
 static GeneratedFirAsset designFirCrossover(
     yyjson_val *parameters, float requestedSampleRate,
     std::uint32_t processingChannels, const DspBackendApi &api) {
@@ -522,47 +584,9 @@ static GeneratedFirAsset designFirCrossover(
   auto channels = std::vector<std::vector<float>>();
   channels.reserve(bandCount);
   for (auto band = std::uint32_t{0}; band < bandCount; ++band) {
-    auto real = std::vector<double>(fftSize / 2u + 1u, 0.0);
-    auto imaginary = std::vector<double>(fftSize / 2u + 1u, 0.0);
-    if (minimumPhase) {
-      auto filterPhase = std::vector<double>();
-      if (!generatedFirMinimumPhase(plan, magnitudes[band], filterPhase,
-                                    result.error)) {
-        return result;
-      }
-      for (auto bin = std::uint32_t{0}; bin <= fftSize / 2u; ++bin) {
-        real[bin] = magnitudes[band][bin] * std::cos(filterPhase[bin]);
-        imaginary[bin] =
-            magnitudes[band][bin] * std::sin(filterPhase[bin]);
-      }
-    } else {
-      for (auto bin = std::uint32_t{0}; bin <= fftSize / 2u; ++bin) {
-        switch (bin & 3u) {
-        case 0u:
-          real[bin] = magnitudes[band][bin];
-          break;
-        case 1u:
-          imaginary[bin] = -magnitudes[band][bin];
-          break;
-        case 2u:
-          real[bin] = -magnitudes[band][bin];
-          break;
-        default:
-          imaginary[bin] = magnitudes[band][bin];
-          break;
-        }
-      }
-    }
-    imaginary.front() = 0.0;
-    imaginary.back() = 0.0;
-    auto time = std::vector<double>();
-    if (!inverseGeneratedFirFft(plan, real, imaginary, time, result.error)) {
-      return result;
-    }
-    auto channel = std::vector<float>(taps);
-    for (auto index = std::uint32_t{0}; index < taps; ++index) {
-      channel[index] = static_cast<float>(time[index] * window[index]);
-    }
+    auto channel = std::vector<float>();
+    if (!designGeneratedFirImpulse(plan, magnitudes[band], window, minimumPhase,
+                                   channel, result.error)) return result;
     channels.push_back(std::move(channel));
   }
   if (!minimumPhase) {
@@ -589,6 +613,72 @@ static GeneratedFirAsset designFirCrossover(
   static_cast<void>(buildGeneratedFirPayload(
       result, channels, sampleRate, kMatrixTopology, paths,
       processingChannels, 2u, assetHeadBlock(parameters)));
+  return result;
+}
+
+GeneratedFirAsset designBassManagementAsset(
+    const BassManagementConfig &config, float requestedSampleRate,
+    std::uint32_t maxFrames, const DspBackendApi &api) {
+  auto result = GeneratedFirAsset{};
+  if (!config.error.empty()) {
+    result.error = config.error;
+    return result;
+  }
+  if (!config.linear || config.lowpassInputs.empty()) return result;
+  const auto count = static_cast<std::uint32_t>(config.lowpassInputs.size());
+  const auto width = config.processingChannels;
+  const auto payloadBytes = kAssetHeaderBytes + count * (12ull + config.taps * 4ull);
+  const auto convolverBytes = estimateGeneratedFirConvolverBytes(
+      config.taps, count, kMatrixTopology, width, 128u, count, width);
+  // Bass Management also reserves three audio buffers, a fixed delay line,
+  // and four banks of 16 IIR filters. 512 bytes bounds each native filter.
+  const auto workingBytes = (3ull * maxFrames + 16513ull) * width * sizeof(float) +
+                            4ull * 16ull * 512ull;
+  if (payloadBytes + convolverBytes + workingBytes > kAssetCapacity) {
+    result.error = "Bass Management FIR, convolution and working buffers exceed EffeTune's 32 MiB limit";
+    return result;
+  }
+  const auto sampleRate = static_cast<std::uint32_t>(std::clamp(
+      std::round(static_cast<double>(requestedSampleRate)), 8000.0, 768000.0));
+  auto plan = GeneratedFirFftPlan(api, config.taps * 2u);
+  if (plan.handle == nullptr) {
+    result.error = "cannot allocate Bass Management design FFT";
+    return result;
+  }
+  const auto window = generatedFirWindow(config.taps, false);
+  auto channels = std::vector<std::vector<float>>();
+  auto paths = std::vector<GeneratedFirPath>();
+  for (const auto input : config.lowpassInputs) {
+    const auto index = static_cast<std::uint32_t>(channels.size());
+    paths.push_back({input, input, index});
+    auto identical = index;
+    for (auto previous = 0u; previous < index; ++previous) {
+      const auto other = config.lowpassInputs[previous];
+      if (config.frequencies[input] == config.frequencies[other] &&
+          config.slopes[input] == config.slopes[other]) {
+        identical = previous;
+        break;
+      }
+    }
+    if (identical != index) {
+      channels.push_back(channels[identical]);
+      continue;
+    }
+    auto magnitudes = std::vector<double>(config.taps + 1u);
+    for (auto bin = 0u; bin <= config.taps; ++bin) {
+      magnitudes[bin] = generatedFirCrossoverLowWeight(
+          static_cast<double>(bin) * sampleRate / plan.size,
+          config.frequencies[input], config.slopes[input]);
+    }
+    auto channel = std::vector<float>();
+    if (!designGeneratedFirImpulse(plan, magnitudes, window, false, channel,
+                                   result.error)) return result;
+    channels.push_back(std::move(channel));
+  }
+  result.filterDelaySamples = config.taps / 2u;
+  static_cast<void>(buildGeneratedFirPayload(result, channels, sampleRate,
+      kMatrixTopology, paths, width, width, 128u));
+  if (!result.error.empty()) result.error = "Bass Management: " + result.error;
   return result;
 }
 

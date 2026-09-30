@@ -541,9 +541,9 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
         continue;
       }
     }
-    const auto generatedAssetDsp = crosstalk || supportsGeneratedFirAsset(node.name);
     const auto bassManagement = node.name == "Bass Management";
-    if (definition->requiresExternalAssets && !generatedAssetDsp && !bassManagement) {
+    const auto generatedAssetDsp = bassManagement || crosstalk || supportsGeneratedFirAsset(node.name);
+    if (definition->requiresExternalAssets && !generatedAssetDsp) {
       warnings.push_back({.nodeIndex = index,
                           .pluginName = std::string(node.name),
                           .reason = "requires external asset loading"});
@@ -577,25 +577,29 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
     if (!packed.error.empty()) {
       return loadError(nodeError(index, packed.error), std::move(warnings));
     }
+    auto bassConfig = BassManagementConfig{};
     if (bassManagement) {
       if (channelSpec != -2) {
         return loadError(nodeError(index, "Bass Management requires an explicit All channel selection"),
                          std::move(warnings));
       }
-      const auto config = decodeBassManagementConfig(packed, options.maxChannels);
-      if (!config.error.empty()) return loadError(nodeError(index, config.error), std::move(warnings));
-      if (config.linear && !config.lowpassInputs.empty()) {
-        return loadError(nodeError(index, "Bass Management Linear FIR generation is not supported yet"),
-                         std::move(warnings));
-      }
+      bassConfig = decodeBassManagementConfig(packed, options.maxChannels);
+      if (!bassConfig.error.empty()) return loadError(nodeError(index, bassConfig.error), std::move(warnings));
     }
     auto generatedAsset = GeneratedFirAsset{};
     if (generatedAssetDsp) {
       const auto processingChannels =
           selectedProcessingChannels(channelSpec, options.maxChannels);
-      generatedAsset = crosstalk ? designCrosstalkAsset(measured, node.parameters, options.sampleRate, processingChannels) : designGeneratedFirAsset(
-          node.name, node.parameters, options.sampleRate, processingChannels,
-          api);
+      if (bassManagement) {
+        generatedAsset = designBassManagementAsset(
+            bassConfig, options.sampleRate, options.maxFrames, api);
+      } else if (crosstalk) {
+        generatedAsset = designCrosstalkAsset(
+            measured, node.parameters, options.sampleRate, processingChannels);
+      } else {
+        generatedAsset = designGeneratedFirAsset(
+            node.name, node.parameters, options.sampleRate, processingChannels, api);
+      }
       if (!generatedAsset.omissionReason.empty()) {
         warnings.push_back({.nodeIndex = index,
                             .pluginName = std::string(node.name),
@@ -606,7 +610,7 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
         return loadError(nodeError(index, generatedAsset.error),
                          std::move(warnings));
       }
-      if (!generatedAsset.payload.empty() &&
+      if (!bassManagement && !generatedAsset.payload.empty() &&
           (!replacePackedParameter(
                packed, "lt", packedHeadBlock(generatedAsset.info.head_block)) ||
            !replacePackedParameter(
@@ -652,7 +656,8 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
           generatedAsset.formatTag);
       if (assetStatus != ET_OK) {
         return loadError(
-            nodeError(index, "native DSP rejected the generated FIR asset"),
+            nodeError(index, bassManagement ? "Bass Management rejected the generated FIR asset" :
+                                             "native DSP rejected the generated FIR asset"),
             std::move(warnings));
       }
     }
