@@ -5,13 +5,13 @@
 EffeTuneで設定したCrosstalk Cancellationを、ステレオスピーカー再生に適用できます。
 EffeTuneで左右それぞれの耳位置から左右スピーカーを測定し、4経路を割り当てて
 プリセットを保存してください。各耳の2経路は同じ単一ポイント測定から選択します。
-測定と設定方法は[EffeTuneの説明](https://github.com/Frieve-A/effetune/blob/v2.10.0/docs/i18n/ja/plugins/spatial.md#crosstalk-cancellation)を参照してください。
+測定と設定方法は[EffeTuneの説明](https://github.com/Frieve-A/effetune/blob/v2.11.0/docs/i18n/ja/plugins/spatial.md#crosstalk-cancellation)を参照してください。
 
 PipeTuneは保存済みプリセットと同じEffeTune設定ディレクトリの
 `measurement-backups/<測定ID>.json`を自動で読み込みます。
 設定ディレクトリは`$XDG_CONFIG_HOME/effetune`、未設定なら`~/.config/effetune`です。
-デスクトップ版EffeTune 2.10.0は、測定をこの場所へ
-[JSONとして自動バックアップ](https://github.com/Frieve-A/effetune/blob/v2.10.0/electron/measurement-backup-ipc.cjs)します。
+デスクトップ版EffeTune 2.11.0は、測定をこの場所へ
+[JSONとして自動バックアップ](https://github.com/Frieve-A/effetune/blob/v2.11.0/electron/measurement-backup-ipc.cjs)します。
 プリセットだけを別のPCへコピーする場合は、参照される測定JSONもコピーしてください。
 ブラウザ版ではIRを含む測定JSONをエクスポートし、元の測定IDをファイル名として
 同じ場所に配置できます。
@@ -25,7 +25,7 @@ PipeTuneは保存済みプリセットと同じEffeTune設定ディレクトリ�
 
 ## Spatial MapperとTV Audio Simulator
 
-[Spatial Mapper](https://github.com/Frieve-A/effetune/blob/v2.10.0/docs/dsp/effects/spatial-mapper/index.md)
+[Spatial Mapper](https://github.com/Frieve-A/effetune/blob/v2.11.0/docs/dsp/effects/spatial-mapper/index.md)
 は、プリセットに保存されたDirect・Diffuse・Residualの行列で処理します。
 Transparentも遅延付きの通過で、48 kHzでは2,560フレーム（約53 ms）の遅延が
 加わります。報告する遅延は動作サンプリング周波数に追従します。
@@ -37,17 +37,76 @@ Transparentも遅延付きの通過で、48 kHzでは2,560フレーム（約53 m
 RL, RRで、9ch以上はAUX配置です。12chの7.1.4プリセットは出力先への明示的な
 接続が必要で、高さ方向のスピーカーを自動的に割り当てる機能はありません。
 
-[TV Audio Simulator](https://github.com/Frieve-A/effetune/blob/v2.10.0/docs/dsp/effects/tv-audio-simulator/index.md)
+[TV Audio Simulator](https://github.com/Frieve-A/effetune/blob/v2.11.0/docs/dsp/effects/tv-audio-simulator/index.md)
 は44.1、48、88.2、96、176.4、192、352.8、384 kHzに対応します。
 Automaticで非対応のレートになった場合は、対応する固定レートを選択してください。
 処理対象は単一chまたはステレオペアで指定します。
-[上流カーネル](https://github.com/Frieve-A/effetune/blob/v2.10.0/dsp/plugins/lofi/tv_audio_simulator/kernel.cpp)
+[上流カーネル](https://github.com/Frieve-A/effetune/blob/v2.11.0/dsp/plugins/lofi/tv_audio_simulator/kernel.cpp)
 はAll指定でも先頭2chのみを加工し、3ch目以降は遅延を揃えずに通過させます。
 複数ペアを加工する場合は、ペアごとにノードを追加してください。
 
 Broadcast Offでも受信ノイズは出力され、Mix = 0でもdry経路の遅延は残ります。
 無音時停止の既定値Ignoreでは、入力が無音でも受信ノイズを出力し続けます。
 停止時間を明示した場合は、フェードして処理を停止し、入力再開時に復帰します。
+
+## Attack Tonal BalanceとBass Extender
+
+[Attack Tonal Balance](https://github.com/Frieve-A/effetune/blob/v2.11.0/docs/dsp/effects/attack-tonal-balance/index.md)
+はアタック成分と持続音成分を調整します。48 kHzでは5,120フレーム（約106.67 ms）の
+遅延が加わり、両ゲインが0 dBでも遅延は残ります。遅延は動作レートに応じて変わります。
+両成分を無効にしても残差音が残る場合があります。元の音声経路へ戻すにはPipeTuneの
+Bypassを使用してください。高レート・多チャンネルでは処理負荷が増えます。
+
+[Bass Extender](https://github.com/Frieve-A/effetune/blob/v2.11.0/dsp/plugins/saturation/bass_extender/kernel.cpp)
+は44.1、48、88.2、96、176.4、192 kHz、処理対象1〜2chに対応し、追加の処理遅延は
+ありません。ステレオでは左右入力の平均から共通の低域成分を生成します。
+多チャンネルのストリームでは、単一chまたはステレオペアを指定してください。
+3ch以上をAllで選択すると読込エラーになります。Automaticで非対応レートになる場合は、
+48 kHzなどの対応する固定レートを選択してください。
+
+## Bass Management
+
+[Bass Management](https://github.com/Frieve-A/effetune/blob/v2.11.0/docs/dsp/effects/bass-management/index.md)
+のIIRとLinearに対応します。Ch = Allを選択し、PipeTuneの起動時に
+`--channels`で必要なチャンネル数（1〜16）を指定してください。EffeTuneで入力の
+役割とサブウーファーへの宛先を設定してからプリセットを保存します。サブ出力は
+Full RangeまたはManagedのメイン出力を兼ねられません。サブ出力を設定した場合、ManagedとLFEには、
+設定済みサブ出力の中から有効な宛先が必要です。不正な経路は読込エラーになり、
+現在動作中のパイプラインを維持します。
+
+実際の出力接続も確認してください。プリセットのch番号から物理スピーカーを自動的に
+割り当てる機能はなく、9ch以上はAUX配置です。複数サブへの分配は入力を等分する
+`1 / 宛先数`です。IIRには追加の処理遅延がありません。Linearはプリセットから
+必要なフィルターを生成するため、別途IRファイルを用意する必要はありません。
+
+| Linearのタップ数 | 追加遅延 | 48 kHzの場合 |
+| --- | --- | --- |
+| 8,192 | 4,224フレーム | 88 ms |
+| 16,384 | 8,320フレーム | 約173.33 ms |
+| 32,768 | 16,512フレーム | 344 ms |
+
+サブが未設定でもLinearの遅延は残ります。レートやバックエンド変更時には
+フィルターを再生成し、準備中はサブ出力が無音になる場合があります。
+アセットと処理領域の32 MiB制限を超える構成はエラーになり、タップ数を自動的に
+減らすことはありません。[上流の処理・アセット契約](https://github.com/Frieve-A/effetune/blob/v2.11.0/dsp/plugins/basics/bass_management/kernel.cpp)に従います。
+
+## オーバーサンプリングと遅延調整
+
+Saturation、Dynamic Saturation、Exciter、Hard Clipping、Harmonic Distortion、
+Multiband Saturationは1・2・4・8倍、Hard Clippingはさらに16倍に対応します。
+既定は1倍で、有効な2倍以上の設定ではdry混合を含め64フレームの遅延が加わります。
+プリセット再読込時に遅延表示も更新されます。
+[上流のオーバーサンプリング契約](https://github.com/Frieve-A/effetune/blob/v2.11.0/dsp/include/effetune/dsp/oversampled_shaper.h)を参照してください。
+
+Brickwall LimiterのOS有効時の遅延はlookahead＋64フレームです。
+1倍では近似逆数計算により、設定した上限をわずかに超える場合があります。
+PipeTuneはこの上流の音声を維持します。出力サンプルを設定上限内に収める必要が
+ある場合は2倍以上を選択してください。
+[Limiterの実装](https://github.com/Frieve-A/effetune/blob/v2.11.0/dsp/plugins/dynamics/brickwall_limiter/kernel.cpp)を参照してください。
+
+[Time Alignment](https://github.com/Frieve-A/effetune/blob/v2.11.0/dsp/plugins/delay/time_alignment/kernel.cpp)
+は最大500 msに対応します。これはスピーカー配置を合わせるための意図的な遅延で、
+ホストの自動遅延補償には加算しません。
 
 ## 制約
 
@@ -60,7 +119,7 @@ Allを選択してください。既定のステレオペアや別のステレ�
 バスの幅にかかわらず無加工で通過します。単一chや奇数chの指定では警告付きで除外します。
 
 Level Meter、Note Spectrogram、Pitch Meter、Oscilloscope、Spectrogram、Spectrum Analyzer、
-Stereo Meterは警告なしで無視します。有効DSP数や遅延には含めず、バス間の転送も
+Stereo Meter、Chroma Spiralの8種類は警告なしで無視します。有効DSP数や遅延には含めず、バス間の転送も
 行いません。表示機能に加えて音声を加工するDSPは、引き続き処理します。
 
 Room EQとIR Reverbには対応していません。Room EQプリセットが参照する測定データは、

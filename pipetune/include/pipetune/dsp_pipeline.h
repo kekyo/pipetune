@@ -221,7 +221,10 @@ struct PipelineLoadResult {
  * Disabled nodes, including nodes gated by a disabled Section, are omitted
  * without warnings. Visualization-only analyzers are also omitted without
  * warnings, active nodes, added latency, or transfers between buses.
- * This includes Pitch Meter. The selected processing width is preserved for
+ * This includes Pitch Meter and Chroma Spiral. Bass Extender requires one or
+ * two selected channels. Bass Management requires explicit All selection and
+ * valid subwoofer routes; its Linear filters are generated from the preset.
+ * The selected processing width is preserved for
  * Spatial Mapper; presets do not enlarge the prepared stream's channel count.
  *
  * @param context Measurement storage used during preparation and rebuilds.

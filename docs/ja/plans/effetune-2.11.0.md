@@ -4,7 +4,7 @@
 
 EffeTuneの参照をv2.10.0 (`abca7ff96f48f9cacace4d3c6aef5c4d3407bd8f`) から公式v2.11.0 (`e200e5151b919bcb2481626b2aa3a0295baa247f`) へ更新し、追加・変更されたDSPをPipeTuneのプリセット実行環境で扱えるようにする。アプリ版は2.11.0、上流DSPライブラリ版は0.11.0である。
 
-2026-09-30、PipeTune HEAD `f239936`、上流の両タグ間のソース差分、公式リリース、タグ固定の文書とAPI・カーネルのコメントを調査した。公式リモートのv2.11.0とローカルタグのコミット一致も確認した。本書は実装前の計画であり、2.11.0のビルド・実行検証はまだ行っていない。
+2026-09-30、PipeTune HEAD `f239936`、上流の両タグ間のソース差分、公式リリース、タグ固定の文書とAPI・カーネルのコメントを調査した。公式リモートのv2.11.0とローカルタグのコミット一致も確認した。以下の設計は実装前に策定した計画である。実施結果と最終完了条件の照合は末尾に記録する。
 
 対応方針は、Attack Tonal BalanceとBass Extenderを通常の音声加工DSPとして実行し、Bass ManagementはIIRとLinearの両方を対応対象にすること。Chroma Spiralは既存の解析専用DSPと同様に、カタログには含め、プリセット実行から無警告で除外する。最も大きな統合作業はBass Managementの条件付きアセット処理とLinear用FIR生成である。
 
@@ -214,16 +214,16 @@ Linearの期待PCMとアセット転送を検証するテストでREDを確認�
 
 ## 最終完了条件
 
-- [ ] 指定の公式v2.11.0を参照し、外部ソースを変更していない。
-- [ ] CLI/GTKがEffeTune 2.11.0を表示し、全バックエンドの107カーネル・パラメータ・アセット容量契約が一致する。
-- [ ] Attack Tonal Balanceの音声、長い遅延、成分制御、再構築を検証した。
-- [ ] Bass Extenderの生成低域、1〜2ch処理、対応レートと失敗・回復を検証した。
-- [ ] Bass ManagementのIIR / Linear、設定検証、ch経路、極性、設計比較、アセット準備、容量・遅延を検証した。
-- [ ] Chroma Spiralを含む解析8種類がPCM・遅延・有効ノード数に影響せず無警告で除外される。
-- [ ] 歪み系6種類、Limiter、Time Alignment、MP3などの変更と入力遅延補償が公式契約に従う。
-- [ ] 既存DSP・生成FIR・Crosstalk・無音時停止・ライブ再構築の全体回帰に成功する。
-- [ ] Debug/Release全体テスト、単独ビルド、インストール、GTK E2Eと13配布構成の結果を記録した。
-- [ ] 利用者文書が利用条件・制限を説明し、実機未検証範囲と最終条件の照合を記録した。
+- [x] 指定の公式v2.11.0を参照し、外部ソースを変更していない。
+- [x] CLI/GTKがEffeTune 2.11.0を表示し、全バックエンドの107カーネル・パラメータ・アセット容量契約が一致する。
+- [x] Attack Tonal Balanceの音声、長い遅延、成分制御、再構築を検証した。
+- [x] Bass Extenderの生成低域、1〜2ch処理、対応レートと失敗・回復を検証した。
+- [x] Bass ManagementのIIR / Linear、設定検証、ch経路、極性、設計比較、アセット準備、容量・遅延を検証した。
+- [x] Chroma Spiralを含む解析8種類がPCM・遅延・有効ノード数に影響せず無警告で除外される。
+- [x] 歪み系6種類、Limiter、Time Alignment、MP3などの変更と入力遅延補償が公式契約に従う。
+- [x] 既存DSP・生成FIR・Crosstalk・無音時停止・ライブ再構築の全体回帰に成功する。
+- [x] Debug/Release全体テスト、単独ビルド、インストール、GTK E2Eと13配布構成の結果を記録した。
+- [x] 利用者文書が利用条件・制限を説明し、実機未検証範囲と最終条件の照合を記録した。
 
 ## 参照と主な変更対象
 
@@ -279,3 +279,11 @@ PipeTune側の主な対象は`pipetune/tools/generate-dsp-catalog.mjs`、`pipetu
 - 段階5のその他の音声: Time Alignmentの0/500/範囲外501 msを32/48/384 kHzで確認し、384 kHzでは16chの最大500 msとresetを実測した。意図的遅延をホスト遅延へ加算しない。MP3は48/384 kHz、MPEG-1/2、Joint Stereo/Stereo、reservoir有無で1秒以上と末尾分を処理し、別ペア保持、非ゼロの加工音声、63/257 frames分割、resetとレート/Scalar/SIMD復帰が一致。ファイル再読込による両プロファイル切替も固定レート別遅延を保持した。MultiChannel Panelは48/384 kHz・16chのgain/mute/最大30 ms delayとreset、FMはテレメトリ無効でも加工音声が出ることを確認した。既存TV、Tubeの初期化/runtime event、AR補間、Click Remover / Clip Restorerも全体テストで成功。Chroma単独と100個のみの構成でも無警告・有効DSP数0・PCM不変を確認した。
 - 段階5の全体結果: 最初の全160件では159件成功し、単独ビルドの版比較が失敗した（`step5-debug.log`）。直前のresetコミット後にCMakeの再構成を省いたため、既存実行ファイルの自動算出版が古かった。作業ツリーを固定したまま`cmake -S . -B build/test -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON`、`cmake --build build/test --parallel 12`、`ctest --test-dir build/test --output-on-failure --parallel 6`を実行し、全160件成功（131.64秒、`step5-reconfigured-build.log`、`step5-debug-reconfigured.log`）。GTK E2Eと単独Releaseを含む。詳細PCM/golden結果は`step5-goldens-and-semantic.log`。段階5の完了条件を満たした。
 - 段階5の性能: Release CLIを再構成・ビルドし、`benchmark-step5.mjs`で48/384 kHz、MP3両プロファイル2chとTime Alignment 500 ms・16chを計測した。256 frames/block、1,024 warmup blocks、512 measure blocks、6構成×3バックエンドで有効DSP数1・除外0・有限非ゼロ出力。MP3 Scalarは48 kHzで847〜1,301 ns/frame、384 kHzで205〜287 ns/frame、最大RSS24,204〜26,508 KiB。Time Alignmentは約63 ns/frame、最大RSSは48 kHzで20,316 KiB、384 kHzで51,612 KiB。RSSは複数バックエンドを含むプロセス全体。`step5-benchmark.log`、`step5-benchmarks.json`と個別JSON/メモリログに保存した。
+- 段階6の文書配置: 現行READMEは詳細説明を`docs/en/details.md`と`docs/ja/details.md`へ分離しているため、新規DSPの処理幅・レート・遅延・配線・容量とLimiter 1倍制限はこの既存の利用者文書へ追記し、両READMEからリンクした。コンポーネントREADME、バックエンド説明、設計説明、公開ロードAPIコメントも更新する。過去の対応計画は変更しない。
+- 段階6の最終ホスト検証: 実装コミット`c370198`に利用者文書と公開APIコメントの更新を加えた作業ツリーを固定し、Debugを再構成・再ビルドした。`ctest --test-dir build/test --output-on-failure --parallel 4`は160件すべて成功（268.72秒、skipなし）。存在しないことを確認した`build/effetune-2.11-release`へRelease / `BUILD_TESTING=ON`を新規構成し、`cmake --build build/effetune-2.11-release --parallel 8`、`ctest --test-dir build/effetune-2.11-release --output-on-failure --parallel 4`で159件すべて成功（225.13秒、skipなし）。ReleaseではDebug専用allocation guardが含まれないため1件少ない。両方に単独コンポーネントReleaseビルド、共有バックエンドgolden、GTK E2E、インストールレイアウト検証を含む。配布ビルドとの並行実行により段階5より所要時間は増えたが、タイムアウトや失敗はない。`final-debug-build.log`、`final-debug.log`、`final-release-build.log`、`final-release.log`と集計`final-host-results.json`へ保存した。
+- 段階6の一時インストール: `DESTDIR="$PWD/artifacts/verification/effetune-2.11.0/install" cmake --install build/effetune-2.11-release --prefix /usr`を実行し、配置したCLI/GTKの`--version`がともに`EffeTune DSP 2.11.0`を表示して正常終了した（`final-install.log`）。ホストのシステム領域は変更していない。PipeTune自身の2.10.8という表示は既存の`screw-up format`による算出版であり、この対応のための手動リリース番号変更は行っていない。
+- 段階6の利用条件: 英日利用者文書にAttackの残差と長い遅延、Bass Extenderの6対応レート・1〜2ch、Bass ManagementのAll・役割・出力接続・IIR/Linear・3タップの遅延・準備待ち・32 MiB制限を記載した。歪み系OS、Time Alignment 500 msと意図的遅延、Limiter 1倍の上限超過と2倍以上の選択を説明し、制約にはv2.11.0の出典を付けた。解析8種類の無警告除外、107カーネル、Attack等のPFFFT利用とMP3の直接PFFFT非依存も更新した。7文書のローカルリンク先に欠落がないことを`document-links.json`へ記録した。
+- 段階6の配布検証: `./build_package_all.sh --jobs 6`が正常終了し、Debian bookwormのamd64/i386/arm64/armhf、trixieの同4種＋riscv64、Ubuntu 24.04/26.04のamd64/arm64、計13構成のパッケージ生成・依存関係/ELF/配置検査・新規コンテナへのインストール・CLI/GTKの版表示が成功した。ログは`final-packages.log`。作業ディレクトリは`artifacts/.tmp/run-20260930114233-3265516`、配布物は`artifacts/deb/pipetune-2.10.8-*.deb`。既存prerequisite imageを使用し、追加パッケージのインストールは不要だった。
+- 段階6の配布音声: `node artifacts/verification/effetune-2.11.0/verify-installed.mjs artifacts/.tmp/run-20260930114233-3265516`で全13構成を確認した。ビルドの完了順に対象を指定して実施し、最終実行では未完了の対象だけを検証した。各コンテナでベンチマーク実行ファイルを`/usr/bin`へコピーし、`/usr/lib/pipetune`のインストール済み共有ライブラリを使用した。48 kHz・4ch・256 frames/blockでAttack Tonal Balance、別ペアのBass Extender、Bass Management IIR/Linear（32,768 taps）を実行し、全プリセットにChroma Spiralも混在させた。Linearは1,024 warmup blocks、他は128、計測は64 blocks。52プリセット構成・計144バックエンド実行で有効DSP数1、除外0、有限・非ゼロの音声を確認した。ローダーによる107カーネル・パラメータ/アセット容量契約の照合も通過した。各対象のJSONと`*-installed.log`、集計`installed-results.json`へ保存した。
+- 段階6のISAと検証範囲: amd64/i386はホストCPUでScalar / baseline / x86-64-v3を実行した。arm64のScalar / NEON baseline / SVE、armhfのScalar / NEON baseline、riscv64のScalar / RVV baselineはQEMUを介して実行した。x86-64-v4はコンパイルと配布を確認したが、ホストCPU非対応のため実行していない。公式golden比較と全体テストはホストの実行可能なバックエンドで確認し、他アーキテクチャの配布検証は上記プリセットの実PCM確認である。エミュレーションの処理時間を実機性能と扱わない。ARM/RISC-V実機のリアルタイム性能、AVX-512実行、物理スピーカーへの配線は未検証である。
+- 最終照合: `node artifacts/verification/effetune-2.11.0/final-audit.mjs`で13構成の欠落・重複、インストール検査完了、全52プリセット/144実行の結果、検証後のパッケージSHA-256一致を確認した。`SHA256SUMS`、`final-results.json`、`final-audit.log`へ保存した。指定の公式サブモジュール参照を維持し、EffeTune/yyjsonの外部ソースに変更はない。`git diff --check`も成功した。上記の実行可能ISA・実機未検証範囲を区別したうえで、最終完了条件10項目を満たした。最終テスト後の追記は本計画の実施記録のみで、ビルドに影響しない。

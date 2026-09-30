@@ -41,13 +41,15 @@ not supported by this MVP.
 
 - Loads canonical and legacy EffeTune preset JSON from files whose extension is
   exactly `.effetune_preset`.
-- Builds every enabled DSP in the pinned EffeTune 2.10.0 native registry,
-  including bus and channel routing through 16 planar channels.
+- Builds every enabled DSP in the pinned EffeTune 2.11.0 native registry,
+  containing 107 kernels, including bus and channel routing through 16 planar channels.
 - Runs Spatial Mapper and TV Audio Simulator presets; see the
-  [supported settings and channel conditions](../README.md#spatial-mapper-and-tv-audio-simulator).
-- Silently omits visualization-only analyzers, including Pitch Meter.
+  [supported settings and channel conditions](../docs/en/details.md#spatial-mapper-and-tv-audio-simulator).
+- Runs Attack Tonal Balance, Bass Extender, and Bass Management IIR/Linear;
+  see the [rate, channel, and latency conditions](../docs/en/details.md#attack-tonal-balance-and-bass-extender).
+- Silently omits eight visualization-only analyzers, including Pitch Meter and Chroma Spiral.
 - Generates and stages convolution coefficients for FIR Crossover, 5Band FIR
-  PEQ, Group Delay EQ, and Group Delay PEQ from their preset parameters.
+  PEQ, Group Delay EQ, Group Delay PEQ, and Bass Management Linear from their preset parameters.
 - Skips unknown DSPs and unresolved stored-asset DSPs, with a warning for each
   omitted node.
 - Publishes a WirePlumber 0.5 smart-filter pair and a WirePlumber 0.4 endpoint
@@ -104,8 +106,8 @@ cd PipeTune
 git submodule update --init --recursive
 ```
 
-`deps/effetune` is pinned to the EffeTune main-branch revision used by this
-checkout. `deps/yyjson` is pinned to yyjson 0.12.0.
+`deps/effetune` is pinned to the official EffeTune v2.11.0 tag.
+`deps/yyjson` is pinned to yyjson 0.12.0.
 
 ## Workspace layout
 
