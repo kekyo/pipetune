@@ -533,6 +533,32 @@ describe('PipeTune GTK dialog', () => {
     );
   });
 
+  it('shows loaded preset entries and retains their states during bypass', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    const table = await getElement('presetEntryView', 'table');
+    expect(await table.getColumnCount()).toBe(2);
+    expect(await table.getRowCount()).toBe(3);
+    const expected = [
+      ['Volume', 'Enabled'],
+      ['Volume', 'Off'],
+      ['Spectrum Analyzer', 'Ignored'],
+    ];
+    for (const bypass of [false, true]) {
+      if (bypass) {
+        await (await getElement('processingEnabledSwitch', 'switch')).toggle();
+        await waitForLabel('status-live-processing', 'Bypass');
+      }
+      expect((await table.info()).states).toContain('showing');
+      for (const [row, values] of expected.entries()) {
+        for (const [column, value] of values.entries()) {
+          const cell = await table.cellAt(row, column);
+          expect((await cell?.info())?.name).toBe(value);
+        }
+      }
+    }
+  });
+
   it('applies every setting live, persists once, and remains open', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();

@@ -60,6 +60,38 @@ static void configureCompactComboBox(GtkWidget *widget) {
   g_list_free(cells);
 }
 
+static const char *presetEntryStateText(pipetune::PresetEntryState state) {
+  switch (state) {
+  case pipetune::PresetEntryState::enabled:
+    return translate("Enabled");
+  case pipetune::PresetEntryState::off:
+    return translate("Off");
+  case pipetune::PresetEntryState::ignored:
+    return translate("Ignored");
+  }
+  return "";
+}
+
+void renderPresetConfiguration(
+    MainWindowUi &ui,
+    const std::optional<std::vector<pipetune::PresetEntry>> &entries) {
+  if (ui.displayedPresetEntries == entries) {
+    return;
+  }
+  auto *model = GTK_LIST_STORE(
+      gtk_tree_view_get_model(GTK_TREE_VIEW(ui.presetEntryView)));
+  gtk_list_store_clear(model);
+  if (entries.has_value()) {
+    for (const auto &entry : *entries) {
+      gtk_list_store_insert_with_values(
+          model, nullptr, -1, 0, entry.name.c_str(),
+          1, presetEntryStateText(entry.state), -1);
+    }
+  }
+  gtk_widget_set_visible(ui.presetConfigurationRow, entries.has_value());
+  ui.displayedPresetEntries = entries;
+}
+
 MainWindowUi createMainWindowUi(GtkApplication *application,
                                 std::string_view pipeTuneVersion,
                                 std::string_view effetuneDspVersion) {
@@ -115,6 +147,10 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
           requiredWidget(builder, "presetCombo", GTK_TYPE_COMBO_BOX_TEXT),
       .presetChooser = requiredWidget(
           builder, "presetChooser", GTK_TYPE_FILE_CHOOSER_BUTTON),
+      .presetConfigurationRow = requiredWidget(
+          builder, "presetConfigurationRow", GTK_TYPE_LIST_BOX_ROW),
+      .presetEntryView = requiredWidget(
+          builder, "presetEntryView", GTK_TYPE_TREE_VIEW),
       .rateCombo =
           requiredWidget(builder, "rateCombo", GTK_TYPE_COMBO_BOX_TEXT),
       .rateEnforcementCombo = requiredWidget(
@@ -157,6 +193,8 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
           requiredWidget(builder, "applyButton", GTK_TYPE_BUTTON),
   };
   configureCompactComboBox(ui.presetCombo);
+  gtk_widget_show_all(
+      gtk_bin_get_child(GTK_BIN(ui.presetConfigurationRow)));
   configureCompactComboBox(ui.rateCombo);
   configureCompactComboBox(ui.rateEnforcementCombo);
   configureCompactComboBox(ui.dspBackendCombo);

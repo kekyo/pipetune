@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface domain="pipetune-gtk">
   <requires lib="gtk+" version="3.24"/>
+  <object class="GtkListStore" id="presetEntryStore">
+    <columns>
+      <column type="gchararray"/>
+      <column type="gchararray"/>
+    </columns>
+  </object>
   <object class="GtkAdjustment" id="dspIdleTimeoutAdjustment">
     <property name="lower">0.1</property>
     <property name="upper">5.0</property>
@@ -295,6 +301,81 @@
                                         <property name="title" translatable="yes">Choose an EffeTune preset</property>
                                         <property name="action">open</property>
                                         <property name="hexpand">True</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBoxRow" id="presetConfigurationRow">
+                                <property name="no-show-all">True</property>
+                                <property name="selectable">False</property>
+                                <property name="activatable">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label" translatable="yes">Preset configuration</property>
+                                        <property name="xalign">0</property>
+                                        <style>
+                                          <class name="section-heading"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkScrolledWindow">
+                                        <property name="margin">14</property>
+                                        <property name="hscrollbar-policy">never</property>
+                                        <property name="vscrollbar-policy">automatic</property>
+                                        <property name="min-content-height">120</property>
+                                        <property name="max-content-height">240</property>
+                                        <property name="propagate-natural-height">True</property>
+                                        <property name="shadow-type">in</property>
+                                        <child>
+                                          <object class="GtkTreeView" id="presetEntryView">
+                                            <property name="model">presetEntryStore</property>
+                                            <property name="headers-clickable">False</property>
+                                            <property name="enable-search">False</property>
+                                            <property name="tooltip-column">0</property>
+                                            <child internal-child="selection">
+                                              <object class="GtkTreeSelection">
+                                                <property name="mode">none</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkTreeViewColumn">
+                                                <property name="title" translatable="yes">DSP entry</property>
+                                                <property name="expand">True</property>
+                                                <property name="sizing">fixed</property>
+                                                <property name="fixed-width">180</property>
+                                                <child>
+                                                  <object class="GtkCellRendererText">
+                                                    <property name="ellipsize">end</property>
+                                                    <property name="ypad">5</property>
+                                                  </object>
+                                                  <attributes>
+                                                    <attribute name="text">0</attribute>
+                                                  </attributes>
+                                                </child>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkTreeViewColumn">
+                                                <property name="title" translatable="yes">State</property>
+                                                <child>
+                                                  <object class="GtkCellRendererText">
+                                                    <property name="ypad">5</property>
+                                                  </object>
+                                                  <attributes>
+                                                    <attribute name="text">1</attribute>
+                                                  </attributes>
+                                                </child>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
                                       </object>
                                     </child>
                                   </object>

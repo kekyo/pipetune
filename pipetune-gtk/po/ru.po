@@ -270,6 +270,9 @@ msgstr "Бэкенд DSP изменён"
 msgid "DSP Engine"
 msgstr "Движок DSP"
 
+msgid "DSP entry"
+msgstr "Элемент DSP"
+
 msgid "DSP latency"
 msgstr "Задержка DSP"
 
@@ -298,6 +301,9 @@ msgstr "Предустановки EffeTune"
 msgid "Enable DSP processing"
 msgstr "Включить обработку DSP"
 
+msgid "Enabled"
+msgstr "Включено"
+
 msgid "English"
 msgstr "Английский"
 
@@ -321,6 +327,9 @@ msgstr "Принудительно — запросить фиксированн
 
 msgid "Ignore"
 msgstr "Игнорировать"
+
+msgid "Ignored"
+msgstr "Игнорируется"
 
 msgid "Input / Sampling Frequencies"
 msgstr "Вход / Частоты дискретизации"
@@ -388,6 +397,9 @@ msgstr "Никогда"
 msgid "None"
 msgstr "Нет"
 
+msgid "Off"
+msgstr "Выключено"
+
 msgid "Open PipeTune"
 msgstr "Открыть PipeTune"
 
@@ -443,6 +455,9 @@ msgstr "Частота дискретизации графа PipeWire"
 
 msgid "Preset"
 msgstr "Предустановка"
+
+msgid "Preset configuration"
+msgstr "Конфигурация пресета"
 
 msgid "Preset library"
 msgstr "Библиотека предустановок"
@@ -553,6 +568,9 @@ msgstr "Стандартная · {0} · {1}"
 
 msgid "Startup configuration path unavailable"
 msgstr "Путь начальной конфигурации недоступен"
+
+msgid "State"
+msgstr "Состояние"
 
 msgid "Suggest"
 msgstr "Предлагать"

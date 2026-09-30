@@ -268,6 +268,9 @@ msgstr "DSP 后端已更改"
 msgid "DSP Engine"
 msgstr "DSP 引擎"
 
+msgid "DSP entry"
+msgstr "DSP 条目"
+
 msgid "DSP latency"
 msgstr "DSP 延迟"
 
@@ -296,6 +299,9 @@ msgstr "EffeTune 预设"
 msgid "Enable DSP processing"
 msgstr "启用 DSP 处理"
 
+msgid "Enabled"
+msgstr "启用"
+
 msgid "English"
 msgstr "英语"
 
@@ -318,6 +324,9 @@ msgid "Force — request the fixed graph sampling frequency"
 msgstr "强制 — 请求固定图采样频率"
 
 msgid "Ignore"
+msgstr "忽略"
+
+msgid "Ignored"
 msgstr "忽略"
 
 msgid "Input / Sampling Frequencies"
@@ -386,6 +395,9 @@ msgstr "从不"
 msgid "None"
 msgstr "无"
 
+msgid "Off"
+msgstr "关闭"
+
 msgid "Open PipeTune"
 msgstr "打开 PipeTune"
 
@@ -441,6 +453,9 @@ msgstr "PipeWire 图采样频率"
 
 msgid "Preset"
 msgstr "预设"
+
+msgid "Preset configuration"
+msgstr "预设配置"
 
 msgid "Preset library"
 msgstr "预设库"
@@ -551,6 +566,9 @@ msgstr "标准 · {0} · {1}"
 
 msgid "Startup configuration path unavailable"
 msgstr "启动配置路径不可用"
+
+msgid "State"
+msgstr "状态"
 
 msgid "Suggest"
 msgstr "建议"

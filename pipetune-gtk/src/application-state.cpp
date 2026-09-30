@@ -189,6 +189,11 @@ void applyControlResponse(
 
   state.hasRuntimeStatus = true;
   state.runtime = response.status;
+  if (response.status.processingMode == pipetune::ProcessingMode::preset) {
+    // Bypass releases the daemon's DSP pipeline, but the selected preset's
+    // configuration remains useful until another preset is loaded.
+    state.presetEntries = response.status.presetEntries;
+  }
   updateInputRate(state.inputRate, response.status,
                   receivedAtMonotonicMilliseconds);
   updateDspTiming(state.dspTiming, response.status);

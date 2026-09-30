@@ -280,6 +280,67 @@ static bool checkJapaneseMeasuredStatusLabels() {
   return check(false, "measured DSP load status is missing");
 }
 
+static bool checkPresetConfiguration(
+    pipetune_gtk::MainWindowUi &ui,
+    const std::array<const char *, 3> &expected) {
+  if (!check(GTK_IS_TREE_VIEW(ui.presetEntryView),
+             "Processing must include a preset configuration table")) {
+    return false;
+  }
+  gtk_widget_show_all(ui.window);
+  if (!check(gtk_widget_get_visible(ui.presetConfigurationRow) == FALSE,
+             "no configuration list may appear before a preset is loaded")) {
+    return false;
+  }
+  using State = pipetune::PresetEntryState;
+  const auto entries = std::vector<pipetune::PresetEntry>{
+      {"Volume", State::enabled}, {"Volume", State::off},
+      {"Spectrum Analyzer", State::ignored}};
+  pipetune_gtk::renderPresetConfiguration(ui, entries);
+  auto *view = GTK_TREE_VIEW(ui.presetEntryView);
+  auto *model = gtk_tree_view_get_model(view);
+  if (!check(gtk_widget_get_visible(ui.presetConfigurationRow) != FALSE,
+             "a loaded preset configuration must be visible") ||
+      !check(gtk_tree_view_get_n_columns(view) == 2 &&
+                 gtk_tree_model_iter_n_children(model, nullptr) == 3,
+             "configuration must have name/state columns and every entry")) {
+    return false;
+  }
+  for (auto index = std::size_t{0}; index < entries.size(); ++index) {
+    auto iter = GtkTreeIter{};
+    gtk_tree_model_iter_nth_child(model, &iter, nullptr, static_cast<int>(index));
+    auto *name = static_cast<gchar *>(nullptr);
+    auto *state = static_cast<gchar *>(nullptr);
+    gtk_tree_model_get(model, &iter, 0, &name, 1, &state, -1);
+    const auto correct = name != nullptr && state != nullptr &&
+                         entries[index].name == name &&
+                         std::string_view(state) == expected[index];
+    g_free(name);
+    g_free(state);
+    if (!check(correct, "configuration name or state differs")) return false;
+  }
+  // Retaining the model also preserves scrolling during status publications.
+  auto iter = GtkTreeIter{};
+  gtk_tree_model_get_iter_first(model, &iter);
+  auto *path = gtk_tree_model_get_path(model, &iter);
+  auto *reference = gtk_tree_row_reference_new(model, path);
+  gtk_tree_path_free(path);
+  pipetune_gtk::renderPresetConfiguration(ui, entries);
+  const auto retained = gtk_tree_row_reference_valid(reference) != FALSE;
+  gtk_tree_row_reference_free(reference);
+  if (!check(retained, "unchanged telemetry must preserve configuration rows")) {
+    return false;
+  }
+  pipetune_gtk::renderPresetConfiguration(ui, std::vector<pipetune::PresetEntry>{});
+  if (!check(gtk_tree_model_iter_n_children(model, nullptr) == 0,
+             "loading an empty preset must remove the previous rows")) {
+    return false;
+  }
+  pipetune_gtk::renderPresetConfiguration(ui, std::nullopt);
+  return check(gtk_widget_get_visible(ui.presetConfigurationRow) == FALSE,
+               "clearing the configuration must hide the section");
+}
+
 int main(int argc, char **argv) {
   if (argc != 2) {
     std::cerr << "locale directory is required\n";
@@ -328,6 +389,7 @@ int main(int argc, char **argv) {
       check(ui.builder != nullptr, "main window builder is unavailable") &&
       checkWidgetTypes(ui) && checkSettingsPages(ui) &&
       checkDspIdleControls(ui) &&
+      checkPresetConfiguration(ui, {"Enabled", "Off", "Ignored"}) &&
       checkLanguageChoices(ui) &&
       checkRestoreDefaultsDescription(ui) && checkVersionLinks(ui) &&
       checkLoadMeterHost(ui) &&
@@ -440,7 +502,8 @@ int main(int argc, char **argv) {
       check(std::string_view(
                 pipetune_gtk::translate("Connected")) == "接続済み",
             "dynamic presentation text was not translated") &&
-      checkJapaneseMeasuredStatusLabels();
+      checkJapaneseMeasuredStatusLabels() &&
+      checkPresetConfiguration(japaneseUi, {"有効", "オフ", "無視"});
   pipetune_gtk::destroyMainWindowUi(japaneseUi);
   pipetune_gtk::restoreUiLocalizationEnvironment(
       originalLocalization);

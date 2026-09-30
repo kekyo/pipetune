@@ -713,6 +713,7 @@ static void renderPresetControls(GtkRuntime *runtime) {
   if (gtk_switch_get_active(processing) != active) {
     gtk_switch_set_active(processing, active);
   }
+  renderPresetConfiguration(runtime->ui, runtime->state.presetEntries);
 }
 
 static void renderRateControls(GtkRuntime *runtime) {

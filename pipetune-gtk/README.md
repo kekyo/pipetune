@@ -151,6 +151,15 @@ The **Preset file** chooser remains available for any standalone
 processing or pass-through bypass. Both the preset selection and the switch
 participate in the dialog-wide live preview and persistence transaction.
 
+The Processing page's Preset configuration table lists every loaded DSP entry
+in preset order, with its name and an Enabled, Off, or Ignored state. Off also
+includes DSPs inside a disabled Section. Ignored identifies visualizers and
+other entries omitted by PipeTune, such as unsupported DSPs or entries with
+unavailable external assets. The table stays visible with its preset states
+when Enable DSP processing is turned off. It is hidden until a preset has
+loaded successfully, and refreshes when the daemon loads another preset or
+reloads an edited preset. A failed load retains the last confirmed configuration.
+
 ## DSP backend
 
 The DSP page's **Native backend** drop-down selects **Scalar**,
