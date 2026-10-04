@@ -1,0 +1,40 @@
+{
+  "name": "EffeTune 2.12 mixed states",
+  "pipeline": [
+    {
+      "name": "Tonal Balance EQ",
+      "parameters": {
+        "am": 0
+      }
+    },
+    {
+      "name": "Rhythm Analyzer",
+      "parameters": {
+        "ck": false
+      }
+    },
+    {
+      "name": "Analog Meter",
+      "inputBus": 1,
+      "outputBus": 0
+    },
+    {
+      "name": "Rhythm Analyzer",
+      "enabled": false,
+      "parameters": {
+        "ck": true
+      }
+    },
+    {
+      "name": "Section",
+      "enabled": false
+    },
+    {
+      "name": "Tonal Balance EQ"
+    },
+    {
+      "name": "Analog Meter",
+      "enabled": false
+    }
+  ]
+}

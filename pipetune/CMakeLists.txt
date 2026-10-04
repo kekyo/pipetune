@@ -556,6 +556,11 @@ if(BUILD_TESTING)
   target_compile_options(pipetune_tonal_balance_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME pipetune_tonal_balance_tests COMMAND pipetune_tonal_balance_tests)
 
+  add_executable(pipetune_rhythm_analyzer_tests test/rhythm_analyzer_test.cpp)
+  target_link_libraries(pipetune_rhythm_analyzer_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_rhythm_analyzer_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_rhythm_analyzer_tests COMMAND pipetune_rhythm_analyzer_tests)
+
   add_executable(pipetune_effetune_211_regression_tests test/effetune_211_regression_test.cpp)
   target_link_libraries(pipetune_effetune_211_regression_tests PRIVATE pipetune_core)
   target_compile_options(pipetune_effetune_211_regression_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)

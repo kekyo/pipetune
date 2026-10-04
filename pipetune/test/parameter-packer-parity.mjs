@@ -109,6 +109,18 @@ for (const field of tonalSpec.fields) {
     }
   }
 }
+for (const mn of [0, 40, 100, 192, 300]) {
+  for (const mx of [0, 50, 140, 240, 300]) {
+    for (const ck of [false, true]) {
+      cases.push({type: 'RhythmAnalyzerPlugin', parameters: {
+        mn, mx, ck, sp: 16, vt: false, vm: true, ve: false, vl: true
+      }});
+    }
+  }
+}
+for (const md of ['VU', 'PPM', 'RMS', 'Sample Peak', 'True Peak', 'Loudness']) {
+  cases.push({type: 'AnalogMeterPlugin', parameters: {md}});
+}
 const integerSpec = loadParamSpecs(path.join(effetuneRoot, 'dsp/plugins')).find(spec =>
   spec.fields.some(field =>
     field.kind === 'int' && field.min <= 1 && field.max >= 1 && !field.defaults.includes(1)
