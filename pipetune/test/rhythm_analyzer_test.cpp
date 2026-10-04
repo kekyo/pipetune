@@ -97,10 +97,10 @@ static bool testClicks(const std::filesystem::path &path) {
             for (auto i = 0u; i < count; ++i) {
               const auto added = audio[c.first * count + i] - input[c.first * count + i];
               for (auto ch = 0u; ch < c.channels; ++ch) {
-                const auto difference = audio[ch * count + i] - input[ch * count + i];
                 const auto selected = click && ch >= c.first && ch < c.first + c.width;
                 if (!check(std::isfinite(audio[ch * count + i]) &&
-                               (selected ? difference == added : difference == 0),
+                               (selected ? audio[ch * count + i] == audio[c.first * count + i] :
+                                           audio[ch * count + i] == input[ch * count + i]),
                            "clicks must match on selected channels and leave all other PCM unchanged")) return false;
               }
               if (click && c.rate == 48000) {

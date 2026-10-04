@@ -505,7 +505,12 @@ static std::vector<float> goldenInput(const GoldenCase &testCase) {
         value = std::sin(2.0 * std::numbers::pi * 20.0 *
             std::expm1(rate * frame / testCase.sampleRate) / rate) * std::pow(10.0, -12.0 / 20.0);
       } else if (testCase.stimulus == "sq50") {
-        value = std::sin(2.0 * std::numbers::pi * 50.0 * frame / testCase.sampleRate) >= 0.0 ?
+        // Match the reference's binary64 operation boundaries. Extended x87
+        // intermediates can change the sign at a square-wave zero crossing.
+        volatile double phase = 2.0 * std::numbers::pi * 50.0;
+        phase = phase * frame;
+        phase = phase / testCase.sampleRate;
+        value = std::sin(phase) >= 0.0 ?
             std::pow(10.0, -3.0 / 20.0) : -std::pow(10.0, -3.0 / 20.0);
       } else if (testCase.stimulus == "fs") {
         value = ((frame + ch) & 1u) == 0u ? 1.0 : -1.0;
