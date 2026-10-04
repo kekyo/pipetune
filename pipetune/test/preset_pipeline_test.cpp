@@ -1166,6 +1166,55 @@ static bool testBassExtenderProcessingWidth(const std::filesystem::path &directo
   return true;
 }
 
+static bool testEffeTune212Processors(const std::filesystem::path &directory) {
+  auto passed = true;
+  for (const auto name : {"Tonal Balance EQ", "Rhythm Analyzer"}) {
+    const auto path = writePreset(directory, "effetune-2.12.effetune_preset",
+        "{\"pipeline\":[{\"name\":\"" + std::string(name) +
+        "\",\"channel\":\"All\",\"parameters\":{\"am\":0,\"ck\":false}}]}");
+    auto loaded = pipetune::loadDspPipeline(path, {48000, 2, 127});
+    if (!check(loaded.pipeline != nullptr, loaded.error) ||
+        !check(loaded.warnings.empty() && loaded.pipeline->activePluginCount() == 1,
+               std::string(name) + " must execute without warnings")) {
+      passed = false;
+      continue;
+    }
+    if (!check(loaded.pipeline->latencyFrames() == 0,
+               std::string(name) + " must not add pipeline latency")) passed = false;
+    for (auto start = 0u; start < 1021u;) {
+      const auto count = std::min(127u, 1021u - start);
+      auto audio = std::vector<float>(2u * count, 0.125F);
+      if (!check(loaded.pipeline->process(audio, 2, count, start / 48000.0) ==
+                     pipetune::ProcessStatus::ok &&
+                     std::ranges::all_of(audio, [](float value) {
+                       return approximately(value, 0.125F);
+                     }), "neutral EffeTune 2.12 settings must preserve PCM")) passed = false;
+      start += count;
+    }
+  }
+  return passed;
+}
+
+static bool testAnalogMeter(const std::filesystem::path &directory) {
+  for (const auto mode : {"VU", "PPM", "RMS", "Sample Peak", "True Peak", "Loudness"}) {
+    const auto path = writePreset(directory, "analog-meter.effetune_preset",
+        "{\"pipeline\":[{\"name\":\"Analog Meter\",\"inputBus\":1,\"outputBus\":0,"
+        "\"parameters\":{\"md\":\"" + std::string(mode) + "\"}}]}");
+    auto loaded = pipetune::loadDspPipeline(path, {48000, 2, 64});
+    if (!check(loaded.pipeline != nullptr, loaded.error) ||
+        !check(loaded.warnings.empty() && loaded.pipeline->activePluginCount() == 0 &&
+                   loaded.pipeline->latencyFrames() == 0,
+               "Analog Meter must be ignored without warnings in every mode")) return false;
+    auto audio = std::vector<float>{0.1F, -0.2F, 0.3F, -0.4F};
+    const auto original = audio;
+    if (!check(loaded.pipeline->process(audio, 2, 2, 0.0) == pipetune::ProcessStatus::ok &&
+                   audio == original && loaded.pipeline->presetEntries().size() == 1 &&
+                   loaded.pipeline->presetEntries()[0].state == pipetune::PresetEntryState::ignored,
+               "Analog Meter must preserve PCM without bus copies and report ignored")) return false;
+  }
+  return true;
+}
+
 static bool testRetainedRecipeRebuild(
     const std::filesystem::path &directory) {
   const auto path = writePreset(
@@ -1194,11 +1243,13 @@ int main() {
       ("pipetune-preset-test-" + std::to_string(static_cast<long long>(getpid())));
   std::filesystem::create_directories(directory);
 
+  const auto effects212 = testEffeTune212Processors(directory);
+  const auto analog = testAnalogMeter(directory);
   const auto attack = testEffeTune211Processor(directory, "Attack Tonal Balance");
   const auto bass = testEffeTune211Processor(directory, "Bass Extender");
   const auto bassWidth = testBassExtenderProcessingWidth(directory);
   const auto visualizers = testVisualizationPresets(directory);
-  const auto passed = testPresetEntries(directory) && attack && bass && bassWidth && visualizers &&
+  const auto passed = effects212 && analog && testPresetEntries(directory) && attack && bass && bassWidth && visualizers &&
       testFirCrossoverRouting(directory) && testFirCrossoverBands(directory) &&
       testEffeTune210Pipeline(directory) && testSpatialMapper(directory) && testTvAudioSimulator(directory) &&
       testBypassPipeline() && testCanonicalPreset(directory) &&

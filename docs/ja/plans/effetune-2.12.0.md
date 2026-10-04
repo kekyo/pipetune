@@ -225,3 +225,10 @@ DESTDIR="$PWD/artifacts/verification/effetune-2.12.0/install" cmake --install bu
 - [共通K-weighting](https://github.com/Frieve-A/effetune/blob/v2.12.0/dsp/include/effetune/dsp/k_weighting.h)
 
 既存計画の形式と前回の検証上の注意点は[2.11.0対応計画](effetune-2.11.0.md)を参照した。今回の実装基準は本書冒頭の現行HEADとする。
+
+## 実施記録
+
+- 段階0: 計画コミット`e9eaaa7`で`make test`を実行し、Debug全160件が成功した（723.18秒）。単独Releaseビルド、GTK E2Eを含む。`baseline-debug.log`と`environment.json`を検証ディレクトリへ保存。必要なツールと13構成のPodmanイメージは存在し、追加インストールは不要だった。
+- 段階1のRED: 新規2加工DSPの無警告実行とAnalog Meter全モードの無警告除外をプリセット経由で検証し、2.11.0では3つの期待どおりの失敗を確認した（`step1-red.log`）。公式2.12.0への参照更新、共通tree modelsへの移行、ARM用生成物変換の改名、3カーネルの浮動小数点条件、Analogの除外後、ホストDebugビルドと対象8テストが成功した（`step1-build.log`、`step1-green.log`）。
+- 段階1の設計見直し: armv7lの初回ビルドで、8個の変換規則が同時に`npx`の同一キャッシュへインストールし、`ENOTEMPTY`・`ENOENT`・`funcity: Permission denied`を起こした（`step1-armv7-package.log`）。従来の独立した変換規則を8モデルへ増やすだけでは、空キャッシュでの並列ビルドを保証できない。変換出力間へ生成依存を加え、この変換だけを直列化する設計に修正する。上流のモデル生成と通常のコンパイルは並列のまま維持し、外部コードは変更しない。修正後は新しいコンテナの空キャッシュから同じARM配布ビルドを再実行する。
+- 段階1完了: 空キャッシュのarmv7l配布ビルド・インストールが成功した。インストール先のScalar / NEON共有ライブラリで最小混在プリセットを実行し、有効DSP数2、除外警告0、同一チェックサムを確認した。CLI/GTKはともにEffeTune DSP 2.12.0を表示する（`step1-armv7-package-green.log`、`step1-installed-arm.log`）。新規型のハッシュ、float数、構造化バイト領域なし、外部アセット不要の契約もホストで成功した（`step1-catalog.log`）。上流作業ツリーは変更なし。段階1の完了条件を満たした。

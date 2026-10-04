@@ -146,7 +146,7 @@ pipetune_resolve_native_processor(
   "${CMAKE_SYSTEM_PROCESSOR}"
   "${CMAKE_SIZEOF_VOID_P}")
 set(CMAKE_PROJECT_effetune_dsp_INCLUDE
-    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EffeTuneNoteModels.cmake")
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EffeTuneTreeModels.cmake")
 add_subdirectory(
   "${PIPETUNE_EFFETUNE_DIR}/dsp"
   "${CMAKE_CURRENT_BINARY_DIR}/effetune-dsp")

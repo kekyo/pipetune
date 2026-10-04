@@ -253,41 +253,62 @@ static std::uint32_t findKernelIndex(const BackendApi &api,
   return count;
 }
 
-static void checkEffeTune211Catalog(const BackendApi &api) {
-  static constexpr std::array<std::string_view, 15> addedTypes = {
+static void checkEffeTune212Catalog(const BackendApi &api) {
+  static constexpr std::array<std::string_view, 18> addedTypes = {
       "GroupDelayPEQPlugin", "MDSimulatorPlugin", "ClickRemoverPlugin",
       "ClipRestorerPlugin", "HumRemoverPlugin", "NoiseReductionPlugin",
       "CrosstalkCancellationPlugin", "NoteSpectrogramPlugin",
       "PitchMeterPlugin", "SpatialMapperPlugin", "TVAudioSimulatorPlugin",
       "AttackTonalBalancePlugin", "BassExtenderPlugin",
-      "BassManagementPlugin", "ChromaSpiralPlugin"};
-  check(api.kernelCount() == 107u,
-        "EffeTune 2.11 backend catalog must contain 107 kernels");
+      "BassManagementPlugin", "ChromaSpiralPlugin", "TonalBalanceEQPlugin",
+      "RhythmAnalyzerPlugin", "AnalogMeterPlugin"};
+  check(api.kernelCount() == 110u,
+        "EffeTune 2.12 backend catalog must contain 110 kernels");
   for (const auto typeName : addedTypes) {
     check(findKernelIndex(api, typeName) < api.kernelCount(),
-          "EffeTune 2.11 backend catalog must contain every required kernel");
+          "EffeTune 2.12 backend catalog must contain every required kernel");
+  }
+  struct Contract {
+    std::string_view type;
+    std::uint32_t hash;
+    std::uint32_t floats;
+  };
+  for (const auto &contract : std::array{
+           Contract{"TonalBalanceEQPlugin", 0x0a5d8c64u, 36u},
+           Contract{"RhythmAnalyzerPlugin", 0xbae05865u, 3u},
+           Contract{"AnalogMeterPlugin", 0xc0e236cdu, 4u}}) {
+    const auto index = findKernelIndex(api, contract.type);
+    if (index >= api.kernelCount()) continue;
+    const auto *definition = pipetune::findDspByTypeName(contract.type);
+    check(api.kernelParamsHash(index) == contract.hash && definition != nullptr &&
+              definition->floatCount == contract.floats &&
+              api.kernelParamBytesCapacity(index) == 0u,
+          "EffeTune 2.12 kernels must expose their official parameter layouts");
+    for (auto slot = 0u; slot < 4u; ++slot)
+      check(api.kernelAssetCapacity(index, slot) == 0u,
+            "EffeTune 2.12 additions must not require external assets");
   }
   const auto phaseSelectIndex = findKernelIndex(api, "PhaseSelectEqPlugin");
   check(phaseSelectIndex < api.kernelCount(),
-        "EffeTune 2.11 backend catalog must retain Phase Select EQ");
+        "EffeTune 2.12 backend catalog must retain Phase Select EQ");
   if (phaseSelectIndex < api.kernelCount()) {
     check(api.kernelParamsHash(phaseSelectIndex) == 0x51c6d77au,
-          "EffeTune 2.11 Phase Select EQ must retain its parameter layout");
+          "EffeTune 2.12 Phase Select EQ must retain its parameter layout");
   }
   const auto tubeIndex = findKernelIndex(api, "TubeSimulatorPlugin");
   check(tubeIndex < api.kernelCount(),
-        "EffeTune 2.11 backend catalog must retain Tube Simulator");
+        "EffeTune 2.12 backend catalog must retain Tube Simulator");
   if (tubeIndex < api.kernelCount()) {
     check(api.kernelParamsHash(tubeIndex) == 0x07986b4bu,
-          "EffeTune 2.11 Tube Simulator must retain its parameter layout");
+          "EffeTune 2.12 Tube Simulator must retain its parameter layout");
   }
   const auto multiChannelPanelIndex =
       findKernelIndex(api, "MultiChannelPanelPlugin");
   check(multiChannelPanelIndex < api.kernelCount(),
-        "EffeTune 2.11 backend catalog must retain Multi Channel Panel");
+        "EffeTune 2.12 backend catalog must retain Multi Channel Panel");
   if (multiChannelPanelIndex < api.kernelCount()) {
     check(api.kernelParamsHash(multiChannelPanelIndex) == 0x9d3d18b9u,
-          "EffeTune 2.11 Multi Channel Panel must expose 16-channel parameters");
+          "EffeTune 2.12 Multi Channel Panel must expose 16-channel parameters");
   }
 }
 
@@ -940,7 +961,7 @@ int main(int argc, char **argv) {
                 PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
             "scalar backend must report its concrete variant");
       checkAllAbiSymbols(scalar.handle);
-      checkEffeTune211Catalog(scalar);
+      checkEffeTune212Catalog(scalar);
       checkTubeRuntimeContract(scalar);
       const auto scalarSpectrum = renderImpulseSpectrum(scalar);
       checkGoldenCases(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,

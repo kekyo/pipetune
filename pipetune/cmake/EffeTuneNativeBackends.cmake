@@ -2,33 +2,37 @@ include_guard(GLOBAL)
 
 # GNU as uses @ for ARM comments, so adapt only the generated ELF directives.
 # Keep the upstream generator and its binary-model validation authoritative.
-function(pipetune_configure_effetune_note_models NATIVE_PROCESSOR)
+function(pipetune_configure_effetune_tree_models NATIVE_PROCESSOR)
   if(NOT NATIVE_PROCESSOR MATCHES "^(arm|armv[5-8].*)$")
     return()
   endif()
-  find_program(PIPETUNE_NOTE_MODEL_NPX_EXECUTABLE npx REQUIRED)
-  set(template "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../tools/arm-note-model.fc")
-  get_target_property(model_sources effetune_note_models SOURCES)
+  find_program(PIPETUNE_TREE_MODEL_NPX_EXECUTABLE npx REQUIRED)
+  set(template "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../tools/arm-tree-model.fc")
+  get_target_property(model_sources effetune_tree_models SOURCES)
   set(adapted_sources)
+  set(previous_adapted)
   foreach(source IN LISTS model_sources)
     if(source MATCHES "\\.S$")
       set(adapted "${source}.arm.S")
       add_custom_command(
         OUTPUT "${adapted}"
-        COMMAND "${PIPETUNE_NOTE_MODEL_NPX_EXECUTABLE}"
+        COMMAND "${PIPETUNE_TREE_MODEL_NPX_EXECUTABLE}"
                 --yes --package=funcity-cli@1.5.0 --package=funcity@1.5.0
                 --package=commander@12.1.0
                 funcity --no-rc -D "input=${source}" -D "output=${adapted}"
                 run -i "${template}"
-        DEPENDS "${source}" "${template}"
-        COMMENT "Adapting Note Spectrogram model assembly for ARM"
+        # First-use npx installs share a cache. Serialize these conversions so
+        # parallel builds cannot unpack the same tool packages concurrently.
+        DEPENDS "${source}" "${template}" ${previous_adapted}
+        COMMENT "Adapting analyzer model assembly for ARM"
         VERBATIM)
       list(APPEND adapted_sources "${adapted}")
+      set(previous_adapted "${adapted}")
     else()
       list(APPEND adapted_sources "${source}")
     endif()
   endforeach()
-  set_property(TARGET effetune_note_models PROPERTY SOURCES "${adapted_sources}")
+  set_property(TARGET effetune_tree_models PROPERTY SOURCES "${adapted_sources}")
 endfunction()
 
 # Resolves the target processor while accounting for a compiler ABI that is
@@ -232,7 +236,7 @@ function(
       "${EFFETUNE_DSP_DIR}/generated/cpp"
       "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../src")
   target_link_libraries(
-    ${TARGET_NAME} PRIVATE ${PFFFT_TARGET} effetune_note_models)
+    ${TARGET_NAME} PRIVATE ${PFFFT_TARGET} effetune_tree_models)
   target_compile_definitions(
     ${TARGET_NAME}
     PRIVATE
@@ -364,6 +368,9 @@ function(
   # shared backends to preserve the official golden outputs.
   set_property(
     SOURCE
+      "${EFFETUNE_DSP_DIR}/plugins/analyzer/analog_meter/kernel.cpp"
+      "${EFFETUNE_DSP_DIR}/plugins/analyzer/rhythm_analyzer/kernel.cpp"
+      "${EFFETUNE_DSP_DIR}/plugins/eq/tonal_balance_eq/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/dynamics/attack_tonal_balance/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/dynamics/auto_leveler/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/lofi/bluetooth_sbc_simulator/kernel.cpp"
