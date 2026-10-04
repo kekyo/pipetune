@@ -1,0 +1,18 @@
+{
+  "name": "tonal-target-adjust",
+  "pipeline": [
+    {
+      "name": "Tonal Balance EQ",
+      "channel": "All",
+      "parameters": {
+        "tg": "All",
+        "at": 1,
+        "ea4": true,
+        "ta4": "hs",
+        "fa4": 8000,
+        "ga4": 3,
+        "qa4": 0.7
+      }
+    }
+  ]
+}

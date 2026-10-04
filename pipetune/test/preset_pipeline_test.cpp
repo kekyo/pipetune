@@ -132,7 +132,14 @@ static bool testPresetEntries(const std::filesystem::path &directory) {
       {"name":"Section","enabled":false},
       {"name":"Volume","enabled":true},
       {"name":"Section","enabled":true},
-      {"nm":"Volume"}
+      {"nm":"Volume"},
+      {"name":"Tonal Balance EQ","parameters":{"am":0}},
+      {"name":"Rhythm Analyzer","parameters":{"ck":false}},
+      {"name":"Analog Meter","inputBus":1,"outputBus":0},
+      {"name":"Rhythm Analyzer","enabled":false,"parameters":{"ck":true}},
+      {"name":"Section","enabled":false},
+      {"name":"Tonal Balance EQ"},
+      {"name":"Analog Meter","enabled":false}
     ]})json");
   const auto loaded = pipetune::loadDspPipeline(
       path, {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64},
@@ -144,11 +151,14 @@ static bool testPresetEntries(const std::filesystem::path &directory) {
       {"Future DSP", State::ignored}, {"IR Reverb", State::ignored},
       {"Crosstalk Cancellation", State::ignored}, {"Section", State::off},
       {"Volume", State::off}, {"Section", State::enabled},
-      {"Volume", State::enabled}};
+      {"Volume", State::enabled}, {"Tonal Balance EQ", State::enabled},
+      {"Rhythm Analyzer", State::enabled}, {"Analog Meter", State::ignored},
+      {"Rhythm Analyzer", State::off}, {"Section", State::off},
+      {"Tonal Balance EQ", State::off}, {"Analog Meter", State::ignored}};
   if (!check(loaded.pipeline != nullptr, loaded.error) ||
       !check(std::ranges::equal(loaded.pipeline->presetEntries(), expected),
              "loaded entries must preserve order and distinguish enabled, off and ignored") ||
-      !check(loaded.pipeline->activePluginCount() == 2,
+      !check(loaded.pipeline->activePluginCount() == 4,
              "entry reporting must match the prepared DSPs")) {
     return false;
   }
@@ -830,7 +840,7 @@ static bool testVisualizationPresets(const std::filesystem::path &directory) {
                "standalone Chroma Spiral must preserve PCM without bus copies")) return false;
   }
   const auto visualizers = std::array{
-      "Level Meter", "Oscilloscope", "Spectrogram", "Spectrum Analyzer", "Stereo Meter", "Note Spectrogram", "Pitch Meter", "Chroma Spiral"};
+      "Level Meter", "Oscilloscope", "Spectrogram", "Spectrum Analyzer", "Stereo Meter", "Note Spectrogram", "Pitch Meter", "Chroma Spiral", "Analog Meter"};
   auto nodes = std::string{};
   for (auto index = 0u; index < 100u; ++index) {
     if (!nodes.empty()) nodes += ',';
@@ -862,6 +872,8 @@ static bool testVisualizationPresets(const std::filesystem::path &directory) {
     {"name":"Transient Shaper","parameters":{}},
     {"name":"Multiband Transient","parameters":{}},
     {"name":"Power Amp Sag","parameters":{}},
+    {"name":"Tonal Balance EQ","parameters":{"am":0}},
+    {"name":"Rhythm Analyzer","parameters":{"ck":false}},
     {"name":"Volume","parameters":{"vl":-6}},
     {"name":"Volume","parameters":{"vl":-12},"inputBus":1,"outputBus":0}
   )json");
@@ -880,7 +892,7 @@ static bool testVisualizationPresets(const std::filesystem::path &directory) {
       reference, {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
   if (!check(actual.pipeline != nullptr, actual.error) ||
       !check(expected.pipeline != nullptr, expected.error) ||
-      !check(actual.warnings.empty() && actual.pipeline->activePluginCount() == 7,
+      !check(actual.warnings.empty() && actual.pipeline->activePluginCount() == 9,
              "audio processors with meters must remain active")) {
     return false;
   }
@@ -895,7 +907,7 @@ static bool testVisualizationPresets(const std::filesystem::path &directory) {
         {.sampleRate = rate, .maxChannels = 2, .maxFrames = 64}, backend);
     if (!check(actual.pipeline != nullptr, actual.error) ||
         !check(expected.pipeline != nullptr, expected.error) ||
-        !check(actual.warnings.empty() && actual.pipeline->activePluginCount() == 7 &&
+        !check(actual.warnings.empty() && actual.pipeline->activePluginCount() == 9 &&
                    actual.pipeline->latencyFrames() == expected.pipeline->latencyFrames(),
                "rebuild must preserve only the audio processors")) {
       return false;
@@ -1166,6 +1178,55 @@ static bool testBassExtenderProcessingWidth(const std::filesystem::path &directo
   return true;
 }
 
+static bool testEffeTune212Processors(const std::filesystem::path &directory) {
+  auto passed = true;
+  for (const auto name : {"Tonal Balance EQ", "Rhythm Analyzer"}) {
+    const auto path = writePreset(directory, "effetune-2.12.effetune_preset",
+        "{\"pipeline\":[{\"name\":\"" + std::string(name) +
+        "\",\"channel\":\"All\",\"parameters\":{\"am\":0,\"ck\":false}}]}");
+    auto loaded = pipetune::loadDspPipeline(path, {48000, 2, 127});
+    if (!check(loaded.pipeline != nullptr, loaded.error) ||
+        !check(loaded.warnings.empty() && loaded.pipeline->activePluginCount() == 1,
+               std::string(name) + " must execute without warnings")) {
+      passed = false;
+      continue;
+    }
+    if (!check(loaded.pipeline->latencyFrames() == 0,
+               std::string(name) + " must not add pipeline latency")) passed = false;
+    for (auto start = 0u; start < 1021u;) {
+      const auto count = std::min(127u, 1021u - start);
+      auto audio = std::vector<float>(2u * count, 0.125F);
+      if (!check(loaded.pipeline->process(audio, 2, count, start / 48000.0) ==
+                     pipetune::ProcessStatus::ok &&
+                     std::ranges::all_of(audio, [](float value) {
+                       return approximately(value, 0.125F);
+                     }), "neutral EffeTune 2.12 settings must preserve PCM")) passed = false;
+      start += count;
+    }
+  }
+  return passed;
+}
+
+static bool testAnalogMeter(const std::filesystem::path &directory) {
+  for (const auto mode : {"VU", "PPM", "RMS", "Sample Peak", "True Peak", "Loudness"}) {
+    const auto path = writePreset(directory, "analog-meter.effetune_preset",
+        "{\"pipeline\":[{\"name\":\"Analog Meter\",\"inputBus\":1,\"outputBus\":0,"
+        "\"parameters\":{\"md\":\"" + std::string(mode) + "\"}}]}");
+    auto loaded = pipetune::loadDspPipeline(path, {48000, 2, 64});
+    if (!check(loaded.pipeline != nullptr, loaded.error) ||
+        !check(loaded.warnings.empty() && loaded.pipeline->activePluginCount() == 0 &&
+                   loaded.pipeline->latencyFrames() == 0,
+               "Analog Meter must be ignored without warnings in every mode")) return false;
+    auto audio = std::vector<float>{0.1F, -0.2F, 0.3F, -0.4F};
+    const auto original = audio;
+    if (!check(loaded.pipeline->process(audio, 2, 2, 0.0) == pipetune::ProcessStatus::ok &&
+                   audio == original && loaded.pipeline->presetEntries().size() == 1 &&
+                   loaded.pipeline->presetEntries()[0].state == pipetune::PresetEntryState::ignored,
+               "Analog Meter must preserve PCM without bus copies and report ignored")) return false;
+  }
+  return true;
+}
+
 static bool testRetainedRecipeRebuild(
     const std::filesystem::path &directory) {
   const auto path = writePreset(
@@ -1194,11 +1255,13 @@ int main() {
       ("pipetune-preset-test-" + std::to_string(static_cast<long long>(getpid())));
   std::filesystem::create_directories(directory);
 
+  const auto effects212 = testEffeTune212Processors(directory);
+  const auto analog = testAnalogMeter(directory);
   const auto attack = testEffeTune211Processor(directory, "Attack Tonal Balance");
   const auto bass = testEffeTune211Processor(directory, "Bass Extender");
   const auto bassWidth = testBassExtenderProcessingWidth(directory);
   const auto visualizers = testVisualizationPresets(directory);
-  const auto passed = testPresetEntries(directory) && attack && bass && bassWidth && visualizers &&
+  const auto passed = effects212 && analog && testPresetEntries(directory) && attack && bass && bassWidth && visualizers &&
       testFirCrossoverRouting(directory) && testFirCrossoverBands(directory) &&
       testEffeTune210Pipeline(directory) && testSpatialMapper(directory) && testTvAudioSimulator(directory) &&
       testBypassPipeline() && testCanonicalPreset(directory) &&

@@ -17,6 +17,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <numbers>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -715,6 +716,87 @@ static bool testTvIdlePolicy(const std::filesystem::path &directory) {
   return true;
 }
 
+static bool testMeasurementIdlePolicy(const std::filesystem::path &directory) {
+  constexpr auto rate = 48000u;
+  constexpr auto block = 128u;
+  auto programme = std::vector<float>(rate);
+  auto random = std::uint32_t{0x12481248};
+  auto previous = 0.0;
+  for (auto i = 0u; i < rate; ++i) {
+    random = random * 1664525u + 1013904223u;
+    const auto noise = static_cast<double>(random >> 8u) / 8388608.0 - 1.0;
+    const auto t = i / static_cast<double>(rate);
+    const auto snareTime = t - 0.5;
+    programme[i] = static_cast<float>(
+        0.2 * std::sin(2 * std::numbers::pi * (50 * t + 2.7 * (1 - std::exp(-t / 0.03)))) * std::exp(-t / 0.12) +
+        (snareTime < 0 ? 0 : (0.13 * noise + 0.08 * std::sin(2 * std::numbers::pi * 190 * snareTime)) * std::exp(-snareTime / 0.06)) +
+        0.04 * (noise - previous) * std::exp(-std::fmod(t, 0.25) / 0.02));
+    previous = noise;
+  }
+  const auto backends = pipetune::discoverDspBackends();
+  for (const auto name : {"Tonal Balance EQ", "Rhythm Analyzer"}) {
+    const auto path = directory / "measurement-idle.effetune_preset";
+    {
+      auto file = std::ofstream(path);
+      file << "{\"pipeline\":[{\"name\":\"" << name << "\",\"channel\":\"All\",\"parameters\":"
+           << R"({"at":100,"tg":"Tilt","ts":-12,"rg":12,"mn":100,"mx":140,"ck":true}}]})";
+    }
+    for (const auto &backend : {backends.scalar.backend, backends.simd.backend}) {
+      for (const auto timeout : {0u, 100u}) {
+        auto loaded = pipetune::loadDspPipeline(path, {rate, 2, block}, backend);
+        auto reference = pipetune::loadDspPipeline(path, {rate, 2, block}, backend);
+        if (!check(loaded.pipeline != nullptr && reference.pipeline != nullptr,
+                   loaded.error + reference.error)) return false;
+        auto slot = pipetune::DspPipelineSlot(std::move(loaded.pipeline));
+        auto changed = 0.0;
+        auto resumedChange = 0.0;
+        auto position = 0u;
+        for (auto phase = 0u; phase < 3u; ++phase) {
+          if (phase == 2u && timeout != 0u &&
+              !check(reference.pipeline->reset() == pipetune::ProcessStatus::ok,
+                     "sleep reference must reset")) return false;
+          const auto total = phase == 0u ? rate * 20u : phase == 1u ? 9600u : rate * 10u;
+          for (auto start = 0u; start < total; start += block, position += block) {
+            auto audio = std::vector<float>(2u * block, 0.0F);
+            if (phase != 1u)
+              for (auto i = 0u; i < block; ++i)
+                audio[i] = audio[block + i] = programme[(start + i) % rate];
+            const auto input = audio;
+            auto expected = audio;
+            const auto before = slot.performanceCounters();
+            const auto actual = slot.processWithIdle(audio, 2, block, position / static_cast<double>(rate),
+                                                     {.timeoutMilliseconds = timeout});
+            if (!check(actual.status == pipetune::ProcessStatus::ok &&
+                           reference.pipeline->process(expected, 2, block, position / static_cast<double>(rate)) ==
+                               pipetune::ProcessStatus::ok, "measurement idle processing failed")) return false;
+            if (phase == 1u && start >= 5120u) {
+              if (!check(timeout == 0u ?
+                             actual.activity == pipetune::DspActivity::active &&
+                                 slot.performanceCounters().processedFrames == before.processedFrames + block :
+                             actual.activity == pipetune::DspActivity::sleeping &&
+                                 slot.performanceCounters().processedFrames == before.processedFrames &&
+                                 allApproximately(audio, 0.0F),
+                         "idle policy must select continuous measurement or reset and suspension")) return false;
+            }
+            if (phase != 1u || timeout == 0u)
+              for (auto i = 0u; i < audio.size(); ++i)
+                if (!check(std::abs(audio[i] - expected[i]) < 1e-6F,
+                           "wake must match reset PCM; Ignore must match uninterrupted PCM")) return false;
+            if (phase == 0u)
+              for (auto i = 0u; i < audio.size(); ++i) changed += std::abs(audio[i] - input[i]);
+            if (phase == 2u)
+              for (auto i = 0u; i < audio.size(); ++i) resumedChange += std::abs(audio[i] - input[i]);
+          }
+        }
+        if (!check(changed > 1.0 && resumedChange > 1.0,
+                   "measurement must establish audible correction/clicks before sleep and after wake")) return false;
+        std::cout << name << " idle=" << timeout << " before=" << changed << " resumed=" << resumedChange << '\n';
+      }
+    }
+  }
+  return true;
+}
+
 int main() {
   const auto directory =
       std::filesystem::temp_directory_path() /
@@ -727,7 +809,7 @@ int main() {
   const auto dcOffset = writeDcOffsetPreset(directory);
   const auto delay = writeDelayPreset(directory);
   const auto tubeSimulator = writeTubeSimulatorPreset(directory);
-  const auto passed = testBassManagementIdlePolicy(directory) && testAttackBassIdlePolicy(directory) && testTvIdlePolicy(directory) && testReplacementChangesPcm(positive, negative) &&
+  const auto passed = testMeasurementIdlePolicy(directory) && testBassManagementIdlePolicy(directory) && testAttackBassIdlePolicy(directory) && testTvIdlePolicy(directory) && testReplacementChangesPcm(positive, negative) &&
                       testBypassDoesNotReportDspWork() &&
                       testActivePipelineLatencyTracksReplacement(
                           tubeSimulator, positive) &&

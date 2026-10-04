@@ -6,7 +6,9 @@
 #ifndef PIPETUNE_GTK_PRESET_CATALOG_H
 #define PIPETUNE_GTK_PRESET_CATALOG_H
 
+#include <cstddef>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -162,6 +164,22 @@ std::vector<PresetChoice> applyEffeTuneSavedPresetRefresh(
  */
 PresetChoicePathResult resolvePresetChoicePath(
     const PresetChoice &choice,
+    const std::filesystem::path &savedPresetDirectory);
+
+/**
+ * Finds the catalog choice represented by a standalone preset path.
+ *
+ * Saved choices are matched by their deterministic snapshot paths without
+ * creating or updating any files.
+ *
+ * @param choices Standard and saved choices to search.
+ * @param presetPath Selected preset path, or empty for no selection.
+ * @param savedPresetDirectory Private saved-preset snapshot directory.
+ * @return Zero-based choice index, or no value for a custom or empty path.
+ */
+std::optional<std::size_t> findPresetChoiceIndex(
+    const std::vector<PresetChoice> &choices,
+    const std::filesystem::path &presetPath,
     const std::filesystem::path &savedPresetDirectory);
 
 /**

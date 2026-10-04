@@ -146,7 +146,7 @@ pipetune_resolve_native_processor(
   "${CMAKE_SYSTEM_PROCESSOR}"
   "${CMAKE_SIZEOF_VOID_P}")
 set(CMAKE_PROJECT_effetune_dsp_INCLUDE
-    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EffeTuneNoteModels.cmake")
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EffeTuneTreeModels.cmake")
 add_subdirectory(
   "${PIPETUNE_EFFETUNE_DIR}/dsp"
   "${CMAKE_CURRENT_BINARY_DIR}/effetune-dsp")
@@ -319,6 +319,9 @@ install(
   RENAME environment.example)
 install(
   FILES docs/dsp-backends.md
+  DESTINATION "${PIPETUNE_DOCUMENTATION_DIR}")
+install(
+  FILES "${CMAKE_CURRENT_SOURCE_DIR}/../packaging/copyright"
   DESTINATION "${PIPETUNE_DOCUMENTATION_DIR}")
 
 if(BUILD_TESTING)
@@ -550,6 +553,16 @@ if(BUILD_TESTING)
   target_link_libraries(pipetune_attack_bass_tests PRIVATE pipetune_core)
   target_compile_options(pipetune_attack_bass_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME pipetune_attack_bass_tests COMMAND pipetune_attack_bass_tests)
+
+  add_executable(pipetune_tonal_balance_tests test/tonal_balance_test.cpp)
+  target_link_libraries(pipetune_tonal_balance_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_tonal_balance_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_tonal_balance_tests COMMAND pipetune_tonal_balance_tests)
+
+  add_executable(pipetune_rhythm_analyzer_tests test/rhythm_analyzer_test.cpp)
+  target_link_libraries(pipetune_rhythm_analyzer_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_rhythm_analyzer_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_rhythm_analyzer_tests COMMAND pipetune_rhythm_analyzer_tests)
 
   add_executable(pipetune_effetune_211_regression_tests test/effetune_211_regression_test.cpp)
   target_link_libraries(pipetune_effetune_211_regression_tests PRIVATE pipetune_core)

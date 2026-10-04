@@ -33,7 +33,8 @@ EffeTune DSPは完全ネイティブコンパイルされたバイナリで計�
   DSPパイプラインを適用できます。
 - `.effetune_preset`拡張子の標準形式および旧形式のEffeTuneプリセットファイルを
   読み込み、DSPパイプラインをデスクトップ音声へ適用します。
-- EffeTune 2.11.0 DSPエンジンを実装しています。
+- EffeTune 2.12.0 DSPエンジンを実装し、Tonal Balance EQとRhythm Analyzerに対応します。
+  [測定・クリック・無音時の休止の動作](docs/ja/details.md#tonal-balance-eq)を参照してください。
 - PipeWireグラフとのサンプリング周波数の自動交渉、または44.1、48、96、192、384 kHzの指定周波数でDSPを計算します。
 - DSPは完全ネイティブコードで計算を処理します。互換性重視のScalar、SIMD自動選択、CPU検証済みの命令セット別実装を選択出来ます。
 - 入力の無音が設定時間続いた場合、エフェクトの残響を処理してからDSP演算を自動的に休止出来ます。

@@ -533,19 +533,59 @@ describe('PipeTune GTK dialog', () => {
     );
   });
 
-  it('shows loaded preset entries and retains their states during bypass', async () => {
+  it('resizes the preset configuration with the available window height', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    const window = await getElement('mainWindow', 'window');
+    const table = await getElement('presetEntryView', 'table');
+    await window.resizeTo(1080, 740);
+    const compact = await table.capture();
+
+    await window.resizeTo(1080, 880);
+    await toPass(async () => {
+      const expanded = await table.capture();
+      expect(expanded.bounds.height - compact.bounds.height).toBe(140);
+      expect(expanded.clipped).toBe(false);
+    });
+    const lastRow = await table.cellAt(5, 0);
+    expect(lastRow).toBeDefined();
+    await expectInsideBounds(
+      lastRow as GtkWidgetElement,
+      (await table.capture()).visibleBounds
+    );
+
+    await window.resizeTo(1080, 740);
+    await toPass(async () => {
+      expect((await table.capture()).bounds.height).toBe(compact.bounds.height);
+    });
+    await window.resizeTo(900, 560);
+    await expectInsideWindow(await getWidget('applyButton'), window);
+  });
+
+  it('retains preset entry states after rate/backend changes and bypass', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     const table = await getElement('presetEntryView', 'table');
     expect(await table.getColumnCount()).toBe(2);
-    expect(await table.getRowCount()).toBe(3);
+    expect(await table.getRowCount()).toBe(6);
     const expected = [
       ['Volume', 'Enabled'],
       ['Volume', 'Off'],
       ['Spectrum Analyzer', 'Ignored'],
+      ['Tonal Balance EQ', 'Enabled'],
+      ['Rhythm Analyzer', 'Enabled'],
+      ['Analog Meter', 'Ignored'],
     ];
-    for (const bypass of [false, true]) {
-      if (bypass) {
+    for (const transition of ['loaded', 'rate', 'backend', 'bypass']) {
+      if (transition === 'rate') {
+        await changeRateTo96Khz();
+        await selectSettingsPage(0);
+      } else if (transition === 'backend') {
+        await selectSettingsPage(2);
+        await selectComboItem('dspBackendCombo', 0);
+        await waitForLabel('status-dsp-backend', 'Scalar');
+        await selectSettingsPage(0);
+      } else if (transition === 'bypass') {
         await (await getElement('processingEnabledSwitch', 'switch')).toggle();
         await waitForLabel('status-live-processing', 'Bypass');
       }
@@ -671,6 +711,53 @@ describe('PipeTune GTK dialog', () => {
     });
   });
 
+  it.each(['standard', 'saved'] as const)(
+    'restores the %s preset library selection after restarting',
+    async (source) => {
+      session = await launchPipeTuneGtk();
+      await waitForConnected();
+      await session.replaceEffeTuneSavedPresets(
+        JSON.stringify({
+          'Remembered preset': {
+            plugins: [{ nm: 'Volume', en: true, vl: 6, ch: 'A' }],
+          },
+        })
+      );
+      const savedIndex = await findComboItem(
+        'presetCombo',
+        'Saved in EffeTune · Remembered preset'
+      );
+      const selectedIndex = source === 'standard' ? 1 : savedIndex;
+      await session.clearRequests();
+      await selectComboItem('presetCombo', selectedIndex);
+      const requests = await waitForCommands(['load']);
+      const presetPath = requests.find(
+        (request) => request.command === 'load'
+      )?.preset;
+
+      // A GUI-only restart must reflect the daemon's current preset even
+      // before it has been persisted as the startup configuration.
+      await session.restartApplication();
+      await waitForConnected();
+      await expectComboItemSelected('presetCombo', selectedIndex);
+      await (await getElement('applyButton', 'button')).click();
+      await toPass(async () => {
+        expect((await session?.inspectConfig())?.preset).toBe(presetPath);
+      });
+
+      await session.disconnectDaemon();
+      await session.reconnectDaemon();
+      await session.restartApplication();
+      await waitForConnected();
+      await expectComboItemSelected('presetCombo', selectedIndex);
+      expect(
+        (await session.readRequests()).filter(
+          (request) => request.command === 'load'
+        )
+      ).toHaveLength(1);
+    }
+  );
+
   it('refreshes the active snapshot when an EffeTune saved preset changes', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
@@ -722,6 +809,7 @@ describe('PipeTune GTK dialog', () => {
         message: 'The active saved-preset snapshot was not refreshed.',
       }
     );
+    await expectComboItemSelected('presetCombo', savedIndex);
   });
 
   it('finishes a processing switch drag across a status refresh', async () => {

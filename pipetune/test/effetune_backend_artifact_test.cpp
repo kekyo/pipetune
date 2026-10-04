@@ -93,6 +93,10 @@ struct BackendApi {
   decltype(&pipetune_effetune_instance_asset_copy_v1) instanceAssetCopy = nullptr;
   decltype(&et_instance_asset_state) instanceAssetState = nullptr;
   decltype(&et_instance_reset) instanceReset = nullptr;
+  decltype(&et_pipeline_configure) pipelineConfigure = nullptr;
+  decltype(&et_pipeline_latency) pipelineLatency = nullptr;
+  decltype(&et_pipeline_process) pipelineProcess = nullptr;
+  decltype(&et_arena_combined_ptr) arenaCombinedPtr = nullptr;
   et_status (*instanceRuntimeEvent)(et_engine, et_instance,
                                     et_runtime_event_state *) = nullptr;
 };
@@ -139,6 +143,10 @@ static BackendApi loadBackend(const std::filesystem::path &path) {
       api.handle, "et_design_fft_inverse");
   api.engineCreate =
       loadFunction<decltype(api.engineCreate)>(api.handle, "et_engine_create");
+  api.pipelineConfigure = loadFunction<decltype(api.pipelineConfigure)>(api.handle, "et_pipeline_configure");
+  api.pipelineLatency = loadFunction<decltype(api.pipelineLatency)>(api.handle, "et_pipeline_latency");
+  api.pipelineProcess = loadFunction<decltype(api.pipelineProcess)>(api.handle, "et_pipeline_process");
+  api.arenaCombinedPtr = loadFunction<decltype(api.arenaCombinedPtr)>(api.handle, "et_arena_combined_ptr");
   api.engineDestroy = loadFunction<decltype(api.engineDestroy)>(
       api.handle, "et_engine_destroy");
   api.enginePrepare = loadFunction<decltype(api.enginePrepare)>(
@@ -253,42 +261,113 @@ static std::uint32_t findKernelIndex(const BackendApi &api,
   return count;
 }
 
-static void checkEffeTune211Catalog(const BackendApi &api) {
-  static constexpr std::array<std::string_view, 15> addedTypes = {
+static void checkEffeTune212Catalog(const BackendApi &api) {
+  static constexpr std::array<std::string_view, 18> addedTypes = {
       "GroupDelayPEQPlugin", "MDSimulatorPlugin", "ClickRemoverPlugin",
       "ClipRestorerPlugin", "HumRemoverPlugin", "NoiseReductionPlugin",
       "CrosstalkCancellationPlugin", "NoteSpectrogramPlugin",
       "PitchMeterPlugin", "SpatialMapperPlugin", "TVAudioSimulatorPlugin",
       "AttackTonalBalancePlugin", "BassExtenderPlugin",
-      "BassManagementPlugin", "ChromaSpiralPlugin"};
-  check(api.kernelCount() == 107u,
-        "EffeTune 2.11 backend catalog must contain 107 kernels");
+      "BassManagementPlugin", "ChromaSpiralPlugin", "TonalBalanceEQPlugin",
+      "RhythmAnalyzerPlugin", "AnalogMeterPlugin"};
+  check(api.kernelCount() == 110u,
+        "EffeTune 2.12 backend catalog must contain 110 kernels");
   for (const auto typeName : addedTypes) {
     check(findKernelIndex(api, typeName) < api.kernelCount(),
-          "EffeTune 2.11 backend catalog must contain every required kernel");
+          "EffeTune 2.12 backend catalog must contain every required kernel");
+  }
+  struct Contract {
+    std::string_view type;
+    std::uint32_t hash;
+    std::uint32_t floats;
+  };
+  for (const auto &contract : std::array{
+           Contract{"TonalBalanceEQPlugin", 0x0a5d8c64u, 36u},
+           Contract{"RhythmAnalyzerPlugin", 0xbae05865u, 3u},
+           Contract{"AnalogMeterPlugin", 0xc0e236cdu, 4u}}) {
+    const auto index = findKernelIndex(api, contract.type);
+    if (index >= api.kernelCount()) continue;
+    const auto *definition = pipetune::findDspByTypeName(contract.type);
+    check(api.kernelParamsHash(index) == contract.hash && definition != nullptr &&
+              definition->floatCount == contract.floats &&
+              api.kernelParamBytesCapacity(index) == 0u,
+          "EffeTune 2.12 kernels must expose their official parameter layouts");
+    for (auto slot = 0u; slot < 4u; ++slot)
+      check(api.kernelAssetCapacity(index, slot) == 0u,
+            "EffeTune 2.12 additions must not require external assets");
   }
   const auto phaseSelectIndex = findKernelIndex(api, "PhaseSelectEqPlugin");
   check(phaseSelectIndex < api.kernelCount(),
-        "EffeTune 2.11 backend catalog must retain Phase Select EQ");
+        "EffeTune 2.12 backend catalog must retain Phase Select EQ");
   if (phaseSelectIndex < api.kernelCount()) {
     check(api.kernelParamsHash(phaseSelectIndex) == 0x51c6d77au,
-          "EffeTune 2.11 Phase Select EQ must retain its parameter layout");
+          "EffeTune 2.12 Phase Select EQ must retain its parameter layout");
   }
   const auto tubeIndex = findKernelIndex(api, "TubeSimulatorPlugin");
   check(tubeIndex < api.kernelCount(),
-        "EffeTune 2.11 backend catalog must retain Tube Simulator");
+        "EffeTune 2.12 backend catalog must retain Tube Simulator");
   if (tubeIndex < api.kernelCount()) {
     check(api.kernelParamsHash(tubeIndex) == 0x07986b4bu,
-          "EffeTune 2.11 Tube Simulator must retain its parameter layout");
+          "EffeTune 2.12 Tube Simulator must retain its parameter layout");
   }
   const auto multiChannelPanelIndex =
       findKernelIndex(api, "MultiChannelPanelPlugin");
   check(multiChannelPanelIndex < api.kernelCount(),
-        "EffeTune 2.11 backend catalog must retain Multi Channel Panel");
+        "EffeTune 2.12 backend catalog must retain Multi Channel Panel");
   if (multiChannelPanelIndex < api.kernelCount()) {
     check(api.kernelParamsHash(multiChannelPanelIndex) == 0x9d3d18b9u,
-          "EffeTune 2.11 Multi Channel Panel must expose 16-channel parameters");
+          "EffeTune 2.12 Multi Channel Panel must expose 16-channel parameters");
   }
+}
+
+static void checkUnrelatedInstanceDestruction(const BackendApi &api) {
+  const auto engine = api.engineCreate();
+  check(engine != 0u && api.enginePrepare(engine, 48000, 2, 128, 4096) == ET_OK,
+        "destruction test engine must prepare");
+  const auto member = api.instanceCreate(engine, "AttackTonalBalancePlugin");
+  const auto unrelated = api.instanceCreate(engine, "VolumePlugin");
+  const auto *definition = pipetune::findDspByTypeName("AttackTonalBalancePlugin");
+  if (engine == 0u || member == 0u || unrelated == 0u || definition == nullptr) {
+    check(false, "destruction test instances must be available");
+    if (engine != 0u) api.engineDestroy(engine);
+    return;
+  }
+  const auto packed = pipetune::packDspParameters(*definition, nullptr);
+  check(api.instanceSetParams(engine, member, packed.floats.data(),
+                              static_cast<std::uint32_t>(packed.floats.size()), definition->hash, 0) == ET_OK,
+        "neutral delayed DSP parameters must apply");
+  // Version 1, one enabled node, main bus in/out, all channels, enabled section.
+  auto descriptor = std::array<std::uint8_t, 20>{1, 0, 0, 0, 1};
+  for (auto byte = 0u; byte < 4u; ++byte)
+    descriptor[8u + byte] = static_cast<std::uint8_t>(member >> (byte * 8u));
+  descriptor[12] = 1;
+  descriptor[15] = 254;
+  descriptor[16] = 1;
+  check(api.pipelineConfigure(engine, descriptor.data(), descriptor.size()) == ET_OK &&
+            api.pipelineLatency(engine) == 5120u, "delayed pipeline must configure");
+  auto *audio = api.arenaCombinedPtr(engine);
+  if (audio == nullptr) {
+    check(false, "pipeline arena must be available");
+    api.engineDestroy(engine);
+    return;
+  }
+  for (auto block = 0u; block < 43u; ++block) {
+    std::fill_n(audio, 256u, 0.0F);
+    if (block == 0u) audio[0] = audio[128] = 0.25F;
+    if (block == 1u) api.instanceDestroy(engine, unrelated);
+    check(api.pipelineLatency(engine) == 5120u &&
+              api.pipelineProcess(engine, 2, 128, block * 128 / 48000.0, 0) == ET_OK,
+          "destroying an unrelated instance must preserve pipeline latency and execution");
+    for (auto ch = 0u; ch < 2u; ++ch)
+      for (auto i = 0u; i < 128u; ++i)
+        check(std::abs(audio[ch * 128u + i] - (block * 128u + i == 5120u ? 0.25F : 0.0F)) < 2e-5F,
+              "unrelated destruction must retain pending delayed PCM");
+  }
+  api.instanceDestroy(engine, member);
+  check(api.pipelineLatency(engine) == 0u &&
+            api.pipelineProcess(engine, 2, 128, 1.0, 0) == ET_ERR_STATE,
+        "destroying a pipeline member must invalidate the pipeline");
+  api.engineDestroy(engine);
 }
 
 static void checkTubeRuntimeContract(const BackendApi &api) {
@@ -426,7 +505,12 @@ static std::vector<float> goldenInput(const GoldenCase &testCase) {
         value = std::sin(2.0 * std::numbers::pi * 20.0 *
             std::expm1(rate * frame / testCase.sampleRate) / rate) * std::pow(10.0, -12.0 / 20.0);
       } else if (testCase.stimulus == "sq50") {
-        value = std::sin(2.0 * std::numbers::pi * 50.0 * frame / testCase.sampleRate) >= 0.0 ?
+        // Match the reference's binary64 operation boundaries. Extended x87
+        // intermediates can change the sign at a square-wave zero crossing.
+        volatile double phase = 2.0 * std::numbers::pi * 50.0;
+        phase = phase * frame;
+        phase = phase / testCase.sampleRate;
+        value = std::sin(phase) >= 0.0 ?
             std::pow(10.0, -3.0 / 20.0) : -std::pow(10.0, -3.0 / 20.0);
       } else if (testCase.stimulus == "fs") {
         value = ((frame + ch) & 1u) == 0u ? 1.0 : -1.0;
@@ -940,8 +1024,15 @@ int main(int argc, char **argv) {
                 PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
             "scalar backend must report its concrete variant");
       checkAllAbiSymbols(scalar.handle);
-      checkEffeTune211Catalog(scalar);
+      checkEffeTune212Catalog(scalar);
       checkTubeRuntimeContract(scalar);
+      checkUnrelatedInstanceDestruction(scalar);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "analyzer/rhythm_analyzer/golden", 6u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "analyzer/analog_meter/golden", 5u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "eq/tonal_balance_eq/golden", 6u);
       const auto scalarSpectrum = renderImpulseSpectrum(scalar);
       checkGoldenCases(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                        goldenCases);
@@ -988,6 +1079,10 @@ int main(int argc, char **argv) {
         checkAllAbiSymbols(simd.handle);
         checkCatalogsMatch(scalar, simd);
         checkTubeRuntimeContract(simd);
+        checkUnrelatedInstanceDestruction(simd);
+        checkMetadataGoldens(simd, expected, pluginRoot / "analyzer/rhythm_analyzer/golden", 6u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "analyzer/analog_meter/golden", 5u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "eq/tonal_balance_eq/golden", 6u);
         checkGoldenCases(simd, expected, goldenCases);
         checkMetadataGoldens(simd, expected, pluginRoot / "spatial/spatial_mapper/golden", 7u);
         checkMetadataGoldens(simd, expected, pluginRoot / "lofi/tv_audio_simulator/golden", 6u);

@@ -33,7 +33,8 @@ application remains available through the desktop system tray.
 - You can load EffeTune preset files to apply a DSP pipeline to the audio output of the entire Linux system.
 - Loads standard and legacy EffeTune preset files with the `.effetune_preset` extension
   and applies the DSP pipeline to desktop audio.
-- Implemented EffeTune 2.11.0 DSP engine.
+- Implemented EffeTune 2.12.0 DSP engine, including Tonal Balance EQ and Rhythm Analyzer.
+  See [measurement, click, and silence-suspension behavior](docs/en/details.md#tonal-balance-eq).
 - Automatically negotiates the sampling rate with the PipeWire graph, or computes the DSP at specified rates of 44.1, 48, 96, 192, or 384 kHz.
 - The DSP performs computations entirely in native code.
   You can choose between Scalar (for compatibility), automatic SIMD selection, or CPU-verified implementations for specific instruction sets.

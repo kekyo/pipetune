@@ -1,0 +1,14 @@
+{
+  "name": "Rhythm click off",
+  "pipeline": [
+    {
+      "name": "Rhythm Analyzer",
+      "channel": "All",
+      "parameters": {
+        "mn": 100,
+        "mx": 140,
+        "ck": false
+      }
+    }
+  ]
+}

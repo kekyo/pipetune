@@ -92,6 +92,7 @@ if (
       if (architectureDspBackends === undefined) {
         fail(`unsupported install-test architecture: ${process.arch}`);
       }
+      const copyright = installPath(documentationDirectory, "copyright");
       const dspBackendDocumentation = installPath(
         documentationDirectory,
         "dsp-backends.md",
@@ -109,11 +110,18 @@ if (
           );
         }
         accessSync(dspBackendDocumentation, constants.R_OK);
+        accessSync(copyright, constants.R_OK);
       } catch (error) {
         fail(`installed PipeTune layout is incomplete: ${error.message}`);
       }
 
       if (process.exitCode !== 1) {
+        const notice = readFileSync(copyright, "utf8");
+        if (!notice.includes("1993 Sun Microsystems") ||
+            !notice.includes("provided that this notice") ||
+            !notice.includes("is preserved.")) {
+          fail("installed copyright must preserve the fdlibm attribution and permission");
+        }
         const serviceLines = readFileSync(service, "utf8")
           .split(/\r?\n/u);
         const environmentFiles = serviceLines.filter((line) =>

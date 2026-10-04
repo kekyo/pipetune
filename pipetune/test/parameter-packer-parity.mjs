@@ -92,6 +92,36 @@ for (const mask of [-1, 0, 1, 1.5, 32768, 65535, 65536]) {
     }
   });
 }
+for (const tg of ['All', 'Classical', 'Electronic', 'Pop', 'Rock', 'Tilt']) {
+  for (const mp of [false, true]) {
+    cases.push({type: 'TonalBalanceEQPlugin', parameters: {tg, mp, at: 100}});
+  }
+}
+const tonalSpec = loadParamSpecs(path.join(effetuneRoot, 'dsp/plugins'))
+  .find(spec => spec.type === 'TonalBalanceEQPlugin');
+for (const field of tonalSpec.fields) {
+  for (const key of field.keys) {
+    const values = field.kind === 'bool' ? [false, true, 0, 1, 2, null] :
+      field.kind === 'enum' ? [...field.values, 'invalid', null] :
+      [field.min - 1, field.min, field.max, field.max + 1, null, 'invalid'];
+    for (const value of values) {
+      cases.push({type: tonalSpec.type, parameters: {[key]: value}});
+    }
+  }
+}
+for (const mn of [0, 40, 100, 192, 300]) {
+  for (const mx of [0, 50, 140, 240, 300]) {
+    for (const ck of [false, true]) {
+      cases.push({type: 'RhythmAnalyzerPlugin', parameters: {
+        mn, mx, ck, sp: 16, vt: false, vm: true, ve: false, vl: true
+      }});
+    }
+  }
+}
+for (const md of ['VU', 'PPM', 'RMS', 'Sample Peak', 'True Peak', 'Loudness']) {
+  cases.push({type: 'AnalogMeterPlugin', parameters: {md}});
+}
+cases.push({type: 'OscilloscopePlugin', parameters: {tm: 'Off'}});
 const integerSpec = loadParamSpecs(path.join(effetuneRoot, 'dsp/plugins')).find(spec =>
   spec.fields.some(field =>
     field.kind === 'int' && field.min <= 1 && field.max >= 1 && !field.defaults.includes(1)

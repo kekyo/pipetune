@@ -186,132 +186,139 @@
                         <property name="hscrollbar-policy">never</property>
                         <property name="vscrollbar-policy">automatic</property>
                         <child>
-                          <object class="GtkListBox" id="processingSettingsList">
-                            <property name="selection-mode">none</property>
+                          <object class="GtkBox" id="processingPage">
+                            <property name="orientation">vertical</property>
                             <property name="margin-start">22</property>
                             <property name="margin-end">22</property>
                             <property name="margin-bottom">22</property>
-                            <style>
-                              <class name="settings-list"/>
-                            </style>
                             <child>
-                              <object class="GtkListBoxRow">
-                                <property name="selectable">False</property>
-                                <property name="activatable">False</property>
+                              <object class="GtkListBox" id="processingSettingsList">
+                                <property name="selection-mode">none</property>
+                                <property name="vexpand">False</property>
+                                <style>
+                                  <class name="settings-list"/>
+                                </style>
                                 <child>
-                                  <object class="GtkLabel">
-                                    <property name="label" translatable="yes">Processing</property>
-                                    <property name="xalign">0</property>
-                                    <style>
-                                      <class name="section-heading"/>
-                                    </style>
+                                  <object class="GtkListBoxRow">
+                                    <property name="selectable">False</property>
+                                    <property name="activatable">False</property>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label" translatable="yes">Processing</property>
+                                        <property name="xalign">0</property>
+                                        <style>
+                                          <class name="section-heading"/>
+                                        </style>
+                                      </object>
+                                    </child>
                                   </object>
                                 </child>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkListBoxRow">
-                                <property name="selectable">False</property>
-                                <property name="activatable">False</property>
                                 <child>
-                                  <object class="GtkBox">
-                                    <property name="orientation">horizontal</property>
-                                    <property name="spacing">18</property>
-                                    <property name="margin">14</property>
+                                  <object class="GtkListBoxRow">
+                                    <property name="selectable">False</property>
+                                    <property name="activatable">False</property>
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="orientation">horizontal</property>
+                                        <property name="spacing">18</property>
+                                        <property name="margin">14</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">vertical</property>
+                                            <property name="spacing">3</property>
+                                            <property name="hexpand">True</property>
+                                            <child>
+                                              <object class="GtkLabel">
+                                                <property name="label" translatable="yes">Enable DSP processing</property>
+                                                <property name="xalign">0</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkLabel">
+                                                <property name="label" translatable="yes">Turn off to pass audio through without an EffeTune preset.</property>
+                                                <property name="xalign">0</property>
+                                                <property name="max-width-chars">30</property>
+                                                <property name="wrap">True</property>
+                                                <style>
+                                                  <class name="dim-label"/>
+                                                </style>
+                                              </object>
+                                            </child>
+                                          </object>
+                                          <packing>
+                                            <property name="expand">True</property>
+                                            <property name="fill">True</property>
+                                          </packing>
+                                        </child>
+                                        <child>
+                                          <object class="GtkSwitch" id="processingEnabledSwitch">
+                                            <property name="valign">center</property>
+                                          </object>
+                                          <packing>
+                                            <property name="expand">False</property>
+                                            <property name="fill">False</property>
+                                          </packing>
+                                        </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkListBoxRow">
+                                    <property name="selectable">False</property>
+                                    <property name="activatable">False</property>
                                     <child>
                                       <object class="GtkBox">
                                         <property name="orientation">vertical</property>
-                                        <property name="spacing">3</property>
-                                        <property name="hexpand">True</property>
+                                        <property name="spacing">8</property>
+                                        <property name="margin">14</property>
                                         <child>
                                           <object class="GtkLabel">
-                                            <property name="label" translatable="yes">Enable DSP processing</property>
+                                            <property name="label" translatable="yes">Preset library</property>
                                             <property name="xalign">0</property>
                                           </object>
                                         </child>
                                         <child>
+                                          <object class="GtkComboBoxText" id="presetCombo"/>
+                                        </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkListBoxRow">
+                                    <property name="selectable">False</property>
+                                    <property name="activatable">False</property>
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="orientation">vertical</property>
+                                        <property name="spacing">8</property>
+                                        <property name="margin">14</property>
+                                        <child>
                                           <object class="GtkLabel">
-                                            <property name="label" translatable="yes">Turn off to pass audio through without an EffeTune preset.</property>
+                                            <property name="label" translatable="yes">Custom preset file</property>
                                             <property name="xalign">0</property>
-                                            <property name="max-width-chars">30</property>
-                                            <property name="wrap">True</property>
-                                            <style>
-                                              <class name="dim-label"/>
-                                            </style>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkFileChooserButton" id="presetChooser">
+                                            <property name="title" translatable="yes">Choose an EffeTune preset</property>
+                                            <property name="action">open</property>
+                                            <property name="hexpand">True</property>
                                           </object>
                                         </child>
                                       </object>
-                                      <packing>
-                                        <property name="expand">True</property>
-                                        <property name="fill">True</property>
-                                      </packing>
-                                    </child>
-                                    <child>
-                                      <object class="GtkSwitch" id="processingEnabledSwitch">
-                                        <property name="valign">center</property>
-                                      </object>
-                                      <packing>
-                                        <property name="expand">False</property>
-                                        <property name="fill">False</property>
-                                      </packing>
                                     </child>
                                   </object>
                                 </child>
                               </object>
                             </child>
+                            <!-- Keep the configuration outside GtkListBox so it can use extra height. -->
                             <child>
-                              <object class="GtkListBoxRow">
-                                <property name="selectable">False</property>
-                                <property name="activatable">False</property>
-                                <child>
-                                  <object class="GtkBox">
-                                    <property name="orientation">vertical</property>
-                                    <property name="spacing">8</property>
-                                    <property name="margin">14</property>
-                                    <child>
-                                      <object class="GtkLabel">
-                                        <property name="label" translatable="yes">Preset library</property>
-                                        <property name="xalign">0</property>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkComboBoxText" id="presetCombo"/>
-                                    </child>
-                                  </object>
-                                </child>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkListBoxRow">
-                                <property name="selectable">False</property>
-                                <property name="activatable">False</property>
-                                <child>
-                                  <object class="GtkBox">
-                                    <property name="orientation">vertical</property>
-                                    <property name="spacing">8</property>
-                                    <property name="margin">14</property>
-                                    <child>
-                                      <object class="GtkLabel">
-                                        <property name="label" translatable="yes">Custom preset file</property>
-                                        <property name="xalign">0</property>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkFileChooserButton" id="presetChooser">
-                                        <property name="title" translatable="yes">Choose an EffeTune preset</property>
-                                        <property name="action">open</property>
-                                        <property name="hexpand">True</property>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkListBoxRow" id="presetConfigurationRow">
+                              <object class="GtkFrame" id="presetConfigurationSection">
                                 <property name="no-show-all">True</property>
-                                <property name="selectable">False</property>
-                                <property name="activatable">False</property>
+                                <property name="shadow-type">none</property>
+                                <property name="vexpand">True</property>
                                 <child>
                                   <object class="GtkBox">
                                     <property name="orientation">vertical</property>
@@ -329,9 +336,8 @@
                                         <property name="margin">14</property>
                                         <property name="hscrollbar-policy">never</property>
                                         <property name="vscrollbar-policy">automatic</property>
-                                        <property name="min-content-height">120</property>
-                                        <property name="max-content-height">240</property>
-                                        <property name="propagate-natural-height">True</property>
+                                        <property name="min-content-height">60</property>
+                                        <property name="vexpand">True</property>
                                         <property name="shadow-type">in</property>
                                         <child>
                                           <object class="GtkTreeView" id="presetEntryView">

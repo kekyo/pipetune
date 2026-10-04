@@ -248,7 +248,7 @@ The generated catalog packs JSON parameters into the exact native ABI expected
 by EffeTune. Tests compare those packed parameters with EffeTune's JavaScript
 packer and compare native PCM output with EffeTune's parity corpus.
 
-The pinned EffeTune 2.11.0 registry contains 107 native kernels. PipeTune supports
+The pinned EffeTune 2.12.0 registry contains 110 native kernels. PipeTune supports
 its 16-channel Multi Channel Panel layout, individual channels through 16,
 paired routes through 15/16, and hexadecimal Matrix routes. It can load MD
 Simulator and all nine effects added in 2.5.0. It regenerates and stages the
@@ -257,19 +257,26 @@ Delay PEQ from their serialized design parameters. The updated Tube Simulator
 includes output-transformer magnetics, and Phase Select EQ accepts left/right
 balance selection alongside frequency and phase.
 
+Tonal Balance EQ and Rhythm Analyzer use the normal preset pipeline with no
+external assets and zero reported latency. Rhythm remains active with its
+click disabled. Rate/backend rebuilds and preset reloads create fresh
+measurement state. Silence suspension resets both effects like other DSPs;
+Ignore continues processing without a host reset. Their [upstream contracts](https://github.com/Frieve-A/effetune/tree/v2.12.0/docs/dsp/effects)
+define measurement and selected-channel behavior.
+
 Attack Tonal Balance and Bass Extender use the normal preset pipeline. Bass
 Extender rejects processing widths above two channels; its supported rates
-are defined by the [upstream kernel](https://github.com/Frieve-A/effetune/blob/v2.11.0/dsp/plugins/saturation/bass_extender/kernel.cpp).
+are defined by the [upstream kernel](https://github.com/Frieve-A/effetune/blob/v2.12.0/dsp/plugins/saturation/bass_extender/kernel.cpp).
 Bass Management requires explicit All selection and validates the packed
 roles, routes, subwoofer masks, and crossover slopes against the prepared
 stream width. IIR needs no asset. Linear generates diagonal low-pass FIR
-paths using the [upstream design](https://github.com/Frieve-A/effetune/blob/v2.11.0/js/bass-management/design-core.js)
+paths using the [upstream design](https://github.com/Frieve-A/effetune/blob/v2.12.0/js/bass-management/design-core.js)
 and the existing pointer-safe asset-copy ABI. Design and allocation occur
 outside the audio callback. The 32 MiB check includes the asset, convolver,
 and processing buffers; preparation and activation are distinct states.
 Rate and backend rebuilds regenerate the filters from the retained recipe.
 
-Eight visualization-only analyzers, including Chroma Spiral, are omitted
+Nine visualization-only analyzers, including Chroma Spiral and Analog Meter, are omitted
 before parameter packing and the 96-node limit. They contribute no bus
 transfers, warnings, or latency. FM Radio Simulator, TV Audio Simulator, and
 MultiChannel Panel retain their audio processing with telemetry disabled.
@@ -298,17 +305,17 @@ At load time, `src/dsp_pipeline.cpp`:
 8. configures one EffeTune engine for the complete routed pipeline; and
 9. reads the configured pipeline latency from EffeTune's native ABI.
 
-EffeTune 2.11 computes latency per channel while configuring the pipeline. It
+EffeTune 2.12 computes latency per channel while configuring the pipeline. It
 aligns the selected input channels before a DSP can mix them, as well as
 shorter additive-merge and output paths. A send aligns its working copy and
 preserves the source bus. The aggregate is reported through
 `et_pipeline_latency`; PipeTune uses that value directly. See the
-[upstream pipeline contract](https://github.com/Frieve-A/effetune/blob/v2.11.0/dsp/README.md).
+[upstream pipeline contract](https://github.com/Frieve-A/effetune/blob/v2.12.0/dsp/README.md).
 Intentional Time Alignment delays remain outside this compensation.
 
 Reset preserves the preset's parameters and prepared assets without
 allocation. PipeTune retains structured parameter bytes and reapplies them
-after engine reset because the [upstream Matrix reset](https://github.com/Frieve-A/effetune/blob/v2.11.0/dsp/plugins/basics/matrix/kernel.cpp)
+after engine reset because the [upstream Matrix reset](https://github.com/Frieve-A/effetune/blob/v2.12.0/dsp/plugins/basics/matrix/kernel.cpp)
 restores its default routes. This also preserves custom Matrix routing after
 silent-input suspension.
 

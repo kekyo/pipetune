@@ -1,0 +1,15 @@
+{
+  "name": "tonal-tilt",
+  "pipeline": [
+    {
+      "name": "Tonal Balance EQ",
+      "channel": "All",
+      "parameters": {
+        "tg": "Tilt",
+        "at": 1,
+        "ts": -12,
+        "tc": 250
+      }
+    }
+  ]
+}
