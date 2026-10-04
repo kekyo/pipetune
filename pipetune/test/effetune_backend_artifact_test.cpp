@@ -963,6 +963,8 @@ int main(int argc, char **argv) {
       checkAllAbiSymbols(scalar.handle);
       checkEffeTune212Catalog(scalar);
       checkTubeRuntimeContract(scalar);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "eq/tonal_balance_eq/golden", 6u);
       const auto scalarSpectrum = renderImpulseSpectrum(scalar);
       checkGoldenCases(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                        goldenCases);
@@ -1009,6 +1011,7 @@ int main(int argc, char **argv) {
         checkAllAbiSymbols(simd.handle);
         checkCatalogsMatch(scalar, simd);
         checkTubeRuntimeContract(simd);
+        checkMetadataGoldens(simd, expected, pluginRoot / "eq/tonal_balance_eq/golden", 6u);
         checkGoldenCases(simd, expected, goldenCases);
         checkMetadataGoldens(simd, expected, pluginRoot / "spatial/spatial_mapper/golden", 7u);
         checkMetadataGoldens(simd, expected, pluginRoot / "lofi/tv_audio_simulator/golden", 6u);

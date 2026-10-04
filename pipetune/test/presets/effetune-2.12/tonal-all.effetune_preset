@@ -1,0 +1,13 @@
+{
+  "name": "tonal-all",
+  "pipeline": [
+    {
+      "name": "Tonal Balance EQ",
+      "channel": "All",
+      "parameters": {
+        "tg": "All",
+        "at": 30
+      }
+    }
+  ]
+}

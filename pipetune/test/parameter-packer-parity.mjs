@@ -92,6 +92,23 @@ for (const mask of [-1, 0, 1, 1.5, 32768, 65535, 65536]) {
     }
   });
 }
+for (const tg of ['All', 'Classical', 'Electronic', 'Pop', 'Rock', 'Tilt']) {
+  for (const mp of [false, true]) {
+    cases.push({type: 'TonalBalanceEQPlugin', parameters: {tg, mp, at: 100}});
+  }
+}
+const tonalSpec = loadParamSpecs(path.join(effetuneRoot, 'dsp/plugins'))
+  .find(spec => spec.type === 'TonalBalanceEQPlugin');
+for (const field of tonalSpec.fields) {
+  for (const key of field.keys) {
+    const values = field.kind === 'bool' ? [false, true, 0, 1, 2, null] :
+      field.kind === 'enum' ? [...field.values, 'invalid', null] :
+      [field.min - 1, field.min, field.max, field.max + 1, null, 'invalid'];
+    for (const value of values) {
+      cases.push({type: tonalSpec.type, parameters: {[key]: value}});
+    }
+  }
+}
 const integerSpec = loadParamSpecs(path.join(effetuneRoot, 'dsp/plugins')).find(spec =>
   spec.fields.some(field =>
     field.kind === 'int' && field.min <= 1 && field.max >= 1 && !field.defaults.includes(1)
