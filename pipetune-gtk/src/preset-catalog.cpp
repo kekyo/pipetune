@@ -472,6 +472,29 @@ PresetChoicePathResult resolvePresetChoicePath(
   return materializeSavedPreset(choice, savedPresetDirectory);
 }
 
+std::optional<std::size_t> findPresetChoiceIndex(
+    const std::vector<PresetChoice> &choices,
+    const std::filesystem::path &presetPath,
+    const std::filesystem::path &savedPresetDirectory) {
+  if (presetPath.empty()) {
+    return std::nullopt;
+  }
+  const auto selected = presetPath.lexically_normal();
+  for (auto index = std::size_t{0}; index < choices.size(); ++index) {
+    const auto &choice = choices[index];
+    if (choice.source == PresetSource::saved && savedPresetDirectory.empty()) {
+      continue;
+    }
+    const auto path = choice.source == PresetSource::standard
+                          ? choice.path
+                          : savedPresetPath(choice, savedPresetDirectory);
+    if (path.lexically_normal() == selected) {
+      return index;
+    }
+  }
+  return std::nullopt;
+}
+
 ActiveSavedPresetRefreshResult refreshActiveSavedPresetSnapshot(
     const std::vector<PresetChoice> &choices,
     const std::filesystem::path &activePresetPath,

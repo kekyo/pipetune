@@ -682,6 +682,53 @@ describe('PipeTune GTK dialog', () => {
     });
   });
 
+  it.each(['standard', 'saved'] as const)(
+    'restores the %s preset library selection after restarting',
+    async (source) => {
+      session = await launchPipeTuneGtk();
+      await waitForConnected();
+      await session.replaceEffeTuneSavedPresets(
+        JSON.stringify({
+          'Remembered preset': {
+            plugins: [{ nm: 'Volume', en: true, vl: 6, ch: 'A' }],
+          },
+        })
+      );
+      const savedIndex = await findComboItem(
+        'presetCombo',
+        'Saved in EffeTune · Remembered preset'
+      );
+      const selectedIndex = source === 'standard' ? 1 : savedIndex;
+      await session.clearRequests();
+      await selectComboItem('presetCombo', selectedIndex);
+      const requests = await waitForCommands(['load']);
+      const presetPath = requests.find(
+        (request) => request.command === 'load'
+      )?.preset;
+
+      // A GUI-only restart must reflect the daemon's current preset even
+      // before it has been persisted as the startup configuration.
+      await session.restartApplication();
+      await waitForConnected();
+      await expectComboItemSelected('presetCombo', selectedIndex);
+      await (await getElement('applyButton', 'button')).click();
+      await toPass(async () => {
+        expect((await session?.inspectConfig())?.preset).toBe(presetPath);
+      });
+
+      await session.disconnectDaemon();
+      await session.reconnectDaemon();
+      await session.restartApplication();
+      await waitForConnected();
+      await expectComboItemSelected('presetCombo', selectedIndex);
+      expect(
+        (await session.readRequests()).filter(
+          (request) => request.command === 'load'
+        )
+      ).toHaveLength(1);
+    }
+  );
+
   it('refreshes the active snapshot when an EffeTune saved preset changes', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
@@ -733,6 +780,7 @@ describe('PipeTune GTK dialog', () => {
         message: 'The active saved-preset snapshot was not refreshed.',
       }
     );
+    await expectComboItemSelected('presetCombo', savedIndex);
   });
 
   it('finishes a processing switch drag across a status refresh', async () => {

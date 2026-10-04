@@ -704,6 +704,11 @@ static void setComboBoxActive(GtkWidget *widget,
   }
 }
 
+static std::filesystem::path savedPresetSnapshotDirectory(
+    const GtkRuntime &runtime) {
+  return runtime.startupConfigPath.parent_path() / "effetune-presets";
+}
+
 static void renderPresetControls(GtkRuntime *runtime) {
   const auto &settings = runtime->transactionReady
                              ? runtime->transaction.desiredLive
@@ -713,6 +718,14 @@ static void renderPresetControls(GtkRuntime *runtime) {
   if (gtk_switch_get_active(processing) != active) {
     gtk_switch_set_active(processing, active);
   }
+  if (settings.presetFound) {
+    runtime->lastPresetPath = settings.presetPath;
+  }
+  const auto selected = findPresetChoiceIndex(
+      runtime->presetChoices, runtime->lastPresetPath,
+      savedPresetSnapshotDirectory(*runtime));
+  setComboBoxActive(runtime->ui.presetCombo,
+                    selected.has_value() ? *selected + 1 : 0);
   renderPresetConfiguration(runtime->ui, runtime->state.presetEntries);
 }
 
@@ -1264,26 +1277,13 @@ static void replacePresetChoices(
   gtk_combo_box_text_append_text(
       GTK_COMBO_BOX_TEXT(runtime->ui.presetCombo),
       translate("Choose a standard or saved EffeTune preset…"));
-  auto activeIndex = gint{0};
-  for (auto index = std::size_t{0}; index < runtime->presetChoices.size();
-       ++index) {
-    const auto &choice = runtime->presetChoices[index];
+  for (const auto &choice : runtime->presetChoices) {
     const auto label = presetChoiceLabel(choice);
     gtk_combo_box_text_append_text(
         GTK_COMBO_BOX_TEXT(runtime->ui.presetCombo), label.c_str());
-    if (choice.source == PresetSource::standard &&
-        choice.path == runtime->lastPresetPath) {
-      activeIndex = static_cast<gint>(index + 1);
-    }
   }
-  gtk_combo_box_set_active(GTK_COMBO_BOX(runtime->ui.presetCombo),
-                           activeIndex);
+  renderPresetControls(runtime);
   runtime->updatingControls = false;
-}
-
-static std::filesystem::path savedPresetSnapshotDirectory(
-    const GtkRuntime &runtime) {
-  return runtime.startupConfigPath.parent_path() / "effetune-presets";
 }
 
 static void refreshRuntimeActiveSavedPresetSnapshot(
@@ -1433,9 +1433,6 @@ static void onPresetFileSet(GtkFileChooserButton *, gpointer userData) {
     render(runtime);
     return;
   }
-  runtime->updatingControls = true;
-  gtk_combo_box_set_active(GTK_COMBO_BOX(runtime->ui.presetCombo), 0);
-  runtime->updatingControls = false;
   selectPresetPath(runtime, path);
 }
 
