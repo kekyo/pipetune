@@ -533,6 +533,35 @@ describe('PipeTune GTK dialog', () => {
     );
   });
 
+  it('resizes the preset configuration with the available window height', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    const window = await getElement('mainWindow', 'window');
+    const table = await getElement('presetEntryView', 'table');
+    await window.resizeTo(1080, 740);
+    const compact = await table.capture();
+
+    await window.resizeTo(1080, 880);
+    await toPass(async () => {
+      const expanded = await table.capture();
+      expect(expanded.bounds.height - compact.bounds.height).toBe(140);
+      expect(expanded.clipped).toBe(false);
+    });
+    const lastRow = await table.cellAt(5, 0);
+    expect(lastRow).toBeDefined();
+    await expectInsideBounds(
+      lastRow as GtkWidgetElement,
+      (await table.capture()).visibleBounds
+    );
+
+    await window.resizeTo(1080, 740);
+    await toPass(async () => {
+      expect((await table.capture()).bounds.height).toBe(compact.bounds.height);
+    });
+    await window.resizeTo(900, 560);
+    await expectInsideWindow(await getWidget('applyButton'), window);
+  });
+
   it('retains preset entry states after rate/backend changes and bypass', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();

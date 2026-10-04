@@ -288,7 +288,7 @@ static bool checkPresetConfiguration(
     return false;
   }
   gtk_widget_show_all(ui.window);
-  if (!check(gtk_widget_get_visible(ui.presetConfigurationRow) == FALSE,
+  if (!check(gtk_widget_get_visible(ui.presetConfigurationSection) == FALSE,
              "no configuration list may appear before a preset is loaded")) {
     return false;
   }
@@ -299,7 +299,7 @@ static bool checkPresetConfiguration(
   pipetune_gtk::renderPresetConfiguration(ui, entries);
   auto *view = GTK_TREE_VIEW(ui.presetEntryView);
   auto *model = gtk_tree_view_get_model(view);
-  if (!check(gtk_widget_get_visible(ui.presetConfigurationRow) != FALSE,
+  if (!check(gtk_widget_get_visible(ui.presetConfigurationSection) != FALSE,
              "a loaded preset configuration must be visible") ||
       !check(gtk_tree_view_get_n_columns(view) == 2 &&
                  gtk_tree_model_iter_n_children(model, nullptr) == 3,
@@ -337,7 +337,7 @@ static bool checkPresetConfiguration(
     return false;
   }
   pipetune_gtk::renderPresetConfiguration(ui, std::nullopt);
-  return check(gtk_widget_get_visible(ui.presetConfigurationRow) == FALSE,
+  return check(gtk_widget_get_visible(ui.presetConfigurationSection) == FALSE,
                "clearing the configuration must hide the section");
 }
 

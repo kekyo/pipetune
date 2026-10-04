@@ -88,7 +88,7 @@ void renderPresetConfiguration(
           1, presetEntryStateText(entry.state), -1);
     }
   }
-  gtk_widget_set_visible(ui.presetConfigurationRow, entries.has_value());
+  gtk_widget_set_visible(ui.presetConfigurationSection, entries.has_value());
   ui.displayedPresetEntries = entries;
 }
 
@@ -147,8 +147,8 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
           requiredWidget(builder, "presetCombo", GTK_TYPE_COMBO_BOX_TEXT),
       .presetChooser = requiredWidget(
           builder, "presetChooser", GTK_TYPE_FILE_CHOOSER_BUTTON),
-      .presetConfigurationRow = requiredWidget(
-          builder, "presetConfigurationRow", GTK_TYPE_LIST_BOX_ROW),
+      .presetConfigurationSection = requiredWidget(
+          builder, "presetConfigurationSection", GTK_TYPE_FRAME),
       .presetEntryView = requiredWidget(
           builder, "presetEntryView", GTK_TYPE_TREE_VIEW),
       .rateCombo =
@@ -194,7 +194,7 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
   };
   configureCompactComboBox(ui.presetCombo);
   gtk_widget_show_all(
-      gtk_bin_get_child(GTK_BIN(ui.presetConfigurationRow)));
+      gtk_bin_get_child(GTK_BIN(ui.presetConfigurationSection)));
   configureCompactComboBox(ui.rateCombo);
   configureCompactComboBox(ui.rateEnforcementCombo);
   configureCompactComboBox(ui.dspBackendCombo);

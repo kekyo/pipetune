@@ -54,7 +54,7 @@ struct MainWindowUi {
   /** EffeTune preset file chooser. */
   GtkWidget *presetChooser = nullptr;
   /** Configuration section hidden until a preset has been loaded. */
-  GtkWidget *presetConfigurationRow = nullptr;
+  GtkWidget *presetConfigurationSection = nullptr;
   /** Read-only preset entry name and state columns. */
   GtkWidget *presetEntryView = nullptr;
   /** Last rendered entries, avoiding model replacement on telemetry updates. */

@@ -249,7 +249,7 @@ export const launchPipeTuneGtk = async (
     appPath: requiredEnvironment('PIPETUNE_GTK_BINARY'),
     display: 'xvfb',
     accessibilitySession: 'minimal',
-    xvfbScreen: '1280x800x24',
+    xvfbScreen: '1280x1024x24',
     xvfbTrayHost: true,
     gsettings: 'memory',
     theme: 'Adwaita',
