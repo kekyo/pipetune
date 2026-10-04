@@ -326,6 +326,62 @@ static bool testBassManagementLiveRejection(const std::filesystem::path &socketP
                "invalid Bass Management live load must retain the previous preset and DSP count");
 }
 
+static bool testMeasurementLiveChanges(const std::filesystem::path &socketPath,
+                                       const std::filesystem::path &presetPath) {
+  const auto path = presetPath.parent_path() / "measurement-live.effetune_preset";
+  const auto content = R"({"pipeline":[
+    {"name":"Tonal Balance EQ","parameters":{"at":100}},
+    {"name":"Rhythm Analyzer","parameters":{"ck":true}},
+    {"name":"Analog Meter"},
+    {"name":"Rhythm Analyzer","enabled":false}
+  ]})";
+  if (!writePresetContents(path, content)) return false;
+  using State = pipetune::PresetEntryState;
+  auto entries = std::vector<pipetune::PresetEntry>{
+      {"Tonal Balance EQ", State::enabled}, {"Rhythm Analyzer", State::enabled},
+      {"Analog Meter", State::ignored}, {"Rhythm Analyzer", State::off}};
+  const auto loaded = pipetune::exchangeControlMessage(socketPath, pipetune::makeLoadPresetControlRequest(path));
+  auto active = pipetune::parseControlResponse(loaded.response);
+  if (!check(loaded.error.empty() && active.success && active.status.presetEntries == entries &&
+                 active.status.activePluginCount == 2 && active.status.dspLatencyFrames == 0 &&
+                 active.warnings.empty(), "measurement preset live load must publish all entry states")) return false;
+  for (const auto rate : {48000u, 96000u}) {
+    const auto previousRevision = active.status.configurationRevision;
+    const auto changed = pipetune::exchangeControlMessage(socketPath,
+        pipetune::makeSetRateControlRequest({.mode = pipetune::SampleRateMode::fixed, .fixedRate = rate}));
+    active = pipetune::parseControlResponse(changed.response);
+    if (!check(changed.error.empty() && active.success && active.status.dspSampleRate == rate &&
+                   active.status.presetEntries == entries && active.status.activePluginCount == 2 &&
+                   active.status.configurationRevision >= previousRevision,
+               "rate rebuild must retain new DSP entry states")) return false;
+    const auto backend = rate == 48000u ? pipetune::DspBackendKind::scalar : pipetune::DspBackendKind::simd;
+    const auto switched = pipetune::exchangeControlMessage(socketPath, pipetune::makeSetDspBackendControlRequest(backend));
+    active = pipetune::parseControlResponse(switched.response);
+    if (!check(switched.error.empty() && active.success && active.status.effectiveDspBackend == backend &&
+                   active.status.presetEntries == entries && active.status.activePluginCount == 2,
+               "backend rebuild must retain new DSP entry states")) return false;
+  }
+  if (!replacePresetContents(path, R"({"pipeline":[
+    {"name":"Tonal Balance EQ","parameters":{"at":100}},
+    {"name":"Rhythm Analyzer","parameters":{"ck":false}},
+    {"name":"Analog Meter"},
+    {"name":"Rhythm Analyzer","enabled":true,"parameters":{"ck":false}}
+  ]})")) return false;
+  entries.back().state = State::enabled;
+  const auto updated = waitForStatus(socketPath, [&](const auto &status) {
+    return status.configurationRevision > active.status.configurationRevision &&
+        status.presetEntries == entries && status.activePluginCount == 3 && status.configurationError.empty();
+  });
+  if (!check(updated.has_value(), "file reload must activate click-off Rhythm as a normal DSP")) return false;
+  if (!replacePresetContents(path, R"({"pipeline":[)")) return false;
+  const auto rejected = waitForStatus(socketPath, [&](const auto &status) {
+    return !status.configurationError.empty() && status.configurationRevision == updated->configurationRevision;
+  });
+  return check(rejected.has_value() && rejected->presetEntries == entries &&
+                   rejected->activePluginCount == 3 && rejected->activePreset == path.string(),
+               "failed reload must retain the measured pipeline and its reported configuration");
+}
+
 static bool testOversamplingReload(const std::filesystem::path &socketPath,
                                    const std::filesystem::path &presetPath) {
   const auto path = presetPath.parent_path() / "oversampling.effetune_preset";
@@ -627,6 +683,7 @@ static bool testOrderlySignalShutdown(
 
   if (!testCrosstalkReload(socketPath, replacementPresetPath) ||
       !testBassManagementLiveRejection(socketPath, replacementPresetPath) ||
+      !testMeasurementLiveChanges(socketPath, replacementPresetPath) ||
       !testOversamplingReload(socketPath, replacementPresetPath)) {
     kill(child, SIGTERM);
     auto childStatus = 0;

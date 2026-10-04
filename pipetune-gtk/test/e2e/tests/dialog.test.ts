@@ -533,19 +533,30 @@ describe('PipeTune GTK dialog', () => {
     );
   });
 
-  it('shows loaded preset entries and retains their states during bypass', async () => {
+  it('retains preset entry states after rate/backend changes and bypass', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     const table = await getElement('presetEntryView', 'table');
     expect(await table.getColumnCount()).toBe(2);
-    expect(await table.getRowCount()).toBe(3);
+    expect(await table.getRowCount()).toBe(6);
     const expected = [
       ['Volume', 'Enabled'],
       ['Volume', 'Off'],
       ['Spectrum Analyzer', 'Ignored'],
+      ['Tonal Balance EQ', 'Enabled'],
+      ['Rhythm Analyzer', 'Enabled'],
+      ['Analog Meter', 'Ignored'],
     ];
-    for (const bypass of [false, true]) {
-      if (bypass) {
+    for (const transition of ['loaded', 'rate', 'backend', 'bypass']) {
+      if (transition === 'rate') {
+        await changeRateTo96Khz();
+        await selectSettingsPage(0);
+      } else if (transition === 'backend') {
+        await selectSettingsPage(2);
+        await selectComboItem('dspBackendCombo', 0);
+        await waitForLabel('status-dsp-backend', 'Scalar');
+        await selectSettingsPage(0);
+      } else if (transition === 'bypass') {
         await (await getElement('processingEnabledSwitch', 'switch')).toggle();
         await waitForLabel('status-live-processing', 'Bypass');
       }

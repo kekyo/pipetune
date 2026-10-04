@@ -121,6 +121,7 @@ for (const mn of [0, 40, 100, 192, 300]) {
 for (const md of ['VU', 'PPM', 'RMS', 'Sample Peak', 'True Peak', 'Loudness']) {
   cases.push({type: 'AnalogMeterPlugin', parameters: {md}});
 }
+cases.push({type: 'OscilloscopePlugin', parameters: {tm: 'Off'}});
 const integerSpec = loadParamSpecs(path.join(effetuneRoot, 'dsp/plugins')).find(spec =>
   spec.fields.some(field =>
     field.kind === 'int' && field.min <= 1 && field.max >= 1 && !field.defaults.includes(1)

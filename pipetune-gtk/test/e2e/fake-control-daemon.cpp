@@ -70,12 +70,15 @@ makeStatus(const pipetune::StartupConfig &config,
           config.presetFound ? config.presetPath.string() : std::string{},
       .configurationError = {},
       .configurationRevision = configurationRevision,
-      .activePluginCount = config.presetFound ? 1u : 0u,
+      .activePluginCount = config.presetFound ? 3u : 0u,
       .presetEntries = config.presetFound
           ? std::vector<pipetune::PresetEntry>{
                 {"Volume", pipetune::PresetEntryState::enabled},
                 {"Volume", pipetune::PresetEntryState::off},
-                {"Spectrum Analyzer", pipetune::PresetEntryState::ignored}}
+                {"Spectrum Analyzer", pipetune::PresetEntryState::ignored},
+                {"Tonal Balance EQ", pipetune::PresetEntryState::enabled},
+                {"Rhythm Analyzer", pipetune::PresetEntryState::enabled},
+                {"Analog Meter", pipetune::PresetEntryState::ignored}}
           : std::vector<pipetune::PresetEntry>{},
       .overrunFrames = 2,
       .underrunFrames = 3,

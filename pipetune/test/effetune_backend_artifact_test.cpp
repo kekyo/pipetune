@@ -93,6 +93,10 @@ struct BackendApi {
   decltype(&pipetune_effetune_instance_asset_copy_v1) instanceAssetCopy = nullptr;
   decltype(&et_instance_asset_state) instanceAssetState = nullptr;
   decltype(&et_instance_reset) instanceReset = nullptr;
+  decltype(&et_pipeline_configure) pipelineConfigure = nullptr;
+  decltype(&et_pipeline_latency) pipelineLatency = nullptr;
+  decltype(&et_pipeline_process) pipelineProcess = nullptr;
+  decltype(&et_arena_combined_ptr) arenaCombinedPtr = nullptr;
   et_status (*instanceRuntimeEvent)(et_engine, et_instance,
                                     et_runtime_event_state *) = nullptr;
 };
@@ -139,6 +143,10 @@ static BackendApi loadBackend(const std::filesystem::path &path) {
       api.handle, "et_design_fft_inverse");
   api.engineCreate =
       loadFunction<decltype(api.engineCreate)>(api.handle, "et_engine_create");
+  api.pipelineConfigure = loadFunction<decltype(api.pipelineConfigure)>(api.handle, "et_pipeline_configure");
+  api.pipelineLatency = loadFunction<decltype(api.pipelineLatency)>(api.handle, "et_pipeline_latency");
+  api.pipelineProcess = loadFunction<decltype(api.pipelineProcess)>(api.handle, "et_pipeline_process");
+  api.arenaCombinedPtr = loadFunction<decltype(api.arenaCombinedPtr)>(api.handle, "et_arena_combined_ptr");
   api.engineDestroy = loadFunction<decltype(api.engineDestroy)>(
       api.handle, "et_engine_destroy");
   api.enginePrepare = loadFunction<decltype(api.enginePrepare)>(
@@ -310,6 +318,56 @@ static void checkEffeTune212Catalog(const BackendApi &api) {
     check(api.kernelParamsHash(multiChannelPanelIndex) == 0x9d3d18b9u,
           "EffeTune 2.12 Multi Channel Panel must expose 16-channel parameters");
   }
+}
+
+static void checkUnrelatedInstanceDestruction(const BackendApi &api) {
+  const auto engine = api.engineCreate();
+  check(engine != 0u && api.enginePrepare(engine, 48000, 2, 128, 4096) == ET_OK,
+        "destruction test engine must prepare");
+  const auto member = api.instanceCreate(engine, "AttackTonalBalancePlugin");
+  const auto unrelated = api.instanceCreate(engine, "VolumePlugin");
+  const auto *definition = pipetune::findDspByTypeName("AttackTonalBalancePlugin");
+  if (engine == 0u || member == 0u || unrelated == 0u || definition == nullptr) {
+    check(false, "destruction test instances must be available");
+    if (engine != 0u) api.engineDestroy(engine);
+    return;
+  }
+  const auto packed = pipetune::packDspParameters(*definition, nullptr);
+  check(api.instanceSetParams(engine, member, packed.floats.data(),
+                              static_cast<std::uint32_t>(packed.floats.size()), definition->hash, 0) == ET_OK,
+        "neutral delayed DSP parameters must apply");
+  // Version 1, one enabled node, main bus in/out, all channels, enabled section.
+  auto descriptor = std::array<std::uint8_t, 20>{1, 0, 0, 0, 1};
+  for (auto byte = 0u; byte < 4u; ++byte)
+    descriptor[8u + byte] = static_cast<std::uint8_t>(member >> (byte * 8u));
+  descriptor[12] = 1;
+  descriptor[15] = 254;
+  descriptor[16] = 1;
+  check(api.pipelineConfigure(engine, descriptor.data(), descriptor.size()) == ET_OK &&
+            api.pipelineLatency(engine) == 5120u, "delayed pipeline must configure");
+  auto *audio = api.arenaCombinedPtr(engine);
+  if (audio == nullptr) {
+    check(false, "pipeline arena must be available");
+    api.engineDestroy(engine);
+    return;
+  }
+  for (auto block = 0u; block < 43u; ++block) {
+    std::fill_n(audio, 256u, 0.0F);
+    if (block == 0u) audio[0] = audio[128] = 0.25F;
+    if (block == 1u) api.instanceDestroy(engine, unrelated);
+    check(api.pipelineLatency(engine) == 5120u &&
+              api.pipelineProcess(engine, 2, 128, block * 128 / 48000.0, 0) == ET_OK,
+          "destroying an unrelated instance must preserve pipeline latency and execution");
+    for (auto ch = 0u; ch < 2u; ++ch)
+      for (auto i = 0u; i < 128u; ++i)
+        check(std::abs(audio[ch * 128u + i] - (block * 128u + i == 5120u ? 0.25F : 0.0F)) < 2e-5F,
+              "unrelated destruction must retain pending delayed PCM");
+  }
+  api.instanceDestroy(engine, member);
+  check(api.pipelineLatency(engine) == 0u &&
+            api.pipelineProcess(engine, 2, 128, 1.0, 0) == ET_ERR_STATE,
+        "destroying a pipeline member must invalidate the pipeline");
+  api.engineDestroy(engine);
 }
 
 static void checkTubeRuntimeContract(const BackendApi &api) {
@@ -963,6 +1021,7 @@ int main(int argc, char **argv) {
       checkAllAbiSymbols(scalar.handle);
       checkEffeTune212Catalog(scalar);
       checkTubeRuntimeContract(scalar);
+      checkUnrelatedInstanceDestruction(scalar);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "analyzer/rhythm_analyzer/golden", 6u);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
@@ -1015,6 +1074,7 @@ int main(int argc, char **argv) {
         checkAllAbiSymbols(simd.handle);
         checkCatalogsMatch(scalar, simd);
         checkTubeRuntimeContract(simd);
+        checkUnrelatedInstanceDestruction(simd);
         checkMetadataGoldens(simd, expected, pluginRoot / "analyzer/rhythm_analyzer/golden", 6u);
         checkMetadataGoldens(simd, expected, pluginRoot / "analyzer/analog_meter/golden", 5u);
         checkMetadataGoldens(simd, expected, pluginRoot / "eq/tonal_balance_eq/golden", 6u);
