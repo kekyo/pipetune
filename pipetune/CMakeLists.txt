@@ -320,6 +320,9 @@ install(
 install(
   FILES docs/dsp-backends.md
   DESTINATION "${PIPETUNE_DOCUMENTATION_DIR}")
+install(
+  FILES "${CMAKE_CURRENT_SOURCE_DIR}/../packaging/copyright"
+  DESTINATION "${PIPETUNE_DOCUMENTATION_DIR}")
 
 if(BUILD_TESTING)
   add_executable(pipetune_measurement_store_tests test/measurement_store_test.cpp)
