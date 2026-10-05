@@ -13,17 +13,11 @@ EffeTune DSPをLinuxデスクトップに適用するエンジンとユーザー
 
 ## これは何?
 
-PipeTuneは、Linuxのデスクトップセッションの音声に
-[EffeTune](https://github.com/Frieve-A/effetune) で構築したDSPプリセットを適用します。
+[EffeTune](https://github.com/Frieve-A/effetune) は、非常に多種のDSPエフェクトを適用できるサウンドフィルタアプリケーションです。
+PipeTuneはEffeTuneのDSPエンジンを、pipewireサウンド環境に移植して、Debian/Ubuntu環境でDSPエフェクトを簡単に適用出来るようにしたものです。
 
-WirePlumber (PipeWireオーケストレーター) が、アプリケーション音声をミックスした後の通常の再生経路へ
-PipeTuneを透過フィルタとして挿入します。
-
-EffeTune DSPは完全ネイティブコンパイルされたバイナリで計算を行います。
-各プラットフォームで、ネイティブSIMD演算を選択出来ます。
-
-また、デスクトップのシステムトレイに
-常駐するGTK3コントロールアプリケーションを提供します。
+これを使えば、あなたのデスクトップで、DSPエフェクトを構成したサウンドを常時使用することが簡単に実現できます。
+EffeTune上で、環境音を構成してプリセットとして保存すれば、すぐにPipeTuneに適用して、全てのLinuxサウンドにエフェクトを効かせられます。
 
 ![PipeTune UI](./images/pipetune-ui.png)
 
@@ -33,8 +27,7 @@ EffeTune DSPは完全ネイティブコンパイルされたバイナリで計�
   DSPパイプラインを適用できます。
 - `.effetune_preset`拡張子の標準形式および旧形式のEffeTuneプリセットファイルを
   読み込み、DSPパイプラインをデスクトップ音声へ適用します。
-- EffeTune 2.12.0 DSPエンジンを実装し、Tonal Balance EQとRhythm Analyzerに対応します。
-  [測定・クリック・無音時の休止の動作](docs/ja/details.md#tonal-balance-eq)を参照してください。
+- EffeTune 2.12.0 DSPエンジンを実装しています。
 - PipeWireグラフとのサンプリング周波数の自動交渉、または44.1、48、96、192、384 kHzの指定周波数でDSPを計算します。
 - DSPは完全ネイティブコードで計算を処理します。互換性重視のScalar、SIMD自動選択、CPU検証済みの命令セット別実装を選択出来ます。
 - 入力の無音が設定時間続いた場合、エフェクトの残響を処理してからDSP演算を自動的に休止出来ます。

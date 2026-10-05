@@ -16,16 +16,13 @@ Engine and User Interface for Applied EffeTune DSP on a Linux Desktop
 
 ## What Is This?
 
-PipeTune applies an [EffeTune](https://github.com/Frieve-A/effetune) DSP preset
-to all audio in one Linux desktop session.
+[EffeTune](https://github.com/Frieve-A/effetune) is a sound filter application that allows you to apply a wide variety of DSP effects.
+PipeTune ports EffeTune’s DSP engine to the Pipewire sound environment, making it easy to apply DSP effects in Debian/Ubuntu environments.
 
-EffeTune DSP performs computations using fully natively compiled binaries.
-On each platform, you can select native SIMD operations.
-
-WirePlumber (PipeWire orchestrator) inserts PipeTune as a transparent filter between the mixed desktop
-playback stream and the normal PipeWire output path. A GTK3 control
-application remains available through the desktop system tray.
-
+With this tool, you can easily set up and use sounds with custom DSP effects on your desktop at all times.
+Simply configure your ambient sounds in EffeTune and save them as presets;
+you can then immediately apply them in PipeTune to apply effects to all Linux sounds.
+ 
 ![PipeTune UI](./images/pipetune-ui.png)
 
 ### Features
@@ -33,8 +30,7 @@ application remains available through the desktop system tray.
 - You can load EffeTune preset files to apply a DSP pipeline to the audio output of the entire Linux system.
 - Loads standard and legacy EffeTune preset files with the `.effetune_preset` extension
   and applies the DSP pipeline to desktop audio.
-- Implemented EffeTune 2.12.0 DSP engine, including Tonal Balance EQ and Rhythm Analyzer.
-  See [measurement, click, and silence-suspension behavior](docs/en/details.md#tonal-balance-eq).
+- Implemented EffeTune 2.12.0 DSP engine.
 - Automatically negotiates the sampling rate with the PipeWire graph, or computes the DSP at specified rates of 44.1, 48, 96, 192, or 384 kHz.
 - The DSP performs computations entirely in native code.
   You can choose between Scalar (for compatibility), automatic SIMD selection, or CPU-verified implementations for specific instruction sets.
