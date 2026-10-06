@@ -154,11 +154,12 @@ try {
   await socketReady();
   const manager = start("WirePlumber", "dbus-run-session", ["--", wireplumber]);
   const probe = start("output probe", driver, [scenario]);
-  if (scenario === "policy-recovery") {
+  if (scenario === "policy-recovery" || scenario === "policy-restart") {
     await waitForMessage(probe, "pipetune-probe:outputs-hidden");
     terminate(manager, "SIGKILL");
     await manager.completion;
-    await waitForMessage(probe, "pipetune-probe:aggregate-closed");
+    await waitForMessage(probe, scenario === "policy-recovery" ?
+      "pipetune-probe:aggregate-closed" : "pipetune-probe:policy-stopped");
     start("restarted WirePlumber", "dbus-run-session", ["--", wireplumber]);
   }
   const result = await probe.completion;
@@ -180,15 +181,21 @@ try {
     assert.equal(report.captureFeedsPlayback, false,
       "a capture endpoint must never feed a playback device");
   }
-  if (scenario === "policy-visibility" || scenario === "policy-recovery") {
+  if (["policy-visibility", "policy-recovery", "policy-restart"].includes(scenario)) {
     assert.equal(report.outputsHiddenDuringPlayback, true,
       "physical outputs must be hidden from selectors and playback clients during multi-device playback");
     assert.equal(report.outputsRestored, true,
       "physical outputs must become visible again when the combined output closes");
   }
-  if (scenario === "policy-recovery") {
+  if (scenario === "policy-recovery" || scenario === "policy-restart") {
     assert.equal(report.metadataInstances, 2,
-      "restoration must occur after WirePlumber restarts with the aggregate absent");
+      "restoration must occur after WirePlumber restarts");
+  }
+  if (scenario === "policy-restart") {
+    for (const frames of report.framesAfterRestart) {
+      assert.ok(frames >= 65536, "each selected output must resume its DSP channels after a policy restart");
+    }
+    assert.equal(report.framesAfterRestart.length, 2);
   }
   if (scenario === "reconnect" || scenario === "policy-reconnect") {
     assert.equal(report.reconnected, true, "a reconnected device must receive its original DSP channels");

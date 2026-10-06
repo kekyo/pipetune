@@ -83,6 +83,7 @@ self.scanning = false
 self.pending_rescan = false
 self.syncing = false
 self.pending_sync = false
+local recovering_ports = {}
 
 function rescan ()
   for si in linkables_om:iterate() do
@@ -257,6 +258,35 @@ function handleLinkable (si)
   end
 
   local node = si:get_associated_proxy ("node")
+  if recovering_ports[si.id] then return end
+  local _, mode = si:get_ports_format()
+  if (mode == nil or mode == "") and node:get_n_ports() > 0 then
+    -- After a policy restart the stream can retain its old DSP ports while
+    -- the new adapter has no format state. Reapplying the same DSP layout
+    -- can wait forever for a ports-changed event. First select the stream's
+    -- raw format so the normal link setup can create fresh DSP ports.
+    for current in node:iterate_params("Format") do
+      local parsed = current:parse()
+      local media_type = parsed and parsed.properties.mediaType
+      local media_subtype = parsed and parsed.properties.mediaSubtype
+      -- Fixed values may still be represented as SPA Choice.None pods.
+      if type(media_type) == "table" then media_type = media_type[1] end
+      if type(media_subtype) == "table" then media_subtype = media_subtype[1] end
+      if media_type == "audio" and media_subtype == "raw" then
+        local id = si.id
+        recovering_ports[id] = true
+        si:set_ports_format(current, "passthrough", function(item, error)
+          recovering_ports[id] = nil
+          if error then
+            Log.warning(item, "cannot recover stream ports: " .. tostring(error))
+          else
+            scheduleSynchronizedRescan()
+          end
+        end)
+        return
+      end
+    end
+  end
   local media_class = node.properties["media.class"] or ""
   local media_role = node.properties["media.role"] or "Default"
   Log.info (si, "handling item " .. tostring(node.properties["node.name"]) ..

@@ -26,10 +26,11 @@ struct Probe;
 constexpr auto kTagPeriod = std::uint32_t{524287};
 constexpr auto kChannelOffset = std::uint32_t{524288};
 constexpr auto kSampleScale = 268435456.0F;
+constexpr auto kRestartFirstTag = std::uint32_t{262144};
 
 enum class Phase {
   initial, disconnected, reconnected, attenuated, muted, restored,
-  awaitingPolicyStop, restoringOutputs
+  awaitingPolicyStop, restartingOutputs, policyRestarted, restoringOutputs
 };
 
 struct Endpoint {
@@ -42,6 +43,8 @@ struct Endpoint {
   std::uint64_t attenuatedFrames = 0;
   std::uint64_t mutedFrames = 0;
   std::uint64_t restoredFrames = 0;
+  std::uint64_t framesAfterRestart = 0;
+  std::uint64_t restartWarmupFrames = 0;
   std::int64_t lastGraphNanoseconds = 0;
   std::uint32_t lastBlockFrames = 0;
   int previousTag = -1;
@@ -95,6 +98,7 @@ struct Probe {
   std::array<OutputLatency, 2> outputLatencies = {};
   std::array<Selector, 2> selectors = {};
   std::uint64_t producedFrames = 0;
+  std::uint64_t sourceTagOffset = 0;
   std::uint64_t processedFrames = 0;
   std::uint64_t channelErrors = 0;
   std::uint64_t disconnectSurvivorFrame = 0;
@@ -107,6 +111,7 @@ struct Probe {
   bool policy = false;
   bool visibility = false;
   bool recovery = false;
+  bool restart = false;
   bool outputsHiddenDuringPlayback = false;
   bool outputsRestored = false;
   bool defaultsReady = false;
@@ -123,6 +128,7 @@ struct Probe {
 
 static bool createEndpoint(Probe &probe, std::uint32_t index);
 static bool createSource(Probe &probe);
+static bool createCombinedOutput(Probe &probe);
 static void selectDefaultOutput(Probe &probe);
 static void finishVisibilityCheck(Probe &probe);
 static bool observeOutputs(Probe &probe, Selector &selector, pw_core *core);
@@ -192,7 +198,8 @@ static bool validateFrame(Endpoint &endpoint, const std::array<float, 2> &sample
   if (tag < 0 || tag >= static_cast<int>(kTagPeriod) ||
       samples[0] != sampleValue(endpoint.firstChannel, tag) * gain ||
       samples[1] != sampleValue(endpoint.firstChannel + 1, tag) * gain ||
-      (endpoint.previousTag != -1 && tag != (endpoint.previousTag + 1) % static_cast<int>(kTagPeriod)))
+      (phase != Phase::restartingOutputs && endpoint.previousTag != -1 &&
+       tag != (endpoint.previousTag + 1) % static_cast<int>(kTagPeriod)))
     return false;
   endpoint.previousTag = tag;
   if (phase == Phase::attenuated && gain == 0.25F) ++endpoint.attenuatedFrames;
@@ -249,7 +256,11 @@ static void capture(void *data) {
                       frame * sizeof(float), sizeof(float));
     }
     if (samples[0] == 0.0F && samples[1] == 0.0F &&
-        endpoint.awaitingSignal) continue;
+        (endpoint.awaitingSignal || probe.phase == Phase::restartingOutputs)) continue;
+    // A restart discards queued audio. Only begin the new continuous PCM
+    // interval when the producer's post-restart tag reaches each output.
+    if (probe.phase == Phase::policyRestarted && endpoint.selected && endpoint.awaitingSignal &&
+        samples[0] < sampleValue(endpoint.firstChannel, kRestartFirstTag)) continue;
     if (!validateFrame(endpoint, samples)) {
       ++probe.channelErrors;
       pw_stream_queue_buffer(endpoint.stream, queued);
@@ -262,9 +273,31 @@ static void capture(void *data) {
     }
     endpoint.awaitingSignal = false;
     ++endpoint.receivedFrames;
+    if (probe.phase == Phase::policyRestarted) ++endpoint.framesAfterRestart;
+    if (probe.phase == Phase::restartingOutputs) ++endpoint.restartWarmupFrames;
   }
   pw_stream_queue_buffer(endpoint.stream, queued);
-  if (probe.volume) {
+  if (probe.phase == Phase::restartingOutputs) {
+    if (probe.endpoints[0].restartWarmupFrames >= 256 &&
+        probe.endpoints[1].restartWarmupFrames >= 256) {
+      if (probe.producedFrames >= kRestartFirstTag) {
+        fail(probe, "policy restart exceeded the first PCM tag interval");
+        return;
+      }
+      // Begin the continuous interval only after both destinations have
+      // received audio through their rebuilt links. Initialization may
+      // discard queued frames while those separate links are established.
+      probe.sourceTagOffset = kRestartFirstTag - probe.producedFrames;
+      for (auto &output : probe.endpoints) {
+        output.previousTag = -1;
+        output.awaitingSignal = true;
+      }
+      probe.phase = Phase::policyRestarted;
+    }
+  } else if (probe.phase == Phase::policyRestarted) {
+    if (probe.endpoints[0].framesAfterRestart >= 65536 &&
+        probe.endpoints[1].framesAfterRestart >= 65536) restoreVisibleOutputs(probe);
+  } else if (probe.volume) {
     if (probe.phase == Phase::initial && probe.endpoints[0].receivedFrames >= 65536 &&
         probe.endpoints[1].receivedFrames >= 65536) {
       if (setVolume(probe, 0.25F, false)) probe.phase = Phase::attenuated;
@@ -364,7 +397,7 @@ static void restoreVisibleOutputs(Probe &probe) {
     }
   }
   probe.outputsHiddenDuringPlayback = true;
-  if (probe.recovery) {
+  if (probe.recovery || (probe.restart && probe.phase == Phase::initial)) {
     probe.phase = Phase::awaitingPolicyStop;
     std::cerr << "pipetune-probe:outputs-hidden\n" << std::flush;
     return;
@@ -412,7 +445,7 @@ static void produce(void *data) {
     auto &plane = buffer->datas[channel];
     auto *samples = static_cast<float *>(plane.data);
     for (auto frame = 0u; frame < frameCount; ++frame)
-      samples[frame] = sampleValue(channel, probe.producedFrames + frame) *
+      samples[frame] = sampleValue(channel, probe.producedFrames + probe.sourceTagOffset + frame) *
           (probe.policy ? 0.5F : 1.0F);
     plane.chunk->offset = 0;
     plane.chunk->stride = sizeof(float);
@@ -600,6 +633,7 @@ static bool createEndpoint(Probe &probe, std::uint32_t index) {
   endpoint.stream = pw_stream_new(probe.core, name.c_str(), pw_properties_new(
       PW_KEY_NODE_NAME, name.c_str(), PW_KEY_NODE_DESCRIPTION, name.c_str(),
       PW_KEY_NODE_GROUP, "pipewire.dummy",
+      PW_KEY_PRIORITY_SESSION, "1000",
       PW_KEY_MEDIA_CLASS, "Audio/Sink", PW_KEY_MEDIA_CATEGORY, "Playback",
       PW_KEY_NODE_VIRTUAL, probe.visibility ? "false" : "true", "node.want-driver", "true",
       "node.pause-on-idle", "false", "audio.channels", "2",
@@ -626,6 +660,19 @@ static int metadataChanged(void *data, std::uint32_t subject, const char *key,
     // for changes to default.configured.audio.sink.
     probe.defaultsReady = true;
     selectDefaultOutput(probe);
+    if (probe.restart && probe.metadataInstances == 2 &&
+        probe.phase == Phase::awaitingPolicyStop &&
+        std::string_view{value}.find("pipetune_probe_combined") != std::string_view::npos) {
+      // Real ALSA nodes belong to WirePlumber and reappear after it restarts.
+      // Recreate the simulated devices only after the new policy is running.
+      for (auto index = 0u; index < probe.endpoints.size(); ++index) {
+        if (!createEndpoint(probe, index)) {
+          fail(probe, "cannot recreate outputs after a policy restart");
+          return 0;
+        }
+      }
+      probe.phase = Phase::restartingOutputs;
+    }
   }
   if (subject == 0 && key != nullptr && value != nullptr &&
       std::strcmp(key, "default.audio.sink") == 0 &&
@@ -708,6 +755,7 @@ static void globalAdded(void *data, std::uint32_t id, std::uint32_t,
       if (probe.nodeNames[output] == "control.endpoint.pipetune.capture" &&
           probe.nodeNames[input].starts_with("pipetune_probe_device_"))
         probe.captureFeedsPlayback = true;
+
     }
     return;
   }
@@ -746,8 +794,32 @@ static void globalRemoved(void *data, std::uint32_t id) {
     probe.metadataListener = {};
     probe.metadataValues.clear();
     if (probe.phase == Phase::awaitingPolicyStop) {
-      closeProcessingOutputs(probe);
-      std::cerr << "pipetune-probe:aggregate-closed\n" << std::flush;
+      if (probe.recovery) {
+        closeProcessingOutputs(probe);
+        std::cerr << "pipetune-probe:aggregate-closed\n" << std::flush;
+      } else {
+        pw_stream_destroy(probe.processorInput);
+        pw_stream_destroy(probe.processorOutput);
+        probe.processorInput = nullptr;
+        probe.processorOutput = nullptr;
+        probe.processorInputListener = {};
+        probe.processorOutputListener = {};
+        pw_proxy_destroy(reinterpret_cast<pw_proxy *>(probe.combinedNode));
+        probe.combinedNode = nullptr;
+        pw_impl_module_destroy(probe.combine);
+        probe.combine = nullptr;
+        for (auto &endpoint : probe.endpoints) {
+          pw_stream_destroy(endpoint.stream);
+          endpoint.stream = nullptr;
+        }
+        probe.defaultsReady = false;
+        probe.defaultRequested = false;
+        if (!createCombinedOutput(probe) || !createProcessor(probe)) {
+          fail(probe, "cannot rebuild processing nodes after a policy restart");
+          return;
+        }
+        std::cerr << "pipetune-probe:policy-stopped\n" << std::flush;
+      }
     }
   }
   probe.nodeNames.erase(std::to_string(id));
@@ -776,7 +848,7 @@ static bool createSource(Probe &probe) {
       PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Playback",
       PW_KEY_MEDIA_ROLE, probe.policy ? "Music" : "PipeTune-Probe",
       "node.dont-fallback", "true", "node.dont-move", "true",
-      "stream.dont-remix", "true", nullptr);
+      "stream.dont-remix", probe.policy ? "false" : "true", nullptr);
   if (!probe.policy) pw_properties_set(properties, PW_KEY_TARGET_OBJECT, "pipetune_probe_combined");
   probe.source = pw_stream_new(sourceCore, "PipeTune probe signal", properties);
   if (probe.source == nullptr) return false;
@@ -787,29 +859,7 @@ static bool createSource(Probe &probe) {
   return connectStream(probe.source, false, probe.policy ? 2u : 4u, PW_STREAM_FLAG_AUTOCONNECT);
 }
 
-static bool prepare(Probe &probe) {
-  probe.loop = pw_main_loop_new(nullptr);
-  if (probe.loop == nullptr) return false;
-  probe.context = pw_context_new(pw_main_loop_get_loop(probe.loop), nullptr, 0);
-  if (probe.context == nullptr) return false;
-  probe.core = pw_context_connect(probe.context, nullptr, 0);
-  if (probe.core == nullptr) return false;
-  if (probe.visibility) {
-    auto *core = pw_context_connect(probe.context,
-        pw_properties_new(PW_KEY_APP_NAME, "PipeTune probe sound settings", nullptr), 0);
-    probe.selectors[0].core = core;
-    if (core == nullptr || !observeOutputs(probe, probe.selectors[0], core)) return false;
-  }
-  probe.registry = pw_core_get_registry(probe.core, PW_VERSION_REGISTRY, 0);
-  if (probe.registry == nullptr) return false;
-  probe.registryEvents.version = PW_VERSION_REGISTRY_EVENTS;
-  probe.registryEvents.global = globalAdded;
-  probe.registryEvents.global_remove = globalRemoved;
-  pw_registry_add_listener(probe.registry, &probe.registryListener,
-                            &probe.registryEvents, &probe);
-  for (auto index = 0u; index < probe.endpoints.size(); ++index) {
-    if (!createEndpoint(probe, index)) return false;
-  }
+static bool createCombinedOutput(Probe &probe) {
   const auto arguments = std::string{"combine.latency-compensate = "} +
       (probe.compensate ? "true\n" : "false\n") + R"conf(
     combine.mode = sink
@@ -842,7 +892,33 @@ static bool prepare(Probe &probe) {
   )conf";
   probe.combine = pw_context_load_module(probe.context,
       "libpipewire-module-combine-stream", arguments.c_str(), nullptr);
-  if (probe.combine == nullptr) return false;
+  return probe.combine != nullptr;
+}
+
+static bool prepare(Probe &probe) {
+  probe.loop = pw_main_loop_new(nullptr);
+  if (probe.loop == nullptr) return false;
+  probe.context = pw_context_new(pw_main_loop_get_loop(probe.loop), nullptr, 0);
+  if (probe.context == nullptr) return false;
+  probe.core = pw_context_connect(probe.context, nullptr, 0);
+  if (probe.core == nullptr) return false;
+  if (probe.visibility) {
+    auto *core = pw_context_connect(probe.context,
+        pw_properties_new(PW_KEY_APP_NAME, "PipeTune probe sound settings", nullptr), 0);
+    probe.selectors[0].core = core;
+    if (core == nullptr || !observeOutputs(probe, probe.selectors[0], core)) return false;
+  }
+  probe.registry = pw_core_get_registry(probe.core, PW_VERSION_REGISTRY, 0);
+  if (probe.registry == nullptr) return false;
+  probe.registryEvents.version = PW_VERSION_REGISTRY_EVENTS;
+  probe.registryEvents.global = globalAdded;
+  probe.registryEvents.global_remove = globalRemoved;
+  pw_registry_add_listener(probe.registry, &probe.registryListener,
+                            &probe.registryEvents, &probe);
+  for (auto index = 0u; index < probe.endpoints.size(); ++index) {
+    if (!createEndpoint(probe, index)) return false;
+  }
+  if (!createCombinedOutput(probe)) return false;
   if (probe.policy) {
     if (!createProcessor(probe)) return false;
   } else if (!createSource(probe)) return false;
@@ -904,13 +980,18 @@ int main(int argc, char **argv) {
     probe.visibility = true;
     probe.recovery = true;
   }
+  else if (argc == 2 && std::string(argv[1]) == "policy-restart") {
+    probe.policy = true;
+    probe.visibility = true;
+    probe.restart = true;
+  }
   else if (argc == 2 && (std::string(argv[1]) == "latency" || std::string(argv[1]) == "latency-off")) {
     probe.latency = true;
     probe.compensate = std::string(argv[1]) == "latency";
   }
   else if (argc > 2 || (argc == 2 && std::string(argv[1]) != "channels")) {
     std::cerr << "Usage: pipetune_multi_device_output_probe "
-        "[channels|reconnect|volume|latency|latency-off|policy|policy-volume|policy-reconnect|policy-visibility|policy-recovery]\n";
+        "[channels|reconnect|volume|latency|latency-off|policy|policy-volume|policy-reconnect|policy-visibility|policy-recovery|policy-restart]\n";
     pw_deinit();
     return 2;
   }
@@ -959,6 +1040,8 @@ int main(int argc, char **argv) {
             << ",\"outputsHiddenDuringPlayback\":" << (probe.outputsHiddenDuringPlayback ? "true" : "false")
             << ",\"outputsRestored\":" << (probe.outputsRestored ? "true" : "false")
             << ",\"metadataInstances\":" << probe.metadataInstances
+            << ",\"framesAfterRestart\":[" << probe.endpoints[0].framesAfterRestart << ','
+            << probe.endpoints[1].framesAfterRestart << ']'
             << ",\"receivedFrames\":[" << probe.endpoints[0].receivedFrames << ','
             << probe.endpoints[1].receivedFrames << ',' << probe.endpoints[2].receivedFrames
             << "],\"channelErrors\":" << probe.channelErrors
