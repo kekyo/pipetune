@@ -96,6 +96,9 @@ msgstr "活动插件"
 msgid "Advanced"
 msgstr "高级"
 
+msgid "After"
+msgstr "更改后"
+
 msgid "All"
 msgstr "全部"
 
@@ -122,6 +125,9 @@ msgstr "可用"
 
 msgid "Baseline"
 msgstr "基准状态"
+
+msgid "Before"
+msgstr "更改前"
 
 msgid "Bypass"
 msgstr "旁路"
@@ -422,6 +428,12 @@ msgstr "负载"
 msgid "Measured frame rate"
 msgstr "实测帧率"
 
+msgid "Move down"
+msgstr "下移"
+
+msgid "Move up"
+msgstr "上移"
+
 msgid "Multiple — outputs selected in PipeTune"
 msgstr "多设备 — 在 PipeTune 中选择输出"
 
@@ -451,6 +463,9 @@ msgstr "输出设备"
 
 msgid "Output mode"
 msgstr "输出模式"
+
+msgid "Output settings changed. Reopen the mapping review."
+msgstr "输出设置已更改。请重新打开通道分配确认窗口。"
 
 #, brace-format
 msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
@@ -520,6 +535,9 @@ msgstr "需要预设"
 msgid "Preset warnings"
 msgstr "预设警告"
 
+msgid "Preview mapping"
+msgstr "预览分配"
+
 msgid "Processing"
 msgstr "处理"
 
@@ -540,6 +558,9 @@ msgstr "用途"
 
 msgid "Quit"
 msgstr "退出"
+
+msgid "Reassign device…"
+msgstr "重新分配设备…"
 
 msgid "Reserved"
 msgstr "已保留"
@@ -564,6 +585,12 @@ msgstr "正在恢复打开对话框时捕获的实时设置"
 
 msgid "Restoring the previous live settings…"
 msgstr "正在恢复之前的实时设置…"
+
+msgid "Review channel mapping"
+msgstr "确认通道分配"
+
+msgid "Review where each final EffeTune channel will play. Your preset is unchanged. Preview this mapping, then use Apply in the main window to save it."
+msgstr "请确认 EffeTune 各最终通道的播放位置。预设本身不会更改。预览此分配后，在主窗口中使用“应用”保存。"
 
 msgid "Rollback requested"
 msgstr "已请求回滚"
@@ -601,6 +628,12 @@ msgstr "Scalar"
 
 msgid "seconds"
 msgstr "秒"
+
+msgid "Select a replacement output device."
+msgstr "请选择替换的输出设备。"
+
+msgid "Select at least one output device."
+msgstr "请至少选择一个输出设备。"
 
 msgid "Setting up PipeTune for this user…"
 msgstr "正在为此用户设置 PipeTune…"
@@ -666,6 +699,9 @@ msgstr "由操作系统选择输出。下方保存的多设备输出分配当前
 
 msgid "The selected device cannot be identified uniquely."
 msgstr "无法唯一识别所选设备。"
+
+msgid "The selected output is no longer available with this profile. Reopen the mapping review."
+msgstr "所选输出已无法使用此配置。请重新打开通道分配确认窗口。"
 
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "界面语言更改将在 PipeTune GTK 重启后生效。"

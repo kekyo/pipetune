@@ -101,6 +101,9 @@ msgstr "الإضافات النشطة"
 msgid "Advanced"
 msgstr "متقدم"
 
+msgid "After"
+msgstr "بعد"
+
 msgid "All"
 msgstr "الكل"
 
@@ -127,6 +130,9 @@ msgstr "متاح"
 
 msgid "Baseline"
 msgstr "خط الأساس"
+
+msgid "Before"
+msgstr "قبل"
 
 msgid "Bypass"
 msgstr "تجاوز"
@@ -427,6 +433,12 @@ msgstr "الحمل"
 msgid "Measured frame rate"
 msgstr "معدل الإطارات المقاس"
 
+msgid "Move down"
+msgstr "نقل لأسفل"
+
+msgid "Move up"
+msgstr "نقل لأعلى"
+
 msgid "Multiple — outputs selected in PipeTune"
 msgstr "متعدد — تُحدّد المخارج في PipeTune"
 
@@ -456,6 +468,9 @@ msgstr "أجهزة الإخراج"
 
 msgid "Output mode"
 msgstr "وضع الإخراج"
+
+msgid "Output settings changed. Reopen the mapping review."
+msgstr "تغيّرت إعدادات الإخراج. أعد فتح مراجعة التعيين."
 
 #, brace-format
 msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
@@ -525,6 +540,9 @@ msgstr "يلزم إعداد مسبق"
 msgid "Preset warnings"
 msgstr "تحذيرات الإعداد المسبق"
 
+msgid "Preview mapping"
+msgstr "معاينة التعيين"
+
 msgid "Processing"
 msgstr "المعالجة"
 
@@ -545,6 +563,9 @@ msgstr "الغرض"
 
 msgid "Quit"
 msgstr "إنهاء"
+
+msgid "Reassign device…"
+msgstr "إعادة تعيين الجهاز…"
 
 msgid "Reserved"
 msgstr "محجوز"
@@ -569,6 +590,12 @@ msgstr "جارٍ استعادة الإعدادات المباشرة الملتق
 
 msgid "Restoring the previous live settings…"
 msgstr "جارٍ استعادة الإعدادات المباشرة السابقة…"
+
+msgid "Review channel mapping"
+msgstr "مراجعة تعيين القنوات"
+
+msgid "Review where each final EffeTune channel will play. Your preset is unchanged. Preview this mapping, then use Apply in the main window to save it."
+msgstr "راجع وجهة تشغيل كل قناة إخراج نهائية في EffeTune. لن يتغير الإعداد المسبق. عاين هذا التعيين، ثم استخدم تطبيق في النافذة الرئيسية لحفظه."
 
 msgid "Rollback requested"
 msgstr "طُلب التراجع"
@@ -606,6 +633,12 @@ msgstr "Scalar"
 
 msgid "seconds"
 msgstr "ثوانٍ"
+
+msgid "Select a replacement output device."
+msgstr "اختر جهاز إخراج بديلًا."
+
+msgid "Select at least one output device."
+msgstr "اختر جهاز إخراج واحدًا على الأقل."
 
 msgid "Setting up PipeTune for this user…"
 msgstr "جارٍ إعداد PipeTune لهذا المستخدم…"
@@ -671,6 +704,9 @@ msgstr "يحدّد نظام التشغيل المخرج. تعيينات المخ
 
 msgid "The selected device cannot be identified uniquely."
 msgstr "لا يمكن تمييز الجهاز المحدّد بشكل فريد."
+
+msgid "The selected output is no longer available with this profile. Reopen the mapping review."
+msgstr "لم يعد المخرج المحدّد متاحًا بملف التعريف هذا. أعد فتح مراجعة التعيين."
 
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "سيُطبّق تغيير لغة الواجهة بعد إعادة تشغيل PipeTune GTK."

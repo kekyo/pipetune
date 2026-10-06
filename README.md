@@ -218,6 +218,11 @@ and multiple outputs selected in PipeTune. In multiple mode, check the devices
 you want to use. Each device lists its active profile, channel count, assigned
 Ch numbers, and presence. The table below maps final EffeTune channels to each
 device's physical channels. Double-click a purpose cell to add your own label.
+Select a channel and use `Move up` or `Move down` to change its number, or
+`Reassign device…` to choose a replacement output for its device. Review the
+before/after table, then choose `Preview mapping`. The EffeTune preset itself
+is unchanged. Reassignment retains other devices' channel numbers and keeps
+removed channels reserved; additional channels are appended.
 Changes preview live; use `Apply` to save or `Cancel` to restore the previous
 configuration. Selecting multiple mode without a device leaves an unfinished
 draft and does not change the live output.

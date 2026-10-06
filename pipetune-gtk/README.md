@@ -82,6 +82,17 @@ edit it. The stereo desktop input uses Ch 1 and Ch 2; additional outputs must be
 created by the EffeTune preset. Single mode keeps the saved multiple-output
 mapping visible but inactive.
 
+Select a channel to move it up or down with its purpose label, or use
+`Reassign device…` to replace the device assigned to that channel. Both actions
+open a before/after review. `Preview mapping` sends the proposed configuration;
+Cancel or Escape in the review leaves it unchanged. The main window's Apply
+still performs the save, and its Cancel restores the confirmed baseline.
+Device replacement retains the device's enabled state and all other devices'
+numbers. Removed physical channels leave reserved slots with their labels;
+new channels append after the existing slots. Replacements exceeding sixteen
+slots or duplicating another output fail. If the selected profile disappears
+while reviewing, reopen the review and select a current output.
+
 Presence distinguishes missing hardware, changed profiles, ambiguous matches,
 pending enumeration, and enumeration errors. It describes device matching, not
 audio activity or measured delay compensation. Live presence changes never

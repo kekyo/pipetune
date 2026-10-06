@@ -96,6 +96,9 @@ msgstr "활성 플러그인"
 msgid "Advanced"
 msgstr "고급"
 
+msgid "After"
+msgstr "변경 후"
+
 msgid "All"
 msgstr "모두"
 
@@ -122,6 +125,9 @@ msgstr "사용 가능"
 
 msgid "Baseline"
 msgstr "기준 상태"
+
+msgid "Before"
+msgstr "변경 전"
 
 msgid "Bypass"
 msgstr "바이패스"
@@ -422,6 +428,12 @@ msgstr "부하"
 msgid "Measured frame rate"
 msgstr "측정 프레임 레이트"
 
+msgid "Move down"
+msgstr "아래로 이동"
+
+msgid "Move up"
+msgstr "위로 이동"
+
 msgid "Multiple — outputs selected in PipeTune"
 msgstr "다중 — PipeTune에서 출력 선택"
 
@@ -451,6 +463,9 @@ msgstr "출력 장치"
 
 msgid "Output mode"
 msgstr "출력 모드"
+
+msgid "Output settings changed. Reopen the mapping review."
+msgstr "출력 설정이 변경되었습니다. 할당 확인 창을 다시 여세요."
 
 #, brace-format
 msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
@@ -520,6 +535,9 @@ msgstr "프리셋 필요"
 msgid "Preset warnings"
 msgstr "프리셋 경고"
 
+msgid "Preview mapping"
+msgstr "할당 미리 보기"
+
 msgid "Processing"
 msgstr "처리"
 
@@ -540,6 +558,9 @@ msgstr "용도"
 
 msgid "Quit"
 msgstr "종료"
+
+msgid "Reassign device…"
+msgstr "장치 재할당…"
 
 msgid "Reserved"
 msgstr "예약됨"
@@ -564,6 +585,12 @@ msgstr "대화 상자가 열릴 때 캡처한 실시간 설정을 복원하는 �
 
 msgid "Restoring the previous live settings…"
 msgstr "이전 실시간 설정 복원 중…"
+
+msgid "Review channel mapping"
+msgstr "채널 할당 확인"
+
+msgid "Review where each final EffeTune channel will play. Your preset is unchanged. Preview this mapping, then use Apply in the main window to save it."
+msgstr "EffeTune의 각 최종 채널이 재생될 위치를 확인하세요. 프리셋은 변경되지 않습니다. 이 할당을 미리 본 뒤 메인 창에서 적용을 눌러 저장하세요."
 
 msgid "Rollback requested"
 msgstr "롤백 요청됨"
@@ -601,6 +628,12 @@ msgstr "Scalar"
 
 msgid "seconds"
 msgstr "초"
+
+msgid "Select a replacement output device."
+msgstr "대체할 출력 장치를 선택하세요."
+
+msgid "Select at least one output device."
+msgstr "출력 장치를 하나 이상 선택하세요."
 
 msgid "Setting up PipeTune for this user…"
 msgstr "이 사용자를 위해 PipeTune을 설정하는 중…"
@@ -666,6 +699,9 @@ msgstr "OS에서 출력을 선택합니다. 아래에 저장된 다중 출력 �
 
 msgid "The selected device cannot be identified uniquely."
 msgstr "선택한 장치를 고유하게 식별할 수 없습니다."
+
+msgid "The selected output is no longer available with this profile. Reopen the mapping review."
+msgstr "선택한 출력은 더 이상 이 프로필로 사용할 수 없습니다. 할당 확인 창을 다시 여세요."
 
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "PipeTune GTK가 다시 시작된 후 UI 언어 변경이 적용됩니다."

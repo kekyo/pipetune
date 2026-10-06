@@ -72,6 +72,22 @@ struct MainWindowUi {
   GtkWidget *outputChannelView = nullptr;
   /** Editable purpose-label cells, borrowed from the builder. */
   GtkCellRenderer *outputLabelRenderer = nullptr;
+  /** Proposes moving the selected slot to the previous channel number. */
+  GtkWidget *outputMoveUpButton = nullptr;
+  /** Proposes moving the selected slot to the next channel number. */
+  GtkWidget *outputMoveDownButton = nullptr;
+  /** Opens a replacement chooser for the selected slot's saved device. */
+  GtkWidget *outputReassignButton = nullptr;
+  /** Modal before/after review, retained and hidden between uses. */
+  GtkWidget *outputMappingDialog = nullptr;
+  /** Current replacement-device choices; hidden for channel moves. */
+  GtkWidget *outputReplacementCombo = nullptr;
+  /** Invalid or stale candidate diagnostic. */
+  GtkWidget *outputMappingErrorLabel = nullptr;
+  /** Read-only before/after channel mapping table. */
+  GtkWidget *outputMappingPreview = nullptr;
+  /** Starts a live preview after the mapping review is accepted. */
+  GtkWidget *outputMappingUseButton = nullptr;
   /** Last rendered settings; avoids replacing rows on telemetry updates. */
   std::optional<pipetune::OutputConfiguration> displayedOutputConfiguration = {};
   /** Last rendered inventory, also used to resolve a user's row selection. */

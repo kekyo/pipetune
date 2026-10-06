@@ -97,6 +97,9 @@ msgstr "Complementos activos"
 msgid "Advanced"
 msgstr "Avanzado"
 
+msgid "After"
+msgstr "Después"
+
 msgid "All"
 msgstr "Todo"
 
@@ -123,6 +126,9 @@ msgstr "Disponible"
 
 msgid "Baseline"
 msgstr "Estado inicial"
+
+msgid "Before"
+msgstr "Antes"
 
 msgid "Bypass"
 msgstr "Omitir"
@@ -423,6 +429,12 @@ msgstr "Carga"
 msgid "Measured frame rate"
 msgstr "Tasa de fotogramas medida"
 
+msgid "Move down"
+msgstr "Bajar"
+
+msgid "Move up"
+msgstr "Subir"
+
 msgid "Multiple — outputs selected in PipeTune"
 msgstr "Múltiple — salidas seleccionadas en PipeTune"
 
@@ -452,6 +464,9 @@ msgstr "Dispositivos de salida"
 
 msgid "Output mode"
 msgstr "Modo de salida"
+
+msgid "Output settings changed. Reopen the mapping review."
+msgstr "La configuración de salida ha cambiado. Vuelva a abrir la revisión de asignaciones."
 
 #, brace-format
 msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
@@ -521,6 +536,9 @@ msgstr "Se requiere un preajuste"
 msgid "Preset warnings"
 msgstr "Advertencias del preajuste"
 
+msgid "Preview mapping"
+msgstr "Previsualizar asignación"
+
 msgid "Processing"
 msgstr "Procesamiento"
 
@@ -541,6 +559,9 @@ msgstr "Uso"
 
 msgid "Quit"
 msgstr "Salir"
+
+msgid "Reassign device…"
+msgstr "Reasignar dispositivo…"
 
 msgid "Reserved"
 msgstr "Reservado"
@@ -565,6 +586,12 @@ msgstr "Restaurando la configuración en directo capturada al abrir el diálogo"
 
 msgid "Restoring the previous live settings…"
 msgstr "Restaurando la configuración en directo anterior…"
+
+msgid "Review channel mapping"
+msgstr "Revisar asignación de canales"
+
+msgid "Review where each final EffeTune channel will play. Your preset is unchanged. Preview this mapping, then use Apply in the main window to save it."
+msgstr "Revise dónde se reproducirá cada canal final de EffeTune. El preajuste no se modifica. Previsualice esta asignación y luego use Aplicar en la ventana principal para guardarla."
 
 msgid "Rollback requested"
 msgstr "Reversión solicitada"
@@ -602,6 +629,12 @@ msgstr "Scalar"
 
 msgid "seconds"
 msgstr "segundos"
+
+msgid "Select a replacement output device."
+msgstr "Seleccione un dispositivo de salida de reemplazo."
+
+msgid "Select at least one output device."
+msgstr "Seleccione al menos un dispositivo de salida."
 
 msgid "Setting up PipeTune for this user…"
 msgstr "Configurando PipeTune para este usuario…"
@@ -667,6 +700,9 @@ msgstr "El SO selecciona la salida. Las asignaciones de salida múltiple guardad
 
 msgid "The selected device cannot be identified uniquely."
 msgstr "No se puede identificar de forma inequívoca el dispositivo seleccionado."
+
+msgid "The selected output is no longer available with this profile. Reopen the mapping review."
+msgstr "La salida seleccionada ya no está disponible con este perfil. Vuelva a abrir la revisión de asignaciones."
 
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "El cambio de idioma de la interfaz tendrá efecto después de reiniciar PipeTune GTK."

@@ -97,6 +97,9 @@ msgstr "सक्रिय प्लगइन"
 msgid "Advanced"
 msgstr "उन्नत"
 
+msgid "After"
+msgstr "बाद में"
+
 msgid "All"
 msgstr "सभी"
 
@@ -123,6 +126,9 @@ msgstr "उपलब्ध"
 
 msgid "Baseline"
 msgstr "आधार स्थिति"
+
+msgid "Before"
+msgstr "पहले"
 
 msgid "Bypass"
 msgstr "बाइपास"
@@ -423,6 +429,12 @@ msgstr "लोड"
 msgid "Measured frame rate"
 msgstr "मापी गई फ़्रेम दर"
 
+msgid "Move down"
+msgstr "नीचे ले जाएँ"
+
+msgid "Move up"
+msgstr "ऊपर ले जाएँ"
+
 msgid "Multiple — outputs selected in PipeTune"
 msgstr "एकाधिक — PipeTune में चुने गए आउटपुट"
 
@@ -452,6 +464,9 @@ msgstr "आउटपुट डिवाइस"
 
 msgid "Output mode"
 msgstr "आउटपुट मोड"
+
+msgid "Output settings changed. Reopen the mapping review."
+msgstr "आउटपुट सेटिंग बदल गई हैं। चैनल असाइनमेंट की समीक्षा फिर से खोलें।"
 
 #, brace-format
 msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
@@ -521,6 +536,9 @@ msgstr "प्रीसेट आवश्यक"
 msgid "Preset warnings"
 msgstr "प्रीसेट चेतावनियाँ"
 
+msgid "Preview mapping"
+msgstr "असाइनमेंट का पूर्वावलोकन"
+
 msgid "Processing"
 msgstr "प्रोसेसिंग"
 
@@ -541,6 +559,9 @@ msgstr "उपयोग"
 
 msgid "Quit"
 msgstr "बाहर निकलें"
+
+msgid "Reassign device…"
+msgstr "डिवाइस फिर से असाइन करें…"
 
 msgid "Reserved"
 msgstr "आरक्षित"
@@ -565,6 +586,12 @@ msgstr "डायलॉग खुलने पर कैप्चर की ग�
 
 msgid "Restoring the previous live settings…"
 msgstr "पिछली लाइव सेटिंग पुनर्स्थापित हो रही हैं…"
+
+msgid "Review channel mapping"
+msgstr "चैनल असाइनमेंट की समीक्षा"
+
+msgid "Review where each final EffeTune channel will play. Your preset is unchanged. Preview this mapping, then use Apply in the main window to save it."
+msgstr "समीक्षा करें कि EffeTune का हर अंतिम चैनल कहाँ बजेगा। आपका प्रीसेट नहीं बदलेगा। इस असाइनमेंट का पूर्वावलोकन करें, फिर इसे सहेजने के लिए मुख्य विंडो में लागू करें का उपयोग करें।"
 
 msgid "Rollback requested"
 msgstr "रोलबैक का अनुरोध किया गया"
@@ -602,6 +629,12 @@ msgstr "Scalar"
 
 msgid "seconds"
 msgstr "सेकंड"
+
+msgid "Select a replacement output device."
+msgstr "बदलने के लिए नया आउटपुट डिवाइस चुनें।"
+
+msgid "Select at least one output device."
+msgstr "कम से कम एक आउटपुट डिवाइस चुनें।"
 
 msgid "Setting up PipeTune for this user…"
 msgstr "इस उपयोगकर्ता के लिए PipeTune सेट अप किया जा रहा है…"
@@ -667,6 +700,9 @@ msgstr "OS आउटपुट चुनता है। नीचे सहे�
 
 msgid "The selected device cannot be identified uniquely."
 msgstr "चुने गए डिवाइस की विशिष्ट पहचान नहीं की जा सकती।"
+
+msgid "The selected output is no longer available with this profile. Reopen the mapping review."
+msgstr "चुना गया आउटपुट अब इस प्रोफ़ाइल के साथ उपलब्ध नहीं है। असाइनमेंट की समीक्षा फिर से खोलें।"
 
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "PipeTune GTK पुनः आरंभ होने के बाद UI भाषा बदलाव प्रभावी होगा।"

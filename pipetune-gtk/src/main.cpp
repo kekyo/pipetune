@@ -13,6 +13,7 @@
 #include "launch-options.h"
 #include "localization.h"
 #include "main-window.h"
+#include "output-mapping-model.h"
 #include "preset-catalog.h"
 #include "preset-file-monitor.h"
 #include "rate-selection-model.h"
@@ -80,6 +81,13 @@ struct OutputDeviceWidgets {
   GtkWidget *details;
 };
 
+struct OutputMappingReview {
+  pipetune::OutputConfiguration before;
+  pipetune::OutputConfigurationResult proposal;
+  std::string replacementId;
+  std::vector<pipetune::AvailableOutput> choices;
+};
+
 struct ApplicationRunResult {
   int exitCode;
   bool restartRequested;
@@ -140,6 +148,7 @@ struct GtkRuntime {
   GdkPixbuf *statusGrayscaleIcon;
   std::string outputEditError = {};
   std::vector<OutputDeviceWidgets> outputDeviceRows = {};
+  std::optional<OutputMappingReview> outputMappingReview = {};
 };
 
 static void render(GtkRuntime *runtime);
@@ -749,6 +758,32 @@ static void renderPresetControls(GtkRuntime *runtime) {
 
 static void onOutputDeviceToggled(GtkToggleButton *button, gpointer userData);
 
+static std::optional<std::size_t> selectedOutputChannel(const GtkRuntime &runtime) {
+  if (!runtime.transactionReady) return std::nullopt;
+  auto *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(runtime.ui.outputChannelView));
+  auto *model = static_cast<GtkTreeModel *>(nullptr);
+  auto iter = GtkTreeIter{};
+  if (!gtk_tree_selection_get_selected(selection, &model, &iter)) return std::nullopt;
+  auto index = guint{0};
+  gtk_tree_model_get(model, &iter, 5, &index, -1);
+  if (index >= runtime.transaction.desiredLive.outputConfiguration.channels.size()) return std::nullopt;
+  return index;
+}
+
+static void renderOutputMappingActions(GtkRuntime *runtime) {
+  const auto selected = selectedOutputChannel(*runtime);
+  const auto editable = controlsAreEditable(*runtime) && selected.has_value();
+  const auto &configuration = runtime->transactionReady ? runtime->transaction.desiredLive.outputConfiguration : runtime->savedConfig.outputConfiguration;
+  gtk_widget_set_sensitive(runtime->ui.outputMoveUpButton, editable && *selected > 0);
+  gtk_widget_set_sensitive(runtime->ui.outputMoveDownButton, editable && *selected + 1 < configuration.channels.size());
+  gtk_widget_set_sensitive(runtime->ui.outputReassignButton, editable && !configuration.channels[*selected].outputId.empty());
+  if (runtime->outputMappingReview.has_value()) {
+    const auto &review = *runtime->outputMappingReview;
+    gtk_widget_set_sensitive(runtime->ui.outputMappingUseButton, controlsAreEditable(*runtime) &&
+        review.proposal.error.empty() && review.proposal.configuration != review.before);
+  }
+}
+
 static const char *outputPresence(pipetune::OutputConnectionState state) {
   switch (state) {
   case pipetune::OutputConnectionState::connected: return translate("Connected");
@@ -770,6 +805,8 @@ static void renderOutputControls(GtkRuntime *runtime) {
       translate("The OS selects the output. Saved multiple-output assignments below are inactive.") :
       translate("Input uses Ch 1 and Ch 2. Create additional outputs in your EffeTune preset. Disabled devices keep their Ch numbers."));
   auto diagnostic = runtime->outputEditError;
+  if (diagnostic.empty() && !single && std::none_of(configuration.outputs.begin(), configuration.outputs.end(),
+      [](const auto &output) { return output.enabled; })) diagnostic = translate("Select at least one output device.");
   if (diagnostic.empty()) diagnostic = pipetune::validateOutputConfiguration(configuration);
   if (diagnostic.empty()) diagnostic = status.outputInventoryError;
   if (diagnostic.empty() && !status.outputInventoryReady) diagnostic = translate("Waiting for output devices…");
@@ -1017,6 +1054,7 @@ static void renderSettingsControls(GtkRuntime *runtime) {
   runtime->updatingControls = true;
   renderPresetControls(runtime);
   renderOutputControls(runtime);
+  renderOutputMappingActions(runtime);
   renderRateControls(runtime);
   renderDspControls(runtime);
   renderLanguageControl(runtime);
@@ -1251,6 +1289,146 @@ static void onOutputLabelEdited(GtkCellRendererText *, gchar *path, gchar *text,
   if (index >= desired.outputConfiguration.channels.size()) return;
   desired.outputConfiguration.channels[index].label = text;
   editDesiredSettings(runtime, desired);
+}
+
+static std::string outputMappingCell(const pipetune::OutputConfiguration &configuration, std::size_t index) {
+  if (index >= configuration.channels.size()) return "—";
+  const auto &slot = configuration.channels[index];
+  const auto output = std::find_if(configuration.outputs.begin(), configuration.outputs.end(),
+      [&slot](const auto &item) { return item.id == slot.outputId; });
+  auto text = std::string(translate("Reserved"));
+  if (output != configuration.outputs.end()) {
+    text = output->device.name + " · " + std::to_string(slot.deviceChannel + 1) +
+        " (" + output->device.channelPositions[slot.deviceChannel] + ')';
+  }
+  if (!slot.label.empty()) text += " · " + slot.label;
+  return text;
+}
+
+static void renderOutputMappingReview(GtkRuntime *runtime) {
+  if (!runtime->outputMappingReview.has_value()) return;
+  const auto &review = *runtime->outputMappingReview;
+  auto *model = GTK_LIST_STORE(gtk_tree_view_get_model(GTK_TREE_VIEW(runtime->ui.outputMappingPreview)));
+  gtk_list_store_clear(model);
+  const auto count = std::max(review.before.channels.size(), review.proposal.configuration.channels.size());
+  for (auto index = std::size_t{0}; index < count; ++index) {
+    const auto number = "Ch " + std::to_string(index + 1);
+    const auto before = outputMappingCell(review.before, index);
+    const auto after = outputMappingCell(review.proposal.configuration, index);
+    const auto tooltip = before + " → " + after;
+    gtk_list_store_insert_with_values(model, nullptr, -1, 0, number.c_str(),
+        1, before.c_str(), 2, after.c_str(), 3, tooltip.c_str(), -1);
+  }
+  gtk_label_set_text(GTK_LABEL(runtime->ui.outputMappingErrorLabel), review.proposal.error.c_str());
+  gtk_widget_set_visible(runtime->ui.outputMappingErrorLabel, !review.proposal.error.empty());
+  renderOutputMappingActions(runtime);
+}
+
+static void onOutputReplacementChanged(GtkComboBox *combo, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (!runtime->outputMappingReview.has_value()) return;
+  auto &review = *runtime->outputMappingReview;
+  if (review.replacementId.empty()) return;
+  const auto index = gtk_combo_box_get_active(combo);
+  if (index < 0 || static_cast<std::size_t>(index) >= review.choices.size()) {
+    review.proposal = {review.before, translate("Select a replacement output device.")};
+  } else {
+    review.proposal = replaceOutputDevice(review.before, review.replacementId, review.choices[index].device);
+    if (review.proposal.error.empty()) {
+      auto enabled = review.proposal.configuration;
+      // A disabled output must still have a unique replacement; temporarily
+      // resolve it as enabled without changing the proposed saved choice.
+      for (auto &output : enabled.outputs) if (output.id == review.replacementId) output.enabled = true;
+      const auto resolved = pipetune::resolveConfiguredOutputs(enabled, review.choices);
+      for (const auto &output : resolved) {
+        if (output.outputId == review.replacementId && output.state != pipetune::OutputConnectionState::connected)
+          review.proposal.error = translate("The selected device cannot be identified uniquely.");
+      }
+    }
+  }
+  renderOutputMappingReview(runtime);
+}
+
+static void showOutputMappingReview(GtkRuntime *runtime, OutputMappingReview review) {
+  runtime->outputMappingReview = std::move(review);
+  auto *combo = GTK_COMBO_BOX_TEXT(runtime->ui.outputReplacementCombo);
+  gtk_combo_box_text_remove_all(combo);
+  for (const auto &output : runtime->outputMappingReview->choices) {
+    const auto label = output.device.name + " · " + output.device.profile + " · " +
+        std::to_string(output.device.channelPositions.size()) + " ch";
+    gtk_combo_box_text_append_text(combo, label.c_str());
+  }
+  gtk_widget_show_all(runtime->ui.outputMappingDialog);
+  gtk_widget_set_visible(runtime->ui.outputReplacementCombo, !runtime->outputMappingReview->replacementId.empty());
+  renderOutputMappingReview(runtime);
+}
+
+static void onOutputMoveClicked(GtkButton *button, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (!controlsAreEditable(*runtime)) return;
+  const auto selected = selectedOutputChannel(*runtime);
+  if (!selected.has_value()) return;
+  const auto &configuration = runtime->transaction.desiredLive.outputConfiguration;
+  const auto up = GTK_WIDGET(button) == runtime->ui.outputMoveUpButton;
+  if ((up && *selected == 0) || (!up && *selected + 1 >= configuration.channels.size())) return;
+  auto proposal = moveOutputChannel(configuration, *selected, up ? *selected - 1 : *selected + 1);
+  showOutputMappingReview(runtime, {configuration, std::move(proposal), {}, {}});
+}
+
+static void onOutputReassignClicked(GtkButton *, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (!controlsAreEditable(*runtime)) return;
+  const auto selected = selectedOutputChannel(*runtime);
+  if (!selected.has_value()) return;
+  const auto &configuration = runtime->transaction.desiredLive.outputConfiguration;
+  const auto &id = configuration.channels[*selected].outputId;
+  if (id.empty()) return;
+  showOutputMappingReview(runtime, {configuration,
+      {configuration, translate("Select a replacement output device.")}, id, runtime->state.runtime.availableOutputs});
+}
+
+static void onOutputMappingSelectionChanged(GtkTreeSelection *, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (!runtime->updatingControls) renderOutputMappingActions(runtime);
+}
+
+static void onOutputMappingResponse(GtkDialog *, gint response, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (!runtime->outputMappingReview.has_value()) return;
+  auto &review = *runtime->outputMappingReview;
+  if (response != GTK_RESPONSE_ACCEPT) {
+    gtk_widget_hide(runtime->ui.outputMappingDialog);
+    runtime->outputMappingReview.reset();
+    return;
+  }
+  if (!controlsAreEditable(*runtime) || runtime->transaction.desiredLive.outputConfiguration != review.before) {
+    review.proposal.error = translate("Output settings changed. Reopen the mapping review.");
+  }
+  if (review.proposal.error.empty() && !review.replacementId.empty()) {
+    auto enabled = review.proposal.configuration;
+    for (auto &output : enabled.outputs) if (output.id == review.replacementId) output.enabled = true;
+    const auto resolved = pipetune::resolveConfiguredOutputs(enabled, runtime->state.runtime.availableOutputs);
+    for (const auto &output : resolved) {
+      if (output.outputId == review.replacementId && (output.state != pipetune::OutputConnectionState::connected ||
+          !runtime->state.runtime.outputInventoryReady || !runtime->state.runtime.outputInventoryError.empty())) {
+        review.proposal.error = translate("The selected output is no longer available with this profile. Reopen the mapping review.");
+      }
+    }
+  }
+  if (!review.proposal.error.empty()) {
+    renderOutputMappingReview(runtime);
+    return;
+  }
+  auto desired = runtime->transaction.desiredLive;
+  desired.outputConfiguration = std::move(review.proposal.configuration);
+  gtk_widget_hide(runtime->ui.outputMappingDialog);
+  runtime->outputMappingReview.reset();
+  editDesiredSettings(runtime, desired);
+}
+
+static gboolean onOutputMappingDelete(GtkWidget *, GdkEvent *, gpointer userData) {
+  onOutputMappingResponse(nullptr, GTK_RESPONSE_CANCEL, userData);
+  return TRUE;
 }
 
 static void onRateChanged(GtkComboBox *combo, gpointer userData) {
@@ -2083,6 +2261,14 @@ static void connectMainWindowSignals(GtkRuntime *runtime) {
                    G_CALLBACK(onRateChanged), runtime);
   g_signal_connect(runtime->ui.outputModeCombo, "changed", G_CALLBACK(onOutputModeChanged), runtime);
   g_signal_connect(runtime->ui.outputLabelRenderer, "edited", G_CALLBACK(onOutputLabelEdited), runtime);
+  g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(runtime->ui.outputChannelView)),
+                   "changed", G_CALLBACK(onOutputMappingSelectionChanged), runtime);
+  g_signal_connect(runtime->ui.outputMoveUpButton, "clicked", G_CALLBACK(onOutputMoveClicked), runtime);
+  g_signal_connect(runtime->ui.outputMoveDownButton, "clicked", G_CALLBACK(onOutputMoveClicked), runtime);
+  g_signal_connect(runtime->ui.outputReassignButton, "clicked", G_CALLBACK(onOutputReassignClicked), runtime);
+  g_signal_connect(runtime->ui.outputReplacementCombo, "changed", G_CALLBACK(onOutputReplacementChanged), runtime);
+  g_signal_connect(runtime->ui.outputMappingDialog, "response", G_CALLBACK(onOutputMappingResponse), runtime);
+  g_signal_connect(runtime->ui.outputMappingDialog, "delete-event", G_CALLBACK(onOutputMappingDelete), runtime);
   g_signal_connect(runtime->ui.rateEnforcementCombo, "changed",
                    G_CALLBACK(onRateEnforcementChanged), runtime);
   g_signal_connect(runtime->ui.dspBackendCombo, "changed",

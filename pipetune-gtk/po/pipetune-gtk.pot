@@ -92,6 +92,9 @@ msgstr ""
 msgid "Advanced"
 msgstr ""
 
+msgid "After"
+msgstr ""
+
 msgid "All"
 msgstr ""
 
@@ -117,6 +120,9 @@ msgid "Available"
 msgstr ""
 
 msgid "Baseline"
+msgstr ""
+
+msgid "Before"
 msgstr ""
 
 msgid "Bypass"
@@ -418,6 +424,12 @@ msgstr ""
 msgid "Measured frame rate"
 msgstr ""
 
+msgid "Move down"
+msgstr ""
+
+msgid "Move up"
+msgstr ""
+
 msgid "Multiple — outputs selected in PipeTune"
 msgstr ""
 
@@ -446,6 +458,9 @@ msgid "Output devices"
 msgstr ""
 
 msgid "Output mode"
+msgstr ""
+
+msgid "Output settings changed. Reopen the mapping review."
 msgstr ""
 
 #, brace-format
@@ -516,6 +531,9 @@ msgstr ""
 msgid "Preset warnings"
 msgstr ""
 
+msgid "Preview mapping"
+msgstr ""
+
 msgid "Processing"
 msgstr ""
 
@@ -535,6 +553,9 @@ msgid "Purpose"
 msgstr ""
 
 msgid "Quit"
+msgstr ""
+
+msgid "Reassign device…"
 msgstr ""
 
 msgid "Reserved"
@@ -559,6 +580,12 @@ msgid "Restoring the live settings captured when the dialog opened"
 msgstr ""
 
 msgid "Restoring the previous live settings…"
+msgstr ""
+
+msgid "Review channel mapping"
+msgstr ""
+
+msgid "Review where each final EffeTune channel will play. Your preset is unchanged. Preview this mapping, then use Apply in the main window to save it."
 msgstr ""
 
 msgid "Rollback requested"
@@ -596,6 +623,12 @@ msgid "Scalar"
 msgstr ""
 
 msgid "seconds"
+msgstr ""
+
+msgid "Select a replacement output device."
+msgstr ""
+
+msgid "Select at least one output device."
 msgstr ""
 
 msgid "Setting up PipeTune for this user…"
@@ -661,6 +694,9 @@ msgid "The OS selects the output. Saved multiple-output assignments below are in
 msgstr ""
 
 msgid "The selected device cannot be identified uniquely."
+msgstr ""
+
+msgid "The selected output is no longer available with this profile. Reopen the mapping review."
 msgstr ""
 
 msgid "The UI language change will take effect after PipeTune GTK restarts."

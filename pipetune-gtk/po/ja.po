@@ -96,6 +96,9 @@ msgstr "有効なプラグイン"
 msgid "Advanced"
 msgstr "詳細"
 
+msgid "After"
+msgstr "変更後"
+
 msgid "All"
 msgstr "すべて"
 
@@ -122,6 +125,9 @@ msgstr "利用可能"
 
 msgid "Baseline"
 msgstr "ベースライン"
+
+msgid "Before"
+msgstr "変更前"
 
 msgid "Bypass"
 msgstr "バイパス"
@@ -422,6 +428,12 @@ msgstr "負荷"
 msgid "Measured frame rate"
 msgstr "実測フレームレート"
 
+msgid "Move down"
+msgstr "下へ移動"
+
+msgid "Move up"
+msgstr "上へ移動"
+
 msgid "Multiple — outputs selected in PipeTune"
 msgstr "複数 — PipeTuneで出力先を選択"
 
@@ -451,6 +463,9 @@ msgstr "出力デバイス"
 
 msgid "Output mode"
 msgstr "出力モード"
+
+msgid "Output settings changed. Reopen the mapping review."
+msgstr "出力設定が変更されました。割り当ての確認画面を開き直してください。"
 
 #, brace-format
 msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
@@ -520,6 +535,9 @@ msgstr "プリセットが必要です"
 msgid "Preset warnings"
 msgstr "プリセット警告"
 
+msgid "Preview mapping"
+msgstr "割り当てをプレビュー"
+
 msgid "Processing"
 msgstr "処理"
 
@@ -540,6 +558,9 @@ msgstr "用途名"
 
 msgid "Quit"
 msgstr "終了"
+
+msgid "Reassign device…"
+msgstr "デバイスを再割り当て…"
 
 msgid "Reserved"
 msgstr "予約済み"
@@ -564,6 +585,12 @@ msgstr "ダイアログを開いた時点のライブ設定を復元していま
 
 msgid "Restoring the previous live settings…"
 msgstr "以前のライブ設定を復元中…"
+
+msgid "Review channel mapping"
+msgstr "チャンネル割り当ての確認"
+
+msgid "Review where each final EffeTune channel will play. Your preset is unchanged. Preview this mapping, then use Apply in the main window to save it."
+msgstr "EffeTuneの各最終チャンネルの出力先を確認してください。プリセット自体は変更しません。この割り当てをプレビューしてから、メイン画面の「適用」で保存します。"
 
 msgid "Rollback requested"
 msgstr "ロールバックを要求しました"
@@ -601,6 +628,12 @@ msgstr "スカラー"
 
 msgid "seconds"
 msgstr "秒"
+
+msgid "Select a replacement output device."
+msgstr "再割り当て先の出力デバイスを選択してください。"
+
+msgid "Select at least one output device."
+msgstr "出力デバイスを1つ以上選択してください。"
 
 msgid "Setting up PipeTune for this user…"
 msgstr "このユーザー向けに PipeTune をセットアップしています…"
@@ -666,6 +699,9 @@ msgstr "出力先はOSが選択します。以下の保存済みの複数出力�
 
 msgid "The selected device cannot be identified uniquely."
 msgstr "選択したデバイスを一意に特定できません。"
+
+msgid "The selected output is no longer available with this profile. Reopen the mapping review."
+msgstr "選択した出力はこのプロファイルで利用できなくなりました。割り当ての確認画面を開き直してください。"
 
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "UI言語の変更はPipeTune GTKの再起動後に反映されます。"
