@@ -194,6 +194,20 @@ pipetune setup --preset /absolute/path/to/example.effetune_preset
 pipetune bypass
 ```
 
+## 音声出力の一覧
+
+現在のPipeWireセッションで利用できる音声出力と、それぞれの有効なプロファイル、全チャンネルの位置を確認できます。
+
+```sh
+pipetune output list
+pipetune output list --json
+```
+
+PipeTuneデーモンが停止している場合も利用でき、出力先、プロファイル、音量は変更しません。
+PipeTuneの内部ノードと音声入力は一覧から除外します。
+JSONには、デバイスの識別情報と一時的なPipeWireノードIDを分けて出力します。
+DSPの上限である16チャンネルを超える出力など、選択できない構成も省略せず、理由を添えて表示します。
+
 ## PCM周波数の選択
 
 PipeTune設定ウインドウの `DSPサンプリング周波数` と `PipeWire強制方式` から設定出来ます。

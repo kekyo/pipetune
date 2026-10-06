@@ -12,6 +12,7 @@
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
 #include "pipetune/dsp_pipeline.h"
+#include "pipetune/output_inventory.h"
 #include "pipetune/pipewire_pipeline.h"
 #include "pipetune/startup_config.h"
 #include "pipetune/version.h"
@@ -491,6 +492,20 @@ int main(int argc, char **argv) {
   }
   if (parsed.options.action == pipetune::CommandLineAction::bypass) {
     return runPersistentBypass(parsed.options);
+  }
+  if (parsed.options.action == pipetune::CommandLineAction::outputList) {
+    const auto inventory = pipetune::queryAvailableOutputs();
+    if (!inventory.error.empty()) {
+      std::cerr << "pipetune: " << inventory.error << '\n';
+      return 1;
+    }
+    const auto formatted = pipetune::formatOutputInventory(inventory.outputs, parsed.options.json);
+    if (formatted.empty()) {
+      std::cerr << "pipetune: cannot format audio output inventory\n";
+      return 1;
+    }
+    std::cout << formatted << '\n';
+    return 0;
   }
   if (isRateCommand(parsed.options.action)) {
     return runRateCommand(parsed.options);

@@ -9,6 +9,7 @@
 #include <iostream>
 #include <span>
 #include <string_view>
+#include <vector>
 
 static bool check(bool condition, std::string_view message) {
   if (!condition) {
@@ -126,6 +127,27 @@ static bool testBypassAction() {
          check(explicitResult.options.controlSocketPath ==
                    "/tmp/pipetune.sock",
                "explicit bypass socket differs");
+}
+
+static bool testOutputActions() {
+  constexpr auto list = std::array<std::string_view, 2>{"output", "list"};
+  constexpr auto json = std::array<std::string_view, 3>{"output", "list", "--json"};
+  const auto plain = pipetune::parseCommandLine(list);
+  const auto encoded = pipetune::parseCommandLine(json);
+  if (!check(plain.error.empty() && plain.options.action == pipetune::CommandLineAction::outputList &&
+             !plain.options.json, "output list must query available devices") ||
+      !check(encoded.error.empty() && encoded.options.action == pipetune::CommandLineAction::outputList &&
+             encoded.options.json, "output list --json must select machine-readable inventory")) return false;
+  for (const auto &arguments : std::array{
+           std::vector<std::string_view>{"output"},
+           std::vector<std::string_view>{"output", "unknown"},
+           std::vector<std::string_view>{"output", "list", "--json", "--json"},
+           std::vector<std::string_view>{"output", "list", "--preset", "file"},
+           std::vector<std::string_view>{"output", "list", "--socket", "/tmp/socket"}}) {
+    if (!check(!pipetune::parseCommandLine(arguments).error.empty(),
+               "output list must reject incomplete, duplicate, and unrelated options")) return false;
+  }
+  return true;
 }
 
 static bool testRateActions() {
@@ -569,7 +591,7 @@ static bool testRejectedArguments() {
 int main() {
   const auto passed = testRunDefaults() && testExplicitOptions() &&
                       testControlActions() && testDaemonAction() &&
-                      testBypassAction() && testRateActions() &&
+                      testBypassAction() && testOutputActions() && testRateActions() &&
                       testDspActions() &&
                       testUserSetupActions() &&
                       testConfigResetAction() &&

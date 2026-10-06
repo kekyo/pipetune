@@ -27,6 +27,8 @@ enum class CommandLineAction {
   daemon,
   /** Bypass live and startup DSP processing. */
   bypass,
+  /** List currently available audio outputs and all profile channels. */
+  outputList,
   /** Show the configured and effective sample-rate state. */
   rateGet,
   /** List automatic and fixed sample-rate choices. */

@@ -211,6 +211,22 @@ pipetune setup --preset /absolute/path/to/example.effetune_preset
 pipetune bypass
 ```
 
+## Listing audio outputs
+
+List the audio outputs in the current PipeWire session, including each output's
+active profile and all channel positions:
+
+```sh
+pipetune output list
+pipetune output list --json
+```
+
+The command works while the PipeTune daemon is stopped and leaves routing,
+profiles, and volume unchanged. Internal PipeTune nodes and audio inputs are
+excluded. The JSON includes device identity separately from the temporary
+PipeWire node ID, plus a diagnostic for layouts that cannot be selected, such
+as outputs exceeding the sixteen-channel DSP limit.
+
 ## Choosing the PCM rate
 
 Configure the rate using `DSP sampling frequency` and `PipeWire enforcement`

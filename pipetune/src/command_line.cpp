@@ -434,6 +434,20 @@ CommandLineParseResult parseCommandLine(
   if (!arguments.empty() && arguments.front() == "bypass") {
     return parseBypassCommandLine(arguments.subspan(1));
   }
+  if (!arguments.empty() && arguments.front() == "output") {
+    if (arguments.size() < 2 || arguments[1] != "list") {
+      return parseError(std::move(options), "output requires list");
+    }
+    options.action = CommandLineAction::outputList;
+    for (const auto argument : arguments.subspan(2)) {
+      if (argument != "--json") {
+        return parseError(std::move(options), "unknown output list option: " + std::string(argument));
+      }
+      if (options.json) return parseError(std::move(options), "duplicate option: --json");
+      options.json = true;
+    }
+    return {.options = std::move(options), .error = {}};
+  }
   if (!arguments.empty() && arguments.front() == "rate") {
     return parseRateCommandLine(arguments.subspan(1));
   }
@@ -607,6 +621,7 @@ std::string_view commandLineUsage() noexcept {
   return "Usage:\n"
          "  pipetune daemon [--config PATH]\n"
          "  pipetune bypass [--socket PATH]\n"
+         "  pipetune output list [--json]\n"
          "  pipetune rate get [--json] [--socket PATH]\n"
          "  pipetune rate list [--json] [--socket PATH]\n"
          "  pipetune rate set automatic [--socket PATH]\n"

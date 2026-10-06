@@ -232,8 +232,10 @@ add_library(
   src/dsp_pipeline_slot.cpp
   src/filter_graph_properties.cpp
   src/input_telemetry.cpp
+  src/output_inventory.cpp
   src/pipewire_buffer_io.cpp
   src/pipewire_latency.cpp
+  src/pipewire_output_inventory.cpp
   src/pipewire_pipeline.cpp
   src/process_runner.cpp
   src/rate_command.cpp
@@ -780,6 +782,16 @@ if(BUILD_TESTING)
     COMMAND pipetune_user_setup_tests)
 
   find_program(PIPETUNE_PIPEWIRE_EXECUTABLE pipewire REQUIRED)
+  add_executable(pipetune_output_inventory_observer_tests test/output_inventory_observer_test.cpp)
+  target_include_directories(pipetune_output_inventory_observer_tests PRIVATE src)
+  target_link_libraries(pipetune_output_inventory_observer_tests PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE)
+  target_compile_options(pipetune_output_inventory_observer_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_output_inventory
+    COMMAND ${PIPETUNE_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/output-inventory.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE} $<TARGET_FILE:pipetune>
+      $<TARGET_FILE:pipetune_output_inventory_observer_tests>)
+  set_tests_properties(pipetune_output_inventory PROPERTIES TIMEOUT 30)
   add_executable(pipetune_output_configuration_tests test/output_configuration_test.cpp)
   target_link_libraries(pipetune_output_configuration_tests PRIVATE pipetune_core)
   target_compile_options(pipetune_output_configuration_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
