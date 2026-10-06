@@ -6,7 +6,7 @@
 
 DSPパイプラインは1つとし、EffeTune側でチャンネル別の処理、Matrixによる分配、クロスオーバー、Time Alignmentなどを構成する。PipeTuneはデバイスの選択、物理出力への対応付け、デバイス間の同期を担当する。OSの全体音量とミュートは複数出力でも利用できるようにする。
 
-2026-10-06の分析と設計検討を保存した計画である。調査基準はPipeTune HEAD `846c691c05646b814a34a5e9198a8192f12e6044`、EffeTune 2.12.0 `1d4d33b2e631a840ae178295e3ea2b66b06b1e43`。状態は実装未着手であり、以下の完了条件は未達成である。
+2026-10-06の分析と設計検討を保存した計画である。調査基準はPipeTune HEAD `846c691c05646b814a34a5e9198a8192f12e6044`、EffeTune 2.12.0 `1d4d33b2e631a840ae178295e3ea2b66b06b1e43`。フェーズ1の検証ドライバーに着手済みであり、製品の複数出力機能と以下の最終完了条件は未達成である。確認済みの内容と残作業は末尾の実施記録に区別して記載する。
 
 今回の範囲は単一モードの維持、複数モード、出力構成とチャンネル対応の保存、デバイス間の同期、CLIとGTKからの操作、OSとの統合、切断・再接続・終了時の復旧までとする。EffeTuneのDSPアルゴリズム変更、DSPパラメータ編集UIの追加、16チャンネルを超えるDSP拡張、EffeTune側のカスタムデバイス構成の自動インポートは含めない。
 
@@ -319,3 +319,37 @@ GTKの検証は既存のテスト基盤に追加する。ブラウザを介す�
 | 保存形式と制御要求の単位 | フェーズ2の実装前 | 既存の原子的保存、設定トランザクション、構成の一貫性 |
 
 方式や必要バージョンが決まったら、その根拠と詳細を本計画へ反映する。現在の計画保存を、これらの未確定事項の決定や実装完了として扱わない。
+
+## 実施記録
+
+### フェーズ1: チャンネル分配、再接続、音量の仮想環境検証
+
+2026-10-06に以下の検証を追加した。検証ドライバーは[pipetune_multi_device_output_probe](../../../pipetune/tools/multi-device-output-probe.cpp)、起動と結果判定は[Node.jsテスト](../../../pipetune/test/multi-device-output.mjs)にある。CMakeのテストビルドに含め、既存の`make test`から実行する。
+
+- `06fca0a chore: add multi-device output validation driver`: 4chの分配を検証する実行可能なドライバー。
+- `32c51a3 chore: verify output channel assignments across reconnects`: 切断中と再接続後のチャンネル対応を検証。
+- `6e5f28c chore: verify combined output volume and mute with PCM`: 集約出力の音量、ミュート、解除のPCMを検証。
+
+テストごとにPipeWire、WirePlumber、D-BusとXDG設定・状態の領域を分離する。ハードウェアモニターを無効にし、2つの選択対象と1つの未選択対象を仮想出力として生成する。WirePlumber 0.4のモニター無効化は、標準の`90-enable-all.lua`より前に読み込ませる。テスト終了時はD-Busの子プロセスも含めて終了させる。
+
+信号はチャンネルを識別する値と127フレーム周期の連番を組み合わせた、float32で正確に表せるPCMとする。各受信サンプルのチャンネル識別値、左右の対応、連番を照合する。一定時間の経過だけでは合格にしない。グラフ周波数は48 kHz、quantumは256フレームとする。
+
+| テスト | 合格条件と確認結果 |
+| --- | --- |
+| `pipetune_multi_device_output` | Ch 1・2とCh 3・4を別々のステレオ出力で各65,536フレーム以上受信。未選択出力の受信信号は0、チャンネル・連番エラーは0 |
+| `pipetune_multi_device_reconnect` | 一方を削除した状態で他方が元のCh 3・4を8,192フレーム受信した後に、同じ名前の出力を再生成。Ch 1・2への復帰を確認し、両出力とも累計131,072フレーム以上、未選択出力の信号とチャンネル・連番エラーは0 |
+| `pipetune_multi_device_volume` | 集約ノードの全チャンネルを線形ゲイン0.25へ変更、ミュート、ゲイン1.0で解除。各出力で各状態を8,192フレーム以上、PCMの減衰値・無音・復帰として確認 |
+
+上記3件は、ホストのPipeWire 1.0.5 / WirePlumber 0.4.17と、Debian trixieコンテナ内のPipeWire 1.4.2 / WirePlumber 0.5.8の両方で成功した。各テストは未実装状態でREDを確認してから実装した。ログは`artifacts/verification/multi-device-output/`の`probe-red.log`、`reconnect-red.log`、`reconnect-green.log`、`volume-red.log`、`volume-first.log`、`probe-trixie.log`、`volume-trixie.log`に保存している。
+
+この段階で確認できたのは、標準combine streamが明示した仮想出力へチャンネルを分配できること、同名ノードの再出現時に対応を維持できること、集約ノードに入力した信号へ全体音量とミュートを適用できることである。製品のDSP、smart filter、endpoint互換ポリシー、OS設定画面を通した統合の確認ではない。同名仮想ノードの再生成は、物理デバイスの安定した識別方法を検証した結果にも置き換えない。
+
+実機の読み取り専用列挙では、TXとUR22mkIIの出力ノードから`device.profile.name`、チャンネル数、位置を取得でき、対応するDeviceオブジェクトから`device.name`、`device.serial`、`device.bus-id`、`device.bus-path`を取得できた。UR22mkIIの`device.serial`は製品名を含む値であり、個体固有のシリアルと断定できない。ALSAカード番号を含む`object.path`や`api.alsa.path`を永続的な識別子として採用せず、同型機の曖昧さとUSBポート変更を含めて識別規則を確定する。抽出結果は`output-identities.json`に保存した。
+
+フェーズ1は未完了である。次の内容を完了してから、採用方式と必要バージョンを確定してフェーズ2へ進む。
+
+- 物理出力の遅延差を与えたPCM検証と、補償量を状態表示へ取得する方法。
+- 独立クロックの実機測定、長時間動作、レート変更、再同期の合格基準。
+- DSP後段の音量を保った公開ノード構成と、WirePlumber 0.4・0.5の実際のPipeTuneポリシーとの統合。
+- 物理出力の非表示、既定出力の退避・復元、通常終了と異常終了時の復旧。
+- 個体識別・プロファイル変更の規則、配布対象への影響と必要なPipeWireバージョン。
