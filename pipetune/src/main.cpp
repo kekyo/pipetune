@@ -9,6 +9,7 @@
 #include "config_reset_command.h"
 #include "dsp_backend_command.h"
 #include "installed_tools.h"
+#include "output_command.h"
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
 #include "pipetune/dsp_pipeline.h"
@@ -366,6 +367,68 @@ static bool isDspCommand(pipetune::CommandLineAction action) {
          action == pipetune::CommandLineAction::dspSet;
 }
 
+static bool isOutputCommand(pipetune::CommandLineAction action) {
+  return action == pipetune::CommandLineAction::outputList ||
+         action == pipetune::CommandLineAction::outputGet ||
+         action == pipetune::CommandLineAction::outputSelect ||
+         action == pipetune::CommandLineAction::outputMode ||
+         action == pipetune::CommandLineAction::outputSet;
+}
+
+static int runOutputCommand(const pipetune::CommandLineOptions &options) {
+  if (options.action == pipetune::CommandLineAction::outputList) {
+    const auto inventory = pipetune::queryAvailableOutputs();
+    if (!inventory.error.empty()) {
+      std::cerr << "pipetune: " << inventory.error << '\n';
+      return 1;
+    }
+    const auto formatted = pipetune::formatOutputInventory(inventory.outputs, options.json);
+    if (formatted.empty()) {
+      std::cerr << "pipetune: cannot format audio output inventory\n";
+      return 1;
+    }
+    std::cout << formatted << '\n';
+    return 0;
+  }
+  const auto socket = pipetune::resolveControlSocketPath(options.controlSocketPath);
+  if (!socket.error.empty()) {
+    std::cerr << "pipetune: " << socket.error << '\n';
+    return 1;
+  }
+  if (options.action == pipetune::CommandLineAction::outputGet) {
+    const auto queried = pipetune::queryOutputStatus(socket.path);
+    if (!queried.error.empty()) {
+      std::cerr << "pipetune: " << queried.error << '\n';
+      return 1;
+    }
+    std::cout << (options.json ? queried.json + '\n' : pipetune::formatOutputStatus(queried.status));
+    return 0;
+  }
+  const auto config = options.configPath.empty() ? resolveUserStartupConfigPath() :
+      pipetune::StartupConfigPathResult{.path = options.configPath, .error = {}};
+  if (!config.error.empty()) {
+    std::cerr << "pipetune: " << config.error << '\n';
+    return 1;
+  }
+  const auto kind = options.action == pipetune::CommandLineAction::outputMode ? pipetune::OutputChangeKind::mode :
+      options.action == pipetune::CommandLineAction::outputSelect ? pipetune::OutputChangeKind::select :
+      pipetune::OutputChangeKind::replace;
+  const auto result = pipetune::executeOutputChange({config.path, socket.path},
+      {kind, options.outputConfiguration, options.outputNodes});
+  if (!result.success) {
+    std::cerr << "pipetune: " << result.error << '\n';
+    return 1;
+  }
+  if (result.liveApplied) {
+    std::cout << "Output configuration is active and saved for future starts.\n"
+              << pipetune::formatOutputStatus(result.status);
+  } else {
+    std::cout << "Output configuration is saved for the next daemon start.\n";
+    if (!result.notice.empty()) std::cout << result.notice << '\n';
+  }
+  return 0;
+}
+
 static int runDspCommand(const pipetune::CommandLineOptions &options) {
   const auto socket =
       pipetune::resolveControlSocketPath(options.controlSocketPath);
@@ -496,19 +559,8 @@ int main(int argc, char **argv) {
   if (parsed.options.action == pipetune::CommandLineAction::bypass) {
     return runPersistentBypass(parsed.options);
   }
-  if (parsed.options.action == pipetune::CommandLineAction::outputList) {
-    const auto inventory = pipetune::queryAvailableOutputs();
-    if (!inventory.error.empty()) {
-      std::cerr << "pipetune: " << inventory.error << '\n';
-      return 1;
-    }
-    const auto formatted = pipetune::formatOutputInventory(inventory.outputs, parsed.options.json);
-    if (formatted.empty()) {
-      std::cerr << "pipetune: cannot format audio output inventory\n";
-      return 1;
-    }
-    std::cout << formatted << '\n';
-    return 0;
+  if (isOutputCommand(parsed.options.action)) {
+    return runOutputCommand(parsed.options);
   }
   if (isRateCommand(parsed.options.action)) {
     return runRateCommand(parsed.options);

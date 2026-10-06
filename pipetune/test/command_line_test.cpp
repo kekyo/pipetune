@@ -130,6 +130,26 @@ static bool testBypassAction() {
 }
 
 static bool testOutputActions() {
+  auto action = std::size_t{0};
+  const auto actions = std::array{pipetune::CommandLineAction::outputGet, pipetune::CommandLineAction::outputMode,
+      pipetune::CommandLineAction::outputSelect, pipetune::CommandLineAction::outputSet};
+  for (const auto &arguments : std::array{
+           std::vector<std::string_view>{"output", "get", "--json", "--socket", "/tmp/socket"},
+           std::vector<std::string_view>{"output", "mode", "single", "--config", "/tmp/environment"},
+           std::vector<std::string_view>{"output", "select", "dac-a", "dac-b"},
+           std::vector<std::string_view>{"output", "set", R"({"mode":"single","outputs":[],"channels":[]})"}}) {
+    const auto parsed = pipetune::parseCommandLine(arguments);
+    if (!check(parsed.error.empty() && parsed.options.action == actions[action++],
+               "output get, mode, select, and set commands must select the requested action")) return false;
+  }
+  const auto selected = pipetune::parseCommandLine(std::array<std::string_view, 8>{
+      "output", "select", "dac-a", "--socket", "/tmp/socket", "dac-b", "--config", "/tmp/environment"});
+  const auto mode = pipetune::parseCommandLine(std::array<std::string_view, 3>{"output", "mode", "multiple"});
+  if (!check(selected.error.empty() && selected.options.outputNodes == std::vector<std::string>{"dac-a", "dac-b"} &&
+             selected.options.controlSocketPath == "/tmp/socket" && selected.options.configPath == "/tmp/environment",
+             "selection must retain device order and explicit endpoint paths") ||
+      !check(mode.error.empty() && mode.options.outputConfiguration.mode == pipetune::OutputMode::multiple,
+             "mode must retain the requested multiple-output choice")) return false;
   constexpr auto list = std::array<std::string_view, 2>{"output", "list"};
   constexpr auto json = std::array<std::string_view, 3>{"output", "list", "--json"};
   const auto plain = pipetune::parseCommandLine(list);
@@ -141,6 +161,15 @@ static bool testOutputActions() {
   for (const auto &arguments : std::array{
            std::vector<std::string_view>{"output"},
            std::vector<std::string_view>{"output", "unknown"},
+           std::vector<std::string_view>{"output", "select"},
+           std::vector<std::string_view>{"output", "select", "dac-a", "--json"},
+           std::vector<std::string_view>{"output", "get", "--config", "/tmp/environment"},
+           std::vector<std::string_view>{"output", "get", "--socket"},
+           std::vector<std::string_view>{"output", "get", "--socket", "/tmp/one", "--socket", "/tmp/two"},
+           std::vector<std::string_view>{"output", "mode"},
+           std::vector<std::string_view>{"output", "mode", "unknown"},
+           std::vector<std::string_view>{"output", "set"},
+           std::vector<std::string_view>{"output", "set", "{}"},
            std::vector<std::string_view>{"output", "list", "--json", "--json"},
            std::vector<std::string_view>{"output", "list", "--preset", "file"},
            std::vector<std::string_view>{"output", "list", "--socket", "/tmp/socket"}}) {

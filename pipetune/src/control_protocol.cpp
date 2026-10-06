@@ -249,12 +249,18 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
             .error = {}};
   }
   if (command == "set-output") {
-    if (yyjson_obj_size(root) != 2)
-      return requestError("set-output request requires only command and configuration fields");
+    if (yyjson_obj_size(root) != 2 && yyjson_obj_size(root) != 3)
+      return requestError("set-output requires command, configuration, and optional expectedRevision");
+    auto expected = std::optional<std::uint64_t>{};
+    if (yyjson_obj_size(root) == 3) {
+      auto *revision = yyjson_obj_get(root, "expectedRevision");
+      if (!yyjson_is_uint(revision)) return requestError("expectedRevision must be an unsigned integer");
+      expected = yyjson_get_uint(revision);
+    }
     auto configuration = parseOutputConfigurationJson(yyjson_obj_get(root, "configuration"));
     if (!configuration.error.empty()) return requestError(std::move(configuration.error));
     return {.request = {.command = ControlCommand::setOutput, .presetPath = {},
-                        .outputConfiguration = std::move(configuration.configuration)}, .error = {}};
+                        .outputConfiguration = std::move(configuration.configuration), .expectedRevision = expected}, .error = {}};
   }
   if (command != "load") {
     return requestError("unsupported control command");
@@ -531,13 +537,16 @@ static std::string_view presetEntryStateName(PresetEntryState state) noexcept {
   return {};
 }
 
-std::string makeSetOutputControlRequest(const OutputConfiguration &configuration) {
+std::string makeSetOutputControlRequest(const OutputConfiguration &configuration,
+    std::optional<std::uint64_t> expectedRevision) {
   auto *root = static_cast<yyjson_mut_val *>(nullptr);
   auto document = createObjectDocument(root);
   if (document == nullptr) return {};
   auto *output = makeOutputConfigurationJson(document.get(), configuration);
   if (output == nullptr || !addString(document.get(), root, "command", "set-output") ||
       !yyjson_mut_obj_add_val(document.get(), root, "configuration", output)) return {};
+  if (expectedRevision.has_value() &&
+      !yyjson_mut_obj_add_uint(document.get(), root, "expectedRevision", *expectedRevision)) return {};
   return writeDocument(document.get());
 }
 

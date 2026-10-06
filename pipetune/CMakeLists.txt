@@ -234,6 +234,7 @@ add_library(
   src/filter_graph_properties.cpp
   src/input_telemetry.cpp
   src/output_inventory.cpp
+  src/output_command.cpp
   src/output_distribution.cpp
   src/pipewire_buffer_io.cpp
   src/pipewire_latency.cpp
@@ -935,6 +936,12 @@ if(BUILD_TESTING)
     PROPERTIES
       SKIP_RETURN_CODE 77
       TIMEOUT 30)
+
+  add_executable(pipetune_output_command_tests test/output_command_test.cpp)
+  target_include_directories(pipetune_output_command_tests PRIVATE src)
+  target_link_libraries(pipetune_output_command_tests PRIVATE pipetune_pipewire)
+  target_compile_options(pipetune_output_command_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_output_command_tests COMMAND pipetune_output_command_tests)
 
   add_executable(
     pipetune_rate_command_tests

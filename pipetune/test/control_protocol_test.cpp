@@ -36,6 +36,11 @@ static bool testRequests() {
   if (!check(output.error.empty() && output.request.command == pipetune::ControlCommand::setOutput &&
              output.request.outputConfiguration == pipetune::OutputConfiguration{},
              "valid output configuration requests must be accepted")) return false;
+  const auto guardedOutput = pipetune::parseControlRequest(
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"expectedRevision":7})");
+  if (!check(guardedOutput.error.empty() && guardedOutput.request.expectedRevision == 7 &&
+             !output.request.expectedRevision.has_value(),
+             "output requests must accept an expected configuration revision")) return false;
   const auto statusJson = pipetune::makeStatusControlRequest();
   const auto status = pipetune::parseControlRequest(statusJson);
   if (!check(status.error.empty(), status.error) ||
@@ -821,14 +826,19 @@ static bool testOutputStatus() {
       .channels = {{"", 0, "Reserved"}, {"saved", 0, "Left"}, {"saved", 1, "Right"}}};
   status.availableOutputs = {{status.outputConfiguration.outputs[0].device, "current-node", 73, UINT64_MAX}};
   status.outputInventoryReady = true;
-  const auto request = pipetune::parseControlRequest(pipetune::makeSetOutputControlRequest(status.outputConfiguration));
+  const auto request = pipetune::parseControlRequest(pipetune::makeSetOutputControlRequest(status.outputConfiguration, UINT64_MAX));
   if (!check(request.error.empty() && request.request.command == pipetune::ControlCommand::setOutput &&
-             request.request.outputConfiguration == status.outputConfiguration,
+             request.request.outputConfiguration == status.outputConfiguration && request.request.expectedRevision == UINT64_MAX,
              "output requests must preserve every fixed assignment")) return false;
   for (const auto json : {
       R"({"command":"set-output"})",
       R"({"command":"set-output","configuration":null})",
       R"({"command":"set-output","configuration":{"mode":"multiple","outputs":[],"channels":[]}})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"expectedRevision":-1})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"expectedRevision":1.5})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"expectedRevision":"7"})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"expectedRevision":null})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"expectedRevision":0,"expectedRevision":1})",
       R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"extra":true})"}) {
     if (!check(!pipetune::parseControlRequest(json).error.empty(), "incomplete or invalid output requests must fail")) return false;
   }

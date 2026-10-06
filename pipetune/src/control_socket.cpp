@@ -650,11 +650,16 @@ exchangeControlMessage(const std::filesystem::path &socketPath,
   if (!configureClientTimeouts(descriptor, error) ||
       connect(descriptor, reinterpret_cast<const sockaddr *>(&address),
               addressLength) != 0) {
+    // Only a refused or missing endpoint proves that no request was sent.
+    // Timeouts and failures after connecting may hide an applied change.
+    const auto unavailable =
+        error.empty() && (errno == ENOENT || errno == ECONNREFUSED);
     if (error.empty()) {
       error = socketError("cannot connect to PipeTune control socket");
     }
     close(descriptor);
-    return {.response = {}, .error = std::move(error)};
+    return {.response = {}, .error = std::move(error),
+            .unavailable = unavailable};
   }
   if (!sameUserPeer(descriptor)) {
     close(descriptor);

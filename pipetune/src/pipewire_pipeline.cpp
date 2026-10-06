@@ -210,6 +210,7 @@ struct PipeWireRuntime {
   std::mutex outputRequestMutex;
   std::condition_variable outputRequestCondition;
   std::optional<OutputConfiguration> requestedOutput;
+  std::optional<std::uint64_t> requestedOutputRevision;
   bool outputRequestCompleted = false;
   bool outputRequestsStopped = false;
   std::string outputRequestError;
@@ -1571,11 +1572,15 @@ static void outputChangeRequested(void *data, std::uint64_t) {
     runtime.dspSampleRate.store(runtime.previousOutputRate, std::memory_order_release);
   } else {
     auto configuration = OutputConfiguration{};
+    auto expectedRevision = std::optional<std::uint64_t>{};
     {
       auto requestLock = std::scoped_lock(runtime.outputRequestMutex);
       if (!runtime.requestedOutput.has_value() || runtime.outputRequestCompleted) return;
       configuration = *runtime.requestedOutput;
+      expectedRevision = runtime.requestedOutputRevision;
     }
+    if (expectedRevision.has_value() && *expectedRevision != runtime.configurationRevision.load(std::memory_order_acquire))
+      return completeOutputRequest(runtime, "configuration changed; refresh output settings before applying them");
     const auto error = validateOutputConfiguration(configuration);
     if (!error.empty()) return completeOutputRequest(runtime, error);
     if (configuration == runtime.options.outputConfiguration) return completeOutputRequest(runtime, {});
@@ -1981,11 +1986,13 @@ static std::string provideControlStatus(void *userData) {
   return makeControlStatusEvent(controlStatus(runtime));
 }
 
-static std::string requestLiveOutputChange(PipeWireRuntime &runtime, const OutputConfiguration &configuration) {
+static std::string requestLiveOutputChange(PipeWireRuntime &runtime, const OutputConfiguration &configuration,
+    std::optional<std::uint64_t> expectedRevision) {
   auto lock = std::unique_lock(runtime.outputRequestMutex);
   if (runtime.outputRequestsStopped) return "PipeTune daemon stopped";
   if (runtime.requestedOutput.has_value()) return "another output change is already pending";
   runtime.requestedOutput = configuration;
+  runtime.requestedOutputRevision = expectedRevision;
   runtime.outputRequestCompleted = false;
   runtime.outputRequestError.clear();
   const auto result = pw_loop_signal_event(pw_main_loop_get_loop(runtime.mainLoop), runtime.outputChangeSource);
@@ -2042,7 +2049,7 @@ static ControlMessageResult handleControlRequest(std::string_view message,
   }
   auto warnings = std::vector<ControlWarning>{};
   if (request.request.command == ControlCommand::setOutput) {
-    const auto error = requestLiveOutputChange(runtime, request.request.outputConfiguration);
+    const auto error = requestLiveOutputChange(runtime, request.request.outputConfiguration, request.request.expectedRevision);
     if (!error.empty()) return closeControlResponse(makeControlErrorResponse(error), true);
     return closeControlResponse(makeControlSuccessResponse(controlStatus(runtime), {}), true);
   }

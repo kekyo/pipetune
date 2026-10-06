@@ -211,7 +211,7 @@ pipetune setup --preset /absolute/path/to/example.effetune_preset
 pipetune bypass
 ```
 
-## Listing audio outputs
+## Choosing audio outputs
 
 List the audio outputs in the current PipeWire session, including each output's
 active profile and all channel positions:
@@ -226,6 +226,48 @@ profiles, and volume unchanged. Internal PipeTune nodes and audio inputs are
 excluded. The JSON includes device identity separately from the temporary
 PipeWire node ID, plus a diagnostic for layouts that cannot be selected, such
 as outputs exceeding the sixteen-channel DSP limit.
+
+Single mode keeps physical output selection in the OS sound settings. To use
+multiple devices, select their node names from `output list`:
+
+```sh
+pipetune output select 'NODE_NAME_A' 'NODE_NAME_B'
+pipetune output get
+pipetune output get --json
+pipetune output mode single
+pipetune output mode multiple
+```
+
+`select` enables multiple mode and assigns every channel in each selected
+output's current profile. The initial order determines the EffeTune Ch numbers.
+Later selections preserve those numbers and labels: deselected outputs keep
+their slots, and new outputs are appended. The sixteen-channel limit includes
+reserved slots. Switching to single mode retains the multiple-output choices.
+
+`get` shows the live mode and a table linking each final EffeTune channel to its
+device, device channel, profile, presence, and optional purpose label. A missing
+device keeps its assignments; its channels are not redirected to another
+output. Presence describes matching hardware, not measured audio transport or
+delay compensation. Changed profiles and ambiguous identities require explicit
+reassignment.
+
+Desktop input remains stereo on Ch 1 and Ch 2. Use the EffeTune preset to create
+the additional outputs, for example with Matrix; Bypass leaves extra channels
+silent. PipeTune does not automatically copy stereo audio to every device.
+
+For explicit reassignment, slot ordering, or labels, `output set` accepts a
+complete routing JSON object as one argument, for example
+`pipetune output set "$(cat routing.json)"`. The object has the same format as
+the `outputConfiguration` field from `output get --json`; pass that field,
+not the whole status response.
+
+Changes are applied to the running daemon and saved for future starts. If the
+daemon is stopped, they are saved for its next start. A rejected or unconfirmed
+live change is not saved. If saving fails after live application, PipeTune
+attempts to restore the previous routing and reports whether restoration
+succeeded. `--socket PATH` selects another daemon for `get`, `select`, `mode`,
+and `set`; the three modifying commands also accept `--config PATH` for its
+startup settings.
 
 ## Choosing the PCM rate
 

@@ -64,6 +64,8 @@ struct ControlRequest {
   DspIdlePolicy dspIdlePolicy = {};
   /** Complete replacement for setOutput; persistence is a separate operation. */
   OutputConfiguration outputConfiguration = {};
+  /** Optional revision guard for setOutput; a mismatch leaves live state intact. */
+  std::optional<std::uint64_t> expectedRevision = std::nullopt;
 };
 
 /**
@@ -322,9 +324,11 @@ std::string makeSetDspIdleControlRequest(const DspIdlePolicy &policy);
 /**
  * Encodes a complete live output configuration without a framing newline.
  * @param configuration Valid output mode, selected devices, and fixed slots.
+ * @param expectedRevision Require this live revision, or omit the guard.
  * @return Encoded request, or empty for invalid input or allocation failure.
  */
-std::string makeSetOutputControlRequest(const OutputConfiguration &configuration);
+std::string makeSetOutputControlRequest(const OutputConfiguration &configuration,
+    std::optional<std::uint64_t> expectedRevision = std::nullopt);
 
 /**
  * Returns a JSON live-preset request without framing newline.

@@ -238,11 +238,22 @@ try {
     const routing = { mode: "multiple", outputs, channels: outputs.flatMap((output) =>
       [0, 1].map((deviceChannel) => ({ outputId: output.id, deviceChannel, label: "" }))) };
     writeConfiguration("pipetune/environment", `PIPETUNE_PRESET=${JSON.stringify(preset)}\nPIPETUNE_RATE=48000\nPIPETUNE_OUTPUT=${JSON.stringify(JSON.stringify(routing))}\n`);
+    const cli = async (arguments_, success = true) => {
+      const command = start("output CLI", productDaemon, ["output", ...arguments_]);
+      const result = await command.completion;
+      assert.equal(result.code === 0, success, `${command.stdout}\n${command.stderr}`);
+      return command.stdout;
+    };
+    const endpoints = ["--socket", socket, "--config", join(config, "pipetune", "environment")];
     // Restart both the daemon and fixtures. The next run must recover saved
     // routing after the devices have been recreated as new runtime objects.
     for (let attempt = 0; attempt < 2; ++attempt) {
       const audio = start("daemon audio fixture", driver, ["audio", scenario]);
       await waitForMessage(audio, "product:devices-ready");
+      if (attempt === 0) {
+        assert.match(await cli(["mode", "single", ...endpoints]), /next daemon start/u);
+        assert.match(await cli(["select", ...outputs.map((output) => output.id), ...endpoints]), /next daemon start/u);
+      }
       const daemon = start("product daemon", productDaemon, ["daemon", "--config", join(config, "pipetune", "environment")]);
       await socketReady(socket);
       const status = start("daemon status", driver, ["control", socket, JSON.stringify({ command: "status" })]);
@@ -250,6 +261,20 @@ try {
       const response = JSON.parse(status.stdout);
       assert.equal(response.ok, true, status.stdout);
       assert.equal(response.processingMode, "preset", status.stdout);
+      assert.deepEqual(JSON.parse(await cli(["get", "--json", "--socket", socket])).outputConfiguration, routing);
+      if (attempt === 0) {
+        assert.match(await cli(["mode", "single", ...endpoints]), /OS selects/u);
+        assert.match(await cli(["mode", "multiple", ...endpoints]), /Ch 4/u);
+        // Selecting the existing devices in reverse order must retain their
+        // saved Ch numbers; labels then survive a real daemon restart.
+        await cli(["select", outputs[1].id, outputs[0].id, ...endpoints]);
+        assert.deepEqual(JSON.parse(await cli(["get", "--json", "--socket", socket])).outputConfiguration, routing);
+        routing.channels[2].label = "サブ左";
+        await cli(["set", JSON.stringify(routing), ...endpoints]);
+        await cli(["select", "missing-output", ...endpoints], false);
+        assert.deepEqual(JSON.parse(await cli(["get", "--json", "--socket", socket])).outputConfiguration, routing);
+        assert.match(await cli(["get", "--socket", socket]), /Ch 3 \|.*1 \(FL\).*サブ左/u);
+      }
       audio.child.kill("SIGUSR1");
       assert.equal((await audio.completion).code, 0, `${audio.stdout}\n${audio.stderr}`);
       const report = JSON.parse(audio.stdout);
@@ -299,6 +324,9 @@ try {
         await setOutput(swapped);
         audio.child.kill("SIGUSR2");
         await next(1);
+        const stale = await control({ command: "set-output", configuration: original, expectedRevision: revision - 1 }, false);
+        assert.match(stale.error, /configuration changed/);
+        assert.deepEqual((await control({ command: "status" })).outputConfiguration, swapped);
         while (swapped.channels.length < 16) swapped.channels.push({ outputId: "", deviceChannel: 0, label: "Reserved" });
         await setOutput(swapped);
         audio.child.kill("SIGUSR2");

@@ -168,6 +168,8 @@ struct ControlExchangeResult {
   std::string response;
   /** Transport or peer-validation diagnostic, or empty on success. */
   std::string error;
+  /** True only when no server accepted the connection; no request was sent. */
+  bool unavailable = false;
 };
 
 /**

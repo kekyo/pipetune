@@ -417,6 +417,52 @@ static CommandLineParseResult parseUnsetupCommandLine(
   return {.options = std::move(options), .error = {}};
 }
 
+static CommandLineParseResult parseOutputCommandLine(std::span<const std::string_view> arguments) {
+  auto options = defaultOptions();
+  if (arguments.empty()) return parseError(std::move(options), "output requires list, get, select, mode, or set");
+  const auto operation = arguments.front();
+  auto firstOption = std::size_t{1};
+  if (operation == "list") options.action = CommandLineAction::outputList;
+  else if (operation == "get") options.action = CommandLineAction::outputGet;
+  else if (operation == "select") options.action = CommandLineAction::outputSelect;
+  else if (operation == "mode" || operation == "set") {
+    if (arguments.size() < 2 || arguments[1].empty())
+      return parseError(std::move(options), "output " + std::string(operation) + " requires a value");
+    firstOption = 2;
+    if (operation == "mode") {
+      options.action = CommandLineAction::outputMode;
+      if (arguments[1] != "single" && arguments[1] != "multiple")
+        return parseError(std::move(options), "output mode must be single or multiple");
+      options.outputConfiguration.mode = arguments[1] == "single" ? OutputMode::single : OutputMode::multiple;
+    } else {
+      options.action = CommandLineAction::outputSet;
+      auto parsed = parseOutputConfiguration(arguments[1]);
+      if (!parsed.error.empty()) return parseError(std::move(options), std::move(parsed.error));
+      options.outputConfiguration = std::move(parsed.configuration);
+    }
+  } else return parseError(std::move(options), "unknown output operation: " + std::string(operation));
+  const auto query = options.action == CommandLineAction::outputList || options.action == CommandLineAction::outputGet;
+  for (auto index = firstOption; index < arguments.size(); ++index) {
+    const auto argument = arguments[index];
+    if (query && argument == "--json") {
+      if (options.json) return parseError(std::move(options), "duplicate option: --json");
+      options.json = true;
+    } else if ((argument == "--socket" && options.action != CommandLineAction::outputList) ||
+               (argument == "--config" && !query)) {
+      auto &path = argument == "--socket" ? options.controlSocketPath : options.configPath;
+      if (!path.empty()) return parseError(std::move(options), "duplicate option: " + std::string(argument));
+      if (++index >= arguments.size() || arguments[index].empty())
+        return parseError(std::move(options), "missing value for " + std::string(argument));
+      path = arguments[index];
+    } else if (options.action == CommandLineAction::outputSelect && !argument.empty() && !argument.starts_with('-')) {
+      options.outputNodes.emplace_back(argument);
+    } else return parseError(std::move(options), "unknown output " + std::string(operation) + " option: " + std::string(argument));
+  }
+  if (options.action == CommandLineAction::outputSelect && options.outputNodes.empty())
+    return parseError(std::move(options), "output select requires at least one node name from output list");
+  return {.options = std::move(options), .error = {}};
+}
+
 CommandLineParseResult parseCommandLine(
     std::span<const std::string_view> arguments) {
   auto options = defaultOptions();
@@ -435,18 +481,7 @@ CommandLineParseResult parseCommandLine(
     return parseBypassCommandLine(arguments.subspan(1));
   }
   if (!arguments.empty() && arguments.front() == "output") {
-    if (arguments.size() < 2 || arguments[1] != "list") {
-      return parseError(std::move(options), "output requires list");
-    }
-    options.action = CommandLineAction::outputList;
-    for (const auto argument : arguments.subspan(2)) {
-      if (argument != "--json") {
-        return parseError(std::move(options), "unknown output list option: " + std::string(argument));
-      }
-      if (options.json) return parseError(std::move(options), "duplicate option: --json");
-      options.json = true;
-    }
-    return {.options = std::move(options), .error = {}};
+    return parseOutputCommandLine(arguments.subspan(1));
   }
   if (!arguments.empty() && arguments.front() == "rate") {
     return parseRateCommandLine(arguments.subspan(1));
@@ -622,6 +657,10 @@ std::string_view commandLineUsage() noexcept {
          "  pipetune daemon [--config PATH]\n"
          "  pipetune bypass [--socket PATH]\n"
          "  pipetune output list [--json]\n"
+         "  pipetune output get [--json] [--socket PATH]\n"
+         "  pipetune output select NODE... [--socket PATH] [--config PATH]\n"
+         "  pipetune output mode single|multiple [--socket PATH] [--config PATH]\n"
+         "  pipetune output set JSON [--socket PATH] [--config PATH]\n"
          "  pipetune rate get [--json] [--socket PATH]\n"
          "  pipetune rate list [--json] [--socket PATH]\n"
          "  pipetune rate set automatic [--socket PATH]\n"
