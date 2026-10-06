@@ -107,14 +107,23 @@ msgstr "الكل"
 msgid "All settings saved"
 msgstr "تم حفظ جميع الإعدادات"
 
+msgid "Ambiguous device"
+msgstr "تعذّر تمييز الجهاز"
+
 msgid "Apply"
 msgstr "تطبيق"
+
+msgid "Audio outputs changed"
+msgstr "تم تغيير مخارج الصوت"
 
 msgid "Automatic"
 msgstr "تلقائي"
 
 msgid "Automatic — follow PipeWire graph sampling frequency"
 msgstr "تلقائي — اتبع تردد أخذ العينات لمخطط PipeWire"
+
+msgid "Available"
+msgstr "متاح"
 
 msgid "Baseline"
 msgstr "خط الأساس"
@@ -142,6 +151,12 @@ msgstr "تعذر حفظ الإعدادات"
 
 msgid "Cannot use saved language preference"
 msgstr "تعذر استخدام تفضيل اللغة المحفوظ"
+
+msgid "Changing audio outputs"
+msgstr "جارٍ تغيير مخارج الصوت"
+
+msgid "Changing audio outputs failed"
+msgstr "تعذّر تغيير مخارج الصوت"
 
 msgid "Changing DSP backend"
 msgstr "جارٍ تغيير واجهة DSP الخلفية"
@@ -246,6 +261,18 @@ msgstr "تُطبّق القيم الافتراضية مباشرة؛ استخدم
 msgid "Defaults selected"
 msgstr "تم تحديد القيم الافتراضية"
 
+msgid "Device"
+msgstr "الجهاز"
+
+msgid "Device channel"
+msgstr "قناة الجهاز"
+
+msgid "Device presence is separate from audio activity. Double-click a purpose cell to edit its label."
+msgstr "وجود الجهاز لا يعني أن الصوت نشط. انقر نقرًا مزدوجًا على خلية الغرض لتعديل تسميتها."
+
+msgid "Disabled"
+msgstr "معطّل"
+
 msgid "Disconnected"
 msgstr "غير متصل"
 
@@ -298,6 +325,9 @@ msgstr "الواجهة الخلفية الفعلية غير متاحة"
 msgid "EffeTune DSP control"
 msgstr "التحكم في EffeTune DSP"
 
+msgid "EffeTune final output channels"
+msgstr "قنوات الإخراج النهائية في EffeTune"
+
 msgid "EffeTune presets"
 msgstr "إعدادات EffeTune المسبقة"
 
@@ -346,6 +376,12 @@ msgstr "تنسيق الإدخال"
 msgid "Input sampling frequency"
 msgstr "تردد أخذ عينات الإدخال"
 
+msgid "Input uses Ch 1 and Ch 2. Create additional outputs in your EffeTune preset. Disabled devices keep their Ch numbers."
+msgstr "يستخدم الإدخال Ch 1 وCh 2. أنشئ مخارج إضافية في إعداد EffeTune المسبق. تحتفظ الأجهزة المعطّلة بأرقام قنواتها."
+
+msgid "Inventory unavailable"
+msgstr "قائمة الأجهزة غير متاحة"
+
 msgid "Language"
 msgstr "اللغة"
 
@@ -391,6 +427,9 @@ msgstr "الحمل"
 msgid "Measured frame rate"
 msgstr "معدل الإطارات المقاس"
 
+msgid "Multiple — outputs selected in PipeTune"
+msgstr "متعدد — تُحدّد المخارج في PipeTune"
+
 msgid "Native backend"
 msgstr "الواجهة الخلفية الأصلية"
 
@@ -400,11 +439,23 @@ msgstr "أبدًا"
 msgid "None"
 msgstr "لا شيء"
 
+msgid "Not connected"
+msgstr "غير متصل"
+
 msgid "Off"
 msgstr "متوقف"
 
 msgid "Open PipeTune"
 msgstr "فتح PipeTune"
+
+msgid "Output"
+msgstr "الإخراج"
+
+msgid "Output devices"
+msgstr "أجهزة الإخراج"
+
+msgid "Output mode"
+msgstr "وضع الإخراج"
 
 #, brace-format
 msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
@@ -456,6 +507,9 @@ msgstr "فرض PipeWire"
 msgid "PipeWire graph sampling frequency"
 msgstr "تردد أخذ العينات لمخطط PipeWire"
 
+msgid "Presence"
+msgstr "حالة الاتصال"
+
 msgid "Preset"
 msgstr "الإعداد المسبق"
 
@@ -483,8 +537,17 @@ msgstr "تم تغيير وضع المعالجة"
 msgid "Processing time"
 msgstr "زمن المعالجة"
 
+msgid "Profile changed"
+msgstr "تغيّر ملف التعريف"
+
+msgid "Purpose"
+msgstr "الغرض"
+
 msgid "Quit"
 msgstr "إنهاء"
+
+msgid "Reserved"
+msgstr "محجوز"
 
 msgid "Restart now"
 msgstr "إعادة التشغيل الآن"
@@ -562,6 +625,9 @@ msgstr "تم تغيير تعليق DSP عند الصمت"
 msgid "SIMD variant"
 msgstr "متغير SIMD"
 
+msgid "Single — output selected by the OS"
+msgstr "فردي — يحدّد نظام التشغيل المخرج"
+
 msgid "Some preset sources are unavailable"
 msgstr "بعض مصادر الإعدادات المسبقة غير متاحة"
 
@@ -600,11 +666,20 @@ msgstr "النظام"
 msgid "System default"
 msgstr "النظام الافتراضي"
 
+msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
+msgstr "يحدّد نظام التشغيل المخرج. تعيينات المخارج المتعددة المحفوظة أدناه غير نشطة."
+
+msgid "The selected device cannot be identified uniquely."
+msgstr "لا يمكن تمييز الجهاز المحدّد بشكل فريد."
+
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "سيُطبّق تغيير لغة الواجهة بعد إعادة تشغيل PipeTune GTK."
 
 msgid "Turn off to pass audio through without an EffeTune preset."
 msgstr "أوقف التشغيل لتمرير الصوت دون إعداد EffeTune مسبق."
+
+msgid "Unassigned"
+msgstr "غير معيّن"
 
 msgid "unavailable"
 msgstr "غير متاح"
@@ -624,6 +699,9 @@ msgstr "غير معروف"
 msgid "Unknown sample format"
 msgstr "تنسيق عينة غير معروف"
 
+msgid "Unsupported channel count"
+msgstr "عدد القنوات غير مدعوم"
+
 msgid "Updating settings"
 msgstr "جارٍ تحديث الإعدادات"
 
@@ -635,6 +713,9 @@ msgstr "الإصدارات"
 
 msgid "Waiting for live PipeTune state…"
 msgstr "في انتظار حالة PipeTune المباشرة…"
+
+msgid "Waiting for output devices…"
+msgstr "في انتظار أجهزة الإخراج…"
 
 msgid "Warnings"
 msgstr "التحذيرات"

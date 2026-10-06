@@ -626,6 +626,13 @@ static bool testOutputSnapshotPreservation() {
 
 static bool testOutputPreviewAndJointCancel() {
   const auto baseline = baseConfig();
+  auto incomplete = baseline;
+  incomplete.outputConfiguration.mode = pipetune::OutputMode::multiple;
+  auto draft = pipetune_gtk::beginSettingsTransaction(baseline, baseline, 1, true);
+  pipetune_gtk::editSettingsTransaction(draft, incomplete);
+  if (!check(pipetune_gtk::nextSettingsOperation(draft) == pipetune_gtk::SettingsOperation::none &&
+             !pipetune_gtk::settingsTransactionCanApply(draft),
+             "multiple mode must wait for a device selection before preview or Apply")) return false;
   auto desired = baseline;
   desired.outputConfiguration = {
       .mode = pipetune::OutputMode::multiple,

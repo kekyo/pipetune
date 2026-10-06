@@ -124,7 +124,7 @@ the settings window opens so you can still control PipeTune.
 ## PipeTune settings window
 
 The PipeTune settings window always displays PipeTune's status, divided into
-sections, on the left, while the Processing, Rate, DSP, and Advanced settings
+sections, on the left, while the Processing, Rate, DSP, Advanced, and Output settings
 are shown on the right.
 
 ![PipeTune UI Window](./images/pipetune-ui-window.png)
@@ -212,6 +212,15 @@ pipetune bypass
 ```
 
 ## Choosing audio outputs
+
+The settings window's `Output` page switches between OS-managed single output
+and multiple outputs selected in PipeTune. In multiple mode, check the devices
+you want to use. Each device lists its active profile, channel count, assigned
+Ch numbers, and presence. The table below maps final EffeTune channels to each
+device's physical channels. Double-click a purpose cell to add your own label.
+Changes preview live; use `Apply` to save or `Cancel` to restore the previous
+configuration. Selecting multiple mode without a device leaves an unfinished
+draft and does not change the live output.
 
 List the audio outputs in the current PipeWire session, including each output's
 active profile and all channel positions:

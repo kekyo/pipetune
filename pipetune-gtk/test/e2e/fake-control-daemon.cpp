@@ -30,6 +30,7 @@ struct FakeDaemonState {
   std::string rejectedCommand;
   std::uint64_t dspTelemetrySequence;
   std::uint64_t manualStatusSequence;
+  std::string outputInventoryState = "connected";
 };
 
 static std::string environmentValue(const char *name) {
@@ -139,6 +140,16 @@ makeStatus(const pipetune::StartupConfig &config,
             .cpuRequirement = "Arm SVE",
             .error = {}}},
       .outputConfiguration = config.outputConfiguration,
+      .availableOutputs = {
+          {.device = {.identity = {.api = "node", .location = "fake-dac-a", .port = "fake-dac-a",
+                                   .vendor = "", .product = "", .serial = ""},
+                      .name = "DAC A", .profile = "Stereo", .channelPositions = {"FL", "FR"}},
+           .nodeName = "fake-dac-a", .nodeId = 73, .nodeSerial = 73},
+          {.device = {.identity = {.api = "node", .location = "fake-dac-b", .port = "fake-dac-b",
+                                   .vendor = "", .product = "", .serial = ""},
+                      .name = "DAC B", .profile = "Stereo", .channelPositions = {"FL", "FR"}},
+           .nodeName = "fake-dac-b", .nodeId = 74, .nodeSerial = 74}},
+      .outputInventoryReady = true,
   };
 }
 
@@ -155,6 +166,25 @@ static pipetune::ControlRuntimeStatus snapshotStatus(
     stale = true;
   }
   auto status = makeStatus(config, revision);
+  if (state.outputInventoryState == "missing") {
+    status.availableOutputs.erase(status.availableOutputs.begin());
+  } else if (state.outputInventoryState == "profileChanged") {
+    status.availableOutputs.front().device.channelPositions = {"AUX0", "AUX1"};
+  } else if (state.outputInventoryState == "ambiguous") {
+    auto duplicate = status.availableOutputs.front();
+    duplicate.nodeName = "fake-dac-duplicate";
+    duplicate.nodeId = 75;
+    duplicate.nodeSerial = 75;
+    status.availableOutputs.push_back(std::move(duplicate));
+  } else if (state.outputInventoryState == "unavailable") {
+    status.availableOutputs.clear();
+    status.outputInventoryError = "E2E inventory unavailable";
+  } else if (state.outputInventoryState == "pending") {
+    status.availableOutputs.clear();
+    status.outputInventoryReady = false;
+  } else if (state.outputInventoryState == "reversed") {
+    std::swap(status.availableOutputs[0], status.availableOutputs[1]);
+  }
   if (stale) {
     status.configurationError = "E2E stale status";
   } else if (state.manualStatusSequence != 0) {
@@ -352,6 +382,7 @@ static int inspectConfig(const std::filesystem::path &path) {
               ? std::to_string(
                     config.dspIdlePolicy.timeoutMilliseconds)
               : "null")
+      << ",\"outputConfiguration\":" << pipetune::formatOutputConfiguration(config.outputConfiguration)
       << "}\n";
   return 0;
 }
@@ -409,6 +440,13 @@ int main(int argc, char **argv) {
   std::cout << "READY\n" << std::flush;
   auto input = std::string{};
   while (std::getline(std::cin, input)) {
+    if (input.starts_with("output-inventory ")) {
+      {
+        auto lock = std::scoped_lock(state.mutex);
+        state.outputInventoryState = input.substr(17);
+      }
+      pipetune::publishControlStatus(started.server.get());
+    }
     if (input == "publish-status") {
       {
         auto lock = std::scoped_lock(state.mutex);

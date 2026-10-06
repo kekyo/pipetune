@@ -112,6 +112,12 @@ nextSettingsOperation(const SettingsTransaction &transaction) {
       transaction.conflict || transaction.liveChangeFailed) {
     return SettingsOperation::none;
   }
+  // Mode selection precedes the first device check, so an incomplete draft
+  // must remain editable without sending a request the daemon will reject.
+  if (!pipetune::validateOutputConfiguration(
+           transaction.desiredLive.outputConfiguration).empty()) {
+    return SettingsOperation::none;
+  }
   if (!operationMatches(SettingsOperation::rate,
                         transaction.confirmedLive,
                         transaction.desiredLive)) {

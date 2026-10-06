@@ -103,14 +103,23 @@ msgstr "सभी"
 msgid "All settings saved"
 msgstr "सभी सेटिंग सहेजी गईं"
 
+msgid "Ambiguous device"
+msgstr "डिवाइस की पहचान अस्पष्ट है"
+
 msgid "Apply"
 msgstr "लागू करें"
+
+msgid "Audio outputs changed"
+msgstr "ऑडियो आउटपुट बदल दिए गए"
 
 msgid "Automatic"
 msgstr "स्वचालित"
 
 msgid "Automatic — follow PipeWire graph sampling frequency"
 msgstr "स्वचालित — PipeWire ग्राफ़ की नमूनाकरण आवृत्ति का अनुसरण करें"
+
+msgid "Available"
+msgstr "उपलब्ध"
 
 msgid "Baseline"
 msgstr "आधार स्थिति"
@@ -138,6 +147,12 @@ msgstr "सेटिंग सहेजी नहीं जा सकीं"
 
 msgid "Cannot use saved language preference"
 msgstr "सहेजी गई भाषा वरीयता उपयोग नहीं की जा सकी"
+
+msgid "Changing audio outputs"
+msgstr "ऑडियो आउटपुट बदले जा रहे हैं"
+
+msgid "Changing audio outputs failed"
+msgstr "ऑडियो आउटपुट बदलना विफल हुआ"
 
 msgid "Changing DSP backend"
 msgstr "DSP बैकएंड बदला जा रहा है"
@@ -242,6 +257,18 @@ msgstr "डिफ़ॉल्ट सीधे लागू हो रहे ह�
 msgid "Defaults selected"
 msgstr "डिफ़ॉल्ट चुने गए"
 
+msgid "Device"
+msgstr "डिवाइस"
+
+msgid "Device channel"
+msgstr "डिवाइस चैनल"
+
+msgid "Device presence is separate from audio activity. Double-click a purpose cell to edit its label."
+msgstr "डिवाइस की मौजूदगी और ऑडियो गतिविधि अलग हैं। लेबल बदलने के लिए उपयोग वाले सेल पर डबल-क्लिक करें।"
+
+msgid "Disabled"
+msgstr "अक्षम"
+
 msgid "Disconnected"
 msgstr "डिस्कनेक्टेड"
 
@@ -294,6 +321,9 @@ msgstr "प्रभावी बैकएंड अनुपलब्ध"
 msgid "EffeTune DSP control"
 msgstr "EffeTune DSP नियंत्रण"
 
+msgid "EffeTune final output channels"
+msgstr "EffeTune के अंतिम आउटपुट चैनल"
+
 msgid "EffeTune presets"
 msgstr "EffeTune प्रीसेट"
 
@@ -342,6 +372,12 @@ msgstr "इनपुट फ़ॉर्मेट"
 msgid "Input sampling frequency"
 msgstr "इनपुट नमूनाकरण आवृत्ति"
 
+msgid "Input uses Ch 1 and Ch 2. Create additional outputs in your EffeTune preset. Disabled devices keep their Ch numbers."
+msgstr "इनपुट Ch 1 और Ch 2 का उपयोग करता है। अपने EffeTune प्रीसेट में अतिरिक्त आउटपुट बनाएँ। अक्षम डिवाइस अपने चैनल नंबर बनाए रखते हैं।"
+
+msgid "Inventory unavailable"
+msgstr "डिवाइस सूची उपलब्ध नहीं है"
+
 msgid "Language"
 msgstr "भाषा"
 
@@ -387,6 +423,9 @@ msgstr "लोड"
 msgid "Measured frame rate"
 msgstr "मापी गई फ़्रेम दर"
 
+msgid "Multiple — outputs selected in PipeTune"
+msgstr "एकाधिक — PipeTune में चुने गए आउटपुट"
+
 msgid "Native backend"
 msgstr "मूल बैकएंड"
 
@@ -396,11 +435,23 @@ msgstr "कभी नहीं"
 msgid "None"
 msgstr "कोई नहीं"
 
+msgid "Not connected"
+msgstr "कनेक्ट नहीं है"
+
 msgid "Off"
 msgstr "बंद"
 
 msgid "Open PipeTune"
 msgstr "PipeTune खोलें"
+
+msgid "Output"
+msgstr "आउटपुट"
+
+msgid "Output devices"
+msgstr "आउटपुट डिवाइस"
+
+msgid "Output mode"
+msgstr "आउटपुट मोड"
 
 #, brace-format
 msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
@@ -452,6 +503,9 @@ msgstr "PipeWire प्रवर्तन"
 msgid "PipeWire graph sampling frequency"
 msgstr "PipeWire ग्राफ़ नमूनाकरण आवृत्ति"
 
+msgid "Presence"
+msgstr "कनेक्शन स्थिति"
+
 msgid "Preset"
 msgstr "प्रीसेट"
 
@@ -479,8 +533,17 @@ msgstr "प्रोसेसिंग मोड बदला गया"
 msgid "Processing time"
 msgstr "प्रोसेसिंग समय"
 
+msgid "Profile changed"
+msgstr "प्रोफ़ाइल बदल गई"
+
+msgid "Purpose"
+msgstr "उपयोग"
+
 msgid "Quit"
 msgstr "बाहर निकलें"
+
+msgid "Reserved"
+msgstr "आरक्षित"
 
 msgid "Restart now"
 msgstr "अभी पुनः आरंभ करें"
@@ -558,6 +621,9 @@ msgstr "मौन पर निलंबन बदल दिया गया"
 msgid "SIMD variant"
 msgstr "SIMD प्रकार"
 
+msgid "Single — output selected by the OS"
+msgstr "एकल — OS द्वारा चुना गया आउटपुट"
+
 msgid "Some preset sources are unavailable"
 msgstr "कुछ प्रीसेट स्रोत अनुपलब्ध हैं"
 
@@ -596,11 +662,20 @@ msgstr "सिस्टम"
 msgid "System default"
 msgstr "सिस्टम डिफ़ॉल्ट"
 
+msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
+msgstr "OS आउटपुट चुनता है। नीचे सहेजे गए एकाधिक आउटपुट के असाइनमेंट निष्क्रिय हैं।"
+
+msgid "The selected device cannot be identified uniquely."
+msgstr "चुने गए डिवाइस की विशिष्ट पहचान नहीं की जा सकती।"
+
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "PipeTune GTK पुनः आरंभ होने के बाद UI भाषा बदलाव प्रभावी होगा।"
 
 msgid "Turn off to pass audio through without an EffeTune preset."
 msgstr "EffeTune प्रीसेट के बिना ऑडियो पास करने के लिए बंद करें।"
+
+msgid "Unassigned"
+msgstr "असाइन नहीं किया गया"
 
 msgid "unavailable"
 msgstr "अनुपलब्ध"
@@ -620,6 +695,9 @@ msgstr "अज्ञात"
 msgid "Unknown sample format"
 msgstr "अज्ञात सैंपल फ़ॉर्मेट"
 
+msgid "Unsupported channel count"
+msgstr "चैनलों की संख्या समर्थित नहीं है"
+
 msgid "Updating settings"
 msgstr "सेटिंग अपडेट हो रही हैं"
 
@@ -631,6 +709,9 @@ msgstr "संस्करण"
 
 msgid "Waiting for live PipeTune state…"
 msgstr "लाइव PipeTune स्थिति की प्रतीक्षा…"
+
+msgid "Waiting for output devices…"
+msgstr "आउटपुट डिवाइस की प्रतीक्षा हो रही है…"
 
 msgid "Warnings"
 msgstr "चेतावनियाँ"

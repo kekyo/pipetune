@@ -151,6 +151,12 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
           builder, "presetConfigurationSection", GTK_TYPE_FRAME),
       .presetEntryView = requiredWidget(
           builder, "presetEntryView", GTK_TYPE_TREE_VIEW),
+      .outputModeCombo = requiredWidget(builder, "outputModeCombo", GTK_TYPE_COMBO_BOX_TEXT),
+      .outputModeNotice = requiredWidget(builder, "outputModeNotice", GTK_TYPE_LABEL),
+      .outputErrorLabel = requiredWidget(builder, "outputErrorLabel", GTK_TYPE_LABEL),
+      .outputDeviceList = requiredWidget(builder, "outputDeviceList", GTK_TYPE_LIST_BOX),
+      .outputChannelView = requiredWidget(builder, "outputChannelView", GTK_TYPE_TREE_VIEW),
+      .outputLabelRenderer = GTK_CELL_RENDERER(gtk_builder_get_object(builder, "outputLabelRenderer")),
       .rateCombo =
           requiredWidget(builder, "rateCombo", GTK_TYPE_COMBO_BOX_TEXT),
       .rateEnforcementCombo = requiredWidget(
@@ -193,6 +199,7 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
           requiredWidget(builder, "applyButton", GTK_TYPE_BUTTON),
   };
   configureCompactComboBox(ui.presetCombo);
+  configureCompactComboBox(ui.outputModeCombo);
   gtk_widget_show_all(
       gtk_bin_get_child(GTK_BIN(ui.presetConfigurationSection)));
   configureCompactComboBox(ui.rateCombo);

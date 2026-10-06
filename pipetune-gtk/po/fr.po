@@ -103,14 +103,23 @@ msgstr "Tout"
 msgid "All settings saved"
 msgstr "Tous les paramètres sont enregistrés"
 
+msgid "Ambiguous device"
+msgstr "Appareil ambigu"
+
 msgid "Apply"
 msgstr "Appliquer"
+
+msgid "Audio outputs changed"
+msgstr "Sorties audio modifiées"
 
 msgid "Automatic"
 msgstr "Automatique"
 
 msgid "Automatic — follow PipeWire graph sampling frequency"
 msgstr "Automatique — suivre la fréquence d'échantillonnage du graphe PipeWire"
+
+msgid "Available"
+msgstr "Disponible"
 
 msgid "Baseline"
 msgstr "État initial"
@@ -138,6 +147,12 @@ msgstr "Impossible d'enregistrer les paramètres"
 
 msgid "Cannot use saved language preference"
 msgstr "Impossible d'utiliser la préférence de langue enregistrée"
+
+msgid "Changing audio outputs"
+msgstr "Modification des sorties audio"
+
+msgid "Changing audio outputs failed"
+msgstr "Échec de la modification des sorties audio"
 
 msgid "Changing DSP backend"
 msgstr "Changement du moteur DSP"
@@ -242,6 +257,18 @@ msgstr "Les valeurs par défaut sont appliquées en direct ; utilisez Appliquer 
 msgid "Defaults selected"
 msgstr "Valeurs par défaut sélectionnées"
 
+msgid "Device"
+msgstr "Appareil"
+
+msgid "Device channel"
+msgstr "Canal de l’appareil"
+
+msgid "Device presence is separate from audio activity. Double-click a purpose cell to edit its label."
+msgstr "La présence de l’appareil ne reflète pas l’activité audio. Double-cliquez sur une cellule d’usage pour modifier son libellé."
+
+msgid "Disabled"
+msgstr "Désactivé"
+
 msgid "Disconnected"
 msgstr "Déconnecté"
 
@@ -294,6 +321,9 @@ msgstr "Moteur effectif indisponible"
 msgid "EffeTune DSP control"
 msgstr "Contrôle DSP EffeTune"
 
+msgid "EffeTune final output channels"
+msgstr "Canaux de sortie finaux d’EffeTune"
+
 msgid "EffeTune presets"
 msgstr "Préréglages EffeTune"
 
@@ -342,6 +372,12 @@ msgstr "Format d'entrée"
 msgid "Input sampling frequency"
 msgstr "Fréquence d'échantillonnage d'entrée"
 
+msgid "Input uses Ch 1 and Ch 2. Create additional outputs in your EffeTune preset. Disabled devices keep their Ch numbers."
+msgstr "L’entrée utilise Ch 1 et Ch 2. Créez des sorties supplémentaires dans votre préréglage EffeTune. Les appareils désactivés conservent leurs numéros de canal."
+
+msgid "Inventory unavailable"
+msgstr "Liste des appareils indisponible"
+
 msgid "Language"
 msgstr "Langue"
 
@@ -387,6 +423,9 @@ msgstr "Charge"
 msgid "Measured frame rate"
 msgstr "Cadence d'images mesurée"
 
+msgid "Multiple — outputs selected in PipeTune"
+msgstr "Multiple — sorties choisies dans PipeTune"
+
 msgid "Native backend"
 msgstr "Moteur natif"
 
@@ -396,11 +435,23 @@ msgstr "Jamais"
 msgid "None"
 msgstr "Aucun"
 
+msgid "Not connected"
+msgstr "Non connecté"
+
 msgid "Off"
 msgstr "Désactivé"
 
 msgid "Open PipeTune"
 msgstr "Ouvrir PipeTune"
+
+msgid "Output"
+msgstr "Sortie"
+
+msgid "Output devices"
+msgstr "Appareils de sortie"
+
+msgid "Output mode"
+msgstr "Mode de sortie"
 
 #, brace-format
 msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
@@ -452,6 +503,9 @@ msgstr "Application PipeWire"
 msgid "PipeWire graph sampling frequency"
 msgstr "Fréquence d'échantillonnage du graphe PipeWire"
 
+msgid "Presence"
+msgstr "Présence"
+
 msgid "Preset"
 msgstr "Préréglage"
 
@@ -479,8 +533,17 @@ msgstr "Mode de traitement modifié"
 msgid "Processing time"
 msgstr "Temps de traitement"
 
+msgid "Profile changed"
+msgstr "Profil modifié"
+
+msgid "Purpose"
+msgstr "Usage"
+
 msgid "Quit"
 msgstr "Quitter"
+
+msgid "Reserved"
+msgstr "Réservé"
 
 msgid "Restart now"
 msgstr "Redémarrer maintenant"
@@ -558,6 +621,9 @@ msgstr "Suspension en cas de silence modifiée"
 msgid "SIMD variant"
 msgstr "Variante SIMD"
 
+msgid "Single — output selected by the OS"
+msgstr "Unique — sortie choisie par le système"
+
 msgid "Some preset sources are unavailable"
 msgstr "Certaines sources de préréglages sont indisponibles"
 
@@ -596,11 +662,20 @@ msgstr "Système"
 msgid "System default"
 msgstr "Valeur par défaut du système"
 
+msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
+msgstr "Le système choisit la sortie. Les affectations de sorties multiples enregistrées ci-dessous sont inactives."
+
+msgid "The selected device cannot be identified uniquely."
+msgstr "L’appareil sélectionné ne peut pas être identifié de manière univoque."
+
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "Le changement de langue de l'interface prendra effet après le redémarrage de PipeTune GTK."
 
 msgid "Turn off to pass audio through without an EffeTune preset."
 msgstr "Désactivez cette option pour transmettre le son sans préréglage EffeTune."
+
+msgid "Unassigned"
+msgstr "Non affecté"
 
 msgid "unavailable"
 msgstr "indisponible"
@@ -620,6 +695,9 @@ msgstr "Inconnu"
 msgid "Unknown sample format"
 msgstr "Format d'échantillon inconnu"
 
+msgid "Unsupported channel count"
+msgstr "Nombre de canaux non pris en charge"
+
 msgid "Updating settings"
 msgstr "Mise à jour des paramètres"
 
@@ -631,6 +709,9 @@ msgstr "Versions"
 
 msgid "Waiting for live PipeTune state…"
 msgstr "En attente de l'état en direct de PipeTune…"
+
+msgid "Waiting for output devices…"
+msgstr "En attente des appareils de sortie…"
 
 msgid "Warnings"
 msgstr "Avertissements"

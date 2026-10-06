@@ -98,13 +98,22 @@ msgstr ""
 msgid "All settings saved"
 msgstr ""
 
+msgid "Ambiguous device"
+msgstr ""
+
 msgid "Apply"
+msgstr ""
+
+msgid "Audio outputs changed"
 msgstr ""
 
 msgid "Automatic"
 msgstr ""
 
 msgid "Automatic — follow PipeWire graph sampling frequency"
+msgstr ""
+
+msgid "Available"
 msgstr ""
 
 msgid "Baseline"
@@ -134,19 +143,16 @@ msgstr ""
 msgid "Cannot use saved language preference"
 msgstr ""
 
-msgid "Changing DSP backend"
-msgstr ""
-
-msgid "Changing DSP backend failed"
-msgstr ""
-
 msgid "Changing audio outputs"
 msgstr ""
 
 msgid "Changing audio outputs failed"
 msgstr ""
 
-msgid "Audio outputs changed"
+msgid "Changing DSP backend"
+msgstr ""
+
+msgid "Changing DSP backend failed"
 msgstr ""
 
 msgid "Changing processing mode"
@@ -246,6 +252,18 @@ msgstr ""
 msgid "Defaults selected"
 msgstr ""
 
+msgid "Device"
+msgstr ""
+
+msgid "Device channel"
+msgstr ""
+
+msgid "Device presence is separate from audio activity. Double-click a purpose cell to edit its label."
+msgstr ""
+
+msgid "Disabled"
+msgstr ""
+
 msgid "Disconnected"
 msgstr ""
 
@@ -298,6 +316,9 @@ msgstr ""
 msgid "EffeTune DSP control"
 msgstr ""
 
+msgid "EffeTune final output channels"
+msgstr ""
+
 msgid "EffeTune presets"
 msgstr ""
 
@@ -346,6 +367,12 @@ msgstr ""
 msgid "Input sampling frequency"
 msgstr ""
 
+msgid "Input uses Ch 1 and Ch 2. Create additional outputs in your EffeTune preset. Disabled devices keep their Ch numbers."
+msgstr ""
+
+msgid "Inventory unavailable"
+msgstr ""
+
 msgid "Language"
 msgstr ""
 
@@ -391,6 +418,9 @@ msgstr ""
 msgid "Measured frame rate"
 msgstr ""
 
+msgid "Multiple — outputs selected in PipeTune"
+msgstr ""
+
 msgid "Native backend"
 msgstr ""
 
@@ -400,10 +430,22 @@ msgstr ""
 msgid "None"
 msgstr ""
 
+msgid "Not connected"
+msgstr ""
+
 msgid "Off"
 msgstr ""
 
 msgid "Open PipeTune"
+msgstr ""
+
+msgid "Output"
+msgstr ""
+
+msgid "Output devices"
+msgstr ""
+
+msgid "Output mode"
 msgstr ""
 
 #, brace-format
@@ -456,6 +498,9 @@ msgstr ""
 msgid "PipeWire graph sampling frequency"
 msgstr ""
 
+msgid "Presence"
+msgstr ""
+
 msgid "Preset"
 msgstr ""
 
@@ -483,7 +528,16 @@ msgstr ""
 msgid "Processing time"
 msgstr ""
 
+msgid "Profile changed"
+msgstr ""
+
+msgid "Purpose"
+msgstr ""
+
 msgid "Quit"
+msgstr ""
+
+msgid "Reserved"
 msgstr ""
 
 msgid "Restart now"
@@ -562,6 +616,9 @@ msgstr ""
 msgid "SIMD variant"
 msgstr ""
 
+msgid "Single — output selected by the OS"
+msgstr ""
+
 msgid "Some preset sources are unavailable"
 msgstr ""
 
@@ -600,10 +657,19 @@ msgstr ""
 msgid "System default"
 msgstr ""
 
+msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
+msgstr ""
+
+msgid "The selected device cannot be identified uniquely."
+msgstr ""
+
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr ""
 
 msgid "Turn off to pass audio through without an EffeTune preset."
+msgstr ""
+
+msgid "Unassigned"
 msgstr ""
 
 msgid "unavailable"
@@ -624,6 +690,9 @@ msgstr ""
 msgid "Unknown sample format"
 msgstr ""
 
+msgid "Unsupported channel count"
+msgstr ""
+
 msgid "Updating settings"
 msgstr ""
 
@@ -634,6 +703,9 @@ msgid "Versions"
 msgstr ""
 
 msgid "Waiting for live PipeTune state…"
+msgstr ""
+
+msgid "Waiting for output devices…"
 msgstr ""
 
 msgid "Warnings"

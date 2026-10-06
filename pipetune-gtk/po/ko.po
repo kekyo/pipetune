@@ -102,14 +102,23 @@ msgstr "모두"
 msgid "All settings saved"
 msgstr "모든 설정을 저장했습니다"
 
+msgid "Ambiguous device"
+msgstr "장치를 구분할 수 없음"
+
 msgid "Apply"
 msgstr "적용"
+
+msgid "Audio outputs changed"
+msgstr "오디오 출력 변경 완료"
 
 msgid "Automatic"
 msgstr "자동"
 
 msgid "Automatic — follow PipeWire graph sampling frequency"
 msgstr "자동 — PipeWire 그래프 샘플링 주파수 따르기"
+
+msgid "Available"
+msgstr "사용 가능"
 
 msgid "Baseline"
 msgstr "기준 상태"
@@ -137,6 +146,12 @@ msgstr "설정을 저장할 수 없습니다"
 
 msgid "Cannot use saved language preference"
 msgstr "저장된 언어 기본 설정을 사용할 수 없습니다"
+
+msgid "Changing audio outputs"
+msgstr "오디오 출력 변경 중"
+
+msgid "Changing audio outputs failed"
+msgstr "오디오 출력 변경 실패"
 
 msgid "Changing DSP backend"
 msgstr "DSP 백엔드 변경 중"
@@ -241,6 +256,18 @@ msgstr "기본값이 실시간으로 적용됩니다. 저장하려면 적용을 
 msgid "Defaults selected"
 msgstr "기본값을 선택했습니다"
 
+msgid "Device"
+msgstr "장치"
+
+msgid "Device channel"
+msgstr "장치 채널"
+
+msgid "Device presence is separate from audio activity. Double-click a purpose cell to edit its label."
+msgstr "장치 연결 상태는 오디오 재생 상태와 별개입니다. 용도 셀을 두 번 클릭하여 이름을 편집하세요."
+
+msgid "Disabled"
+msgstr "비활성화됨"
+
 msgid "Disconnected"
 msgstr "연결 끊김"
 
@@ -293,6 +320,9 @@ msgstr "유효 백엔드를 사용할 수 없음"
 msgid "EffeTune DSP control"
 msgstr "EffeTune DSP 제어"
 
+msgid "EffeTune final output channels"
+msgstr "EffeTune 최종 출력 채널"
+
 msgid "EffeTune presets"
 msgstr "EffeTune 프리셋"
 
@@ -341,6 +371,12 @@ msgstr "입력 형식"
 msgid "Input sampling frequency"
 msgstr "입력 샘플링 주파수"
 
+msgid "Input uses Ch 1 and Ch 2. Create additional outputs in your EffeTune preset. Disabled devices keep their Ch numbers."
+msgstr "입력은 Ch 1과 Ch 2를 사용합니다. 추가 출력은 EffeTune 프리셋에서 만드세요. 비활성화된 장치의 채널 번호는 유지됩니다."
+
+msgid "Inventory unavailable"
+msgstr "장치 목록을 사용할 수 없음"
+
 msgid "Language"
 msgstr "언어"
 
@@ -386,6 +422,9 @@ msgstr "부하"
 msgid "Measured frame rate"
 msgstr "측정 프레임 레이트"
 
+msgid "Multiple — outputs selected in PipeTune"
+msgstr "다중 — PipeTune에서 출력 선택"
+
 msgid "Native backend"
 msgstr "네이티브 백엔드"
 
@@ -395,11 +434,23 @@ msgstr "없음"
 msgid "None"
 msgstr "없음"
 
+msgid "Not connected"
+msgstr "연결되지 않음"
+
 msgid "Off"
 msgstr "꺼짐"
 
 msgid "Open PipeTune"
 msgstr "PipeTune 열기"
+
+msgid "Output"
+msgstr "출력"
+
+msgid "Output devices"
+msgstr "출력 장치"
+
+msgid "Output mode"
+msgstr "출력 모드"
 
 #, brace-format
 msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
@@ -451,6 +502,9 @@ msgstr "PipeWire 적용"
 msgid "PipeWire graph sampling frequency"
 msgstr "PipeWire 그래프 샘플링 주파수"
 
+msgid "Presence"
+msgstr "연결 상태"
+
 msgid "Preset"
 msgstr "프리셋"
 
@@ -478,8 +532,17 @@ msgstr "처리 모드를 변경했습니다"
 msgid "Processing time"
 msgstr "처리 시간"
 
+msgid "Profile changed"
+msgstr "프로필 변경됨"
+
+msgid "Purpose"
+msgstr "용도"
+
 msgid "Quit"
 msgstr "종료"
+
+msgid "Reserved"
+msgstr "예약됨"
 
 msgid "Restart now"
 msgstr "지금 다시 시작"
@@ -557,6 +620,9 @@ msgstr "무음 시 일시 중단 변경됨"
 msgid "SIMD variant"
 msgstr "SIMD 변형"
 
+msgid "Single — output selected by the OS"
+msgstr "단일 — OS에서 출력 선택"
+
 msgid "Some preset sources are unavailable"
 msgstr "일부 프리셋 소스를 사용할 수 없습니다"
 
@@ -595,11 +661,20 @@ msgstr "시스템"
 msgid "System default"
 msgstr "시스템 기본값"
 
+msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
+msgstr "OS에서 출력을 선택합니다. 아래에 저장된 다중 출력 할당은 비활성 상태입니다."
+
+msgid "The selected device cannot be identified uniquely."
+msgstr "선택한 장치를 고유하게 식별할 수 없습니다."
+
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "PipeTune GTK가 다시 시작된 후 UI 언어 변경이 적용됩니다."
 
 msgid "Turn off to pass audio through without an EffeTune preset."
 msgstr "EffeTune 프리셋 없이 오디오를 통과시키려면 끄세요."
+
+msgid "Unassigned"
+msgstr "할당되지 않음"
 
 msgid "unavailable"
 msgstr "사용 불가"
@@ -619,6 +694,9 @@ msgstr "알 수 없음"
 msgid "Unknown sample format"
 msgstr "알 수 없는 샘플 형식"
 
+msgid "Unsupported channel count"
+msgstr "지원하지 않는 채널 수"
+
 msgid "Updating settings"
 msgstr "설정 업데이트 중"
 
@@ -630,6 +708,9 @@ msgstr "버전"
 
 msgid "Waiting for live PipeTune state…"
 msgstr "실시간 PipeTune 상태를 기다리는 중…"
+
+msgid "Waiting for output devices…"
+msgstr "출력 장치를 기다리는 중…"
 
 msgid "Warnings"
 msgstr "경고"
