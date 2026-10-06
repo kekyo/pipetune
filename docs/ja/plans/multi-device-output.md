@@ -346,6 +346,10 @@ GTKの検証は既存のテスト基盤に追加する。ブラウザを介す�
 
 実機の読み取り専用列挙では、TXとUR22mkIIの出力ノードから`device.profile.name`、チャンネル数、位置を取得でき、対応するDeviceオブジェクトから`device.name`、`device.serial`、`device.bus-id`、`device.bus-path`を取得できた。UR22mkIIの`device.serial`は製品名を含む値であり、個体固有のシリアルと断定できない。ALSAカード番号を含む`object.path`や`api.alsa.path`を永続的な識別子として採用せず、同型機の曖昧さとUSBポート変更を含めて識別規則を確定する。抽出結果は`output-identities.json`に保存した。
 
+経路のコード調査では、combine streamが付与する`node.link-group`と既存ポリシーの相互作用を、追加の検証対象として特定した。PipeTuneの[0.4互換ポリシー](../../../pipetune/src/wireplumber_04_compat.cpp)は、既定出力の探索からlink groupを持つノードを除外する。[WirePlumber 0.5.8のfilter-utils.lua](https://github.com/PipeWire/wireplumber/blob/0.5.8/src/scripts/lib/filter-utils.lua)でも、選択先にlink groupがある場合のフィルタ探索は、smart filterであるかどうかに依存する。集約ノードを単に既定出力へ指定するだけで、アプリケーションの音声がDSPを通ると仮定しない。これはコードから得た検証上の懸念であり、この時点で製品経路のPCMによる再現確認は行っていない。
+
+補償状態の表示も方式選定に含める。[PipeWire 1.0.5のcombine stream実装](https://github.com/PipeWire/pipewire/blob/1.0.5/src/modules/module-combine-stream.c)では、ストリームの時間情報から最大遅延との差を計算し、モジュール内部のバッファへ反映する。一般向けAPIで取得できる遅延と、実際に追加された補償量を混同せず、表示の根拠を検証する。内部構造へ直接アクセスする方式は採用しない。
+
 フェーズ1は未完了である。次の内容を完了してから、採用方式と必要バージョンを確定してフェーズ2へ進む。
 
 - 物理出力の遅延差を与えたPCM検証と、補償量を状態表示へ取得する方法。
