@@ -242,9 +242,13 @@ try {
       "the remaining device must continue receiving its original DSP channels");
     assert.ok(report.receivedFrames[0] >= 131072, "device A must receive PCM before and after reconnecting");
     assert.ok(report.receivedFrames[1] >= 131072, "device B must remain routed while device A reconnects");
+    if (scenario === "policy-reconnect") {
+      assert.ok(report.reconnectMutedFrames >= 256,
+        "the reconnecting output must pass silence through all linked channels before playback resumes");
+    }
   }
   if (scenario === "volume" || scenario === "policy-volume" || scenario === "policy-pulse-volume") {
-    if (scenario === "policy-pulse-volume") {
+    if (scenario === "policy-pulse-volume" || scenario === "policy-volume") {
       assert.ok(report.unmutedInputFramesDuringMute >= 8192,
         "master mute must preserve the DSP input while silencing the physical outputs");
     }

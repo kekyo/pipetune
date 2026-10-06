@@ -70,6 +70,14 @@ struct Selector {
   std::map<std::uint32_t, std::string> nodes;
 };
 
+struct OutputLink {
+  pw_link *proxy = nullptr;
+  spa_hook listener = {};
+  pw_link_events events = {};
+  std::uint32_t targetId = PW_ID_ANY;
+  bool active = false;
+};
+
 struct Probe {
   pw_main_loop *loop = nullptr;
   pw_context *context = nullptr;
@@ -79,6 +87,7 @@ struct Probe {
   pw_registry_events registryEvents = {};
   spa_hook registryListener = {};
   pw_node *combinedNode = nullptr;
+  pw_node *controlNode = nullptr;
   pw_metadata *metadata = nullptr;
   std::uint32_t metadataId = PW_ID_ANY;
   std::uint32_t metadataInstances = 0;
@@ -105,6 +114,8 @@ struct Probe {
   std::uint64_t unmutedInputFramesDuringMute = 0;
   std::array<float, 2> channelVolumes = {1.0F, 1.0F};
   bool masterMute = false;
+  bool reconnectMuted = false;
+  std::uint64_t reconnectMutedFrames = 0;
   std::uint64_t channelErrors = 0;
   std::uint64_t disconnectSurvivorFrame = 0;
   std::uint64_t survivorFramesWhileDisconnected = 0;
@@ -130,6 +141,7 @@ struct Probe {
   std::string error;
   std::map<std::string, std::string> nodeNames;
   std::map<std::string, std::pair<std::string, std::string>> links;
+  std::map<std::uint32_t, OutputLink> outputLinks;
   std::map<std::string, std::string> metadataValues;
 };
 
@@ -163,7 +175,7 @@ static bool setVolume(Probe &probe, float gain, bool mute) {
               << '\n' << std::flush;
     return true;
   }
-  if (probe.combinedNode == nullptr) {
+  if (probe.controlNode == nullptr) {
     fail(probe, "combined output was not available for volume control");
     return false;
   }
@@ -175,8 +187,8 @@ static bool setVolume(Probe &probe, float gain, bool mute) {
       SPA_PROP_volume, SPA_POD_Float(1.0F),
       SPA_PROP_mute, SPA_POD_Bool(mute),
       SPA_PROP_channelVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float,
-                                              volumes.size(), volumes.data())));
-  if (pw_node_set_param(probe.combinedNode, SPA_PARAM_Props, 0, properties) < 0) {
+                                              probe.policy ? 2u : volumes.size(), volumes.data())));
+  if (pw_node_set_param(probe.controlNode, SPA_PARAM_Props, 0, properties) < 0) {
     fail(probe, "cannot change combined output volume");
     return false;
   }
@@ -262,6 +274,7 @@ static void capture(void *data) {
     endpoint.lastGraphNanoseconds = time.now;
     endpoint.lastBlockFrames = frameCount;
   }
+  auto silent = true;
   for (auto frame = 0u; frame < frameCount; ++frame) {
     auto samples = std::array<float, 2>{};
     for (auto channel = 0u; channel < 2; ++channel) {
@@ -269,6 +282,14 @@ static void capture(void *data) {
       std::memcpy(&samples[channel],
                   static_cast<const char *>(plane.data) + plane.chunk->offset +
                       frame * sizeof(float), sizeof(float));
+    }
+    silent = silent && samples[0] == 0.0F && samples[1] == 0.0F;
+    if (probe.reconnectMuted && probe.phase == Phase::reconnected &&
+        endpoint.firstChannel == 0 && !silent) {
+      ++probe.channelErrors;
+      pw_stream_queue_buffer(endpoint.stream, queued);
+      fail(probe, "a reconnecting output received audio before all channels were ready");
+      return;
     }
     if (samples[0] == 0.0F && samples[1] == 0.0F &&
         (endpoint.awaitingSignal || probe.phase == Phase::restartingOutputs)) continue;
@@ -283,6 +304,8 @@ static void capture(void *data) {
                       std::to_string(endpoint.firstChannel + 1) + " after " +
                       std::to_string(endpoint.receivedFrames) + " frames, values " +
                       std::to_string(samples[0]) + ", " + std::to_string(samples[1]) +
+                      ", scaled " + std::to_string(samples[0] * kSampleScale) + ", " +
+                      std::to_string(samples[1] * kSampleScale) +
                       ", previous tag " + std::to_string(endpoint.previousTag));
       return;
     }
@@ -292,6 +315,18 @@ static void capture(void *data) {
     if (probe.phase == Phase::restartingOutputs) ++endpoint.restartWarmupFrames;
   }
   pw_stream_queue_buffer(endpoint.stream, queued);
+  if (probe.reconnectMuted && probe.phase == Phase::reconnected && endpoint.firstChannel == 0 &&
+      silent && frameCount > 0) {
+    const auto target = pw_stream_get_node_id(endpoint.stream);
+    const auto activeLinks = std::count_if(probe.outputLinks.begin(), probe.outputLinks.end(),
+        [target](const auto &entry) { return entry.second.targetId == target && entry.second.active; });
+    if (activeLinks == 2) {
+      // Leave the DSP inputs and the surviving device running. Only release
+      // this device after all its ports have linked and passed a silent block.
+      probe.reconnectMutedFrames += frameCount;
+      probe.reconnectMuted = false;
+    }
+  }
   if (probe.phase == Phase::restartingOutputs) {
     if (probe.endpoints[0].restartWarmupFrames >= 256 &&
         probe.endpoints[1].restartWarmupFrames >= 256) {
@@ -335,6 +370,7 @@ static void capture(void *data) {
       probe.endpoints[1].receivedFrames >= 65536) {
     // The surviving device's received frames are the barrier for recreating
     // the disconnected sink, rather than a fixed wall-clock sleep.
+    probe.reconnectMuted = probe.policy;
     auto &removed = probe.endpoints[0];
     pw_stream_destroy(removed.stream);
     removed.stream = nullptr;
@@ -397,11 +433,22 @@ static bool observeOutputs(Probe &probe, Selector &selector, pw_core *core) {
   if (selector.registry == nullptr) return false;
   selector.events.version = PW_VERSION_REGISTRY_EVENTS;
   selector.events.global = [](void *data, std::uint32_t id, std::uint32_t,
-                              const char *type, std::uint32_t, const spa_dict *properties) {
+                              const char *type, std::uint32_t version, const spa_dict *properties) {
     auto &view = *static_cast<Selector *>(data);
     if (std::strcmp(type, PW_TYPE_INTERFACE_Node) != 0 || properties == nullptr) return;
+    const auto *mediaClass = spa_dict_lookup(properties, PW_KEY_MEDIA_CLASS);
+    if (mediaClass == nullptr || std::strcmp(mediaClass, "Audio/Sink") != 0) return;
     const auto *name = spa_dict_lookup(properties, PW_KEY_NODE_NAME);
     if (name != nullptr) view.nodes[id] = name;
+    // Model desktop controls with a separate client, including its normal
+    // permission boundary, instead of the node owner's loopback connection.
+    if (view.probe->volume && !view.probe->pulse &&
+        &view == &view.probe->selectors[0] && name != nullptr &&
+        std::strcmp(name, "pipetune_probe_combined") == 0) {
+      view.probe->controlNode = static_cast<pw_node *>(pw_registry_bind(view.registry, id,
+          PW_TYPE_INTERFACE_Node, std::min(version, std::uint32_t{PW_VERSION_NODE}), 0));
+      if (view.probe->controlNode == nullptr) fail(*view.probe, "cannot bind desktop volume controls");
+    }
     finishVisibilityCheck(*view.probe);
   };
   selector.events.global_remove = [](void *data, std::uint32_t id) {
@@ -415,8 +462,8 @@ static bool observeOutputs(Probe &probe, Selector &selector, pw_core *core) {
 
 static void restoreVisibleOutputs(Probe &probe) {
   for (const auto &selector : probe.selectors) {
-    if (visiblePhysicalOutputs(selector) != 0 || !visibleCombinedOutput(selector)) {
-      fail(probe, "a selector or playback client can still select physical outputs during multi-device playback");
+    if (selector.nodes.size() != 1 || !visibleCombinedOutput(selector)) {
+      fail(probe, "a selector or playback client can select outputs other than the public logical sink");
       return;
     }
   }
@@ -564,7 +611,7 @@ static void processorOutputProcess(void *data) {
             (channel >= 2 ? 2.0F * kChannelOffset / kSampleScale : 0.0F);
         // This probe exercises uniform master volume. The additive DSP term
         // must be attenuated too, so applying gain before DSP cannot pass.
-        samples[frame] = probe.masterMute ? 0.0F :
+        samples[frame] = probe.masterMute || (probe.reconnectMuted && channel < 2) ? 0.0F :
             processed * probe.channelVolumes[0];
       }
       to.chunk->offset = 0;
@@ -608,7 +655,7 @@ static bool publishMasterVolume(Probe &probe) {
 
 static void processorInputParameterChanged(void *data, std::uint32_t id, const spa_pod *parameter) {
   auto &probe = *static_cast<Probe *>(data);
-  if (!probe.pulse || id != SPA_PARAM_Props || parameter == nullptr ||
+  if (!probe.policy || id != SPA_PARAM_Props || parameter == nullptr ||
       probe.phase == Phase::restoringOutputs) return;
   // Adapter construction emits its initial properties before the stream has
   // a node to control. Initialize our controls after connectStream returns.
@@ -648,7 +695,7 @@ static bool createProcessor(Probe &probe) {
     pw_properties_set(inputProperties, key.c_str(), value.c_str());
   for (const auto &[key, value] : output.output)
     pw_properties_set(outputProperties, key.c_str(), value.c_str());
-  if (probe.pulse) {
+  if (probe.policy) {
     // The selectable logical output is the application's actual input sink.
     // The distribution sink remains private behind the DSP.
     pw_properties_set(inputProperties, PW_KEY_NODE_NAME, "pipetune_probe_combined");
@@ -661,7 +708,7 @@ static bool createProcessor(Probe &probe) {
     pw_properties_set(inputProperties, "node.pipetune.target-endpoint", nullptr);
   }
   pw_properties_set(outputProperties, PW_KEY_TARGET_OBJECT,
-      probe.pulse ? "pipetune_probe_distribution" : "pipetune_probe_combined");
+      probe.policy ? "pipetune_probe_distribution" : "pipetune_probe_combined");
   pw_properties_set(outputProperties, "node.pipetune.managed-output", "true");
   pw_properties_set(outputProperties, "node.dont-fallback", "true");
   pw_properties_set(outputProperties, "node.dont-move", "true");
@@ -682,7 +729,7 @@ static bool createProcessor(Probe &probe) {
   return connectStream(probe.processorInput, true, 2, PW_STREAM_FLAG_ASYNC) &&
       connectStream(probe.processorOutput, false, 4,
           PW_STREAM_FLAG_TRIGGER | PW_STREAM_FLAG_AUTOCONNECT) &&
-      (!probe.pulse || publishMasterVolume(probe));
+      (!probe.policy || publishMasterVolume(probe));
 }
 
 static void sinkParameterChanged(void *data, std::uint32_t id, const spa_pod *parameter) {
@@ -813,7 +860,7 @@ static void globalAdded(void *data, std::uint32_t id, std::uint32_t,
         probe.applicationClientId = static_cast<std::uint32_t>(std::stoul(client));
       if (std::strcmp(name, "pipetune_probe_processor") == 0)
         probe.processorClientId = static_cast<std::uint32_t>(std::stoul(client));
-      if (probe.pulse && std::strcmp(name, "pipetune_probe_combined") == 0)
+      if (probe.policy && std::strcmp(name, "pipetune_probe_combined") == 0)
         probe.processorClientId = static_cast<std::uint32_t>(std::stoul(client));
     }
   }
@@ -849,7 +896,23 @@ static void globalAdded(void *data, std::uint32_t id, std::uint32_t,
       if (probe.nodeNames[output] == "control.endpoint.pipetune.capture" &&
           probe.nodeNames[input].starts_with("pipetune_probe_device_"))
         probe.captureFeedsPlayback = true;
-
+      if (probe.reconnect && probe.nodeNames[input] == "pipetune_probe_device_0" &&
+          probe.nodeNames[output] == "output.pipetune_probe_distribution_pipetune_probe_device_0") {
+        auto &observed = probe.outputLinks[id];
+        observed.targetId = static_cast<std::uint32_t>(std::stoul(input));
+        observed.proxy = static_cast<pw_link *>(pw_registry_bind(probe.registry, id,
+            PW_TYPE_INTERFACE_Link, std::min(version, std::uint32_t{PW_VERSION_LINK}), 0));
+        if (observed.proxy == nullptr) {
+          fail(probe, "cannot observe the reconnecting output's channel links");
+          return;
+        }
+        observed.events.version = PW_VERSION_LINK_EVENTS;
+        observed.events.info = [](void *value, const pw_link_info *info) {
+          auto &link = *static_cast<OutputLink *>(value);
+          link.active = info != nullptr && info->state == PW_LINK_STATE_ACTIVE;
+        };
+        pw_link_add_listener(observed.proxy, &observed.listener, &observed.events, &observed);
+      }
     }
     return;
   }
@@ -918,6 +981,10 @@ static void globalRemoved(void *data, std::uint32_t id) {
   }
   probe.nodeNames.erase(std::to_string(id));
   probe.links.erase(std::to_string(id));
+  if (const auto link = probe.outputLinks.find(id); link != probe.outputLinks.end()) {
+    pw_proxy_destroy(reinterpret_cast<pw_proxy *>(link->second.proxy));
+    probe.outputLinks.erase(link);
+  }
   for (auto &output : probe.outputLatencies) {
     if (output.id != id || output.port == nullptr) continue;
     pw_proxy_destroy(reinterpret_cast<pw_proxy *>(output.port));
@@ -962,13 +1029,13 @@ static bool createSource(Probe &probe) {
 static bool createCombinedOutput(Probe &probe) {
   const auto arguments = std::string{"combine.latency-compensate = "} +
       (probe.compensate ? "true\n" : "false\n") + "node.name = " +
-      (probe.pulse ? "pipetune_probe_distribution\n" : "pipetune_probe_combined\n") + R"conf(
+      (probe.policy ? "pipetune_probe_distribution\n" : "pipetune_probe_combined\n") + R"conf(
     combine.mode = sink
     node.description = "PipeTune multi-device output probe"
     combine.props = {
       audio.position = [ AUX0 AUX1 AUX2 AUX3 ]
       node.virtual = true
-    )conf" + (probe.pulse ? "node.pipetune.internal = true\n" : "node.pipetune.aggregate = true\n") + R"conf(
+    )conf" + (probe.policy ? "node.pipetune.internal = true\n" : "node.pipetune.aggregate = true\n") + R"conf(
     }
     stream.props = {
       stream.dont-remix = true
@@ -1017,7 +1084,7 @@ static bool prepare(Probe &probe) {
   if (probe.context == nullptr) return false;
   probe.core = pw_context_connect(probe.context, nullptr, 0);
   if (probe.core == nullptr) return false;
-  if (probe.visibility) {
+  if (probe.visibility || probe.volume) {
     auto *core = pw_context_connect(probe.context,
         pw_properties_new(PW_KEY_APP_NAME, "PipeTune probe sound settings",
             PW_KEY_APP_PROCESS_BINARY, "pipetune_probe_settings", nullptr), 0);
@@ -1064,6 +1131,11 @@ static void destroy(Probe &probe) {
   if (probe.processorInput != nullptr) pw_stream_destroy(probe.processorInput);
   if (probe.processorOutput != nullptr) pw_stream_destroy(probe.processorOutput);
   if (probe.metadata != nullptr) pw_proxy_destroy(reinterpret_cast<pw_proxy *>(probe.metadata));
+  if (probe.controlNode != nullptr) pw_proxy_destroy(reinterpret_cast<pw_proxy *>(probe.controlNode));
+  for (auto &[id, link] : probe.outputLinks) {
+    static_cast<void>(id);
+    if (link.proxy != nullptr) pw_proxy_destroy(reinterpret_cast<pw_proxy *>(link.proxy));
+  }
   for (auto &selector : probe.selectors)
     if (selector.registry != nullptr) pw_proxy_destroy(reinterpret_cast<pw_proxy *>(selector.registry));
   for (auto &output : probe.outputLatencies)
@@ -1180,6 +1252,7 @@ int main(int argc, char **argv) {
             << "],\"channelErrors\":" << probe.channelErrors
             << ",\"reconnected\":" << (probe.phase == Phase::reconnected ? "true" : "false")
             << ",\"survivorFramesWhileDisconnected\":" << probe.survivorFramesWhileDisconnected
+            << ",\"reconnectMutedFrames\":" << probe.reconnectMutedFrames
             << ",\"declaredLatencyFrames\":" << (probe.latency ? 63 : 0)
             << ",\"observedCompensationFrames\":" << compensation
             << ",\"reportedDelayFrames\":[" << probe.outputLatencies[0].reportedFrames
