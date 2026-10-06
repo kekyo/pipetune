@@ -103,6 +103,7 @@ struct AudioTest {
   bool restartMuted = false;
   bool restartResumed = false;
   bool latency = false;
+  bool latencyReconnect = false;
   bool intentionalDelay = false;
   bool controls = false;
   bool awaitingControl = false;
@@ -194,8 +195,14 @@ static void captureLatency(TestOutput &output, pw_buffer &buffer) {
     if (output.index == 2) continue;
     validFrame = validFrame && tags[0] == tags[1];
     const auto consecutive = output.previousTag < 0 || tags[0] == (output.previousTag + 1) % tagPeriod;
-    if (test.latencySettled && (!validFrame || !consecutive))
-      return fail(test, "steady latency PCM lost channel identity or frame order");
+    if (test.latencySettled && (!validFrame || !consecutive)) {
+      if (!test.latencyReconnect || test.stage == 0)
+        return fail(test, "steady latency PCM lost channel identity or frame order");
+      // Rebuilding the distribution intentionally fades and discards queued
+      // audio. Start the consecutive measurement window after that boundary.
+      test.latencySettled = false;
+      for (auto &item : test.outputs) item.frames = 0;
+    }
     validBlock = validBlock && validFrame && consecutive;
     output.previousTag = validFrame ? tags[0] : -1;
   }
@@ -207,12 +214,13 @@ static void captureLatency(TestOutput &output, pw_buffer &buffer) {
   if (validBlock && test.latencySettled) output.frames += frames;
   const auto &a = test.outputs[0];
   const auto &b = test.outputs[1];
-  if (!a.matched || !b.matched || a.blockTime == 0 || b.blockTime == 0) return;
+  const auto single = test.latencyReconnect && test.stage == 1;
+  if (!a.matched || (!single && !b.matched) || a.blockTime == 0 || (!single && b.blockTime == 0)) return;
   const auto elapsedFrames = std::llround(static_cast<double>(a.blockTime - b.blockTime) * 48000 / 1000000000);
   const auto relative = elapsedFrames + a.blockFrames - b.blockFrames + b.previousTag - a.previousTag +
       (test.intentionalDelay ? 48 : 0);
-  const auto compensation = (relative % tagPeriod + tagPeriod) % tagPeriod;
-  const auto aligned = compensation <= test.declaredLatency && test.declaredLatency - compensation <= 1;
+  const auto compensation = single ? -1 : (relative % tagPeriod + tagPeriod) % tagPeriod;
+  const auto aligned = single || (compensation <= test.declaredLatency && test.declaredLatency - compensation <= 1);
   if (!test.latencySettled) {
     if (aligned) {
       test.latencySettled = true;
@@ -220,13 +228,19 @@ static void captureLatency(TestOutput &output, pw_buffer &buffer) {
     }
     return;
   }
-  if (!aligned) return fail(test, "steady product delay compensation differs from the device latency");
-  if (a.frames < 32768 || b.frames < 32768) return;
+  if (!aligned) {
+    if (!test.latencyReconnect || test.stage == 0)
+      return fail(test, "steady product delay compensation differs from the device latency");
+    test.latencySettled = false;
+    for (auto &item : test.outputs) item.frames = 0;
+    return;
+  }
+  if (a.frames < 32768 || (!single && b.frames < 32768)) return;
   test.stageFrames[test.stage] = {a.frames, b.frames};
   test.compensation[test.stage] = compensation;
   if (test.stage == 2) return static_cast<void>(pw_main_loop_quit(test.loop));
   ++test.stage;
-  test.declaredLatency = test.stage == 1 ? 127 : 31;
+  test.declaredLatency = test.latencyReconnect ? (test.stage == 1 ? 0 : 63) : test.stage == 1 ? 127 : 31;
   test.latencySettled = false;
   for (auto &item : test.outputs) { item.frames = 0; item.matched = false; item.previousTag = -1; }
   pw_loop_signal_event(pw_main_loop_get_loop(test.loop), test.graphEvent);
@@ -426,6 +440,16 @@ static bool createTestOutput(TestOutput &output) {
 
 static void changeOutputGraph(void *data, std::uint64_t) {
   auto &test = *static_cast<AudioTest *>(data);
+  if (test.latencyReconnect) {
+    auto &output = test.outputs[1];
+    if (test.stage == 1) {
+      spa_hook_remove(&output.listener);
+      pw_stream_destroy(output.stream);
+      output.stream = nullptr;
+      output.ready = false;
+    } else if (!createTestOutput(output)) fail(test, "cannot restore the slower output");
+    return;
+  }
   if (test.latency) return outputParameterChanged(&test.outputs[1], SPA_PARAM_Latency, nullptr);
   if (test.restart) {
     // ALSA nodes are owned by WirePlumber and reappear with new generations
@@ -462,7 +486,8 @@ static int runAudio(std::string_view scenario) {
   test.restart = scenario == "product-restart" || test.restartMuted;
   test.reconnect = scenario == "product-reconnect" || test.profile || test.restart;
   test.intentionalDelay = scenario == "product-time-alignment";
-  test.latency = scenario == "product-latency" || test.intentionalDelay;
+  test.latencyReconnect = scenario == "product-latency-reconnect";
+  test.latency = scenario == "product-latency" || test.intentionalDelay || test.latencyReconnect;
   test.controls = scenario == "product-controls";
   test.loop = pw_main_loop_new(nullptr);
   if (test.loop == nullptr) return 1;

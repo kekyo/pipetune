@@ -242,10 +242,15 @@ try {
     const report = JSON.parse(audio.stdout);
     assert.ok(report.receivedFrames.every((frames) => scenario === "product-disconnected" ? frames === 0 : frames >= 32768));
     assert.ok(report.producedFrames >= 32768);
-    assert.equal(report.stages.length, scenario === "product-controls" ? 9 : scenario === "product-profile" ? 5 : ["product-restart", "product-latency", "product-time-alignment"].includes(scenario) ? 3 :
+    assert.equal(report.stages.length, scenario === "product-controls" ? 9 : scenario === "product-profile" ? 5 : ["product-restart", "product-latency", "product-latency-reconnect", "product-time-alignment"].includes(scenario) ? 3 :
       ["product-volume", "product-reconnect", "product-restart-mute"].includes(scenario) ? 4 : 1);
     assert.ok(report.stages.every((stage, index) => stage.every((frames, device) =>
-      scenario === "product-disconnected" || ((["product-reconnect", "product-profile"].includes(scenario) && index === 2 || scenario === "product-profile" && index === 3) && device === 0) ? frames === 0 : frames >= 32768)));
+      scenario === "product-disconnected" || (scenario === "product-latency-reconnect" && index === 1 && device === 1) ||
+      ((["product-reconnect", "product-profile"].includes(scenario) && index === 2 || scenario === "product-profile" && index === 3) && device === 0) ? frames === 0 : frames >= 32768)));
+    if (scenario === "product-latency-reconnect") {
+      assert.equal(report.compensationFrames[1], -1, "a missing output has no measured relative delay");
+      for (const index of [0, 2]) assert.ok(report.compensationFrames[index] >= 62 && report.compensationFrames[index] <= 63);
+    }
     if (["product-latency", "product-time-alignment"].includes(scenario)) {
       for (const [index, declared] of [63, 127, 31].entries())
         assert.ok(report.compensationFrames[index] <= declared && declared - report.compensationFrames[index] <= 1,

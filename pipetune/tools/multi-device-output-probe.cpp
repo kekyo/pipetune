@@ -309,8 +309,21 @@ static void applyReconfiguration(void *data, std::uint64_t) {
       spa_hook_remove(&removed.listener);
       pw_stream_destroy(removed.stream);
       removed.stream = nullptr;
-    } else if (!createEndpoint(probe, 1)) {
-      fail(probe, "cannot reconnect the slower output");
+    } else {
+      // Rejoin through a fresh distribution and feeder, as in the product.
+      // Adding a stream to a running combine module can leave its queue one
+      // graph quantum apart from the surviving stream after a hotplug.
+      spa_hook_remove(&probe.sourceListener);
+      pw_stream_destroy(probe.source);
+      probe.source = nullptr;
+      pw_impl_module_destroy(probe.combine);
+      probe.combine = nullptr;
+      probe.sourcePrimed = false;
+      probe.sourceStartTick.reset();
+      probe.sourceWaitFrames = 0;
+      probe.reconnectMuted = false;
+      if (!createEndpoint(probe, 1) || !createCombinedOutput(probe) || !createSource(probe))
+        fail(probe, "cannot rebuild the distribution after reconnecting the slower output");
     }
   } else {
     sinkParameterChanged(&probe.endpoints[1], SPA_PARAM_Latency, nullptr);
