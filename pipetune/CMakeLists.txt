@@ -825,7 +825,7 @@ if(BUILD_TESTING)
       $<TARGET_FILE:pipetune_multi_device_output_probe>
       volume)
   set_tests_properties(pipetune_multi_device_volume PROPERTIES TIMEOUT 60)
-  foreach(scenario IN ITEMS latency latency-off)
+  foreach(scenario IN ITEMS latency latency-off latency-change latency-reconnect)
     add_test(
       NAME pipetune_multi_device_${scenario}
       COMMAND

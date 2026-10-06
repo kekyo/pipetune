@@ -282,6 +282,24 @@ try {
     assert.equal(report.observedCompensationFrames, scenario === "latency" ? 63 : 0,
       "PCM timing must reflect whether compensation is enabled");
   }
+  if (scenario === "latency-change" || scenario === "latency-reconnect") {
+    assert.deepEqual(report.latencyStages.map((stage) => stage.declaredFrames),
+      scenario === "latency-change" ? [63, 127, 31] : [63, 0, 63]);
+    for (const [index, stage] of report.latencyStages.entries()) {
+      assert.ok(stage.compensationFrames <= stage.declaredFrames &&
+        stage.declaredFrames - stage.compensationFrames <= 1,
+        "compensation must follow device latency within one frame of integer-time truncation");
+      assert.equal(stage.steadyFrames.length, 2);
+      assert.ok(stage.steadyFrames[0] >= 65536,
+        "the faster output must preserve PCM order for a complete interval after each delay change");
+      if (scenario === "latency-reconnect" && index === 1) {
+        assert.equal(stage.steadyFrames[1], 0, "the disconnected output must receive no audio");
+      } else {
+        assert.ok(stage.steadyFrames[1] >= 65536,
+          "the slower output must preserve PCM order before and after reconfiguration");
+      }
+    }
+  }
   process.stdout.write(`${version.stdout.trim()}\n${JSON.stringify(report)}\n`);
 } catch (error) {
   for (const child of children) process.stderr.write(`${child.name}:\n${child.stdout}${child.stderr}\n`);

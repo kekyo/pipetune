@@ -53,6 +53,9 @@ struct Endpoint {
   int previousTag = -1;
   bool selected = true;
   bool awaitingSignal = true;
+  bool lastBlockHasSignal = false;
+  std::uint64_t latencyTransitionDiscontinuities = 0;
+  std::uint64_t latencyTransitionSilentFrames = 0;
 };
 
 struct OutputLatency {
@@ -78,6 +81,12 @@ struct OutputLink {
   pw_link_events events = {};
   std::uint32_t targetId = PW_ID_ANY;
   bool active = false;
+};
+
+struct LatencyMeasurement {
+  std::uint32_t declaredFrames = 0;
+  std::uint64_t compensationFrames = 0;
+  std::array<std::uint64_t, 2> steadyFrames = {};
 };
 
 struct Probe {
@@ -113,6 +122,8 @@ struct Probe {
   spa_hook processorOutputListener = {};
   spa_source *watchdog = nullptr;
   spa_source *pulseSignal = nullptr;
+  spa_source *reconfigurationEvent = nullptr;
+  bool reconfigurationPending = false;
   std::array<Endpoint, 3> endpoints = {};
   std::array<OutputLatency, 2> outputLatencies = {};
   std::array<Selector, 2> selectors = {};
@@ -122,6 +133,9 @@ struct Probe {
   std::uint64_t unmutedInputFramesDuringMute = 0;
   std::array<float, 2> channelVolumes = {1.0F, 1.0F};
   bool masterMute = false;
+  bool sourcePrimed = false;
+  std::optional<std::uint64_t> sourceStartTick;
+  std::uint64_t sourceWaitFrames = 0;
   bool reconnectMuted = false;
   std::uint64_t reconnectMutedFrames = 0;
   std::uint32_t reconnectingOutputId = PW_ID_ANY;
@@ -135,6 +149,13 @@ struct Probe {
   bool reconnect = false;
   bool volume = false;
   bool latency = false;
+  bool dynamicLatency = false;
+  bool latencyReconnect = false;
+  bool latencyTransitioning = false;
+  std::uint32_t simulatedLatencyFrames = 63;
+  std::uint32_t latencyStage = 0;
+  std::array<std::uint64_t, 2> latencyStageStart = {};
+  std::array<LatencyMeasurement, 3> latencyMeasurements = {};
   bool compensate = true;
   bool policy = false;
   bool visibility = false;
@@ -167,10 +188,19 @@ static void finishVisibilityCheck(Probe &probe);
 static bool observeOutputs(Probe &probe, Selector &selector, pw_core *core);
 static void restoreVisibleOutputs(Probe &probe);
 static void closeProcessingOutputs(Probe &probe);
+static void sinkParameterChanged(void *data, std::uint32_t id, const spa_pod *parameter);
+static void updatePipelineReadiness(Probe &probe, std::uint32_t frames);
+static void updateReconnectingOutput(Probe &probe, std::uint32_t frames);
 
 static void fail(Probe &probe, const std::string &message) {
   if (probe.error.empty()) probe.error = message;
   pw_main_loop_quit(probe.loop);
+}
+
+static void scheduleReconfiguration(Probe &probe) {
+  probe.reconfigurationPending = true;
+  if (pw_loop_signal_event(pw_main_loop_get_loop(probe.loop), probe.reconfigurationEvent) < 0)
+    fail(probe, "cannot schedule the output reconfiguration");
 }
 
 // A channel-specific offset identifies the channel, and a modulo-524287 tag
@@ -181,6 +211,99 @@ static void fail(Probe &probe, const std::string &message) {
 static float sampleValue(std::uint32_t channel, std::uint64_t frame) {
   return static_cast<float>((channel + 1u) * kChannelOffset + frame % kTagPeriod) /
          kSampleScale;
+}
+
+static std::optional<std::uint64_t> observedCompensation(const Probe &probe) {
+  const auto &first = probe.endpoints[0];
+  const auto &second = probe.endpoints[1];
+  if (first.previousTag < 0 || second.previousTag < 0 ||
+      !first.lastBlockHasSignal || !second.lastBlockHasSignal) return std::nullopt;
+  // Stream-local tick counters may have different origins. Both test sinks
+  // use the same graph clock, so compare their monotonic timestamps instead.
+  const auto frameDifference = std::llround(
+      static_cast<double>(first.lastGraphNanoseconds - second.lastGraphNanoseconds) *
+      48000.0 / 1000000000.0) + static_cast<std::int64_t>(first.lastBlockFrames) -
+      static_cast<std::int64_t>(second.lastBlockFrames);
+  const auto phaseDifference = frameDifference % kTagPeriod + 2 * kTagPeriod +
+      second.previousTag - first.previousTag;
+  return static_cast<std::uint64_t>(phaseDifference % kTagPeriod);
+}
+
+static void advanceLatencyMeasurement(Probe &probe) {
+  if (probe.success || !probe.error.empty() || probe.reconfigurationPending) return;
+  const auto compensation = observedCompensation(probe);
+  // combine-stream converts graph frames to integer nanoseconds and then
+  // back to frames. That truncation can leave one frame uncompensated.
+  const auto aligned = compensation && *compensation <= probe.simulatedLatencyFrames &&
+      probe.simulatedLatencyFrames - *compensation <= 1;
+  const auto disconnected = probe.latencyReconnect && probe.latencyStage == 1;
+  const auto reported = disconnected && probe.outputLatencies[1].port == nullptr ?
+      probe.outputLatencies[0].reportedFrames :
+      probe.outputLatencies[1].reportedFrames - probe.outputLatencies[0].reportedFrames;
+  if (probe.latencyTransitioning) {
+    if (!aligned || reported != probe.simulatedLatencyFrames) return;
+    probe.latencyTransitioning = false;
+    for (auto index = 0u; index < 2; ++index)
+      probe.latencyStageStart[index] = probe.endpoints[index].receivedFrames;
+    return;
+  }
+  auto frames = std::array<std::uint64_t, 2>{};
+  for (auto index = 0u; index < 2; ++index) {
+    frames[index] = probe.endpoints[index].receivedFrames - probe.latencyStageStart[index];
+    if (!(disconnected && index == 1) && frames[index] < 65536) return;
+  }
+  if (!aligned || reported != probe.simulatedLatencyFrames) {
+    fail(probe, "steady PCM and public latency do not match the simulated device delay");
+    return;
+  }
+  probe.latencyMeasurements[probe.latencyStage] = {
+      .declaredFrames = probe.simulatedLatencyFrames,
+      .compensationFrames = *compensation, .steadyFrames = frames};
+  if (++probe.latencyStage == probe.latencyMeasurements.size()) {
+    probe.success = true;
+    pw_main_loop_quit(probe.loop);
+    return;
+  }
+  probe.simulatedLatencyFrames = probe.latencyReconnect ?
+      (probe.latencyStage == 1 ? 0 : 63) : (probe.latencyStage == 1 ? 127 : 31);
+  // Changing a delay buffer necessarily changes which sample is next.
+  // Observe those transition discontinuities separately, then require a
+  // complete continuous interval after the new compensation is measurable.
+  probe.latencyTransitioning = true;
+  // A process callback may be executing inside the stream's adapter. Defer
+  // topology changes until that callback has returned to the main loop.
+  scheduleReconfiguration(probe);
+}
+
+static void applyReconfiguration(void *data, std::uint64_t) {
+  auto &probe = *static_cast<Probe *>(data);
+  if (probe.success || !probe.error.empty()) return;
+  if (probe.reconnect) {
+    if (probe.phase == Phase::disconnected) {
+      auto &removed = probe.endpoints[0];
+      spa_hook_remove(&removed.listener);
+      pw_stream_destroy(removed.stream);
+      removed.stream = nullptr;
+      probe.disconnectSurvivorFrame = probe.endpoints[1].receivedFrames;
+    } else if (!createEndpoint(probe, 0)) {
+      fail(probe, "cannot reconnect the first output");
+    }
+  } else if (probe.latencyReconnect) {
+    if (probe.latencyStage == 1) {
+      // Retain the slow sink's last PCM timestamp as a reference to the
+      // unchanged dummy clock while measuring the survivor's delay release.
+      auto &removed = probe.endpoints[1];
+      probe.reconnectMuted = true;
+      spa_hook_remove(&removed.listener);
+      pw_stream_destroy(removed.stream);
+      removed.stream = nullptr;
+    } else if (!createEndpoint(probe, 1)) {
+      fail(probe, "cannot reconnect the slower output");
+    }
+  } else {
+    sinkParameterChanged(&probe.endpoints[1], SPA_PARAM_Latency, nullptr);
+  }
+  probe.reconfigurationPending = false;
 }
 
 static bool setVolume(Probe &probe, float gain, bool mute) {
@@ -246,10 +369,13 @@ static bool validateFrame(Endpoint &endpoint, const std::array<float, 2> &sample
                    static_cast<int>((endpoint.firstChannel + 1u) * kChannelOffset);
   if (tag < 0 || tag >= static_cast<int>(kTagPeriod) ||
       samples[0] != sampleValue(endpoint.firstChannel, tag) * gain ||
-      samples[1] != sampleValue(endpoint.firstChannel + 1, tag) * gain ||
-      (phase != Phase::restartingOutputs && endpoint.previousTag != -1 &&
-       tag != (endpoint.previousTag + 1) % static_cast<int>(kTagPeriod)))
+      samples[1] != sampleValue(endpoint.firstChannel + 1, tag) * gain)
     return false;
+  if (phase != Phase::restartingOutputs && endpoint.previousTag != -1 &&
+      tag != (endpoint.previousTag + 1) % static_cast<int>(kTagPeriod)) {
+    if (!endpoint.probe->latencyTransitioning) return false;
+    ++endpoint.latencyTransitionDiscontinuities;
+  }
   endpoint.previousTag = tag;
   if (phase == Phase::attenuated && gain == attenuatedGain) ++endpoint.attenuatedFrames;
   if (phase == Phase::restored) ++endpoint.restoredFrames;
@@ -289,15 +415,18 @@ static void capture(void *data) {
   if (probe.latency) {
     auto time = pw_time{};
     if (pw_stream_get_time_n(endpoint.stream, &time, sizeof(time)) < 0 ||
-        time.rate.num != 1 || time.rate.denom != 48000) {
+        time.rate.num != 1 || time.rate.denom != 48000 || queued->time == 0) {
       pw_stream_queue_buffer(endpoint.stream, queued);
       fail(probe, "capture did not provide the expected graph timeline");
       return;
     }
-    endpoint.lastGraphNanoseconds = time.now;
+    // The newest stream snapshot may already describe another graph cycle.
+    // Associate PCM with the cycle recorded on this specific capture buffer.
+    endpoint.lastGraphNanoseconds = static_cast<std::int64_t>(queued->time);
     endpoint.lastBlockFrames = frameCount;
   }
   auto silent = true;
+  endpoint.lastBlockHasSignal = frameCount > 0;
   for (auto frame = 0u; frame < frameCount; ++frame) {
     auto samples = std::array<float, 2>{};
     for (auto channel = 0u; channel < 2; ++channel) {
@@ -307,6 +436,9 @@ static void capture(void *data) {
                       frame * sizeof(float), sizeof(float));
     }
     silent = silent && samples[0] == 0.0F && samples[1] == 0.0F;
+    if (samples[0] == 0.0F && samples[1] == 0.0F) endpoint.lastBlockHasSignal = false;
+    if (probe.latencyTransitioning && samples[0] == 0.0F && samples[1] == 0.0F)
+      ++endpoint.latencyTransitionSilentFrames;
     if (probe.reconnectMuted && probe.phase == Phase::reconnected &&
         endpoint.firstChannel == 0 && !silent) {
       ++probe.channelErrors;
@@ -315,7 +447,8 @@ static void capture(void *data) {
       return;
     }
     if (samples[0] == 0.0F && samples[1] == 0.0F &&
-        (endpoint.awaitingSignal || probe.phase == Phase::restartingOutputs) &&
+        (endpoint.awaitingSignal || probe.phase == Phase::restartingOutputs ||
+         probe.latencyTransitioning) &&
         !(probe.phase == Phase::restartingOutputs && probe.restartWithMute && endpoint.selected))
       continue;
     // A restart discards queued audio. Only begin the new continuous PCM
@@ -341,6 +474,10 @@ static void capture(void *data) {
     if (probe.phase == Phase::restartingOutputs) ++endpoint.restartWarmupFrames;
   }
   pw_stream_queue_buffer(endpoint.stream, queued);
+  if (probe.dynamicLatency) {
+    advanceLatencyMeasurement(probe);
+    return;
+  }
   if (probe.phase == Phase::reconnected && endpoint.firstChannel == 0 && endpoint.awaitingSignal &&
       silent && frameCount > 0) {
     const auto target = pw_stream_get_node_id(endpoint.stream);
@@ -407,21 +544,15 @@ static void capture(void *data) {
       probe.endpoints[1].receivedFrames >= 65536) {
     // The surviving device's received frames are the barrier for recreating
     // the disconnected sink, rather than a fixed wall-clock sleep.
-    probe.reconnectMuted = probe.policy;
-    auto &removed = probe.endpoints[0];
-    pw_stream_destroy(removed.stream);
-    removed.stream = nullptr;
-    probe.disconnectSurvivorFrame = probe.endpoints[1].receivedFrames;
+    probe.reconnectMuted = true;
     probe.phase = Phase::disconnected;
-  } else if (probe.phase == Phase::disconnected &&
+    scheduleReconfiguration(probe);
+  } else if (probe.phase == Phase::disconnected && !probe.reconfigurationPending &&
       probe.endpoints[1].receivedFrames >= probe.disconnectSurvivorFrame + 8192) {
     probe.survivorFramesWhileDisconnected =
         probe.endpoints[1].receivedFrames - probe.disconnectSurvivorFrame;
-    if (!createEndpoint(probe, 0)) {
-      fail(probe, "cannot reconnect the first output");
-      return;
-    }
     probe.phase = Phase::reconnected;
+    scheduleReconfiguration(probe);
   } else if ((!probe.reconnect && probe.endpoints[0].receivedFrames >= 65536 &&
               probe.endpoints[1].receivedFrames >= 65536) ||
              (probe.phase == Phase::reconnected &&
@@ -589,12 +720,19 @@ static void produce(void *data) {
     frameCount = std::min(frameCount, buffer->datas[channel].maxsize /
                                         static_cast<std::uint32_t>(sizeof(float)));
   }
+  if (!probe.policy) {
+    updatePipelineReadiness(probe, frameCount);
+    updateReconnectingOutput(probe, frameCount);
+  }
   for (auto channel = 0u; channel < channels; ++channel) {
     auto &plane = buffer->datas[channel];
     auto *samples = static_cast<float *>(plane.data);
+    const auto muted = !probe.policy && (!probe.sourcePrimed ||
+        (probe.reconnectMuted && channel / 2 == (probe.latencyReconnect ? 1u : 0u)));
     for (auto frame = 0u; frame < frameCount; ++frame)
-      samples[frame] = sampleValue(channel, probe.producedFrames + probe.sourceTagOffset + frame) *
-          (probe.policy ? 0.5F : 1.0F);
+      samples[frame] = muted ? 0.0F :
+          sampleValue(channel, probe.producedFrames + probe.sourceTagOffset + frame) *
+              (probe.policy ? 0.5F : 1.0F);
     plane.chunk->offset = 0;
     plane.chunk->stride = sizeof(float);
     plane.chunk->size = frameCount * sizeof(float);
@@ -642,20 +780,51 @@ static bool connectStream(pw_stream *stream, bool input, std::uint32_t channels,
                            PW_ID_ANY, flags, &format, 1) >= 0;
 }
 
+static void updatePipelineReadiness(Probe &probe, std::uint32_t frames) {
+  if (probe.sourcePrimed || frames == 0) return;
+  // All input, distribution and device channels must be active before
+  // playback starts. Ports become ready separately, including after restart.
+  auto *stream = probe.policy ? probe.processorOutput : probe.source;
+  const auto requiredLinks = probe.policy ? 10 : 8;
+  if (std::count_if(probe.outputLinks.begin(), probe.outputLinks.end(),
+      [](const auto &entry) { return entry.second.active; }) != requiredLinks ||
+      pw_stream_get_state(stream, nullptr) != PW_STREAM_STATE_STREAMING) {
+    probe.sourceStartTick.reset();
+    probe.sourceWaitFrames = 0;
+    return;
+  }
+  auto time = pw_time{};
+  if (pw_stream_get_time_n(stream, &time, sizeof(time)) < 0) return;
+  if (time.rate.num != 1 || time.rate.denom != 48000) {
+    fail(probe, "source did not provide the expected startup timeline");
+    return;
+  }
+  if (!probe.sourceStartTick || time.ticks < *probe.sourceStartTick) {
+    probe.sourceStartTick = time.ticks;
+    probe.sourceWaitFrames = 0;
+  }
+  probe.sourceWaitFrames = std::max(probe.sourceWaitFrames,
+      static_cast<std::uint64_t>(std::max(time.delay, std::int64_t{0})) +
+          time.queued + time.buffered + frames);
+  probe.sourcePrimed = time.ticks - *probe.sourceStartTick >= probe.sourceWaitFrames;
+}
+
 static void updateReconnectingOutput(Probe &probe, std::uint32_t frames) {
   if (!probe.reconnectMuted || frames == 0) return;
+  if (probe.latencyReconnect ? probe.latencyStage != 2 : probe.phase != Phase::reconnected) return;
+  auto *stream = probe.policy ? probe.processorOutput : probe.source;
   const auto activeLinks = std::count_if(probe.outputLinks.begin(), probe.outputLinks.end(),
       [&probe](const auto &entry) {
         return entry.second.targetId == probe.reconnectingOutputId && entry.second.active;
       });
   if (probe.reconnectingOutputId == PW_ID_ANY || activeLinks != 2 ||
-      pw_stream_get_state(probe.processorOutput, nullptr) != PW_STREAM_STATE_STREAMING) {
+      pw_stream_get_state(stream, nullptr) != PW_STREAM_STATE_STREAMING) {
     probe.reconnectStartTick.reset();
     probe.reconnectWaitFrames = 0;
     return;
   }
   auto time = pw_time{};
-  if (pw_stream_get_time_n(probe.processorOutput, &time, sizeof(time)) < 0) return;
+  if (pw_stream_get_time_n(stream, &time, sizeof(time)) < 0) return;
   // This driver fixes both stream and graph rates at 48 kHz. Queued and
   // buffered frames therefore have the same units as graph ticks and delay.
   if (time.rate.num != 1 || time.rate.denom != 48000) {
@@ -706,6 +875,7 @@ static void processorOutputProcess(void *data) {
     else valid = frames == channelFrames;
   }
   if (valid) {
+    updatePipelineReadiness(probe, frames);
     updateReconnectingOutput(probe, frames);
     for (auto channel = 0u; channel < 4; ++channel) {
       const auto &from = input->buffer->datas[channel % 2];
@@ -721,7 +891,8 @@ static void processorOutputProcess(void *data) {
             (channel >= 2 ? 2.0F * kChannelOffset / kSampleScale : 0.0F);
         // This probe exercises uniform master volume. The additive DSP term
         // must be attenuated too, so applying gain before DSP cannot pass.
-        samples[frame] = probe.masterMute || (probe.reconnectMuted && channel < 2) ? 0.0F :
+        samples[frame] = !probe.sourcePrimed || probe.masterMute ||
+            (probe.reconnectMuted && channel < 2) ? 0.0F :
             processed * probe.channelVolumes[0];
       }
       to.chunk->offset = 0;
@@ -790,6 +961,9 @@ static void processorInputParameterChanged(void *data, std::uint32_t id, const s
 }
 
 static bool createProcessor(Probe &probe) {
+  probe.sourcePrimed = false;
+  probe.sourceStartTick.reset();
+  probe.sourceWaitFrames = 0;
   auto options = pipetune::FilterGraphPropertyOptions{
       .nodeName = "pipetune_probe_processor",
       .nodeDescription = "PipeTune probe processor",
@@ -849,7 +1023,8 @@ static void sinkParameterChanged(void *data, std::uint32_t id, const spa_pod *pa
   auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
   auto latency = spa_latency_info{};
   latency.direction = SPA_DIRECTION_INPUT;
-  latency.min_rate = latency.max_rate = endpoint.firstChannel == 2 ? 63 : 0;
+  latency.min_rate = latency.max_rate = endpoint.firstChannel == 2 ?
+      endpoint.probe->simulatedLatencyFrames : 0;
   auto parameters = std::array<const spa_pod *, 2>{};
   parameters[0] = spa_latency_build(&builder, SPA_PARAM_Latency, &latency);
   auto upstream = spa_latency_info{};
@@ -961,10 +1136,12 @@ static void globalAdded(void *data, std::uint32_t id, std::uint32_t,
                         const spa_dict *properties) {
   auto &probe = *static_cast<Probe *>(data);
   if (properties == nullptr) return;
-  if ((probe.policy || probe.latency) && std::strcmp(type, PW_TYPE_INTERFACE_Node) == 0) {
+  if (std::strcmp(type, PW_TYPE_INTERFACE_Node) == 0) {
     const auto *name = spa_dict_lookup(properties, PW_KEY_NODE_NAME);
     if (name != nullptr) probe.nodeNames[std::to_string(id)] = name;
-    if (probe.reconnect && name != nullptr && std::strcmp(name, "pipetune_probe_device_0") == 0)
+    if ((probe.reconnect || probe.latencyReconnect) && name != nullptr &&
+        std::strcmp(name, probe.latencyReconnect ? "pipetune_probe_device_1" :
+            "pipetune_probe_device_0") == 0)
       probe.reconnectingOutputId = id;
     const auto *client = spa_dict_lookup(properties, PW_KEY_CLIENT_ID);
     if (name != nullptr && client != nullptr) {
@@ -1000,7 +1177,7 @@ static void globalAdded(void *data, std::uint32_t id, std::uint32_t,
     }
     return;
   }
-  if (probe.policy && std::strcmp(type, PW_TYPE_INTERFACE_Link) == 0) {
+  if (std::strcmp(type, PW_TYPE_INTERFACE_Link) == 0) {
     const auto *output = spa_dict_lookup(properties, PW_KEY_LINK_OUTPUT_NODE);
     const auto *input = spa_dict_lookup(properties, PW_KEY_LINK_INPUT_NODE);
     if (output != nullptr && input != nullptr) {
@@ -1008,8 +1185,16 @@ static void globalAdded(void *data, std::uint32_t id, std::uint32_t,
       if (probe.nodeNames[output] == "control.endpoint.pipetune.capture" &&
           probe.nodeNames[input].starts_with("pipetune_probe_device_"))
         probe.captureFeedsPlayback = true;
-      if (probe.reconnect && probe.nodeNames[input] == "pipetune_probe_device_0" &&
-          probe.nodeNames[output] == "output.pipetune_probe_distribution_pipetune_probe_device_0") {
+      const auto sourceLink = probe.nodeNames[input] == "pipetune_probe_combined" &&
+          probe.nodeNames[output] == "pipetune_probe_signal";
+      const auto distributionLink = probe.policy && probe.nodeNames[input] == "pipetune_probe_distribution" &&
+          probe.nodeNames[output] == "pipetune_probe_processor.output";
+      const auto deviceLink =
+          (probe.nodeNames[input] == "pipetune_probe_device_0" ||
+           probe.nodeNames[input] == "pipetune_probe_device_1") &&
+          probe.nodeNames[output] == std::string{probe.policy ?
+              "output.pipetune_probe_distribution_" : "output.pipetune_probe_combined_"} + probe.nodeNames[input];
+      if (sourceLink || distributionLink || deviceLink) {
         auto &observed = probe.outputLinks[id];
         observed.targetId = static_cast<std::uint32_t>(std::stoul(input));
         observed.proxy = static_cast<pw_link *>(pw_registry_bind(probe.registry, id,
@@ -1182,6 +1367,11 @@ static bool createCombinedOutput(Probe &probe) {
 static bool prepare(Probe &probe) {
   probe.loop = pw_main_loop_new(nullptr);
   if (probe.loop == nullptr) return false;
+  if (probe.dynamicLatency || probe.reconnect) {
+    probe.reconfigurationEvent = pw_loop_add_event(pw_main_loop_get_loop(probe.loop),
+        applyReconfiguration, &probe);
+    if (probe.reconfigurationEvent == nullptr) return false;
+  }
   if (probe.pulse) {
     probe.pulseSignal = pw_loop_add_signal(pw_main_loop_get_loop(probe.loop), SIGUSR1,
         [](void *data, int) {
@@ -1242,6 +1432,8 @@ static void destroy(Probe &probe) {
   if (probe.processorOutput != nullptr) spa_hook_remove(&probe.processorOutputListener);
   if (probe.pulseSignal != nullptr)
     pw_loop_destroy_source(pw_main_loop_get_loop(probe.loop), probe.pulseSignal);
+  if (probe.reconfigurationEvent != nullptr)
+    pw_loop_destroy_source(pw_main_loop_get_loop(probe.loop), probe.reconfigurationEvent);
   if (probe.watchdog != nullptr)
     pw_loop_destroy_source(pw_main_loop_get_loop(probe.loop), probe.watchdog);
   if (probe.source != nullptr) pw_stream_destroy(probe.source);
@@ -1311,13 +1503,18 @@ int main(int argc, char **argv) {
     probe.pulse = true;
     probe.volume = std::string(argv[1]) == "policy-pulse-volume";
   }
-  else if (argc == 2 && (std::string(argv[1]) == "latency" || std::string(argv[1]) == "latency-off")) {
+  else if (argc == 2 && (std::string(argv[1]) == "latency" || std::string(argv[1]) == "latency-off" ||
+                        std::string(argv[1]) == "latency-change" ||
+                        std::string(argv[1]) == "latency-reconnect")) {
     probe.latency = true;
-    probe.compensate = std::string(argv[1]) == "latency";
+    probe.compensate = std::string(argv[1]) != "latency-off";
+    probe.dynamicLatency = std::string(argv[1]) == "latency-change" ||
+        std::string(argv[1]) == "latency-reconnect";
+    probe.latencyReconnect = std::string(argv[1]) == "latency-reconnect";
   }
   else if (argc > 2 || (argc == 2 && std::string(argv[1]) != "channels")) {
     std::cerr << "Usage: pipetune_multi_device_output_probe "
-        "[channels|reconnect|volume|latency|latency-off|policy|policy-volume|policy-reconnect|policy-visibility|policy-recovery|policy-restart|policy-restart-volume|policy-restart-mute|policy-pulse|policy-pulse-volume]\n";
+        "[channels|reconnect|volume|latency|latency-off|latency-change|latency-reconnect|policy|policy-volume|policy-reconnect|policy-visibility|policy-recovery|policy-restart|policy-restart-volume|policy-restart-mute|policy-pulse|policy-pulse-volume]\n";
     pw_deinit();
     return 2;
   }
@@ -1341,21 +1538,7 @@ int main(int argc, char **argv) {
   }
   destroy(probe);
   if (!probe.error.empty()) std::cerr << probe.error << '\n';
-  // The virtual sinks share one driver clock. The stream-local tick counters
-  // can have different origins when activation happens in different cycles.
-  // Compare snapshots using their common monotonic timestamp instead.
-  auto compensation = std::uint64_t{0};
-  if (probe.latency && probe.endpoints[0].previousTag >= 0 && probe.endpoints[1].previousTag >= 0) {
-    const auto &first = probe.endpoints[0];
-    const auto &second = probe.endpoints[1];
-    const auto frameDifference = std::llround(
-        static_cast<double>(first.lastGraphNanoseconds - second.lastGraphNanoseconds) *
-        48000.0 / 1000000000.0) + static_cast<std::int64_t>(first.lastBlockFrames) -
-        static_cast<std::int64_t>(second.lastBlockFrames);
-    const auto phaseDifference = frameDifference % kTagPeriod + 2 * kTagPeriod +
-        second.previousTag - first.previousTag;
-    compensation = static_cast<std::uint64_t>(phaseDifference % kTagPeriod);
-  }
+  const auto compensation = probe.latency ? observedCompensation(probe).value_or(0) : 0;
   std::cout << "{\"success\":" << (probe.success ? "true" : "false")
             << ",\"channels\":4,\"producedFrames\":" << probe.producedFrames
             << ",\"processedFrames\":" << probe.processedFrames
@@ -1379,7 +1562,7 @@ int main(int argc, char **argv) {
             << ",\"survivorFramesWhileDisconnected\":" << probe.survivorFramesWhileDisconnected
             << ",\"reconnectMutedFrames\":" << probe.reconnectMutedFrames
             << ",\"reconnectGraphWaitFrames\":" << probe.reconnectGraphWaitFrames
-            << ",\"declaredLatencyFrames\":" << (probe.latency ? 63 : 0)
+            << ",\"declaredLatencyFrames\":" << (probe.latency ? probe.simulatedLatencyFrames : 0)
             << ",\"observedCompensationFrames\":" << compensation
             << ",\"reportedDelayFrames\":[" << probe.outputLatencies[0].reportedFrames
             << ',' << probe.outputLatencies[1].reportedFrames << ']'
@@ -1390,6 +1573,20 @@ int main(int argc, char **argv) {
     std::cout << "{\"attenuated\":" << endpoint.attenuatedFrames
               << ",\"muted\":" << endpoint.mutedFrames
               << ",\"restored\":" << endpoint.restoredFrames << '}';
+  }
+  std::cout << "],\"latencyTransitionDiscontinuities\":["
+            << probe.endpoints[0].latencyTransitionDiscontinuities << ','
+            << probe.endpoints[1].latencyTransitionDiscontinuities
+            << "],\"latencyTransitionSilentFrames\":["
+            << probe.endpoints[0].latencyTransitionSilentFrames << ','
+            << probe.endpoints[1].latencyTransitionSilentFrames << "],\"latencyStages\":[";
+  for (auto index = 0u; index < probe.latencyStage; ++index) {
+    if (index != 0) std::cout << ',';
+    const auto &measurement = probe.latencyMeasurements[index];
+    std::cout << "{\"declaredFrames\":" << measurement.declaredFrames
+              << ",\"compensationFrames\":" << measurement.compensationFrames
+              << ",\"steadyFrames\":[" << measurement.steadyFrames[0] << ','
+              << measurement.steadyFrames[1] << "]}";
   }
   std::cout << "]}\n";
   pw_deinit();
