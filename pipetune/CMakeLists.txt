@@ -182,6 +182,7 @@ add_library(
   src/dsp_pipeline.cpp
   src/generated_fir_asset.cpp
   src/measurement_store.cpp
+  src/output_configuration.cpp
   src/crosstalk_fir.cpp
   src/sample_rate.cpp
   src/startup_config.cpp
@@ -779,6 +780,10 @@ if(BUILD_TESTING)
     COMMAND pipetune_user_setup_tests)
 
   find_program(PIPETUNE_PIPEWIRE_EXECUTABLE pipewire REQUIRED)
+  add_executable(pipetune_output_configuration_tests test/output_configuration_test.cpp)
+  target_link_libraries(pipetune_output_configuration_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_output_configuration_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_output_configuration_tests COMMAND pipetune_output_configuration_tests)
   find_program(PIPETUNE_WIREPLUMBER_EXECUTABLE wireplumber REQUIRED)
   find_program(PIPETUNE_PW_CAT_EXECUTABLE pw-cat REQUIRED)
   find_program(PIPETUNE_PW_DUMP_EXECUTABLE pw-dump REQUIRED)
