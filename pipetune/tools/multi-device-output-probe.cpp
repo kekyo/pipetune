@@ -27,7 +27,10 @@ constexpr auto kTagPeriod = std::uint32_t{524287};
 constexpr auto kChannelOffset = std::uint32_t{524288};
 constexpr auto kSampleScale = 268435456.0F;
 
-enum class Phase { initial, disconnected, reconnected, attenuated, muted, restored, restoringOutputs };
+enum class Phase {
+  initial, disconnected, reconnected, attenuated, muted, restored,
+  awaitingPolicyStop, restoringOutputs
+};
 
 struct Endpoint {
   Probe *probe = nullptr;
@@ -73,6 +76,8 @@ struct Probe {
   spa_hook registryListener = {};
   pw_node *combinedNode = nullptr;
   pw_metadata *metadata = nullptr;
+  std::uint32_t metadataId = PW_ID_ANY;
+  std::uint32_t metadataInstances = 0;
   pw_metadata_events metadataEvents = {};
   spa_hook metadataListener = {};
   pw_impl_module *combine = nullptr;
@@ -101,6 +106,7 @@ struct Probe {
   bool compensate = true;
   bool policy = false;
   bool visibility = false;
+  bool recovery = false;
   bool outputsHiddenDuringPlayback = false;
   bool outputsRestored = false;
   bool defaultsReady = false;
@@ -121,6 +127,7 @@ static void selectDefaultOutput(Probe &probe);
 static void finishVisibilityCheck(Probe &probe);
 static bool observeOutputs(Probe &probe, Selector &selector, pw_core *core);
 static void restoreVisibleOutputs(Probe &probe);
+static void closeProcessingOutputs(Probe &probe);
 
 static void fail(Probe &probe, const std::string &message) {
   if (probe.error.empty()) probe.error = message;
@@ -198,7 +205,7 @@ static void capture(void *data) {
   auto &probe = *endpoint.probe;
   auto *queued = pw_stream_dequeue_buffer(endpoint.stream);
   if (queued == nullptr) return;
-  if (probe.phase == Phase::restoringOutputs) {
+  if (probe.phase == Phase::restoringOutputs || probe.phase == Phase::awaitingPolicyStop) {
     pw_stream_queue_buffer(endpoint.stream, queued);
     return;
   }
@@ -357,6 +364,15 @@ static void restoreVisibleOutputs(Probe &probe) {
     }
   }
   probe.outputsHiddenDuringPlayback = true;
+  if (probe.recovery) {
+    probe.phase = Phase::awaitingPolicyStop;
+    std::cerr << "pipetune-probe:outputs-hidden\n" << std::flush;
+    return;
+  }
+  closeProcessingOutputs(probe);
+}
+
+static void closeProcessingOutputs(Probe &probe) {
   probe.phase = Phase::restoringOutputs;
   pw_stream_destroy(probe.source);
   probe.source = nullptr;
@@ -704,6 +720,8 @@ static void globalAdded(void *data, std::uint32_t id, std::uint32_t,
       fail(probe, "cannot bind default output metadata");
       return;
     }
+    probe.metadataId = id;
+    ++probe.metadataInstances;
     probe.metadataEvents.version = PW_VERSION_METADATA_EVENTS;
     probe.metadataEvents.property = metadataChanged;
     pw_metadata_add_listener(probe.metadata, &probe.metadataListener, &probe.metadataEvents, &probe);
@@ -721,6 +739,17 @@ static void globalAdded(void *data, std::uint32_t id, std::uint32_t,
 
 static void globalRemoved(void *data, std::uint32_t id) {
   auto &probe = *static_cast<Probe *>(data);
+  if (id == probe.metadataId && probe.metadata != nullptr) {
+    pw_proxy_destroy(reinterpret_cast<pw_proxy *>(probe.metadata));
+    probe.metadata = nullptr;
+    probe.metadataId = PW_ID_ANY;
+    probe.metadataListener = {};
+    probe.metadataValues.clear();
+    if (probe.phase == Phase::awaitingPolicyStop) {
+      closeProcessingOutputs(probe);
+      std::cerr << "pipetune-probe:aggregate-closed\n" << std::flush;
+    }
+  }
   probe.nodeNames.erase(std::to_string(id));
   probe.links.erase(std::to_string(id));
   for (auto &output : probe.outputLatencies) {
@@ -870,19 +899,27 @@ int main(int argc, char **argv) {
     probe.policy = true;
     probe.visibility = true;
   }
+  else if (argc == 2 && std::string(argv[1]) == "policy-recovery") {
+    probe.policy = true;
+    probe.visibility = true;
+    probe.recovery = true;
+  }
   else if (argc == 2 && (std::string(argv[1]) == "latency" || std::string(argv[1]) == "latency-off")) {
     probe.latency = true;
     probe.compensate = std::string(argv[1]) == "latency";
   }
   else if (argc > 2 || (argc == 2 && std::string(argv[1]) != "channels")) {
     std::cerr << "Usage: pipetune_multi_device_output_probe "
-        "[channels|reconnect|volume|latency|latency-off|policy|policy-volume|policy-reconnect|policy-visibility]\n";
+        "[channels|reconnect|volume|latency|latency-off|policy|policy-volume|policy-reconnect|policy-visibility|policy-recovery]\n";
     pw_deinit();
     return 2;
   }
   if (prepare(probe)) pw_main_loop_run(probe.loop);
   else probe.error = "cannot prepare multi-device output probe";
   if (!probe.error.empty() && probe.policy) {
+    for (const auto &selector : probe.selectors)
+      std::cerr << "Selector: " << visiblePhysicalOutputs(selector) << " physical outputs, combined "
+          << visibleCombinedOutput(selector) << '\n';
     for (const auto &[key, value] : probe.metadataValues)
       std::cerr << "Metadata " << key << ": " << value << '\n';
     std::cerr << "Application stream: " << (probe.source == nullptr ? "not created" :
@@ -921,6 +958,7 @@ int main(int argc, char **argv) {
             << ",\"captureFeedsPlayback\":" << (probe.captureFeedsPlayback ? "true" : "false")
             << ",\"outputsHiddenDuringPlayback\":" << (probe.outputsHiddenDuringPlayback ? "true" : "false")
             << ",\"outputsRestored\":" << (probe.outputsRestored ? "true" : "false")
+            << ",\"metadataInstances\":" << probe.metadataInstances
             << ",\"receivedFrames\":[" << probe.endpoints[0].receivedFrames << ','
             << probe.endpoints[1].receivedFrames << ',' << probe.endpoints[2].receivedFrames
             << "],\"channelErrors\":" << probe.channelErrors

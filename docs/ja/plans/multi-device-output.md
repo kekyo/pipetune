@@ -399,6 +399,16 @@ WirePlumber 0.4では、既存endpointポリシーが集約ノードの出力ス
 
 ホストの0.4.17とコンテナの0.5.8で、非表示中のPCMと通常終了後の再表示を確認した。ホストの関連12件も成功した。ログは`visibility-red.log`、`visibility-observation-red.log`、`visibility-first-green.log`、`visibility-trixie-first.log`、`visibility-regression-green.log`に保存した。実際のGNOME設定画面とPulseAudio経由の列挙・再生、異常終了、WirePlumber再起動時の復旧は未確認である。特にWirePlumberが停止中に集約クライアントも消失した場合に、以前の非表示状態を残さないための復旧記録は、この段階のメモリ内管理では未実装である。既定出力が物理出力へ戻ることと、利用者が以前選択していた出力を厳密に復元することも区別し、後者は引き続き検証する。
 
+### フェーズ1: WirePlumber停止中に集約出力が終了した場合の復旧
+
+`pipetune_multi_device_policy-recovery`を追加した。非表示中のPCMと2つの独立したクライアントの一覧を確認してから、分離環境のWirePlumberをSIGKILLで終了する。既定出力metadataの消失を受けて集約・処理ノードを終了し、WirePlumberを再起動する。以前から接続している両クライアントへ物理出力が再表示され、既定出力が物理出力へ戻ることを確認する。待機はプロセスとregistryのイベントに基づき、再起動前後でmetadataが2回生成されたことも照合する。
+
+修正前は両クライアントとも物理出力が0台のままとなり、検証が失敗した。PipeWireのクライアント権限はWirePlumberの終了だけでは取り消されないため、非表示にした対応をWirePlumberのStateへ権限変更前に保存する。PipeWireのserver cookieとクライアント・出力のobject.serialで照合し、再利用された数値IDへ権限を適用しない。起動時の列挙完了を待って集約出力の有無を判定し、復元のサーバー同期が完了するまで記録を保持する。保存に失敗した場合は新しい非表示権限を設定しない。[WirePlumberのState API](https://pipewire.pages.freedesktop.org/wireplumber/scripting/lua_api/lua_state_api.html)、[Core API](https://pipewire.pages.freedesktop.org/wireplumber/scripting/lua_api/lua_core_api.html)、[0.4.17のObjectManager APIコメント](https://github.com/PipeWire/wireplumber/blob/0.4.17/lib/wp/object-manager.c)
+
+ホストの0.4.17とコンテナの0.5.8で復旧検証が成功した。ログは`recovery-isolated-red.log`、`recovery-first-green.log`、`recovery-wp05.log`に保存した。テストの強制終了時に不要なGVfsのFUSEマウントを残さないよう、分離環境に限って`GIO_USE_VFS=local`を設定する。[GIOの環境変数](https://docs.gtk.org/gio/overview.html)
+
+これはWirePlumber停止中の集約終了からの復旧であり、処理を続けたままの再起動、製品デーモンの強制終了、以前の既定出力の厳密な復元、GNOMEとPulseAudioの操作までは確認していない。製品側には、非表示の準備失敗を検出してモード切替を確定しない処理も必要である。
+
 ### 全体テストと残作業
 
 音量検証までを実装した段階で`make test`を実行し、169件中168件が成功した。GTK E2Eも成功した。1件の`pipetune_component_build`は、実行中のコミットによってGit履歴から求める版番号が変わり、先にビルドされた実行ファイルの版番号と一致しなかったため失敗した。コミット`36db494`で再構成・全ターゲットの再ビルドを行い、コミットを追加せずに同テストを再実行して成功した。製品コードやテストの比較条件を変更する対処は行っていない。
@@ -410,5 +420,5 @@ WirePlumber 0.4では、既存endpointポリシーが集約ノードの出力ス
 - 動作中の遅延変更・最も遅い出力の切断と再接続、実デバイスでの遅延差補償、公開ポートの遅延通知から取得する状態の実機確認。
 - 独立クロックの実機測定、長時間動作、レート変更、再同期の合格基準。
 - 確認済みの模擬DSP経路を実デバイスでも検証し、物理デバイス側の音量と集約側の全体音量の関係を確認。
-- ネイティブクライアントで確認した非表示・通常終了後の復元について、GNOMEとPulseAudio経由の表示、以前の既定出力の退避・復元、異常終了とWirePlumber再起動時の復旧を確認。
+- ネイティブクライアントで確認した非表示・通常終了後の復元について、GNOMEとPulseAudio経由の表示、以前の既定出力の退避・復元、製品デーモンの異常終了と集約出力を維持したWirePlumber再起動時の復旧を確認。WirePlumber停止中に集約出力を閉じた場合の権限復旧は検証済み。
 - 個体識別・プロファイル変更の規則、配布対象への影響と必要なPipeWireバージョン。

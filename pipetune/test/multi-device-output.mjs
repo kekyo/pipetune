@@ -25,6 +25,8 @@ const environment = {
   XDG_CONFIG_HOME: config,
   XDG_STATE_HOME: state,
   XDG_DATA_HOME: data,
+  // The isolated audio session does not need remote filesystems or FUSE mounts.
+  GIO_USE_VFS: "local",
 };
 const writeConfiguration = (relative, contents) => {
   const components = relative.split("/");
@@ -128,11 +130,37 @@ const socketReady = async () => {
   });
 };
 
+const waitForMessage = async (record, message) => {
+  await new Promise((resolve, reject) => {
+    const finish = (error) => {
+      clearTimeout(timeout);
+      record.child.stderr.off("data", changed);
+      record.child.off("close", closed);
+      if (error) reject(error);
+      else resolve();
+    };
+    const changed = () => { if (record.stderr.includes(message)) finish(); };
+    const closed = () => finish(new Error(`${record.name} exited before ${message}`));
+    const timeout = setTimeout(() => finish(new Error(`did not receive ${message}`)), 20000);
+    record.child.stderr.on("data", changed);
+    record.child.on("close", closed);
+    if (record.result !== undefined) closed();
+    else changed();
+  });
+};
+
 try {
   start("PipeWire", pipewire, []);
   await socketReady();
-  start("WirePlumber", "dbus-run-session", ["--", wireplumber]);
+  const manager = start("WirePlumber", "dbus-run-session", ["--", wireplumber]);
   const probe = start("output probe", driver, [scenario]);
+  if (scenario === "policy-recovery") {
+    await waitForMessage(probe, "pipetune-probe:outputs-hidden");
+    terminate(manager, "SIGKILL");
+    await manager.completion;
+    await waitForMessage(probe, "pipetune-probe:aggregate-closed");
+    start("restarted WirePlumber", "dbus-run-session", ["--", wireplumber]);
+  }
   const result = await probe.completion;
   assert.equal(result.code, 0, `${probe.stdout}\n${probe.stderr}`);
   const report = JSON.parse(probe.stdout);
@@ -152,11 +180,15 @@ try {
     assert.equal(report.captureFeedsPlayback, false,
       "a capture endpoint must never feed a playback device");
   }
-  if (scenario === "policy-visibility") {
+  if (scenario === "policy-visibility" || scenario === "policy-recovery") {
     assert.equal(report.outputsHiddenDuringPlayback, true,
       "physical outputs must be hidden from selectors and playback clients during multi-device playback");
     assert.equal(report.outputsRestored, true,
       "physical outputs must become visible again when the combined output closes");
+  }
+  if (scenario === "policy-recovery") {
+    assert.equal(report.metadataInstances, 2,
+      "restoration must occur after WirePlumber restarts with the aggregate absent");
   }
   if (scenario === "reconnect" || scenario === "policy-reconnect") {
     assert.equal(report.reconnected, true, "a reconnected device must receive its original DSP channels");
