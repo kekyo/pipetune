@@ -85,6 +85,8 @@ try {
   assert.deepEqual(alsa.channelPositions, ["FL", "FR"]);
   assert.equal(alsa.selectable, true);
   assert.ok(Number.isInteger(alsa.nodeId));
+  assert.equal(typeof alsa.nodeSerial, "string");
+  assert.ok(BigInt(alsa.nodeSerial) > 0n);
   const surround = outputs.find((output) => output.nodeName === "inventory.surround");
   assert.deepEqual(surround.channelPositions, ["FL", "FR", "FC", "LFE", "RL", "RR", "SL", "SR"]);
   assert.equal(surround.identity.api, "node");

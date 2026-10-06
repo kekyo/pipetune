@@ -112,6 +112,7 @@ std::string formatOutputInventory(std::span<const AvailableOutput> outputs, bool
     };
     const auto error = selectionError(output);
     if (!yyjson_mut_obj_add_uint(document.get(), object, "nodeId", output.nodeId) ||
+        !add(object, "nodeSerial", std::to_string(output.nodeSerial)) ||
         !yyjson_mut_obj_add_bool(document.get(), object, "selectable", error.empty()) ||
         !add(object, "nodeName", output.nodeName) || !add(object, "name", output.device.name) ||
         !add(object, "profile", output.device.profile) || !add(object, "error", error) ||

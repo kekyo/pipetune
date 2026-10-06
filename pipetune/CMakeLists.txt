@@ -92,7 +92,7 @@ endif()
 
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
-pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3)
+pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET "libpipewire-0.3>=1.0.5")
 pkg_check_modules(SAMPLERATE REQUIRED IMPORTED_TARGET samplerate)
 
 find_program(PIPETUNE_NODE_EXECUTABLE node REQUIRED)
@@ -233,6 +233,7 @@ add_library(
   src/filter_graph_properties.cpp
   src/input_telemetry.cpp
   src/output_inventory.cpp
+  src/output_distribution.cpp
   src/pipewire_buffer_io.cpp
   src/pipewire_latency.cpp
   src/pipewire_output_inventory.cpp
@@ -813,6 +814,17 @@ if(BUILD_TESTING)
   target_compile_options(
     pipetune_multi_device_output_probe PRIVATE
     -Wall -Wextra -Wpedantic -Werror)
+  add_executable(pipetune_product_output_tests test/product_output_test.cpp)
+  target_link_libraries(pipetune_product_output_tests PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE)
+  target_compile_options(pipetune_product_output_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  foreach(scenario product-bypass product-matrix product-slots product-sixteen product-volume product-disconnected)
+    add_test(NAME pipetune_${scenario}
+      COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+        ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+        $<TARGET_FILE:pipetune_product_output_tests> ${scenario}
+        $<TARGET_FILE:pipetune_wireplumber_policy_fixture>)
+    set_tests_properties(pipetune_${scenario} PROPERTIES TIMEOUT 45)
+  endforeach()
   add_test(
     NAME pipetune_multi_device_output
     COMMAND

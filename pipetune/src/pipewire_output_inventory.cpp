@@ -154,6 +154,9 @@ static AvailableOutput describeOutput(std::uint32_t id, const InventoryObject &n
   for (const auto &[key, value] : node.properties) properties[key] = value;
   auto output = AvailableOutput{};
   output.nodeId = id;
+  const auto serial = property(node.properties, "object.serial");
+  const auto parsedSerial = std::from_chars(serial.data(), serial.data() + serial.size(), output.nodeSerial);
+  if (parsedSerial.ec != std::errc{} || parsedSerial.ptr != serial.data() + serial.size()) output.nodeSerial = 0;
   output.nodeName = property(properties, "node.name");
   auto &device = output.device;
   device.name = property(properties, "node.description");

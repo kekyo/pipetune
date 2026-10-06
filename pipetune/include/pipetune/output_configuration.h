@@ -107,6 +107,8 @@ struct AvailableOutput {
   std::string nodeName;
   /** Current PipeWire global ID, valid only for this inventory snapshot. */
   std::uint32_t nodeId = 0;
+  /** Runtime object generation; prevents routing to a reused numerical ID. */
+  std::uint64_t nodeSerial = 0;
 };
 
 /** Explains whether one saved output can currently receive its assigned audio. */

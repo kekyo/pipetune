@@ -12,19 +12,23 @@
 #include "dsp_pipeline_slot.h"
 #include "filter_graph_properties.h"
 #include "input_telemetry.h"
+#include "output_distribution.h"
 #include "pipewire_buffer_io.h"
 #include "pipewire_latency.h"
+#include "pipewire_output_inventory.h"
 #include "pipewire_stream_flags.h"
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
 #include "sample_rate_converter.h"
 
 #include <pipewire/pipewire.h>
+#include <pipewire/impl-module.h>
 #include <spa/buffer/buffer.h>
 #include <spa/param/audio/raw-utils.h>
 #include <spa/param/buffers.h>
 #include <spa/param/format.h>
 #include <spa/param/latency-utils.h>
+#include <spa/param/props.h>
 #include <spa/pod/builder.h>
 
 #include <algorithm>
@@ -32,6 +36,7 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cmath>
 #include <climits>
 #include <csignal>
 #include <condition_variable>
@@ -174,6 +179,16 @@ struct PipeWireRuntime {
   bool readyNotified;
   bool completed;
   std::string error;
+  PipeWireOutputInventoryPtr outputInventory;
+  OutputInventoryResult availableOutputs;
+  pw_impl_module *outputDistribution = nullptr;
+  spa_hook outputDistributionListener = {};
+  spa_source *outputGraphSource = nullptr;
+  std::string outputDistributionArguments;
+  float masterVolume = 1.0F;
+  bool masterMute = false;
+  bool publishingMasterVolume = false;
+  std::atomic<float> masterOutputGain{1.0F};
 
   PipeWireRuntime(std::unique_ptr<DspPipeline> preparedPipeline,
                   const PipeWirePipelineOptions &runtimeOptions,
@@ -255,6 +270,7 @@ struct PipeWireRuntime {
   ~PipeWireRuntime() {
     controlServer.reset();
     presetFileMonitor.reset();
+    outputInventory.reset();
     if (outputStream != nullptr) {
       if (outputListenerInstalled) {
         spa_hook_remove(&outputListener);
@@ -267,6 +283,10 @@ struct PipeWireRuntime {
       }
       pw_stream_destroy(inputStream);
     }
+    if (outputDistribution != nullptr) {
+      spa_hook_remove(&outputDistributionListener);
+      pw_impl_module_destroy(outputDistribution);
+    }
     if (core != nullptr) {
       pw_core_disconnect(core);
     }
@@ -275,6 +295,7 @@ struct PipeWireRuntime {
     }
     if (mainLoop != nullptr) {
       auto *loop = pw_main_loop_get_loop(mainLoop);
+      if (outputGraphSource != nullptr) pw_loop_destroy_source(loop, outputGraphSource);
       if (rateChangeSource != nullptr) {
         pw_loop_destroy_source(loop, rateChangeSource);
       }
@@ -607,11 +628,15 @@ static std::uint32_t streamChannelCount(const PipeWirePipelineOptions &options, 
 }
 
 static spa_audio_info_raw makeRawFormat(std::uint32_t channelCount,
-                                        std::uint32_t sampleRate) {
+                                        std::uint32_t sampleRate, bool numbered) {
   auto info = spa_audio_info_raw{};
   info.format = SPA_AUDIO_FORMAT_F32P;
   info.rate = sampleRate;
   info.channels = channelCount;
+  if (numbered) {
+    for (auto channel = 0U; channel < channelCount; ++channel) info.position[channel] = SPA_AUDIO_CHANNEL_AUX0 + channel;
+    return info;
+  }
   switch (channelCount) {
   case 1:
     info.position[0] = SPA_AUDIO_CHANNEL_MONO;
@@ -701,8 +726,8 @@ static spa_pod *buildBufferParameter(spa_pod_builder &builder,
 
 static spa_pod *buildAutomaticFormatParameter(
     spa_pod_builder &builder, std::uint32_t channelCount,
-    std::uint32_t preferredRate) {
-  auto info = makeRawFormat(channelCount, preferredRate);
+    std::uint32_t preferredRate, bool numbered) {
+  auto info = makeRawFormat(channelCount, preferredRate, numbered);
   auto frame = spa_pod_frame{};
   spa_pod_builder_push_object(&builder, &frame, SPA_TYPE_OBJECT_Format,
                               SPA_PARAM_EnumFormat);
@@ -818,10 +843,54 @@ static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
   return true;
 }
 
+static bool publishMasterVolume(PipeWireRuntime &runtime) {
+  // Parameter callbacks own the visible controls; the audio callback receives
+  // their effective gain in one lock-free update, including mute transitions.
+  runtime.masterOutputGain.store(runtime.masterMute ? 0.0F : runtime.masterVolume, std::memory_order_release);
+  auto storage = std::array<std::uint8_t, 256>{};
+  auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
+  const auto volumes = std::array<float, 2>{runtime.masterVolume, runtime.masterVolume};
+  const auto unity = std::array<float, 2>{1, 1};
+  const auto *properties = static_cast<const spa_pod *>(spa_pod_builder_add_object(
+      &builder, SPA_TYPE_OBJECT_Props, SPA_PARAM_Props,
+      SPA_PROP_volume, SPA_POD_Float(1.0F),
+      SPA_PROP_mute, SPA_POD_Bool(runtime.masterMute),
+      SPA_PROP_channelVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, volumes.size(), volumes.data()),
+      SPA_PROP_softMute, SPA_POD_Bool(false),
+      SPA_PROP_softVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, unity.size(), unity.data())));
+  runtime.publishingMasterVolume = true;
+  const auto result = pw_stream_set_param(runtime.inputStream, SPA_PARAM_Props, properties);
+  runtime.publishingMasterVolume = false;
+  return result >= 0;
+}
+
+static void updateMasterVolume(PipeWireRuntime &runtime, const spa_pod *parameter) {
+  if (parameter == nullptr || runtime.publishingMasterVolume || pw_stream_get_node_id(runtime.inputStream) == PW_ID_ANY) return;
+  auto volume = 1.0F;
+  if (const auto *property = spa_pod_find_prop(parameter, nullptr, SPA_PROP_volume)) spa_pod_get_float(&property->value, &volume);
+  if (!std::isfinite(volume) || volume < 0) return;
+  if (const auto *property = spa_pod_find_prop(parameter, nullptr, SPA_PROP_mute)) spa_pod_get_bool(&property->value, &runtime.masterMute);
+  if (const auto *property = spa_pod_find_prop(parameter, nullptr, SPA_PROP_channelVolumes)) {
+    auto channels = std::array<float, 2>{runtime.masterVolume, runtime.masterVolume};
+    const auto count = spa_pod_copy_array(&property->value, SPA_TYPE_Float, channels.data(), channels.size());
+    if (count != 0 && std::all_of(channels.begin(), channels.end(), [](float gain) { return std::isfinite(gain) && gain >= 0; })) {
+      // The aggregate exposes one master gain. Normalize any stereo balance
+      // request to the louder channel instead of inventing per-device balance.
+      runtime.masterVolume = *std::max_element(channels.begin(), channels.end());
+    }
+  }
+  runtime.masterVolume *= volume;
+  if (!publishMasterVolume(runtime)) failRuntime(runtime, "cannot publish multiple-output master volume");
+}
+
 static void streamParameterChanged(void *data, std::uint32_t id,
                                    const spa_pod *parameter) {
   auto &context = *static_cast<StreamCallbackContext *>(data);
   auto &runtime = *context.runtime;
+  if (id == SPA_PARAM_Props && context.input && runtime.options.outputConfiguration.mode == OutputMode::multiple) {
+    updateMasterVolume(runtime, parameter);
+    return;
+  }
   if (id == SPA_PARAM_Latency) {
     const auto update = runtime.latencyState.updatePortLatency(parameter);
     if (update.valid) {
@@ -1168,7 +1237,11 @@ static void outputProcess(void *data) {
       const auto source = scratch.subspan(
           static_cast<std::size_t>(channel) * blockFrames, blockFrames);
       auto *destination = static_cast<float *>(buffer.datas[channel].data);
-      std::copy(source.begin(), source.end(), destination + outputFrame);
+      if (runtime.options.outputConfiguration.mode == OutputMode::multiple) {
+        const auto gain = runtime.masterOutputGain.load(std::memory_order_acquire);
+        if (gain == 0) std::fill_n(destination + outputFrame, blockFrames, 0.0F);
+        else std::transform(source.begin(), source.end(), destination + outputFrame, [gain](float sample) { return sample * gain; });
+      } else std::copy(source.begin(), source.end(), destination + outputFrame);
     }
     outputFrame += blockFrames;
   }
@@ -1219,7 +1292,8 @@ static FilterGraphProperties currentFilterGraphProperties(
        .fixedSampleRate = fixedSampleRate,
        .channelCount = runtime.options.channelCount,
        .forceRate = forceRate,
-       .inputChannelCount = streamChannelCount(runtime.options, true)});
+       .inputChannelCount = streamChannelCount(runtime.options, true),
+       .multipleOutputs = runtime.options.outputConfiguration.mode == OutputMode::multiple});
 }
 
 static std::string connectStream(PipeWireRuntime &runtime, pw_stream *stream,
@@ -1236,12 +1310,13 @@ static std::string connectStream(PipeWireRuntime &runtime, pw_stream *stream,
     policy = runtime.configuredRatePolicy;
   }
   const auto channelCount = streamChannelCount(runtime.options, direction == PW_DIRECTION_INPUT);
-  auto info = makeRawFormat(channelCount, preferredRate);
+  const auto numbered = direction == PW_DIRECTION_OUTPUT && runtime.options.outputConfiguration.mode == OutputMode::multiple;
+  auto info = makeRawFormat(channelCount, preferredRate, numbered);
   const spa_pod *format =
       policy.mode == SampleRateMode::fixed
           ? spa_format_audio_raw_build(&builder, SPA_PARAM_EnumFormat, &info)
           : buildAutomaticFormatParameter(builder, channelCount,
-                                          preferredRate);
+                                          preferredRate, numbered);
   const spa_pod *parameters[] = {format};
   const auto flags =
       makePipeWireStreamFlags(direction, autoconnect, reconnect);
@@ -1328,7 +1403,54 @@ static std::string createAudioStreams(PipeWireRuntime &runtime) {
     destroyAudioStreams(runtime);
     return inputError;
   }
+  if (runtime.options.outputConfiguration.mode == OutputMode::multiple && !publishMasterVolume(runtime)) {
+    destroyAudioStreams(runtime);
+    return "cannot initialize multiple-output master volume";
+  }
   return {};
+}
+
+static void distributionDestroyed(void *data) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  spa_hook_remove(&runtime.outputDistributionListener);
+  runtime.outputDistribution = nullptr;
+  failRuntime(runtime, "PipeWire output distribution stopped unexpectedly");
+}
+
+static void applyOutputInventory(void *data, std::uint64_t) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  if (runtime.completed) return;
+  if (!runtime.availableOutputs.error.empty()) return failRuntime(runtime, runtime.availableOutputs.error);
+  const auto arguments = makeOutputDistributionArguments(runtime.options.filterName + ".distribution",
+      runtime.options.outputConfiguration, runtime.availableOutputs.outputs);
+  if (!arguments.error.empty()) return failRuntime(runtime, arguments.error);
+  if (runtime.outputDistribution != nullptr && arguments.arguments == runtime.outputDistributionArguments) return;
+  // Destruction is deferred out of registry and module callbacks. The public
+  // input and processing pipeline keep their saved channel layout on rebuild.
+  destroyAudioStreams(runtime);
+  if (runtime.outputDistribution != nullptr) {
+    spa_hook_remove(&runtime.outputDistributionListener);
+    pw_impl_module_destroy(runtime.outputDistribution);
+    runtime.outputDistribution = nullptr;
+  }
+  runtime.outputDistribution = pw_context_load_module(runtime.context,
+      "libpipewire-module-combine-stream", arguments.arguments.c_str(), nullptr);
+  if (runtime.outputDistribution == nullptr) return failRuntime(runtime, systemError("cannot create output distribution", -errno));
+  static const auto events = [] {
+    auto value = pw_impl_module_events{}; value.version = PW_VERSION_IMPL_MODULE_EVENTS;
+    value.destroy = distributionDestroyed; return value;
+  }();
+  runtime.outputDistributionListener = {};
+  pw_impl_module_add_listener(runtime.outputDistribution, &runtime.outputDistributionListener, &events, &runtime);
+  runtime.outputDistributionArguments = arguments.arguments;
+  const auto error = createAudioStreams(runtime);
+  if (!error.empty()) failRuntime(runtime, error);
+}
+
+static void outputInventoryChanged(const OutputInventoryResult &snapshot, void *data) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  runtime.availableOutputs = snapshot;
+  pw_loop_signal_event(pw_main_loop_get_loop(runtime.mainLoop), runtime.outputGraphSource);
 }
 
 static ControlDspBackendAvailability controlDspBackendAvailability(
@@ -1923,6 +2045,13 @@ static bool createMainLoop(PipeWireRuntime &runtime) {
                 systemError("cannot create PipeWire latency event", -errno));
     return false;
   }
+  if (runtime.options.outputConfiguration.mode == OutputMode::multiple) {
+    runtime.outputGraphSource = pw_loop_add_event(pw_main_loop_get_loop(runtime.mainLoop), applyOutputInventory, &runtime);
+    if (runtime.outputGraphSource == nullptr) {
+      failRuntime(runtime, systemError("cannot create output graph event", -errno));
+      return false;
+    }
+  }
   return true;
 }
 
@@ -1937,7 +2066,8 @@ static bool createAudioClient(PipeWireRuntime &runtime) {
   runtime.outputEvents.process = outputProcess;
 
   runtime.context = pw_context_new(
-      pw_main_loop_get_loop(runtime.mainLoop), nullptr, 0);
+      pw_main_loop_get_loop(runtime.mainLoop),
+      pw_properties_new(PW_KEY_APP_NAME, "PipeTune", PW_KEY_APP_PROCESS_BINARY, "pipetune", nullptr), 0);
   if (runtime.context == nullptr) {
     failRuntime(runtime, systemError("cannot create PipeWire context", -errno));
     return false;
@@ -1946,6 +2076,14 @@ static bool createAudioClient(PipeWireRuntime &runtime) {
   if (runtime.core == nullptr) {
     failRuntime(runtime, systemError("cannot connect to PipeWire core", -errno));
     return false;
+  }
+  if (runtime.options.outputConfiguration.mode == OutputMode::multiple) {
+    runtime.outputInventory = observePipeWireOutputs(runtime.core, outputInventoryChanged, &runtime);
+    if (runtime.outputInventory == nullptr) {
+      failRuntime(runtime, "cannot observe audio outputs");
+      return false;
+    }
+    return true;
   }
   const auto error = createAudioStreams(runtime);
   if (!error.empty()) {
@@ -2027,6 +2165,12 @@ static std::string validateOptions(const DspPipeline &pipeline,
   }
   if (options.inputChannelCount > options.channelCount) {
     return "PipeWire input channel count must not exceed the DSP width";
+  }
+  const auto outputError = validateOutputConfiguration(options.outputConfiguration);
+  if (!outputError.empty()) return outputError;
+  if (options.outputConfiguration.mode == OutputMode::multiple &&
+      (streamChannelCount(options, true) != 2 || options.channelCount != outputDspChannelCount(options.outputConfiguration))) {
+    return "multiple mode requires stereo input and the configured DSP width";
   }
   if (options.maxFrames < 32 ||
       options.maxFrames > static_cast<std::uint32_t>(INT_MAX) / kSampleBytes) {

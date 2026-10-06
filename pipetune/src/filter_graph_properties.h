@@ -32,6 +32,8 @@ struct FilterGraphPropertyOptions {
   bool forceRate;
   /** Input width; zero preserves the same width as the DSP output. */
   std::uint32_t inputChannelCount = 0;
+  /** True to expose one public input and target the private output distributor. */
+  bool multipleOutputs = false;
 };
 
 /** Properties and connection behavior for one filter node pair. */

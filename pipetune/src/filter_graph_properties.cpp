@@ -49,13 +49,19 @@ FilterGraphProperties makeFilterGraphProperties(
   result.input.emplace_back("media.role", "DSP");
   result.input.emplace_back("node.description", options.nodeDescription);
   result.input.emplace_back("node.virtual", "true");
-  result.input.emplace_back("node.pipetune.internal", "true");
   result.input.emplace_back("node.always-process", "true");
-  result.input.emplace_back("filter.smart", "true");
-  result.input.emplace_back("filter.smart.name", "net.kekyo.pipetune");
-  result.input.emplace_back("target.endpoint", "endpoint.pipetune.playback");
-  result.input.emplace_back("node.pipetune.target-endpoint",
-                            "endpoint.pipetune.playback");
+  if (options.multipleOutputs) {
+    result.input.emplace_back("node.pipetune.aggregate", "true");
+    result.input.emplace_back("node.pipetune.public-input", "true");
+    result.input.emplace_back("node.pipetune.manage-default", "true");
+  } else {
+    result.input.emplace_back("node.pipetune.internal", "true");
+    result.input.emplace_back("filter.smart", "true");
+    result.input.emplace_back("filter.smart.name", "net.kekyo.pipetune");
+    result.input.emplace_back("target.endpoint", "endpoint.pipetune.playback");
+    result.input.emplace_back("node.pipetune.target-endpoint",
+                              "endpoint.pipetune.playback");
+  }
   result.input.emplace_back("channelmix.min-volume", "1.0");
   result.input.emplace_back("channelmix.max-volume", "1.0");
 
@@ -66,6 +72,12 @@ FilterGraphProperties makeFilterGraphProperties(
   result.output.emplace_back("media.role", "PipeTune-Filter-Output");
   result.output.emplace_back("node.passive", "true");
   result.output.emplace_back("stream.dont-remix", "true");
+  if (options.multipleOutputs) {
+    result.output.emplace_back("target.object", options.nodeName + ".distribution");
+    result.output.emplace_back("node.pipetune.managed-output", "true");
+    result.output.emplace_back("node.dont-fallback", "true");
+    result.output.emplace_back("node.dont-move", "true");
+  }
   result.output.emplace_back("channelmix.min-volume", "1.0");
   result.output.emplace_back("channelmix.max-volume", "1.0");
   if (options.fixedSampleRate.has_value() && options.forceRate) {
