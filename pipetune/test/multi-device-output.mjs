@@ -81,6 +81,7 @@ if (scenario.startsWith("policy")) {
     return result.stdout;
   };
   if (/libwireplumber 0\.4\./u.test(version.stdout)) {
+    writeConfiguration("wireplumber/main.lua.d/60-pipetune-streams.lua", policy("stream-configuration"));
     writeConfiguration("wireplumber/scripts/pipetune-node-visibility.lua", policy("visibility"));
     writeConfiguration("wireplumber/policy.lua.d/60-pipetune-policy.lua", policy("configuration"));
     writeConfiguration("wireplumber/scripts/pipetune-endpoint-client.lua", policy("endpoint-client"));
@@ -193,7 +194,7 @@ try {
     probe.child.kill("SIGUSR1");
     process.stdout.write(`${JSON.stringify(pulseReport)}\n`);
   }
-  if (scenario === "policy-recovery" || scenario === "policy-restart") {
+  if (scenario === "policy-recovery" || scenario.startsWith("policy-restart")) {
     await waitForMessage(probe, "pipetune-probe:outputs-hidden");
     terminate(manager, "SIGKILL");
     await manager.completion;
@@ -220,21 +221,36 @@ try {
     assert.equal(report.captureFeedsPlayback, false,
       "a capture endpoint must never feed a playback device");
   }
-  if (["policy-visibility", "policy-recovery", "policy-restart", "policy-pulse", "policy-pulse-volume"].includes(scenario)) {
+  if (["policy-visibility", "policy-recovery", "policy-pulse", "policy-pulse-volume"].includes(scenario) ||
+      scenario.startsWith("policy-restart")) {
     assert.equal(report.outputsHiddenDuringPlayback, true,
       "physical outputs must be hidden from selectors and playback clients during multi-device playback");
     assert.equal(report.outputsRestored, true,
       "physical outputs must become visible again when the combined output closes");
   }
-  if (scenario === "policy-recovery" || scenario === "policy-restart") {
+  if (scenario === "policy-recovery" || scenario.startsWith("policy-restart")) {
     assert.equal(report.metadataInstances, 2,
       "restoration must occur after WirePlumber restarts");
   }
-  if (scenario === "policy-restart") {
+  if (scenario.startsWith("policy-restart")) {
     for (const frames of report.framesAfterRestart) {
       assert.ok(frames >= 65536, "each selected output must resume its DSP channels after a policy restart");
     }
     assert.equal(report.framesAfterRestart.length, 2);
+    if (scenario !== "policy-restart") {
+      assert.equal(report.controlsRestoredAfterRestart, true,
+        "the recreated logical output must expose the previous master volume and mute state");
+      for (const output of report.volumeFrames) {
+        assert.ok(output.attenuated >= 8192, "master volume must be applied before restarting");
+        if (scenario === "policy-restart-mute") assert.ok(output.muted >= 8192);
+      }
+    }
+    if (scenario === "policy-restart-mute") {
+      for (const frames of report.mutedFramesAfterRestart) {
+        assert.ok(frames >= 8192, "each selected output must remain muted after a policy restart");
+      }
+      assert.equal(report.mutedFramesAfterRestart.length, 2);
+    }
   }
   if (scenario === "reconnect" || scenario === "policy-reconnect") {
     assert.equal(report.reconnected, true, "a reconnected device must receive its original DSP channels");

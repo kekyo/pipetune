@@ -68,6 +68,9 @@ static pipetune::UserManagementPaths makePaths(
       .wirePlumberPolicyPath =
           directory / "config" / "wireplumber" / "policy.lua.d" /
           "60-pipetune-filter.lua",
+      .wirePlumber04StreamConfigurationPath =
+          directory / "config" / "wireplumber" / "main.lua.d" /
+          "60-pipetune-streams.lua",
       .wirePlumberClientScriptPath =
           directory / "config" / "wireplumber" / "scripts" /
           "pipetune-endpoint-client.lua",
@@ -244,6 +247,9 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
                "setup must restore a backed-up custom autostart override") &&
          check(std::filesystem::exists(paths.wirePlumberPolicyPath),
                "setup must install the WirePlumber 0.4 compatibility policy") &&
+         check(std::filesystem::exists(
+                   paths.wirePlumber04StreamConfigurationPath),
+               "setup must install master-control rules before streams are restored") &&
          check(policy.find("endpoint.pipetune.playback") !=
                        std::string::npos &&
                    policy.find("endpoint.pipetune.capture") !=
@@ -498,6 +504,8 @@ static bool testSetupRollback(const std::filesystem::path &directory) {
                "failed setup must restore the previous configuration") &&
          check(!std::filesystem::exists(paths.wirePlumberPolicyPath),
                "failed setup must restore the previous WirePlumber policy") &&
+         check(!std::filesystem::exists(paths.wirePlumber04StreamConfigurationPath),
+               "failed setup must restore the previous master-control stream configuration") &&
          check(!std::filesystem::exists(paths.wirePlumberClientScriptPath),
                "failed setup must restore the previous client policy") &&
          check(!std::filesystem::exists(paths.wirePlumberDeviceScriptPath),
@@ -528,6 +536,8 @@ static bool testSetupRollback(const std::filesystem::path &directory) {
 static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
   const auto paths = makePaths(directory / "unsetup");
   writeFile(paths.wirePlumberPolicyPath, "managed policy");
+  const auto streamConfiguration = paths.wirePlumber04StreamConfigurationPath;
+  writeFile(streamConfiguration, "managed stream configuration");
   writeFile(paths.wirePlumberClientScriptPath, "managed client script");
   writeFile(paths.wirePlumberDeviceScriptPath, "managed device script");
   writeFile(paths.wirePlumber04VisibilityScriptPath,
@@ -570,6 +580,8 @@ static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
                "policy") &&
          check(!std::filesystem::exists(paths.wirePlumberPolicyPath),
                "unsetup must remove the WirePlumber 0.4 compatibility policy") &&
+         check(!std::filesystem::exists(streamConfiguration),
+               "unsetup must remove the master-control stream configuration") &&
          check(!std::filesystem::exists(paths.wirePlumberClientScriptPath),
                "unsetup must remove the WirePlumber 0.4 client policy") &&
          check(!std::filesystem::exists(paths.wirePlumberDeviceScriptPath),
@@ -619,6 +631,8 @@ static bool testUnsetupStopFailurePreservesConfiguration(
 static bool testUnsetupRestartFailureRestoresPolicies(
     const std::filesystem::path &directory) {
   const auto paths = makePaths(directory / "unsetup-rollback");
+  const auto streamConfiguration = paths.wirePlumber04StreamConfigurationPath;
+  writeFile(streamConfiguration, "stream rules");
   writeFile(paths.wirePlumberPolicyPath, "policy");
   writeFile(paths.wirePlumberClientScriptPath, "client");
   writeFile(paths.wirePlumberDeviceScriptPath, "device");
@@ -638,6 +652,7 @@ static bool testUnsetupRestartFailureRestoresPolicies(
   return check(!result.success,
                "audio stack restart failure must fail unsetup") &&
          check(readFile(paths.wirePlumberPolicyPath) == "policy" &&
+                   readFile(streamConfiguration) == "stream rules" &&
                    readFile(paths.wirePlumberClientScriptPath) == "client" &&
                    readFile(paths.wirePlumberDeviceScriptPath) == "device" &&
                    readFile(paths.wirePlumber04VisibilityScriptPath) ==

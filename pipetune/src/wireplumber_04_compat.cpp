@@ -9,6 +9,22 @@
 
 namespace pipetune {
 
+constexpr auto kWirePlumber04StreamConfiguration = std::string_view{R"wp04lua(-- Managed by PipeTune.
+-- WirePlumber 0.4 compares this setting to the Lua boolean false. Set it
+-- through a rule because PipeWire node properties carry string values.
+-- PipeTune publishes its retained master controls when recreating this sink.
+table.insert(stream_defaults.rules, {
+  matches = {
+    {
+      { "node.pipetune.public-input", "equals", "true" },
+    },
+  },
+  apply_properties = {
+    ["state.restore-props"] = false,
+  },
+})
+)wp04lua"};
+
 constexpr auto kWirePlumber04Policy = std::string_view{R"wp04lua(-- Managed by PipeTune.
 -- WirePlumber 0.5 ignores policy.lua.d and uses PipeTune's smart-filter
 -- properties directly. WirePlumber 0.4 uses these endpoints and compatibility
@@ -727,6 +743,10 @@ streams_om:activate()
 
 std::string_view wirePlumber04CompatibilityPolicy() noexcept {
   return kWirePlumber04Policy;
+}
+
+std::string_view wirePlumber04StreamConfiguration() noexcept {
+  return kWirePlumber04StreamConfiguration;
 }
 
 std::string_view wirePlumber04EndpointClientPolicy() noexcept {

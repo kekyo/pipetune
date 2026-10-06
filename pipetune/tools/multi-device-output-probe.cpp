@@ -46,6 +46,7 @@ struct Endpoint {
   std::uint64_t mutedFrames = 0;
   std::uint64_t restoredFrames = 0;
   std::uint64_t framesAfterRestart = 0;
+  std::uint64_t mutedFramesAfterRestart = 0;
   std::uint64_t restartWarmupFrames = 0;
   std::int64_t lastGraphNanoseconds = 0;
   std::uint32_t lastBlockFrames = 0;
@@ -89,6 +90,12 @@ struct Probe {
   spa_hook registryListener = {};
   pw_node *combinedNode = nullptr;
   pw_node *controlNode = nullptr;
+  std::uint32_t controlNodeId = PW_ID_ANY;
+  spa_hook controlNodeListener = {};
+  pw_node_events controlNodeEvents = {};
+  float visibleVolume = -1.0F;
+  bool visibleMute = false;
+  bool controlsRestoredAfterRestart = false;
   pw_metadata *metadata = nullptr;
   std::uint32_t metadataId = PW_ID_ANY;
   std::uint32_t metadataInstances = 0;
@@ -133,6 +140,8 @@ struct Probe {
   bool visibility = false;
   bool recovery = false;
   bool restart = false;
+  bool restartControls = false;
+  bool restartWithMute = false;
   bool pulse = false;
   bool pulseReady = false;
   bool outputsHiddenDuringPlayback = false;
@@ -206,6 +215,12 @@ static bool validateFrame(Endpoint &endpoint, const std::array<float, 2> &sample
   // PulseAudio's 50% software volume corresponds to a linear gain of 1/8.
   const auto attenuatedGain = endpoint.probe->pulse ? 0.125F : 0.25F;
   const auto silence = samples[0] == 0.0F && samples[1] == 0.0F;
+  if (phase == Phase::restartingOutputs && endpoint.probe->restartWithMute) {
+    if (!silence) return false;
+    ++endpoint.mutedFramesAfterRestart;
+    endpoint.previousTag = -1;
+    return true;
+  }
   if (phase == Phase::muted && silence) {
     ++endpoint.mutedFrames;
     endpoint.previousTag = -1;
@@ -222,6 +237,9 @@ static bool validateFrame(Endpoint &endpoint, const std::array<float, 2> &sample
     else if (endpoint.attenuatedFrames != 0) return false;
   } else if (phase == Phase::muted) {
     if (endpoint.mutedFrames != 0) return false;
+    gain = attenuatedGain;
+  } else if (endpoint.probe->restartControls &&
+      (phase == Phase::restartingOutputs || phase == Phase::policyRestarted)) {
     gain = attenuatedGain;
   }
   const auto tag = static_cast<int>(std::lround(samples[0] / gain * kSampleScale)) -
@@ -297,11 +315,14 @@ static void capture(void *data) {
       return;
     }
     if (samples[0] == 0.0F && samples[1] == 0.0F &&
-        (endpoint.awaitingSignal || probe.phase == Phase::restartingOutputs)) continue;
+        (endpoint.awaitingSignal || probe.phase == Phase::restartingOutputs) &&
+        !(probe.phase == Phase::restartingOutputs && probe.restartWithMute && endpoint.selected))
+      continue;
     // A restart discards queued audio. Only begin the new continuous PCM
     // interval when the producer's post-restart tag reaches each output.
     if (probe.phase == Phase::policyRestarted && endpoint.selected && endpoint.awaitingSignal &&
-        samples[0] < sampleValue(endpoint.firstChannel, kRestartFirstTag)) continue;
+        samples[0] < sampleValue(endpoint.firstChannel, kRestartFirstTag) *
+            (probe.restartControls ? 0.25F : 1.0F)) continue;
     if (!validateFrame(endpoint, samples)) {
       ++probe.channelErrors;
       pw_stream_queue_buffer(endpoint.stream, queued);
@@ -332,8 +353,18 @@ static void capture(void *data) {
     }
   }
   if (probe.phase == Phase::restartingOutputs) {
-    if (probe.endpoints[0].restartWarmupFrames >= 256 &&
-        probe.endpoints[1].restartWarmupFrames >= 256) {
+    const auto warmupFrames = probe.restartWithMute ? 8192u : 256u;
+    if (probe.endpoints[0].restartWarmupFrames >= warmupFrames &&
+        probe.endpoints[1].restartWarmupFrames >= warmupFrames) {
+      if (probe.restartControls) {
+        probe.controlsRestoredAfterRestart = probe.visibleVolume == 0.25F &&
+            probe.visibleMute == probe.restartWithMute;
+        if (!probe.controlsRestoredAfterRestart) {
+          fail(probe, "desktop master controls were not restored after the policy restart");
+          return;
+        }
+        if (probe.restartWithMute && !setVolume(probe, 0.25F, false)) return;
+      }
       if (probe.producedFrames >= kRestartFirstTag) {
         fail(probe, "policy restart exceeded the first PCM tag interval");
         return;
@@ -357,10 +388,12 @@ static void capture(void *data) {
       if (setVolume(probe, 0.25F, false)) probe.phase = Phase::attenuated;
     } else if (probe.phase == Phase::attenuated && probe.endpoints[0].attenuatedFrames >= 8192 &&
                probe.endpoints[1].attenuatedFrames >= 8192) {
-      if (setVolume(probe, 0.25F, true)) probe.phase = Phase::muted;
+      if (probe.restartControls && !probe.restartWithMute) restoreVisibleOutputs(probe);
+      else if (setVolume(probe, 0.25F, true)) probe.phase = Phase::muted;
     } else if (probe.phase == Phase::muted && probe.endpoints[0].mutedFrames >= 8192 &&
                probe.endpoints[1].mutedFrames >= 8192) {
-      if (setVolume(probe, 1.0F, false)) probe.phase = Phase::restored;
+      if (probe.restartWithMute) restoreVisibleOutputs(probe);
+      else if (setVolume(probe, 1.0F, false)) probe.phase = Phase::restored;
     } else if (probe.phase == Phase::restored && probe.endpoints[0].restoredFrames >= 8192 &&
                probe.endpoints[1].restoredFrames >= 8192) {
       if (probe.pulse) restoreVisibleOutputs(probe);
@@ -412,6 +445,23 @@ static bool visibleCombinedOutput(const Selector &selector) {
       [](const auto &entry) { return entry.second == "pipetune_probe_combined"; });
 }
 
+static void desktopControlsChanged(void *data, int, std::uint32_t id,
+                                    std::uint32_t, std::uint32_t, const spa_pod *parameter) {
+  auto &probe = *static_cast<Probe *>(data);
+  if (id != SPA_PARAM_Props || parameter == nullptr) return;
+  auto volume = 1.0F;
+  if (const auto *property = spa_pod_find_prop(parameter, nullptr, SPA_PROP_volume))
+    spa_pod_get_float(&property->value, &volume);
+  if (const auto *property = spa_pod_find_prop(parameter, nullptr, SPA_PROP_channelVolumes)) {
+    auto channels = std::array<float, 2>{};
+    const auto count = spa_pod_copy_array(&property->value, SPA_TYPE_Float,
+        channels.data(), channels.size());
+    if (count == 2 && channels[0] == channels[1]) probe.visibleVolume = channels[0] * volume;
+  }
+  if (const auto *property = spa_pod_find_prop(parameter, nullptr, SPA_PROP_mute))
+    spa_pod_get_bool(&property->value, &probe.visibleMute);
+}
+
 static void finishVisibilityCheck(Probe &probe) {
   if (probe.phase != Phase::restoringOutputs || probe.outputsRestored) return;
   const auto selection = probe.metadataValues.find("default.audio.sink");
@@ -452,11 +502,29 @@ static bool observeOutputs(Probe &probe, Selector &selector, pw_core *core) {
       view.probe->controlNode = static_cast<pw_node *>(pw_registry_bind(view.registry, id,
           PW_TYPE_INTERFACE_Node, std::min(version, std::uint32_t{PW_VERSION_NODE}), 0));
       if (view.probe->controlNode == nullptr) fail(*view.probe, "cannot bind desktop volume controls");
+      else {
+        view.probe->controlNodeId = id;
+        view.probe->visibleVolume = -1.0F;
+        view.probe->controlNodeEvents.version = PW_VERSION_NODE_EVENTS;
+        view.probe->controlNodeEvents.param = desktopControlsChanged;
+        pw_node_add_listener(view.probe->controlNode, &view.probe->controlNodeListener,
+            &view.probe->controlNodeEvents, view.probe);
+        auto parameter = std::uint32_t{SPA_PARAM_Props};
+        if (pw_node_subscribe_params(view.probe->controlNode, &parameter, 1) < 0)
+          fail(*view.probe, "cannot observe desktop volume controls");
+      }
     }
     finishVisibilityCheck(*view.probe);
   };
   selector.events.global_remove = [](void *data, std::uint32_t id) {
     auto &view = *static_cast<Selector *>(data);
+    if (&view == &view.probe->selectors[0] && id == view.probe->controlNodeId) {
+      spa_hook_remove(&view.probe->controlNodeListener);
+      pw_proxy_destroy(reinterpret_cast<pw_proxy *>(view.probe->controlNode));
+      view.probe->controlNode = nullptr;
+      view.probe->controlNodeId = PW_ID_ANY;
+      view.probe->controlNodeListener = {};
+    }
     view.nodes.erase(id);
     finishVisibilityCheck(*view.probe);
   };
@@ -477,7 +545,7 @@ static void restoreVisibleOutputs(Probe &probe) {
     std::cerr << "pipetune-probe:outputs-hidden\n" << std::flush;
     return;
   }
-  if (probe.recovery || (probe.restart && probe.phase == Phase::initial)) {
+  if (probe.recovery || (probe.restart && probe.metadataInstances == 1)) {
     probe.phase = Phase::awaitingPolicyStop;
     std::cerr << "pipetune-probe:outputs-hidden\n" << std::flush;
     return;
@@ -1226,10 +1294,15 @@ int main(int argc, char **argv) {
     probe.visibility = true;
     probe.recovery = true;
   }
-  else if (argc == 2 && std::string(argv[1]) == "policy-restart") {
+  else if (argc == 2 && (std::string(argv[1]) == "policy-restart" ||
+                        std::string(argv[1]) == "policy-restart-volume" ||
+                        std::string(argv[1]) == "policy-restart-mute")) {
     probe.policy = true;
     probe.visibility = true;
     probe.restart = true;
+    probe.restartControls = std::string(argv[1]) != "policy-restart";
+    probe.restartWithMute = std::string(argv[1]) == "policy-restart-mute";
+    probe.volume = probe.restartControls;
   }
   else if (argc == 2 && (std::string(argv[1]) == "policy-pulse" ||
                         std::string(argv[1]) == "policy-pulse-volume")) {
@@ -1244,7 +1317,7 @@ int main(int argc, char **argv) {
   }
   else if (argc > 2 || (argc == 2 && std::string(argv[1]) != "channels")) {
     std::cerr << "Usage: pipetune_multi_device_output_probe "
-        "[channels|reconnect|volume|latency|latency-off|policy|policy-volume|policy-reconnect|policy-visibility|policy-recovery|policy-restart|policy-pulse|policy-pulse-volume]\n";
+        "[channels|reconnect|volume|latency|latency-off|policy|policy-volume|policy-reconnect|policy-visibility|policy-recovery|policy-restart|policy-restart-volume|policy-restart-mute|policy-pulse|policy-pulse-volume]\n";
     pw_deinit();
     return 2;
   }
@@ -1296,6 +1369,9 @@ int main(int argc, char **argv) {
             << ",\"metadataInstances\":" << probe.metadataInstances
             << ",\"framesAfterRestart\":[" << probe.endpoints[0].framesAfterRestart << ','
             << probe.endpoints[1].framesAfterRestart << ']'
+            << ",\"mutedFramesAfterRestart\":[" << probe.endpoints[0].mutedFramesAfterRestart << ','
+            << probe.endpoints[1].mutedFramesAfterRestart << ']'
+            << ",\"controlsRestoredAfterRestart\":" << (probe.controlsRestoredAfterRestart ? "true" : "false")
             << ",\"receivedFrames\":[" << probe.endpoints[0].receivedFrames << ','
             << probe.endpoints[1].receivedFrames << ',' << probe.endpoints[2].receivedFrames
             << "],\"channelErrors\":" << probe.channelErrors

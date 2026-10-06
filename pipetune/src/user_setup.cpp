@@ -105,7 +105,7 @@ static std::string acquireUserManagementLock(
   return {};
 }
 
-static std::array<ManagedFileState, 6> makeWirePlumberFiles(
+static std::array<ManagedFileState, 7> makeWirePlumberFiles(
     const UserManagementPaths &paths) {
   const auto emptySnapshot = FileSnapshot{
       .exists = false, .contents = {}, .mode = 0600, .error = {}};
@@ -113,6 +113,12 @@ static std::array<ManagedFileState, 6> makeWirePlumberFiles(
       {.path = paths.wirePlumberPolicyPath,
        .contents = wirePlumber04CompatibilityPolicy(),
        .description = "WirePlumber 0.4 compatibility policy",
+       .snapshot = emptySnapshot,
+       .needsUpdate = false,
+       .mutated = false},
+      {.path = paths.wirePlumber04StreamConfigurationPath,
+       .contents = wirePlumber04StreamConfiguration(),
+       .description = "WirePlumber 0.4 master-control stream configuration",
        .snapshot = emptySnapshot,
        .needsUpdate = false,
        .mutated = false},
@@ -454,6 +460,9 @@ UserManagementPathResult resolveUserManagementPaths(
               .wirePlumberPolicyPath =
                   xdgRoot / "wireplumber" / "policy.lua.d" /
                   "60-pipetune-filter.lua",
+              .wirePlumber04StreamConfigurationPath =
+                  xdgRoot / "wireplumber" / "main.lua.d" /
+                  "60-pipetune-streams.lua",
               .wirePlumberClientScriptPath =
                   xdgRoot / "wireplumber" / "scripts" /
                   "pipetune-endpoint-client.lua",

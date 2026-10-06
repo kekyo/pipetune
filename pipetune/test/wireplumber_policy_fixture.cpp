@@ -13,6 +13,7 @@ int main(int argc, char **argv) {
   if (argc == 2) {
     const auto part = std::string_view{argv[1]};
     if (part == "configuration") policy = pipetune::wirePlumber04CompatibilityPolicy();
+    else if (part == "stream-configuration") policy = pipetune::wirePlumber04StreamConfiguration();
     else if (part == "endpoint-client") policy = pipetune::wirePlumber04EndpointClientPolicy();
     else if (part == "endpoint-device") policy = pipetune::wirePlumber04EndpointDevicePolicy();
     else if (part == "visibility") policy = pipetune::wirePlumberNodeVisibilityPolicy();
