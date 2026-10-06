@@ -972,7 +972,8 @@ if(BUILD_TESTING)
   endif()
   add_test(
     NAME pipetune_pipewire_buffer_io_tests
-    COMMAND pipetune_pipewire_buffer_io_tests)
+    COMMAND pipetune_pipewire_buffer_io_tests
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/presets/stereo-to-four.effetune_preset)
 
   add_executable(
     pipetune_pipewire_latency_tests

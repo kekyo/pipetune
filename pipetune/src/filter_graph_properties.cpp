@@ -12,7 +12,7 @@ namespace pipetune {
 
 static void appendCommonProperties(FilterNodeProperties &properties,
                                    const FilterGraphPropertyOptions &options,
-                                   std::string_view nodeName) {
+                                   std::string_view nodeName, std::uint32_t channelCount) {
   const auto group = options.nodeName + ".group";
   const auto linkGroup = options.nodeName + ".link-group";
   properties.emplace_back("application.name", "PipeTune");
@@ -28,7 +28,7 @@ static void appendCommonProperties(FilterNodeProperties &properties,
                             std::to_string(*options.fixedSampleRate));
   }
   properties.emplace_back("audio.channels",
-                          std::to_string(options.channelCount));
+                          std::to_string(channelCount));
   properties.emplace_back("state.restore-props", "false");
 }
 
@@ -42,7 +42,8 @@ FilterGraphProperties makeFilterGraphProperties(
       .outputAutoconnect = true,
       .outputReconnect = true};
 
-  appendCommonProperties(result.input, options, options.nodeName);
+  appendCommonProperties(result.input, options, options.nodeName,
+                         options.inputChannelCount == 0 ? options.channelCount : options.inputChannelCount);
   result.input.emplace_back("media.class", "Audio/Sink");
   result.input.emplace_back("media.category", "Playback");
   result.input.emplace_back("media.role", "DSP");
@@ -59,7 +60,7 @@ FilterGraphProperties makeFilterGraphProperties(
   result.input.emplace_back("channelmix.max-volume", "1.0");
 
   appendCommonProperties(result.output, options,
-                         options.nodeName + ".output");
+                         options.nodeName + ".output", options.channelCount);
   result.output.emplace_back("media.class", "Stream/Output/Audio");
   result.output.emplace_back("media.category", "Playback");
   result.output.emplace_back("media.role", "PipeTune-Filter-Output");

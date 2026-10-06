@@ -602,13 +602,17 @@ static void streamStateChanged(void *data, pw_stream_state previousState,
   finishReadinessCheck(runtime);
 }
 
-static spa_audio_info_raw makeRawFormat(const PipeWirePipelineOptions &options,
+static std::uint32_t streamChannelCount(const PipeWirePipelineOptions &options, bool input) noexcept {
+  return input && options.inputChannelCount != 0 ? options.inputChannelCount : options.channelCount;
+}
+
+static spa_audio_info_raw makeRawFormat(std::uint32_t channelCount,
                                         std::uint32_t sampleRate) {
   auto info = spa_audio_info_raw{};
   info.format = SPA_AUDIO_FORMAT_F32P;
   info.rate = sampleRate;
-  info.channels = options.channelCount;
-  switch (options.channelCount) {
+  info.channels = channelCount;
+  switch (channelCount) {
   case 1:
     info.position[0] = SPA_AUDIO_CHANNEL_MONO;
     break;
@@ -664,7 +668,7 @@ static spa_audio_info_raw makeRawFormat(const PipeWirePipelineOptions &options,
   default:
     // Numbered multichannel buses use PipeWire AUX positions to preserve
     // their explicit planar order beyond the standard surround layouts.
-    for (auto channel = std::uint32_t{0}; channel < options.channelCount;
+    for (auto channel = std::uint32_t{0}; channel < channelCount;
          ++channel) {
       info.position[channel] = SPA_AUDIO_CHANNEL_AUX0 + channel;
     }
@@ -674,14 +678,15 @@ static spa_audio_info_raw makeRawFormat(const PipeWirePipelineOptions &options,
 }
 
 static spa_pod *buildBufferParameter(spa_pod_builder &builder,
-                                     const PipeWirePipelineOptions &options) {
+                                     const PipeWirePipelineOptions &options,
+                                     std::uint32_t channelCount) {
   auto frame = spa_pod_frame{};
   spa_pod_builder_push_object(&builder, &frame, SPA_TYPE_OBJECT_ParamBuffers,
                               SPA_PARAM_Buffers);
   spa_pod_builder_add(
       &builder, SPA_PARAM_BUFFERS_buffers, SPA_POD_CHOICE_RANGE_Int(8, 2, 32),
       SPA_PARAM_BUFFERS_blocks,
-      SPA_POD_Int(static_cast<int>(options.channelCount)),
+      SPA_POD_Int(static_cast<int>(channelCount)),
       SPA_PARAM_BUFFERS_size,
       SPA_POD_CHOICE_RANGE_Int(static_cast<int>(options.maxFrames * kSampleBytes),
                                static_cast<int>(32 * kSampleBytes),
@@ -695,9 +700,9 @@ static spa_pod *buildBufferParameter(spa_pod_builder &builder,
 }
 
 static spa_pod *buildAutomaticFormatParameter(
-    spa_pod_builder &builder, const PipeWirePipelineOptions &options,
+    spa_pod_builder &builder, std::uint32_t channelCount,
     std::uint32_t preferredRate) {
-  auto info = makeRawFormat(options, preferredRate);
+  auto info = makeRawFormat(channelCount, preferredRate);
   auto frame = spa_pod_frame{};
   spa_pod_builder_push_object(&builder, &frame, SPA_TYPE_OBJECT_Format,
                               SPA_PARAM_EnumFormat);
@@ -710,7 +715,7 @@ static spa_pod *buildAutomaticFormatParameter(
                                static_cast<int>(kMinimumGraphSampleRate),
                                static_cast<int>(kMaximumGraphSampleRate)),
       SPA_FORMAT_AUDIO_channels,
-      SPA_POD_Int(static_cast<int>(options.channelCount)),
+      SPA_POD_Int(static_cast<int>(channelCount)),
       SPA_FORMAT_AUDIO_position,
       SPA_POD_Array(sizeof(std::uint32_t), SPA_TYPE_Id, info.channels,
                     info.position),
@@ -863,7 +868,7 @@ static void streamParameterChanged(void *data, std::uint32_t id,
   const auto previousRate =
       runtime.dspSampleRate.load(std::memory_order_acquire);
   if (parseResult < 0 || negotiated.format != SPA_AUDIO_FORMAT_F32P ||
-      negotiated.channels != runtime.options.channelCount ||
+      negotiated.channels != streamChannelCount(runtime.options, context.input) ||
       !applyNegotiatedStreamRate(runtime, context.input, negotiated.rate)) {
     if (!runtime.error.empty()) {
       return;
@@ -889,7 +894,7 @@ static void streamParameterChanged(void *data, std::uint32_t id,
   auto builder = spa_pod_builder{};
   spa_pod_builder_init(&builder, storage.data(), storage.size());
   const spa_pod *parameters[] = {
-      buildBufferParameter(builder, runtime.options)};
+      buildBufferParameter(builder, runtime.options, streamChannelCount(runtime.options, context.input))};
   auto *stream = context.input ? runtime.inputStream : runtime.outputStream;
   const auto updateResult = pw_stream_update_params(stream, parameters, 1);
   if (updateResult < 0) {
@@ -909,23 +914,6 @@ static void streamParameterChanged(void *data, std::uint32_t id,
   }
   requestControlStatusUpdate(runtime);
   finishReadinessCheck(runtime);
-}
-
-static void copyInputPlane(const spa_data &plane, std::uint32_t sourceFrame,
-                           std::span<float> destination) noexcept {
-  if ((plane.chunk->flags & SPA_CHUNK_FLAG_EMPTY) != 0) {
-    std::fill(destination.begin(), destination.end(), 0.0F);
-    return;
-  }
-  const auto byteCount =
-      static_cast<std::uint32_t>(destination.size_bytes());
-  const auto sourceByte =
-      (plane.chunk->offset + sourceFrame * kSampleBytes) % plane.maxsize;
-  const auto firstBytes = std::min(byteCount, plane.maxsize - sourceByte);
-  auto *source = static_cast<const std::uint8_t *>(plane.data);
-  std::memcpy(destination.data(), source + sourceByte, firstBytes);
-  std::memcpy(reinterpret_cast<std::uint8_t *>(destination.data()) + firstBytes,
-              source, byteCount - firstBytes);
 }
 
 static void updateGraphSampleRate(PipeWireRuntime &runtime,
@@ -1030,7 +1018,8 @@ static void processAvailableInput(PipeWireRuntime &runtime) {
     }
     auto &buffer = *pipeWireBuffer->buffer;
     auto frameCount = std::uint32_t{0};
-    if (!inspectPipeWireCaptureBuffer(buffer, runtime.options.channelCount,
+    const auto inputChannels = streamChannelCount(runtime.options, true);
+    if (!inspectPipeWireCaptureBuffer(buffer, inputChannels,
                                       frameCount)) {
       runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
       pipeWireBuffer->size = 0;
@@ -1052,14 +1041,9 @@ static void processAvailableInput(PipeWireRuntime &runtime) {
                            .first(static_cast<std::size_t>(
                                       runtime.options.channelCount) *
                                   blockFrames);
-        for (auto channel = std::uint32_t{0};
-             channel < runtime.options.channelCount; ++channel) {
-          auto channelScratch = scratch.subspan(
-              static_cast<std::size_t>(channel) * blockFrames,
-              blockFrames);
-          copyInputPlane(buffer.datas[channel], sourceFrame, channelScratch);
-        }
-        if (!processStreamInputBlock(runtime, scratch, blockFrames)) {
+        if (!copyPipeWireCaptureBlock(buffer, inputChannels, sourceFrame, blockFrames,
+                                     runtime.options.channelCount, scratch) ||
+            !processStreamInputBlock(runtime, scratch, blockFrames)) {
           runtime.processingErrors.fetch_add(1,
                                              std::memory_order_relaxed);
         }
@@ -1234,7 +1218,8 @@ static FilterGraphProperties currentFilterGraphProperties(
        .nodeDescription = runtime.options.filterDescription,
        .fixedSampleRate = fixedSampleRate,
        .channelCount = runtime.options.channelCount,
-       .forceRate = forceRate});
+       .forceRate = forceRate,
+       .inputChannelCount = streamChannelCount(runtime.options, true)});
 }
 
 static std::string connectStream(PipeWireRuntime &runtime, pw_stream *stream,
@@ -1250,11 +1235,12 @@ static std::string connectStream(PipeWireRuntime &runtime, pw_stream *stream,
     auto lock = std::scoped_lock(runtime.rateStateMutex);
     policy = runtime.configuredRatePolicy;
   }
-  auto info = makeRawFormat(runtime.options, preferredRate);
+  const auto channelCount = streamChannelCount(runtime.options, direction == PW_DIRECTION_INPUT);
+  auto info = makeRawFormat(channelCount, preferredRate);
   const spa_pod *format =
       policy.mode == SampleRateMode::fixed
           ? spa_format_audio_raw_build(&builder, SPA_PARAM_EnumFormat, &info)
-          : buildAutomaticFormatParameter(builder, runtime.options,
+          : buildAutomaticFormatParameter(builder, channelCount,
                                           preferredRate);
   const spa_pod *parameters[] = {format};
   const auto flags =
@@ -1470,7 +1456,7 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .inputSampleFormat = inputNegotiated ? "F32P" : "",
           .inputSampleRate = inputNegotiated ? inputSampleRate : 0,
           .inputChannelCount =
-              inputNegotiated ? runtime.options.channelCount : 0,
+              inputNegotiated ? streamChannelCount(runtime.options, true) : 0,
           .inputFramesReceived = input.framesReceived,
           .inputLastReceivedUnixMilliseconds =
               input.lastReceivedUnixMilliseconds,
@@ -2038,6 +2024,9 @@ static std::string validateOptions(const DspPipeline &pipeline,
   }
   if (options.channelCount == 0 || options.channelCount > 16) {
     return "PipeWire channel count must be between one and sixteen";
+  }
+  if (options.inputChannelCount > options.channelCount) {
+    return "PipeWire input channel count must not exceed the DSP width";
   }
   if (options.maxFrames < 32 ||
       options.maxFrames > static_cast<std::uint32_t>(INT_MAX) / kSampleBytes) {
