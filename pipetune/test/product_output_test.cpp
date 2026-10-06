@@ -4,6 +4,7 @@
  * https://github.com/kekyo/pipetune/
  */
 #include "pipetune/pipewire_pipeline.h"
+#include "pipetune/control_socket.h"
 
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
@@ -14,6 +15,7 @@
 #include <array>
 #include <cmath>
 #include <csignal>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <string_view>
@@ -23,6 +25,8 @@ static void runtimeReady(void *) {
 }
 
 static int runProduct(const char *preset, std::string_view scenario) {
+  const auto *socket = std::getenv("PIPETUNE_PRODUCT_SOCKET");
+  if (scenario == "product-controls" && socket == nullptr) return 2;
   auto configuration = pipetune::OutputConfiguration{};
   for (auto index = 0U; index < 2; ++index) {
     const auto name = "pipetune_product_device_" + std::to_string(index);
@@ -57,7 +61,7 @@ static int runProduct(const char *preset, std::string_view scenario) {
   const auto result = pipetune::runPipeWirePipeline(std::move(pipeline), {
       .filterName = "pipetune_product_input", .filterDescription = "PipeTune Multiple Outputs",
       .initialPresetPath = preset == nullptr ? "" : preset, .initialConfigurationError = {},
-      .controlSocketPath = {}, .dspSampleRate = 48000,
+      .controlSocketPath = scenario == "product-controls" ? socket : "", .dspSampleRate = 48000,
       .ratePolicy = {.mode = pipetune::SampleRateMode::fixed, .fixedRate = 48000,
           .enforcement = pipetune::SampleRateEnforcement::suggest},
       .channelCount = width, .maxFrames = 8192, .ringCapacityFrames = 16384,
@@ -100,13 +104,15 @@ struct AudioTest {
   bool restartResumed = false;
   bool latency = false;
   bool intentionalDelay = false;
+  bool controls = false;
+  bool awaitingControl = false;
   bool latencySettled = false;
   std::uint32_t declaredLatency = 63;
   std::array<std::int64_t, 3> compensation = {};
   spa_source *graphEvent = nullptr;
   std::uint32_t publicInputId = PW_ID_ANY;
   unsigned stage = 0;
-  std::array<std::array<std::uint64_t, 2>, 5> stageFrames = {};
+  std::array<std::array<std::uint64_t, 2>, 9> stageFrames = {};
   pw_registry *registry = nullptr;
   spa_hook registryListener = {};
   pw_node *control = nullptr;
@@ -269,6 +275,11 @@ static void capture(void *data) {
     }
     if (test.restartMuted && (test.stage == 1 || test.stage == 2)) expected = 0.0F;
     if (test.profile && test.stage == 3 && output.index == 0) expected = 0.0F;
+    if (test.controls && output.index < 2) {
+      if (test.stage == 3 && output.index == 1) expected = 0.0F;
+      if (test.stage >= 4) expected += test.stage == 4 ? 0.125F : 0.25F;
+      if (test.stage == 6) expected = 0.0F;
+    }
     for (auto frame = 0U; frame < frames; ++frame) {
       auto sample = 0.0F;
       std::memcpy(&sample, static_cast<const char *>(plane.data) + plane.chunk->offset + frame * sizeof(float), sizeof(float));
@@ -276,19 +287,20 @@ static void capture(void *data) {
         fail(test, "profile mismatch received audio");
       if (test.disconnected && sample != 0) fail(test, "unresolved or disabled output received fallback audio");
       if (output.index == 2 && sample != 0) fail(test, "unselected device received audio");
-      matches = matches && sample == expected;
+      matches = matches && (test.controls && expected != 0.0F ? std::abs(sample - expected) < 0.000001F : sample == expected);
     }
   }
   queued->size = frames;
   pw_stream_queue_buffer(output.stream, queued);
   if (!valid) return fail(test, "invalid stereo capture buffer");
   if (output.index == 2) return;
+  if (test.awaitingControl) return;
   if (test.restart && test.stage == 2 && !test.restartResumed) return;
   if (test.reconnect && !test.restart && (test.stage == 2 || (test.profile && test.stage == 3)) && output.index == 0) return;
   // Graph replacement permits a brief fade or silence. Require a fresh,
   // consecutive window of exact PCM after each device change rather than
   // counting samples from the old graph toward the recovered state.
-  if (test.reconnect && test.stage >= 2 && !matches) {
+  if (((test.reconnect && test.stage >= 2) || test.controls) && !matches) {
     output.matched = false;
     output.frames = 0;
     return;
@@ -298,6 +310,15 @@ static void capture(void *data) {
   if (output.matched && frames != 0 && !matches) return fail(test, "steady product output differs on device " + std::to_string(output.index));
   if (matches && frames != 0) { output.matched = true; output.frames += frames; }
   if ((test.outputs[0].frames >= 32768 || (test.reconnect && !test.restart && (test.stage == 2 || (test.profile && test.stage == 3)))) && test.outputs[1].frames >= 32768) {
+    if (test.controls) {
+      test.stageFrames[test.stage] = {test.outputs[0].frames, test.outputs[1].frames};
+      if (test.stage == 8) pw_main_loop_quit(test.loop);
+      else {
+        test.awaitingControl = true;
+        std::cerr << "product:controls-stage-" << test.stage << '\n' << std::flush;
+      }
+      return;
+    }
     if (test.restart && test.stage == 2 &&
         (test.visibleGain != 0.5F || test.visibleMute != test.restartMuted))
       return fail(test, "master controls were not restored after the policy restart");
@@ -332,7 +353,8 @@ static void produce(void *data) {
       for (auto frame = 0U; frame < frames; ++frame)
         static_cast<float *>(plane.data)[frame] = static_cast<float>((channel + 1) * channelOffset +
             (test.produced + frame) % tagPeriod) / sampleScale;
-    } else std::fill_n(static_cast<float *>(plane.data), frames, channel == 0 ? 0.25F : 0.5F);
+    } else std::fill_n(static_cast<float *>(plane.data), frames,
+        test.controls && test.stage == 6 ? 0.0F : channel == 0 ? 0.25F : 0.5F);
     plane.chunk->offset = 0;
     plane.chunk->size = frames * sizeof(float);
     plane.chunk->stride = sizeof(float);
@@ -349,7 +371,10 @@ static void startSource(void *data, int) {
   test.source = pw_stream_new(test.core, "Product test signal", pw_properties_new(
       PW_KEY_NODE_NAME, "pipetune_product_signal", PW_KEY_TARGET_OBJECT, "pipetune_product_input",
       PW_KEY_MEDIA_CATEGORY, "Playback", PW_KEY_MEDIA_ROLE, "Music",
-      "node.dont-fallback", "true", "node.dont-move", "true", nullptr));
+      // This fixture pins its target and waits across intentional rate
+      // rebuilds. Without linger, WirePlumber 0.5 destroys a pinned stream
+      // when its target temporarily disappears and fallback is forbidden.
+      "node.dont-fallback", "true", "node.dont-move", "true", "node.linger", "true", nullptr));
   static const auto events = [] { auto value = pw_stream_events{}; value.version = PW_VERSION_STREAM_EVENTS; value.process = produce; return value; }();
   if (test.source == nullptr) return fail(test, "cannot create source");
   pw_stream_add_listener(test.source, &test.sourceListener, &events, &test);
@@ -438,12 +463,20 @@ static int runAudio(std::string_view scenario) {
   test.reconnect = scenario == "product-reconnect" || test.profile || test.restart;
   test.intentionalDelay = scenario == "product-time-alignment";
   test.latency = scenario == "product-latency" || test.intentionalDelay;
+  test.controls = scenario == "product-controls";
   test.loop = pw_main_loop_new(nullptr);
   if (test.loop == nullptr) return 1;
   // Block and register the control signal before PipeWire creates data threads.
   auto *signal = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR1, startSource, &test);
   auto *resume = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR2, [](void *data, int) {
     auto &test = *static_cast<AudioTest *>(data);
+    if (test.controls) {
+      if (!test.awaitingControl) return fail(test, "unexpected control transition");
+      test.awaitingControl = false;
+      ++test.stage;
+      for (auto &output : test.outputs) { output.frames = 0; output.matched = false; }
+      return;
+    }
     pw_loop_signal_event(pw_main_loop_get_loop(test.loop), test.graphEvent);
   }, &test);
   if (signal == nullptr || resume == nullptr) return 1;
@@ -541,6 +574,12 @@ static int runAudio(std::string_view scenario) {
 
 int main(int argc, char **argv) {
   if (argc < 3) return 2;
+  if (std::string_view(argv[1]) == "control" && argc == 4) {
+    const auto result = pipetune::exchangeControlMessage(argv[2], argv[3]);
+    if (!result.error.empty()) { std::cerr << result.error << '\n'; return 1; }
+    std::cout << result.response << '\n';
+    return 0;
+  }
   if (std::string_view(argv[1]) == "audio") return runAudio(argv[2]);
   if (std::string_view(argv[1]) == "runtime" && argc == 4)
     return runProduct(std::string_view(argv[2]) == "bypass" ? nullptr : argv[2], argv[3]);

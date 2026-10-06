@@ -23,7 +23,6 @@ pipetune_audio_stream_owners = {}
 pipetune_audio_stream_counts = {}
 pipetune_physical_outputs = {}
 pipetune_aggregate_owners = {}
-pipetune_public_inputs = {}
 
 -- PipeWire keeps client permissions when WirePlumber exits. Persist each
 -- override before denying access, so a new policy instance can restore it
@@ -158,7 +157,7 @@ local function update_node_permissions(client, node_id, owner_id)
 
   local id = client_id(client)
   local hidden = pipetune_hidden_nodes[node_id]
-  local private_output = next(pipetune_public_inputs) ~= nil and hidden and hidden.output
+  local private_output = next(pipetune_aggregate_owners) ~= nil and hidden and hidden.output
   if id ~= nil and pipetune_audio_stream_counts[id] ~= nil and not private_output then
     -- WirePlumber 0.4 cannot express PipeWire's link-only permission.
     -- Temporarily restore access so this client's stream can link.
@@ -283,14 +282,14 @@ pipetune_nodes_om:connect("object-added", function(om, node)
   if aggregate == "true" or aggregate == true then
     pipetune_aggregate_owners[node_id] = owner_id or -1
     if proxy_property(node, "node.pipetune.manage-default") == "true" then
-      managed_defaults[node_id] = proxy_property(node, "node.name")
+      -- A private distribution node keeps the public target's lease alive
+      -- while rate renegotiation replaces the public input stream.
+      managed_defaults[node_id] = proxy_property(node, "node.pipetune.public-target") or
+          proxy_property(node, "node.name")
       update_default_output()
     end
-    if proxy_property(node, "node.pipetune.public-input") == "true" then
-      pipetune_public_inputs[node_id] = true
-    end
     update_all_client_permissions()
-    return
+    if not is_internal_node(node) then return end
   end
   local virtual = proxy_property(node, "node.virtual")
   if proxy_property(node, "media.class") == "Audio/Sink" and
@@ -335,7 +334,6 @@ pipetune_nodes_om:connect("object-removed", function(om, node)
   pipetune_physical_outputs[node_id] = nil
   if pipetune_aggregate_owners[node_id] ~= nil then
     pipetune_aggregate_owners[node_id] = nil
-    pipetune_public_inputs[node_id] = nil
     managed_defaults[node_id] = nil
     update_default_output()
     -- The aggregate's lifetime is the mode switch. This also runs when

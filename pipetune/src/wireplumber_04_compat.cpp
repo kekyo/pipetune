@@ -181,6 +181,9 @@ function findTargetEndpoint (node, media_class, role)
       -- PulseAudio can complete playback without exposing internal sinks.
       return input
     end
+    -- The distribution outlives a public-input rate rebuild. Wait for that
+    -- input instead of briefly routing application audio around the DSP.
+    if aggregates_om:get_n_objects() > 0 then return nil end
   end
   local target_class_assoc = {
     ["Stream/Input/Audio"] = "Audio/Source",
@@ -370,6 +373,10 @@ function unhandleLinkable (si)
 end
 
 endpoints_om = ObjectManager { Interest { type = "SiEndpoint" }}
+aggregates_om = ObjectManager { Interest {
+  type = "node",
+  Constraint { "node.pipetune.aggregate", "=", "true", type = "pw" },
+} }
 public_inputs_om = ObjectManager { Interest {
   type = "SiLinkable",
   Constraint { "node.pipetune.public-input", "=", "true", type = "pw-global" },
@@ -402,11 +409,16 @@ public_inputs_om:connect("objects-changed", function ()
   scheduleSynchronizedRescan ()
 end)
 
+aggregates_om:connect("objects-changed", function ()
+  scheduleSynchronizedRescan ()
+end)
+
 linkables_om:connect("object-removed", function (om, si)
   unhandleLinkable (si)
 end)
 
 endpoints_om:activate()
+aggregates_om:activate()
 public_inputs_om:activate()
 linkables_om:activate()
 links_om:activate()

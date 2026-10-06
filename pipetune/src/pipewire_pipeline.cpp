@@ -1448,7 +1448,7 @@ static void applyOutputInventory(void *data, std::uint64_t) {
   if (runtime.completed) return;
   if (!runtime.availableOutputs.error.empty()) return failRuntime(runtime, runtime.availableOutputs.error);
   const auto arguments = makeOutputDistributionArguments(runtime.options.filterName + ".distribution",
-      runtime.options.outputConfiguration, runtime.availableOutputs.outputs);
+      runtime.options.filterName, runtime.options.outputConfiguration, runtime.availableOutputs.outputs);
   if (!arguments.error.empty()) return failRuntime(runtime, arguments.error);
   if (!runtime.outputPolicyReset && runtime.outputDistribution != nullptr && arguments.arguments == runtime.outputDistributionArguments) return;
   if (runtime.outputPolicyReset) {

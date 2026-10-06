@@ -14,11 +14,12 @@
 namespace pipetune {
 
 OutputDistributionArguments makeOutputDistributionArguments(
-    const std::string &nodeName, const OutputConfiguration &configuration,
+    const std::string &nodeName, const std::string &publicInputName, const OutputConfiguration &configuration,
     std::span<const AvailableOutput> inventory) {
   const auto error = validateOutputConfiguration(configuration);
   if (!error.empty()) return {{}, error};
-  if (nodeName.empty() || nodeName.find('\0') != std::string::npos || configuration.mode != OutputMode::multiple)
+  if (nodeName.empty() || nodeName.find('\0') != std::string::npos || publicInputName.empty() ||
+      publicInputName.find('\0') != std::string::npos || configuration.mode != OutputMode::multiple)
     return {{}, "output distribution requires a node name and multiple mode"};
   const auto resolved = resolveConfiguredOutputs(configuration, inventory);
   auto document = std::unique_ptr<yyjson_mut_doc, decltype(&yyjson_mut_doc_free)>(
@@ -41,6 +42,9 @@ OutputDistributionArguments makeOutputDistributionArguments(
       !yyjson_mut_obj_add_bool(document.get(), root, "combine.latency-compensate", true) ||
       !yyjson_mut_obj_add_bool(document.get(), combined, "node.virtual", true) ||
       !yyjson_mut_obj_add_bool(document.get(), combined, "node.pipetune.internal", true) ||
+      !yyjson_mut_obj_add_bool(document.get(), combined, "node.pipetune.aggregate", true) ||
+      !yyjson_mut_obj_add_bool(document.get(), combined, "node.pipetune.manage-default", true) ||
+      !add(combined, "node.pipetune.public-target", publicInputName) ||
       !yyjson_mut_obj_add_bool(document.get(), stream, "stream.dont-remix", true) ||
       !yyjson_mut_obj_add_bool(document.get(), stream, "node.dont-fallback", true) ||
       !yyjson_mut_obj_add_bool(document.get(), stream, "node.dont-move", true) ||

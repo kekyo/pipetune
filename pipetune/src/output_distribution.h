@@ -21,12 +21,13 @@ struct OutputDistributionArguments {
 /**
  * Maps DSP AUX slots to uniquely resolved device channels without fallback.
  * @param nodeName Private distribution sink name.
+ * @param publicInputName Public playback target retained during stream rebuilds.
  * @param configuration Valid saved routing, including disabled/reserved slots.
  * @param inventory Current device descriptions and runtime object generations.
  * @return combine-stream arguments with latency compensation, or an error.
  */
 OutputDistributionArguments makeOutputDistributionArguments(
-    const std::string &nodeName, const OutputConfiguration &configuration,
+    const std::string &nodeName, const std::string &publicInputName, const OutputConfiguration &configuration,
     std::span<const AvailableOutput> inventory);
 
 } // namespace pipetune

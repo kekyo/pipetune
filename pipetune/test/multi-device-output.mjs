@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, watch, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -29,6 +29,7 @@ const environment = {
   // The isolated audio session does not need remote filesystems or FUSE mounts.
   GIO_USE_VFS: "local",
   PULSE_SERVER: `unix:${join(runtime, "pulse-native")}`,
+  PIPETUNE_PRODUCT_SOCKET: join(runtime, "product-control.sock"),
 };
 const writeConfiguration = (relative, contents) => {
   const components = relative.split("/");
@@ -180,6 +181,55 @@ try {
     const runtime = start("product runtime", driver, ["runtime", scenario === "product-bypass" ? "bypass" : preset, scenario]);
     await waitForMessage(runtime, "product:runtime-ready");
     audio.child.kill("SIGUSR1");
+    if (scenario === "product-controls") {
+      const control = async (request, success = true) => {
+        const client = start("product control", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET, JSON.stringify(request)]);
+        const timeout = setTimeout(() => terminate(client, "SIGTERM"), 10000);
+        const result = await client.completion;
+        clearTimeout(timeout);
+        assert.equal(result.code, 0, client.stderr);
+        const response = JSON.parse(client.stdout);
+        assert.equal(response.ok, success, client.stdout);
+        return response;
+      };
+      const next = (stage) => waitForMessage(audio, `product:controls-stage-${stage}`);
+      const rate = (sampleRate) => control({ command: "set-rate", rateMode: "fixed", sampleRate, enforcement: "suggest" });
+      const backend = (backend) => control({ command: "set-dsp-backend", backend, simdVariant: "auto" });
+      await next(0);
+      assert.equal((await rate(96000)).dspSampleRate, 96000);
+      audio.child.kill("SIGUSR2");
+      await next(1);
+      assert.equal((await backend("simd")).effectiveDspBackend, "simd");
+      audio.child.kill("SIGUSR2");
+      await next(2);
+      assert.equal((await control({ command: "bypass" })).processingMode, "bypass");
+      audio.child.kill("SIGUSR2");
+      await next(3);
+      pipeline.push({ name: "DC Offset", enabled: true, channel: "All", parameters: { of: 0.125 } });
+      writeFileSync(preset, JSON.stringify({ pipeline }));
+      assert.equal((await control({ command: "load", preset })).activePluginCount, 2);
+      audio.child.kill("SIGUSR2");
+      await next(4);
+      pipeline[1].parameters.of = 0.25;
+      writeFileSync(`${preset}.new`, JSON.stringify({ pipeline }));
+      renameSync(`${preset}.new`, preset);
+      audio.child.kill("SIGUSR2");
+      await next(5);
+      const invalid = join(directory, "invalid.effetune_preset");
+      writeFileSync(invalid, "{invalid");
+      await control({ command: "load", preset: invalid }, false);
+      assert.equal((await control({ command: "status" })).preset, preset);
+      assert.equal((await control({ command: "set-dsp-idle", timeoutMilliseconds: 100 })).dspIdleTimeoutMilliseconds, 100);
+      audio.child.kill("SIGUSR2");
+      await next(6);
+      assert.equal((await control({ command: "status" })).dspActivity, "sleeping");
+      audio.child.kill("SIGUSR2");
+      await next(7);
+      assert.equal((await control({ command: "status" })).dspActivity, "active");
+      assert.equal((await rate(48000)).dspSampleRate, 48000);
+      assert.equal((await backend("scalar")).effectiveDspBackend, "scalar");
+      audio.child.kill("SIGUSR2");
+    }
     if (scenario.startsWith("product-restart")) {
       await waitForMessage(audio, "product:restart-ready");
       terminate(manager, "SIGTERM");
@@ -192,7 +242,7 @@ try {
     const report = JSON.parse(audio.stdout);
     assert.ok(report.receivedFrames.every((frames) => scenario === "product-disconnected" ? frames === 0 : frames >= 32768));
     assert.ok(report.producedFrames >= 32768);
-    assert.equal(report.stages.length, scenario === "product-profile" ? 5 : ["product-restart", "product-latency", "product-time-alignment"].includes(scenario) ? 3 :
+    assert.equal(report.stages.length, scenario === "product-controls" ? 9 : scenario === "product-profile" ? 5 : ["product-restart", "product-latency", "product-time-alignment"].includes(scenario) ? 3 :
       ["product-volume", "product-reconnect", "product-restart-mute"].includes(scenario) ? 4 : 1);
     assert.ok(report.stages.every((stage, index) => stage.every((frames, device) =>
       scenario === "product-disconnected" || ((["product-reconnect", "product-profile"].includes(scenario) && index === 2 || scenario === "product-profile" && index === 3) && device === 0) ? frames === 0 : frames >= 32768)));
