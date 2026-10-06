@@ -837,19 +837,21 @@ if(BUILD_TESTING)
         ${scenario})
     set_tests_properties(pipetune_multi_device_${scenario} PROPERTIES TIMEOUT 60)
   endforeach()
-  add_test(
-    NAME pipetune_multi_device_policy-pulse
-    COMMAND
-      ${PIPETUNE_NODE_EXECUTABLE}
-      ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
-      ${PIPETUNE_PIPEWIRE_EXECUTABLE}
-      ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
-      $<TARGET_FILE:pipetune_multi_device_output_probe>
-      policy-pulse
-      $<TARGET_FILE:pipetune_wireplumber_policy_fixture>
-      ${PIPETUNE_PULSE_EXECUTABLE}
-      $<TARGET_FILE:pipetune_pulse_output_probe>)
-  set_tests_properties(pipetune_multi_device_policy-pulse PROPERTIES TIMEOUT 60)
+  foreach(scenario policy-pulse policy-pulse-volume)
+    add_test(
+      NAME pipetune_multi_device_${scenario}
+      COMMAND
+        ${PIPETUNE_NODE_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+        ${PIPETUNE_PIPEWIRE_EXECUTABLE}
+        ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+        $<TARGET_FILE:pipetune_multi_device_output_probe>
+        ${scenario}
+        $<TARGET_FILE:pipetune_wireplumber_policy_fixture>
+        ${PIPETUNE_PULSE_EXECUTABLE}
+        $<TARGET_FILE:pipetune_pulse_output_probe>)
+    set_tests_properties(pipetune_multi_device_${scenario} PROPERTIES TIMEOUT 60)
+  endforeach()
   add_executable(
     pipetune_wireplumber_policy_fixture
     test/wireplumber_policy_fixture.cpp)

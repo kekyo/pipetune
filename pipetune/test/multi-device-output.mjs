@@ -44,7 +44,7 @@ writeConfiguration("pipewire/pipewire.conf.d/99-pipetune-test.conf", `context.pr
   default.clock.max-quantum = 256
 }
 `);
-if (scenario === "policy-pulse") {
+if (scenario.startsWith("policy-pulse")) {
   assert.ok(pulseServer && pulseDriver, "PulseAudio server and client probe paths are required");
   writeConfiguration("pipewire/pipewire-pulse.conf.d/99-pipetune-test.conf", `pulse.properties = {
     server.address = [ "unix:${join(runtime, "pulse-native")}" ]
@@ -161,19 +161,24 @@ const waitForMessage = async (record, message) => {
 try {
   start("PipeWire", pipewire, []);
   await socketReady(join(runtime, remote));
-  if (scenario === "policy-pulse") {
+  if (scenario.startsWith("policy-pulse")) {
     start("PulseAudio protocol server", "dbus-run-session", ["--", pulseServer]);
     await socketReady(join(runtime, "pulse-native"));
   }
   const manager = start("WirePlumber", "dbus-run-session", ["--", wireplumber]);
   const probe = start("output probe", driver, [scenario]);
-  if (scenario === "policy-pulse") {
+  if (scenario.startsWith("policy-pulse")) {
     await waitForMessage(probe, "pipetune-probe:pulse-ready");
     const pulse = start("PulseAudio client probe", pulseDriver, []);
-    await Promise.all([
-      waitForMessage(probe, "pipetune-probe:outputs-hidden"),
-      waitForMessage(pulse, "pulse-probe:outputs-hidden"),
-    ]);
+    await waitForMessage(pulse, "pulse-probe:outputs-hidden");
+    if (scenario === "policy-pulse-volume") {
+      for (const [index, phase] of ["attenuate", "mute", "restore"].entries()) {
+        await waitForMessage(probe, `pipetune-probe:volume-${phase}`);
+        pulse.child.kill("SIGUSR1");
+        await waitForMessage(pulse, `pulse-probe:volume-state-${index + 1}`);
+      }
+    }
+    await waitForMessage(probe, "pipetune-probe:outputs-hidden");
     probe.child.kill("SIGUSR1");
     await waitForMessage(probe, "pipetune-probe:outputs-restored");
     await waitForMessage(pulse, "pulse-probe:outputs-restored");
@@ -183,6 +188,7 @@ try {
     assert.equal(pulseReport.outputsHidden, true);
     assert.equal(pulseReport.outputsRestored, true);
     assert.equal(pulseReport.clients, 2);
+    assert.equal(pulseReport.volumeStatesObserved, scenario === "policy-pulse-volume" ? 3 : 0);
     assert.ok(pulseReport.producedFrames >= 65536);
     probe.child.kill("SIGUSR1");
     process.stdout.write(`${JSON.stringify(pulseReport)}\n`);
@@ -214,7 +220,7 @@ try {
     assert.equal(report.captureFeedsPlayback, false,
       "a capture endpoint must never feed a playback device");
   }
-  if (["policy-visibility", "policy-recovery", "policy-restart", "policy-pulse"].includes(scenario)) {
+  if (["policy-visibility", "policy-recovery", "policy-restart", "policy-pulse", "policy-pulse-volume"].includes(scenario)) {
     assert.equal(report.outputsHiddenDuringPlayback, true,
       "physical outputs must be hidden from selectors and playback clients during multi-device playback");
     assert.equal(report.outputsRestored, true,
@@ -237,7 +243,11 @@ try {
     assert.ok(report.receivedFrames[0] >= 131072, "device A must receive PCM before and after reconnecting");
     assert.ok(report.receivedFrames[1] >= 131072, "device B must remain routed while device A reconnects");
   }
-  if (scenario === "volume" || scenario === "policy-volume") {
+  if (scenario === "volume" || scenario === "policy-volume" || scenario === "policy-pulse-volume") {
+    if (scenario === "policy-pulse-volume") {
+      assert.ok(report.unmutedInputFramesDuringMute >= 8192,
+        "master mute must preserve the DSP input while silencing the physical outputs");
+    }
     for (const output of report.volumeFrames) {
       assert.ok(output.attenuated >= 8192, "master volume must attenuate every selected output");
       assert.ok(output.muted >= 8192, "master mute must silence every selected output");

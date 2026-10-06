@@ -4,10 +4,12 @@
  * https://github.com/kekyo/pipetune/
  */
 #include <pulse/pulseaudio.h>
+#include <pulse/mainloop-signal.h>
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <csignal>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -24,6 +26,9 @@ struct Client {
   bool dirty = false;
   bool hidden = false;
   bool restored = false;
+  pa_cvolume volume = {};
+  bool mute = false;
+  std::array<bool, 3> volumeStates = {};
 };
 
 struct Probe {
@@ -35,6 +40,8 @@ struct Probe {
   bool hidden = false;
   bool restored = false;
   bool stopping = false;
+  unsigned volumePhase = 0;
+  unsigned reportedVolumePhase = 0;
   std::string error;
 };
 
@@ -58,6 +65,19 @@ static void inspect(Client &client) {
       "pipetune_probe_combined") != client.sinks.end();
   const auto physical = std::count_if(client.sinks.begin(), client.sinks.end(),
       [](const auto &name) { return name.starts_with("pipetune_probe_device_"); });
+  if (combined && probe.volumePhase > 0) {
+    const auto expected = probe.volumePhase == 3 ? PA_VOLUME_NORM : PA_VOLUME_NORM / 2;
+    if (client.volume.channels == 2 && client.volume.values[0] == expected &&
+        client.volume.values[1] == expected && client.mute == (probe.volumePhase == 2))
+      client.volumeStates[probe.volumePhase - 1] = true;
+    if (probe.reportedVolumePhase != probe.volumePhase &&
+        std::all_of(probe.clients.begin(), probe.clients.end(), [&](const auto &view) {
+          return view.volumeStates[probe.volumePhase - 1];
+        })) {
+      probe.reportedVolumePhase = probe.volumePhase;
+      std::cerr << "pulse-probe:volume-state-" << probe.volumePhase << '\n' << std::flush;
+    }
+  }
   if (!probe.hidden && combined && physical == 0 &&
       client.defaultSink == "pipetune_probe_combined") {
     if (client.playback && probe.stream == nullptr) startPlayback(client);
@@ -100,7 +120,13 @@ static void sinksReceived(pa_context *, const pa_sink_info *info, int eol, void 
     return;
   }
   if (eol == 0) {
-    if (info != nullptr && info->name != nullptr) client.sinks.emplace_back(info->name);
+    if (info != nullptr && info->name != nullptr) {
+      client.sinks.emplace_back(info->name);
+      if (std::string{info->name} == "pipetune_probe_combined") {
+        client.volume = info->volume;
+        client.mute = info->mute != 0;
+      }
+    }
     return;
   }
   client.querying = false;
@@ -180,10 +206,48 @@ static void startPlayback(Client &client) {
       nullptr, nullptr) < 0) fail(probe, "cannot connect default PulseAudio playback");
 }
 
+static void changeVolume(pa_mainloop_api *, pa_signal_event *, int, void *data) {
+  auto &probe = *static_cast<Probe *>(data);
+  if (!probe.hidden || probe.volumePhase >= 3 ||
+      probe.volumePhase != probe.reportedVolumePhase) {
+    fail(probe, "volume request arrived outside the expected playback phase");
+    return;
+  }
+  ++probe.volumePhase;
+  auto &client = probe.clients[0];
+  auto volume = pa_cvolume{};
+  pa_cvolume_set(&volume, 2, probe.volumePhase == 3 ? PA_VOLUME_NORM : PA_VOLUME_NORM / 2);
+  checkOperation(client, pa_context_set_sink_volume_by_name(client.context,
+      "pipetune_probe_combined", &volume, [](pa_context *, int success, void *value) {
+        auto &view = *static_cast<Client *>(value);
+        if (!success) {
+          fail(*view.probe, "cannot set PulseAudio output volume");
+          return;
+        }
+        checkOperation(view, pa_context_set_sink_mute_by_name(view.context,
+            "pipetune_probe_combined", view.probe->volumePhase == 2,
+            [](pa_context *, int accepted, void *user) {
+              auto &control = *static_cast<Client *>(user);
+              if (!accepted) fail(*control.probe, "cannot set PulseAudio output mute");
+              else for (auto &observer : control.probe->clients) query(observer);
+            }, &view));
+      }, &client));
+}
+
 int main() {
   auto probe = Probe{};
   probe.loop = pa_mainloop_new();
   if (probe.loop == nullptr) return 1;
+  if (pa_signal_init(pa_mainloop_get_api(probe.loop)) < 0) {
+    pa_mainloop_free(probe.loop);
+    return 1;
+  }
+  auto *signal = pa_signal_new(SIGUSR1, changeVolume, &probe);
+  if (signal == nullptr) {
+    pa_signal_done();
+    pa_mainloop_free(probe.loop);
+    return 1;
+  }
   for (auto index = 0u; index < probe.clients.size(); ++index) {
     auto &client = probe.clients[index];
     client.probe = &probe;
@@ -228,10 +292,13 @@ int main() {
     pa_context_disconnect(client.context);
     pa_context_unref(client.context);
   }
+  pa_signal_free(signal);
+  pa_signal_done();
   pa_mainloop_free(probe.loop);
   if (!probe.error.empty()) std::cerr << probe.error << '\n';
   std::cout << "{\"clients\":2,\"producedFrames\":" << probe.producedFrames
             << ",\"outputsHidden\":" << (probe.hidden ? "true" : "false")
-            << ",\"outputsRestored\":" << (probe.restored ? "true" : "false") << "}\n";
+            << ",\"outputsRestored\":" << (probe.restored ? "true" : "false")
+            << ",\"volumeStatesObserved\":" << probe.reportedVolumePhase << "}\n";
   return probe.hidden && probe.restored && probe.error.empty() ? 0 : 1;
 }

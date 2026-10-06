@@ -159,6 +159,13 @@ function findRole(role, tmc)
 end
 
 function findTargetEndpoint (node, media_class, role)
+  if media_class == "Stream/Output/Audio" then
+    for input in public_inputs_om:iterate() do
+      -- A multi-output public input must be the stream's actual peer, so
+      -- PulseAudio can complete playback without exposing internal sinks.
+      return input
+    end
+  end
   local target_class_assoc = {
     ["Stream/Input/Audio"] = "Audio/Source",
     ["Stream/Output/Audio"] = "Audio/Sink",
@@ -218,7 +225,7 @@ function createLink (si, si_target_ep)
     ["out.item.port.context"] = "output",
     ["in.item.port.context"] = "input",
     ["is.policy.endpoint.client.link"] = true,
-    ["media.role"] = target_ep_props["role"],
+    ["media.role"] = target_ep_props["role"] or "PipeTune-Playback",
     ["target.media.class"] = target_ep_props["media.class"],
     ["item.plugged.usec"] = si_props["item.plugged.usec"],
   } then
@@ -305,25 +312,20 @@ function handleLinkable (si)
     local in_id = tonumber(link.properties["in.item.id"])
     if out_id == si.id or in_id == si.id then
       local is_out = out_id == si.id and true or false
-      for peer_ep in endpoints_om:iterate() do
-        if peer_ep.id == (is_out and in_id or out_id) then
+      local peer_id = is_out and in_id or out_id
+      if peer_id == si_target_ep.id then
+        Log.info (si, "... already linked to proper target endpoint")
+        return
+      end
 
-          if peer_ep.id == si_target_ep.id then
-            Log.info (si, "... already linked to proper target endpoint")
-            return
-          end
-
-          -- remove old link if active, otherwise schedule rescan
-          if ((link:get_active_features() & Feature.SessionItem.ACTIVE) ~= 0) then
-            link:remove ()
-            Log.info (si, "... moving to new target")
-          else
-            scheduleRescan ()
-            Log.info (si, "... scheduled rescan")
-            return
-          end
-
-        end
+      -- remove old link if active, otherwise schedule rescan
+      if ((link:get_active_features() & Feature.SessionItem.ACTIVE) ~= 0) then
+        link:remove ()
+        Log.info (si, "... moving to new target")
+      else
+        scheduleRescan ()
+        Log.info (si, "... scheduled rescan")
+        return
       end
     end
   end
@@ -352,6 +354,11 @@ function unhandleLinkable (si)
 end
 
 endpoints_om = ObjectManager { Interest { type = "SiEndpoint" }}
+public_inputs_om = ObjectManager { Interest {
+  type = "SiLinkable",
+  Constraint { "node.pipetune.public-input", "=", "true", type = "pw-global" },
+  Constraint { "active-features", "!", 0, type = "gobject" },
+} }
 linkables_om = ObjectManager { Interest { type = "SiLinkable",
   -- only handle si-audio-adapter and si-node
   Constraint {
@@ -375,11 +382,16 @@ endpoints_om:connect("objects-changed", function (om)
   scheduleSynchronizedRescan ()
 end)
 
+public_inputs_om:connect("objects-changed", function ()
+  scheduleSynchronizedRescan ()
+end)
+
 linkables_om:connect("object-removed", function (om, si)
   unhandleLinkable (si)
 end)
 
 endpoints_om:activate()
+public_inputs_om:activate()
 linkables_om:activate()
 links_om:activate()
 scheduleSynchronizedRescan ()
