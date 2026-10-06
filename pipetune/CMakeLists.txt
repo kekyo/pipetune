@@ -783,6 +783,23 @@ if(BUILD_TESTING)
   find_program(PIPETUNE_PW_CAT_EXECUTABLE pw-cat REQUIRED)
   find_program(PIPETUNE_PW_DUMP_EXECUTABLE pw-dump REQUIRED)
   add_executable(
+    pipetune_multi_device_output_probe
+    tools/multi-device-output-probe.cpp)
+  target_link_libraries(
+    pipetune_multi_device_output_probe PRIVATE PkgConfig::PIPEWIRE)
+  target_compile_options(
+    pipetune_multi_device_output_probe PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+  add_test(
+    NAME pipetune_multi_device_output
+    COMMAND
+      ${PIPETUNE_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE}
+      ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+      $<TARGET_FILE:pipetune_multi_device_output_probe>)
+  set_tests_properties(pipetune_multi_device_output PROPERTIES TIMEOUT 60)
+  add_executable(
     pipetune_wireplumber_policy_fixture
     test/wireplumber_policy_fixture.cpp)
   target_include_directories(

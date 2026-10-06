@@ -1,0 +1,135 @@
+import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, watch, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const [pipewire, wireplumber, driver] = process.argv.slice(2);
+assert.ok(pipewire && wireplumber && driver, "PipeWire, WirePlumber and probe paths are required");
+const version = spawnSync(wireplumber, ["--version"], { encoding: "utf8" });
+assert.equal(version.status, 0, version.stderr);
+
+const directory = mkdtempSync(join(tmpdir(), "pipetune-multi-output-"));
+const runtime = join(directory, "runtime");
+const config = join(directory, "config");
+const state = join(directory, "state");
+const data = join(directory, "data");
+for (const path of [runtime, config, state, data]) mkdirSync(path, { recursive: true, mode: 0o700 });
+const remote = `pipetune-multi-${process.pid}`;
+const environment = {
+  ...process.env,
+  XDG_RUNTIME_DIR: runtime,
+  PIPEWIRE_RUNTIME_DIR: runtime,
+  PIPEWIRE_CORE: remote,
+  PIPEWIRE_REMOTE: remote,
+  XDG_CONFIG_HOME: config,
+  XDG_STATE_HOME: state,
+  XDG_DATA_HOME: data,
+};
+const writeConfiguration = (relative, contents) => {
+  const components = relative.split("/");
+  components.pop();
+  mkdirSync(join(config, ...components), { recursive: true });
+  writeFileSync(join(config, relative), contents);
+};
+writeConfiguration("pipewire/pipewire.conf.d/99-pipetune-test.conf", `context.properties = {
+  core.name = "${remote}"
+  default.clock.rate = 48000
+  default.clock.quantum = 256
+  default.clock.min-quantum = 256
+  default.clock.max-quantum = 256
+}
+`);
+if (/libwireplumber 0\.4\./u.test(version.stdout)) {
+  writeConfiguration("wireplumber/main.lua.d/99-pipetune-test.lua", `alsa_monitor.enabled = false
+v4l2_monitor.enabled = false
+libcamera_monitor.enabled = false
+`);
+  writeConfiguration("wireplumber/bluetooth.lua.d/99-pipetune-test.lua", `bluez_monitor.enabled = false
+bluez_midi_monitor.enabled = false
+`);
+} else {
+  writeConfiguration("wireplumber/wireplumber.conf.d/99-pipetune-test.conf", `wireplumber.profiles = {
+  main = {
+    monitor.alsa = disabled
+    monitor.bluez = disabled
+    monitor.bluez-midi = disabled
+    monitor.v4l2 = disabled
+    monitor.libcamera = disabled
+  }
+}
+`);
+}
+
+const children = [];
+const start = (name, executable, args) => {
+  const child = spawn(executable, args, {
+    env: environment,
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
+  });
+  const record = { name, child, stdout: "", stderr: "", result: undefined, error: undefined };
+  child.stdout.on("data", (chunk) => { record.stdout += chunk; });
+  child.stderr.on("data", (chunk) => { record.stderr += chunk; });
+  child.on("error", (error) => { record.error = error; });
+  record.completion = new Promise((resolve) => {
+    child.on("close", (code, signal) => {
+      record.result = { code, signal };
+      resolve(record.result);
+    });
+  });
+  children.push(record);
+  return record;
+};
+const terminate = (record, signal) => {
+  if (record.child.pid === undefined) return;
+  try {
+    // dbus-run-session starts descendants that keep its output pipes open.
+    // Terminate the isolated process group, including those descendants.
+    process.kill(-record.child.pid, signal);
+  } catch (error) {
+    if (error.code !== "ESRCH") throw error;
+  }
+};
+const socketReady = async () => {
+  const socket = join(runtime, remote);
+  await new Promise((resolve, reject) => {
+    const observer = watch(runtime, () => { if (existsSync(socket)) finish(); });
+    const timeout = setTimeout(() => finish(new Error("isolated PipeWire socket was not created")), 15000);
+    const finish = (error) => {
+      clearTimeout(timeout);
+      observer.close();
+      if (error) reject(error);
+      else resolve();
+    };
+    if (existsSync(socket)) finish();
+  });
+};
+
+try {
+  start("PipeWire", pipewire, []);
+  await socketReady();
+  start("WirePlumber", "dbus-run-session", ["--", wireplumber]);
+  const probe = start("output probe", driver, []);
+  const result = await probe.completion;
+  assert.equal(result.code, 0, `${probe.stdout}\n${probe.stderr}`);
+  const report = JSON.parse(probe.stdout);
+  assert.equal(report.success, true);
+  assert.equal(report.channels, 4);
+  assert.ok(report.receivedFrames[0] >= 65536, "device A must receive DSP channels 1 and 2");
+  assert.ok(report.receivedFrames[1] >= 65536, "device B must receive DSP channels 3 and 4");
+  assert.equal(report.receivedFrames[2], 0, "an unselected output must receive no signal");
+  assert.equal(report.channelErrors, 0, "received PCM must preserve channel identity and sample order");
+  process.stdout.write(`${version.stdout.trim()}\n${JSON.stringify(report)}\n`);
+} catch (error) {
+  for (const child of children) process.stderr.write(`${child.name}:\n${child.stderr}\n`);
+  throw error;
+} finally {
+  for (const record of [...children].reverse()) {
+    if (record.result === undefined) terminate(record, "SIGTERM");
+    const timeout = setTimeout(() => terminate(record, "SIGKILL"), 5000);
+    await record.completion;
+    clearTimeout(timeout);
+  }
+  rmSync(directory, { recursive: true, force: true });
+}
