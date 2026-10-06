@@ -137,6 +137,8 @@ TXとUR22mkIIを選択した場合の対応表は次の形とする。用途名�
 
 入力幅、出力幅、DSPの準備、PipeWire接続をまとめて切り替える必要があるため、現在のrate、backend、idle、processingの順序をそのまま増やすだけで成立すると仮定しない。設定操作の依存関係を整理し、中間状態で不適合なプリセットや接続が有効にならないようにする。再構築時には短い無音区間を許容し、失敗時は旧構成へ戻す。
 
+出力構成と処理プリセットの両方が未反映の場合は、同じ出力変更要求に任意のプリセット指定を含め、新しい出力幅でDSPを準備して一括で切り替える。指定なしは現在の処理を維持し、プリセットパスはそのプリセットへの変更、明示的なnullはBypassへの変更を表す。Cancelや初期値への復元でも同じ要求を使う。たとえば2ch専用のDSPから4ch構成へ戻す際、旧DSPを4chへ先に拡張して失敗する順序を避ける。新しいDSPの準備または接続に失敗した場合は、出力構成だけでなく以前の処理とプリセットも保持・復元する。各応答の確認では両方の設定が一致して初めてApplyを有効にする。
+
 ## OSの出力選択と終了時の復旧
 
 ### 複数モードで選択をPipeTuneへ集約する方式
@@ -687,6 +689,16 @@ PipeWire 1.0.5 / WirePlumber 0.4.17とPipeWire 1.4.2 / WirePlumber 0.5.8で9段�
 CLI処理が未実装の状態、構成リビジョンが無視される状態、実行ファイルが新コマンドを実行しない状態でREDを確認した（`output-cli-parser-red.log`、`output-cli-command-red.log`、`output-cas-runtime-red.log`、`output-cli-main-red.log`）。選択・対応表、設定の保持、適用拒否、保存失敗時の復元と復元拒否、不正応答、停止中の保存を検証した。
 
 実際の`pipetune`コマンドと製品デーモンを使い、停止中の保存、ライブでの単一・複数切替、番号を保つ再選択、日本語の用途名設定、デーモン再起動後の復元を確認した。両出力で32768フレーム以上の指定PCMと未選択出力への非転送を検証し、PipeWire 1.0.5 / WirePlumber 0.4.17とPipeWire 1.4.2 / WirePlumber 0.5.8で成功した（`output-cli-main-green.log`、`output-cli-wp05.log`）。全ターゲットのビルドと関連31件が成功した（`output-cli-regression-build.log`、`output-cli-regression.log`）。全体の`make test`、GTK統合、補償状態の表示は完了条件へ含めたままとする。
+
+### フェーズ3: 出力構成とプリセットの一括プレビューと復元
+
+GTKの設定トランザクションへ出力変更を追加した。出力構成とプリセットの両方が異なる場合は、`set-output`の任意の`preset`フィールドで同時に指定する。省略は現在の処理の維持、nullはBypass、文字列はプリセットパスを表す。新しい幅でのファイル読み込みとDSP準備は既存の制御スレッドで行い、接続切替と確定には既存の出力変更トランザクションを使う。準備中に構成リビジョンやサンプリング周波数が変わった場合は旧状態を保持して再操作を求める。
+
+出力経路の復元対象に処理モード、プリセット、診断、再読込待ち状態を含めた。新しいプリセットの監視先は接続成功後に変更する。GTKは出力構成とプリセットの両方を確認してからプレビュー成功とし、片方だけを返す応答ではApplyやCancel完了を認めない。Cancelは保存ファイルを変更せず、直前の確定済みライブ構成へ両方を戻す。非同期のGTK制御クライアントからも、構成・プリセット・リビジョン条件を送信できることを確認した。この段階は設定モデルと制御経路の統合であり、Outputページの操作部品は引き続き追加する。
+
+REDでは、2ch専用のBass Extenderが有効なまま4chへ戻す要求が、そのDSPの幅制約で失敗した。一括変更では、指定したMatrixを4chで先に準備して成功した。Bypassへの一括変更、存在しないプリセットの拒否、同期・非同期の接続エラー後に以前のMatrixと出力対応へ戻ることも確認した（`output-processing-red.log`、`output-processing-runtime-red.log`、`output-processing-green.log`、`output-gtk-transaction-red.log`、`output-gtk-transaction-green.log`）。
+
+WirePlumber 0.4.17と0.5.8の両方で9段階のPCMを確認し、全ターゲットのビルドと関連25件が成功した（`output-processing-wp05.log`、`output-processing-regression-build.log`、`output-processing-regression.log`）。UIからのデバイス選択と対応表、Apply・CancelのE2E、補償表示と最終完了条件は未完了である。
 
 ### 全体テストと残作業
 

@@ -249,18 +249,31 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
             .error = {}};
   }
   if (command == "set-output") {
-    if (yyjson_obj_size(root) != 2 && yyjson_obj_size(root) != 3)
-      return requestError("set-output requires command, configuration, and optional expectedRevision");
+    auto *revision = yyjson_obj_get(root, "expectedRevision");
+    auto *presetValue = yyjson_obj_get(root, "preset");
+    if (yyjson_obj_size(root) != 2U + (revision != nullptr) + (presetValue != nullptr))
+      return requestError("set-output requires command, configuration, and optional expectedRevision and preset");
     auto expected = std::optional<std::uint64_t>{};
-    if (yyjson_obj_size(root) == 3) {
-      auto *revision = yyjson_obj_get(root, "expectedRevision");
+    if (revision != nullptr) {
       if (!yyjson_is_uint(revision)) return requestError("expectedRevision must be an unsigned integer");
       expected = yyjson_get_uint(revision);
+    }
+    auto preset = std::optional<std::filesystem::path>{};
+    if (presetValue != nullptr) {
+      if (yyjson_is_null(presetValue)) preset = std::filesystem::path{};
+      else {
+        if (!yyjson_is_str(presetValue) || yyjson_get_len(presetValue) == 0)
+          return requestError("set-output preset must be null for bypass or a non-empty path");
+        const auto path = std::string(yyjson_get_str(presetValue), yyjson_get_len(presetValue));
+        if (path.find('\0') != std::string::npos) return requestError("set-output preset must not contain NUL");
+        preset = path;
+      }
     }
     auto configuration = parseOutputConfigurationJson(yyjson_obj_get(root, "configuration"));
     if (!configuration.error.empty()) return requestError(std::move(configuration.error));
     return {.request = {.command = ControlCommand::setOutput, .presetPath = {},
-                        .outputConfiguration = std::move(configuration.configuration), .expectedRevision = expected}, .error = {}};
+                        .outputConfiguration = std::move(configuration.configuration), .expectedRevision = expected,
+                        .outputPreset = std::move(preset)}, .error = {}};
   }
   if (command != "load") {
     return requestError("unsupported control command");
@@ -538,7 +551,7 @@ static std::string_view presetEntryStateName(PresetEntryState state) noexcept {
 }
 
 std::string makeSetOutputControlRequest(const OutputConfiguration &configuration,
-    std::optional<std::uint64_t> expectedRevision) {
+    std::optional<std::uint64_t> expectedRevision, const std::optional<std::filesystem::path> &preset) {
   auto *root = static_cast<yyjson_mut_val *>(nullptr);
   auto document = createObjectDocument(root);
   if (document == nullptr) return {};
@@ -547,6 +560,10 @@ std::string makeSetOutputControlRequest(const OutputConfiguration &configuration
       !yyjson_mut_obj_add_val(document.get(), root, "configuration", output)) return {};
   if (expectedRevision.has_value() &&
       !yyjson_mut_obj_add_uint(document.get(), root, "expectedRevision", *expectedRevision)) return {};
+  if (preset.has_value()) {
+    const auto path = preset->string();
+    if (path.find('\0') != std::string::npos || !addNullableString(document.get(), root, "preset", path)) return {};
+  }
   return writeDocument(document.get());
 }
 

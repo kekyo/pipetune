@@ -144,6 +144,15 @@ msgstr "DSPバックエンドを変更中"
 msgid "Changing DSP backend failed"
 msgstr "DSPバックエンドの変更に失敗しました"
 
+msgid "Changing audio outputs"
+msgstr "音声出力を変更中"
+
+msgid "Changing audio outputs failed"
+msgstr "音声出力の変更に失敗しました"
+
+msgid "Audio outputs changed"
+msgstr "音声出力を変更しました"
+
 msgid "Changing processing mode"
 msgstr "処理モードを変更中"
 

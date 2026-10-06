@@ -34,6 +34,9 @@ static bool operationMatches(
            left.dspSimdVariant == right.dspSimdVariant;
   case SettingsOperation::dspIdle:
     return left.dspIdlePolicy == right.dspIdlePolicy;
+  case SettingsOperation::output:
+    return left.outputConfiguration == right.outputConfiguration &&
+           left.presetFound == right.presetFound && left.presetPath == right.presetPath;
   case SettingsOperation::processing:
     return left.presetFound == right.presetFound &&
            left.presetPath == right.presetPath;
@@ -49,6 +52,8 @@ static std::string confirmationDiagnostic(SettingsOperation operation) {
     return "Daemon did not confirm the requested DSP backend";
   case SettingsOperation::dspIdle:
     return "Daemon did not confirm the requested DSP suspension policy";
+  case SettingsOperation::output:
+    return "Daemon did not confirm the requested outputs and processing mode";
   case SettingsOperation::processing:
     return "Daemon did not confirm the requested processing mode";
   case SettingsOperation::none:
@@ -121,6 +126,11 @@ nextSettingsOperation(const SettingsTransaction &transaction) {
                         transaction.confirmedLive,
                         transaction.desiredLive)) {
     return SettingsOperation::dspIdle;
+  }
+  if (transaction.confirmedLive.outputConfiguration != transaction.desiredLive.outputConfiguration) {
+    // Output width and preset may be mutually incompatible with the current
+    // configuration. Restore them together instead of ordering partial edits.
+    return SettingsOperation::output;
   }
   if (!operationMatches(SettingsOperation::processing,
                         transaction.confirmedLive,

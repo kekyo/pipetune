@@ -575,6 +575,8 @@ static UiMessage settingsOperationName(SettingsOperation operation) {
     return localizedMessage("Changing DSP backend", {});
   case SettingsOperation::dspIdle:
     return localizedMessage("Changing silence suspension", {});
+  case SettingsOperation::output:
+    return localizedMessage("Changing audio outputs", {});
   case SettingsOperation::processing:
     return localizedMessage("Changing processing mode", {});
   case SettingsOperation::none:
@@ -591,6 +593,8 @@ static UiMessage settingsOperationSuccess(SettingsOperation operation) {
     return localizedMessage("DSP backend changed", {});
   case SettingsOperation::dspIdle:
     return localizedMessage("Silence suspension changed", {});
+  case SettingsOperation::output:
+    return localizedMessage("Audio outputs changed", {});
   case SettingsOperation::processing:
     return localizedMessage("Processing mode changed", {});
   case SettingsOperation::none:
@@ -607,6 +611,8 @@ static UiMessage settingsOperationFailure(SettingsOperation operation) {
     return localizedMessage("Changing DSP backend failed", {});
   case SettingsOperation::dspIdle:
     return localizedMessage("Changing silence suspension failed", {});
+  case SettingsOperation::output:
+    return localizedMessage("Changing audio outputs failed", {});
   case SettingsOperation::processing:
     return localizedMessage("Changing processing mode failed", {});
   case SettingsOperation::none:
@@ -1680,6 +1686,15 @@ static void dispatchSettingsOperation(
     setControlDspIdleAsync(runtime->controlClient, target.dspIdlePolicy,
                            onSettingsOperationReply, runtime);
     return;
+  case SettingsOperation::output: {
+    const auto &confirmed = runtime->transaction.confirmedLive;
+    auto preset = std::optional<std::filesystem::path>{};
+    if (target.presetFound != confirmed.presetFound || target.presetPath != confirmed.presetPath)
+      preset = target.presetFound ? target.presetPath : std::filesystem::path{};
+    setControlOutputAsync(runtime->controlClient, target.outputConfiguration, preset,
+        runtime->transaction.confirmedRevision, onSettingsOperationReply, runtime);
+    return;
+  }
   case SettingsOperation::processing:
     if (target.presetFound) {
       loadControlPresetAsync(runtime->controlClient, target.presetPath,

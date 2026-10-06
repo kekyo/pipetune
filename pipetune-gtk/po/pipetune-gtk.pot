@@ -140,6 +140,15 @@ msgstr ""
 msgid "Changing DSP backend failed"
 msgstr ""
 
+msgid "Changing audio outputs"
+msgstr ""
+
+msgid "Changing audio outputs failed"
+msgstr ""
+
+msgid "Audio outputs changed"
+msgstr ""
+
 msgid "Changing processing mode"
 msgstr ""
 

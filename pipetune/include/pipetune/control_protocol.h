@@ -66,6 +66,9 @@ struct ControlRequest {
   OutputConfiguration outputConfiguration = {};
   /** Optional revision guard for setOutput; a mismatch leaves live state intact. */
   std::optional<std::uint64_t> expectedRevision = std::nullopt;
+  /** Optional processing choice for setOutput: empty path means bypass;
+   * no value preserves the current pipeline recipe. */
+  std::optional<std::filesystem::path> outputPreset = std::nullopt;
 };
 
 /**
@@ -325,10 +328,13 @@ std::string makeSetDspIdleControlRequest(const DspIdlePolicy &policy);
  * Encodes a complete live output configuration without a framing newline.
  * @param configuration Valid output mode, selected devices, and fixed slots.
  * @param expectedRevision Require this live revision, or omit the guard.
+ * @param preset Optional preset to prepare at the new width; an empty path
+ * requests bypass and no value preserves the active processing recipe.
  * @return Encoded request, or empty for invalid input or allocation failure.
  */
 std::string makeSetOutputControlRequest(const OutputConfiguration &configuration,
-    std::optional<std::uint64_t> expectedRevision = std::nullopt);
+    std::optional<std::uint64_t> expectedRevision = std::nullopt,
+    const std::optional<std::filesystem::path> &preset = std::nullopt);
 
 /**
  * Returns a JSON live-preset request without framing newline.

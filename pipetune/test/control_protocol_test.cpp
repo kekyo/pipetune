@@ -31,6 +31,12 @@ static bool replaceOnce(std::string &value, std::string_view from,
 }
 
 static bool testRequests() {
+  for (const auto json : {
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"preset":null})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"preset":"/tmp/music.effetune_preset","expectedRevision":7})"}) {
+    if (!check(pipetune::parseControlRequest(json).error.empty(),
+               "output changes must optionally carry processing choices for atomic restoration")) return false;
+  }
   const auto output = pipetune::parseControlRequest(
       R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]}})");
   if (!check(output.error.empty() && output.request.command == pipetune::ControlCommand::setOutput &&
@@ -41,6 +47,13 @@ static bool testRequests() {
   if (!check(guardedOutput.error.empty() && guardedOutput.request.expectedRevision == 7 &&
              !output.request.expectedRevision.has_value(),
              "output requests must accept an expected configuration revision")) return false;
+  for (const auto &preset : {std::optional<std::filesystem::path>{},
+                            std::optional<std::filesystem::path>{std::filesystem::path{}},
+                            std::optional<std::filesystem::path>{"/tmp/音楽\".effetune_preset"}}) {
+    const auto parsed = pipetune::parseControlRequest(pipetune::makeSetOutputControlRequest({}, 7, preset));
+    if (!check(parsed.error.empty() && parsed.request.outputPreset == preset && parsed.request.expectedRevision == 7,
+               "joint changes must distinguish preserved processing, bypass, and a preset path")) return false;
+  }
   const auto statusJson = pipetune::makeStatusControlRequest();
   const auto status = pipetune::parseControlRequest(statusJson);
   if (!check(status.error.empty(), status.error) ||
@@ -839,6 +852,10 @@ static bool testOutputStatus() {
       R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"expectedRevision":"7"})",
       R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"expectedRevision":null})",
       R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"expectedRevision":0,"expectedRevision":1})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"preset":""})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"preset":false})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"preset":"path\u0000suffix"})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"preset":null,"preset":"path"})",
       R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"extra":true})"}) {
     if (!check(!pipetune::parseControlRequest(json).error.empty(), "incomplete or invalid output requests must fail")) return false;
   }

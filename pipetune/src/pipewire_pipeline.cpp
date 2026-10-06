@@ -211,6 +211,8 @@ struct PipeWireRuntime {
   std::condition_variable outputRequestCondition;
   std::optional<OutputConfiguration> requestedOutput;
   std::optional<std::uint64_t> requestedOutputRevision;
+  std::optional<std::filesystem::path> requestedOutputPreset;
+  std::unique_ptr<DspPipeline> requestedOutputPipeline;
   bool outputRequestCompleted = false;
   bool outputRequestsStopped = false;
   std::string outputRequestError;
@@ -222,6 +224,10 @@ struct PipeWireRuntime {
   std::unique_ptr<PipeWireAudioBuffers> previousAudioBuffers;
   std::uint32_t previousOutputWidth = 0;
   std::uint32_t previousOutputRate = 0;
+  ProcessingMode previousProcessingMode = ProcessingMode::bypass;
+  std::string previousPreset;
+  std::string previousConfigurationError;
+  bool previousPresetReloadPending = false;
   std::uint64_t retiredOverrunFrames = 0;
   std::uint64_t retiredUnderrunFrames = 0;
   std::string outputFailure;
@@ -1532,6 +1538,8 @@ static void finishOutputChange(PipeWireRuntime &runtime) {
   }
   runtime.previousAudioBuffers.reset();
   runtime.previousOutput.reset();
+  runtime.previousPreset.clear();
+  runtime.previousConfigurationError.clear();
   runtime.outputRollingBack = false;
   auto disabled = timespec{};
   pw_loop_update_timer(pw_main_loop_get_loop(runtime.mainLoop), runtime.outputChangeTimer, &disabled, &disabled, false);
@@ -1570,27 +1578,35 @@ static void outputChangeRequested(void *data, std::uint64_t) {
     runtime.options.outputConfiguration = *runtime.previousOutput;
     runtime.options.channelCount = runtime.previousOutputWidth;
     runtime.dspSampleRate.store(runtime.previousOutputRate, std::memory_order_release);
+    runtime.processingMode = runtime.previousProcessingMode;
+    runtime.activePreset = std::move(runtime.previousPreset);
+    runtime.configurationError = std::move(runtime.previousConfigurationError);
+    runtime.presetReloadPending = runtime.previousPresetReloadPending;
   } else {
     auto configuration = OutputConfiguration{};
     auto expectedRevision = std::optional<std::uint64_t>{};
+    auto preset = std::optional<std::filesystem::path>{};
+    auto prepared = std::unique_ptr<DspPipeline>{};
     {
       auto requestLock = std::scoped_lock(runtime.outputRequestMutex);
       if (!runtime.requestedOutput.has_value() || runtime.outputRequestCompleted) return;
       configuration = *runtime.requestedOutput;
       expectedRevision = runtime.requestedOutputRevision;
+      preset = runtime.requestedOutputPreset;
+      prepared = std::move(runtime.requestedOutputPipeline);
     }
     if (expectedRevision.has_value() && *expectedRevision != runtime.configurationRevision.load(std::memory_order_acquire))
       return completeOutputRequest(runtime, "configuration changed; refresh output settings before applying them");
     const auto error = validateOutputConfiguration(configuration);
     if (!error.empty()) return completeOutputRequest(runtime, error);
-    if (configuration == runtime.options.outputConfiguration) return completeOutputRequest(runtime, {});
+    if (configuration == runtime.options.outputConfiguration && !preset.has_value()) return completeOutputRequest(runtime, {});
     if (streamChannelCount(runtime.options, true) != 2)
       return completeOutputRequest(runtime, "live output configuration requires stereo desktop input");
     if (configuration.mode == OutputMode::multiple &&
         (!runtime.outputInventoryReady || !runtime.availableOutputs.error.empty()))
       return completeOutputRequest(runtime, "output device inventory is unavailable");
     const auto width = outputDspChannelCount(configuration);
-    if (configuration.mode == runtime.options.outputConfiguration.mode && width == runtime.options.channelCount) {
+    if (!preset.has_value() && configuration.mode == runtime.options.outputConfiguration.mode && width == runtime.options.channelCount) {
       const auto arguments = configuration.mode == OutputMode::multiple ?
           makeOutputDistributionArguments(runtime.options.filterName + ".distribution",
               runtime.options.filterName, configuration, runtime.availableOutputs.outputs) : OutputDistributionArguments{};
@@ -1605,9 +1621,15 @@ static void outputChangeRequested(void *data, std::uint64_t) {
       }
     }
     const auto sampleRate = runtime.dspSampleRate.load(std::memory_order_acquire);
-    auto rebuilt = runtime.pipeline.rebuildActive({.sampleRate = static_cast<float>(sampleRate),
-        .maxChannels = width, .maxFrames = runtime.options.maxFrames});
-    if (rebuilt.pipeline == nullptr) return completeOutputRequest(runtime, rebuilt.error);
+    if (prepared != nullptr) {
+      if (prepared->sampleRate() != static_cast<float>(sampleRate))
+        return completeOutputRequest(runtime, "sample rate changed while preparing outputs; retry the change");
+    } else {
+      auto rebuilt = runtime.pipeline.rebuildActive({.sampleRate = static_cast<float>(sampleRate),
+          .maxChannels = width, .maxFrames = runtime.options.maxFrames});
+      if (rebuilt.pipeline == nullptr) return completeOutputRequest(runtime, rebuilt.error);
+      prepared = std::move(rebuilt.pipeline);
+    }
     auto buffers = std::unique_ptr<PipeWireAudioBuffers>{};
     try {
       buffers = std::make_unique<PipeWireAudioBuffers>(width, runtime.options.ringCapacityFrames, runtime.options.maxFrames);
@@ -1618,9 +1640,19 @@ static void outputChangeRequested(void *data, std::uint64_t) {
     runtime.previousOutput = runtime.options.outputConfiguration;
     runtime.previousOutputWidth = runtime.options.channelCount;
     runtime.previousOutputRate = sampleRate;
+    runtime.previousProcessingMode = runtime.processingMode;
+    runtime.previousPreset = runtime.activePreset;
+    runtime.previousConfigurationError = runtime.configurationError;
+    runtime.previousPresetReloadPending = runtime.presetReloadPending;
     runtime.previousAudioBuffers = std::move(runtime.audioBuffers);
     runtime.audioBuffers = std::move(buffers);
-    runtime.pipeline.stageReplacement(std::move(rebuilt.pipeline));
+    runtime.pipeline.stageReplacement(std::move(prepared));
+    if (preset.has_value()) {
+      runtime.processingMode = preset->empty() ? ProcessingMode::bypass : ProcessingMode::preset;
+      runtime.activePreset = preset->string();
+      runtime.configurationError.clear();
+      runtime.presetReloadPending = false;
+    }
     runtime.options.outputConfiguration = std::move(configuration);
     runtime.options.channelCount = width;
     runtime.options.inputChannelCount = 2;
@@ -1856,6 +1888,15 @@ struct PresetActivationResult {
   bool deferred;
 };
 
+static std::shared_ptr<const DspBackend> activeDspBackend(PipeWireRuntime &runtime) {
+  auto lock = std::scoped_lock(runtime.dspBackendStateMutex);
+  if (runtime.dspBackendState.effectiveVariant.has_value()) {
+    const auto *loaded = runtime.dspBackendState.backends.find(*runtime.dspBackendState.effectiveVariant);
+    if (loaded != nullptr) return loaded->backend;
+  }
+  return {};
+}
+
 static PresetActivationResult activatePreset(
     PipeWireRuntime &runtime, const std::filesystem::path &presetPath,
     bool automaticReload) {
@@ -1874,17 +1915,7 @@ static PresetActivationResult activatePreset(
     }
   }
 
-  auto backend = std::shared_ptr<const DspBackend>{};
-  {
-    auto backendLock = std::scoped_lock(runtime.dspBackendStateMutex);
-    if (runtime.dspBackendState.effectiveVariant.has_value()) {
-      const auto *loaded = runtime.dspBackendState.backends.find(
-          *runtime.dspBackendState.effectiveVariant);
-      if (loaded != nullptr) {
-        backend = loaded->backend;
-      }
-    }
-  }
+  auto backend = activeDspBackend(runtime);
   if (backend == nullptr) {
     const auto error =
         "cannot load a preset without a usable scalar DSP backend";
@@ -1986,24 +2017,74 @@ static std::string provideControlStatus(void *userData) {
   return makeControlStatusEvent(controlStatus(runtime));
 }
 
-static std::string requestLiveOutputChange(PipeWireRuntime &runtime, const OutputConfiguration &configuration,
-    std::optional<std::uint64_t> expectedRevision) {
+static PresetActivationResult requestLiveOutputChange(PipeWireRuntime &runtime, const OutputConfiguration &configuration,
+    std::optional<std::uint64_t> expectedRevision, const std::optional<std::filesystem::path> &preset) {
+  auto prepared = std::unique_ptr<DspPipeline>{};
+  auto warnings = std::vector<ControlWarning>{};
+  const auto validation = validateOutputConfiguration(configuration);
+  if (!validation.empty()) return {{}, validation, false};
+  if (preset.has_value()) {
+    // Preset and measurement-file I/O stays on the existing control thread.
+    // The main loop receives an already prepared pipeline and checks that its
+    // revision and sample rate still describe the current runtime.
+    auto pipelineLock = std::scoped_lock(runtime.pipelineMutationMutex);
+    const auto revision = runtime.configurationRevision.load(std::memory_order_acquire);
+    if (expectedRevision.has_value() && *expectedRevision != revision)
+      return {{}, "configuration changed; refresh output settings before applying them", false};
+    expectedRevision = revision;
+    {
+      auto rateLock = std::scoped_lock(runtime.rateStateMutex);
+      if (runtime.rateTransitioning) return {{}, "cannot change output processing during sample-rate transition", false};
+    }
+    const auto build = PipelineBuildOptions{
+        .sampleRate = static_cast<float>(runtime.dspSampleRate.load(std::memory_order_acquire)),
+        .maxChannels = outputDspChannelCount(configuration), .maxFrames = runtime.options.maxFrames};
+    if (preset->empty()) {
+      auto created = createBypassDspPipeline(build);
+      if (created.pipeline == nullptr) return {{}, std::move(created.error), false};
+      prepared = std::move(created.pipeline);
+    } else {
+      auto backend = activeDspBackend(runtime);
+      if (backend == nullptr) return {{}, "cannot load a preset without a usable scalar DSP backend", false};
+      auto loaded = loadDspPipeline(*preset, build, std::move(backend));
+      if (loaded.pipeline == nullptr) return {{}, std::move(loaded.error), false};
+      prepared = std::move(loaded.pipeline);
+      for (auto &warning : loaded.warnings)
+        warnings.push_back({warning.nodeIndex, std::move(warning.pluginName), std::move(warning.reason)});
+    }
+  }
   auto lock = std::unique_lock(runtime.outputRequestMutex);
-  if (runtime.outputRequestsStopped) return "PipeTune daemon stopped";
-  if (runtime.requestedOutput.has_value()) return "another output change is already pending";
+  if (runtime.outputRequestsStopped) return {{}, "PipeTune daemon stopped", false};
+  if (runtime.requestedOutput.has_value()) return {{}, "another output change is already pending", false};
   runtime.requestedOutput = configuration;
   runtime.requestedOutputRevision = expectedRevision;
+  runtime.requestedOutputPreset = preset;
+  runtime.requestedOutputPipeline = std::move(prepared);
   runtime.outputRequestCompleted = false;
   runtime.outputRequestError.clear();
   const auto result = pw_loop_signal_event(pw_main_loop_get_loop(runtime.mainLoop), runtime.outputChangeSource);
   if (result < 0) {
     runtime.requestedOutput.reset();
-    return systemError("cannot schedule output change", result);
+    runtime.requestedOutputPipeline.reset();
+    runtime.requestedOutputPreset.reset();
+    return {{}, systemError("cannot schedule output change", result), false};
   }
   runtime.outputRequestCondition.wait(lock, [&runtime] { return runtime.outputRequestCompleted; });
   runtime.requestedOutput.reset();
+  runtime.requestedOutputPipeline.reset();
+  runtime.requestedOutputPreset.reset();
   runtime.outputRequestCompleted = false;
-  return std::exchange(runtime.outputRequestError, {});
+  auto error = std::exchange(runtime.outputRequestError, {});
+  lock.unlock();
+  if (error.empty() && preset.has_value() && runtime.presetFileMonitor != nullptr) {
+    auto pipelineLock = std::scoped_lock(runtime.pipelineMutationMutex);
+    if (preset->empty()) runtime.presetFileMonitor->clear();
+    else {
+      const auto monitorError = runtime.presetFileMonitor->setPaths(*preset, runtime.pipeline.measurementFiles());
+      if (!monitorError.empty()) runtime.configurationError = monitorError;
+    }
+  }
+  return {std::move(warnings), std::move(error), false};
 }
 
 static std::string requestLiveRateChange(
@@ -2049,9 +2130,10 @@ static ControlMessageResult handleControlRequest(std::string_view message,
   }
   auto warnings = std::vector<ControlWarning>{};
   if (request.request.command == ControlCommand::setOutput) {
-    const auto error = requestLiveOutputChange(runtime, request.request.outputConfiguration, request.request.expectedRevision);
-    if (!error.empty()) return closeControlResponse(makeControlErrorResponse(error), true);
-    return closeControlResponse(makeControlSuccessResponse(controlStatus(runtime), {}), true);
+    const auto changed = requestLiveOutputChange(runtime, request.request.outputConfiguration,
+        request.request.expectedRevision, request.request.outputPreset);
+    if (!changed.error.empty()) return closeControlResponse(makeControlErrorResponse(changed.error), true);
+    return closeControlResponse(makeControlSuccessResponse(controlStatus(runtime), changed.warnings), true);
   }
   if (request.request.command == ControlCommand::setRate) {
     const auto error =

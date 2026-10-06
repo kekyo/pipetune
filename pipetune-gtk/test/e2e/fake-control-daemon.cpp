@@ -268,7 +268,13 @@ static pipetune::ControlMessageResult handleRequest(
       state.liveConfig.dspIdlePolicy = parsed.request.dspIdlePolicy;
       break;
     case pipetune::ControlCommand::setOutput:
+      if (parsed.request.expectedRevision.has_value() && *parsed.request.expectedRevision != state.configurationRevision)
+        return closeResponse(pipetune::makeControlErrorResponse("configuration changed"), false);
       state.liveConfig.outputConfiguration = parsed.request.outputConfiguration;
+      if (parsed.request.outputPreset.has_value()) {
+        state.liveConfig.presetPath = *parsed.request.outputPreset;
+        state.liveConfig.presetFound = !state.liveConfig.presetPath.empty();
+      }
       break;
     case pipetune::ControlCommand::status:
     case pipetune::ControlCommand::subscribe:

@@ -532,4 +532,11 @@ void setControlDspIdleAsync(ControlClient *client,
                callback, userData);
 }
 
+void setControlOutputAsync(ControlClient *client,
+    const pipetune::OutputConfiguration &configuration,
+    const std::optional<std::filesystem::path> &preset, std::uint64_t expectedRevision,
+    ControlClientReplyCallback callback, void *userData) {
+  startRequest(client, pipetune::makeSetOutputControlRequest(configuration, expectedRevision, preset), callback, userData);
+}
+
 } // namespace pipetune_gtk
