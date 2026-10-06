@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cmath>
 #include <csignal>
 #include <cstdlib>
@@ -20,13 +21,60 @@
 #include <iostream>
 #include <string_view>
 
+static bool rejectRestoredWidth = false;
+static bool sawWideOutput = false;
+static unsigned outputFailures = 0;
+struct DeferredOutputFailure {
+  pw_loop *loop;
+  spa_source *event;
+  pw_stream *stream;
+};
+
+// Only this test executable wraps the public API. Fail one real stream
+// connection after a wide layout has played, then report a negotiation error.
+// Restoring the old width and the final retry use the real API.
+extern "C" int __real_pw_stream_connect(pw_stream *, pw_direction, std::uint32_t,
+    pw_stream_flags, const spa_pod **, std::uint32_t);
+extern "C" int __wrap_pw_stream_connect(pw_stream *stream, pw_direction direction,
+    std::uint32_t target, pw_stream_flags flags, const spa_pod **parameters, std::uint32_t count) {
+  if (rejectRestoredWidth && direction == PW_DIRECTION_OUTPUT && count != 0) {
+    auto format = spa_audio_info_raw{};
+    if (spa_format_audio_raw_parse(parameters[0], &format) >= 0) {
+      if (format.channels == 16) sawWideOutput = true;
+      else if (sawWideOutput && format.channels == 4) {
+        if (++outputFailures == 1) {
+          std::cerr << "product:injected-output-failure\n" << std::flush;
+          return -EIO;
+        }
+        rejectRestoredWidth = false;
+        const auto result = __real_pw_stream_connect(stream, direction, target, flags, parameters, count);
+        if (result < 0) return result;
+        auto *loop = pw_context_get_main_loop(pw_core_get_context(pw_stream_get_core(stream)));
+        auto failure = std::make_unique<DeferredOutputFailure>(DeferredOutputFailure{loop, nullptr, stream});
+        failure->event = pw_loop_add_event(loop, [](void *data, std::uint64_t) {
+          auto failure = std::unique_ptr<DeferredOutputFailure>(static_cast<DeferredOutputFailure *>(data));
+          std::cerr << "product:injected-output-negotiation-error\n" << std::flush;
+          pw_stream_set_error(failure->stream, -EIO, "injected output negotiation error");
+          pw_loop_destroy_source(failure->loop, failure->event);
+        }, failure.get());
+        if (failure->event == nullptr) return -ENOMEM;
+        pw_loop_signal_event(loop, failure->event);
+        static_cast<void>(failure.release());
+        return result;
+      }
+    }
+  }
+  return __real_pw_stream_connect(stream, direction, target, flags, parameters, count);
+}
+
 static void runtimeReady(void *) {
   std::cerr << "product:runtime-ready\n" << std::flush;
 }
 
 static int runProduct(const char *preset, std::string_view scenario) {
+  rejectRestoredWidth = scenario == "product-output-change";
   const auto *socket = std::getenv("PIPETUNE_PRODUCT_SOCKET");
-  const auto control = scenario == "product-controls" || scenario.starts_with("product-output-status");
+  const auto control = scenario == "product-controls" || scenario.starts_with("product-output-");
   if (control && socket == nullptr) return 2;
   auto configuration = pipetune::OutputConfiguration{};
   for (auto index = 0U; index < 2; ++index) {
@@ -109,6 +157,8 @@ struct AudioTest {
   bool latencyReconnect = false;
   bool intentionalDelay = false;
   bool controls = false;
+  bool outputChange = false;
+  std::uint64_t singleModeFrames = 0;
   bool inventory = false;
   bool awaitingControl = false;
   bool latencySettled = false;
@@ -298,27 +348,44 @@ static void capture(void *data) {
       if (test.stage >= 4) expected += test.stage == 4 ? 0.125F : 0.25F;
       if (test.stage == 6) expected = 0.0F;
     }
+    if (test.outputChange) {
+      if (test.stage >= 1 && test.stage <= 5 && output.index < 2)
+        expected = channel == 0 ? 0.25F : output.index == 0 ? -0.5F : 0.5F;
+      if (test.stage >= 3 && test.stage <= 5 && output.index == 0) expected = 0.0F;
+      if (test.stage == 7) expected = output.index == 2 ? (channel == 0 ? 0.25F : 0.5F) : 0.0F;
+    }
     for (auto frame = 0U; frame < frames; ++frame) {
       auto sample = 0.0F;
       std::memcpy(&sample, static_cast<const char *>(plane.data) + plane.chunk->offset + frame * sizeof(float), sizeof(float));
       if (test.profile && test.stage == 3 && output.index == 0 && sample != 0)
         fail(test, "profile mismatch received audio");
       if (test.disconnected && sample != 0) fail(test, "unresolved or disabled output received fallback audio");
-      if (output.index == 2 && sample != 0) fail(test, "unselected device received audio");
+      if (output.index == 2 && sample != 0 &&
+          !(test.outputChange && (test.stage >= 7 || test.awaitingControl))) fail(test, "unselected device received audio");
       matches = matches && (test.controls && expected != 0.0F ? std::abs(sample - expected) < 0.000001F : sample == expected);
     }
   }
   queued->size = frames;
   pw_stream_queue_buffer(output.stream, queued);
   if (!valid) return fail(test, "invalid stereo capture buffer");
-  if (output.index == 2) return;
+  if (output.index == 2 && !(test.outputChange && test.stage >= 7)) return;
   if (test.awaitingControl) return;
+  if (test.outputChange && test.stage == 7) {
+    if (output.index == 2) {
+      test.singleModeFrames = matches ? test.singleModeFrames + frames : 0;
+      if (test.singleModeFrames >= 32768) {
+        test.awaitingControl = true;
+        std::cerr << "product:controls-stage-7\n" << std::flush;
+      }
+    } else if (!matches) return fail(test, "single mode played on a non-default output");
+    return;
+  }
   if (test.restart && test.stage == 2 && !test.restartResumed) return;
   if (test.reconnect && !test.restart && (test.stage == 2 || (test.profile && test.stage == 3)) && output.index == 0) return;
   // Graph replacement permits a brief fade or silence. Require a fresh,
   // consecutive window of exact PCM after each device change rather than
   // counting samples from the old graph toward the recovered state.
-  if (((test.reconnect && test.stage >= 2) || test.controls) && !matches) {
+  if (((test.reconnect && test.stage >= 2) || test.controls || test.outputChange) && !matches) {
     output.matched = false;
     output.frames = 0;
     return;
@@ -327,8 +394,9 @@ static void capture(void *data) {
   // exact continuous PCM after the first complete block reaches unity gain.
   if (output.matched && frames != 0 && !matches) return fail(test, "steady product output differs on device " + std::to_string(output.index));
   if (matches && frames != 0) { output.matched = true; output.frames += frames; }
-  if ((test.outputs[0].frames >= 32768 || (test.reconnect && !test.restart && (test.stage == 2 || (test.profile && test.stage == 3)))) && test.outputs[1].frames >= 32768) {
-    if (test.controls) {
+  if ((test.outputs[0].frames >= 32768 || (test.reconnect && !test.restart && (test.stage == 2 || (test.profile && test.stage == 3)))) && test.outputs[1].frames >= 32768 &&
+      (!test.outputChange || test.stage != 8 || test.outputs[2].frames >= 32768)) {
+    if (test.controls || test.outputChange) {
       test.stageFrames[test.stage] = {test.outputs[0].frames, test.outputs[1].frames};
       if (test.stage == 8) pw_main_loop_quit(test.loop);
       else {
@@ -506,6 +574,7 @@ static int runAudio(std::string_view scenario) {
   test.latencyReconnect = scenario == "product-latency-reconnect";
   test.latency = scenario == "product-latency" || test.intentionalDelay || test.latencyReconnect;
   test.controls = scenario == "product-controls";
+  test.outputChange = scenario == "product-output-change";
   test.inventory = scenario.starts_with("product-output-status");
   test.loop = pw_main_loop_new(nullptr);
   if (test.loop == nullptr) return 1;
@@ -514,7 +583,7 @@ static int runAudio(std::string_view scenario) {
   auto *resume = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR2, [](void *data, int) {
     auto &test = *static_cast<AudioTest *>(data);
     if (test.inventory && ++test.stage == 4) return static_cast<void>(pw_main_loop_quit(test.loop));
-    if (test.controls) {
+    if (test.controls || test.outputChange) {
       if (!test.awaitingControl) return fail(test, "unexpected control transition");
       test.awaitingControl = false;
       ++test.stage;
@@ -612,7 +681,7 @@ static int runAudio(std::string_view scenario) {
     if (stage != 0) std::cout << ',';
     std::cout << '[' << test.stageFrames[stage][0] << ',' << test.stageFrames[stage][1] << ']';
   }
-  std::cout << "],\"compensationFrames\":[" << test.compensation[0] << ',' << test.compensation[1] << ',' << test.compensation[2] << "]}\n";
+  std::cout << "],\"singleModeFrames\":" << test.singleModeFrames << ",\"compensationFrames\":[" << test.compensation[0] << ',' << test.compensation[1] << ',' << test.compensation[2] << "]}\n";
   return test.error.empty() ? 0 : 1;
 }
 

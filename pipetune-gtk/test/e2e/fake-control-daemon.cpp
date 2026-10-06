@@ -138,6 +138,7 @@ makeStatus(const pipetune::StartupConfig &config,
             .cpuSupported = true,
             .cpuRequirement = "Arm SVE",
             .error = {}}},
+      .outputConfiguration = config.outputConfiguration,
   };
 }
 
@@ -188,6 +189,8 @@ static std::string commandName(pipetune::ControlCommand command) {
     return "setDspBackend";
   case pipetune::ControlCommand::setDspIdle:
     return "setDspIdle";
+  case pipetune::ControlCommand::setOutput:
+    return "setOutput";
   case pipetune::ControlCommand::subscribe:
     return "subscribe";
   }
@@ -263,6 +266,9 @@ static pipetune::ControlMessageResult handleRequest(
       break;
     case pipetune::ControlCommand::setDspIdle:
       state.liveConfig.dspIdlePolicy = parsed.request.dspIdlePolicy;
+      break;
+    case pipetune::ControlCommand::setOutput:
+      state.liveConfig.outputConfiguration = parsed.request.outputConfiguration;
       break;
     case pipetune::ControlCommand::status:
     case pipetune::ControlCommand::subscribe:

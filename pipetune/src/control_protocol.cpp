@@ -248,6 +248,14 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
                         .dspIdlePolicy = policy},
             .error = {}};
   }
+  if (command == "set-output") {
+    if (yyjson_obj_size(root) != 2)
+      return requestError("set-output request requires only command and configuration fields");
+    auto configuration = parseOutputConfigurationJson(yyjson_obj_get(root, "configuration"));
+    if (!configuration.error.empty()) return requestError(std::move(configuration.error));
+    return {.request = {.command = ControlCommand::setOutput, .presetPath = {},
+                        .outputConfiguration = std::move(configuration.configuration)}, .error = {}};
+  }
   if (command != "load") {
     return requestError("unsupported control command");
   }
@@ -521,6 +529,16 @@ static std::string_view presetEntryStateName(PresetEntryState state) noexcept {
     return "ignored";
   }
   return {};
+}
+
+std::string makeSetOutputControlRequest(const OutputConfiguration &configuration) {
+  auto *root = static_cast<yyjson_mut_val *>(nullptr);
+  auto document = createObjectDocument(root);
+  if (document == nullptr) return {};
+  auto *output = makeOutputConfigurationJson(document.get(), configuration);
+  if (output == nullptr || !addString(document.get(), root, "command", "set-output") ||
+      !yyjson_mut_obj_add_val(document.get(), root, "configuration", output)) return {};
+  return writeDocument(document.get());
 }
 
 static bool outputStatusIsConsistent(const ControlRuntimeStatus &status) {

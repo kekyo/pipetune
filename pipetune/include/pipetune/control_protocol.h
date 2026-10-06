@@ -40,6 +40,8 @@ enum class ControlCommand {
   setDspBackend,
   /** Replace the automatic DSP suspension policy. */
   setDspIdle,
+  /** Replace the live output mode and complete fixed channel mapping. */
+  setOutput,
   /** Keep the connection open and publish status changes. */
   subscribe
 };
@@ -60,6 +62,8 @@ struct ControlRequest {
   DspSimdVariant dspSimdVariant = DspSimdVariant::automatic;
   /** Requested automatic suspension policy for setDspIdle. */
   DspIdlePolicy dspIdlePolicy = {};
+  /** Complete replacement for setOutput; persistence is a separate operation. */
+  OutputConfiguration outputConfiguration = {};
 };
 
 /**
@@ -314,6 +318,13 @@ makeSetDspBackendControlRequest(DspBackendKind kind,
  * @return Encoded request, or an empty string for invalid input or failure.
  */
 std::string makeSetDspIdleControlRequest(const DspIdlePolicy &policy);
+
+/**
+ * Encodes a complete live output configuration without a framing newline.
+ * @param configuration Valid output mode, selected devices, and fixed slots.
+ * @return Encoded request, or empty for invalid input or allocation failure.
+ */
+std::string makeSetOutputControlRequest(const OutputConfiguration &configuration);
 
 /**
  * Returns a JSON live-preset request without framing newline.

@@ -31,6 +31,11 @@ static bool replaceOnce(std::string &value, std::string_view from,
 }
 
 static bool testRequests() {
+  const auto output = pipetune::parseControlRequest(
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]}})");
+  if (!check(output.error.empty() && output.request.command == pipetune::ControlCommand::setOutput &&
+             output.request.outputConfiguration == pipetune::OutputConfiguration{},
+             "valid output configuration requests must be accepted")) return false;
   const auto statusJson = pipetune::makeStatusControlRequest();
   const auto status = pipetune::parseControlRequest(statusJson);
   if (!check(status.error.empty(), status.error) ||
@@ -816,6 +821,17 @@ static bool testOutputStatus() {
       .channels = {{"", 0, "Reserved"}, {"saved", 0, "Left"}, {"saved", 1, "Right"}}};
   status.availableOutputs = {{status.outputConfiguration.outputs[0].device, "current-node", 73, UINT64_MAX}};
   status.outputInventoryReady = true;
+  const auto request = pipetune::parseControlRequest(pipetune::makeSetOutputControlRequest(status.outputConfiguration));
+  if (!check(request.error.empty() && request.request.command == pipetune::ControlCommand::setOutput &&
+             request.request.outputConfiguration == status.outputConfiguration,
+             "output requests must preserve every fixed assignment")) return false;
+  for (const auto json : {
+      R"({"command":"set-output"})",
+      R"({"command":"set-output","configuration":null})",
+      R"({"command":"set-output","configuration":{"mode":"multiple","outputs":[],"channels":[]}})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"extra":true})"}) {
+    if (!check(!pipetune::parseControlRequest(json).error.empty(), "incomplete or invalid output requests must fail")) return false;
+  }
   // An unsupported live profile still belongs in the inventory. It must not
   // be silently truncated to the DSP's sixteen-channel selection limit.
   auto wide = status.availableOutputs[0];

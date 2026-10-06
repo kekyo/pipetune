@@ -461,7 +461,17 @@ static bool testStagedReplacementCanCommitAndRollback(
     return false;
   }
 
+  auto renegotiated = slot.rebuildActive(
+      {.sampleRate = 96000.0F, .maxChannels = 2, .maxFrames = 32});
+  if (!check(renegotiated.pipeline != nullptr, renegotiated.error)) return false;
+  slot.replace(std::move(renegotiated.pipeline));
+  samples = {0.25F, 0.5F};
+  if (!check(slot.hasStagedReplacement() &&
+             slot.process(samples, 2, 1, 0.0) == pipetune::ProcessStatus::ok &&
+             approximately(samples[1], 0.5F * std::pow(10.0F, -6.0F / 20.0F)),
+             "format renegotiation must retain the original rollback pipeline")) return false;
   slot.rollbackStaged();
+  samples.resize(1);
   samples[0] = 0.25F;
   if (!check(!slot.hasStagedReplacement(),
              "rollback must close the transaction") ||

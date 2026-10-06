@@ -271,7 +271,7 @@ try {
     const runtime = start("product runtime", driver, ["runtime", scenario === "product-bypass" ? "bypass" : preset, scenario]);
     await waitForMessage(runtime, "product:runtime-ready");
     audio.child.kill("SIGUSR1");
-    if (scenario === "product-controls") {
+    if (scenario === "product-controls" || scenario === "product-output-change") {
       const control = async (request, success = true) => {
         const client = start("product control", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET, JSON.stringify(request)]);
         const timeout = setTimeout(() => terminate(client, "SIGTERM"), 10000);
@@ -283,6 +283,77 @@ try {
         return response;
       };
       const next = (stage) => waitForMessage(audio, `product:controls-stage-${stage}`);
+      if (scenario === "product-output-change") {
+        await next(0);
+        const initial = await control({ command: "status" });
+        const original = initial.outputConfiguration;
+        let revision = initial.configurationRevision;
+        const setOutput = async (configuration) => {
+          const status = await control({ command: "set-output", configuration });
+          assert.deepEqual(status.outputConfiguration, configuration);
+          assert.equal(status.inputChannelCount, 2);
+          assert.equal(status.configurationRevision, ++revision);
+        };
+        const swapped = structuredClone(original);
+        swapped.channels = [...swapped.channels.slice(2), ...swapped.channels.slice(0, 2)];
+        await setOutput(swapped);
+        audio.child.kill("SIGUSR2");
+        await next(1);
+        while (swapped.channels.length < 16) swapped.channels.push({ outputId: "", deviceChannel: 0, label: "Reserved" });
+        await setOutput(swapped);
+        audio.child.kill("SIGUSR2");
+        await next(2);
+        swapped.outputs[0].enabled = false;
+        await setOutput(swapped);
+        audio.child.kill("SIGUSR2");
+        await next(3);
+        swapped.channels[0].label = "サブ左";
+        await setOutput(swapped);
+        const failedConnection = await control({ command: "set-output", configuration: original }, false);
+        assert.match(failedConnection.error, /cannot connect PipeWire stream/);
+        await waitForMessage(runtime, "product:injected-output-failure");
+        const restoredConnection = await control({ command: "status" });
+        assert.deepEqual(restoredConnection.outputConfiguration, swapped);
+        assert.equal(restoredConnection.configurationRevision, revision);
+        audio.child.kill("SIGUSR2");
+        await next(4);
+        const invalid = structuredClone(swapped);
+        invalid.channels[1] = invalid.channels[0];
+        await control({ command: "set-output", configuration: invalid }, false);
+        const retained = await control({ command: "status" });
+        assert.deepEqual(retained.outputConfiguration, swapped);
+        assert.equal(retained.configurationRevision, revision);
+        const failedNegotiation = await control({ command: "set-output", configuration: original }, false);
+        assert.match(failedNegotiation.error, /injected output negotiation error/);
+        await waitForMessage(runtime, "product:injected-output-negotiation-error");
+        const rolledBack = await control({ command: "status" });
+        assert.deepEqual(rolledBack.outputConfiguration, swapped);
+        assert.equal(rolledBack.configurationRevision, revision);
+        assert.equal(rolledBack.inputChannelCount, 2);
+        audio.child.kill("SIGUSR2");
+        await next(5);
+        await setOutput(original);
+        audio.child.kill("SIGUSR2");
+        await next(6);
+        await setOutput({ ...original, mode: "single" });
+        audio.child.kill("SIGUSR2");
+        await next(7);
+        const stereoOnly = join(directory, "stereo-only.effetune_preset");
+        writeFileSync(stereoOnly, JSON.stringify({ pipeline: [{ name: "Bass Extender", channel: "All" }] }));
+        const stereoStatus = await control({ command: "load", preset: stereoOnly });
+        revision = stereoStatus.configurationRevision;
+        const rejected = await control({ command: "set-output", configuration: original }, false);
+        assert.match(rejected.error, /Bass Extender/);
+        const afterRejection = await control({ command: "status" });
+        assert.equal(afterRejection.configurationRevision, revision);
+        assert.deepEqual(afterRejection.outputConfiguration, { ...original, mode: "single" });
+        assert.equal(afterRejection.preset, stereoOnly);
+        revision = (await control({ command: "load", preset })).configurationRevision;
+        await setOutput(original);
+        const unchanged = await control({ command: "set-output", configuration: original });
+        assert.equal(unchanged.configurationRevision, revision);
+        audio.child.kill("SIGUSR2");
+      } else {
       const rate = (sampleRate) => control({ command: "set-rate", rateMode: "fixed", sampleRate, enforcement: "suggest" });
       const backend = (backend) => control({ command: "set-dsp-backend", backend, simdVariant: "auto" });
       await next(0);
@@ -319,6 +390,7 @@ try {
       assert.equal((await rate(48000)).dspSampleRate, 48000);
       assert.equal((await backend("scalar")).effectiveDspBackend, "scalar");
       audio.child.kill("SIGUSR2");
+      }
     }
     if (scenario.startsWith("product-restart")) {
       await waitForMessage(audio, "product:restart-ready");
@@ -332,15 +404,16 @@ try {
     const report = JSON.parse(audio.stdout);
     assert.ok(report.receivedFrames.every((frames) => scenario === "product-disconnected" ? frames === 0 : frames >= 32768));
     assert.ok(report.producedFrames >= 32768);
-    assert.equal(report.stages.length, scenario === "product-controls" ? 9 : scenario === "product-profile" ? 5 : ["product-restart", "product-latency", "product-latency-reconnect", "product-time-alignment"].includes(scenario) ? 3 :
+    assert.equal(report.stages.length, ["product-controls", "product-output-change"].includes(scenario) ? 9 : scenario === "product-profile" ? 5 : ["product-restart", "product-latency", "product-latency-reconnect", "product-time-alignment"].includes(scenario) ? 3 :
       ["product-volume", "product-reconnect", "product-restart-mute"].includes(scenario) ? 4 : 1);
     assert.ok(report.stages.every((stage, index) => stage.every((frames, device) =>
-      scenario === "product-disconnected" || (scenario === "product-latency-reconnect" && index === 1 && device === 1) ||
+      scenario === "product-disconnected" || (scenario === "product-output-change" && index === 7) || (scenario === "product-latency-reconnect" && index === 1 && device === 1) ||
       ((["product-reconnect", "product-profile"].includes(scenario) && index === 2 || scenario === "product-profile" && index === 3) && device === 0) ? frames === 0 : frames >= 32768)));
     if (scenario === "product-latency-reconnect") {
       assert.equal(report.compensationFrames[1], -1, "a missing output has no measured relative delay");
       for (const index of [0, 2]) assert.ok(report.compensationFrames[index] >= 62 && report.compensationFrames[index] <= 63);
     }
+    if (scenario === "product-output-change") assert.ok(report.singleModeFrames >= 32768);
     if (["product-latency", "product-time-alignment"].includes(scenario)) {
       for (const [index, declared] of [63, 127, 31].entries())
         assert.ok(report.compensationFrames[index] <= declared && declared - report.compensationFrames[index] <= 1,
