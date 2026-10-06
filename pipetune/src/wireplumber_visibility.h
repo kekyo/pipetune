@@ -11,7 +11,11 @@
 namespace pipetune {
 
 /**
- * Returns the WirePlumber policy that hides PipeTune-internal nodes.
+ * Returns the WirePlumber policy for PipeTune node visibility and default output.
+ *
+ * Internal nodes remain private. Aggregate outputs can request a temporary
+ * default-output selection whose previous preference survives their removal
+ * and a WirePlumber restart.
  *
  * @return Complete runtime Lua script contents.
  */

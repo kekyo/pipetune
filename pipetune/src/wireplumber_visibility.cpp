@@ -35,6 +35,70 @@ local server_cookie = tostring(Core.get_info().cookie)
 local nodes_installed = false
 local clients_installed = false
 
+-- Keep the user's configured preference separate from the effective fallback.
+-- WirePlumber owns this lease so a crashed processing client cannot strand the
+-- configured default on a logical sink that no longer exists.
+local default_state = State("pipetune-default-output")
+local saved_default = default_state:load()
+local managed_defaults = {}
+local default_metadata = nil
+local default_restoring = false
+local default_update_pending = false
+local configured_key = "default.configured.audio.sink"
+
+local function output_name(value)
+  if value == nil then return nil end
+  local json = Json.Raw(value)
+  if json == nil or not json:is_object() then return nil end
+  local ok, parsed = pcall(function() return json:parse() end)
+  if ok and type(parsed) == "table" and type(parsed.name) == "string" then return parsed.name end
+  return nil
+end
+
+local function save_default()
+  local ok, error = default_state:save(saved_default)
+  if not ok then Log.warning("cannot save PipeTune default output: " .. tostring(error)) end
+  return ok
+end
+
+local function update_default_output()
+  if not nodes_installed or default_metadata == nil or default_restoring then return end
+  -- In 0.4 the metadata object appears before the default-node policy starts
+  -- listening. Its first effective selection is the initialization barrier.
+  if default_metadata:find(0, "default.audio.sink") == nil then return end
+  local _, name = next(managed_defaults)
+  local current, current_type = default_metadata:find(0, configured_key)
+  if name ~= nil then
+    local value = Json.Object { name = name }:get_data()
+    if saved_default["aggregate"] == nil then
+      saved_default["aggregate"] = value
+      saved_default["previous-present"] = current ~= nil and "true" or "false"
+      saved_default["previous-value"] = current
+      saved_default["previous-type"] = current_type
+      if not save_default() then
+        saved_default = default_state:load()
+        return
+      end
+    end
+    if output_name(current) ~= name then default_metadata:set(0, configured_key, "Spa:String:JSON", value) end
+  elseif saved_default["aggregate"] ~= nil then
+    default_restoring = true
+    if output_name(current) == output_name(saved_default["aggregate"]) then
+      local previous = saved_default["previous-present"] == "true" and
+          saved_default["previous-value"] or nil
+      default_metadata:set(0, configured_key, saved_default["previous-type"], previous)
+    end
+    -- Keep recovery data until the server acknowledges the restoration.
+    Core.sync(function(error)
+      default_restoring = false
+      if error == nil and next(managed_defaults) == nil then
+        saved_default = {}
+        save_default()
+      end
+    end)
+  end
+end
+
 local function save_permissions()
   local ok, error = permission_state:save(saved_permissions)
   if not ok then
@@ -218,6 +282,10 @@ pipetune_nodes_om:connect("object-added", function(om, node)
   local aggregate = proxy_property(node, "node.pipetune.aggregate")
   if aggregate == "true" or aggregate == true then
     pipetune_aggregate_owners[node_id] = owner_id or -1
+    if proxy_property(node, "node.pipetune.manage-default") == "true" then
+      managed_defaults[node_id] = proxy_property(node, "node.name")
+      update_default_output()
+    end
     if proxy_property(node, "node.pipetune.public-input") == "true" then
       pipetune_public_inputs[node_id] = true
     end
@@ -268,6 +336,8 @@ pipetune_nodes_om:connect("object-removed", function(om, node)
   if pipetune_aggregate_owners[node_id] ~= nil then
     pipetune_aggregate_owners[node_id] = nil
     pipetune_public_inputs[node_id] = nil
+    managed_defaults[node_id] = nil
+    update_default_output()
     -- The aggregate's lifetime is the mode switch. This also runs when
     -- its client disappears without sending a shutdown request.
     update_all_client_permissions()
@@ -320,6 +390,7 @@ end
 
 pipetune_nodes_om:connect("installed", function()
   nodes_installed = true
+  update_default_output()
   restore_initial_permissions()
 end)
 pipetune_clients_om:connect("installed", function()
@@ -327,8 +398,43 @@ pipetune_clients_om:connect("installed", function()
   restore_initial_permissions()
 end)
 
+local defaults_om = ObjectManager {
+  Interest { type = "metadata", Constraint { "metadata.name", "=", "default" } },
+}
+defaults_om:connect("object-added", function(om, metadata)
+  default_metadata = metadata
+  metadata:connect("changed", function(m, subject, key, value_type, value)
+    if subject ~= 0 then return end
+    if key == configured_key and not default_restoring and next(managed_defaults) ~= nil and
+        saved_default["aggregate"] ~= nil and output_name(value) ~= output_name(saved_default["aggregate"]) then
+      -- An external change becomes the preference restored on exit, while
+      -- multi-device mode continues to use its logical sink.
+      local previous = default_state:load()
+      saved_default["previous-present"] = value ~= nil and "true" or "false"
+      saved_default["previous-value"] = value
+      saved_default["previous-type"] = value_type
+      if not save_default() then saved_default = previous; return end
+    end
+    if (key == configured_key or key == "default.audio.sink") and not default_update_pending then
+      -- ImplMetadata dispatches changes synchronously. Rewriting inside that
+      -- signal can deliver the nested value before the original notification
+      -- reaches other clients. Apply the decision after this dispatch ends.
+      default_update_pending = true
+      Core.sync(function(error)
+        default_update_pending = false
+        if error == nil then update_default_output() end
+      end)
+    end
+  end)
+  update_default_output()
+end)
+defaults_om:connect("object-removed", function(om, metadata)
+  if default_metadata == metadata then default_metadata = nil end
+end)
+
 pipetune_nodes_om:activate()
 pipetune_clients_om:activate()
+defaults_om:activate()
 )wpvis"};
 
 constexpr auto kWirePlumber05NodeVisibilityConfiguration =

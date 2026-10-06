@@ -145,7 +145,9 @@ TXとUR22mkIIを選択した場合の対応表は次の形とする。用途名�
 
 WirePlumber 0.5のsmart filterは、共通のlink groupを持つノード対を特定のターゲットへ結ぶ仕組みである。1つのフィルタ出力に複数のターゲットを指定するだけで集約できると仮定しない。0.4のendpointポリシーも、現行の既定出力追従から複数モード用の経路へ切り替える必要がある。[smart filterの仕様](https://pipewire.pages.freedesktop.org/wireplumber/policies/smart_filters.html)、[0.4互換ポリシー](../../../pipetune/src/wireplumber_04_compat.cpp)
 
-単一モードへ戻るとき、デーモンが通常終了するとき、異常終了するときに、物理出力の可視性と通常のOSによる選択を復元する。非表示状態だけが残って音声を操作できなくならないことを検証する。既定出力の退避・復元方法と、外部から既定出力を変更された場合の扱いはフェーズ1で確定する。
+単一モードへ戻るとき、デーモンが通常終了するとき、異常終了するときに、物理出力の可視性と通常のOSによる選択を復元する。非表示状態だけが残って音声を操作できなくならないことを検証する。
+
+既定出力の退避と復元はWirePlumber側が担当する。保存するのは`default.configured.audio.sink`の値・型・存在の有無であり、その時点の代替出力を示す`default.audio.sink`ではない。以前に設定されたデバイスが未接続でも希望の設定を維持する。複数モード中に外部のクライアントが設定を変更した場合、その値を終了時の復元先とし、複数モード中の出力は論理出力へ戻す。同じ論理出力を表すJSONの空白の違いは設定変更と扱わない。退避は書き換え前に永続化し、復元のサーバー確認後に復旧記録を消去する。[WirePlumber Metadata API](https://pipewire.pages.freedesktop.org/wireplumber/scripting/lua_api/lua_proxies_api.html#pipewire-metadata)、[State API](https://pipewire.pages.freedesktop.org/wireplumber/scripting/lua_api/lua_state_api.html)
 
 ### 物理出力をOSに残す代案
 
@@ -501,6 +503,16 @@ PulseAudioだけでなく、ネイティブ再生、音量、切断・再接続�
 
 遅延変更が未実装のREDと切断が未実装のREDを確認し、最終状態ではホストの関連20件と0.5.8環境の全17シナリオが成功した。REDは`latency-change-red.log`と`latency-reconnect-red.log`、量子化差は`latency-change-first.log`、破棄時の診断は`latency-reconnect-asan.log`、最終の回帰結果は`pipeline-startup-host.log`と`pipeline-startup-wp05.log`に保存した。
 
+### フェーズ1: 以前に設定された既定出力の復旧
+
+公開論理出力が既定出力の管理を要求すると、WirePlumberポリシーが設定を退避してその出力を選択し、ノードが消えたら元の設定へ戻す。単一モードと管理を要求しないノードには適用しない。WirePlumber停止中に論理出力が終了した場合にも、次の起動で保存された設定を復元する。
+
+未接続のデバイスを以前の設定として保存する`policy-defaults`、以前の設定が存在しない`policy-defaults-empty`、外部の設定変更を復元する`policy-defaults-external`、JSONの空白が違うだけの選択で以前の設定を失わない`policy-defaults-equivalent`、WirePlumber停止中に論理出力が終了する`policy-defaults-recovery`を追加した。各ケースは論理出力経由のPCM再生と物理出力の非表示・復元も確認する。
+
+自動選択がないREDを`defaults-red.log`に保存した。外部変更の検証では、WirePlumberが所有するMetadataの通知中に同じキーを書き戻すと、クライアントへ新旧の通知が逆順に届く問題を確認した。書き戻しを通知後のCore.syncへ移して解消した。JSONを文字列だけで比較して以前の設定を失うREDは`defaults-equivalent-red.log`にある。
+
+最終のホスト関連25件とPipeWire 1.4.2 / WirePlumber 0.5.8の22シナリオが成功した。ログは`defaults-final-host.log`、`defaults-final-wp05.log`。この検証はポリシーと検証ドライバーを対象とし、製品デーモンの異常終了と設定画面への統合は後続フェーズで確認する。
+
 ### 全体テストと残作業
 
 音量検証までを実装した段階で`make test`を実行し、169件中168件が成功した。GTK E2Eも成功した。1件の`pipetune_component_build`は、実行中のコミットによってGit履歴から求める版番号が変わり、先にビルドされた実行ファイルの版番号と一致しなかったため失敗した。コミット`36db494`で再構成・全ターゲットの再ビルドを行い、コミットを追加せずに同テストを再実行して成功した。製品コードやテストの比較条件を変更する対処は行っていない。
@@ -513,5 +525,5 @@ PulseAudioだけでなく、ネイティブ再生、音量、切断・再接続�
 - 動作中の遅延変更と最も遅い出力の切断・再接続は、共通クロックの仮想環境で確認済み。実デバイスでの遅延差補償と、公開ポートの遅延通知から取得する状態を実機で確認する。
 - 独立クロックの実機測定、長時間動作、レート変更、再同期の合格基準。
 - 確認済みの模擬DSP経路を実デバイスでも検証し、物理デバイス側の音量と集約側の全体音量の関係を確認。
-- ネイティブクライアントで確認した非表示・通常終了後の復元について、GNOMEの画面操作、以前の既定出力の退避・復元、製品デーモンの異常終了を確認。PulseAudio経由の出力一覧、WirePlumber停止中の集約終了からの権限復旧、検証ドライバーでの再起動後の音声・全体音量・ミュート維持は検証済み。製品への統合は残っている。
+- ネイティブクライアントで確認した非表示・通常終了後の復元について、GNOMEの画面操作と製品デーモンの異常終了を確認。以前に設定された既定出力の退避・復元、PulseAudio経由の出力一覧、WirePlumber停止中の集約終了からの権限復旧、検証ドライバーでの再起動後の音声・全体音量・ミュート維持は検証済み。製品への統合は残っている。
 - 個体識別・プロファイル変更の規則、配布対象への影響と必要なPipeWireバージョン。

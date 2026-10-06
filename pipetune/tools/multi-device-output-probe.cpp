@@ -29,6 +29,9 @@ constexpr auto kTagPeriod = std::uint32_t{524287};
 constexpr auto kChannelOffset = std::uint32_t{524288};
 constexpr auto kSampleScale = 268435456.0F;
 constexpr auto kRestartFirstTag = std::uint32_t{262144};
+constexpr auto kPreviousConfiguredOutput = "{\"name\":\"pipetune_probe_previous_missing\"}";
+constexpr auto kChangedConfiguredOutput = "{\"name\":\"pipetune_probe_changed_missing\"}";
+constexpr auto kEquivalentConfiguredOutput = "{ \"name\" : \"pipetune_probe_combined\" }";
 
 enum class Phase {
   initial, disconnected, reconnected, attenuated, muted, restored,
@@ -169,6 +172,15 @@ struct Probe {
   bool outputsRestored = false;
   bool defaultsReady = false;
   bool defaultRequested = false;
+  bool manageDefaults = false;
+  bool defaultSeedRequested = false;
+  bool defaultSeeded = false;
+  bool configuredDefaultRestored = false;
+  bool defaultInitiallyEmpty = false;
+  bool externalDefault = false;
+  bool equivalentDefault = false;
+  bool externalDefaultRequested = false;
+  bool externalDefaultObserved = false;
   std::uint32_t applicationClientId = PW_ID_ANY;
   std::uint32_t processorClientId = PW_ID_ANY;
   bool captureFeedsPlayback = false;
@@ -598,6 +610,12 @@ static void finishVisibilityCheck(Probe &probe) {
   const auto selection = probe.metadataValues.find("default.audio.sink");
   if (selection == probe.metadataValues.end() ||
       selection->second.find("pipetune_probe_device_") == std::string::npos) return;
+  if (probe.manageDefaults) {
+    const auto expected = probe.defaultInitiallyEmpty ? "(removed)" :
+        (probe.externalDefault && !probe.equivalentDefault ? kChangedConfiguredOutput : kPreviousConfiguredOutput);
+    if (probe.metadataValues["default.configured.audio.sink"] != expected) return;
+    probe.configuredDefaultRestored = true;
+  }
   for (const auto &selector : probe.selectors)
     if (visiblePhysicalOutputs(selector) != 3 || visibleCombinedOutput(selector)) return;
   probe.outputsRestored = true;
@@ -664,6 +682,21 @@ static bool observeOutputs(Probe &probe, Selector &selector, pw_core *core) {
 }
 
 static void restoreVisibleOutputs(Probe &probe) {
+  if (probe.externalDefault && !probe.externalDefaultRequested) {
+    probe.externalDefaultRequested = true;
+    if (pw_metadata_set_property(probe.metadata, 0, "default.configured.audio.sink",
+        "Spa:String:JSON", probe.equivalentDefault ? kEquivalentConfiguredOutput : kChangedConfiguredOutput) < 0)
+      fail(probe, "cannot change the configured preference during multi-device playback");
+    return;
+  }
+  if (probe.externalDefault && (!probe.externalDefaultObserved ||
+      probe.metadataValues["default.configured.audio.sink"].find("pipetune_probe_combined") == std::string::npos))
+    return;
+  if (probe.manageDefaults && probe.metadataValues["default.configured.audio.sink"].find(
+      "pipetune_probe_combined") == std::string::npos) {
+    fail(probe, "the logical output was not configured as the managed default");
+    return;
+  }
   for (const auto &selector : probe.selectors) {
     if (selector.nodes.size() != 1 || !visibleCombinedOutput(selector)) {
       fail(probe, "a selector or playback client can select outputs other than the public logical sink");
@@ -986,6 +1019,8 @@ static bool createProcessor(Probe &probe) {
     pw_properties_set(inputProperties, "node.pipetune.internal", nullptr);
     pw_properties_set(inputProperties, "node.pipetune.aggregate", "true");
     pw_properties_set(inputProperties, "node.pipetune.public-input", "true");
+    if (probe.manageDefaults)
+      pw_properties_set(inputProperties, "node.pipetune.manage-default", "true");
     pw_properties_set(inputProperties, "filter.smart", nullptr);
     pw_properties_set(inputProperties, "filter.smart.name", nullptr);
     pw_properties_set(inputProperties, "target.endpoint", nullptr);
@@ -1076,6 +1111,16 @@ static int metadataChanged(void *data, std::uint32_t subject, const char *key,
   auto &probe = *static_cast<Probe *>(data);
   if (subject == 0 && key != nullptr)
     probe.metadataValues[key] = value == nullptr ? "(removed)" : value;
+  if (probe.externalDefaultRequested && subject == 0 && key != nullptr && value != nullptr &&
+      std::strcmp(key, "default.configured.audio.sink") == 0 &&
+      std::strcmp(value, probe.equivalentDefault ? kEquivalentConfiguredOutput : kChangedConfiguredOutput) == 0)
+    probe.externalDefaultObserved = true;
+  if (probe.manageDefaults && !probe.defaultSeeded && subject == 0 && key != nullptr &&
+      value != nullptr && std::strcmp(key, "default.configured.audio.sink") == 0 &&
+      std::strcmp(value, kPreviousConfiguredOutput) == 0) {
+    probe.defaultSeeded = true;
+    if (!createProcessor(probe)) fail(probe, "cannot create the default-managed output");
+  }
   finishVisibilityCheck(probe);
   if (subject == 0 && key != nullptr && value != nullptr &&
       std::strcmp(key, "default.audio.sink") == 0) {
@@ -1107,6 +1152,19 @@ static int metadataChanged(void *data, std::uint32_t subject, const char *key,
 }
 
 static void selectDefaultOutput(Probe &probe) {
+  if (probe.manageDefaults) {
+    if (!probe.defaultsReady || probe.defaultSeedRequested || probe.metadata == nullptr) return;
+    probe.defaultSeedRequested = true;
+    if (probe.defaultInitiallyEmpty) {
+      probe.defaultSeeded = true;
+      if (!createProcessor(probe)) fail(probe, "cannot create the default-managed output");
+      return;
+    }
+    if (pw_metadata_set_property(probe.metadata, 0, "default.configured.audio.sink",
+        "Spa:String:JSON", kPreviousConfiguredOutput) < 0)
+      fail(probe, "cannot seed the previously configured output");
+    return;
+  }
   if (!probe.policy || !probe.defaultsReady || probe.defaultRequested || probe.metadata == nullptr ||
       probe.combinedNode == nullptr) return;
   probe.defaultRequested = true;
@@ -1410,7 +1468,7 @@ static bool prepare(Probe &probe) {
   }
   if (!createCombinedOutput(probe)) return false;
   if (probe.policy) {
-    if (!createProcessor(probe)) return false;
+    if (!probe.manageDefaults && !createProcessor(probe)) return false;
   } else if (!createSource(probe)) return false;
   probe.watchdog = pw_loop_add_timer(pw_main_loop_get_loop(probe.loop),
       [](void *data, std::uint64_t) {
@@ -1486,6 +1544,19 @@ int main(int argc, char **argv) {
     probe.visibility = true;
     probe.recovery = true;
   }
+  else if (argc == 2 && (std::string(argv[1]) == "policy-defaults" ||
+                        std::string(argv[1]) == "policy-defaults-recovery" ||
+                        std::string(argv[1]) == "policy-defaults-empty" ||
+                        std::string(argv[1]) == "policy-defaults-equivalent" ||
+                        std::string(argv[1]) == "policy-defaults-external")) {
+    probe.policy = true;
+    probe.visibility = true;
+    probe.manageDefaults = true;
+    probe.recovery = std::string(argv[1]) == "policy-defaults-recovery";
+    probe.defaultInitiallyEmpty = std::string(argv[1]) == "policy-defaults-empty";
+    probe.equivalentDefault = std::string(argv[1]) == "policy-defaults-equivalent";
+    probe.externalDefault = std::string(argv[1]) == "policy-defaults-external" || probe.equivalentDefault;
+  }
   else if (argc == 2 && (std::string(argv[1]) == "policy-restart" ||
                         std::string(argv[1]) == "policy-restart-volume" ||
                         std::string(argv[1]) == "policy-restart-mute")) {
@@ -1514,7 +1585,7 @@ int main(int argc, char **argv) {
   }
   else if (argc > 2 || (argc == 2 && std::string(argv[1]) != "channels")) {
     std::cerr << "Usage: pipetune_multi_device_output_probe "
-        "[channels|reconnect|volume|latency|latency-off|latency-change|latency-reconnect|policy|policy-volume|policy-reconnect|policy-visibility|policy-recovery|policy-restart|policy-restart-volume|policy-restart-mute|policy-pulse|policy-pulse-volume]\n";
+        "[channels|reconnect|volume|latency|latency-off|latency-change|latency-reconnect|policy|policy-volume|policy-reconnect|policy-visibility|policy-recovery|policy-defaults|policy-defaults-empty|policy-defaults-external|policy-defaults-equivalent|policy-defaults-recovery|policy-restart|policy-restart-volume|policy-restart-mute|policy-pulse|policy-pulse-volume]\n";
     pw_deinit();
     return 2;
   }
@@ -1549,6 +1620,7 @@ int main(int argc, char **argv) {
             << ",\"captureFeedsPlayback\":" << (probe.captureFeedsPlayback ? "true" : "false")
             << ",\"outputsHiddenDuringPlayback\":" << (probe.outputsHiddenDuringPlayback ? "true" : "false")
             << ",\"outputsRestored\":" << (probe.outputsRestored ? "true" : "false")
+            << ",\"configuredDefaultRestored\":" << (probe.configuredDefaultRestored ? "true" : "false")
             << ",\"metadataInstances\":" << probe.metadataInstances
             << ",\"framesAfterRestart\":[" << probe.endpoints[0].framesAfterRestart << ','
             << probe.endpoints[1].framesAfterRestart << ']'

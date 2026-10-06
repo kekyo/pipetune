@@ -860,6 +860,7 @@ if(BUILD_TESTING)
   target_link_libraries(
     pipetune_wireplumber_policy_fixture PRIVATE pipetune_pipewire)
   foreach(scenario policy policy-volume policy-reconnect policy-visibility policy-recovery
+      policy-defaults policy-defaults-empty policy-defaults-external policy-defaults-equivalent policy-defaults-recovery
       policy-restart policy-restart-volume policy-restart-mute)
     add_test(
       NAME pipetune_multi_device_${scenario}
