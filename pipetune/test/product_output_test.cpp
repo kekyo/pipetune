@@ -7,10 +7,12 @@
 
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
+#include <spa/param/latency-utils.h>
 #include <spa/param/props.h>
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <csignal>
 #include <cstring>
 #include <iostream>
@@ -75,6 +77,9 @@ struct TestOutput {
   bool ready = false;
   bool matched = false;
   std::uint64_t frames = 0;
+  std::int64_t previousTag = -1;
+  std::int64_t blockTime = 0;
+  std::uint32_t blockFrames = 0;
 };
 
 struct AudioTest {
@@ -93,6 +98,11 @@ struct AudioTest {
   bool restart = false;
   bool restartMuted = false;
   bool restartResumed = false;
+  bool latency = false;
+  bool intentionalDelay = false;
+  bool latencySettled = false;
+  std::uint32_t declaredLatency = 63;
+  std::array<std::int64_t, 3> compensation = {};
   spa_source *graphEvent = nullptr;
   std::uint32_t publicInputId = PW_ID_ANY;
   unsigned stage = 0;
@@ -139,6 +149,83 @@ static void outputState(void *data, pw_stream_state, pw_stream_state state, cons
 
 static void changeOutputGraph(void *data, std::uint64_t);
 
+// Exactly representable channel offsets and frame tags permit PCM delay
+// measurements without relying on callback arrival order or startup silence.
+static constexpr auto tagPeriod = std::int64_t{524287};
+static constexpr auto channelOffset = std::int64_t{524288};
+static constexpr auto sampleScale = 268435456.0F;
+
+static void captureLatency(TestOutput &output, pw_buffer &buffer) {
+  auto &test = *output.test;
+  auto frames = std::uint32_t{UINT32_MAX};
+  if (buffer.buffer == nullptr || buffer.buffer->n_datas != 2)
+    return fail(test, "invalid latency capture buffer");
+  for (const auto &plane : std::span(buffer.buffer->datas, 2)) {
+    if (plane.data == nullptr || plane.chunk == nullptr || plane.chunk->offset > plane.maxsize ||
+        plane.chunk->size > plane.maxsize - plane.chunk->offset || plane.chunk->stride != sizeof(float))
+      return fail(test, "invalid latency capture plane");
+    frames = std::min(frames, static_cast<std::uint32_t>(plane.chunk->size / sizeof(float)));
+  }
+  auto validBlock = frames != 0;
+  for (auto frame = 0U; frame < frames; ++frame) {
+    auto tags = std::array<std::int64_t, 2>{};
+    auto validFrame = true;
+    for (auto channel = 0U; channel < 2; ++channel) {
+      const auto &plane = buffer.buffer->datas[channel];
+      auto sample = 0.0F;
+      std::memcpy(&sample, static_cast<const char *>(plane.data) + plane.chunk->offset + frame * sizeof(float), sizeof(float));
+      if (output.index == 2) {
+        if (sample != 0.0F) return fail(test, "unselected device received latency signal");
+        continue;
+      }
+      if (output.index == 1 && channel == 1) sample = -sample;
+      const auto scaled = sample * sampleScale;
+      if (!std::isfinite(scaled) || scaled < (channel + 1) * channelOffset ||
+          scaled >= (channel + 1) * channelOffset + tagPeriod || std::floor(scaled) != scaled) {
+        validFrame = false;
+      } else tags[channel] = static_cast<std::int64_t>(scaled) - (channel + 1) * channelOffset;
+    }
+    if (output.index == 2) continue;
+    validFrame = validFrame && tags[0] == tags[1];
+    const auto consecutive = output.previousTag < 0 || tags[0] == (output.previousTag + 1) % tagPeriod;
+    if (test.latencySettled && (!validFrame || !consecutive))
+      return fail(test, "steady latency PCM lost channel identity or frame order");
+    validBlock = validBlock && validFrame && consecutive;
+    output.previousTag = validFrame ? tags[0] : -1;
+  }
+  buffer.size = frames;
+  if (output.index == 2) return;
+  output.matched = validBlock;
+  output.blockTime = static_cast<std::int64_t>(buffer.time);
+  output.blockFrames = frames;
+  if (validBlock && test.latencySettled) output.frames += frames;
+  const auto &a = test.outputs[0];
+  const auto &b = test.outputs[1];
+  if (!a.matched || !b.matched || a.blockTime == 0 || b.blockTime == 0) return;
+  const auto elapsedFrames = std::llround(static_cast<double>(a.blockTime - b.blockTime) * 48000 / 1000000000);
+  const auto relative = elapsedFrames + a.blockFrames - b.blockFrames + b.previousTag - a.previousTag +
+      (test.intentionalDelay ? 48 : 0);
+  const auto compensation = (relative % tagPeriod + tagPeriod) % tagPeriod;
+  const auto aligned = compensation <= test.declaredLatency && test.declaredLatency - compensation <= 1;
+  if (!test.latencySettled) {
+    if (aligned) {
+      test.latencySettled = true;
+      for (auto &item : test.outputs) item.frames = 0;
+    }
+    return;
+  }
+  if (!aligned) return fail(test, "steady product delay compensation differs from the device latency");
+  if (a.frames < 32768 || b.frames < 32768) return;
+  test.stageFrames[test.stage] = {a.frames, b.frames};
+  test.compensation[test.stage] = compensation;
+  if (test.stage == 2) return static_cast<void>(pw_main_loop_quit(test.loop));
+  ++test.stage;
+  test.declaredLatency = test.stage == 1 ? 127 : 31;
+  test.latencySettled = false;
+  for (auto &item : test.outputs) { item.frames = 0; item.matched = false; item.previousTag = -1; }
+  pw_loop_signal_event(pw_main_loop_get_loop(test.loop), test.graphEvent);
+}
+
 static void setMasterVolume(AudioTest &test) {
   if (test.control == nullptr) return fail(test, "public input is unavailable for master control");
   auto storage = std::array<std::uint8_t, 256>{};
@@ -157,6 +244,11 @@ static void capture(void *data) {
   auto &test = *output.test;
   auto *queued = pw_stream_dequeue_buffer(output.stream);
   if (queued == nullptr) return;
+  if (test.latency) {
+    captureLatency(output, *queued);
+    pw_stream_queue_buffer(output.stream, queued);
+    return;
+  }
   auto valid = queued->buffer != nullptr && queued->buffer->n_datas == 2;
   auto matches = true;
   auto frames = std::uint32_t{0};
@@ -236,7 +328,11 @@ static void produce(void *data) {
   }
   for (auto channel = 0U; channel < 2; ++channel) {
     auto &plane = queued->buffer->datas[channel];
-    std::fill_n(static_cast<float *>(plane.data), frames, channel == 0 ? 0.25F : 0.5F);
+    if (test.latency) {
+      for (auto frame = 0U; frame < frames; ++frame)
+        static_cast<float *>(plane.data)[frame] = static_cast<float>((channel + 1) * channelOffset +
+            (test.produced + frame) % tagPeriod) / sampleScale;
+    } else std::fill_n(static_cast<float *>(plane.data), frames, channel == 0 ? 0.25F : 0.5F);
     plane.chunk->offset = 0;
     plane.chunk->size = frames * sizeof(float);
     plane.chunk->stride = sizeof(float);
@@ -261,10 +357,33 @@ static void startSource(void *data, int) {
       static_cast<pw_stream_flags>(PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_AUTOCONNECT))) fail(test, "cannot connect source");
 }
 
+static void outputParameterChanged(void *data, std::uint32_t id, const spa_pod *parameter) {
+  auto &output = *static_cast<TestOutput *>(data);
+  if (!output.test->latency || (id != SPA_PARAM_Format && id != SPA_PARAM_Latency)) return;
+  auto storage = std::array<std::uint8_t, 512>{};
+  auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
+  auto downstream = spa_latency_info{};
+  downstream.direction = SPA_DIRECTION_INPUT;
+  downstream.min_rate = downstream.max_rate = output.index == 1 ? output.test->declaredLatency : 0;
+  auto upstream = spa_latency_info{};
+  upstream.direction = SPA_DIRECTION_OUTPUT;
+  auto parameters = std::array<const spa_pod *, 2>{spa_latency_build(&builder, SPA_PARAM_Latency, &downstream), nullptr};
+  if (id == SPA_PARAM_Latency && parameter != nullptr && spa_latency_parse(parameter, &upstream) >= 0 &&
+      upstream.direction == SPA_DIRECTION_OUTPUT) parameters[1] = parameter;
+  else {
+    upstream = {};
+    upstream.direction = SPA_DIRECTION_OUTPUT;
+    parameters[1] = spa_latency_build(&builder, SPA_PARAM_Latency, &upstream);
+  }
+  if (pw_stream_update_params(output.stream, parameters.data(), parameters.size()) < 0)
+    fail(*output.test, "cannot publish device latency");
+}
+
 static bool createTestOutput(TestOutput &output) {
   static const auto events = [] {
     auto value = pw_stream_events{}; value.version = PW_VERSION_STREAM_EVENTS;
-    value.state_changed = outputState; value.process = capture; return value;
+    value.state_changed = outputState; value.process = capture;
+    value.param_changed = outputParameterChanged; return value;
   }();
   const auto name = "pipetune_product_device_" + std::to_string(output.index);
   output.stream = pw_stream_new(output.test->core, name.c_str(), pw_properties_new(
@@ -282,6 +401,7 @@ static bool createTestOutput(TestOutput &output) {
 
 static void changeOutputGraph(void *data, std::uint64_t) {
   auto &test = *static_cast<AudioTest *>(data);
+  if (test.latency) return outputParameterChanged(&test.outputs[1], SPA_PARAM_Latency, nullptr);
   if (test.restart) {
     // ALSA nodes are owned by WirePlumber and reappear with new generations
     // after a restart. Keep the application source alive while simulating it.
@@ -316,6 +436,8 @@ static int runAudio(std::string_view scenario) {
   test.restartMuted = scenario == "product-restart-mute";
   test.restart = scenario == "product-restart" || test.restartMuted;
   test.reconnect = scenario == "product-reconnect" || test.profile || test.restart;
+  test.intentionalDelay = scenario == "product-time-alignment";
+  test.latency = scenario == "product-latency" || test.intentionalDelay;
   test.loop = pw_main_loop_new(nullptr);
   if (test.loop == nullptr) return 1;
   // Block and register the control signal before PipeWire creates data threads.
@@ -413,7 +535,7 @@ static int runAudio(std::string_view scenario) {
     if (stage != 0) std::cout << ',';
     std::cout << '[' << test.stageFrames[stage][0] << ',' << test.stageFrames[stage][1] << ']';
   }
-  std::cout << "]}\n";
+  std::cout << "],\"compensationFrames\":[" << test.compensation[0] << ',' << test.compensation[1] << ',' << test.compensation[2] << "]}\n";
   return test.error.empty() ? 0 : 1;
 }
 

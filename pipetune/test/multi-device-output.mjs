@@ -175,6 +175,7 @@ try {
       { name: "Matrix", enabled: true, channel: "All", parameters: { mx: scenario === "product-slots" ? "001102p1304" : "001102p13" } },
     ];
     if (["product-volume", "product-reconnect", "product-profile", "product-restart", "product-restart-mute"].includes(scenario)) pipeline.push({ name: "DC Offset", enabled: true, channel: "All", parameters: { of: 0.125 } });
+    if (scenario === "product-time-alignment") pipeline.push({ name: "Time Alignment", enabled: true, channel: "34", parameters: { dl: 1 } });
     writeFileSync(preset, JSON.stringify({ pipeline }));
     const runtime = start("product runtime", driver, ["runtime", scenario === "product-bypass" ? "bypass" : preset, scenario]);
     await waitForMessage(runtime, "product:runtime-ready");
@@ -191,10 +192,15 @@ try {
     const report = JSON.parse(audio.stdout);
     assert.ok(report.receivedFrames.every((frames) => scenario === "product-disconnected" ? frames === 0 : frames >= 32768));
     assert.ok(report.producedFrames >= 32768);
-    assert.equal(report.stages.length, scenario === "product-profile" ? 5 : scenario === "product-restart" ? 3 :
+    assert.equal(report.stages.length, scenario === "product-profile" ? 5 : ["product-restart", "product-latency", "product-time-alignment"].includes(scenario) ? 3 :
       ["product-volume", "product-reconnect", "product-restart-mute"].includes(scenario) ? 4 : 1);
     assert.ok(report.stages.every((stage, index) => stage.every((frames, device) =>
       scenario === "product-disconnected" || ((["product-reconnect", "product-profile"].includes(scenario) && index === 2 || scenario === "product-profile" && index === 3) && device === 0) ? frames === 0 : frames >= 32768)));
+    if (["product-latency", "product-time-alignment"].includes(scenario)) {
+      for (const [index, declared] of [63, 127, 31].entries())
+        assert.ok(report.compensationFrames[index] <= declared && declared - report.compensationFrames[index] <= 1,
+          "automatic output compensation must preserve the preset's intentional channel delay");
+    }
     runtime.child.kill("SIGTERM");
     assert.equal((await runtime.completion).code, 0, runtime.stderr);
     process.stdout.write(`${JSON.stringify(report)}\n`);
