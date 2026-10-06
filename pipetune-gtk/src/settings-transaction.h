@@ -219,7 +219,7 @@ bool settingsTransactionShouldClose(
  * Converts complete daemon status into the settings transaction value type.
  *
  * @param status Runtime status received from the control socket.
- * @return Live preset, rate, backend, and DSP idle choices.
+ * @return Live preset, rate, backend, DSP idle, and output routing choices.
  */
 pipetune::StartupConfig startupConfigFromRuntime(
     const pipetune::ControlRuntimeStatus &status);

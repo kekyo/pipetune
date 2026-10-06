@@ -16,7 +16,8 @@ static bool configMatches(const pipetune::StartupConfig &left,
          left.ratePolicy == right.ratePolicy &&
          left.dspBackend == right.dspBackend &&
          left.dspSimdVariant == right.dspSimdVariant &&
-         left.dspIdlePolicy == right.dspIdlePolicy;
+         left.dspIdlePolicy == right.dspIdlePolicy &&
+         left.outputConfiguration == right.outputConfiguration;
 }
 
 static bool operationMatches(
@@ -277,6 +278,7 @@ pipetune::StartupConfig startupConfigFromRuntime(
       .dspBackend = status.configuredDspBackend,
       .dspSimdVariant = status.configuredDspSimdVariant,
       .dspIdlePolicy = status.dspIdlePolicy,
+      .outputConfiguration = status.outputConfiguration,
   };
 }
 

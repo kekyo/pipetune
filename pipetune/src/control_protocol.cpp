@@ -4,10 +4,12 @@
  * https://github.com/kekyo/pipetune/
  */
 #include "pipetune/control_protocol.h"
+#include "output_json.h"
 
 #include <yyjson.h>
 
 #include <cstdlib>
+#include <charconv>
 #include <cstring>
 #include <memory>
 #include <limits>
@@ -521,6 +523,13 @@ static std::string_view presetEntryStateName(PresetEntryState state) noexcept {
   return {};
 }
 
+static bool outputStatusIsConsistent(const ControlRuntimeStatus &status) {
+  return validateOutputConfiguration(status.outputConfiguration).empty() &&
+      status.outputInventoryError.find('\0') == std::string::npos &&
+      (status.outputInventoryReady || (status.availableOutputs.empty() && status.outputInventoryError.empty())) &&
+      (status.outputInventoryError.empty() || status.availableOutputs.empty());
+}
+
 static std::string makeControlStatusMessage(
     const ControlRuntimeStatus &status,
     std::span<const ControlWarning> warnings, bool statusEvent) {
@@ -530,7 +539,8 @@ static std::string makeControlStatusMessage(
        !status.activePreset.empty()) ||
       !dspIdleStatusIsConsistent(status) ||
       !sampleRateStatusIsConsistent(status) ||
-      !dspBackendStatusIsConsistent(status)) {
+      !dspBackendStatusIsConsistent(status) ||
+      !outputStatusIsConsistent(status)) {
     return makeControlErrorResponse("cannot encode inconsistent control status");
   }
 
@@ -626,6 +636,24 @@ static std::string makeControlStatusMessage(
       !addNullableString(document.get(), root, "dspBackendError",
                          status.dspBackendError)) {
     return makeControlErrorResponse("cannot encode control response");
+  }
+
+  auto *outputConfiguration = makeOutputConfigurationJson(document.get(), status.outputConfiguration);
+  auto *outputs = yyjson_mut_obj_add_arr(document.get(), root, "availableOutputs");
+  if (outputConfiguration == nullptr || outputs == nullptr ||
+      !yyjson_mut_obj_add_val(document.get(), root, "outputConfiguration", outputConfiguration) ||
+      !yyjson_mut_obj_add_bool(document.get(), root, "outputInventoryReady", status.outputInventoryReady) ||
+      !addNullableString(document.get(), root, "outputInventoryError", status.outputInventoryError))
+    return makeControlErrorResponse("cannot encode output status");
+  for (const auto &output : status.availableOutputs) {
+    auto *item = yyjson_mut_arr_add_obj(document.get(), outputs);
+    auto *device = makeOutputDeviceJson(document.get(), output.device);
+    if (item == nullptr || device == nullptr ||
+        !yyjson_mut_obj_add_val(document.get(), item, "device", device) ||
+        !addString(document.get(), item, "nodeName", output.nodeName) ||
+        !yyjson_mut_obj_add_uint(document.get(), item, "nodeId", output.nodeId) ||
+        !addString(document.get(), item, "nodeSerial", std::to_string(output.nodeSerial)))
+      return makeControlErrorResponse("cannot encode available outputs");
   }
 
   auto *presetEntries =
@@ -1096,6 +1124,30 @@ static bool readPresetEntries(yyjson_val *root,
   return true;
 }
 
+static bool readOutputStatus(yyjson_val *root, ControlRuntimeStatus &status) {
+  auto configuration = parseOutputConfigurationJson(yyjson_obj_get(root, "outputConfiguration"));
+  auto *outputs = yyjson_obj_get(root, "availableOutputs");
+  if (!configuration.error.empty() || !yyjson_is_arr(outputs) ||
+      !readBooleanField(root, "outputInventoryReady", status.outputInventoryReady) ||
+      !readNullableStringField(root, "outputInventoryError", status.outputInventoryError)) return false;
+  status.outputConfiguration = std::move(configuration.configuration);
+  for (auto index = std::size_t{0}; index < yyjson_arr_size(outputs); ++index) {
+    auto *item = yyjson_arr_get(outputs, index);
+    auto output = AvailableOutput{};
+    auto serial = std::string{};
+    if (!yyjson_is_obj(item) || yyjson_obj_size(item) != 4 ||
+        !parseOutputDeviceJson(yyjson_obj_get(item, "device"), output.device).empty() ||
+        !readStringField(item, "nodeName", output.nodeName) ||
+        !readUint32Field(item, "nodeId", output.nodeId) || !readStringField(item, "nodeSerial", serial)) return false;
+    // JSON clients must not round a 64-bit PipeWire generation through a
+    // floating-point Number before it is used to pin an output target.
+    const auto parsed = std::from_chars(serial.data(), serial.data() + serial.size(), output.nodeSerial);
+    if (parsed.ec != std::errc{} || parsed.ptr != serial.data() + serial.size()) return false;
+    status.availableOutputs.push_back(std::move(output));
+  }
+  return outputStatusIsConsistent(status);
+}
+
 ControlResponseParseResult parseControlResponse(std::string_view json) {
   auto document =
       JsonDocument(yyjson_read(json.data(), json.size(), YYJSON_READ_NOFLAG));
@@ -1218,7 +1270,8 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       !readNullableStringField(root, "dspBackendError",
                                status.dspBackendError) ||
       !readAvailableDspBackends(root, status.availableDspBackends) ||
-      !readAvailableDspVariants(root, status.availableDspVariants)) {
+      !readAvailableDspVariants(root, status.availableDspVariants) ||
+      !readOutputStatus(root, status)) {
     return responseError("successful control response has invalid status");
   }
   if ((status.processingMode == ProcessingMode::preset &&

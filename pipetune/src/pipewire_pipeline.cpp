@@ -181,6 +181,10 @@ struct PipeWireRuntime {
   std::string error;
   PipeWireOutputInventoryPtr outputInventory;
   OutputInventoryResult availableOutputs;
+  // The PipeWire loop owns inventory updates; the control thread copies a
+  // complete snapshot under this mutex. Audio callbacks never acquire it.
+  std::mutex outputStateMutex;
+  bool outputInventoryReady = false;
   pw_impl_module *outputDistribution = nullptr;
   spa_hook outputDistributionListener = {};
   spa_source *outputGraphSource = nullptr;
@@ -1486,7 +1490,13 @@ static void applyOutputInventory(void *data, std::uint64_t) {
 
 static void outputInventoryChanged(const OutputInventoryResult &snapshot, void *data) {
   auto &runtime = *static_cast<PipeWireRuntime *>(data);
-  runtime.availableOutputs = snapshot;
+  {
+    auto lock = std::scoped_lock(runtime.outputStateMutex);
+    runtime.availableOutputs = snapshot;
+    runtime.outputInventoryReady = true;
+  }
+  requestControlStatusUpdate(runtime);
+  if (runtime.options.outputConfiguration.mode != OutputMode::multiple) return;
   const auto generation = pipeWireOutputPolicyGeneration(*runtime.outputInventory);
   if (generation != runtime.outputPolicyGeneration) {
     runtime.outputPolicyGeneration = generation;
@@ -1601,6 +1611,15 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
   }
   const auto idleState = runtime.dspIdleState.load();
   const auto presetEntries = runtime.pipeline.presetEntries();
+  auto outputConfiguration = OutputConfiguration{};
+  auto outputInventory = OutputInventoryResult{};
+  auto outputInventoryReady = false;
+  {
+    auto lock = std::scoped_lock(runtime.outputStateMutex);
+    outputConfiguration = runtime.options.outputConfiguration;
+    outputInventory = runtime.availableOutputs;
+    outputInventoryReady = runtime.outputInventoryReady;
+  }
   return {.processingMode = runtime.processingMode,
           .dspActivity = idleState.activity,
           .dspIdlePolicy = idleState.policy,
@@ -1636,7 +1655,11 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .dspBackendFallback = backendFallback,
           .dspBackendError = std::move(backendError),
           .availableDspBackends = std::move(availableBackends),
-          .availableDspVariants = std::move(availableVariants)};
+          .availableDspVariants = std::move(availableVariants),
+          .outputConfiguration = std::move(outputConfiguration),
+          .availableOutputs = outputInventory.error.empty() ? std::move(outputInventory.outputs) : std::vector<AvailableOutput>{},
+          .outputInventoryReady = outputInventoryReady,
+          .outputInventoryError = std::move(outputInventory.error)};
 }
 
 static ControlMessageResult closeControlResponse(std::string response,
@@ -2119,14 +2142,12 @@ static bool createAudioClient(PipeWireRuntime &runtime) {
     failRuntime(runtime, systemError("cannot connect to PipeWire core", -errno));
     return false;
   }
-  if (runtime.options.outputConfiguration.mode == OutputMode::multiple) {
-    runtime.outputInventory = observePipeWireOutputs(runtime.core, outputInventoryChanged, &runtime);
-    if (runtime.outputInventory == nullptr) {
-      failRuntime(runtime, "cannot observe audio outputs");
-      return false;
-    }
-    return true;
+  runtime.outputInventory = observePipeWireOutputs(runtime.core, outputInventoryChanged, &runtime);
+  if (runtime.outputInventory == nullptr) {
+    failRuntime(runtime, "cannot observe audio outputs");
+    return false;
   }
+  if (runtime.options.outputConfiguration.mode == OutputMode::multiple) return true;
   const auto error = createAudioStreams(runtime);
   if (!error.empty()) {
     failRuntime(runtime, error);

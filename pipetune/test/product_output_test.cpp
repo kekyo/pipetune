@@ -26,7 +26,8 @@ static void runtimeReady(void *) {
 
 static int runProduct(const char *preset, std::string_view scenario) {
   const auto *socket = std::getenv("PIPETUNE_PRODUCT_SOCKET");
-  if (scenario == "product-controls" && socket == nullptr) return 2;
+  const auto control = scenario == "product-controls" || scenario.starts_with("product-output-status");
+  if (control && socket == nullptr) return 2;
   auto configuration = pipetune::OutputConfiguration{};
   for (auto index = 0U; index < 2; ++index) {
     const auto name = "pipetune_product_device_" + std::to_string(index);
@@ -39,6 +40,7 @@ static int runProduct(const char *preset, std::string_view scenario) {
     configuration = std::move(appended.configuration);
   }
   configuration.mode = pipetune::OutputMode::multiple;
+  if (scenario == "product-output-status-single") configuration.mode = pipetune::OutputMode::single;
   if (scenario == "product-slots") {
     const auto &a = configuration.outputs[0].id;
     const auto &b = configuration.outputs[1].id;
@@ -61,7 +63,7 @@ static int runProduct(const char *preset, std::string_view scenario) {
   const auto result = pipetune::runPipeWirePipeline(std::move(pipeline), {
       .filterName = "pipetune_product_input", .filterDescription = "PipeTune Multiple Outputs",
       .initialPresetPath = preset == nullptr ? "" : preset, .initialConfigurationError = {},
-      .controlSocketPath = scenario == "product-controls" ? socket : "", .dspSampleRate = 48000,
+      .controlSocketPath = control ? socket : "", .dspSampleRate = 48000,
       .ratePolicy = {.mode = pipetune::SampleRateMode::fixed, .fixedRate = 48000,
           .enforcement = pipetune::SampleRateEnforcement::suggest},
       .channelCount = width, .maxFrames = 8192, .ringCapacityFrames = 16384,
@@ -107,6 +109,7 @@ struct AudioTest {
   bool latencyReconnect = false;
   bool intentionalDelay = false;
   bool controls = false;
+  bool inventory = false;
   bool awaitingControl = false;
   bool latencySettled = false;
   std::uint32_t declaredLatency = 63;
@@ -432,7 +435,8 @@ static bool createTestOutput(TestOutput &output) {
       PW_KEY_PRIORITY_SESSION, output.index == 2 ? "2000" : "1000",
       "node.want-driver", "true", "node.pause-on-idle", "false",
       "audio.channels", "2", "audio.position", "[ FL FR ]",
-      "node.device.profile.name", output.test->profile && output.test->stage == 3 && output.index == 0 ? "changed" : "", nullptr));
+      "node.device.profile.name", ((output.test->profile && output.test->stage == 3) ||
+          (output.test->inventory && output.test->stage == 2)) && output.index == 0 ? "changed" : "", nullptr));
   if (output.stream == nullptr) return false;
   output.listener = {};
   pw_stream_add_listener(output.stream, &output.listener, &events, &output);
@@ -441,6 +445,17 @@ static bool createTestOutput(TestOutput &output) {
 
 static void changeOutputGraph(void *data, std::uint64_t) {
   auto &test = *static_cast<AudioTest *>(data);
+  if (test.inventory) {
+    auto &output = test.outputs[0];
+    if (output.stream != nullptr) {
+      spa_hook_remove(&output.listener);
+      pw_stream_destroy(output.stream);
+      output.stream = nullptr;
+      output.ready = false;
+    }
+    if (test.stage > 1 && !createTestOutput(output)) fail(test, "cannot recreate inventory output");
+    return;
+  }
   if (test.latencyReconnect) {
     auto &output = test.outputs[1];
     if (test.stage == 1) {
@@ -491,12 +506,14 @@ static int runAudio(std::string_view scenario) {
   test.latencyReconnect = scenario == "product-latency-reconnect";
   test.latency = scenario == "product-latency" || test.intentionalDelay || test.latencyReconnect;
   test.controls = scenario == "product-controls";
+  test.inventory = scenario.starts_with("product-output-status");
   test.loop = pw_main_loop_new(nullptr);
   if (test.loop == nullptr) return 1;
   // Block and register the control signal before PipeWire creates data threads.
   auto *signal = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR1, startSource, &test);
   auto *resume = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR2, [](void *data, int) {
     auto &test = *static_cast<AudioTest *>(data);
+    if (test.inventory && ++test.stage == 4) return static_cast<void>(pw_main_loop_quit(test.loop));
     if (test.controls) {
       if (!test.awaitingControl) return fail(test, "unexpected control transition");
       test.awaitingControl = false;

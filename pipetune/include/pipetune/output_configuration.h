@@ -110,6 +110,8 @@ struct AvailableOutput {
   std::uint32_t nodeId = 0;
   /** Runtime object generation; prevents routing to a reused numerical ID. */
   std::uint64_t nodeSerial = 0;
+  /** Compares the device description and its current runtime identifiers. */
+  bool operator==(const AvailableOutput &) const = default;
 };
 
 /** Explains whether one saved output can currently receive its assigned audio. */

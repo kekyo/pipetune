@@ -805,8 +805,57 @@ static bool testPresetEntries() {
                "an empty preset must round-trip without entries");
 }
 
+static bool testOutputStatus() {
+  auto status = pipetune::ControlRuntimeStatus{};
+  status.outputConfiguration = {
+      .mode = pipetune::OutputMode::multiple,
+      .outputs = {{.id = "saved", .enabled = true,
+          .device = {.identity = {.api = "alsa", .location = "usb:1", .port = "pcm:0:0",
+                                 .vendor = "", .product = "", .serial = ""},
+                     .name = "Saved \"出力\"", .profile = "analog-stereo", .channelPositions = {"FL", "FR"}}}},
+      .channels = {{"", 0, "Reserved"}, {"saved", 0, "Left"}, {"saved", 1, "Right"}}};
+  status.availableOutputs = {{status.outputConfiguration.outputs[0].device, "current-node", 73, UINT64_MAX}};
+  status.outputInventoryReady = true;
+  // An unsupported live profile still belongs in the inventory. It must not
+  // be silently truncated to the DSP's sixteen-channel selection limit.
+  auto wide = status.availableOutputs[0];
+  wide.nodeName = "wide-node";
+  wide.nodeId = 74;
+  wide.nodeSerial = 75;
+  wide.device.identity.location = "usb:2";
+  wide.device.channelPositions.resize(18, "UNKNOWN");
+  status.availableOutputs.push_back(wide);
+  for (const auto event : {false, true}) {
+    const auto encoded = event ? pipetune::makeControlStatusEvent(status) : pipetune::makeControlSuccessResponse(status, {});
+    const auto parsed = pipetune::parseControlResponse(encoded);
+    if (!check(parsed.valid && parsed.success && parsed.status.outputConfiguration == status.outputConfiguration &&
+               parsed.status.availableOutputs == status.availableOutputs && parsed.status.outputInventoryReady,
+               "status and events must preserve saved mappings and the complete live inventory")) return false;
+    const auto resolved = pipetune::resolveConfiguredOutputs(parsed.status.outputConfiguration, parsed.status.availableOutputs);
+    if (!check(resolved[0].state == pipetune::OutputConnectionState::connected && resolved[0].inventoryIndex == 0,
+               "clients must be able to resolve assignments against the reported inventory")) return false;
+    for (const auto &[from, to] : std::vector<std::pair<std::string_view, std::string_view>>{
+        {"\"outputInventoryReady\":true", "\"outputInventoryReady\":null"},
+        {"\"outputInventoryError\":null", "\"outputInventoryError\":7"},
+        {"\"deviceChannel\":1", "\"deviceChannel\":16"},
+        {"\"nodeSerial\":\"18446744073709551615\"", "\"nodeSerial\":18446744073709551615"},
+        {"\"nodeId\":73", "\"nodeId\":-1"}}) {
+      auto invalid = encoded;
+      if (!check(replaceOnce(invalid, from, to) && !pipetune::parseControlResponse(invalid).valid,
+                 "malformed output status must be rejected")) return false;
+    }
+  }
+  status.availableOutputs.clear();
+  status.outputInventoryError = "Output enumeration failed";
+  const auto failed = pipetune::parseControlResponse(pipetune::makeControlSuccessResponse(status, {}));
+  return check(failed.valid && failed.success && failed.status.outputInventoryError == status.outputInventoryError &&
+               failed.status.outputConfiguration == status.outputConfiguration && failed.status.availableOutputs.empty(),
+               "an inventory failure must preserve saved assignments and report its cause");
+}
+
 int main() {
   if (!testPresetEntries()) return 1;
+  if (!testOutputStatus()) return 1;
   return testRequests() && testRejectedRequests() && testSuccessResponse() &&
                  testStatusEvent() && testBypassStatus() &&
                  testDspBackendFallbackStatus() &&

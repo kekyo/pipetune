@@ -8,6 +8,7 @@
 
 #include "pipetune/dsp_backend.h"
 #include "pipetune/dsp_idle.h"
+#include "pipetune/output_configuration.h"
 #include "pipetune/preset_entry.h"
 #include "pipetune/sample_rate.h"
 
@@ -200,6 +201,14 @@ struct ControlRuntimeStatus {
        .cpuSupported = false,
        .cpuRequirement = "unknown",
        .error = "SIMD DSP variant availability was not reported"}};
+  /** Live output mode and fixed assignments, independent of device presence. */
+  OutputConfiguration outputConfiguration = {};
+  /** Current selectable and unsupported devices; never inferred from settings. */
+  std::vector<AvailableOutput> availableOutputs = {};
+  /** True after the first complete inventory snapshot has arrived. */
+  bool outputInventoryReady = false;
+  /** Enumeration diagnostic, or empty for a successful or pending inventory. */
+  std::string outputInventoryError = {};
 };
 
 /**

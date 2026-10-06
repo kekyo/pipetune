@@ -3,6 +3,9 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { createConnection } from "node:net";
+import { once } from "node:events";
+import { createInterface } from "node:readline";
 
 const [pipewire, wireplumber, driver, scenario = "channels", policyFixture,
   pulseServer, pulseDriver, productDaemon] = process.argv.slice(2);
@@ -168,7 +171,55 @@ try {
     await socketReady(join(runtime, "pulse-native"));
   }
   const manager = start("WirePlumber", "dbus-run-session", ["--", wireplumber]);
-  if (scenario === "product-daemon") {
+  if (scenario.startsWith("product-output-status")) {
+    const audio = start("inventory fixtures", driver, ["audio", scenario]);
+    await waitForMessage(audio, "product:devices-ready");
+    const product = start("product runtime", driver, ["runtime", "bypass", scenario]);
+    await waitForMessage(product, "product:runtime-ready");
+    const client = createConnection(environment.PIPETUNE_PRODUCT_SOCKET);
+    const deadline = setTimeout(() => client.destroy(), 10000);
+    let lines;
+    let transportError;
+    client.on("error", (error) => { transportError = error; });
+    client.on("close", () => lines?.close());
+    let stage = 0;
+    let saved;
+    try {
+      await once(client, "connect");
+      lines = createInterface({ input: client, crlfDelay: Infinity });
+      client.write(`${JSON.stringify({ command: "subscribe" })}\n`);
+      for await (const line of lines) {
+        const status = JSON.parse(line);
+        assert.equal(status.ok, true, line);
+        assert.equal(status.outputConfiguration.mode, scenario.endsWith("-single") ? "single" : "multiple");
+        if (!saved) saved = status.outputConfiguration;
+        assert.deepEqual(status.outputConfiguration, saved, "inventory changes must preserve every saved slot");
+        if (!status.outputInventoryReady) continue;
+        assert.equal(status.outputInventoryError, null);
+        const first = status.availableOutputs.find((output) => output.nodeName === "pipetune_product_device_0");
+        const expected = stage === 1 ? !first : first?.device.profile === (stage === 2 ? "changed" : "");
+        if (!expected) continue;
+        assert.equal(status.availableOutputs.length, stage === 1 ? 2 : 3,
+          `internal nodes must not enter the inventory: ${status.availableOutputs.map((output) => output.nodeName).join(", ")}`);
+        if (first) {
+          assert.deepEqual(first.device.channelPositions, ["FL", "FR"]);
+          assert.equal(typeof first.nodeSerial, "string");
+        }
+        audio.child.kill("SIGUSR2");
+        if (++stage === 4) break;
+      }
+    } finally {
+      clearTimeout(deadline);
+      lines?.close();
+      client.destroy();
+    }
+    assert.equal(transportError, undefined);
+    assert.equal(stage, 4, "subscriptions must report initial, missing, changed-profile, and restored outputs");
+    assert.equal((await audio.completion).code, 0, audio.stderr);
+    terminate(product, "SIGTERM");
+    assert.equal((await product.completion).code, 0, product.stderr);
+    process.stdout.write(`${JSON.stringify({ inventoryStages: stage, configuration: saved })}\n`);
+  } else if (scenario === "product-daemon") {
     assert.ok(productDaemon, "the product daemon executable is required");
     environment.PIPETUNE_PRODUCT_INPUT = "pipetune_sink";
     const socket = join(runtime, "pipetune", "control.sock");

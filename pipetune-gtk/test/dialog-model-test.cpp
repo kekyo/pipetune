@@ -602,7 +602,30 @@ static bool testActionLogHistory() {
   return check(log.entries.empty(), "Clear must remove visible log history");
 }
 
+static bool testOutputSnapshotPreservation() {
+  auto status = pipetune::ControlRuntimeStatus{};
+  status.outputConfiguration = {
+      .mode = pipetune::OutputMode::multiple,
+      .outputs = {{.id = "dac", .enabled = true,
+          .device = {.identity = {.api = "node", .location = "dac", .port = "dac",
+                                 .vendor = "", .product = "", .serial = ""},
+                     .name = "Saved DAC", .profile = "", .channelPositions = {"MONO"}}}},
+      .channels = {{"", 0, "Reserved"}, {"dac", 0, "Subwoofer"}}};
+  const auto live = pipetune_gtk::startupConfigFromRuntime(status);
+  if (!check(live.outputConfiguration == status.outputConfiguration,
+             "runtime output mappings must survive conversion to the saved snapshot")) return false;
+  auto transaction = pipetune_gtk::beginSettingsTransaction({}, live, 1, true);
+  if (!check(pipetune_gtk::settingsTransactionCanApply(transaction) &&
+             pipetune_gtk::settingsTransactionIsDirty(transaction),
+             "live output choices differing from saved choices must count as unsaved settings")) return false;
+  pipetune_gtk::completeSettingsPersistence(transaction, true, {});
+  return check(transaction.saved.outputConfiguration == status.outputConfiguration &&
+               !pipetune_gtk::settingsTransactionIsDirty(transaction),
+               "Apply must retain the complete output snapshot");
+}
+
 int main() {
+  if (!testOutputSnapshotPreservation()) return 1;
   return testLiveCoalescingApplyAndCancel() &&
                  testDspIdleLiveApplyAndCancel() &&
                  testFailuresDisconnectAndConflict() &&

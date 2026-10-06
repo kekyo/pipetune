@@ -818,7 +818,7 @@ if(BUILD_TESTING)
   add_executable(pipetune_product_output_tests test/product_output_test.cpp)
   target_link_libraries(pipetune_product_output_tests PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE)
   target_compile_options(pipetune_product_output_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  foreach(scenario product-bypass product-matrix product-slots product-sixteen product-volume product-disconnected product-reconnect product-profile product-restart product-restart-mute product-latency product-latency-reconnect product-time-alignment product-controls)
+  foreach(scenario product-bypass product-matrix product-slots product-sixteen product-volume product-disconnected product-reconnect product-profile product-restart product-restart-mute product-latency product-latency-reconnect product-time-alignment product-controls product-output-status product-output-status-single)
     add_test(NAME pipetune_${scenario}
       COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
         ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}

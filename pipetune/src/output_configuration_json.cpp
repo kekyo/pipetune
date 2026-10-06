@@ -4,6 +4,7 @@
  * https://github.com/kekyo/pipetune/
  */
 #include "pipetune/output_configuration.h"
+#include "output_json.h"
 
 #include <yyjson.h>
 
@@ -28,18 +29,40 @@ static bool hasFields(yyjson_val *value, std::initializer_list<const char *> nam
 static bool readString(yyjson_val *value, std::string &destination) {
   if (!yyjson_is_str(value)) return false;
   destination.assign(yyjson_get_str(value), yyjson_get_len(value));
-  return true;
+  return destination.find('\0') == std::string::npos;
 }
 
-OutputConfigurationResult parseOutputConfiguration(std::string_view json) {
+std::string parseOutputDeviceJson(yyjson_val *device, OutputDeviceDescription &destination) {
+  if (!hasFields(device, {"identity", "name", "profile", "channelPositions"}))
+    return "output device requires exactly identity, name, profile, and channelPositions";
+  auto *identity = yyjson_obj_get(device, "identity");
+  auto saved = OutputDeviceDescription{};
+  if (!hasFields(identity, {"api", "location", "port", "vendor", "product", "serial"}) ||
+      !readString(yyjson_obj_get(identity, "api"), saved.identity.api) ||
+      !readString(yyjson_obj_get(identity, "location"), saved.identity.location) ||
+      !readString(yyjson_obj_get(identity, "port"), saved.identity.port) ||
+      !readString(yyjson_obj_get(identity, "vendor"), saved.identity.vendor) ||
+      !readString(yyjson_obj_get(identity, "product"), saved.identity.product) ||
+      !readString(yyjson_obj_get(identity, "serial"), saved.identity.serial) ||
+      !readString(yyjson_obj_get(device, "name"), saved.name) ||
+      !readString(yyjson_obj_get(device, "profile"), saved.profile))
+    return "output identity, name, and profile require string fields without NUL";
+  auto *positions = yyjson_obj_get(device, "channelPositions");
+  if (!yyjson_is_arr(positions)) return "output channelPositions must be an array";
+  for (auto channel = std::size_t{0}; channel < yyjson_arr_size(positions); ++channel) {
+    auto position = std::string{};
+    if (!readString(yyjson_arr_get(positions, channel), position))
+      return "output channel positions must be strings without NUL";
+    saved.channelPositions.push_back(std::move(position));
+  }
+  destination = std::move(saved);
+  return {};
+}
+
+OutputConfigurationResult parseOutputConfigurationJson(yyjson_val *root) {
   const auto fail = [](std::string error) {
     return OutputConfigurationResult{.configuration = {}, .error = std::move(error)};
   };
-  if (json.size() > 64 * 1024) return fail("output configuration exceeds 64 KiB");
-  auto document = std::unique_ptr<yyjson_doc, decltype(&yyjson_doc_free)>(
-      yyjson_read(json.data(), json.size(), YYJSON_READ_NOFLAG), yyjson_doc_free);
-  if (document == nullptr) return fail("output configuration is not valid JSON");
-  auto *root = yyjson_doc_get_root(document.get());
   if (!hasFields(root, {"mode", "outputs", "channels"}))
     return fail("output configuration requires exactly mode, outputs, and channels");
   auto configuration = OutputConfiguration{};
@@ -61,30 +84,8 @@ OutputConfigurationResult parseOutputConfiguration(std::string_view json) {
     if (!readString(yyjson_obj_get(value, "id"), output.id) || !yyjson_is_bool(enabled))
       return fail("output id must be a string and enabled must be a boolean");
     output.enabled = yyjson_get_bool(enabled);
-    auto *device = yyjson_obj_get(value, "device");
-    if (!hasFields(device, {"identity", "name", "profile", "channelPositions"}))
-      return fail("output device requires exactly identity, name, profile, and channelPositions");
-    auto *identity = yyjson_obj_get(device, "identity");
-    auto &saved = output.device;
-    if (!hasFields(identity, {"api", "location", "port", "vendor", "product", "serial"}) ||
-        !readString(yyjson_obj_get(identity, "api"), saved.identity.api) ||
-        !readString(yyjson_obj_get(identity, "location"), saved.identity.location) ||
-        !readString(yyjson_obj_get(identity, "port"), saved.identity.port) ||
-        !readString(yyjson_obj_get(identity, "vendor"), saved.identity.vendor) ||
-        !readString(yyjson_obj_get(identity, "product"), saved.identity.product) ||
-        !readString(yyjson_obj_get(identity, "serial"), saved.identity.serial) ||
-        !readString(yyjson_obj_get(device, "name"), saved.name) ||
-        !readString(yyjson_obj_get(device, "profile"), saved.profile))
-      return fail("output identity, name, and profile must have all required string fields");
-    auto *positions = yyjson_obj_get(device, "channelPositions");
-    if (!yyjson_is_arr(positions) || yyjson_arr_size(positions) > 16)
-      return fail("output channelPositions must be an array of at most sixteen strings");
-    for (auto channel = std::size_t{0}; channel < yyjson_arr_size(positions); ++channel) {
-      auto position = std::string{};
-      if (!readString(yyjson_arr_get(positions, channel), position))
-        return fail("output channel positions must be strings");
-      saved.channelPositions.push_back(std::move(position));
-    }
+    const auto error = parseOutputDeviceJson(yyjson_obj_get(value, "device"), output.device);
+    if (!error.empty()) return fail(error);
     configuration.outputs.push_back(std::move(output));
   }
   for (auto index = std::size_t{0}; index < yyjson_arr_size(channels); ++index) {
@@ -105,15 +106,28 @@ OutputConfigurationResult parseOutputConfiguration(std::string_view json) {
   return {.configuration = std::move(configuration), .error = {}};
 }
 
-std::string formatOutputConfiguration(const OutputConfiguration &configuration) {
+yyjson_mut_val *makeOutputDeviceJson(yyjson_mut_doc *doc, const OutputDeviceDescription &saved) {
+  auto *device = yyjson_mut_obj(doc);
+  auto *identity = yyjson_mut_obj_add_obj(doc, device, "identity");
+  auto *positions = yyjson_mut_obj_add_arr(doc, device, "channelPositions");
+  if (device == nullptr || identity == nullptr || positions == nullptr) return nullptr;
+  const auto add = [doc](yyjson_mut_val *target, const char *key, const std::string &value) {
+    return yyjson_mut_obj_add_strncpy(doc, target, key, value.data(), value.size());
+  };
+  if (!add(device, "name", saved.name) || !add(device, "profile", saved.profile) ||
+      !add(identity, "api", saved.identity.api) || !add(identity, "location", saved.identity.location) ||
+      !add(identity, "port", saved.identity.port) || !add(identity, "vendor", saved.identity.vendor) ||
+      !add(identity, "product", saved.identity.product) || !add(identity, "serial", saved.identity.serial)) return nullptr;
+  for (const auto &position : saved.channelPositions) {
+    if (!yyjson_mut_arr_add_strncpy(doc, positions, position.data(), position.size())) return nullptr;
+  }
+  return device;
+}
+
+yyjson_mut_val *makeOutputConfigurationJson(yyjson_mut_doc *doc, const OutputConfiguration &configuration) {
   if (!validateOutputConfiguration(configuration).empty()) return {};
-  auto document = std::unique_ptr<yyjson_mut_doc, decltype(&yyjson_mut_doc_free)>(
-      yyjson_mut_doc_new(nullptr), yyjson_mut_doc_free);
-  if (document == nullptr) return {};
-  auto *doc = document.get();
   auto *root = yyjson_mut_obj(doc);
   if (root == nullptr) return {};
-  yyjson_mut_doc_set_root(doc, root);
   const auto add = [doc](yyjson_mut_val *target, const char *key, const std::string &value) {
     return yyjson_mut_obj_add_strncpy(doc, target, key, value.data(), value.size());
   };
@@ -123,25 +137,34 @@ std::string formatOutputConfiguration(const OutputConfiguration &configuration) 
   if (outputs == nullptr || channels == nullptr) return {};
   for (const auto &output : configuration.outputs) {
     auto *value = yyjson_mut_arr_add_obj(doc, outputs);
-    auto *device = yyjson_mut_obj_add_obj(doc, value, "device");
-    auto *identity = yyjson_mut_obj_add_obj(doc, device, "identity");
-    auto *positions = yyjson_mut_obj_add_arr(doc, device, "channelPositions");
-    if (value == nullptr || device == nullptr || identity == nullptr || positions == nullptr) return {};
-    const auto &saved = output.device;
-    if (!add(value, "id", output.id) || !yyjson_mut_obj_add_bool(doc, value, "enabled", output.enabled) ||
-        !add(device, "name", saved.name) || !add(device, "profile", saved.profile) ||
-        !add(identity, "api", saved.identity.api) || !add(identity, "location", saved.identity.location) ||
-        !add(identity, "port", saved.identity.port) || !add(identity, "vendor", saved.identity.vendor) ||
-        !add(identity, "product", saved.identity.product) || !add(identity, "serial", saved.identity.serial)) return {};
-    for (const auto &position : saved.channelPositions) {
-      if (!yyjson_mut_arr_add_strncpy(doc, positions, position.data(), position.size())) return {};
-    }
+    auto *device = makeOutputDeviceJson(doc, output.device);
+    if (value == nullptr || device == nullptr || !yyjson_mut_obj_add_val(doc, value, "device", device) ||
+        !add(value, "id", output.id) || !yyjson_mut_obj_add_bool(doc, value, "enabled", output.enabled)) return {};
   }
   for (const auto &slot : configuration.channels) {
     auto *value = yyjson_mut_arr_add_obj(doc, channels);
     if (value == nullptr || !add(value, "outputId", slot.outputId) || !add(value, "label", slot.label) ||
         !yyjson_mut_obj_add_uint(doc, value, "deviceChannel", slot.deviceChannel)) return {};
   }
+  return root;
+}
+
+OutputConfigurationResult parseOutputConfiguration(std::string_view json) {
+  if (json.size() > 64 * 1024) return {.configuration = {}, .error = "output configuration exceeds 64 KiB"};
+  auto document = std::unique_ptr<yyjson_doc, decltype(&yyjson_doc_free)>(
+      yyjson_read(json.data(), json.size(), YYJSON_READ_NOFLAG), yyjson_doc_free);
+  if (document == nullptr) return {.configuration = {}, .error = "output configuration is not valid JSON"};
+  return parseOutputConfigurationJson(yyjson_doc_get_root(document.get()));
+}
+
+std::string formatOutputConfiguration(const OutputConfiguration &configuration) {
+  auto document = std::unique_ptr<yyjson_mut_doc, decltype(&yyjson_mut_doc_free)>(
+      yyjson_mut_doc_new(nullptr), yyjson_mut_doc_free);
+  if (document == nullptr) return {};
+  auto *doc = document.get();
+  auto *root = makeOutputConfigurationJson(doc, configuration);
+  if (root == nullptr) return {};
+  yyjson_mut_doc_set_root(doc, root);
   auto length = std::size_t{0};
   auto encoded = std::unique_ptr<char, decltype(&std::free)>(
       yyjson_mut_write(doc, YYJSON_WRITE_NOFLAG, &length), std::free);

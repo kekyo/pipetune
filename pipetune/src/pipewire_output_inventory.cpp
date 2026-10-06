@@ -141,7 +141,8 @@ static std::vector<std::string> propertyChannels(const InventoryProperties &prop
 
 static bool isOutput(const InventoryProperties &properties) {
   if (property(properties, "media.class") != "Audio/Sink") return false;
-  for (const auto key : {"node.pipetune.internal", "node.pipetune.aggregate", "node.pipetune.public-input"}) {
+  for (const auto key : {"node.pipetune.internal", "node.pipetune.aggregate", "node.pipetune.public-input",
+                         "wireplumber.is-endpoint"}) {
     if (property(properties, key) == "true") return false;
   }
   return !property(properties, "node.name").empty();
