@@ -17,6 +17,8 @@
 
 struct Probe;
 
+enum class Phase { initial, disconnected, reconnected };
+
 struct Endpoint {
   Probe *probe = nullptr;
   pw_stream *stream = nullptr;
@@ -26,6 +28,7 @@ struct Endpoint {
   std::uint64_t receivedFrames = 0;
   int previousTag = -1;
   bool selected = true;
+  bool awaitingSignal = true;
 };
 
 struct Probe {
@@ -40,9 +43,15 @@ struct Probe {
   std::array<Endpoint, 3> endpoints = {};
   std::uint64_t producedFrames = 0;
   std::uint64_t channelErrors = 0;
+  std::uint64_t disconnectSurvivorFrame = 0;
+  std::uint64_t survivorFramesWhileDisconnected = 0;
+  Phase phase = Phase::initial;
+  bool reconnect = false;
   bool success = false;
   std::string error;
 };
+
+static bool createEndpoint(Probe &probe, std::uint32_t index);
 
 static void fail(Probe &probe, const std::string &message) {
   if (probe.error.empty()) probe.error = message;
@@ -91,7 +100,7 @@ static void capture(void *data) {
                       frame * sizeof(float), sizeof(float));
     }
     if (samples[0] == 0.0F && samples[1] == 0.0F &&
-        endpoint.receivedFrames == 0) continue;
+        endpoint.awaitingSignal) continue;
     const auto tag = static_cast<int>(std::lround(samples[0] * 65536.0F)) -
                      static_cast<int>((endpoint.firstChannel + 1u) * 512u);
     const auto valid = endpoint.selected && tag >= 0 && tag < 127 &&
@@ -109,11 +118,34 @@ static void capture(void *data) {
       return;
     }
     endpoint.previousTag = tag;
+    endpoint.awaitingSignal = false;
     ++endpoint.receivedFrames;
   }
   pw_stream_queue_buffer(endpoint.stream, queued);
-  if (probe.endpoints[0].receivedFrames >= 65536 &&
+  if (probe.reconnect && probe.phase == Phase::initial &&
+      probe.endpoints[0].receivedFrames >= 65536 &&
       probe.endpoints[1].receivedFrames >= 65536) {
+    // The surviving device's received frames are the barrier for recreating
+    // the disconnected sink, rather than a fixed wall-clock sleep.
+    auto &removed = probe.endpoints[0];
+    pw_stream_destroy(removed.stream);
+    removed.stream = nullptr;
+    probe.disconnectSurvivorFrame = probe.endpoints[1].receivedFrames;
+    probe.phase = Phase::disconnected;
+  } else if (probe.phase == Phase::disconnected &&
+      probe.endpoints[1].receivedFrames >= probe.disconnectSurvivorFrame + 8192) {
+    probe.survivorFramesWhileDisconnected =
+        probe.endpoints[1].receivedFrames - probe.disconnectSurvivorFrame;
+    if (!createEndpoint(probe, 0)) {
+      fail(probe, "cannot reconnect the first output");
+      return;
+    }
+    probe.phase = Phase::reconnected;
+  } else if ((!probe.reconnect && probe.endpoints[0].receivedFrames >= 65536 &&
+              probe.endpoints[1].receivedFrames >= 65536) ||
+             (probe.phase == Phase::reconnected &&
+              probe.endpoints[0].receivedFrames >= 131072 &&
+              probe.endpoints[1].receivedFrames >= 131072)) {
     probe.success = true;
     pw_main_loop_quit(probe.loop);
   }
@@ -192,6 +224,29 @@ static bool connectStream(pw_stream *stream, bool input) {
                            PW_ID_ANY, flags, &format, 1) >= 0;
 }
 
+static bool createEndpoint(Probe &probe, std::uint32_t index) {
+  auto &endpoint = probe.endpoints[index];
+  endpoint.probe = &probe;
+  endpoint.firstChannel = index * 2u;
+  endpoint.selected = index < 2;
+  endpoint.previousTag = -1;
+  endpoint.awaitingSignal = true;
+  endpoint.listener = {};
+  const auto name = "pipetune_probe_device_" + std::to_string(index);
+  endpoint.stream = pw_stream_new(probe.core, name.c_str(), pw_properties_new(
+      PW_KEY_NODE_NAME, name.c_str(), PW_KEY_NODE_DESCRIPTION, name.c_str(),
+      PW_KEY_MEDIA_CLASS, "Audio/Sink", PW_KEY_MEDIA_CATEGORY, "Playback",
+      PW_KEY_NODE_VIRTUAL, "true", "node.want-driver", "true",
+      "node.pause-on-idle", "false", "audio.channels", "2",
+      "audio.position", "[ FL FR ]", nullptr));
+  if (endpoint.stream == nullptr) return false;
+  endpoint.events.version = PW_VERSION_STREAM_EVENTS;
+  endpoint.events.state_changed = sinkStateChanged;
+  endpoint.events.process = capture;
+  pw_stream_add_listener(endpoint.stream, &endpoint.listener, &endpoint.events, &endpoint);
+  return connectStream(endpoint.stream, true);
+}
+
 static bool prepare(Probe &probe) {
   probe.loop = pw_main_loop_new(nullptr);
   if (probe.loop == nullptr) return false;
@@ -200,23 +255,7 @@ static bool prepare(Probe &probe) {
   probe.core = pw_context_connect(probe.context, nullptr, 0);
   if (probe.core == nullptr) return false;
   for (auto index = 0u; index < probe.endpoints.size(); ++index) {
-    auto &endpoint = probe.endpoints[index];
-    endpoint.probe = &probe;
-    endpoint.firstChannel = index * 2u;
-    endpoint.selected = index < 2;
-    const auto name = "pipetune_probe_device_" + std::to_string(index);
-    endpoint.stream = pw_stream_new(probe.core, name.c_str(), pw_properties_new(
-        PW_KEY_NODE_NAME, name.c_str(), PW_KEY_NODE_DESCRIPTION, name.c_str(),
-        PW_KEY_MEDIA_CLASS, "Audio/Sink", PW_KEY_MEDIA_CATEGORY, "Playback",
-        PW_KEY_NODE_VIRTUAL, "true", "node.want-driver", "true",
-        "node.pause-on-idle", "false", "audio.channels", "2",
-        "audio.position", "[ FL FR ]", nullptr));
-    if (endpoint.stream == nullptr) return false;
-    endpoint.events.version = PW_VERSION_STREAM_EVENTS;
-    endpoint.events.state_changed = sinkStateChanged;
-    endpoint.events.process = capture;
-    pw_stream_add_listener(endpoint.stream, &endpoint.listener, &endpoint.events, &endpoint);
-    if (!connectStream(endpoint.stream, true)) return false;
+    if (!createEndpoint(probe, index)) return false;
   }
   const auto *arguments = R"conf(
     combine.mode = sink
@@ -287,6 +326,12 @@ static void destroy(Probe &probe) {
 int main(int argc, char **argv) {
   pw_init(&argc, &argv);
   auto probe = Probe{};
+  if (argc == 2 && std::string(argv[1]) == "reconnect") probe.reconnect = true;
+  else if (argc > 2 || (argc == 2 && std::string(argv[1]) != "channels")) {
+    std::cerr << "Usage: pipetune_multi_device_output_probe [channels|reconnect]\n";
+    pw_deinit();
+    return 2;
+  }
   if (prepare(probe)) pw_main_loop_run(probe.loop);
   else probe.error = "cannot prepare multi-device output probe";
   destroy(probe);
@@ -295,7 +340,10 @@ int main(int argc, char **argv) {
             << ",\"channels\":4,\"producedFrames\":" << probe.producedFrames
             << ",\"receivedFrames\":[" << probe.endpoints[0].receivedFrames << ','
             << probe.endpoints[1].receivedFrames << ',' << probe.endpoints[2].receivedFrames
-            << "],\"channelErrors\":" << probe.channelErrors << "}\n";
+            << "],\"channelErrors\":" << probe.channelErrors
+            << ",\"reconnected\":" << (probe.phase == Phase::reconnected ? "true" : "false")
+            << ",\"survivorFramesWhileDisconnected\":" << probe.survivorFramesWhileDisconnected
+            << "}\n";
   pw_deinit();
   return probe.success && probe.error.empty() ? 0 : 1;
 }

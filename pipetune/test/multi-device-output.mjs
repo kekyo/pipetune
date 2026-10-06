@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, watch, writeFileSync } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const [pipewire, wireplumber, driver] = process.argv.slice(2);
+const [pipewire, wireplumber, driver, scenario = "channels"] = process.argv.slice(2);
 assert.ok(pipewire && wireplumber && driver, "PipeWire, WirePlumber and probe paths are required");
 const version = spawnSync(wireplumber, ["--version"], { encoding: "utf8" });
 assert.equal(version.status, 0, version.stderr);
@@ -41,11 +41,12 @@ writeConfiguration("pipewire/pipewire.conf.d/99-pipetune-test.conf", `context.pr
 }
 `);
 if (/libwireplumber 0\.4\./u.test(version.stdout)) {
-  writeConfiguration("wireplumber/main.lua.d/99-pipetune-test.lua", `alsa_monitor.enabled = false
+  // Disable hardware monitors before WirePlumber's 90-enable-all.lua runs.
+  writeConfiguration("wireplumber/main.lua.d/60-pipetune-test.lua", `alsa_monitor.enabled = false
 v4l2_monitor.enabled = false
 libcamera_monitor.enabled = false
 `);
-  writeConfiguration("wireplumber/bluetooth.lua.d/99-pipetune-test.lua", `bluez_monitor.enabled = false
+  writeConfiguration("wireplumber/bluetooth.lua.d/60-pipetune-test.lua", `bluez_monitor.enabled = false
 bluez_midi_monitor.enabled = false
 `);
 } else {
@@ -110,7 +111,7 @@ try {
   start("PipeWire", pipewire, []);
   await socketReady();
   start("WirePlumber", "dbus-run-session", ["--", wireplumber]);
-  const probe = start("output probe", driver, []);
+  const probe = start("output probe", driver, [scenario]);
   const result = await probe.completion;
   assert.equal(result.code, 0, `${probe.stdout}\n${probe.stderr}`);
   const report = JSON.parse(probe.stdout);
@@ -120,6 +121,13 @@ try {
   assert.ok(report.receivedFrames[1] >= 65536, "device B must receive DSP channels 3 and 4");
   assert.equal(report.receivedFrames[2], 0, "an unselected output must receive no signal");
   assert.equal(report.channelErrors, 0, "received PCM must preserve channel identity and sample order");
+  if (scenario === "reconnect") {
+    assert.equal(report.reconnected, true, "a reconnected device must receive its original DSP channels");
+    assert.ok(report.survivorFramesWhileDisconnected >= 8192,
+      "the remaining device must continue receiving its original DSP channels");
+    assert.ok(report.receivedFrames[0] >= 131072, "device A must receive PCM before and after reconnecting");
+    assert.ok(report.receivedFrames[1] >= 131072, "device B must remain routed while device A reconnects");
+  }
   process.stdout.write(`${version.stdout.trim()}\n${JSON.stringify(report)}\n`);
 } catch (error) {
   for (const child of children) process.stderr.write(`${child.name}:\n${child.stderr}\n`);
