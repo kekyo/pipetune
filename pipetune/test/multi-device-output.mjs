@@ -4,7 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, watch, writeFileSync } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const [pipewire, wireplumber, driver, scenario = "channels", policyFixture] = process.argv.slice(2);
+const [pipewire, wireplumber, driver, scenario = "channels", policyFixture,
+  pulseServer, pulseDriver] = process.argv.slice(2);
 assert.ok(pipewire && wireplumber && driver, "PipeWire, WirePlumber and probe paths are required");
 const version = spawnSync(wireplumber, ["--version"], { encoding: "utf8" });
 assert.equal(version.status, 0, version.stderr);
@@ -27,6 +28,7 @@ const environment = {
   XDG_DATA_HOME: data,
   // The isolated audio session does not need remote filesystems or FUSE mounts.
   GIO_USE_VFS: "local",
+  PULSE_SERVER: `unix:${join(runtime, "pulse-native")}`,
 };
 const writeConfiguration = (relative, contents) => {
   const components = relative.split("/");
@@ -42,6 +44,13 @@ writeConfiguration("pipewire/pipewire.conf.d/99-pipetune-test.conf", `context.pr
   default.clock.max-quantum = 256
 }
 `);
+if (scenario === "policy-pulse") {
+  assert.ok(pulseServer && pulseDriver, "PulseAudio server and client probe paths are required");
+  writeConfiguration("pipewire/pipewire-pulse.conf.d/99-pipetune-test.conf", `pulse.properties = {
+    server.address = [ "unix:${join(runtime, "pulse-native")}" ]
+  }
+`);
+}
 if (/libwireplumber 0\.4\./u.test(version.stdout)) {
   // Disable hardware monitors before WirePlumber's 90-enable-all.lua runs.
   writeConfiguration("wireplumber/main.lua.d/60-pipetune-test.lua", `alsa_monitor.enabled = false
@@ -115,11 +124,10 @@ const terminate = (record, signal) => {
     if (error.code !== "ESRCH") throw error;
   }
 };
-const socketReady = async () => {
-  const socket = join(runtime, remote);
+const socketReady = async (socket) => {
   await new Promise((resolve, reject) => {
     const observer = watch(runtime, () => { if (existsSync(socket)) finish(); });
-    const timeout = setTimeout(() => finish(new Error("isolated PipeWire socket was not created")), 15000);
+    const timeout = setTimeout(() => finish(new Error(`isolated audio socket was not created: ${socket}`)), 15000);
     const finish = (error) => {
       clearTimeout(timeout);
       observer.close();
@@ -144,16 +152,41 @@ const waitForMessage = async (record, message) => {
     const timeout = setTimeout(() => finish(new Error(`did not receive ${message}`)), 20000);
     record.child.stderr.on("data", changed);
     record.child.on("close", closed);
-    if (record.result !== undefined) closed();
+    if (record.stderr.includes(message)) finish();
+    else if (record.result !== undefined) closed();
     else changed();
   });
 };
 
 try {
   start("PipeWire", pipewire, []);
-  await socketReady();
+  await socketReady(join(runtime, remote));
+  if (scenario === "policy-pulse") {
+    start("PulseAudio protocol server", "dbus-run-session", ["--", pulseServer]);
+    await socketReady(join(runtime, "pulse-native"));
+  }
   const manager = start("WirePlumber", "dbus-run-session", ["--", wireplumber]);
   const probe = start("output probe", driver, [scenario]);
+  if (scenario === "policy-pulse") {
+    await waitForMessage(probe, "pipetune-probe:pulse-ready");
+    const pulse = start("PulseAudio client probe", pulseDriver, []);
+    await Promise.all([
+      waitForMessage(probe, "pipetune-probe:outputs-hidden"),
+      waitForMessage(pulse, "pulse-probe:outputs-hidden"),
+    ]);
+    probe.child.kill("SIGUSR1");
+    await waitForMessage(probe, "pipetune-probe:outputs-restored");
+    await waitForMessage(pulse, "pulse-probe:outputs-restored");
+    const pulseResult = await pulse.completion;
+    assert.equal(pulseResult.code, 0, `${pulse.stdout}\n${pulse.stderr}`);
+    const pulseReport = JSON.parse(pulse.stdout);
+    assert.equal(pulseReport.outputsHidden, true);
+    assert.equal(pulseReport.outputsRestored, true);
+    assert.equal(pulseReport.clients, 2);
+    assert.ok(pulseReport.producedFrames >= 65536);
+    probe.child.kill("SIGUSR1");
+    process.stdout.write(`${JSON.stringify(pulseReport)}\n`);
+  }
   if (scenario === "policy-recovery" || scenario === "policy-restart") {
     await waitForMessage(probe, "pipetune-probe:outputs-hidden");
     terminate(manager, "SIGKILL");
@@ -181,7 +214,7 @@ try {
     assert.equal(report.captureFeedsPlayback, false,
       "a capture endpoint must never feed a playback device");
   }
-  if (["policy-visibility", "policy-recovery", "policy-restart"].includes(scenario)) {
+  if (["policy-visibility", "policy-recovery", "policy-restart", "policy-pulse"].includes(scenario)) {
     assert.equal(report.outputsHiddenDuringPlayback, true,
       "physical outputs must be hidden from selectors and playback clients during multi-device playback");
     assert.equal(report.outputsRestored, true,

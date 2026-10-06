@@ -90,15 +90,16 @@ On Ubuntu 24.04:
 ```sh
 sudo apt install \
   build-essential cmake dbus-x11 desktop-file-utils git \
-  libgdk-pixbuf2.0-bin libgtk-3-dev libpipewire-0.3-dev \
-  libsamplerate0-dev nodejs pkg-config x11-utils xvfb
+  libgdk-pixbuf2.0-bin libgtk-3-dev libpipewire-0.3-dev libpulse-dev \
+  libsamplerate0-dev nodejs pipewire-pulse pkg-config x11-utils xvfb
 ```
 
 PipeTune requires CMake 3.24 or newer, a C++20 GCC toolchain, Node.js, PipeWire
 0.3 and libsamplerate development files, GTK 3 development files, and a
 WirePlumber 0.4 or 0.5 desktop session. The complete test suite
 also uses `systemd-analyze`, an isolated D-Bus session, Xvfb, X11 utilities,
-`desktop-file-validate`, and the GdkPixbuf thumbnailer.
+`desktop-file-validate`, the GdkPixbuf thumbnailer, and the libpulse development
+files and `pipewire-pulse` executable for isolated desktop-audio integration tests.
 
 Clone with both pinned dependencies:
 

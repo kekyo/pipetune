@@ -782,6 +782,11 @@ if(BUILD_TESTING)
   find_program(PIPETUNE_WIREPLUMBER_EXECUTABLE wireplumber REQUIRED)
   find_program(PIPETUNE_PW_CAT_EXECUTABLE pw-cat REQUIRED)
   find_program(PIPETUNE_PW_DUMP_EXECUTABLE pw-dump REQUIRED)
+  find_program(PIPETUNE_PULSE_EXECUTABLE pipewire-pulse REQUIRED)
+  pkg_check_modules(PULSE REQUIRED IMPORTED_TARGET libpulse)
+  add_executable(pipetune_pulse_output_probe tools/pulse-output-probe.cpp)
+  target_link_libraries(pipetune_pulse_output_probe PRIVATE PkgConfig::PULSE)
+  target_compile_options(pipetune_pulse_output_probe PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_executable(
     pipetune_multi_device_output_probe
     tools/multi-device-output-probe.cpp)
@@ -832,6 +837,19 @@ if(BUILD_TESTING)
         ${scenario})
     set_tests_properties(pipetune_multi_device_${scenario} PROPERTIES TIMEOUT 60)
   endforeach()
+  add_test(
+    NAME pipetune_multi_device_policy-pulse
+    COMMAND
+      ${PIPETUNE_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE}
+      ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+      $<TARGET_FILE:pipetune_multi_device_output_probe>
+      policy-pulse
+      $<TARGET_FILE:pipetune_wireplumber_policy_fixture>
+      ${PIPETUNE_PULSE_EXECUTABLE}
+      $<TARGET_FILE:pipetune_pulse_output_probe>)
+  set_tests_properties(pipetune_multi_device_policy-pulse PROPERTIES TIMEOUT 60)
   add_executable(
     pipetune_wireplumber_policy_fixture
     test/wireplumber_policy_fixture.cpp)

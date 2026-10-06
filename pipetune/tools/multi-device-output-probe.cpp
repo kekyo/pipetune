@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <csignal>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
@@ -30,7 +31,7 @@ constexpr auto kRestartFirstTag = std::uint32_t{262144};
 
 enum class Phase {
   initial, disconnected, reconnected, attenuated, muted, restored,
-  awaitingPolicyStop, restartingOutputs, policyRestarted, restoringOutputs
+  awaitingPolicyStop, restartingOutputs, policyRestarted, restoringOutputs, awaitingPulseCheck
 };
 
 struct Endpoint {
@@ -94,6 +95,7 @@ struct Probe {
   spa_hook processorInputListener = {};
   spa_hook processorOutputListener = {};
   spa_source *watchdog = nullptr;
+  spa_source *pulseSignal = nullptr;
   std::array<Endpoint, 3> endpoints = {};
   std::array<OutputLatency, 2> outputLatencies = {};
   std::array<Selector, 2> selectors = {};
@@ -112,6 +114,8 @@ struct Probe {
   bool visibility = false;
   bool recovery = false;
   bool restart = false;
+  bool pulse = false;
+  bool pulseReady = false;
   bool outputsHiddenDuringPlayback = false;
   bool outputsRestored = false;
   bool defaultsReady = false;
@@ -212,7 +216,8 @@ static void capture(void *data) {
   auto &probe = *endpoint.probe;
   auto *queued = pw_stream_dequeue_buffer(endpoint.stream);
   if (queued == nullptr) return;
-  if (probe.phase == Phase::restoringOutputs || probe.phase == Phase::awaitingPolicyStop) {
+  if (probe.phase == Phase::restoringOutputs || probe.phase == Phase::awaitingPolicyStop ||
+      probe.phase == Phase::awaitingPulseCheck) {
     pw_stream_queue_buffer(endpoint.stream, queued);
     return;
   }
@@ -355,13 +360,19 @@ static bool visibleCombinedOutput(const Selector &selector) {
 }
 
 static void finishVisibilityCheck(Probe &probe) {
-  if (probe.phase != Phase::restoringOutputs) return;
+  if (probe.phase != Phase::restoringOutputs || probe.outputsRestored) return;
   const auto selection = probe.metadataValues.find("default.audio.sink");
   if (selection == probe.metadataValues.end() ||
       selection->second.find("pipetune_probe_device_") == std::string::npos) return;
   for (const auto &selector : probe.selectors)
     if (visiblePhysicalOutputs(selector) != 3 || visibleCombinedOutput(selector)) return;
   probe.outputsRestored = true;
+  if (probe.pulse) {
+    // Keep simulated devices alive until the separate PulseAudio clients have
+    // observed their restoration through the server's own registry views.
+    std::cerr << "pipetune-probe:outputs-restored\n" << std::flush;
+    return;
+  }
   probe.success = true;
   pw_main_loop_quit(probe.loop);
 }
@@ -397,6 +408,11 @@ static void restoreVisibleOutputs(Probe &probe) {
     }
   }
   probe.outputsHiddenDuringPlayback = true;
+  if (probe.pulse) {
+    probe.phase = Phase::awaitingPulseCheck;
+    std::cerr << "pipetune-probe:outputs-hidden\n" << std::flush;
+    return;
+  }
   if (probe.recovery || (probe.restart && probe.phase == Phase::initial)) {
     probe.phase = Phase::awaitingPolicyStop;
     std::cerr << "pipetune-probe:outputs-hidden\n" << std::flush;
@@ -407,7 +423,7 @@ static void restoreVisibleOutputs(Probe &probe) {
 
 static void closeProcessingOutputs(Probe &probe) {
   probe.phase = Phase::restoringOutputs;
-  pw_stream_destroy(probe.source);
+  if (probe.source != nullptr) pw_stream_destroy(probe.source);
   probe.source = nullptr;
   pw_stream_destroy(probe.processorInput);
   probe.processorInput = nullptr;
@@ -677,7 +693,7 @@ static int metadataChanged(void *data, std::uint32_t subject, const char *key,
   if (subject == 0 && key != nullptr && value != nullptr &&
       std::strcmp(key, "default.audio.sink") == 0 &&
       std::string{value}.find("pipetune_probe_combined") != std::string::npos &&
-      probe.source == nullptr && !createSource(probe))
+      probe.source == nullptr && !probe.pulseReady && !createSource(probe))
     fail(probe, "cannot start playback on the default output");
   return 0;
 }
@@ -843,6 +859,11 @@ static bool createSource(Probe &probe) {
     if (probe.visibility && !observeOutputs(probe, probe.selectors[1], probe.applicationCore)) return false;
     sourceCore = probe.applicationCore;
   }
+  if (probe.pulse) {
+    probe.pulseReady = true;
+    std::cerr << "pipetune-probe:pulse-ready\n" << std::flush;
+    return true;
+  }
   auto *properties = pw_properties_new(
       PW_KEY_NODE_NAME, "pipetune_probe_signal",
       PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Playback",
@@ -898,6 +919,18 @@ static bool createCombinedOutput(Probe &probe) {
 static bool prepare(Probe &probe) {
   probe.loop = pw_main_loop_new(nullptr);
   if (probe.loop == nullptr) return false;
+  if (probe.pulse) {
+    probe.pulseSignal = pw_loop_add_signal(pw_main_loop_get_loop(probe.loop), SIGUSR1,
+        [](void *data, int) {
+          auto &state = *static_cast<Probe *>(data);
+          if (state.phase == Phase::awaitingPulseCheck) closeProcessingOutputs(state);
+          else if (state.outputsRestored) {
+            state.success = true;
+            pw_main_loop_quit(state.loop);
+          } else fail(state, "unexpected PulseAudio verification acknowledgement");
+        }, &probe);
+    if (probe.pulseSignal == nullptr) return false;
+  }
   probe.context = pw_context_new(pw_main_loop_get_loop(probe.loop), nullptr, 0);
   if (probe.context == nullptr) return false;
   probe.core = pw_context_connect(probe.context, nullptr, 0);
@@ -933,6 +966,8 @@ static bool prepare(Probe &probe) {
 }
 
 static void destroy(Probe &probe) {
+  if (probe.pulseSignal != nullptr)
+    pw_loop_destroy_source(pw_main_loop_get_loop(probe.loop), probe.pulseSignal);
   if (probe.watchdog != nullptr)
     pw_loop_destroy_source(pw_main_loop_get_loop(probe.loop), probe.watchdog);
   if (probe.source != nullptr) pw_stream_destroy(probe.source);
@@ -985,13 +1020,18 @@ int main(int argc, char **argv) {
     probe.visibility = true;
     probe.restart = true;
   }
+  else if (argc == 2 && std::string(argv[1]) == "policy-pulse") {
+    probe.policy = true;
+    probe.visibility = true;
+    probe.pulse = true;
+  }
   else if (argc == 2 && (std::string(argv[1]) == "latency" || std::string(argv[1]) == "latency-off")) {
     probe.latency = true;
     probe.compensate = std::string(argv[1]) == "latency";
   }
   else if (argc > 2 || (argc == 2 && std::string(argv[1]) != "channels")) {
     std::cerr << "Usage: pipetune_multi_device_output_probe "
-        "[channels|reconnect|volume|latency|latency-off|policy|policy-volume|policy-reconnect|policy-visibility|policy-recovery|policy-restart]\n";
+        "[channels|reconnect|volume|latency|latency-off|policy|policy-volume|policy-reconnect|policy-visibility|policy-recovery|policy-restart|policy-pulse]\n";
     pw_deinit();
     return 2;
   }

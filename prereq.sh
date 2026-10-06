@@ -39,10 +39,12 @@ gettext
 hicolor-icon-theme
 libgtk-3-dev
 libpipewire-0.3-dev
+libpulse-dev
 libsamplerate0-dev
 nodejs
 npm
 pipewire
+pipewire-pulse
 pkg-config
 python3
 systemd
