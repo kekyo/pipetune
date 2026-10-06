@@ -152,6 +152,12 @@ try {
     assert.equal(report.captureFeedsPlayback, false,
       "a capture endpoint must never feed a playback device");
   }
+  if (scenario === "policy-visibility") {
+    assert.equal(report.outputsHiddenDuringPlayback, true,
+      "physical outputs must be hidden from selectors and playback clients during multi-device playback");
+    assert.equal(report.outputsRestored, true,
+      "physical outputs must become visible again when the combined output closes");
+  }
   if (scenario === "reconnect" || scenario === "policy-reconnect") {
     assert.equal(report.reconnected, true, "a reconnected device must receive its original DSP channels");
     assert.ok(report.survivorFramesWhileDisconnected >= 8192,

@@ -21,6 +21,9 @@ constexpr auto kWirePlumberNodeVisibilityPolicy =
 pipetune_hidden_nodes = {}
 pipetune_audio_stream_owners = {}
 pipetune_audio_stream_counts = {}
+pipetune_physical_outputs = {}
+pipetune_aggregate_owners = {}
+pipetune_hidden_physical_permissions = {}
 
 local function proxy_property(proxy, key)
   local properties = proxy["properties"]
@@ -82,8 +85,37 @@ local function update_node_permissions(client, node_id, owner_id)
 end
 
 local function update_client_permissions(client)
+  local id = client_id(client)
+  -- Desktop selectors and pipewire-pulse use unrestricted clients. Do not
+  -- replace permissions managed by a portal or another restricted policy.
+  if id ~= nil and proxy_property(client, "pipewire.access") == "unrestricted" then
+    local changed = pipetune_hidden_physical_permissions[id] or {}
+    pipetune_hidden_physical_permissions[id] = changed
+    local owns_aggregate = false
+    for _, owner_id in pairs(pipetune_aggregate_owners) do
+      if id == owner_id then owns_aggregate = true end
+    end
+    for node_id, owner_id in pairs(pipetune_physical_outputs) do
+      local hide = next(pipetune_aggregate_owners) ~= nil and
+          not is_wireplumber(client) and not is_pipetune(client) and
+          not is_node_owner(client, owner_id) and not owns_aggregate
+      if hide then
+        client:update_permissions { [node_id] = "-" }
+        changed[node_id] = true
+      elseif changed[node_id] then
+        client:update_permissions { [node_id] = "all" }
+        changed[node_id] = nil
+      end
+    end
+  end
   for node_id, hidden_node in pairs(pipetune_hidden_nodes) do
     update_node_permissions(client, node_id, hidden_node.owner_id)
+  end
+end
+
+local function update_all_client_permissions()
+  for client in pipetune_clients_om:iterate() do
+    update_client_permissions(client)
   end
 end
 
@@ -104,9 +136,22 @@ pipetune_clients_om = ObjectManager {
 }
 
 pipetune_nodes_om:connect("object-added", function(om, node)
+  local node_id = node["bound-id"]
+  local owner_id = tonumber(proxy_property(node, "client.id"))
+  local aggregate = proxy_property(node, "node.pipetune.aggregate")
+  if aggregate == "true" or aggregate == true then
+    pipetune_aggregate_owners[node_id] = owner_id or -1
+    update_all_client_permissions()
+    return
+  end
+  local virtual = proxy_property(node, "node.virtual")
+  if proxy_property(node, "media.class") == "Audio/Sink" and
+      virtual ~= "true" and virtual ~= true and not is_internal_node(node) then
+    pipetune_physical_outputs[node_id] = owner_id or -1
+    update_all_client_permissions()
+    return
+  end
   if is_audio_stream(node) then
-    local node_id = node["bound-id"]
-    local owner_id = tonumber(proxy_property(node, "client.id"))
     if owner_id ~= nil then
       pipetune_audio_stream_owners[node_id] = owner_id
       pipetune_audio_stream_counts[owner_id] =
@@ -120,8 +165,6 @@ pipetune_nodes_om:connect("object-added", function(om, node)
     return
   end
 
-  local node_id = node["bound-id"]
-  local owner_id = tonumber(proxy_property(node, "client.id"))
   pipetune_hidden_nodes[node_id] = { owner_id = owner_id }
   for client in pipetune_clients_om:iterate() do
     update_node_permissions(client, node_id, owner_id)
@@ -131,6 +174,16 @@ end)
 pipetune_nodes_om:connect("object-removed", function(om, node)
   local node_id = node["bound-id"]
   pipetune_hidden_nodes[node_id] = nil
+  pipetune_physical_outputs[node_id] = nil
+  for _, changed in pairs(pipetune_hidden_physical_permissions) do
+    changed[node_id] = nil
+  end
+  if pipetune_aggregate_owners[node_id] ~= nil then
+    pipetune_aggregate_owners[node_id] = nil
+    -- The aggregate's lifetime is the mode switch. This also runs when
+    -- its client disappears without sending a shutdown request.
+    update_all_client_permissions()
+  end
 
   local owner_id = pipetune_audio_stream_owners[node_id]
   if owner_id == nil then
@@ -148,6 +201,10 @@ end)
 
 pipetune_clients_om:connect("object-added", function(om, client)
   update_client_permissions(client)
+end)
+
+pipetune_clients_om:connect("object-removed", function(om, client)
+  pipetune_hidden_physical_permissions[client_id(client)] = nil
 end)
 
 pipetune_nodes_om:activate()

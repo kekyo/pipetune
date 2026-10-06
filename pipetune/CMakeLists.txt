@@ -839,7 +839,7 @@ if(BUILD_TESTING)
     pipetune_wireplumber_policy_fixture PRIVATE src)
   target_link_libraries(
     pipetune_wireplumber_policy_fixture PRIVATE pipetune_pipewire)
-  foreach(scenario policy policy-volume policy-reconnect)
+  foreach(scenario policy policy-volume policy-reconnect policy-visibility)
     add_test(
       NAME pipetune_multi_device_${scenario}
       COMMAND

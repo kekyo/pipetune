@@ -27,7 +27,7 @@ constexpr auto kTagPeriod = std::uint32_t{524287};
 constexpr auto kChannelOffset = std::uint32_t{524288};
 constexpr auto kSampleScale = 268435456.0F;
 
-enum class Phase { initial, disconnected, reconnected, attenuated, muted, restored };
+enum class Phase { initial, disconnected, reconnected, attenuated, muted, restored, restoringOutputs };
 
 struct Endpoint {
   Probe *probe = nullptr;
@@ -52,6 +52,15 @@ struct OutputLatency {
   spa_hook listener = {};
   pw_port_events events = {};
   std::int64_t reportedFrames = -1;
+};
+
+struct Selector {
+  Probe *probe = nullptr;
+  pw_core *core = nullptr;
+  pw_registry *registry = nullptr;
+  spa_hook listener = {};
+  pw_registry_events events = {};
+  std::map<std::uint32_t, std::string> nodes;
 };
 
 struct Probe {
@@ -79,6 +88,7 @@ struct Probe {
   spa_source *watchdog = nullptr;
   std::array<Endpoint, 3> endpoints = {};
   std::array<OutputLatency, 2> outputLatencies = {};
+  std::array<Selector, 2> selectors = {};
   std::uint64_t producedFrames = 0;
   std::uint64_t processedFrames = 0;
   std::uint64_t channelErrors = 0;
@@ -90,6 +100,9 @@ struct Probe {
   bool latency = false;
   bool compensate = true;
   bool policy = false;
+  bool visibility = false;
+  bool outputsHiddenDuringPlayback = false;
+  bool outputsRestored = false;
   bool defaultsReady = false;
   bool defaultRequested = false;
   std::uint32_t applicationClientId = PW_ID_ANY;
@@ -105,6 +118,9 @@ struct Probe {
 static bool createEndpoint(Probe &probe, std::uint32_t index);
 static bool createSource(Probe &probe);
 static void selectDefaultOutput(Probe &probe);
+static void finishVisibilityCheck(Probe &probe);
+static bool observeOutputs(Probe &probe, Selector &selector, pw_core *core);
+static void restoreVisibleOutputs(Probe &probe);
 
 static void fail(Probe &probe, const std::string &message) {
   if (probe.error.empty()) probe.error = message;
@@ -182,6 +198,10 @@ static void capture(void *data) {
   auto &probe = *endpoint.probe;
   auto *queued = pw_stream_dequeue_buffer(endpoint.stream);
   if (queued == nullptr) return;
+  if (probe.phase == Phase::restoringOutputs) {
+    pw_stream_queue_buffer(endpoint.stream, queued);
+    return;
+  }
   auto *buffer = queued->buffer;
   if (buffer == nullptr || buffer->n_datas < 2) {
     pw_stream_queue_buffer(endpoint.stream, queued);
@@ -276,9 +296,77 @@ static void capture(void *data) {
              (probe.phase == Phase::reconnected &&
               probe.endpoints[0].receivedFrames >= 131072 &&
               probe.endpoints[1].receivedFrames >= 131072)) {
-    probe.success = true;
-    pw_main_loop_quit(probe.loop);
+    if (probe.visibility) restoreVisibleOutputs(probe);
+    else {
+      probe.success = true;
+      pw_main_loop_quit(probe.loop);
+    }
   }
+}
+
+static std::size_t visiblePhysicalOutputs(const Selector &selector) {
+  return std::count_if(selector.nodes.begin(), selector.nodes.end(),
+      [](const auto &entry) { return entry.second.starts_with("pipetune_probe_device_"); });
+}
+
+static bool visibleCombinedOutput(const Selector &selector) {
+  return std::any_of(selector.nodes.begin(), selector.nodes.end(),
+      [](const auto &entry) { return entry.second == "pipetune_probe_combined"; });
+}
+
+static void finishVisibilityCheck(Probe &probe) {
+  if (probe.phase != Phase::restoringOutputs) return;
+  const auto selection = probe.metadataValues.find("default.audio.sink");
+  if (selection == probe.metadataValues.end() ||
+      selection->second.find("pipetune_probe_device_") == std::string::npos) return;
+  for (const auto &selector : probe.selectors)
+    if (visiblePhysicalOutputs(selector) != 3 || visibleCombinedOutput(selector)) return;
+  probe.outputsRestored = true;
+  probe.success = true;
+  pw_main_loop_quit(probe.loop);
+}
+
+static bool observeOutputs(Probe &probe, Selector &selector, pw_core *core) {
+  selector.probe = &probe;
+  selector.core = core;
+  selector.registry = pw_core_get_registry(core, PW_VERSION_REGISTRY, 0);
+  if (selector.registry == nullptr) return false;
+  selector.events.version = PW_VERSION_REGISTRY_EVENTS;
+  selector.events.global = [](void *data, std::uint32_t id, std::uint32_t,
+                              const char *type, std::uint32_t, const spa_dict *properties) {
+    auto &view = *static_cast<Selector *>(data);
+    if (std::strcmp(type, PW_TYPE_INTERFACE_Node) != 0 || properties == nullptr) return;
+    const auto *name = spa_dict_lookup(properties, PW_KEY_NODE_NAME);
+    if (name != nullptr) view.nodes[id] = name;
+    finishVisibilityCheck(*view.probe);
+  };
+  selector.events.global_remove = [](void *data, std::uint32_t id) {
+    auto &view = *static_cast<Selector *>(data);
+    view.nodes.erase(id);
+    finishVisibilityCheck(*view.probe);
+  };
+  pw_registry_add_listener(selector.registry, &selector.listener, &selector.events, &selector);
+  return true;
+}
+
+static void restoreVisibleOutputs(Probe &probe) {
+  for (const auto &selector : probe.selectors) {
+    if (visiblePhysicalOutputs(selector) != 0 || !visibleCombinedOutput(selector)) {
+      fail(probe, "a selector or playback client can still select physical outputs during multi-device playback");
+      return;
+    }
+  }
+  probe.outputsHiddenDuringPlayback = true;
+  probe.phase = Phase::restoringOutputs;
+  pw_stream_destroy(probe.source);
+  probe.source = nullptr;
+  pw_stream_destroy(probe.processorInput);
+  probe.processorInput = nullptr;
+  pw_stream_destroy(probe.processorOutput);
+  probe.processorOutput = nullptr;
+  pw_impl_module_destroy(probe.combine);
+  probe.combine = nullptr;
+  finishVisibilityCheck(probe);
 }
 
 static void produce(void *data) {
@@ -497,7 +585,7 @@ static bool createEndpoint(Probe &probe, std::uint32_t index) {
       PW_KEY_NODE_NAME, name.c_str(), PW_KEY_NODE_DESCRIPTION, name.c_str(),
       PW_KEY_NODE_GROUP, "pipewire.dummy",
       PW_KEY_MEDIA_CLASS, "Audio/Sink", PW_KEY_MEDIA_CATEGORY, "Playback",
-      PW_KEY_NODE_VIRTUAL, "true", "node.want-driver", "true",
+      PW_KEY_NODE_VIRTUAL, probe.visibility ? "false" : "true", "node.want-driver", "true",
       "node.pause-on-idle", "false", "audio.channels", "2",
       "audio.position", "[ FL FR ]", nullptr));
   if (endpoint.stream == nullptr) return false;
@@ -514,6 +602,7 @@ static int metadataChanged(void *data, std::uint32_t subject, const char *key,
   auto &probe = *static_cast<Probe *>(data);
   if (subject == 0 && key != nullptr)
     probe.metadataValues[key] = value == nullptr ? "(removed)" : value;
+  finishVisibilityCheck(probe);
   if (subject == 0 && key != nullptr && value != nullptr &&
       std::strcmp(key, "default.audio.sink") == 0) {
     // Wait for the default-node policy to publish its first selection. On
@@ -650,6 +739,7 @@ static bool createSource(Probe &probe) {
     probe.applicationCore = pw_context_connect(probe.context, pw_properties_new(
         PW_KEY_APP_NAME, "PipeTune probe application", nullptr), 0);
     if (probe.applicationCore == nullptr) return false;
+    if (probe.visibility && !observeOutputs(probe, probe.selectors[1], probe.applicationCore)) return false;
     sourceCore = probe.applicationCore;
   }
   auto *properties = pw_properties_new(
@@ -675,6 +765,12 @@ static bool prepare(Probe &probe) {
   if (probe.context == nullptr) return false;
   probe.core = pw_context_connect(probe.context, nullptr, 0);
   if (probe.core == nullptr) return false;
+  if (probe.visibility) {
+    auto *core = pw_context_connect(probe.context,
+        pw_properties_new(PW_KEY_APP_NAME, "PipeTune probe sound settings", nullptr), 0);
+    probe.selectors[0].core = core;
+    if (core == nullptr || !observeOutputs(probe, probe.selectors[0], core)) return false;
+  }
   probe.registry = pw_core_get_registry(probe.core, PW_VERSION_REGISTRY, 0);
   if (probe.registry == nullptr) return false;
   probe.registryEvents.version = PW_VERSION_REGISTRY_EVENTS;
@@ -693,6 +789,7 @@ static bool prepare(Probe &probe) {
     combine.props = {
       audio.position = [ AUX0 AUX1 AUX2 AUX3 ]
       node.virtual = true
+      node.pipetune.aggregate = true
     }
     stream.props = {
       stream.dont-remix = true
@@ -737,6 +834,8 @@ static void destroy(Probe &probe) {
   if (probe.processorInput != nullptr) pw_stream_destroy(probe.processorInput);
   if (probe.processorOutput != nullptr) pw_stream_destroy(probe.processorOutput);
   if (probe.metadata != nullptr) pw_proxy_destroy(reinterpret_cast<pw_proxy *>(probe.metadata));
+  for (auto &selector : probe.selectors)
+    if (selector.registry != nullptr) pw_proxy_destroy(reinterpret_cast<pw_proxy *>(selector.registry));
   for (auto &output : probe.outputLatencies)
     if (output.port != nullptr) pw_proxy_destroy(reinterpret_cast<pw_proxy *>(output.port));
   if (probe.combinedNode != nullptr)
@@ -747,6 +846,7 @@ static void destroy(Probe &probe) {
   for (auto &endpoint : probe.endpoints)
     if (endpoint.stream != nullptr) pw_stream_destroy(endpoint.stream);
   if (probe.applicationCore != nullptr) pw_core_disconnect(probe.applicationCore);
+  if (probe.selectors[0].core != nullptr) pw_core_disconnect(probe.selectors[0].core);
   if (probe.core != nullptr) pw_core_disconnect(probe.core);
   if (probe.context != nullptr) pw_context_destroy(probe.context);
   if (probe.loop != nullptr) pw_main_loop_destroy(probe.loop);
@@ -766,13 +866,17 @@ int main(int argc, char **argv) {
     probe.policy = true;
     probe.reconnect = true;
   }
+  else if (argc == 2 && std::string(argv[1]) == "policy-visibility") {
+    probe.policy = true;
+    probe.visibility = true;
+  }
   else if (argc == 2 && (std::string(argv[1]) == "latency" || std::string(argv[1]) == "latency-off")) {
     probe.latency = true;
     probe.compensate = std::string(argv[1]) == "latency";
   }
   else if (argc > 2 || (argc == 2 && std::string(argv[1]) != "channels")) {
     std::cerr << "Usage: pipetune_multi_device_output_probe "
-        "[channels|reconnect|volume|latency|latency-off|policy|policy-volume|policy-reconnect]\n";
+        "[channels|reconnect|volume|latency|latency-off|policy|policy-volume|policy-reconnect|policy-visibility]\n";
     pw_deinit();
     return 2;
   }
@@ -815,6 +919,8 @@ int main(int argc, char **argv) {
             << ",\"applicationClientId\":" << probe.applicationClientId
             << ",\"processorClientId\":" << probe.processorClientId
             << ",\"captureFeedsPlayback\":" << (probe.captureFeedsPlayback ? "true" : "false")
+            << ",\"outputsHiddenDuringPlayback\":" << (probe.outputsHiddenDuringPlayback ? "true" : "false")
+            << ",\"outputsRestored\":" << (probe.outputsRestored ? "true" : "false")
             << ",\"receivedFrames\":[" << probe.endpoints[0].receivedFrames << ','
             << probe.endpoints[1].receivedFrames << ',' << probe.endpoints[2].receivedFrames
             << "],\"channelErrors\":" << probe.channelErrors
