@@ -20,6 +20,7 @@
 #include <cstring>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <string>
 
 struct Probe;
@@ -116,6 +117,10 @@ struct Probe {
   bool masterMute = false;
   bool reconnectMuted = false;
   std::uint64_t reconnectMutedFrames = 0;
+  std::uint32_t reconnectingOutputId = PW_ID_ANY;
+  std::optional<std::uint64_t> reconnectStartTick;
+  std::uint64_t reconnectWaitFrames = 0;
+  std::uint64_t reconnectGraphWaitFrames = 0;
   std::uint64_t channelErrors = 0;
   std::uint64_t disconnectSurvivorFrame = 0;
   std::uint64_t survivorFramesWhileDisconnected = 0;
@@ -315,16 +320,15 @@ static void capture(void *data) {
     if (probe.phase == Phase::restartingOutputs) ++endpoint.restartWarmupFrames;
   }
   pw_stream_queue_buffer(endpoint.stream, queued);
-  if (probe.reconnectMuted && probe.phase == Phase::reconnected && endpoint.firstChannel == 0 &&
+  if (probe.phase == Phase::reconnected && endpoint.firstChannel == 0 && endpoint.awaitingSignal &&
       silent && frameCount > 0) {
     const auto target = pw_stream_get_node_id(endpoint.stream);
     const auto activeLinks = std::count_if(probe.outputLinks.begin(), probe.outputLinks.end(),
         [target](const auto &entry) { return entry.second.targetId == target && entry.second.active; });
     if (activeLinks == 2) {
-      // Leave the DSP inputs and the surviving device running. Only release
-      // this device after all its ports have linked and passed a silent block.
+      // The receiver only verifies silence. Playback readiness must be
+      // decided by the controller without a callback from the destination.
       probe.reconnectMutedFrames += frameCount;
-      probe.reconnectMuted = false;
     }
   }
   if (probe.phase == Phase::restartingOutputs) {
@@ -570,6 +574,43 @@ static bool connectStream(pw_stream *stream, bool input, std::uint32_t channels,
                            PW_ID_ANY, flags, &format, 1) >= 0;
 }
 
+static void updateReconnectingOutput(Probe &probe, std::uint32_t frames) {
+  if (!probe.reconnectMuted || frames == 0) return;
+  const auto activeLinks = std::count_if(probe.outputLinks.begin(), probe.outputLinks.end(),
+      [&probe](const auto &entry) {
+        return entry.second.targetId == probe.reconnectingOutputId && entry.second.active;
+      });
+  if (probe.reconnectingOutputId == PW_ID_ANY || activeLinks != 2 ||
+      pw_stream_get_state(probe.processorOutput, nullptr) != PW_STREAM_STATE_STREAMING) {
+    probe.reconnectStartTick.reset();
+    probe.reconnectWaitFrames = 0;
+    return;
+  }
+  auto time = pw_time{};
+  if (pw_stream_get_time_n(probe.processorOutput, &time, sizeof(time)) < 0) return;
+  // This driver fixes both stream and graph rates at 48 kHz. Queued and
+  // buffered frames therefore have the same units as graph ticks and delay.
+  if (time.rate.num != 1 || time.rate.denom != 48000) {
+    fail(probe, "processor did not provide the expected reconnect timeline");
+    return;
+  }
+  if (!probe.reconnectStartTick || time.ticks < *probe.reconnectStartTick) {
+    probe.reconnectStartTick = time.ticks;
+    probe.reconnectWaitFrames = 0;
+  }
+  // Keep the destination silent until a complete block can have traversed
+  // the now-linked graph, including its queues and reported downstream delay.
+  // Only the owned output stream's public clock is used for this decision;
+  // a real playback device cannot acknowledge PCM through capture callbacks.
+  probe.reconnectWaitFrames = std::max(probe.reconnectWaitFrames,
+      static_cast<std::uint64_t>(std::max(time.delay, std::int64_t{0})) +
+          time.queued + time.buffered + frames);
+  const auto elapsed = time.ticks - *probe.reconnectStartTick;
+  if (elapsed < probe.reconnectWaitFrames) return;
+  probe.reconnectGraphWaitFrames = elapsed;
+  probe.reconnectMuted = false;
+}
+
 static void processorOutputProcess(void *data) {
   auto &probe = *static_cast<Probe *>(data);
   auto *input = pw_stream_dequeue_buffer(probe.processorInput);
@@ -597,6 +638,7 @@ static void processorOutputProcess(void *data) {
     else valid = frames == channelFrames;
   }
   if (valid) {
+    updateReconnectingOutput(probe, frames);
     for (auto channel = 0u; channel < 4; ++channel) {
       const auto &from = input->buffer->datas[channel % 2];
       auto &to = output->buffer->datas[channel];
@@ -854,6 +896,8 @@ static void globalAdded(void *data, std::uint32_t id, std::uint32_t,
   if ((probe.policy || probe.latency) && std::strcmp(type, PW_TYPE_INTERFACE_Node) == 0) {
     const auto *name = spa_dict_lookup(properties, PW_KEY_NODE_NAME);
     if (name != nullptr) probe.nodeNames[std::to_string(id)] = name;
+    if (probe.reconnect && name != nullptr && std::strcmp(name, "pipetune_probe_device_0") == 0)
+      probe.reconnectingOutputId = id;
     const auto *client = spa_dict_lookup(properties, PW_KEY_CLIENT_ID);
     if (name != nullptr && client != nullptr) {
       if (std::strcmp(name, "pipetune_probe_signal") == 0)
@@ -944,6 +988,11 @@ static void globalAdded(void *data, std::uint32_t id, std::uint32_t,
 
 static void globalRemoved(void *data, std::uint32_t id) {
   auto &probe = *static_cast<Probe *>(data);
+  if (id == probe.reconnectingOutputId) {
+    probe.reconnectingOutputId = PW_ID_ANY;
+    probe.reconnectStartTick.reset();
+    probe.reconnectWaitFrames = 0;
+  }
   if (id == probe.metadataId && probe.metadata != nullptr) {
     pw_proxy_destroy(reinterpret_cast<pw_proxy *>(probe.metadata));
     probe.metadata = nullptr;
@@ -1253,6 +1302,7 @@ int main(int argc, char **argv) {
             << ",\"reconnected\":" << (probe.phase == Phase::reconnected ? "true" : "false")
             << ",\"survivorFramesWhileDisconnected\":" << probe.survivorFramesWhileDisconnected
             << ",\"reconnectMutedFrames\":" << probe.reconnectMutedFrames
+            << ",\"reconnectGraphWaitFrames\":" << probe.reconnectGraphWaitFrames
             << ",\"declaredLatencyFrames\":" << (probe.latency ? 63 : 0)
             << ",\"observedCompensationFrames\":" << compensation
             << ",\"reportedDelayFrames\":[" << probe.outputLatencies[0].reportedFrames
