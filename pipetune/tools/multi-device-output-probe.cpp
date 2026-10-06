@@ -6,6 +6,7 @@
 #include <pipewire/pipewire.h>
 #include <pipewire/impl-module.h>
 #include <spa/param/audio/format-utils.h>
+#include <spa/param/props.h>
 
 #include <algorithm>
 #include <array>
@@ -17,7 +18,7 @@
 
 struct Probe;
 
-enum class Phase { initial, disconnected, reconnected };
+enum class Phase { initial, disconnected, reconnected, attenuated, muted, restored };
 
 struct Endpoint {
   Probe *probe = nullptr;
@@ -26,6 +27,9 @@ struct Endpoint {
   pw_stream_events events = {};
   std::uint32_t firstChannel = 0;
   std::uint64_t receivedFrames = 0;
+  std::uint64_t attenuatedFrames = 0;
+  std::uint64_t mutedFrames = 0;
+  std::uint64_t restoredFrames = 0;
   int previousTag = -1;
   bool selected = true;
   bool awaitingSignal = true;
@@ -35,6 +39,10 @@ struct Probe {
   pw_main_loop *loop = nullptr;
   pw_context *context = nullptr;
   pw_core *core = nullptr;
+  pw_registry *registry = nullptr;
+  pw_registry_events registryEvents = {};
+  spa_hook registryListener = {};
+  pw_node *combinedNode = nullptr;
   pw_impl_module *combine = nullptr;
   pw_stream *source = nullptr;
   pw_stream_events sourceEvents = {};
@@ -47,6 +55,7 @@ struct Probe {
   std::uint64_t survivorFramesWhileDisconnected = 0;
   Phase phase = Phase::initial;
   bool reconnect = false;
+  bool volume = false;
   bool success = false;
   std::string error;
 };
@@ -64,6 +73,62 @@ static void fail(Probe &probe, const std::string &message) {
 static float sampleValue(std::uint32_t channel, std::uint64_t frame) {
   return static_cast<float>((channel + 1u) * 512u + frame % 127u) /
          65536.0F;
+}
+
+static bool setVolume(Probe &probe, float gain, bool mute) {
+  if (probe.combinedNode == nullptr) {
+    fail(probe, "combined output was not available for volume control");
+    return false;
+  }
+  auto storage = std::array<std::uint8_t, 1024>{};
+  auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
+  const auto volumes = std::array<float, 4>{gain, gain, gain, gain};
+  const auto *properties = static_cast<const spa_pod *>(spa_pod_builder_add_object(
+      &builder, SPA_TYPE_OBJECT_Props, SPA_PARAM_Props,
+      SPA_PROP_volume, SPA_POD_Float(1.0F),
+      SPA_PROP_mute, SPA_POD_Bool(mute),
+      SPA_PROP_channelVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float,
+                                              volumes.size(), volumes.data())));
+  if (pw_node_set_param(probe.combinedNode, SPA_PARAM_Props, 0, properties) < 0) {
+    fail(probe, "cannot change combined output volume");
+    return false;
+  }
+  return true;
+}
+
+static bool validateFrame(Endpoint &endpoint, const std::array<float, 2> &samples) {
+  if (!endpoint.selected) return false;
+  const auto phase = endpoint.probe->phase;
+  const auto silence = samples[0] == 0.0F && samples[1] == 0.0F;
+  if (phase == Phase::muted && silence) {
+    ++endpoint.mutedFrames;
+    endpoint.previousTag = -1;
+    return true;
+  }
+  if (phase == Phase::restored && silence && endpoint.restoredFrames == 0)
+    return true;
+  auto gain = 1.0F;
+  if (phase == Phase::attenuated) {
+    // Accept already queued full-volume frames until the requested gain is
+    // first observed in PCM. Afterwards, every sample must use the new gain.
+    const auto boundary = sampleValue(endpoint.firstChannel, 0) * 0.5F;
+    if (samples[0] < boundary) gain = 0.25F;
+    else if (endpoint.attenuatedFrames != 0) return false;
+  } else if (phase == Phase::muted) {
+    if (endpoint.mutedFrames != 0) return false;
+    gain = 0.25F;
+  }
+  const auto tag = static_cast<int>(std::lround(samples[0] / gain * 65536.0F)) -
+                   static_cast<int>((endpoint.firstChannel + 1u) * 512u);
+  if (tag < 0 || tag >= 127 ||
+      samples[0] != sampleValue(endpoint.firstChannel, tag) * gain ||
+      samples[1] != sampleValue(endpoint.firstChannel + 1, tag) * gain ||
+      (endpoint.previousTag != -1 && tag != (endpoint.previousTag + 1) % 127))
+    return false;
+  endpoint.previousTag = tag;
+  if (phase == Phase::attenuated && gain == 0.25F) ++endpoint.attenuatedFrames;
+  if (phase == Phase::restored) ++endpoint.restoredFrames;
+  return true;
 }
 
 static void capture(void *data) {
@@ -101,13 +166,7 @@ static void capture(void *data) {
     }
     if (samples[0] == 0.0F && samples[1] == 0.0F &&
         endpoint.awaitingSignal) continue;
-    const auto tag = static_cast<int>(std::lround(samples[0] * 65536.0F)) -
-                     static_cast<int>((endpoint.firstChannel + 1u) * 512u);
-    const auto valid = endpoint.selected && tag >= 0 && tag < 127 &&
-        samples[0] == sampleValue(endpoint.firstChannel, tag) &&
-        samples[1] == sampleValue(endpoint.firstChannel + 1, tag) &&
-        (endpoint.previousTag == -1 || tag == (endpoint.previousTag + 1) % 127);
-    if (!valid) {
+    if (!validateFrame(endpoint, samples)) {
       ++probe.channelErrors;
       pw_stream_queue_buffer(endpoint.stream, queued);
       fail(probe, "received PCM does not preserve channel identity and sample order: channel " +
@@ -117,12 +176,26 @@ static void capture(void *data) {
                       ", previous tag " + std::to_string(endpoint.previousTag));
       return;
     }
-    endpoint.previousTag = tag;
     endpoint.awaitingSignal = false;
     ++endpoint.receivedFrames;
   }
   pw_stream_queue_buffer(endpoint.stream, queued);
-  if (probe.reconnect && probe.phase == Phase::initial &&
+  if (probe.volume) {
+    if (probe.phase == Phase::initial && probe.endpoints[0].receivedFrames >= 65536 &&
+        probe.endpoints[1].receivedFrames >= 65536) {
+      if (setVolume(probe, 0.25F, false)) probe.phase = Phase::attenuated;
+    } else if (probe.phase == Phase::attenuated && probe.endpoints[0].attenuatedFrames >= 8192 &&
+               probe.endpoints[1].attenuatedFrames >= 8192) {
+      if (setVolume(probe, 0.25F, true)) probe.phase = Phase::muted;
+    } else if (probe.phase == Phase::muted && probe.endpoints[0].mutedFrames >= 8192 &&
+               probe.endpoints[1].mutedFrames >= 8192) {
+      if (setVolume(probe, 1.0F, false)) probe.phase = Phase::restored;
+    } else if (probe.phase == Phase::restored && probe.endpoints[0].restoredFrames >= 8192 &&
+               probe.endpoints[1].restoredFrames >= 8192) {
+      probe.success = true;
+      pw_main_loop_quit(probe.loop);
+    }
+  } else if (probe.reconnect && probe.phase == Phase::initial &&
       probe.endpoints[0].receivedFrames >= 65536 &&
       probe.endpoints[1].receivedFrames >= 65536) {
     // The surviving device's received frames are the barrier for recreating
@@ -247,6 +320,18 @@ static bool createEndpoint(Probe &probe, std::uint32_t index) {
   return connectStream(endpoint.stream, true);
 }
 
+static void globalAdded(void *data, std::uint32_t id, std::uint32_t,
+                        const char *type, std::uint32_t version,
+                        const spa_dict *properties) {
+  auto &probe = *static_cast<Probe *>(data);
+  if (std::strcmp(type, PW_TYPE_INTERFACE_Node) != 0 || properties == nullptr) return;
+  const auto *name = spa_dict_lookup(properties, PW_KEY_NODE_NAME);
+  if (name == nullptr || std::strcmp(name, "pipetune_probe_combined") != 0) return;
+  probe.combinedNode = static_cast<pw_node *>(pw_registry_bind(probe.registry, id,
+      PW_TYPE_INTERFACE_Node, std::min(version, std::uint32_t{PW_VERSION_NODE}), 0));
+  if (probe.combinedNode == nullptr) fail(probe, "cannot bind combined output controls");
+}
+
 static bool prepare(Probe &probe) {
   probe.loop = pw_main_loop_new(nullptr);
   if (probe.loop == nullptr) return false;
@@ -254,6 +339,12 @@ static bool prepare(Probe &probe) {
   if (probe.context == nullptr) return false;
   probe.core = pw_context_connect(probe.context, nullptr, 0);
   if (probe.core == nullptr) return false;
+  probe.registry = pw_core_get_registry(probe.core, PW_VERSION_REGISTRY, 0);
+  if (probe.registry == nullptr) return false;
+  probe.registryEvents.version = PW_VERSION_REGISTRY_EVENTS;
+  probe.registryEvents.global = globalAdded;
+  pw_registry_add_listener(probe.registry, &probe.registryListener,
+                            &probe.registryEvents, &probe);
   for (auto index = 0u; index < probe.endpoints.size(); ++index) {
     if (!createEndpoint(probe, index)) return false;
   }
@@ -315,6 +406,10 @@ static void destroy(Probe &probe) {
   if (probe.watchdog != nullptr)
     pw_loop_destroy_source(pw_main_loop_get_loop(probe.loop), probe.watchdog);
   if (probe.source != nullptr) pw_stream_destroy(probe.source);
+  if (probe.combinedNode != nullptr)
+    pw_proxy_destroy(reinterpret_cast<pw_proxy *>(probe.combinedNode));
+  if (probe.registry != nullptr)
+    pw_proxy_destroy(reinterpret_cast<pw_proxy *>(probe.registry));
   if (probe.combine != nullptr) pw_impl_module_destroy(probe.combine);
   for (auto &endpoint : probe.endpoints)
     if (endpoint.stream != nullptr) pw_stream_destroy(endpoint.stream);
@@ -327,8 +422,9 @@ int main(int argc, char **argv) {
   pw_init(&argc, &argv);
   auto probe = Probe{};
   if (argc == 2 && std::string(argv[1]) == "reconnect") probe.reconnect = true;
+  else if (argc == 2 && std::string(argv[1]) == "volume") probe.volume = true;
   else if (argc > 2 || (argc == 2 && std::string(argv[1]) != "channels")) {
-    std::cerr << "Usage: pipetune_multi_device_output_probe [channels|reconnect]\n";
+    std::cerr << "Usage: pipetune_multi_device_output_probe [channels|reconnect|volume]\n";
     pw_deinit();
     return 2;
   }
@@ -343,7 +439,15 @@ int main(int argc, char **argv) {
             << "],\"channelErrors\":" << probe.channelErrors
             << ",\"reconnected\":" << (probe.phase == Phase::reconnected ? "true" : "false")
             << ",\"survivorFramesWhileDisconnected\":" << probe.survivorFramesWhileDisconnected
-            << "}\n";
+            << ",\"volumeFrames\":[";
+  for (auto index = 0u; index < 2; ++index) {
+    if (index != 0) std::cout << ',';
+    const auto &endpoint = probe.endpoints[index];
+    std::cout << "{\"attenuated\":" << endpoint.attenuatedFrames
+              << ",\"muted\":" << endpoint.mutedFrames
+              << ",\"restored\":" << endpoint.restoredFrames << '}';
+  }
+  std::cout << "]}\n";
   pw_deinit();
   return probe.success && probe.error.empty() ? 0 : 1;
 }

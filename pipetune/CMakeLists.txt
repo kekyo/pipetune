@@ -809,6 +809,16 @@ if(BUILD_TESTING)
       $<TARGET_FILE:pipetune_multi_device_output_probe>
       reconnect)
   set_tests_properties(pipetune_multi_device_reconnect PROPERTIES TIMEOUT 60)
+  add_test(
+    NAME pipetune_multi_device_volume
+    COMMAND
+      ${PIPETUNE_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE}
+      ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+      $<TARGET_FILE:pipetune_multi_device_output_probe>
+      volume)
+  set_tests_properties(pipetune_multi_device_volume PROPERTIES TIMEOUT 60)
   add_executable(
     pipetune_wireplumber_policy_fixture
     test/wireplumber_policy_fixture.cpp)

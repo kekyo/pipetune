@@ -128,6 +128,14 @@ try {
     assert.ok(report.receivedFrames[0] >= 131072, "device A must receive PCM before and after reconnecting");
     assert.ok(report.receivedFrames[1] >= 131072, "device B must remain routed while device A reconnects");
   }
+  if (scenario === "volume") {
+    for (const output of report.volumeFrames) {
+      assert.ok(output.attenuated >= 8192, "master volume must attenuate every selected output");
+      assert.ok(output.muted >= 8192, "master mute must silence every selected output");
+      assert.ok(output.restored >= 8192, "unmuting must restore every selected output");
+    }
+    assert.equal(report.volumeFrames.length, 2);
+  }
   process.stdout.write(`${version.stdout.trim()}\n${JSON.stringify(report)}\n`);
 } catch (error) {
   for (const child of children) process.stderr.write(`${child.name}:\n${child.stderr}\n`);
