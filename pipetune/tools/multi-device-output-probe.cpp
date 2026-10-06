@@ -3,8 +3,11 @@
  * Under MIT.
  * https://github.com/kekyo/pipetune/
  */
+#include "filter_graph_properties.h"
+
 #include <pipewire/pipewire.h>
 #include <pipewire/impl-module.h>
+#include <pipewire/extensions/metadata.h>
 #include <spa/param/audio/format-utils.h>
 #include <spa/param/latency-utils.h>
 #include <spa/param/props.h>
@@ -15,6 +18,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <map>
 #include <string>
 
 struct Probe;
@@ -50,13 +54,23 @@ struct Probe {
   pw_registry_events registryEvents = {};
   spa_hook registryListener = {};
   pw_node *combinedNode = nullptr;
+  pw_metadata *metadata = nullptr;
+  pw_metadata_events metadataEvents = {};
+  spa_hook metadataListener = {};
   pw_impl_module *combine = nullptr;
   pw_stream *source = nullptr;
   pw_stream_events sourceEvents = {};
   spa_hook sourceListener = {};
+  pw_stream *processorInput = nullptr;
+  pw_stream *processorOutput = nullptr;
+  pw_stream_events processorInputEvents = {};
+  pw_stream_events processorOutputEvents = {};
+  spa_hook processorInputListener = {};
+  spa_hook processorOutputListener = {};
   spa_source *watchdog = nullptr;
   std::array<Endpoint, 3> endpoints = {};
   std::uint64_t producedFrames = 0;
+  std::uint64_t processedFrames = 0;
   std::uint64_t channelErrors = 0;
   std::uint64_t disconnectSurvivorFrame = 0;
   std::uint64_t survivorFramesWhileDisconnected = 0;
@@ -65,11 +79,19 @@ struct Probe {
   bool volume = false;
   bool latency = false;
   bool compensate = true;
+  bool policy = false;
+  bool defaultsReady = false;
+  bool defaultRequested = false;
   bool success = false;
   std::string error;
+  std::map<std::string, std::string> nodeNames;
+  std::map<std::string, std::pair<std::string, std::string>> links;
+  std::map<std::string, std::string> metadataValues;
 };
 
 static bool createEndpoint(Probe &probe, std::uint32_t index);
+static bool createSource(Probe &probe);
+static void selectDefaultOutput(Probe &probe);
 
 static void fail(Probe &probe, const std::string &message) {
   if (probe.error.empty()) probe.error = message;
@@ -248,17 +270,18 @@ static void capture(void *data) {
 
 static void produce(void *data) {
   auto &probe = *static_cast<Probe *>(data);
+  const auto channels = probe.policy ? 2u : 4u;
   auto *queued = pw_stream_dequeue_buffer(probe.source);
   if (queued == nullptr) return;
   auto *buffer = queued->buffer;
-  if (buffer == nullptr || buffer->n_datas < 4) {
+  if (buffer == nullptr || buffer->n_datas < channels) {
     pw_stream_queue_buffer(probe.source, queued);
-    fail(probe, "producer did not negotiate four planar channels");
+    fail(probe, "producer did not negotiate the requested planar channels");
     return;
   }
   auto frameCount = static_cast<std::uint32_t>(
       queued->requested == 0 ? 256 : queued->requested);
-  for (auto channel = 0u; channel < 4; ++channel) {
+  for (auto channel = 0u; channel < channels; ++channel) {
     if (buffer->datas[channel].data == nullptr ||
         buffer->datas[channel].chunk == nullptr) {
       pw_stream_queue_buffer(probe.source, queued);
@@ -268,11 +291,12 @@ static void produce(void *data) {
     frameCount = std::min(frameCount, buffer->datas[channel].maxsize /
                                         static_cast<std::uint32_t>(sizeof(float)));
   }
-  for (auto channel = 0u; channel < 4; ++channel) {
+  for (auto channel = 0u; channel < channels; ++channel) {
     auto &plane = buffer->datas[channel];
     auto *samples = static_cast<float *>(plane.data);
     for (auto frame = 0u; frame < frameCount; ++frame)
-      samples[frame] = sampleValue(channel, probe.producedFrames + frame);
+      samples[frame] = sampleValue(channel, probe.producedFrames + frame) *
+          (probe.policy ? 0.5F : 1.0F);
     plane.chunk->offset = 0;
     plane.chunk->stride = sizeof(float);
     plane.chunk->size = frameCount * sizeof(float);
@@ -297,13 +321,14 @@ static void sinkStateChanged(void *data, pw_stream_state,
          error == nullptr ? "sink failed" : error);
 }
 
-static bool connectStream(pw_stream *stream, bool input) {
+static bool connectStream(pw_stream *stream, bool input, std::uint32_t channels,
+                           std::uint32_t extraFlags) {
   auto raw = spa_audio_info_raw{};
   raw.format = SPA_AUDIO_FORMAT_F32P;
   raw.rate = 48000;
-  raw.channels = input ? 2u : 4u;
+  raw.channels = channels;
   for (auto channel = 0u; channel < raw.channels; ++channel) {
-    if (input)
+    if (channels == 2)
       raw.position[channel] = channel == 0 ? SPA_AUDIO_CHANNEL_FL : SPA_AUDIO_CHANNEL_FR;
     else
       raw.position[channel] = SPA_AUDIO_CHANNEL_AUX0 + channel;
@@ -314,9 +339,108 @@ static bool connectStream(pw_stream *stream, bool input) {
   // Main-loop process callbacks keep failure reporting and termination out of
   // the real-time thread. This executable is a verification driver, not DSP.
   const auto flags = static_cast<pw_stream_flags>(PW_STREAM_FLAG_MAP_BUFFERS |
-      (input ? 0 : PW_STREAM_FLAG_AUTOCONNECT));
+      extraFlags);
   return pw_stream_connect(stream, input ? PW_DIRECTION_INPUT : PW_DIRECTION_OUTPUT,
                            PW_ID_ANY, flags, &format, 1) >= 0;
+}
+
+static void processorOutputProcess(void *data) {
+  auto &probe = *static_cast<Probe *>(data);
+  auto *input = pw_stream_dequeue_buffer(probe.processorInput);
+  if (input == nullptr) return;
+  auto *output = pw_stream_dequeue_buffer(probe.processorOutput);
+  if (output == nullptr) {
+    pw_stream_queue_buffer(probe.processorInput, input);
+    fail(probe, "processor has no output buffer");
+    return;
+  }
+  auto valid = input->buffer != nullptr && output->buffer != nullptr &&
+      input->buffer->n_datas == 2 && output->buffer->n_datas == 4;
+  auto frames = std::uint32_t{0};
+  for (auto channel = 0u; valid && channel < 4; ++channel) {
+    const auto &from = input->buffer->datas[channel % 2];
+    const auto &to = output->buffer->datas[channel];
+    valid = from.data != nullptr && from.chunk != nullptr && to.data != nullptr &&
+        to.chunk != nullptr && from.chunk->stride == static_cast<int>(sizeof(float)) &&
+        from.chunk->offset <= from.maxsize &&
+        from.chunk->size <= from.maxsize - from.chunk->offset &&
+        from.chunk->size <= to.maxsize;
+    if (!valid) break;
+    const auto channelFrames = from.chunk->size / static_cast<std::uint32_t>(sizeof(float));
+    if (channel == 0) frames = channelFrames;
+    else valid = frames == channelFrames;
+  }
+  if (valid) {
+    for (auto channel = 0u; channel < 4; ++channel) {
+      const auto &from = input->buffer->datas[channel % 2];
+      auto &to = output->buffer->datas[channel];
+      auto *samples = static_cast<float *>(to.data);
+      for (auto frame = 0u; frame < frames; ++frame) {
+        auto sample = 0.0F;
+        std::memcpy(&sample, static_cast<const char *>(from.data) +
+            from.chunk->offset + frame * sizeof(float), sizeof(float));
+        samples[frame] = sample == 0.0F ? 0.0F : sample * 2.0F +
+            (channel >= 2 ? 2.0F * kChannelOffset / kSampleScale : 0.0F);
+      }
+      to.chunk->offset = 0;
+      to.chunk->stride = sizeof(float);
+      to.chunk->size = frames * sizeof(float);
+    }
+    output->size = frames;
+    probe.processedFrames += frames;
+  }
+  pw_stream_queue_buffer(probe.processorOutput, output);
+  pw_stream_queue_buffer(probe.processorInput, input);
+  if (!valid) fail(probe, "processor did not receive compatible stereo input and four-channel output buffers");
+}
+
+static void processorInputProcess(void *data) {
+  auto &probe = *static_cast<Probe *>(data);
+  if (pw_stream_trigger_process(probe.processorOutput) >= 0) return;
+  // Like the product runtime, retire input while the output is still being
+  // connected. The always-process input may run before its output is ready.
+  while (auto *input = pw_stream_dequeue_buffer(probe.processorInput)) {
+    input->size = 0;
+    pw_stream_queue_buffer(probe.processorInput, input);
+  }
+}
+
+static bool createProcessor(Probe &probe) {
+  auto options = pipetune::FilterGraphPropertyOptions{
+      .nodeName = "pipetune_probe_processor",
+      .nodeDescription = "PipeTune probe processor",
+      .fixedSampleRate = 48000,
+      .channelCount = 2,
+      .forceRate = false};
+  const auto input = pipetune::makeFilterGraphProperties(options);
+  options.channelCount = 4;
+  const auto output = pipetune::makeFilterGraphProperties(options);
+  auto *inputProperties = pw_properties_new(nullptr, nullptr);
+  auto *outputProperties = pw_properties_new(nullptr, nullptr);
+  for (const auto &[key, value] : input.input)
+    pw_properties_set(inputProperties, key.c_str(), value.c_str());
+  for (const auto &[key, value] : output.output)
+    pw_properties_set(outputProperties, key.c_str(), value.c_str());
+  pw_properties_set(outputProperties, PW_KEY_TARGET_OBJECT, "pipetune_probe_combined");
+  pw_properties_set(outputProperties, "node.pipetune.managed-output", "true");
+  pw_properties_set(outputProperties, "node.dont-fallback", "true");
+  pw_properties_set(outputProperties, "node.dont-move", "true");
+  probe.processorInput = pw_stream_new(probe.core, "PipeTune probe processor input", inputProperties);
+  probe.processorOutput = pw_stream_new(probe.core, "PipeTune probe processor output", outputProperties);
+  if (probe.processorInput == nullptr || probe.processorOutput == nullptr) return false;
+  probe.processorInputEvents.version = PW_VERSION_STREAM_EVENTS;
+  probe.processorInputEvents.state_changed = sourceStateChanged;
+  probe.processorInputEvents.process = processorInputProcess;
+  probe.processorOutputEvents.version = PW_VERSION_STREAM_EVENTS;
+  probe.processorOutputEvents.state_changed = sourceStateChanged;
+  probe.processorOutputEvents.process = processorOutputProcess;
+  pw_stream_add_listener(probe.processorInput, &probe.processorInputListener,
+      &probe.processorInputEvents, &probe);
+  pw_stream_add_listener(probe.processorOutput, &probe.processorOutputListener,
+      &probe.processorOutputEvents, &probe);
+  return connectStream(probe.processorInput, true, 2, PW_STREAM_FLAG_ASYNC) &&
+      connectStream(probe.processorOutput, false, 4,
+          PW_STREAM_FLAG_TRIGGER | PW_STREAM_FLAG_AUTOCONNECT);
 }
 
 static void sinkParameterChanged(void *data, std::uint32_t id, const spa_pod *parameter) {
@@ -365,19 +489,100 @@ static bool createEndpoint(Probe &probe, std::uint32_t index) {
   endpoint.events.process = capture;
   endpoint.events.param_changed = sinkParameterChanged;
   pw_stream_add_listener(endpoint.stream, &endpoint.listener, &endpoint.events, &endpoint);
-  return connectStream(endpoint.stream, true);
+  return connectStream(endpoint.stream, true, 2, 0);
+}
+
+static int metadataChanged(void *data, std::uint32_t subject, const char *key,
+                            const char *, const char *value) {
+  auto &probe = *static_cast<Probe *>(data);
+  if (subject == 0 && key != nullptr)
+    probe.metadataValues[key] = value == nullptr ? "(removed)" : value;
+  if (subject == 0 && key != nullptr && value != nullptr &&
+      std::strcmp(key, "default.audio.sink") == 0) {
+    // Wait for the default-node policy to publish its first selection. On
+    // WirePlumber 0.4 the metadata global appears before that policy listens
+    // for changes to default.configured.audio.sink.
+    probe.defaultsReady = true;
+    selectDefaultOutput(probe);
+  }
+  if (subject == 0 && key != nullptr && value != nullptr &&
+      std::strcmp(key, "default.audio.sink") == 0 &&
+      std::string{value}.find("pipetune_probe_combined") != std::string::npos &&
+      probe.source == nullptr && !createSource(probe))
+    fail(probe, "cannot start playback on the default output");
+  return 0;
+}
+
+static void selectDefaultOutput(Probe &probe) {
+  if (!probe.policy || !probe.defaultsReady || probe.defaultRequested || probe.metadata == nullptr ||
+      probe.combinedNode == nullptr) return;
+  probe.defaultRequested = true;
+  if (pw_metadata_set_property(probe.metadata, 0, "default.configured.audio.sink",
+      "Spa:String:JSON", "{\"name\":\"pipetune_probe_combined\"}") < 0)
+    fail(probe, "cannot select the default combined output");
 }
 
 static void globalAdded(void *data, std::uint32_t id, std::uint32_t,
                         const char *type, std::uint32_t version,
                         const spa_dict *properties) {
   auto &probe = *static_cast<Probe *>(data);
+  if (properties == nullptr) return;
+  if (probe.policy && std::strcmp(type, PW_TYPE_INTERFACE_Node) == 0) {
+    const auto *name = spa_dict_lookup(properties, PW_KEY_NODE_NAME);
+    if (name != nullptr) probe.nodeNames[std::to_string(id)] = name;
+  }
+  if (probe.policy && std::strcmp(type, PW_TYPE_INTERFACE_Link) == 0) {
+    const auto *output = spa_dict_lookup(properties, PW_KEY_LINK_OUTPUT_NODE);
+    const auto *input = spa_dict_lookup(properties, PW_KEY_LINK_INPUT_NODE);
+    if (output != nullptr && input != nullptr)
+      probe.links[std::to_string(id)] = {output, input};
+    return;
+  }
+  if (probe.policy && std::strcmp(type, PW_TYPE_INTERFACE_Metadata) == 0) {
+    const auto *name = spa_dict_lookup(properties, PW_KEY_METADATA_NAME);
+    if (name == nullptr || std::strcmp(name, "default") != 0) return;
+    probe.metadata = static_cast<pw_metadata *>(pw_registry_bind(probe.registry, id,
+        PW_TYPE_INTERFACE_Metadata, std::min(version, std::uint32_t{PW_VERSION_METADATA}), 0));
+    if (probe.metadata == nullptr) {
+      fail(probe, "cannot bind default output metadata");
+      return;
+    }
+    probe.metadataEvents.version = PW_VERSION_METADATA_EVENTS;
+    probe.metadataEvents.property = metadataChanged;
+    pw_metadata_add_listener(probe.metadata, &probe.metadataListener, &probe.metadataEvents, &probe);
+    selectDefaultOutput(probe);
+    return;
+  }
   if (std::strcmp(type, PW_TYPE_INTERFACE_Node) != 0 || properties == nullptr) return;
   const auto *name = spa_dict_lookup(properties, PW_KEY_NODE_NAME);
   if (name == nullptr || std::strcmp(name, "pipetune_probe_combined") != 0) return;
   probe.combinedNode = static_cast<pw_node *>(pw_registry_bind(probe.registry, id,
       PW_TYPE_INTERFACE_Node, std::min(version, std::uint32_t{PW_VERSION_NODE}), 0));
   if (probe.combinedNode == nullptr) fail(probe, "cannot bind combined output controls");
+  else selectDefaultOutput(probe);
+}
+
+static void globalRemoved(void *data, std::uint32_t id) {
+  auto &probe = *static_cast<Probe *>(data);
+  probe.nodeNames.erase(std::to_string(id));
+  probe.links.erase(std::to_string(id));
+}
+
+static bool createSource(Probe &probe) {
+  auto *properties = pw_properties_new(
+      PW_KEY_NODE_NAME, "pipetune_probe_signal",
+      PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Playback",
+      PW_KEY_MEDIA_ROLE, probe.policy ? "Music" : "PipeTune-Probe",
+      "node.dont-fallback", "true", "node.dont-move", "true",
+      "stream.dont-remix", "true", nullptr);
+  if (!probe.policy) pw_properties_set(properties, PW_KEY_TARGET_OBJECT, "pipetune_probe_combined");
+  probe.source = pw_stream_new(probe.core, "PipeTune probe signal", properties);
+  if (probe.source == nullptr) return false;
+  probe.sourceEvents.version = PW_VERSION_STREAM_EVENTS;
+  probe.sourceEvents.state_changed = sourceStateChanged;
+  probe.sourceEvents.process = produce;
+  pw_stream_add_listener(probe.source, &probe.sourceListener, &probe.sourceEvents, &probe);
+  return connectStream(probe.source, false, probe.policy ? 2u : 4u, PW_STREAM_FLAG_AUTOCONNECT);
 }
 
 static bool prepare(Probe &probe) {
@@ -391,6 +596,7 @@ static bool prepare(Probe &probe) {
   if (probe.registry == nullptr) return false;
   probe.registryEvents.version = PW_VERSION_REGISTRY_EVENTS;
   probe.registryEvents.global = globalAdded;
+  probe.registryEvents.global_remove = globalRemoved;
   pw_registry_add_listener(probe.registry, &probe.registryListener,
                             &probe.registryEvents, &probe);
   for (auto index = 0u; index < probe.endpoints.size(); ++index) {
@@ -410,6 +616,7 @@ static bool prepare(Probe &probe) {
       node.dont-fallback = true
       node.dont-move = true
       media.role = PipeTune-Probe-Output
+      node.pipetune.managed-output = true
     }
     stream.rules = [
       { matches = [ { node.name = pipetune_probe_device_0 } ]
@@ -427,19 +634,9 @@ static bool prepare(Probe &probe) {
   probe.combine = pw_context_load_module(probe.context,
       "libpipewire-module-combine-stream", arguments.c_str(), nullptr);
   if (probe.combine == nullptr) return false;
-  probe.source = pw_stream_new(probe.core, "PipeTune probe signal", pw_properties_new(
-      PW_KEY_NODE_NAME, "pipetune_probe_signal",
-      PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Playback",
-      PW_KEY_MEDIA_ROLE, "PipeTune-Probe",
-      PW_KEY_TARGET_OBJECT, "pipetune_probe_combined",
-      "node.dont-fallback", "true", "node.dont-move", "true",
-      "stream.dont-remix", "true", nullptr));
-  if (probe.source == nullptr) return false;
-  probe.sourceEvents.version = PW_VERSION_STREAM_EVENTS;
-  probe.sourceEvents.state_changed = sourceStateChanged;
-  probe.sourceEvents.process = produce;
-  pw_stream_add_listener(probe.source, &probe.sourceListener, &probe.sourceEvents, &probe);
-  if (!connectStream(probe.source, false)) return false;
+  if (probe.policy) {
+    if (!createProcessor(probe)) return false;
+  } else if (!createSource(probe)) return false;
   probe.watchdog = pw_loop_add_timer(pw_main_loop_get_loop(probe.loop),
       [](void *data, std::uint64_t) {
         fail(*static_cast<Probe *>(data), "PipeWire graph did not complete before the watchdog");
@@ -454,6 +651,9 @@ static void destroy(Probe &probe) {
   if (probe.watchdog != nullptr)
     pw_loop_destroy_source(pw_main_loop_get_loop(probe.loop), probe.watchdog);
   if (probe.source != nullptr) pw_stream_destroy(probe.source);
+  if (probe.processorInput != nullptr) pw_stream_destroy(probe.processorInput);
+  if (probe.processorOutput != nullptr) pw_stream_destroy(probe.processorOutput);
+  if (probe.metadata != nullptr) pw_proxy_destroy(reinterpret_cast<pw_proxy *>(probe.metadata));
   if (probe.combinedNode != nullptr)
     pw_proxy_destroy(reinterpret_cast<pw_proxy *>(probe.combinedNode));
   if (probe.registry != nullptr)
@@ -471,17 +671,31 @@ int main(int argc, char **argv) {
   auto probe = Probe{};
   if (argc == 2 && std::string(argv[1]) == "reconnect") probe.reconnect = true;
   else if (argc == 2 && std::string(argv[1]) == "volume") probe.volume = true;
+  else if (argc == 2 && std::string(argv[1]) == "policy") probe.policy = true;
   else if (argc == 2 && (std::string(argv[1]) == "latency" || std::string(argv[1]) == "latency-off")) {
     probe.latency = true;
     probe.compensate = std::string(argv[1]) == "latency";
   }
   else if (argc > 2 || (argc == 2 && std::string(argv[1]) != "channels")) {
-    std::cerr << "Usage: pipetune_multi_device_output_probe [channels|reconnect|volume|latency|latency-off]\n";
+    std::cerr << "Usage: pipetune_multi_device_output_probe [channels|reconnect|volume|latency|latency-off|policy]\n";
     pw_deinit();
     return 2;
   }
   if (prepare(probe)) pw_main_loop_run(probe.loop);
   else probe.error = "cannot prepare multi-device output probe";
+  if (!probe.error.empty() && probe.policy) {
+    for (const auto &[key, value] : probe.metadataValues)
+      std::cerr << "Metadata " << key << ": " << value << '\n';
+    std::cerr << "Application stream: " << (probe.source == nullptr ? "not created" :
+        pw_stream_state_as_string(pw_stream_get_state(probe.source, nullptr))) << '\n';
+    for (const auto &[id, edge] : probe.links) {
+      const auto output = probe.nodeNames.find(edge.first);
+      const auto input = probe.nodeNames.find(edge.second);
+      std::cerr << "Link " << id << ": "
+          << (output == probe.nodeNames.end() ? edge.first : output->second) << " -> "
+          << (input == probe.nodeNames.end() ? edge.second : input->second) << '\n';
+    }
+  }
   destroy(probe);
   if (!probe.error.empty()) std::cerr << probe.error << '\n';
   // The virtual sinks share one driver clock. The stream-local tick counters
@@ -501,6 +715,8 @@ int main(int argc, char **argv) {
   }
   std::cout << "{\"success\":" << (probe.success ? "true" : "false")
             << ",\"channels\":4,\"producedFrames\":" << probe.producedFrames
+            << ",\"processedFrames\":" << probe.processedFrames
+            << ",\"inputChannels\":" << (probe.policy ? 2 : 4)
             << ",\"receivedFrames\":[" << probe.endpoints[0].receivedFrames << ','
             << probe.endpoints[1].receivedFrames << ',' << probe.endpoints[2].receivedFrames
             << "],\"channelErrors\":" << probe.channelErrors

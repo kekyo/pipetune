@@ -365,6 +365,18 @@ GTKの検証は既存のテスト基盤に追加する。ブラウザを介す�
 
 これは申告された固定遅延差に対する仮想環境での検証であり、独立クロック、動作中の遅延変更、実機のDAC出力時刻、製品UIからの補償量取得を確認した結果ではない。
 
+### フェーズ1: 既存の接続ポリシーを通るPCM経路
+
+`pipetune_multi_device_policy`を追加し、製品から生成したWirePlumber設定・スクリプトと、製品のフィルタノードプロパティを使って検証した。集約ノードを既定出力へ選び、接続先を指定しない通常のMusicストリームからステレオPCMを再生する。模擬DSPは入力を2倍し、追加の2chへ識別用の値を加える。各仮想出力で変換後の正確なPCMを65,536フレーム以上照合するため、DSPの迂回、チャンネル混合、重複接続も失敗になる。実際のEffeTuneプリセットを実行した検証ではない。
+
+WirePlumber 0.4では、既存endpointポリシーが集約ノードの出力ストリームを既定出力へ戻し、フィードバック接続を作ることを確認した。単にそのストリームを除外すると、endpointが存在する場合に標準のnodeポリシーも処理しないため、デバイスへ接続されない。PipeTuneが管理する出力に`node.pipetune.managed-output`を付け、endpointポリシーで`target.object`の名前またはシリアルにだけ接続する方式へ変更した。DSP出力も同じ方法で集約先へ固定する。対象が不在の場合は既定出力へ転送しない。管理対象以外の既定出力追従は維持する。[WirePlumber 0.4.17のnodeポリシー](https://github.com/PipeWire/wireplumber/blob/0.4.17/src/scripts/policy-node.lua)
+
+検証ドライバーは、WirePlumberが初回の`default.audio.sink`を通知してから既定出力を設定する。0.4ではmetadataオブジェクトの出現と、既定出力モジュールが変更通知を受け始める時点が異なるためである。固定時間の待機や再試行にはしない。[WirePlumber 0.4.17の既定出力管理](https://github.com/PipeWire/wireplumber/blob/0.4.17/modules/module-default-nodes.c)
+
+ホストのPipeWire 1.0.5 / WirePlumber 0.4.17で修正後のPCM検証と関連8件が成功した。PipeWire 1.4.2 / WirePlumber 0.5.8でも同じPCM検証が成功し、0.5のsmart filterへ追加の接続フックは不要だった。前述のlink groupに関するコード調査だけでは決めず、実際の経路と受信PCMによって確認した。ログは`policy-red.log`、`policy-graph.log`、`policy-04-metadata-ready.log`、`policy-04-green.log`、`policy-trixie-green.log`に保存した。
+
+この段階で確認したのは通常再生の経路であり、この経路での音量変更、切断・再接続、OS設定画面での可視性、異常終了時の復旧は引き続き検証する。
+
 ### 全体テストと残作業
 
 音量検証までを実装した段階で`make test`を実行し、169件中168件が成功した。GTK E2Eも成功した。1件の`pipetune_component_build`は、実行中のコミットによってGit履歴から求める版番号が変わり、先にビルドされた実行ファイルの版番号と一致しなかったため失敗した。コミット`36db494`で再構成・全ターゲットの再ビルドを行い、コミットを追加せずに同テストを再実行して成功した。製品コードやテストの比較条件を変更する対処は行っていない。

@@ -531,6 +531,29 @@ function handleFilter(filter)
   handleLinkable(filter)
 end
 
+function findManagedOutputTarget(si)
+  local node = si:get_associated_proxy("node")
+  if not node or not node.properties or
+      node.properties["node.pipetune.managed-output"] ~= "true" then
+    return false, nil
+  end
+
+  -- Multi-device outputs are pinned to one named target. Never send a
+  -- disconnected device's channels to the default sink or the aggregate.
+  local target = node.properties["target.object"]
+  if target then
+    for item in linkables_om:iterate() do
+      local target_node = item:get_associated_proxy("node")
+      local props = target_node and target_node.properties
+      if props and (props["node.name"] == target or
+          props["object.serial"] == target) then
+        return true, item
+      end
+    end
+  end
+  return true, nil
+end
+
 function handleLinkable (si)
   local si_props = si.properties
   local is_filter = (si_props["node.link-group"] ~= nil)
@@ -541,7 +564,10 @@ function handleLinkable (si)
   end
 
   -- find proper target item
-  local si_target = findUndefinedTarget (si)
+  local is_managed, si_target = findManagedOutputTarget(si)
+  if not is_managed then
+    si_target = findUndefinedTarget (si)
+  end
   if not si_target then
     Log.info (si, "... target item not found")
     return
@@ -637,6 +663,10 @@ linkables_om:connect("objects-changed", function (om)
 end)
 
 endpoints_om:connect("object-added", function (om)
+  scheduleRescan ()
+end)
+
+streams_om:connect("objects-changed", function (om)
   scheduleRescan ()
 end)
 

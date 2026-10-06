@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, watch, writeFileSync } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const [pipewire, wireplumber, driver, scenario = "channels"] = process.argv.slice(2);
+const [pipewire, wireplumber, driver, scenario = "channels", policyFixture] = process.argv.slice(2);
 assert.ok(pipewire && wireplumber && driver, "PipeWire, WirePlumber and probe paths are required");
 const version = spawnSync(wireplumber, ["--version"], { encoding: "utf8" });
 assert.equal(version.status, 0, version.stderr);
@@ -60,6 +60,27 @@ bluez_midi_monitor.enabled = false
   }
 }
 `);
+}
+
+if (scenario === "policy") {
+  assert.ok(policyFixture, "the PipeTune WirePlumber policy fixture is required");
+  const policy = (part) => {
+    const result = spawnSync(policyFixture, [part], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout;
+  };
+  if (/libwireplumber 0\.4\./u.test(version.stdout)) {
+    writeConfiguration("wireplumber/scripts/pipetune-node-visibility.lua", policy("visibility"));
+    writeConfiguration("wireplumber/policy.lua.d/60-pipetune-policy.lua", policy("configuration"));
+    writeConfiguration("wireplumber/scripts/pipetune-endpoint-client.lua", policy("endpoint-client"));
+    writeConfiguration("wireplumber/scripts/pipetune-endpoint-device.lua", policy("endpoint-device"));
+  } else {
+    mkdirSync(join(data, "wireplumber", "scripts"), { recursive: true });
+    writeFileSync(join(data, "wireplumber", "scripts", "pipetune-node-visibility.lua"),
+      policy("visibility"));
+    writeConfiguration("wireplumber/wireplumber.conf.d/60-pipetune-visibility.conf",
+      policy("visibility-configuration"));
+  }
 }
 
 const children = [];
@@ -121,6 +142,10 @@ try {
   assert.ok(report.receivedFrames[1] >= 65536, "device B must receive DSP channels 3 and 4");
   assert.equal(report.receivedFrames[2], 0, "an unselected output must receive no signal");
   assert.equal(report.channelErrors, 0, "received PCM must preserve channel identity and sample order");
+  if (scenario === "policy") {
+    assert.equal(report.inputChannels, 2, "desktop input must remain stereo");
+    assert.ok(report.processedFrames >= 65536, "default playback must pass through the processor");
+  }
   if (scenario === "reconnect") {
     assert.equal(report.reconnected, true, "a reconnected device must receive its original DSP channels");
     assert.ok(report.survivorFramesWhileDisconnected >= 8192,
