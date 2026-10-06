@@ -288,13 +288,14 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
   const auto result = pipetune::runPipeWirePipeline(
       std::move(prepared.pipeline),
       {.filterName = "pipetune_sink",
-       .filterDescription = "PipeTune Processed Audio",
+       .filterDescription = prepared.outputConfiguration.mode == pipetune::OutputMode::multiple
+           ? "PipeTune Multiple Outputs" : "PipeTune Processed Audio",
        .initialPresetPath = prepared.activePresetPath,
        .initialConfigurationError = prepared.configurationError,
        .controlSocketPath = socket.path,
        .dspSampleRate = initialDspSampleRate,
        .ratePolicy = prepared.ratePolicy,
-       .channelCount = 2,
+       .channelCount = pipetune::outputDspChannelCount(prepared.outputConfiguration),
        .maxFrames = kMaximumProcessFrames,
        .ringCapacityFrames = kRingCapacityFrames,
        .readyCallback = nullptr,
@@ -303,7 +304,9 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
        .configuredDspBackend = prepared.configuredDspBackend,
        .configuredDspSimdVariant =
            prepared.configuredDspSimdVariant,
-       .dspIdlePolicy = prepared.dspIdlePolicy},
+       .dspIdlePolicy = prepared.dspIdlePolicy,
+       .inputChannelCount = 2,
+       .outputConfiguration = std::move(prepared.outputConfiguration)},
       pipetune::PipeWireRunMode::untilInterrupted);
   if (!result.success) {
     std::cerr << "pipetune: " << result.error << '\n';

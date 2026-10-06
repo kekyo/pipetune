@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const [pipewire, wireplumber, driver, scenario = "channels", policyFixture,
-  pulseServer, pulseDriver] = process.argv.slice(2);
+  pulseServer, pulseDriver, productDaemon] = process.argv.slice(2);
 assert.ok(pipewire && wireplumber && driver, "PipeWire, WirePlumber and probe paths are required");
 const version = spawnSync(wireplumber, ["--version"], { encoding: "utf8" });
 assert.equal(version.status, 0, version.stderr);
@@ -128,7 +128,7 @@ const terminate = (record, signal) => {
 };
 const socketReady = async (socket) => {
   await new Promise((resolve, reject) => {
-    const observer = watch(runtime, () => { if (existsSync(socket)) finish(); });
+    const observer = watch(dirname(socket), () => { if (existsSync(socket)) finish(); });
     const timeout = setTimeout(() => finish(new Error(`isolated audio socket was not created: ${socket}`)), 15000);
     const finish = (error) => {
       clearTimeout(timeout);
@@ -168,7 +168,46 @@ try {
     await socketReady(join(runtime, "pulse-native"));
   }
   const manager = start("WirePlumber", "dbus-run-session", ["--", wireplumber]);
-  if (scenario.startsWith("product")) {
+  if (scenario === "product-daemon") {
+    assert.ok(productDaemon, "the product daemon executable is required");
+    environment.PIPETUNE_PRODUCT_INPUT = "pipetune_sink";
+    const socket = join(runtime, "pipetune", "control.sock");
+    mkdirSync(dirname(socket), { recursive: true });
+    const preset = join(directory, "saved.effetune_preset");
+    writeFileSync(preset, JSON.stringify({ pipeline: [
+      { name: "Matrix", enabled: true, channel: "All", parameters: { mx: "001102p13" } },
+    ] }));
+    const outputs = [0, 1].map((index) => {
+      const name = `pipetune_product_device_${index}`;
+      return { id: name, enabled: true, device: {
+        identity: { api: "node", location: name, port: name, vendor: "", product: "", serial: "" },
+        name, profile: "", channelPositions: ["FL", "FR"],
+      } };
+    });
+    const routing = { mode: "multiple", outputs, channels: outputs.flatMap((output) =>
+      [0, 1].map((deviceChannel) => ({ outputId: output.id, deviceChannel, label: "" }))) };
+    writeConfiguration("pipetune/environment", `PIPETUNE_PRESET=${JSON.stringify(preset)}\nPIPETUNE_RATE=48000\nPIPETUNE_OUTPUT=${JSON.stringify(JSON.stringify(routing))}\n`);
+    // Restart both the daemon and fixtures. The next run must recover saved
+    // routing after the devices have been recreated as new runtime objects.
+    for (let attempt = 0; attempt < 2; ++attempt) {
+      const audio = start("daemon audio fixture", driver, ["audio", scenario]);
+      await waitForMessage(audio, "product:devices-ready");
+      const daemon = start("product daemon", productDaemon, ["daemon", "--config", join(config, "pipetune", "environment")]);
+      await socketReady(socket);
+      const status = start("daemon status", driver, ["control", socket, JSON.stringify({ command: "status" })]);
+      assert.equal((await status.completion).code, 0, status.stderr);
+      const response = JSON.parse(status.stdout);
+      assert.equal(response.ok, true, status.stdout);
+      assert.equal(response.processingMode, "preset", status.stdout);
+      audio.child.kill("SIGUSR1");
+      assert.equal((await audio.completion).code, 0, `${audio.stdout}\n${audio.stderr}`);
+      const report = JSON.parse(audio.stdout);
+      assert.ok(report.receivedFrames.every((frames) => frames >= 32768));
+      terminate(daemon, "SIGTERM");
+      assert.equal((await daemon.completion).code, 0, daemon.stderr);
+      process.stdout.write(`${JSON.stringify({ attempt, ...report })}\n`);
+    }
+  } else if (scenario.startsWith("product")) {
     const audio = start("product audio fixture", driver, ["audio", scenario]);
     await waitForMessage(audio, "product:devices-ready");
     const preset = join(directory, "matrix.effetune_preset");

@@ -184,6 +184,20 @@ function findTargetEndpoint (node, media_class, role)
     -- The distribution outlives a public-input rate rebuild. Wait for that
     -- input instead of briefly routing application audio around the DSP.
     if aggregates_om:get_n_objects() > 0 then return nil end
+    local requested = node.properties["target.object"]
+    if requested and node.properties["node.dont-fallback"] == "true" then
+      local available = false
+      for target in target_nodes_om:iterate() do
+        local props = target.properties
+        if props["node.name"] == requested or props["object.serial"] == requested then
+          available = true
+          break
+        end
+      end
+      -- The daemon's control socket can be ready before its audio nodes.
+      -- A pinned application must wait for that target, not use the endpoint.
+      if not available then return nil end
+    end
   end
   local target_class_assoc = {
     ["Stream/Input/Audio"] = "Audio/Source",
@@ -337,15 +351,11 @@ function handleLinkable (si)
         return
       end
 
-      -- remove old link if active, otherwise schedule rescan
-      if ((link:get_active_features() & Feature.SessionItem.ACTIVE) ~= 0) then
-        link:remove ()
-        Log.info (si, "... moving to new target")
-      else
-        scheduleRescan ()
-        Log.info (si, "... scheduled rescan")
-        return
-      end
+      -- Remove the old target's link even if activation is still pending.
+      -- A public input can appear while the endpoint link is negotiating;
+      -- that obsolete link may never activate, so waiting prevents rerouting.
+      link:remove ()
+      Log.info (si, "... moving to new target")
     end
   end
 
@@ -373,6 +383,7 @@ function unhandleLinkable (si)
 end
 
 endpoints_om = ObjectManager { Interest { type = "SiEndpoint" }}
+target_nodes_om = ObjectManager { Interest { type = "node" } }
 aggregates_om = ObjectManager { Interest {
   type = "node",
   Constraint { "node.pipetune.aggregate", "=", "true", type = "pw" },
@@ -413,11 +424,16 @@ aggregates_om:connect("objects-changed", function ()
   scheduleSynchronizedRescan ()
 end)
 
+target_nodes_om:connect("objects-changed", function ()
+  scheduleSynchronizedRescan ()
+end)
+
 linkables_om:connect("object-removed", function (om, si)
   unhandleLinkable (si)
 end)
 
 endpoints_om:activate()
+target_nodes_om:activate()
 aggregates_om:activate()
 public_inputs_om:activate()
 linkables_om:activate()

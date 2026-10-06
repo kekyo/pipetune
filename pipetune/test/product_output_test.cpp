@@ -92,6 +92,7 @@ struct AudioTest {
   pw_core *core = nullptr;
   std::array<TestOutput, 3> outputs;
   pw_stream *source = nullptr;
+  std::string inputName = "pipetune_product_input";
   spa_hook sourceListener = {};
   bool matrix = false;
   bool slots = false;
@@ -383,7 +384,7 @@ static void startSource(void *data, int) {
   auto &test = *static_cast<AudioTest *>(data);
   if (test.source != nullptr) return fail(test, "source started twice");
   test.source = pw_stream_new(test.core, "Product test signal", pw_properties_new(
-      PW_KEY_NODE_NAME, "pipetune_product_signal", PW_KEY_TARGET_OBJECT, "pipetune_product_input",
+      PW_KEY_NODE_NAME, "pipetune_product_signal", PW_KEY_TARGET_OBJECT, test.inputName.c_str(),
       PW_KEY_MEDIA_CATEGORY, "Playback", PW_KEY_MEDIA_ROLE, "Music",
       // This fixture pins its target and waits across intentional rate
       // rebuilds. Without linger, WirePlumber 0.5 destroys a pinned stream
@@ -477,6 +478,7 @@ static void changeOutputGraph(void *data, std::uint64_t) {
 static int runAudio(std::string_view scenario) {
   pw_init(nullptr, nullptr);
   auto test = AudioTest{};
+  if (const auto *name = std::getenv("PIPETUNE_PRODUCT_INPUT")) test.inputName = name;
   test.matrix = scenario != "product-bypass";
   test.slots = scenario == "product-slots";
   test.volume = scenario == "product-volume";
@@ -517,7 +519,7 @@ static int runAudio(std::string_view scenario) {
       auto &test = *static_cast<AudioTest *>(data);
       if (std::strcmp(type, PW_TYPE_INTERFACE_Node) != 0 || props == nullptr || test.control != nullptr) return;
       const auto *name = spa_dict_lookup(props, PW_KEY_NODE_NAME);
-      if (name != nullptr && std::string_view(name) == "pipetune_product_input") {
+      if (name != nullptr && std::string_view(name) == test.inputName) {
         test.publicInputId = id;
         test.control = static_cast<pw_node *>(pw_registry_bind(test.registry, id, type, std::min<std::uint32_t>(version, PW_VERSION_NODE), 0));
         if (test.control == nullptr) return fail(test, "cannot observe master controls");

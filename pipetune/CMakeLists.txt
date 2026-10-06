@@ -827,6 +827,13 @@ if(BUILD_TESTING)
     set_tests_properties(pipetune_${scenario} PROPERTIES TIMEOUT 45)
   endforeach()
   add_test(
+    NAME pipetune_product-daemon
+    COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+      $<TARGET_FILE:pipetune_product_output_tests> product-daemon
+      $<TARGET_FILE:pipetune_wireplumber_policy_fixture> "" "" $<TARGET_FILE:pipetune>)
+  set_tests_properties(pipetune_product-daemon PROPERTIES TIMEOUT 45)
+  add_test(
     NAME pipetune_multi_device_output
     COMMAND
       ${PIPETUNE_NODE_EXECUTABLE}
