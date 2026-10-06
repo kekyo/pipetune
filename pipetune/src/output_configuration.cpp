@@ -21,13 +21,20 @@ std::string validateOutputConfiguration(const OutputConfiguration &configuration
   for (auto index = std::size_t{0}; index < configuration.outputs.size(); ++index) {
     const auto &output = configuration.outputs[index];
     const auto &device = output.device;
+    // PipeWire properties use NUL-terminated strings. Never let a saved
+    // identity or label change meaning when passed to that boundary.
+    for (const auto *field : {&output.id, &device.name, &device.profile,
+         &device.identity.api, &device.identity.location, &device.identity.port,
+         &device.identity.vendor, &device.identity.product, &device.identity.serial}) {
+      if (field->find('\0') != std::string::npos) return "output fields must not contain NUL";
+    }
     if (output.id.empty() || assigned.contains(output.id))
       return "configured output identifiers must be nonempty and unique";
     if (device.identity.api.empty() || device.identity.location.empty() || device.identity.port.empty())
       return "configured output requires a stable API, location, and output identifier";
     if (device.name.empty() || device.channelPositions.empty() || device.channelPositions.size() > 16 ||
         std::any_of(device.channelPositions.begin(), device.channelPositions.end(),
-            [](const auto &position) { return position.empty(); }))
+            [](const auto &position) { return position.empty() || position.find('\0') != std::string::npos; }))
       return "configured output requires a name and one through sixteen channel positions";
     for (auto previous = std::size_t{0}; previous < index; ++previous) {
       const auto &other = configuration.outputs[previous].device;
@@ -38,6 +45,8 @@ std::string validateOutputConfiguration(const OutputConfiguration &configuration
     enabled = enabled || output.enabled;
   }
   for (const auto &slot : configuration.channels) {
+    if (slot.outputId.find('\0') != std::string::npos || slot.label.find('\0') != std::string::npos)
+      return "output channel fields must not contain NUL";
     if (slot.outputId.empty()) {
       if (slot.deviceChannel != 0) return "an unassigned slot must not reference a device channel";
       continue;

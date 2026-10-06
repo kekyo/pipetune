@@ -31,6 +31,7 @@ constexpr auto kDspIdleTimeoutAssignment =
 constexpr auto kRateAssignment = std::string_view{"PIPETUNE_RATE="};
 constexpr auto kRateEnforcementAssignment =
     std::string_view{"PIPETUNE_RATE_ENFORCEMENT="};
+constexpr auto kOutputAssignment = std::string_view{"PIPETUNE_OUTPUT="};
 constexpr auto kMaximumConfigBytes = std::size_t{64 * 1024};
 
 static std::string systemError(std::string_view operation) {
@@ -242,6 +243,15 @@ std::string saveStartupConfig(const std::filesystem::path &configPath,
                   config.ratePolicy.enforcement)) +
               "\n";
 
+  const auto outputError = validateOutputConfiguration(config.outputConfiguration);
+  if (!outputError.empty()) return outputError;
+  const auto outputJson = formatOutputConfiguration(config.outputConfiguration);
+  if (outputJson.empty()) return "cannot encode output configuration";
+  contents += std::string(kOutputAssignment) + encodeConfigValue(outputJson) + "\n";
+  // Account for environment quoting as well as JSON escaping before replacing
+  // the previous snapshot; the loader must be able to read everything we save.
+  if (contents.size() > kMaximumConfigBytes) return "startup configuration exceeds 64 KiB";
+
   auto filesystemError = std::error_code{};
   const auto directory = configPath.parent_path();
   if (directory.empty()) {
@@ -333,6 +343,7 @@ loadStartupConfig(const std::filesystem::path &configPath) {
   auto dspIdleTimeoutFound = false;
   auto rateFound = false;
   auto enforcementFound = false;
+  auto outputFound = false;
   auto offset = std::size_t{0};
   while (offset <= contents.size()) {
     const auto end = contents.find('\n', offset);
@@ -415,6 +426,15 @@ loadStartupConfig(const std::filesystem::path &configPath) {
           return fail("sample-rate enforcement assignment is invalid");
         }
         enforcementFound = true;
+      } else if (line.starts_with(kOutputAssignment)) {
+        if (outputFound) return fail("startup configuration contains duplicate PIPETUNE_OUTPUT assignments");
+        auto decoded = std::string{};
+        if (!decodeConfigValue(line.substr(kOutputAssignment.size()), decoded))
+          return fail("output configuration assignment is invalid");
+        auto parsed = parseOutputConfiguration(decoded);
+        if (!parsed.error.empty()) return fail(parsed.error);
+        config.outputConfiguration = std::move(parsed.configuration);
+        outputFound = true;
       } else {
         return fail("startup configuration contains an unsupported line");
       }

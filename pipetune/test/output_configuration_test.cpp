@@ -134,10 +134,68 @@ static bool testDspWidth() {
                "a mono output must not shrink the stereo DSP input");
 }
 
+static bool testJsonRoundTrip() {
+  auto configuration = twoOutputs();
+  configuration.outputs[0].enabled = false;
+  configuration.outputs[1].device.name = "USB \"右\" \\ output\nsecond line";
+  configuration.outputs[1].device.identity.serial.clear();
+  configuration.channels.insert(configuration.channels.begin() + 2, {"", 0, "Reserved"});
+  configuration.channels.resize(16);
+  configuration.channels[0].label = "メイン左\t\"near\"";
+  for (const auto mode : {pipetune::OutputMode::multiple, pipetune::OutputMode::single}) {
+    configuration.mode = mode;
+    const auto json = pipetune::formatOutputConfiguration(configuration);
+    const auto parsed = pipetune::parseOutputConfiguration(json);
+    if (!check(!json.empty() && json.find('\n') == std::string::npos, "output JSON must be a single line") ||
+        !check(parsed.error.empty() && parsed.configuration == configuration,
+               "all saved identities, slots, labels and disabled devices must round-trip")) return false;
+  }
+  const auto defaults = pipetune::parseOutputConfiguration(R"({"mode":"single","outputs":[],"channels":[]})");
+  return check(defaults.error.empty() && defaults.configuration == pipetune::OutputConfiguration{},
+               "explicit empty single mode must decode to defaults");
+}
+
+static bool testRejectedJson() {
+  const auto mono = std::string{R"({"mode":"multiple","outputs":[{"id":"a","enabled":true,"device":{"identity":{"api":"alsa","location":"usb:1","port":"pcm:0:0","vendor":"","product":"","serial":""},"name":"DAC","profile":"","channelPositions":["MONO"]}}],"channels":[{"outputId":"a","deviceChannel":0,"label":""}]})"};
+  if (!check(pipetune::parseOutputConfiguration(mono).error.empty(), "a complete mono configuration must be accepted")) return false;
+  for (const auto &[from, to] : std::vector<std::pair<std::string, std::string>>{
+      {"\"multiple\"", "\"mirror\""}, {"\"multiple\"", "false"},
+      {"\"enabled\":true", "\"enabled\":1"}, {"\"enabled\":true,", ""},
+      {"\"name\":\"DAC\"", "\"name\":\"A\",\"name\":\"B\""},
+      {"\"serial\":\"\"", "\"serial\":null"}, {"\"serial\":\"\"", "\"nodeId\":2"},
+      {"\"location\":\"usb:1\"", "\"location\":\"usb\\u00001\""},
+      {"\"MONO\"", "1"}, {"\"deviceChannel\":0", "\"deviceChannel\":1"},
+      {"\"deviceChannel\":0", "\"deviceChannel\":-1"},
+      {"\"deviceChannel\":0", "\"deviceChannel\":0.5"},
+      {"\"deviceChannel\":0", "\"deviceChannel\":4294967296"},
+      {"\"outputId\":\"a\"", "\"outputId\":\"missing\""},
+      {"\"label\":\"\"", "\"label\":false"}}) {
+    auto invalid = mono;
+    invalid.replace(invalid.find(from), from.size(), to);
+    const auto parsed = pipetune::parseOutputConfiguration(invalid);
+    if (!check(!parsed.error.empty() && parsed.configuration == pipetune::OutputConfiguration{},
+               "invalid output JSON must fail without returning partial routing: " + to)) return false;
+  }
+  for (const auto json : {"", "[]", "{}", "null", R"({"mode":"single","outputs":[],"channels":[],"extra":1})",
+       R"({"mode":"single","outputs":[],"channels":[],"mode":"single"})",
+       R"({"mode":"single","outputs":[],"channels":[]}{})"}) {
+    if (!check(!pipetune::parseOutputConfiguration(json).error.empty(), "malformed or extra output fields must fail")) return false;
+  }
+  auto invalid = twoOutputs();
+  invalid.channels.pop_back();
+  if (!check(pipetune::formatOutputConfiguration(invalid).empty(), "encoding must reject incomplete mappings")) return false;
+  invalid = twoOutputs();
+  invalid.outputs[0].device.identity.location.push_back('\0');
+  return check(!pipetune::validateOutputConfiguration(invalid).empty() &&
+               pipetune::formatOutputConfiguration(invalid).empty(), "embedded NUL must not be truncated into a different device identity");
+}
+
 int main() {
   auto success = testValidation();
   success = testAppendingAndReservations() && success;
   success = testResolution() && success;
   success = testDspWidth() && success;
+  success = testJsonRoundTrip() && success;
+  success = testRejectedJson() && success;
   return success ? 0 : 1;
 }

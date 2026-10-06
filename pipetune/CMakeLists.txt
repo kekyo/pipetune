@@ -183,6 +183,7 @@ add_library(
   src/generated_fir_asset.cpp
   src/measurement_store.cpp
   src/output_configuration.cpp
+  src/output_configuration_json.cpp
   src/crosstalk_fir.cpp
   src/sample_rate.cpp
   src/startup_config.cpp

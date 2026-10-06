@@ -11,6 +11,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace pipetune {
@@ -141,6 +142,21 @@ struct ResolvedOutput {
  * @return Empty on success, otherwise a diagnostic without modifying input.
  */
 std::string validateOutputConfiguration(const OutputConfiguration &configuration);
+
+/**
+ * Encodes persistent routing choices as compact UTF-8 JSON.
+ * @param configuration Complete routing choices, including reserved slots.
+ * @return JSON on success, or empty for invalid settings or an encoding error.
+ */
+std::string formatOutputConfiguration(const OutputConfiguration &configuration);
+
+/**
+ * Decodes and validates a complete persistent routing configuration.
+ * @param json UTF-8 JSON with explicit mode, outputs, and channel slots.
+ * @return Valid configuration, or default single mode and a diagnostic.
+ * @remarks Unknown, duplicate, missing, and incorrectly typed fields fail.
+ */
+OutputConfigurationResult parseOutputConfiguration(std::string_view json);
 
 /**
  * Appends every channel of an output without reusing reserved slots.
