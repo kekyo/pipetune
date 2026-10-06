@@ -819,6 +819,18 @@ if(BUILD_TESTING)
       $<TARGET_FILE:pipetune_multi_device_output_probe>
       volume)
   set_tests_properties(pipetune_multi_device_volume PROPERTIES TIMEOUT 60)
+  foreach(scenario IN ITEMS latency latency-off)
+    add_test(
+      NAME pipetune_multi_device_${scenario}
+      COMMAND
+        ${PIPETUNE_NODE_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+        ${PIPETUNE_PIPEWIRE_EXECUTABLE}
+        ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+        $<TARGET_FILE:pipetune_multi_device_output_probe>
+        ${scenario})
+    set_tests_properties(pipetune_multi_device_${scenario} PROPERTIES TIMEOUT 60)
+  endforeach()
   add_executable(
     pipetune_wireplumber_policy_fixture
     test/wireplumber_policy_fixture.cpp)

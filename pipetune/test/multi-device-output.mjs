@@ -136,9 +136,14 @@ try {
     }
     assert.equal(report.volumeFrames.length, 2);
   }
+  if (scenario === "latency" || scenario === "latency-off") {
+    assert.equal(report.declaredLatencyFrames, 63);
+    assert.equal(report.observedCompensationFrames, scenario === "latency" ? 63 : 0,
+      "PCM timing must reflect whether compensation is enabled");
+  }
   process.stdout.write(`${version.stdout.trim()}\n${JSON.stringify(report)}\n`);
 } catch (error) {
-  for (const child of children) process.stderr.write(`${child.name}:\n${child.stderr}\n`);
+  for (const child of children) process.stderr.write(`${child.name}:\n${child.stdout}${child.stderr}\n`);
   throw error;
 } finally {
   for (const record of [...children].reverse()) {

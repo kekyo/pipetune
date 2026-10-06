@@ -6,6 +6,7 @@
 #include <pipewire/pipewire.h>
 #include <pipewire/impl-module.h>
 #include <spa/param/audio/format-utils.h>
+#include <spa/param/latency-utils.h>
 #include <spa/param/props.h>
 
 #include <algorithm>
@@ -17,6 +18,10 @@
 #include <string>
 
 struct Probe;
+
+constexpr auto kTagPeriod = std::uint32_t{524287};
+constexpr auto kChannelOffset = std::uint32_t{524288};
+constexpr auto kSampleScale = 268435456.0F;
 
 enum class Phase { initial, disconnected, reconnected, attenuated, muted, restored };
 
@@ -30,6 +35,8 @@ struct Endpoint {
   std::uint64_t attenuatedFrames = 0;
   std::uint64_t mutedFrames = 0;
   std::uint64_t restoredFrames = 0;
+  std::int64_t lastGraphNanoseconds = 0;
+  std::uint32_t lastBlockFrames = 0;
   int previousTag = -1;
   bool selected = true;
   bool awaitingSignal = true;
@@ -56,6 +63,8 @@ struct Probe {
   Phase phase = Phase::initial;
   bool reconnect = false;
   bool volume = false;
+  bool latency = false;
+  bool compensate = true;
   bool success = false;
   std::string error;
 };
@@ -67,12 +76,14 @@ static void fail(Probe &probe, const std::string &message) {
   pw_main_loop_quit(probe.loop);
 }
 
-// A channel-specific offset identifies the channel, and a modulo-127 tag
+// A channel-specific offset identifies the channel, and a modulo-524287 tag
 // identifies consecutive frames without depending on startup silence length.
 // Values are exactly representable in float32 and remain below 0.034 FS.
+// The period exceeds the producer's watchdog frame limit, so a long delay
+// cannot alias a short delay in the latency comparison.
 static float sampleValue(std::uint32_t channel, std::uint64_t frame) {
-  return static_cast<float>((channel + 1u) * 512u + frame % 127u) /
-         65536.0F;
+  return static_cast<float>((channel + 1u) * kChannelOffset + frame % kTagPeriod) /
+         kSampleScale;
 }
 
 static bool setVolume(Probe &probe, float gain, bool mute) {
@@ -118,12 +129,12 @@ static bool validateFrame(Endpoint &endpoint, const std::array<float, 2> &sample
     if (endpoint.mutedFrames != 0) return false;
     gain = 0.25F;
   }
-  const auto tag = static_cast<int>(std::lround(samples[0] / gain * 65536.0F)) -
-                   static_cast<int>((endpoint.firstChannel + 1u) * 512u);
-  if (tag < 0 || tag >= 127 ||
+  const auto tag = static_cast<int>(std::lround(samples[0] / gain * kSampleScale)) -
+                   static_cast<int>((endpoint.firstChannel + 1u) * kChannelOffset);
+  if (tag < 0 || tag >= static_cast<int>(kTagPeriod) ||
       samples[0] != sampleValue(endpoint.firstChannel, tag) * gain ||
       samples[1] != sampleValue(endpoint.firstChannel + 1, tag) * gain ||
-      (endpoint.previousTag != -1 && tag != (endpoint.previousTag + 1) % 127))
+      (endpoint.previousTag != -1 && tag != (endpoint.previousTag + 1) % static_cast<int>(kTagPeriod)))
     return false;
   endpoint.previousTag = tag;
   if (phase == Phase::attenuated && gain == 0.25F) ++endpoint.attenuatedFrames;
@@ -155,6 +166,17 @@ static void capture(void *data) {
     }
     frameCount = std::min(frameCount, plane.chunk->size /
                                         static_cast<std::uint32_t>(sizeof(float)));
+  }
+  if (probe.latency) {
+    auto time = pw_time{};
+    if (pw_stream_get_time_n(endpoint.stream, &time, sizeof(time)) < 0 ||
+        time.rate.num != 1 || time.rate.denom != 48000) {
+      pw_stream_queue_buffer(endpoint.stream, queued);
+      fail(probe, "capture did not provide the expected graph timeline");
+      return;
+    }
+    endpoint.lastGraphNanoseconds = time.now;
+    endpoint.lastBlockFrames = frameCount;
   }
   for (auto frame = 0u; frame < frameCount; ++frame) {
     auto samples = std::array<float, 2>{};
@@ -297,6 +319,31 @@ static bool connectStream(pw_stream *stream, bool input) {
                            PW_ID_ANY, flags, &format, 1) >= 0;
 }
 
+static void sinkParameterChanged(void *data, std::uint32_t id, const spa_pod *parameter) {
+  auto &endpoint = *static_cast<Endpoint *>(data);
+  if (!endpoint.probe->latency || (id != SPA_PARAM_Latency && id != SPA_PARAM_Format)) return;
+  auto storage = std::array<std::uint8_t, 1024>{};
+  auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
+  auto latency = spa_latency_info{};
+  latency.direction = SPA_DIRECTION_INPUT;
+  latency.min_rate = latency.max_rate = endpoint.firstChannel == 2 ? 63 : 0;
+  auto parameters = std::array<const spa_pod *, 2>{};
+  parameters[0] = spa_latency_build(&builder, SPA_PARAM_Latency, &latency);
+  auto upstream = spa_latency_info{};
+  // Latency negotiation can replace the port's parameter list. Publish both
+  // the sink's fixed downstream delay and the newly received upstream delay.
+  if (parameter != nullptr && id == SPA_PARAM_Latency &&
+      spa_latency_parse(parameter, &upstream) >= 0 && upstream.direction == SPA_DIRECTION_OUTPUT)
+    parameters[1] = parameter;
+  else {
+    upstream = {};
+    upstream.direction = SPA_DIRECTION_OUTPUT;
+    parameters[1] = spa_latency_build(&builder, SPA_PARAM_Latency, &upstream);
+  }
+  if (pw_stream_update_params(endpoint.stream, parameters.data(), parameters.size()) < 0)
+    fail(*endpoint.probe, "cannot publish simulated output latency");
+}
+
 static bool createEndpoint(Probe &probe, std::uint32_t index) {
   auto &endpoint = probe.endpoints[index];
   endpoint.probe = &probe;
@@ -316,6 +363,7 @@ static bool createEndpoint(Probe &probe, std::uint32_t index) {
   endpoint.events.version = PW_VERSION_STREAM_EVENTS;
   endpoint.events.state_changed = sinkStateChanged;
   endpoint.events.process = capture;
+  endpoint.events.param_changed = sinkParameterChanged;
   pw_stream_add_listener(endpoint.stream, &endpoint.listener, &endpoint.events, &endpoint);
   return connectStream(endpoint.stream, true);
 }
@@ -348,11 +396,11 @@ static bool prepare(Probe &probe) {
   for (auto index = 0u; index < probe.endpoints.size(); ++index) {
     if (!createEndpoint(probe, index)) return false;
   }
-  const auto *arguments = R"conf(
+  const auto arguments = std::string{"combine.latency-compensate = "} +
+      (probe.compensate ? "true\n" : "false\n") + R"conf(
     combine.mode = sink
     node.name = pipetune_probe_combined
     node.description = "PipeTune multi-device output probe"
-    combine.latency-compensate = true
     combine.props = {
       audio.position = [ AUX0 AUX1 AUX2 AUX3 ]
       node.virtual = true
@@ -377,7 +425,7 @@ static bool prepare(Probe &probe) {
     ]
   )conf";
   probe.combine = pw_context_load_module(probe.context,
-      "libpipewire-module-combine-stream", arguments, nullptr);
+      "libpipewire-module-combine-stream", arguments.c_str(), nullptr);
   if (probe.combine == nullptr) return false;
   probe.source = pw_stream_new(probe.core, "PipeTune probe signal", pw_properties_new(
       PW_KEY_NODE_NAME, "pipetune_probe_signal",
@@ -423,8 +471,12 @@ int main(int argc, char **argv) {
   auto probe = Probe{};
   if (argc == 2 && std::string(argv[1]) == "reconnect") probe.reconnect = true;
   else if (argc == 2 && std::string(argv[1]) == "volume") probe.volume = true;
+  else if (argc == 2 && (std::string(argv[1]) == "latency" || std::string(argv[1]) == "latency-off")) {
+    probe.latency = true;
+    probe.compensate = std::string(argv[1]) == "latency";
+  }
   else if (argc > 2 || (argc == 2 && std::string(argv[1]) != "channels")) {
-    std::cerr << "Usage: pipetune_multi_device_output_probe [channels|reconnect|volume]\n";
+    std::cerr << "Usage: pipetune_multi_device_output_probe [channels|reconnect|volume|latency|latency-off]\n";
     pw_deinit();
     return 2;
   }
@@ -432,6 +484,21 @@ int main(int argc, char **argv) {
   else probe.error = "cannot prepare multi-device output probe";
   destroy(probe);
   if (!probe.error.empty()) std::cerr << probe.error << '\n';
+  // The virtual sinks share one driver clock. The stream-local tick counters
+  // can have different origins when activation happens in different cycles.
+  // Compare snapshots using their common monotonic timestamp instead.
+  auto compensation = std::uint64_t{0};
+  if (probe.latency && probe.endpoints[0].previousTag >= 0 && probe.endpoints[1].previousTag >= 0) {
+    const auto &first = probe.endpoints[0];
+    const auto &second = probe.endpoints[1];
+    const auto frameDifference = std::llround(
+        static_cast<double>(first.lastGraphNanoseconds - second.lastGraphNanoseconds) *
+        48000.0 / 1000000000.0) + static_cast<std::int64_t>(first.lastBlockFrames) -
+        static_cast<std::int64_t>(second.lastBlockFrames);
+    const auto phaseDifference = frameDifference % kTagPeriod + 2 * kTagPeriod +
+        second.previousTag - first.previousTag;
+    compensation = static_cast<std::uint64_t>(phaseDifference % kTagPeriod);
+  }
   std::cout << "{\"success\":" << (probe.success ? "true" : "false")
             << ",\"channels\":4,\"producedFrames\":" << probe.producedFrames
             << ",\"receivedFrames\":[" << probe.endpoints[0].receivedFrames << ','
@@ -439,6 +506,8 @@ int main(int argc, char **argv) {
             << "],\"channelErrors\":" << probe.channelErrors
             << ",\"reconnected\":" << (probe.phase == Phase::reconnected ? "true" : "false")
             << ",\"survivorFramesWhileDisconnected\":" << probe.survivorFramesWhileDisconnected
+            << ",\"declaredLatencyFrames\":" << (probe.latency ? 63 : 0)
+            << ",\"observedCompensationFrames\":" << compensation
             << ",\"volumeFrames\":[";
   for (auto index = 0u; index < 2; ++index) {
     if (index != 0) std::cout << ',';
