@@ -839,17 +839,19 @@ if(BUILD_TESTING)
     pipetune_wireplumber_policy_fixture PRIVATE src)
   target_link_libraries(
     pipetune_wireplumber_policy_fixture PRIVATE pipetune_pipewire)
-  add_test(
-    NAME pipetune_multi_device_policy
-    COMMAND
-      ${PIPETUNE_NODE_EXECUTABLE}
-      ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
-      ${PIPETUNE_PIPEWIRE_EXECUTABLE}
-      ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
-      $<TARGET_FILE:pipetune_multi_device_output_probe>
-      policy
-      $<TARGET_FILE:pipetune_wireplumber_policy_fixture>)
-  set_tests_properties(pipetune_multi_device_policy PROPERTIES TIMEOUT 60)
+  foreach(scenario policy policy-volume policy-reconnect)
+    add_test(
+      NAME pipetune_multi_device_${scenario}
+      COMMAND
+        ${PIPETUNE_NODE_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+        ${PIPETUNE_PIPEWIRE_EXECUTABLE}
+        ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+        $<TARGET_FILE:pipetune_multi_device_output_probe>
+        ${scenario}
+        $<TARGET_FILE:pipetune_wireplumber_policy_fixture>)
+    set_tests_properties(pipetune_multi_device_${scenario} PROPERTIES TIMEOUT 60)
+  endforeach()
   if(MSVC)
     target_compile_options(
       pipetune_wireplumber_policy_fixture PRIVATE /W4 /WX)

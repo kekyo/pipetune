@@ -672,12 +672,21 @@ int main(int argc, char **argv) {
   if (argc == 2 && std::string(argv[1]) == "reconnect") probe.reconnect = true;
   else if (argc == 2 && std::string(argv[1]) == "volume") probe.volume = true;
   else if (argc == 2 && std::string(argv[1]) == "policy") probe.policy = true;
+  else if (argc == 2 && std::string(argv[1]) == "policy-volume") {
+    probe.policy = true;
+    probe.volume = true;
+  }
+  else if (argc == 2 && std::string(argv[1]) == "policy-reconnect") {
+    probe.policy = true;
+    probe.reconnect = true;
+  }
   else if (argc == 2 && (std::string(argv[1]) == "latency" || std::string(argv[1]) == "latency-off")) {
     probe.latency = true;
     probe.compensate = std::string(argv[1]) == "latency";
   }
   else if (argc > 2 || (argc == 2 && std::string(argv[1]) != "channels")) {
-    std::cerr << "Usage: pipetune_multi_device_output_probe [channels|reconnect|volume|latency|latency-off|policy]\n";
+    std::cerr << "Usage: pipetune_multi_device_output_probe "
+        "[channels|reconnect|volume|latency|latency-off|policy|policy-volume|policy-reconnect]\n";
     pw_deinit();
     return 2;
   }

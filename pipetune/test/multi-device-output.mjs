@@ -62,7 +62,7 @@ bluez_midi_monitor.enabled = false
 `);
 }
 
-if (scenario === "policy") {
+if (scenario.startsWith("policy")) {
   assert.ok(policyFixture, "the PipeTune WirePlumber policy fixture is required");
   const policy = (part) => {
     const result = spawnSync(policyFixture, [part], { encoding: "utf8" });
@@ -142,18 +142,18 @@ try {
   assert.ok(report.receivedFrames[1] >= 65536, "device B must receive DSP channels 3 and 4");
   assert.equal(report.receivedFrames[2], 0, "an unselected output must receive no signal");
   assert.equal(report.channelErrors, 0, "received PCM must preserve channel identity and sample order");
-  if (scenario === "policy") {
+  if (scenario.startsWith("policy")) {
     assert.equal(report.inputChannels, 2, "desktop input must remain stereo");
     assert.ok(report.processedFrames >= 65536, "default playback must pass through the processor");
   }
-  if (scenario === "reconnect") {
+  if (scenario === "reconnect" || scenario === "policy-reconnect") {
     assert.equal(report.reconnected, true, "a reconnected device must receive its original DSP channels");
     assert.ok(report.survivorFramesWhileDisconnected >= 8192,
       "the remaining device must continue receiving its original DSP channels");
     assert.ok(report.receivedFrames[0] >= 131072, "device A must receive PCM before and after reconnecting");
     assert.ok(report.receivedFrames[1] >= 131072, "device B must remain routed while device A reconnects");
   }
-  if (scenario === "volume") {
+  if (scenario === "volume" || scenario === "policy-volume") {
     for (const output of report.volumeFrames) {
       assert.ok(output.attenuated >= 8192, "master volume must attenuate every selected output");
       assert.ok(output.muted >= 8192, "master mute must silence every selected output");

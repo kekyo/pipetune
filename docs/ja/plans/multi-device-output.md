@@ -375,7 +375,9 @@ WirePlumber 0.4では、既存endpointポリシーが集約ノードの出力ス
 
 ホストのPipeWire 1.0.5 / WirePlumber 0.4.17で修正後のPCM検証と関連8件が成功した。PipeWire 1.4.2 / WirePlumber 0.5.8でも同じPCM検証が成功し、0.5のsmart filterへ追加の接続フックは不要だった。前述のlink groupに関するコード調査だけでは決めず、実際の経路と受信PCMによって確認した。ログは`policy-red.log`、`policy-graph.log`、`policy-04-metadata-ready.log`、`policy-04-green.log`、`policy-trixie-green.log`に保存した。
 
-この段階で確認したのは通常再生の経路であり、この経路での音量変更、切断・再接続、OS設定画面での可視性、異常終了時の復旧は引き続き検証する。
+続いて`pipetune_multi_device_policy-volume`と`pipetune_multi_device_policy-reconnect`を追加し、両環境で成功した。前者は模擬DSPによる加算も含めたPCM全体が0.25倍になること、ミュートと解除が両出力へ反映されることを各8,192フレーム以上照合する。後者は片方の切断中も残った出力が元の番号で継続し、再接続後に両出力が累計131,072フレーム以上を受け取ることを確認する。ログは`policy-transitions-red.log`、`policy-transitions-green.log`、`policy-transitions-trixie.log`に保存した。
+
+この段階では入力、模擬DSP、仮想出力は同じPipeWireクライアントから生成している。別クライアントからの再生、OS設定画面での可視性、異常終了時の復旧は引き続き検証する。
 
 ### 全体テストと残作業
 
