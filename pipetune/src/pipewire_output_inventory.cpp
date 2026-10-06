@@ -6,6 +6,7 @@
 #include "pipewire_output_inventory.h"
 
 #include <pipewire/pipewire.h>
+#include <pipewire/extensions/metadata.h>
 #include <spa/param/audio/raw-types.h>
 #include <spa/param/format.h>
 #include <spa/param/port-config.h>
@@ -14,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cerrno>
 #include <cstring>
 #include <map>
 #include <optional>
@@ -50,6 +52,8 @@ struct PipeWireOutputInventory {
   OutputInventoryCallback callback = nullptr;
   void *userData = nullptr;
   int pending = 0;
+  std::uint32_t defaultMetadataId = PW_ID_ANY;
+  std::uint64_t policyGeneration = 0;
 };
 
 static void updateProperties(InventoryProperties &properties, const spa_dict *dictionary) {
@@ -242,6 +246,11 @@ static void globalAdded(void *data, std::uint32_t id, std::uint32_t permissions,
                         const char *type, std::uint32_t version, const spa_dict *props) {
   auto &inventory = *static_cast<PipeWireOutputInventory *>(data);
   if ((permissions & PW_PERM_R) == 0) return;
+  if (std::strcmp(type, PW_TYPE_INTERFACE_Metadata) == 0 && props != nullptr) {
+    const auto *name = spa_dict_lookup(props, PW_KEY_METADATA_NAME);
+    if (name != nullptr && std::strcmp(name, "default") == 0) inventory.defaultMetadataId = id;
+    return;
+  }
   const auto isNode = std::strcmp(type, PW_TYPE_INTERFACE_Node) == 0;
   const auto isDevice = std::strcmp(type, PW_TYPE_INTERFACE_Device) == 0;
   if (!isNode && !isDevice) return;
@@ -267,7 +276,12 @@ static void globalRemoved(void *data, std::uint32_t id) {
   auto &inventory = *static_cast<PipeWireOutputInventory *>(data);
   const auto removedNode = inventory.nodes.erase(id);
   const auto removedDevice = inventory.devices.erase(id);
-  if (removedNode != 0 || removedDevice != 0) scheduleSnapshot(inventory);
+  const auto removedPolicy = id == inventory.defaultMetadataId;
+  if (removedPolicy) {
+    inventory.defaultMetadataId = PW_ID_ANY;
+    ++inventory.policyGeneration;
+  }
+  if (removedNode != 0 || removedDevice != 0 || removedPolicy) scheduleSnapshot(inventory);
 }
 
 static void coreDone(void *data, std::uint32_t id, int sequence) {
@@ -283,8 +297,10 @@ static void coreDone(void *data, std::uint32_t id, int sequence) {
   inventory.callback(snapshot, inventory.userData);
 }
 
-static void coreError(void *data, std::uint32_t id, int, int, const char *message) {
-  if (id != PW_ID_CORE) return;
+static void coreError(void *data, std::uint32_t id, int, int code, const char *message) {
+  // Method errors for disappearing resources can also be reported on the
+  // core. They do not mean that the connection or its registry was lost.
+  if (id != PW_ID_CORE || code != -EPIPE) return;
   auto &inventory = *static_cast<PipeWireOutputInventory *>(data);
   const auto result = OutputInventoryResult{.outputs = {}, .error =
       std::string("PipeWire output enumeration failed: ") + (message == nullptr ? "connection lost" : message)};
@@ -313,6 +329,10 @@ PipeWireOutputInventoryPtr observePipeWireOutputs(
   pw_registry_add_listener(inventory->registry, &inventory->registryListener, &registryEvents, inventory.get());
   scheduleSnapshot(*inventory);
   return inventory;
+}
+
+std::uint64_t pipeWireOutputPolicyGeneration(const PipeWireOutputInventory &inventory) noexcept {
+  return inventory.policyGeneration;
 }
 
 void PipeWireOutputInventoryDeleter::operator()(PipeWireOutputInventory *inventory) const noexcept {

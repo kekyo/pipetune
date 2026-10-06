@@ -185,6 +185,8 @@ struct PipeWireRuntime {
   spa_hook outputDistributionListener = {};
   spa_source *outputGraphSource = nullptr;
   std::string outputDistributionArguments;
+  std::uint64_t outputPolicyGeneration = 0;
+  bool outputPolicyReset = false;
   float masterVolume = 1.0F;
   bool masterMute = false;
   bool publishingMasterVolume = false;
@@ -271,6 +273,9 @@ struct PipeWireRuntime {
     controlServer.reset();
     presetFileMonitor.reset();
     outputInventory.reset();
+    // Capture triggers the output from the data loop. Stop those callbacks
+    // before releasing the stream that they may still be using.
+    if (inputStream != nullptr) static_cast<void>(pw_stream_set_active(inputStream, false));
     if (outputStream != nullptr) {
       if (outputListenerInstalled) {
         spa_hook_remove(&outputListener);
@@ -1327,9 +1332,11 @@ static std::string connectStream(PipeWireRuntime &runtime, pw_stream *stream,
                     : std::string{};
 }
 
-static void destroyAudioStreams(PipeWireRuntime &runtime) {
-  resetOutputTransition(runtime, transitionSampleRate(runtime));
-  runtime.rateBridgeReady.store(false, std::memory_order_release);
+static void destroyOutputStream(PipeWireRuntime &runtime) {
+  // Deactivation synchronizes with the stream's data loop. Keeping the node
+  // registered preserves application links while its callback is quiescent.
+  if (runtime.inputStream != nullptr)
+    static_cast<void>(pw_stream_set_active(runtime.inputStream, false));
   if (runtime.outputStream != nullptr) {
     if (runtime.outputListenerInstalled) {
       spa_hook_remove(&runtime.outputListener);
@@ -1338,6 +1345,15 @@ static void destroyAudioStreams(PipeWireRuntime &runtime) {
     pw_stream_destroy(runtime.outputStream);
     runtime.outputStream = nullptr;
   }
+  resetOutputTransition(runtime, transitionSampleRate(runtime));
+  runtime.rateBridgeReady.store(false, std::memory_order_release);
+  runtime.outputReady = false;
+  runtime.outputFormatReady = false;
+  runtime.outputStreamSampleRate.store(0, std::memory_order_release);
+}
+
+static void destroyAudioStreams(PipeWireRuntime &runtime) {
+  destroyOutputStream(runtime);
   if (runtime.inputStream != nullptr) {
     if (runtime.inputListenerInstalled) {
       spa_hook_remove(&runtime.inputListener);
@@ -1358,6 +1374,33 @@ static void destroyAudioStreams(PipeWireRuntime &runtime) {
   runtime.inputFormatNegotiated.store(false, std::memory_order_release);
 }
 
+static std::string createOutputStream(PipeWireRuntime &runtime,
+                                       const FilterGraphProperties &graph) {
+  auto *outputProperties = makePipeWireProperties(graph.output);
+  if (outputProperties == nullptr) {
+    destroyOutputStream(runtime);
+    return "cannot allocate PipeWire filter-output properties";
+  }
+  runtime.outputStream =
+      pw_stream_new(runtime.core, "PipeTune filter output", outputProperties);
+  if (runtime.outputStream == nullptr) {
+    destroyOutputStream(runtime);
+    return systemError("cannot create PipeWire filter output", -errno);
+  }
+  runtime.outputListener = {};
+  pw_stream_add_listener(runtime.outputStream, &runtime.outputListener,
+                         &runtime.outputEvents, &runtime.outputContext);
+  runtime.outputListenerInstalled = true;
+  const auto outputError =
+      connectStream(runtime, runtime.outputStream, PW_DIRECTION_OUTPUT,
+                    graph.outputAutoconnect, graph.outputReconnect);
+  if (!outputError.empty()) {
+    destroyOutputStream(runtime);
+    return outputError;
+  }
+  return {};
+}
+
 static std::string createAudioStreams(PipeWireRuntime &runtime) {
   const auto graph = currentFilterGraphProperties(runtime);
   auto *inputProperties = makePipeWireProperties(graph.input);
@@ -1374,24 +1417,7 @@ static std::string createAudioStreams(PipeWireRuntime &runtime) {
                          &runtime.inputEvents, &runtime.inputContext);
   runtime.inputListenerInstalled = true;
 
-  auto *outputProperties = makePipeWireProperties(graph.output);
-  if (outputProperties == nullptr) {
-    destroyAudioStreams(runtime);
-    return "cannot allocate PipeWire filter-output properties";
-  }
-  runtime.outputStream =
-      pw_stream_new(runtime.core, "PipeTune filter output", outputProperties);
-  if (runtime.outputStream == nullptr) {
-    destroyAudioStreams(runtime);
-    return systemError("cannot create PipeWire filter output", -errno);
-  }
-  runtime.outputListener = {};
-  pw_stream_add_listener(runtime.outputStream, &runtime.outputListener,
-                         &runtime.outputEvents, &runtime.outputContext);
-  runtime.outputListenerInstalled = true;
-  const auto outputError =
-      connectStream(runtime, runtime.outputStream, PW_DIRECTION_OUTPUT,
-                    graph.outputAutoconnect, graph.outputReconnect);
+  const auto outputError = createOutputStream(runtime, graph);
   if (!outputError.empty()) {
     destroyAudioStreams(runtime);
     return outputError;
@@ -1424,10 +1450,18 @@ static void applyOutputInventory(void *data, std::uint64_t) {
   const auto arguments = makeOutputDistributionArguments(runtime.options.filterName + ".distribution",
       runtime.options.outputConfiguration, runtime.availableOutputs.outputs);
   if (!arguments.error.empty()) return failRuntime(runtime, arguments.error);
-  if (runtime.outputDistribution != nullptr && arguments.arguments == runtime.outputDistributionArguments) return;
-  // Destruction is deferred out of registry and module callbacks. The public
-  // input and processing pipeline keep their saved channel layout on rebuild.
-  destroyAudioStreams(runtime);
+  if (!runtime.outputPolicyReset && runtime.outputDistribution != nullptr && arguments.arguments == runtime.outputDistributionArguments) return;
+  if (runtime.outputPolicyReset) {
+    // A restarted session manager cannot reuse the old port configuration.
+    // Recreate owned streams, retaining the DSP layout and master controls.
+    destroyAudioStreams(runtime);
+    runtime.outputPolicyReset = false;
+  } else {
+    destroyOutputStream(runtime);
+  }
+  // Device changes replace the private distribution and its feeding stream.
+  // Keep the public input alive so application links, the default-output lease
+  // and the master controls survive across both WirePlumber versions.
   if (runtime.outputDistribution != nullptr) {
     spa_hook_remove(&runtime.outputDistributionListener);
     pw_impl_module_destroy(runtime.outputDistribution);
@@ -1443,13 +1477,21 @@ static void applyOutputInventory(void *data, std::uint64_t) {
   runtime.outputDistributionListener = {};
   pw_impl_module_add_listener(runtime.outputDistribution, &runtime.outputDistributionListener, &events, &runtime);
   runtime.outputDistributionArguments = arguments.arguments;
-  const auto error = createAudioStreams(runtime);
-  if (!error.empty()) failRuntime(runtime, error);
+  const auto error = runtime.inputStream == nullptr ? createAudioStreams(runtime) :
+      createOutputStream(runtime, currentFilterGraphProperties(runtime));
+  if (!error.empty()) return failRuntime(runtime, error);
+  const auto active = pw_stream_set_active(runtime.inputStream, true);
+  if (active < 0) failRuntime(runtime, systemError("cannot resume capture after output reconfiguration", active));
 }
 
 static void outputInventoryChanged(const OutputInventoryResult &snapshot, void *data) {
   auto &runtime = *static_cast<PipeWireRuntime *>(data);
   runtime.availableOutputs = snapshot;
+  const auto generation = pipeWireOutputPolicyGeneration(*runtime.outputInventory);
+  if (generation != runtime.outputPolicyGeneration) {
+    runtime.outputPolicyGeneration = generation;
+    runtime.outputPolicyReset = true;
+  }
   pw_loop_signal_event(pw_main_loop_get_loop(runtime.mainLoop), runtime.outputGraphSource);
 }
 

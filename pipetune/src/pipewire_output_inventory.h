@@ -42,6 +42,15 @@ using OutputInventoryCallback = void (*)(const OutputInventoryResult &snapshot, 
 PipeWireOutputInventoryPtr observePipeWireOutputs(
     pw_core *core, OutputInventoryCallback callback, void *userData);
 
+/**
+ * Reports losses of the default-output policy observed on this connection.
+ * @param inventory Live observer, accessed on its core loop thread.
+ * @return Monotonic generation, initially zero. Changes trigger a snapshot.
+ * @remarks A removed default metadata object invalidates the policy's graph
+ * configuration even when the physical output inventory has not changed.
+ */
+std::uint64_t pipeWireOutputPolicyGeneration(const PipeWireOutputInventory &inventory) noexcept;
+
 } // namespace pipetune
 
 #endif

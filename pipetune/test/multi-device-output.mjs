@@ -174,18 +174,27 @@ try {
     const pipeline = [
       { name: "Matrix", enabled: true, channel: "All", parameters: { mx: scenario === "product-slots" ? "001102p1304" : "001102p13" } },
     ];
-    if (scenario === "product-volume") pipeline.push({ name: "DC Offset", enabled: true, channel: "All", parameters: { of: 0.125 } });
+    if (["product-volume", "product-reconnect", "product-profile", "product-restart", "product-restart-mute"].includes(scenario)) pipeline.push({ name: "DC Offset", enabled: true, channel: "All", parameters: { of: 0.125 } });
     writeFileSync(preset, JSON.stringify({ pipeline }));
     const runtime = start("product runtime", driver, ["runtime", scenario === "product-bypass" ? "bypass" : preset, scenario]);
     await waitForMessage(runtime, "product:runtime-ready");
     audio.child.kill("SIGUSR1");
+    if (scenario.startsWith("product-restart")) {
+      await waitForMessage(audio, "product:restart-ready");
+      terminate(manager, "SIGTERM");
+      await manager.completion;
+      start("restarted WirePlumber", "dbus-run-session", ["--", wireplumber]);
+      audio.child.kill("SIGUSR2");
+    }
     const result = await audio.completion;
     assert.equal(result.code, 0, `${audio.stdout}\n${audio.stderr}`);
     const report = JSON.parse(audio.stdout);
     assert.ok(report.receivedFrames.every((frames) => scenario === "product-disconnected" ? frames === 0 : frames >= 32768));
     assert.ok(report.producedFrames >= 32768);
-    assert.equal(report.stages.length, scenario === "product-volume" ? 4 : 1);
-    assert.ok(report.stages.every((stage) => stage.every((frames) => scenario === "product-disconnected" ? frames === 0 : frames >= 32768)));
+    assert.equal(report.stages.length, scenario === "product-profile" ? 5 : scenario === "product-restart" ? 3 :
+      ["product-volume", "product-reconnect", "product-restart-mute"].includes(scenario) ? 4 : 1);
+    assert.ok(report.stages.every((stage, index) => stage.every((frames, device) =>
+      scenario === "product-disconnected" || ((["product-reconnect", "product-profile"].includes(scenario) && index === 2 || scenario === "product-profile" && index === 3) && device === 0) ? frames === 0 : frames >= 32768)));
     runtime.child.kill("SIGTERM");
     assert.equal((await runtime.completion).code, 0, runtime.stderr);
     process.stdout.write(`${JSON.stringify(report)}\n`);
@@ -330,7 +339,7 @@ try {
   process.stdout.write(`${version.stdout.trim()}\n${JSON.stringify(report)}\n`);
   }
 } catch (error) {
-  for (const child of children) process.stderr.write(`${child.name}:\n${child.stdout}${child.stderr}\n`);
+  for (const child of children) process.stderr.write(`${child.name} (${JSON.stringify(child.result)}):\n${child.stdout}${child.stderr}\n`);
   throw error;
 } finally {
   for (const record of [...children].reverse()) {

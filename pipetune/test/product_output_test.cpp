@@ -88,11 +88,21 @@ struct AudioTest {
   bool slots = false;
   bool volume = false;
   bool disconnected = false;
+  bool reconnect = false;
+  bool profile = false;
+  bool restart = false;
+  bool restartMuted = false;
+  bool restartResumed = false;
+  spa_source *graphEvent = nullptr;
+  std::uint32_t publicInputId = PW_ID_ANY;
   unsigned stage = 0;
-  std::array<std::array<std::uint64_t, 2>, 4> stageFrames = {};
+  std::array<std::array<std::uint64_t, 2>, 5> stageFrames = {};
   pw_registry *registry = nullptr;
   spa_hook registryListener = {};
   pw_node *control = nullptr;
+  spa_hook controlListener = {};
+  float visibleGain = -1.0F;
+  bool visibleMute = false;
   bool announced = false;
   std::uint64_t produced = 0;
   std::string error;
@@ -127,15 +137,17 @@ static void outputState(void *data, pw_stream_state, pw_stream_state state, cons
   }
 }
 
+static void changeOutputGraph(void *data, std::uint64_t);
+
 static void setMasterVolume(AudioTest &test) {
   if (test.control == nullptr) return fail(test, "public input is unavailable for master control");
   auto storage = std::array<std::uint8_t, 256>{};
   auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
-  const auto gain = test.stage == 1 ? 0.5F : 1.0F;
+  const auto gain = test.reconnect || test.stage == 1 ? 0.5F : 1.0F;
   const auto volumes = std::array<float, 2>{gain, gain};
   const auto *parameter = static_cast<const spa_pod *>(spa_pod_builder_add_object(
       &builder, SPA_TYPE_OBJECT_Props, SPA_PARAM_Props,
-      SPA_PROP_volume, SPA_POD_Float(1.0F), SPA_PROP_mute, SPA_POD_Bool(test.stage == 2),
+      SPA_PROP_volume, SPA_POD_Float(1.0F), SPA_PROP_mute, SPA_POD_Bool(test.restartMuted ? test.stage < 3 : !test.reconnect && test.stage == 2),
       SPA_PROP_channelVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, volumes.size(), volumes.data())));
   if (pw_node_set_param(test.control, SPA_PARAM_Props, 0, parameter) < 0) fail(test, "cannot change master volume");
 }
@@ -158,13 +170,18 @@ static void capture(void *data) {
         output.index == 1 && test.matrix ? (channel == 0 ? 0.25F : -0.5F) : 0.0F;
     if (test.slots && output.index < 2) expected = output.index == 0 ?
         (channel == 0 ? 0.25F : -0.5F) : (channel == 0 ? 0.5F : 0.25F);
-    if (test.volume && output.index < 2) {
+    if ((test.volume || test.reconnect) && output.index < 2) {
       expected += 0.125F;
-      expected *= test.stage == 2 ? 0.0F : test.stage == 1 ? 0.5F : 1.0F;
+      expected *= test.reconnect ? (test.stage == 0 ? 1.0F : 0.5F) :
+          test.stage == 2 ? 0.0F : test.stage == 1 ? 0.5F : 1.0F;
     }
+    if (test.restartMuted && (test.stage == 1 || test.stage == 2)) expected = 0.0F;
+    if (test.profile && test.stage == 3 && output.index == 0) expected = 0.0F;
     for (auto frame = 0U; frame < frames; ++frame) {
       auto sample = 0.0F;
       std::memcpy(&sample, static_cast<const char *>(plane.data) + plane.chunk->offset + frame * sizeof(float), sizeof(float));
+      if (test.profile && test.stage == 3 && output.index == 0 && sample != 0)
+        fail(test, "profile mismatch received audio");
       if (test.disconnected && sample != 0) fail(test, "unresolved or disabled output received fallback audio");
       if (output.index == 2 && sample != 0) fail(test, "unselected device received audio");
       matches = matches && sample == expected;
@@ -174,17 +191,34 @@ static void capture(void *data) {
   pw_stream_queue_buffer(output.stream, queued);
   if (!valid) return fail(test, "invalid stereo capture buffer");
   if (output.index == 2) return;
+  if (test.restart && test.stage == 2 && !test.restartResumed) return;
+  if (test.reconnect && !test.restart && (test.stage == 2 || (test.profile && test.stage == 3)) && output.index == 0) return;
+  // Graph replacement permits a brief fade or silence. Require a fresh,
+  // consecutive window of exact PCM after each device change rather than
+  // counting samples from the old graph toward the recovered state.
+  if (test.reconnect && test.stage >= 2 && !matches) {
+    output.matched = false;
+    output.frames = 0;
+    return;
+  }
   // The product deliberately fades in after its initial bridge delay. Require
   // exact continuous PCM after the first complete block reaches unity gain.
   if (output.matched && frames != 0 && !matches) return fail(test, "steady product output differs on device " + std::to_string(output.index));
   if (matches && frames != 0) { output.matched = true; output.frames += frames; }
-  if (test.outputs[0].frames >= 32768 && test.outputs[1].frames >= 32768) {
+  if ((test.outputs[0].frames >= 32768 || (test.reconnect && !test.restart && (test.stage == 2 || (test.profile && test.stage == 3)))) && test.outputs[1].frames >= 32768) {
+    if (test.restart && test.stage == 2 &&
+        (test.visibleGain != 0.5F || test.visibleMute != test.restartMuted))
+      return fail(test, "master controls were not restored after the policy restart");
     test.stageFrames[test.stage] = {test.outputs[0].frames, test.outputs[1].frames};
-    if (!test.volume || test.stage == 3) pw_main_loop_quit(test.loop);
+    if ((!test.volume && !test.reconnect) || test.stage == (test.profile ? 4U : test.restart && !test.restartMuted ? 2U : 3U)) pw_main_loop_quit(test.loop);
     else {
       ++test.stage;
       for (auto &item : test.outputs) { item.frames = 0; item.matched = false; }
-      setMasterVolume(test);
+      if (test.restart && test.stage == 2)
+        std::cerr << "product:restart-ready\n" << std::flush;
+      else if (test.reconnect && !test.restart && test.stage >= 2)
+        pw_loop_signal_event(pw_main_loop_get_loop(test.loop), test.graphEvent);
+      else setMasterVolume(test);
     }
   }
 }
@@ -219,12 +253,56 @@ static void startSource(void *data, int) {
   test.source = pw_stream_new(test.core, "Product test signal", pw_properties_new(
       PW_KEY_NODE_NAME, "pipetune_product_signal", PW_KEY_TARGET_OBJECT, "pipetune_product_input",
       PW_KEY_MEDIA_CATEGORY, "Playback", PW_KEY_MEDIA_ROLE, "Music",
-      "node.dont-fallback", "true", "node.dont-move", "true", "stream.dont-remix", "true", nullptr));
+      "node.dont-fallback", "true", "node.dont-move", "true", nullptr));
   static const auto events = [] { auto value = pw_stream_events{}; value.version = PW_VERSION_STREAM_EVENTS; value.process = produce; return value; }();
   if (test.source == nullptr) return fail(test, "cannot create source");
   pw_stream_add_listener(test.source, &test.sourceListener, &events, &test);
   if (!connectStereo(test.source, PW_DIRECTION_OUTPUT,
       static_cast<pw_stream_flags>(PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_AUTOCONNECT))) fail(test, "cannot connect source");
+}
+
+static bool createTestOutput(TestOutput &output) {
+  static const auto events = [] {
+    auto value = pw_stream_events{}; value.version = PW_VERSION_STREAM_EVENTS;
+    value.state_changed = outputState; value.process = capture; return value;
+  }();
+  const auto name = "pipetune_product_device_" + std::to_string(output.index);
+  output.stream = pw_stream_new(output.test->core, name.c_str(), pw_properties_new(
+      PW_KEY_NODE_NAME, name.c_str(), PW_KEY_NODE_DESCRIPTION, name.c_str(), PW_KEY_MEDIA_CLASS, "Audio/Sink",
+      PW_KEY_NODE_GROUP, "pipewire.dummy", PW_KEY_NODE_VIRTUAL, "false",
+      PW_KEY_PRIORITY_SESSION, output.index == 2 ? "2000" : "1000",
+      "node.want-driver", "true", "node.pause-on-idle", "false",
+      "audio.channels", "2", "audio.position", "[ FL FR ]",
+      "node.device.profile.name", output.test->profile && output.test->stage == 3 && output.index == 0 ? "changed" : "", nullptr));
+  if (output.stream == nullptr) return false;
+  output.listener = {};
+  pw_stream_add_listener(output.stream, &output.listener, &events, &output);
+  return connectStereo(output.stream, PW_DIRECTION_INPUT, PW_STREAM_FLAG_MAP_BUFFERS);
+}
+
+static void changeOutputGraph(void *data, std::uint64_t) {
+  auto &test = *static_cast<AudioTest *>(data);
+  if (test.restart) {
+    // ALSA nodes are owned by WirePlumber and reappear with new generations
+    // after a restart. Keep the application source alive while simulating it.
+    for (auto &output : test.outputs) {
+      spa_hook_remove(&output.listener);
+      pw_stream_destroy(output.stream);
+      output.stream = nullptr;
+      output.ready = false;
+      if (!createTestOutput(output)) return fail(test, "cannot restore test hardware");
+    }
+    test.restartResumed = true;
+    return;
+  }
+  auto &output = test.outputs[0];
+  if (output.stream != nullptr) {
+    spa_hook_remove(&output.listener);
+    pw_stream_destroy(output.stream);
+    output.stream = nullptr;
+    output.ready = false;
+  }
+  if (test.stage != 2 && !createTestOutput(output)) fail(test, "cannot reconnect test output");
 }
 
 static int runAudio(std::string_view scenario) {
@@ -234,11 +312,19 @@ static int runAudio(std::string_view scenario) {
   test.slots = scenario == "product-slots";
   test.volume = scenario == "product-volume";
   test.disconnected = scenario == "product-disconnected";
+  test.profile = scenario == "product-profile";
+  test.restartMuted = scenario == "product-restart-mute";
+  test.restart = scenario == "product-restart" || test.restartMuted;
+  test.reconnect = scenario == "product-reconnect" || test.profile || test.restart;
   test.loop = pw_main_loop_new(nullptr);
   if (test.loop == nullptr) return 1;
   // Block and register the control signal before PipeWire creates data threads.
   auto *signal = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR1, startSource, &test);
-  if (signal == nullptr) return 1;
+  auto *resume = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR2, [](void *data, int) {
+    auto &test = *static_cast<AudioTest *>(data);
+    pw_loop_signal_event(pw_main_loop_get_loop(test.loop), test.graphEvent);
+  }, &test);
+  if (signal == nullptr || resume == nullptr) return 1;
   test.context = pw_context_new(pw_main_loop_get_loop(test.loop), nullptr, 0);
   if (test.context == nullptr) return 1;
   test.core = pw_context_connect(test.context, nullptr, 0);
@@ -251,30 +337,55 @@ static int runAudio(std::string_view scenario) {
       auto &test = *static_cast<AudioTest *>(data);
       if (std::strcmp(type, PW_TYPE_INTERFACE_Node) != 0 || props == nullptr || test.control != nullptr) return;
       const auto *name = spa_dict_lookup(props, PW_KEY_NODE_NAME);
-      if (name != nullptr && std::string_view(name) == "pipetune_product_input")
+      if (name != nullptr && std::string_view(name) == "pipetune_product_input") {
+        test.publicInputId = id;
         test.control = static_cast<pw_node *>(pw_registry_bind(test.registry, id, type, std::min<std::uint32_t>(version, PW_VERSION_NODE), 0));
+        if (test.control == nullptr) return fail(test, "cannot observe master controls");
+        static const auto controlEvents = [] {
+          auto value = pw_node_events{}; value.version = PW_VERSION_NODE_EVENTS;
+          value.param = [](void *data, int, std::uint32_t id, std::uint32_t, std::uint32_t, const spa_pod *param) {
+            auto &test = *static_cast<AudioTest *>(data);
+            if (id != SPA_PARAM_Props || param == nullptr) return;
+            if (const auto *prop = spa_pod_find_prop(param, nullptr, SPA_PROP_channelVolumes)) {
+              auto values = std::array<float, 2>{};
+              if (spa_pod_copy_array(&prop->value, SPA_TYPE_Float, values.data(), values.size()) == 2)
+                test.visibleGain = values[0] == values[1] ? values[0] : -1.0F;
+            }
+            if (const auto *prop = spa_pod_find_prop(param, nullptr, SPA_PROP_mute))
+              spa_pod_get_bool(&prop->value, &test.visibleMute);
+          };
+          return value;
+        }();
+        test.controlListener = {};
+        pw_node_add_listener(test.control, &test.controlListener, &controlEvents, &test);
+        auto parameter = std::uint32_t{SPA_PARAM_Props};
+        if (pw_node_subscribe_params(test.control, &parameter, 1) < 0) fail(test, "cannot subscribe to master controls");
+      }
+    };
+    value.global_remove = [](void *data, std::uint32_t id) {
+      auto &test = *static_cast<AudioTest *>(data);
+      if (id == test.publicInputId) {
+        if (test.reconnect && !test.restart)
+          fail(test, "public input disappeared during device reconnection");
+        if (test.control != nullptr) {
+          spa_hook_remove(&test.controlListener);
+          pw_proxy_destroy(reinterpret_cast<pw_proxy *>(test.control));
+        }
+        test.visibleGain = -1.0F;
+        test.control = nullptr;
+        test.publicInputId = PW_ID_ANY;
+      }
     };
     return value;
   }();
   if (test.registry == nullptr) return 1;
   pw_registry_add_listener(test.registry, &test.registryListener, &registryEvents, &test);
-  static const auto events = [] {
-    auto value = pw_stream_events{}; value.version = PW_VERSION_STREAM_EVENTS;
-    value.state_changed = outputState; value.process = capture; return value;
-  }();
   for (auto index = 0U; index < test.outputs.size(); ++index) {
     auto &output = test.outputs[index]; output.test = &test; output.index = index;
-    const auto name = "pipetune_product_device_" + std::to_string(index);
-    output.stream = pw_stream_new(test.core, name.c_str(), pw_properties_new(
-        PW_KEY_NODE_NAME, name.c_str(), PW_KEY_NODE_DESCRIPTION, name.c_str(), PW_KEY_MEDIA_CLASS, "Audio/Sink",
-        PW_KEY_NODE_GROUP, "pipewire.dummy", PW_KEY_NODE_VIRTUAL, "false",
-        PW_KEY_PRIORITY_SESSION, index == 2 ? "2000" : "1000",
-        "node.want-driver", "true", "node.pause-on-idle", "false",
-        "audio.channels", "2", "audio.position", "[ FL FR ]", nullptr));
-    if (output.stream == nullptr) return 1;
-    pw_stream_add_listener(output.stream, &output.listener, &events, &output);
-    if (!connectStereo(output.stream, PW_DIRECTION_INPUT, PW_STREAM_FLAG_MAP_BUFFERS)) return 1;
+    if (!createTestOutput(output)) return 1;
   }
+  test.graphEvent = pw_loop_add_event(pw_main_loop_get_loop(test.loop), changeOutputGraph, &test);
+  if (test.graphEvent == nullptr) return 1;
   auto *timer = pw_loop_add_timer(pw_main_loop_get_loop(test.loop), [](void *data, std::uint64_t) {
     fail(*static_cast<AudioTest *>(data), "product PCM test timed out");
   }, &test);
@@ -283,12 +394,17 @@ static int runAudio(std::string_view scenario) {
       pw_loop_update_timer(pw_main_loop_get_loop(test.loop), timer, &deadline, &interval, false) < 0) return 1;
   pw_main_loop_run(test.loop);
   if (test.source != nullptr) pw_stream_destroy(test.source);
-  for (auto &output : test.outputs) pw_stream_destroy(output.stream);
-  if (test.control != nullptr) pw_proxy_destroy(reinterpret_cast<pw_proxy *>(test.control));
+  for (auto &output : test.outputs) if (output.stream != nullptr) pw_stream_destroy(output.stream);
+  if (test.control != nullptr) {
+    spa_hook_remove(&test.controlListener);
+    pw_proxy_destroy(reinterpret_cast<pw_proxy *>(test.control));
+  }
   spa_hook_remove(&test.registryListener);
   pw_proxy_destroy(reinterpret_cast<pw_proxy *>(test.registry));
+  pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), test.graphEvent);
   pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), timer);
   pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), signal);
+  pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), resume);
   pw_core_disconnect(test.core); pw_context_destroy(test.context); pw_main_loop_destroy(test.loop); pw_deinit();
   if (!test.error.empty()) std::cerr << test.error << '\n';
   std::cout << "{\"receivedFrames\":[" << test.outputs[0].frames << ',' << test.outputs[1].frames
