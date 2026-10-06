@@ -481,7 +481,10 @@ function createLink (si_ep, si_target, is_filter)
   local ep_props = si_ep.properties
   local target_props = si_target.properties
 
-  if target_props["item.node.direction"] == "input" then
+  -- A default capture source can be a sink monitor. The endpoint's media
+  -- class determines direction; the target's main ports can be inputs.
+  if ep_props["media.class"] ~= "Audio/Source" and
+      ep_props["media.class"] ~= "Video/Source" then
     -- playback
     out_item = si_ep
     in_item = si_target

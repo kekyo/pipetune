@@ -377,7 +377,13 @@ WirePlumber 0.4では、既存endpointポリシーが集約ノードの出力ス
 
 続いて`pipetune_multi_device_policy-volume`と`pipetune_multi_device_policy-reconnect`を追加し、両環境で成功した。前者は模擬DSPによる加算も含めたPCM全体が0.25倍になること、ミュートと解除が両出力へ反映されることを各8,192フレーム以上照合する。後者は片方の切断中も残った出力が元の番号で継続し、再接続後に両出力が累計131,072フレーム以上を受け取ることを確認する。ログは`policy-transitions-red.log`、`policy-transitions-green.log`、`policy-transitions-trixie.log`に保存した。
 
-この段階では入力、模擬DSP、仮想出力は同じPipeWireクライアントから生成している。別クライアントからの再生、OS設定画面での可視性、異常終了時の復旧は引き続き検証する。
+初回は入力、模擬DSP、仮想出力を同じPipeWireクライアントから生成した。その後、入力を別のクライアント接続へ移し、registry上の所有クライアントIDが異なることと、受信PCMが正しいことを照合するようにした。これにより、再生アプリケーションが非表示のDSPノードを所有しているために権限上の問題が隠れることを避ける。
+
+追加検証では2つの問題を切り分けた。0.4の既存endpointポリシーは、既定の録音元がAudio/Sinkのモニターになる場合、録音用endpointからスピーカーへ逆向きに接続していた。接続方向をendpointのmedia classから決めるように修正し、そのような接続が一度も作られないことをregistryのLinkで検証する。[WirePlumber 0.4.17の既定録音元の選定](https://github.com/PipeWire/wireplumber/blob/0.4.17/modules/module-default-nodes.c)
+
+この方向修正だけでは、切断直後に無音が入る失敗が残った。ログから、仮想デバイスの切断時にグラフのdriverが録音endpointから再生endpointへ変わることを確認した。従来の仮想PCM検証で想定していた単一クロックが維持されていなかったため、仮想出力をテスト用の`pipewire.dummy`グループへ明示的に所属させる。フレーム連続性の検証条件は緩めない。これは仮想環境の経路検証の条件を固定する処置であり、実デバイスへ同じグループやclock.nameを付ける設計ではない。driver変更時の再同期と許容する無音区間は、実機およびクロック変更の検証で引き続き確定する。[PipeWireのnode.group仕様](https://docs.pipewire.org/group__pw__keys.html)
+
+別クライアント化と方向修正後は、ホストで関連10件、0.5.8環境でドライバーの全8シナリオが成功した。固定クロックでの0.4再接続は3回連続で成功した。再現と修正確認のログは`policy-client-red.log`、`policy-capture-direction-red.log`、`policy-client-direction-debug.log`、`policy-client-stable-clock.log`、`policy-client-all-green.log`、`policy-client-trixie-all-green.log`にある。OS設定画面での可視性と異常終了時の復旧は未確認である。
 
 ### 全体テストと残作業
 

@@ -145,6 +145,12 @@ try {
   if (scenario.startsWith("policy")) {
     assert.equal(report.inputChannels, 2, "desktop input must remain stereo");
     assert.ok(report.processedFrames >= 65536, "default playback must pass through the processor");
+    assert.equal(typeof report.applicationClientId, "number");
+    assert.equal(typeof report.processorClientId, "number");
+    assert.notEqual(report.applicationClientId, report.processorClientId,
+      "playback must cross the permission boundary from a separate application client");
+    assert.equal(report.captureFeedsPlayback, false,
+      "a capture endpoint must never feed a playback device");
   }
   if (scenario === "reconnect" || scenario === "policy-reconnect") {
     assert.equal(report.reconnected, true, "a reconnected device must receive its original DSP channels");

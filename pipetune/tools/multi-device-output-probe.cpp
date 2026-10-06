@@ -50,6 +50,7 @@ struct Probe {
   pw_main_loop *loop = nullptr;
   pw_context *context = nullptr;
   pw_core *core = nullptr;
+  pw_core *applicationCore = nullptr;
   pw_registry *registry = nullptr;
   pw_registry_events registryEvents = {};
   spa_hook registryListener = {};
@@ -82,6 +83,9 @@ struct Probe {
   bool policy = false;
   bool defaultsReady = false;
   bool defaultRequested = false;
+  std::uint32_t applicationClientId = PW_ID_ANY;
+  std::uint32_t processorClientId = PW_ID_ANY;
+  bool captureFeedsPlayback = false;
   bool success = false;
   std::string error;
   std::map<std::string, std::string> nodeNames;
@@ -477,8 +481,12 @@ static bool createEndpoint(Probe &probe, std::uint32_t index) {
   endpoint.awaitingSignal = true;
   endpoint.listener = {};
   const auto name = "pipetune_probe_device_" + std::to_string(index);
+  // These virtual PCM checks use the test server's single dummy clock.
+  // Keep it as the driver even when a policy endpoint appears or disappears;
+  // physical-device clock changes require their own resynchronization test.
   endpoint.stream = pw_stream_new(probe.core, name.c_str(), pw_properties_new(
       PW_KEY_NODE_NAME, name.c_str(), PW_KEY_NODE_DESCRIPTION, name.c_str(),
+      PW_KEY_NODE_GROUP, "pipewire.dummy",
       PW_KEY_MEDIA_CLASS, "Audio/Sink", PW_KEY_MEDIA_CATEGORY, "Playback",
       PW_KEY_NODE_VIRTUAL, "true", "node.want-driver", "true",
       "node.pause-on-idle", "false", "audio.channels", "2",
@@ -530,12 +538,23 @@ static void globalAdded(void *data, std::uint32_t id, std::uint32_t,
   if (probe.policy && std::strcmp(type, PW_TYPE_INTERFACE_Node) == 0) {
     const auto *name = spa_dict_lookup(properties, PW_KEY_NODE_NAME);
     if (name != nullptr) probe.nodeNames[std::to_string(id)] = name;
+    const auto *client = spa_dict_lookup(properties, PW_KEY_CLIENT_ID);
+    if (name != nullptr && client != nullptr) {
+      if (std::strcmp(name, "pipetune_probe_signal") == 0)
+        probe.applicationClientId = static_cast<std::uint32_t>(std::stoul(client));
+      if (std::strcmp(name, "pipetune_probe_processor") == 0)
+        probe.processorClientId = static_cast<std::uint32_t>(std::stoul(client));
+    }
   }
   if (probe.policy && std::strcmp(type, PW_TYPE_INTERFACE_Link) == 0) {
     const auto *output = spa_dict_lookup(properties, PW_KEY_LINK_OUTPUT_NODE);
     const auto *input = spa_dict_lookup(properties, PW_KEY_LINK_INPUT_NODE);
-    if (output != nullptr && input != nullptr)
+    if (output != nullptr && input != nullptr) {
       probe.links[std::to_string(id)] = {output, input};
+      if (probe.nodeNames[output] == "control.endpoint.pipetune.capture" &&
+          probe.nodeNames[input].starts_with("pipetune_probe_device_"))
+        probe.captureFeedsPlayback = true;
+    }
     return;
   }
   if (probe.policy && std::strcmp(type, PW_TYPE_INTERFACE_Metadata) == 0) {
@@ -569,6 +588,15 @@ static void globalRemoved(void *data, std::uint32_t id) {
 }
 
 static bool createSource(Probe &probe) {
+  // Use a separate client so the source needs the same permissions as an
+  // ordinary desktop application, rather than owning the processing sink.
+  auto *sourceCore = probe.core;
+  if (probe.policy) {
+    probe.applicationCore = pw_context_connect(probe.context, pw_properties_new(
+        PW_KEY_APP_NAME, "PipeTune probe application", nullptr), 0);
+    if (probe.applicationCore == nullptr) return false;
+    sourceCore = probe.applicationCore;
+  }
   auto *properties = pw_properties_new(
       PW_KEY_NODE_NAME, "pipetune_probe_signal",
       PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Playback",
@@ -576,7 +604,7 @@ static bool createSource(Probe &probe) {
       "node.dont-fallback", "true", "node.dont-move", "true",
       "stream.dont-remix", "true", nullptr);
   if (!probe.policy) pw_properties_set(properties, PW_KEY_TARGET_OBJECT, "pipetune_probe_combined");
-  probe.source = pw_stream_new(probe.core, "PipeTune probe signal", properties);
+  probe.source = pw_stream_new(sourceCore, "PipeTune probe signal", properties);
   if (probe.source == nullptr) return false;
   probe.sourceEvents.version = PW_VERSION_STREAM_EVENTS;
   probe.sourceEvents.state_changed = sourceStateChanged;
@@ -661,6 +689,7 @@ static void destroy(Probe &probe) {
   if (probe.combine != nullptr) pw_impl_module_destroy(probe.combine);
   for (auto &endpoint : probe.endpoints)
     if (endpoint.stream != nullptr) pw_stream_destroy(endpoint.stream);
+  if (probe.applicationCore != nullptr) pw_core_disconnect(probe.applicationCore);
   if (probe.core != nullptr) pw_core_disconnect(probe.core);
   if (probe.context != nullptr) pw_context_destroy(probe.context);
   if (probe.loop != nullptr) pw_main_loop_destroy(probe.loop);
@@ -726,6 +755,9 @@ int main(int argc, char **argv) {
             << ",\"channels\":4,\"producedFrames\":" << probe.producedFrames
             << ",\"processedFrames\":" << probe.processedFrames
             << ",\"inputChannels\":" << (probe.policy ? 2 : 4)
+            << ",\"applicationClientId\":" << probe.applicationClientId
+            << ",\"processorClientId\":" << probe.processorClientId
+            << ",\"captureFeedsPlayback\":" << (probe.captureFeedsPlayback ? "true" : "false")
             << ",\"receivedFrames\":[" << probe.endpoints[0].receivedFrames << ','
             << probe.endpoints[1].receivedFrames << ',' << probe.endpoints[2].receivedFrames
             << "],\"channelErrors\":" << probe.channelErrors
