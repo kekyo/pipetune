@@ -46,6 +46,14 @@ struct Endpoint {
   bool awaitingSignal = true;
 };
 
+struct OutputLatency {
+  pw_port *port = nullptr;
+  std::uint32_t id = PW_ID_ANY;
+  spa_hook listener = {};
+  pw_port_events events = {};
+  std::int64_t reportedFrames = -1;
+};
+
 struct Probe {
   pw_main_loop *loop = nullptr;
   pw_context *context = nullptr;
@@ -70,6 +78,7 @@ struct Probe {
   spa_hook processorOutputListener = {};
   spa_source *watchdog = nullptr;
   std::array<Endpoint, 3> endpoints = {};
+  std::array<OutputLatency, 2> outputLatencies = {};
   std::uint64_t producedFrames = 0;
   std::uint64_t processedFrames = 0;
   std::uint64_t channelErrors = 0;
@@ -530,12 +539,28 @@ static void selectDefaultOutput(Probe &probe) {
     fail(probe, "cannot select the default combined output");
 }
 
+static void outputLatencyChanged(void *data, int, std::uint32_t id,
+                                  std::uint32_t, std::uint32_t, const spa_pod *parameter) {
+  auto &output = *static_cast<OutputLatency *>(data);
+  auto latency = spa_latency_info{};
+  if (id != SPA_PARAM_Latency || parameter == nullptr ||
+      spa_latency_parse(parameter, &latency) < 0 ||
+      latency.direction != SPA_DIRECTION_INPUT) return;
+  // These tests negotiate exactly 48 kHz with a 256-frame graph quantum.
+  // This is the downstream delay published by the port, not direct access
+  // to combine-stream's private compensation buffer.
+  output.reportedFrames = static_cast<std::int64_t>(
+      (latency.min_quantum + latency.max_quantum) * 0.5 * 256) +
+      (static_cast<std::int64_t>(latency.min_rate) + latency.max_rate) / 2 +
+      static_cast<std::int64_t>((latency.min_ns + latency.max_ns) * 0.5 * 48000 / 1000000000);
+}
+
 static void globalAdded(void *data, std::uint32_t id, std::uint32_t,
                         const char *type, std::uint32_t version,
                         const spa_dict *properties) {
   auto &probe = *static_cast<Probe *>(data);
   if (properties == nullptr) return;
-  if (probe.policy && std::strcmp(type, PW_TYPE_INTERFACE_Node) == 0) {
+  if ((probe.policy || probe.latency) && std::strcmp(type, PW_TYPE_INTERFACE_Node) == 0) {
     const auto *name = spa_dict_lookup(properties, PW_KEY_NODE_NAME);
     if (name != nullptr) probe.nodeNames[std::to_string(id)] = name;
     const auto *client = spa_dict_lookup(properties, PW_KEY_CLIENT_ID);
@@ -545,6 +570,30 @@ static void globalAdded(void *data, std::uint32_t id, std::uint32_t,
       if (std::strcmp(name, "pipetune_probe_processor") == 0)
         probe.processorClientId = static_cast<std::uint32_t>(std::stoul(client));
     }
+  }
+  if (probe.latency && std::strcmp(type, PW_TYPE_INTERFACE_Port) == 0) {
+    const auto *node = spa_dict_lookup(properties, PW_KEY_NODE_ID);
+    const auto *direction = spa_dict_lookup(properties, PW_KEY_PORT_DIRECTION);
+    if (node == nullptr || direction == nullptr || std::strcmp(direction, "out") != 0) return;
+    for (auto index = 0u; index < probe.outputLatencies.size(); ++index) {
+      auto &output = probe.outputLatencies[index];
+      const auto name = "output.pipetune_probe_combined_pipetune_probe_device_" + std::to_string(index);
+      if (output.port != nullptr || probe.nodeNames[node] != name) continue;
+      output.id = id;
+      output.port = static_cast<pw_port *>(pw_registry_bind(probe.registry, id,
+          PW_TYPE_INTERFACE_Port, std::min(version, std::uint32_t{PW_VERSION_PORT}), 0));
+      if (output.port == nullptr) {
+        fail(probe, "cannot bind the output port latency");
+        return;
+      }
+      output.events.version = PW_VERSION_PORT_EVENTS;
+      output.events.param = outputLatencyChanged;
+      pw_port_add_listener(output.port, &output.listener, &output.events, &output);
+      auto parameter = std::uint32_t{SPA_PARAM_Latency};
+      if (pw_port_subscribe_params(output.port, &parameter, 1) < 0)
+        fail(probe, "cannot subscribe to output port latency");
+    }
+    return;
   }
   if (probe.policy && std::strcmp(type, PW_TYPE_INTERFACE_Link) == 0) {
     const auto *output = spa_dict_lookup(properties, PW_KEY_LINK_OUTPUT_NODE);
@@ -585,6 +634,12 @@ static void globalRemoved(void *data, std::uint32_t id) {
   auto &probe = *static_cast<Probe *>(data);
   probe.nodeNames.erase(std::to_string(id));
   probe.links.erase(std::to_string(id));
+  for (auto &output : probe.outputLatencies) {
+    if (output.id != id || output.port == nullptr) continue;
+    pw_proxy_destroy(reinterpret_cast<pw_proxy *>(output.port));
+    output.port = nullptr;
+    output.reportedFrames = -1;
+  }
 }
 
 static bool createSource(Probe &probe) {
@@ -682,6 +737,8 @@ static void destroy(Probe &probe) {
   if (probe.processorInput != nullptr) pw_stream_destroy(probe.processorInput);
   if (probe.processorOutput != nullptr) pw_stream_destroy(probe.processorOutput);
   if (probe.metadata != nullptr) pw_proxy_destroy(reinterpret_cast<pw_proxy *>(probe.metadata));
+  for (auto &output : probe.outputLatencies)
+    if (output.port != nullptr) pw_proxy_destroy(reinterpret_cast<pw_proxy *>(output.port));
   if (probe.combinedNode != nullptr)
     pw_proxy_destroy(reinterpret_cast<pw_proxy *>(probe.combinedNode));
   if (probe.registry != nullptr)
@@ -765,6 +822,8 @@ int main(int argc, char **argv) {
             << ",\"survivorFramesWhileDisconnected\":" << probe.survivorFramesWhileDisconnected
             << ",\"declaredLatencyFrames\":" << (probe.latency ? 63 : 0)
             << ",\"observedCompensationFrames\":" << compensation
+            << ",\"reportedDelayFrames\":[" << probe.outputLatencies[0].reportedFrames
+            << ',' << probe.outputLatencies[1].reportedFrames << ']'
             << ",\"volumeFrames\":[";
   for (auto index = 0u; index < 2; ++index) {
     if (index != 0) std::cout << ',';

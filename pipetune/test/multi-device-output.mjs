@@ -169,6 +169,8 @@ try {
   }
   if (scenario === "latency" || scenario === "latency-off") {
     assert.equal(report.declaredLatencyFrames, 63);
+    assert.equal(report.reportedDelayFrames[1] - report.reportedDelayFrames[0], 63,
+      "public output-port latency must expose the downstream device delay difference");
     assert.equal(report.observedCompensationFrames, scenario === "latency" ? 63 : 0,
       "PCM timing must reflect whether compensation is enabled");
   }
