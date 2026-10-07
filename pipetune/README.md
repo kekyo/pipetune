@@ -9,6 +9,8 @@ It uses the formal `.effetune_preset` format.
 
 ## Audio path
 
+Single mode keeps the existing OS-managed output path:
+
 ```text
 desktop applications
         |
@@ -31,6 +33,14 @@ WirePlumber default-output policy and system volume
         v
 selected PipeWire sink
 ```
+
+Multiple mode takes the same stereo input through one DSP pipeline, then
+applies the OS master gain and mute before distributing final DSP channels to
+the devices selected in PipeTune. The Output page shows which device and
+physical channel receives each final channel. Additional outputs are generated
+by the EffeTune preset; bypass leaves them silent. See
+[choosing audio outputs](../README.md#choosing-audio-outputs) for setup and CLI
+commands.
 
 Ubuntu 24.04 uses PipeWire with `pipewire-pulse` by default. PulseAudio
 applications therefore enter the same PipeWire graph and do not require a
@@ -75,13 +85,20 @@ not supported by this MVP.
 - Publishes initial and changed runtime state to same-user local subscribers.
 - Starts the managed daemon without a preset and passes audio through unchanged.
 - Automates per-user service, GTK, and autostart setup and removal.
-- Leaves default-device selection, hotplug routing, and master volume entirely
-  under WirePlumber and the desktop sound controls.
+- Keeps OS output selection in single mode and supports simultaneous device
+  selection in multiple mode with fixed channel assignments through Ch 16.
+- Preserves reserved channel numbers across disconnects and disabled devices,
+  with explicit review before renumbering or assigning another device.
+- Shows physical device controls, path activity, and clearly labeled delay
+  compensation estimates; unavailable observations remain unknown.
+- Keeps OS master volume and mute after DSP. Multiple mode exposes one logical
+  output and restores physical output selection when it ends.
 
 The default rate policy is Automatic: PipeTune follows the graph rate
 negotiated for its two filter nodes. Stereo remains the default channel
-layout, and direct runs accept one through sixteen channels. PipeWire performs
-any conversion required by applications or the selected device.
+layout; multiple mode derives DSP width from the saved channel slots while
+keeping desktop input stereo. Direct runs accept one through sixteen channels.
+PipeWire performs conversion required by applications or the selected devices.
 
 ## Requirements
 
@@ -404,7 +421,7 @@ pipetune setup
 
 Plain `setup` first checks whether the current user's integration is already
 current. It returns successfully without repeating setup when the installed
-PipeTune version, all six managed WirePlumber files, the GTK autostart state,
+PipeTune version, all seven managed WirePlumber files, the GTK autostart state,
 and the enabled and active service are ready. Run the existing setup workflow
 unconditionally with either form:
 
