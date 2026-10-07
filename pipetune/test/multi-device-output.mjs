@@ -340,10 +340,10 @@ try {
     const runtime = start("product runtime", driver, ["runtime", scenario === "product-bypass" ? "bypass" : preset, scenario]);
     await waitForMessage(runtime, "product:runtime-ready");
     audio.child.kill("SIGUSR1");
-    if (scenario === "product-controls" || scenario === "product-output-change") {
+    if (["product-controls", "product-output-change", "product-output-timeout"].includes(scenario)) {
       const control = async (request, success = true) => {
         const client = start("product control", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET, JSON.stringify(request)]);
-        const timeout = setTimeout(() => terminate(client, "SIGTERM"), 10000);
+        const timeout = setTimeout(() => terminate(client, "SIGTERM"), scenario === "product-output-timeout" ? 20000 : 10000);
         const result = await client.completion;
         clearTimeout(timeout);
         assert.equal(result.code, 0, client.stderr);
@@ -352,7 +352,34 @@ try {
         return response;
       };
       const next = (stage) => waitForMessage(audio, `product:controls-stage-${stage}`);
-      if (scenario === "product-output-change") {
+      if (scenario === "product-output-timeout") {
+        await next(0);
+        const initial = await control({ command: "status" });
+        const wide = structuredClone(initial.outputConfiguration);
+        while (wide.channels.length < 16) wide.channels.push({ outputId: "", deviceChannel: 0, label: "Reserved" });
+        const request = { command: "set-output", configuration: wide, preset: null, expectedRevision: initial.configurationRevision };
+        const rejected = await control(request, false);
+        assert.match(rejected.error, /timed out while negotiating output configuration/);
+        await waitForMessage(runtime, "product:unconfigured-output-stream");
+        await waitForMessage(runtime, "product:unconfigured-output-retired");
+        const restored = await control({ command: "status" });
+        assert.deepEqual(restored.outputConfiguration, initial.outputConfiguration);
+        assert.equal(restored.configurationRevision, initial.configurationRevision);
+        assert.equal(restored.preset, preset);
+        assert.equal(restored.processingMode, "preset");
+        assert.equal(restored.activePluginCount, initial.activePluginCount);
+        assert.equal(restored.inputChannelCount, 2);
+        audio.child.kill("SIGUSR2");
+        await next(1);
+        // A timeout must release the pending request and staged DSP so the
+        // identical change can subsequently succeed with normal negotiation.
+        const retried = await control(request);
+        assert.deepEqual(retried.outputConfiguration, wide);
+        assert.equal(retried.configurationRevision, initial.configurationRevision + 1);
+        assert.equal(retried.preset, null);
+        assert.equal(retried.processingMode, "bypass");
+        audio.child.kill("SIGUSR2");
+      } else if (scenario === "product-output-change") {
         await next(0);
         const initial = await control({ command: "status" });
         const original = initial.outputConfiguration;
@@ -492,7 +519,7 @@ try {
     const report = JSON.parse(audio.stdout);
     assert.ok(report.receivedFrames.every((frames) => scenario === "product-disconnected" ? frames === 0 : frames >= 32768));
     assert.ok(report.producedFrames >= 32768);
-    assert.equal(report.stages.length, ["product-controls", "product-output-change"].includes(scenario) ? 9 : scenario === "product-profile" ? 5 : ["product-restart", "product-latency", "product-latency-reconnect", "product-time-alignment"].includes(scenario) ? 3 :
+    assert.equal(report.stages.length, ["product-controls", "product-output-change"].includes(scenario) ? 9 : scenario === "product-profile" ? 5 : ["product-restart", "product-latency", "product-latency-reconnect", "product-time-alignment", "product-output-timeout"].includes(scenario) ? 3 :
       ["product-volume", "product-reconnect", "product-restart-mute"].includes(scenario) ? 4 : 1);
     assert.ok(report.stages.every((stage, index) => stage.every((frames, device) =>
       scenario === "product-disconnected" || (scenario === "product-output-change" && index === 7) || (scenario === "product-latency-reconnect" && index === 1 && device === 1) ||

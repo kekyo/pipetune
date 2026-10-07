@@ -22,6 +22,7 @@
 #include <string_view>
 
 static bool rejectRestoredWidth = false;
+static bool stallWideOutput = false;
 static bool sawWideOutput = false;
 static unsigned outputFailures = 0;
 struct DeferredOutputFailure {
@@ -29,14 +30,59 @@ struct DeferredOutputFailure {
   spa_source *event;
   pw_stream *stream;
 };
+struct UnconfiguredOutput {
+  pw_stream *stream;
+  spa_hook listener = {};
+  bool registered = false;
+  bool negotiated = false;
+};
 
 // Only this test executable wraps the public API. Fail one real stream
 // connection after a wide layout has played, then report a negotiation error.
 // Restoring the old width and the final retry use the real API.
+// A separate scenario leaves one exported stream unconfigured until timeout.
 extern "C" int __real_pw_stream_connect(pw_stream *, pw_direction, std::uint32_t,
     pw_stream_flags, const spa_pod **, std::uint32_t);
 extern "C" int __wrap_pw_stream_connect(pw_stream *stream, pw_direction direction,
     std::uint32_t target, pw_stream_flags flags, const spa_pod **parameters, std::uint32_t count) {
+  if (stallWideOutput && direction == PW_DIRECTION_OUTPUT && count != 0) {
+    auto format = spa_audio_info_raw{};
+    if (spa_format_audio_raw_parse(parameters[0], &format) >= 0 && format.channels == 16) {
+      stallWideOutput = false;
+      // Export a real stream outside the session manager's audio classes.
+      // Its format remains unconfigured until the product's deadline expires.
+      const auto item = spa_dict_item{PW_KEY_MEDIA_CLASS, "PipeTune/Test"};
+      const auto properties = SPA_DICT_INIT(&item, 1);
+      const auto updated = pw_stream_update_properties(stream, &properties);
+      if (updated < 0) return updated;
+      auto observation = std::make_unique<UnconfiguredOutput>(UnconfiguredOutput{.stream = stream});
+      static const auto events = [] {
+        auto value = pw_stream_events{};
+        value.version = PW_VERSION_STREAM_EVENTS;
+        value.state_changed = [](void *data, pw_stream_state, pw_stream_state state, const char *) {
+          auto &observation = *static_cast<UnconfiguredOutput *>(data);
+          if (state == PW_STREAM_STATE_PAUSED && pw_stream_get_node_id(observation.stream) != PW_ID_ANY)
+            observation.registered = true;
+        };
+        value.param_changed = [](void *data, std::uint32_t id, const spa_pod *parameter) {
+          if (id == SPA_PARAM_Format && parameter != nullptr)
+            static_cast<UnconfiguredOutput *>(data)->negotiated = true;
+        };
+        value.destroy = [](void *data) {
+          auto observation = std::unique_ptr<UnconfiguredOutput>(static_cast<UnconfiguredOutput *>(data));
+          spa_hook_remove(&observation->listener);
+          if (observation->registered && !observation->negotiated)
+            std::cerr << "product:unconfigured-output-retired\n" << std::flush;
+        };
+        return value;
+      }();
+      pw_stream_add_listener(stream, &observation->listener, &events, observation.get());
+      static_cast<void>(observation.release());
+      const auto result = __real_pw_stream_connect(stream, direction, target, flags, parameters, count);
+      if (result >= 0) std::cerr << "product:unconfigured-output-stream\n" << std::flush;
+      return result;
+    }
+  }
   if (rejectRestoredWidth && direction == PW_DIRECTION_OUTPUT && count != 0) {
     auto format = spa_audio_info_raw{};
     if (spa_format_audio_raw_parse(parameters[0], &format) >= 0) {
@@ -73,6 +119,7 @@ static void runtimeReady(void *) {
 
 static int runProduct(const char *preset, std::string_view scenario) {
   rejectRestoredWidth = scenario == "product-output-change";
+  stallWideOutput = scenario == "product-output-timeout";
   const auto *socket = std::getenv("PIPETUNE_PRODUCT_SOCKET");
   const auto control = scenario == "product-controls" || scenario.starts_with("product-output-");
   if (control && socket == nullptr) return 2;
@@ -161,6 +208,7 @@ struct AudioTest {
   bool intentionalDelay = false;
   bool controls = false;
   bool outputChange = false;
+  bool outputTimeout = false;
   std::uint64_t singleModeFrames = 0;
   bool inventory = false;
   bool awaitingControl = false;
@@ -364,6 +412,7 @@ static void capture(void *data) {
       if (test.stage >= 3 && test.stage <= 5 && output.index == 0) expected = 0.0F;
       if (test.stage == 7) expected = output.index == 2 ? (channel == 0 ? 0.25F : 0.5F) : 0.0F;
     }
+    if (test.outputTimeout && test.stage == 2 && output.index == 1) expected = 0.0F;
     for (auto frame = 0U; frame < frames; ++frame) {
       auto sample = 0.0F;
       std::memcpy(&sample, static_cast<const char *>(plane.data) + plane.chunk->offset + frame * sizeof(float), sizeof(float));
@@ -397,7 +446,7 @@ static void capture(void *data) {
   // Graph replacement permits a brief fade or silence. Require a fresh,
   // consecutive window of exact PCM after each device change rather than
   // counting samples from the old graph toward the recovered state.
-  if (((test.reconnect && test.stage >= 2) || test.controls || test.outputChange) && !matches) {
+  if (((test.reconnect && test.stage >= 2) || test.controls || test.outputChange || test.outputTimeout) && !matches) {
     output.matched = false;
     output.frames = 0;
     return;
@@ -418,9 +467,9 @@ static void capture(void *data) {
         return;
       }
     }
-    if (test.controls || test.outputChange) {
+    if (test.controls || test.outputChange || test.outputTimeout) {
       test.stageFrames[test.stage] = {test.outputs[0].frames, test.outputs[1].frames};
-      if (test.stage == 8) pw_main_loop_quit(test.loop);
+      if (test.stage == (test.outputTimeout ? 2U : 8U)) pw_main_loop_quit(test.loop);
       else {
         test.awaitingControl = true;
         std::cerr << "product:controls-stage-" << test.stage << '\n' << std::flush;
@@ -601,6 +650,7 @@ static int runAudio(std::string_view scenario) {
   test.latency = scenario == "product-latency" || test.intentionalDelay || test.latencyReconnect;
   test.controls = scenario == "product-controls";
   test.outputChange = scenario == "product-output-change";
+  test.outputTimeout = scenario == "product-output-timeout";
   test.inventory = scenario.starts_with("product-output-status");
   test.loop = pw_main_loop_new(nullptr);
   if (test.loop == nullptr) return 1;
@@ -609,7 +659,7 @@ static int runAudio(std::string_view scenario) {
   auto *resume = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR2, [](void *data, int) {
     auto &test = *static_cast<AudioTest *>(data);
     if (test.inventory && ++test.stage == 4) return static_cast<void>(pw_main_loop_quit(test.loop));
-    if (test.controls || test.outputChange) {
+    if (test.controls || test.outputChange || test.outputTimeout) {
       if (!test.awaitingControl) return fail(test, "unexpected control transition");
       test.awaitingControl = false;
       ++test.stage;
@@ -683,7 +733,7 @@ static int runAudio(std::string_view scenario) {
   auto *timer = pw_loop_add_timer(pw_main_loop_get_loop(test.loop), [](void *data, std::uint64_t) {
     fail(*static_cast<AudioTest *>(data), "product PCM test timed out");
   }, &test);
-  auto deadline = timespec{.tv_sec = 15, .tv_nsec = 0}; auto interval = timespec{};
+  auto deadline = timespec{.tv_sec = test.outputTimeout ? 30 : 15, .tv_nsec = 0}; auto interval = timespec{};
   if (timer == nullptr || signal == nullptr ||
       pw_loop_update_timer(pw_main_loop_get_loop(test.loop), timer, &deadline, &interval, false) < 0) return 1;
   pw_main_loop_run(test.loop);
