@@ -7,6 +7,7 @@
 #include "pipetune/control_socket.h"
 #include "pipetune/startup_config.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -32,6 +33,7 @@ struct FakeDaemonState {
   std::uint64_t manualStatusSequence;
   std::string outputInventoryState = "connected";
   std::string outputVolumeState = "normal";
+  std::string outputTimingState = "normal";
 };
 
 static std::string environmentValue(const char *name) {
@@ -193,6 +195,28 @@ static pipetune::ControlRuntimeStatus snapshotStatus(
       else if (state.outputVolumeState == "unknown") volume = {73, {}, {}, {}};
     }
     status.outputVolumes.push_back(std::move(volume));
+  }
+  if (config.outputConfiguration.mode == pipetune::OutputMode::multiple) {
+    const auto resolved = pipetune::resolveConfiguredOutputs(config.outputConfiguration, status.availableOutputs);
+    auto maximumLatency = 0.0;
+    for (const auto &output : resolved) {
+      if (!output.inventoryIndex) continue;
+      const auto serial = status.availableOutputs[*output.inventoryIndex].nodeSerial;
+      auto timing = pipetune::OutputTimingState{output.outputId, serial, pipetune::OutputPathActivity::active, {}, {}};
+      if (state.outputTimingState == "pending") timing.activity = pipetune::OutputPathActivity::pending;
+      else if (state.outputTimingState == "idle") timing.activity = pipetune::OutputPathActivity::idle;
+      else if (state.outputTimingState == "error") timing.activity = pipetune::OutputPathActivity::error;
+      else if (state.outputTimingState != "unknown") {
+        timing.reportedLatencyNanoseconds = serial == 73 ? 1'000'000.0 : 3'000'000.0;
+        maximumLatency = std::max(maximumLatency, *timing.reportedLatencyNanoseconds);
+      }
+      status.outputTimings.push_back(std::move(timing));
+    }
+    for (auto &timing : status.outputTimings) {
+      if (timing.reportedLatencyNanoseconds) {
+        timing.estimatedCompensationNanoseconds = maximumLatency - *timing.reportedLatencyNanoseconds;
+      }
+    }
   }
   if (stale) {
     status.configurationError = "E2E stale status";
@@ -449,6 +473,13 @@ int main(int argc, char **argv) {
   std::cout << "READY\n" << std::flush;
   auto input = std::string{};
   while (std::getline(std::cin, input)) {
+    if (input.starts_with("output-timing ")) {
+      {
+        auto lock = std::scoped_lock(state.mutex);
+        state.outputTimingState = input.substr(14);
+      }
+      pipetune::publishControlStatus(started.server.get());
+    }
     if (input.starts_with("output-volume ")) {
       {
         auto lock = std::scoped_lock(state.mutex);

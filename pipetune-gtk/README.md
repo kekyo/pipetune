@@ -90,6 +90,14 @@ change the routing or interrupt purpose-label editing when they update.
 Disconnected, changed-profile, and ambiguous devices show unknown controls;
 losing the daemon connection also clears the live volume display.
 
+Selected outputs in multiple mode show audio path activity separately from
+device presence: pending, idle, active, or error. Their estimated compensation
+is shown in milliseconds, or `Unknown` when timing is unavailable. An active
+path alone does not establish its delay. The tooltip explains that the estimate
+uses reported output latency and does not measure the compensation buffer or
+acoustic arrival time. Disconnects and unavailable inventory clear stale
+reports. These updates preserve in-progress purpose edits and never save settings.
+
 Select a channel to move it up or down with its purpose label, or use
 `Reassign device…` to replace the device assigned to that channel. Both actions
 open a before/after review. `Preview mapping` sends the proposed configuration;

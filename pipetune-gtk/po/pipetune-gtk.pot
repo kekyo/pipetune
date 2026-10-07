@@ -110,6 +110,21 @@ msgstr ""
 msgid "Audio outputs changed"
 msgstr ""
 
+msgid "Audio path active"
+msgstr ""
+
+msgid "Audio path error"
+msgstr ""
+
+msgid "Audio path idle"
+msgstr ""
+
+msgid "Audio path pending"
+msgstr ""
+
+msgid "Audio path unavailable"
+msgstr ""
+
 msgid "Automatic"
 msgstr ""
 
@@ -351,6 +366,13 @@ msgid "English"
 msgstr ""
 
 msgid "Errors"
+msgstr ""
+
+#, brace-format
+msgid "Estimated compensation: {0}"
+msgstr ""
+
+msgid "Estimated from reported output latency. This is not a measurement of the compensation buffer or acoustic arrival time."
 msgstr ""
 
 msgid "Finishing rollback…"

@@ -116,6 +116,10 @@ export interface PipeTuneGtkTestSession {
   readonly setOutputVolume: (
     state: 'normal' | 'muted' | 'unknown'
   ) => Promise<void>;
+  /** Publishes path activity and estimates without changing routing or revisions. */
+  readonly setOutputTiming: (
+    state: 'normal' | 'pending' | 'idle' | 'error' | 'unknown'
+  ) => Promise<void>;
   /** Atomically replaces EffeTune's saved-preset JSON file. */
   readonly replaceEffeTuneSavedPresets: (contents: string) => Promise<void>;
   /** Stops all processes and removes the isolated filesystem root. */
@@ -418,6 +422,15 @@ export const launchPipeTuneGtk = async (
       if (daemon === undefined) throw new Error('fake daemon is unavailable');
       await new Promise<void>((resolve, reject) => {
         daemon?.process.stdin.write(`output-volume ${state}\n`, (error) => {
+          if (error !== null && error !== undefined) reject(error);
+          else resolve();
+        });
+      });
+    },
+    setOutputTiming: async (state) => {
+      if (daemon === undefined) throw new Error('fake daemon is unavailable');
+      await new Promise<void>((resolve, reject) => {
+        daemon?.process.stdin.write(`output-timing ${state}\n`, (error) => {
           if (error !== null && error !== undefined) reject(error);
           else resolve();
         });

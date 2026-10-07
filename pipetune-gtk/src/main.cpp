@@ -82,6 +82,8 @@ struct OutputDeviceWidgets {
   GtkWidget *details;
   GtkWidget *volume;
   std::string volumeText;
+  GtkWidget *timing;
+  std::string timingText;
 };
 
 struct OutputMappingReview {
@@ -833,7 +835,7 @@ static void renderOutputControls(GtkRuntime *runtime) {
       return row.device.identity == device.identity && row.device.profile == device.profile &&
           row.device.channelPositions == device.channelPositions;
     });
-    auto widgets = OutputDeviceWidgets{device, nullptr, nullptr, nullptr, nullptr, {}};
+    auto widgets = OutputDeviceWidgets{device, nullptr, nullptr, nullptr, nullptr, {}, nullptr, {}};
     if (previous != oldRows.end()) {
       widgets = std::move(*previous);
       oldRows.erase(previous);
@@ -844,6 +846,7 @@ static void renderOutputControls(GtkRuntime *runtime) {
       widgets.button = gtk_check_button_new_with_label(device.name.c_str());
       widgets.details = gtk_label_new(nullptr);
       widgets.volume = gtk_label_new(nullptr);
+      widgets.timing = gtk_label_new(nullptr);
       gtk_label_set_xalign(GTK_LABEL(widgets.details), 0);
       gtk_label_set_ellipsize(GTK_LABEL(widgets.details), PANGO_ELLIPSIZE_END);
       gtk_label_set_max_width_chars(GTK_LABEL(widgets.details), 45);
@@ -853,6 +856,10 @@ static void renderOutputControls(GtkRuntime *runtime) {
       gtk_label_set_line_wrap(GTK_LABEL(widgets.volume), TRUE);
       gtk_label_set_max_width_chars(GTK_LABEL(widgets.volume), 45);
       gtk_box_pack_start(GTK_BOX(box), widgets.volume, FALSE, FALSE, 0);
+      gtk_label_set_xalign(GTK_LABEL(widgets.timing), 0);
+      gtk_label_set_line_wrap(GTK_LABEL(widgets.timing), TRUE);
+      gtk_label_set_max_width_chars(GTK_LABEL(widgets.timing), 45);
+      gtk_box_pack_start(GTK_BOX(box), widgets.timing, FALSE, FALSE, 0);
       gtk_container_add(GTK_CONTAINER(ui.outputDeviceList), box);
       widgets.row = gtk_widget_get_parent(box);
       g_signal_connect(widgets.button, "toggled", G_CALLBACK(onOutputDeviceToggled), runtime);
@@ -870,6 +877,7 @@ static void renderOutputControls(GtkRuntime *runtime) {
 #ifdef PIPETUNE_GTK_E2E_ACCESSIBILITY
     gestament_gtk_assign_accessible_id(button, ("output-device-" + std::to_string(rowIndex)).c_str());
     gestament_gtk_assign_accessible_id(widgets.volume, ("output-volume-" + std::to_string(rowIndex)).c_str());
+    gestament_gtk_assign_accessible_id(widgets.timing, ("output-timing-" + std::to_string(rowIndex)).c_str());
 #endif
     ++rowIndex;
     gtk_label_set_text(GTK_LABEL(widgets.details), details.c_str());
@@ -955,6 +963,42 @@ static void renderOutputVolumes(GtkRuntime *runtime) {
     const auto tooltip = text + '\n' + translate(
         "Reported device controls, separate from the OS master volume. Channel gains show the minimum and maximum across the device.");
     gtk_widget_set_tooltip_text(row.volume, tooltip.c_str());
+  }
+}
+
+static void renderOutputTimings(GtkRuntime *runtime) {
+  const auto &status = runtime->state.runtime;
+  if (!runtime->ui.displayedOutputConfiguration) return;
+  const auto &configuration = *runtime->ui.displayedOutputConfiguration;
+  const auto ready = runtime->state.connection == ControlConnectionState::connected &&
+      status.outputInventoryReady && status.outputInventoryError.empty() &&
+      configuration == status.outputConfiguration;
+  const auto resolved = pipetune::resolveConfiguredOutputs(configuration, status.availableOutputs);
+  for (auto &row : runtime->outputDeviceRows) {
+    const auto output = std::find_if(configuration.outputs.begin(), configuration.outputs.end(),
+        [&row](const auto &saved) {
+          return saved.device.identity == row.device.identity && saved.device.profile == row.device.profile &&
+              saved.device.channelPositions == row.device.channelPositions;
+        });
+    const auto visible = configuration.mode == pipetune::OutputMode::multiple &&
+        output != configuration.outputs.end() && output->enabled;
+    gtk_widget_set_visible(row.timing, visible);
+    if (!visible) continue;
+    const pipetune::OutputTimingState *timing = nullptr;
+    const auto &target = resolved[static_cast<std::size_t>(output - configuration.outputs.begin())];
+    if (ready && target.inventoryIndex) {
+      const auto serial = status.availableOutputs[*target.inventoryIndex].nodeSerial;
+      const auto report = std::find_if(status.outputTimings.begin(), status.outputTimings.end(),
+          [&output, serial](const auto &entry) { return entry.outputId == output->id && entry.nodeSerial == serial; });
+      if (report != status.outputTimings.end()) timing = &*report;
+    }
+    const auto text = outputTimingText(timing);
+    if (row.timingText == text) continue;
+    row.timingText = text;
+    gtk_label_set_text(GTK_LABEL(row.timing), text.c_str());
+    const auto tooltip = text + '\n' + translate(
+        "Estimated from reported output latency. This is not a measurement of the compensation buffer or acoustic arrival time.");
+    gtk_widget_set_tooltip_text(row.timing, tooltip.c_str());
   }
 }
 
@@ -1090,6 +1134,7 @@ static void renderSettingsControls(GtkRuntime *runtime) {
   renderPresetControls(runtime);
   renderOutputControls(runtime);
   renderOutputVolumes(runtime);
+  renderOutputTimings(runtime);
   renderOutputMappingActions(runtime);
   renderRateControls(runtime);
   renderDspControls(runtime);

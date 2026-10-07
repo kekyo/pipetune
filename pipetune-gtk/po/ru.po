@@ -116,6 +116,21 @@ msgstr "Применить"
 msgid "Audio outputs changed"
 msgstr "Аудиовыходы изменены"
 
+msgid "Audio path active"
+msgstr "Аудиотракт активен"
+
+msgid "Audio path error"
+msgstr "Ошибка аудиотракта"
+
+msgid "Audio path idle"
+msgstr "Аудиотракт простаивает"
+
+msgid "Audio path pending"
+msgstr "Аудиотракт в ожидании"
+
+msgid "Audio path unavailable"
+msgstr "Аудиотракт недоступен"
+
 msgid "Automatic"
 msgstr "Автоматически"
 
@@ -358,6 +373,13 @@ msgstr "Английский"
 
 msgid "Errors"
 msgstr "Ошибки"
+
+#, brace-format
+msgid "Estimated compensation: {0}"
+msgstr "Оценка компенсации: {0}"
+
+msgid "Estimated from reported output latency. This is not a measurement of the compensation buffer or acoustic arrival time."
+msgstr "Оценка на основе сообщённой задержки вывода. Это не измерение буфера компенсации или времени прихода звука."
 
 msgid "Finishing rollback…"
 msgstr "Завершение отката…"

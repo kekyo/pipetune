@@ -9,9 +9,11 @@
 #include <cstdlib>
 #include <ctime>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 static bool check(bool condition, std::string_view message) {
   if (!condition) {
@@ -156,7 +158,41 @@ static bool testOutputVolumeText() {
              "uniform channel gains must not be multiplied by a separate scalar report");
 }
 
+static bool testOutputTimingText() {
+  using pipetune::OutputPathActivity;
+  if (!check(pipetune_gtk::outputTimingText(nullptr) ==
+             "Audio path unavailable · Estimated compensation: Unknown",
+             "missing timing must not imply a running path or zero compensation")) return false;
+  auto timing = pipetune::OutputTimingState{"dac-a", 73, OutputPathActivity::active, 1'000'000, 2'125'000};
+  if (!check(pipetune_gtk::outputTimingText(&timing) ==
+             "Audio path active · Estimated compensation: 2.125 ms",
+             "compensation must be identified as an estimate in milliseconds")) return false;
+  timing.estimatedCompensationNanoseconds = 0;
+  if (!check(pipetune_gtk::outputTimingText(&timing) ==
+             "Audio path active · Estimated compensation: 0.000 ms",
+             "a known zero estimate must remain distinct from unknown")) return false;
+  for (const auto value : {std::optional<double>{}, std::optional<double>{-1},
+                           std::optional<double>{std::numeric_limits<double>::infinity()},
+                           std::optional<double>{std::numeric_limits<double>::quiet_NaN()}}) {
+    timing.estimatedCompensationNanoseconds = value;
+    if (!check(pipetune_gtk::outputTimingText(&timing) ==
+               "Audio path active · Estimated compensation: Unknown",
+               "missing or invalid estimates must not alter observed activity")) return false;
+  }
+  timing.estimatedCompensationNanoseconds = 2'125'000;
+  for (const auto &[activity, text] : {
+      std::pair{OutputPathActivity::pending, "Audio path pending · Estimated compensation: Unknown"},
+      std::pair{OutputPathActivity::idle, "Audio path idle · Estimated compensation: Unknown"},
+      std::pair{OutputPathActivity::error, "Audio path error · Estimated compensation: Unknown"}}) {
+    timing.activity = activity;
+    if (!check(pipetune_gtk::outputTimingText(&timing) == text,
+               "inactive paths must not retain an estimate")) return false;
+  }
+  return true;
+}
+
 int main() {
+  if (!testOutputTimingText()) return 1;
   if (!testOutputVolumeText()) return 1;
   return testActiveText() && testUnavailableAndIdleText() &&
                  testRuntimeText()

@@ -115,6 +115,21 @@ msgstr "लागू करें"
 msgid "Audio outputs changed"
 msgstr "ऑडियो आउटपुट बदल दिए गए"
 
+msgid "Audio path active"
+msgstr "ऑडियो पथ सक्रिय"
+
+msgid "Audio path error"
+msgstr "ऑडियो पथ में त्रुटि"
+
+msgid "Audio path idle"
+msgstr "ऑडियो पथ निष्क्रिय"
+
+msgid "Audio path pending"
+msgstr "ऑडियो पथ लंबित"
+
+msgid "Audio path unavailable"
+msgstr "ऑडियो पथ अनुपलब्ध"
+
 msgid "Automatic"
 msgstr "स्वचालित"
 
@@ -357,6 +372,13 @@ msgstr "अंग्रेज़ी"
 
 msgid "Errors"
 msgstr "त्रुटियाँ"
+
+#, brace-format
+msgid "Estimated compensation: {0}"
+msgstr "अनुमानित क्षतिपूर्ति: {0}"
+
+msgid "Estimated from reported output latency. This is not a measurement of the compensation buffer or acoustic arrival time."
+msgstr "रिपोर्ट की गई आउटपुट विलंबता के आधार पर अनुमान। यह क्षतिपूर्ति बफ़र या ध्वनि के पहुँचने के समय का माप नहीं है।"
 
 msgid "Finishing rollback…"
 msgstr "रोलबैक पूरा किया जा रहा है…"

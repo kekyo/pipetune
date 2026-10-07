@@ -119,6 +119,21 @@ msgstr "تطبيق"
 msgid "Audio outputs changed"
 msgstr "تم تغيير مخارج الصوت"
 
+msgid "Audio path active"
+msgstr "مسار الصوت نشط"
+
+msgid "Audio path error"
+msgstr "خطأ في مسار الصوت"
+
+msgid "Audio path idle"
+msgstr "مسار الصوت خامل"
+
+msgid "Audio path pending"
+msgstr "مسار الصوت قيد الانتظار"
+
+msgid "Audio path unavailable"
+msgstr "مسار الصوت غير متاح"
+
 msgid "Automatic"
 msgstr "تلقائي"
 
@@ -361,6 +376,13 @@ msgstr "الإنجليزية"
 
 msgid "Errors"
 msgstr "الأخطاء"
+
+#, brace-format
+msgid "Estimated compensation: {0}"
+msgstr "التعويض التقديري: {0}"
+
+msgid "Estimated from reported output latency. This is not a measurement of the compensation buffer or acoustic arrival time."
+msgstr "تقدير مستند إلى زمن تأخير الإخراج المُبلّغ عنه. لا يمثل قياسًا لمخزن التعويض أو وقت وصول الصوت."
 
 msgid "Finishing rollback…"
 msgstr "جارٍ إنهاء التراجع…"

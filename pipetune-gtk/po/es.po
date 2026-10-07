@@ -115,6 +115,21 @@ msgstr "Aplicar"
 msgid "Audio outputs changed"
 msgstr "Salidas de audio cambiadas"
 
+msgid "Audio path active"
+msgstr "Ruta de audio activa"
+
+msgid "Audio path error"
+msgstr "Error en la ruta de audio"
+
+msgid "Audio path idle"
+msgstr "Ruta de audio inactiva"
+
+msgid "Audio path pending"
+msgstr "Ruta de audio pendiente"
+
+msgid "Audio path unavailable"
+msgstr "Ruta de audio no disponible"
+
 msgid "Automatic"
 msgstr "Automático"
 
@@ -357,6 +372,13 @@ msgstr "Inglés"
 
 msgid "Errors"
 msgstr "Errores"
+
+#, brace-format
+msgid "Estimated compensation: {0}"
+msgstr "Compensación estimada: {0}"
+
+msgid "Estimated from reported output latency. This is not a measurement of the compensation buffer or acoustic arrival time."
+msgstr "Estimación a partir de la latencia de salida notificada. No mide el búfer de compensación ni el tiempo de llegada del sonido."
 
 msgid "Finishing rollback…"
 msgstr "Finalizando la reversión…"

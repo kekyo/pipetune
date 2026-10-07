@@ -355,6 +355,123 @@ const hideWithKeyboard = async (method: 'escape' | 'close'): Promise<void> => {
 };
 
 describe('PipeTune GTK dialog', () => {
+  it('updates path activity and estimates while retaining channel editing', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await (await getElement('mainWindow', 'window')).resizeTo(1080, 800);
+    await selectSettingsPage(4);
+    await selectComboItem('outputModeCombo', 1);
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await (await getElement('output-device-1', 'checkbox')).toggle();
+    const table = await getElement('outputChannelView', 'table');
+    await waitForLabel(
+      'output-timing-0',
+      'Audio path active · Estimated compensation: 2.000 ms'
+    );
+    await waitForLabel(
+      'output-timing-1',
+      'Audio path active · Estimated compensation: 0.000 ms'
+    );
+    const saved = await session.inspectConfig();
+    await session.clearRequests();
+    const purpose = await table.cellAt(0, 3);
+    if (purpose === undefined) throw new Error('Purpose cell is unavailable');
+    const bounds = (await purpose.capture()).bounds;
+    await (await getElement('mainWindow', 'window')).activate();
+    await session.app.input.moveMouseTo(
+      bounds.x + Math.floor(bounds.width / 2),
+      bounds.y + Math.floor(bounds.height / 2)
+    );
+    await session.app.input.setMouseButton('left', true);
+    await session.app.input.setMouseButton('left', false);
+    await session.app.input.pressKey('Return');
+    await session.app.input.pressKey('s');
+    await session.setOutputTiming('unknown');
+    await waitForLabel(
+      'output-timing-0',
+      'Audio path active · Estimated compensation: Unknown'
+    );
+    expect(
+      (await session.readRequests()).filter(
+        (request) => request.command === 'set-output'
+      )
+    ).toHaveLength(0);
+    await session.app.input.pressKey('u');
+    await session.app.input.pressKey('b');
+    await session.app.input.pressKey('Return');
+    await toPass(async () => {
+      expect((await (await table.cellAt(0, 3))?.info())?.name).toBe('sub');
+      expect(
+        (await (await getElement('applyButton', 'button')).info()).states
+      ).toContain('sensitive');
+      expect(
+        (await session?.readRequests())
+          ?.filter((request) => request.command === 'set-output')
+          .at(-1)?.configuration
+      ).toMatchObject({ channels: [{ label: 'sub' }, {}, {}, {}] });
+    });
+    await session.clearRequests();
+    for (const state of ['pending', 'idle', 'error'] as const) {
+      await session.setOutputTiming(state);
+      await waitForLabel(
+        'output-timing-0',
+        `Audio path ${state} · Estimated compensation: Unknown`
+      );
+    }
+    await session.setOutputTiming('normal');
+    await waitForLabel(
+      'output-timing-0',
+      'Audio path active · Estimated compensation: 2.000 ms'
+    );
+    for (const state of [
+      'missing',
+      'profileChanged',
+      'ambiguous',
+      'unavailable',
+      'pending',
+    ] as const) {
+      await session.setOutputInventory(state);
+      await waitForLabel(
+        'output-timing-0',
+        'Audio path unavailable · Estimated compensation: Unknown'
+      );
+    }
+    await session.setOutputInventory('connected');
+    await waitForLabel(
+      'output-timing-0',
+      'Audio path active · Estimated compensation: 2.000 ms'
+    );
+    expect(
+      (await session.readRequests()).filter(
+        (request) => request.command === 'set-output'
+      )
+    ).toHaveLength(0);
+    expect(await session.inspectConfig()).toEqual(saved);
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await toPass(async () => {
+      expect(
+        (await (await getElement('output-timing-0', 'label')).info()).states
+      ).not.toContain('visible');
+    });
+    await selectComboItem('outputModeCombo', 0);
+    await toPass(async () => {
+      expect(
+        (await (await getElement('output-timing-1', 'label')).info()).states
+      ).not.toContain('visible');
+    });
+    await selectComboItem('outputModeCombo', 1);
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await waitForLabel(
+      'output-timing-0',
+      'Audio path active · Estimated compensation: 2.000 ms'
+    );
+    await session.disconnectDaemon();
+    await waitForLabel(
+      'output-timing-0',
+      'Audio path unavailable · Estimated compensation: Unknown'
+    );
+  });
+
   it('updates physical device controls while retaining channel editing', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();

@@ -78,6 +78,26 @@ std::string outputVolumeText(const pipetune::OutputVolumeState *volume) {
       " · " + formatUiMessage(localizedMessage("Channel gains: {0}", {channels}));
 }
 
+std::string outputTimingText(const pipetune::OutputTimingState *timing) {
+  const auto *activity = translate("Audio path unavailable");
+  auto compensation = std::string(translate("Unknown"));
+  if (timing != nullptr) {
+    switch (timing->activity) {
+    case pipetune::OutputPathActivity::pending: activity = translate("Audio path pending"); break;
+    case pipetune::OutputPathActivity::idle: activity = translate("Audio path idle"); break;
+    case pipetune::OutputPathActivity::active: activity = translate("Audio path active"); break;
+    case pipetune::OutputPathActivity::error: activity = translate("Audio path error"); break;
+    }
+    const auto estimate = timing->estimatedCompensationNanoseconds;
+    if (timing->activity == pipetune::OutputPathActivity::active && estimate &&
+        std::isfinite(*estimate) && *estimate >= 0) {
+      compensation = fixedDecimal(*estimate / 1'000'000.0, 3) + " ms";
+    }
+  }
+  return std::string(activity) + " · " +
+      formatUiMessage(localizedMessage("Estimated compensation: {0}", {compensation}));
+}
+
 static std::string dspProcessingTimeText(
     const ApplicationState &state) {
   if (!state.dspTiming.hasAverage ||

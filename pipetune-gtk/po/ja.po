@@ -114,6 +114,21 @@ msgstr "適用"
 msgid "Audio outputs changed"
 msgstr "音声出力を変更しました"
 
+msgid "Audio path active"
+msgstr "音声経路は稼働中"
+
+msgid "Audio path error"
+msgstr "音声経路にエラー"
+
+msgid "Audio path idle"
+msgstr "音声経路は休止中"
+
+msgid "Audio path pending"
+msgstr "音声経路を準備中"
+
+msgid "Audio path unavailable"
+msgstr "音声経路は不明"
+
 msgid "Automatic"
 msgstr "自動"
 
@@ -356,6 +371,13 @@ msgstr "English"
 
 msgid "Errors"
 msgstr "エラー"
+
+#, brace-format
+msgid "Estimated compensation: {0}"
+msgstr "補償量の目安: {0}"
+
+msgid "Estimated from reported output latency. This is not a measurement of the compensation buffer or acoustic arrival time."
+msgstr "報告された出力遅延から算出した目安です。補償バッファ量や音の到達時間を測定した値ではありません。"
 
 msgid "Finishing rollback…"
 msgstr "ロールバックを完了中…"

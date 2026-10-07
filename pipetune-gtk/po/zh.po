@@ -114,6 +114,21 @@ msgstr "应用"
 msgid "Audio outputs changed"
 msgstr "音频输出已更改"
 
+msgid "Audio path active"
+msgstr "音频路径运行中"
+
+msgid "Audio path error"
+msgstr "音频路径错误"
+
+msgid "Audio path idle"
+msgstr "音频路径空闲"
+
+msgid "Audio path pending"
+msgstr "音频路径准备中"
+
+msgid "Audio path unavailable"
+msgstr "音频路径不可用"
+
 msgid "Automatic"
 msgstr "自动"
 
@@ -356,6 +371,13 @@ msgstr "英语"
 
 msgid "Errors"
 msgstr "错误"
+
+#, brace-format
+msgid "Estimated compensation: {0}"
+msgstr "估算补偿量：{0}"
+
+msgid "Estimated from reported output latency. This is not a measurement of the compensation buffer or acoustic arrival time."
+msgstr "根据报告的输出延迟估算。此值并非对补偿缓冲区或声音到达时间的测量结果。"
 
 msgid "Finishing rollback…"
 msgstr "正在完成回滚…"

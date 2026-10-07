@@ -114,6 +114,21 @@ msgstr "적용"
 msgid "Audio outputs changed"
 msgstr "오디오 출력 변경 완료"
 
+msgid "Audio path active"
+msgstr "오디오 경로 활성 상태"
+
+msgid "Audio path error"
+msgstr "오디오 경로 오류"
+
+msgid "Audio path idle"
+msgstr "오디오 경로 유휴 상태"
+
+msgid "Audio path pending"
+msgstr "오디오 경로 준비 중"
+
+msgid "Audio path unavailable"
+msgstr "오디오 경로 정보 없음"
+
 msgid "Automatic"
 msgstr "자동"
 
@@ -356,6 +371,13 @@ msgstr "영어"
 
 msgid "Errors"
 msgstr "오류"
+
+#, brace-format
+msgid "Estimated compensation: {0}"
+msgstr "예상 보정량: {0}"
+
+msgid "Estimated from reported output latency. This is not a measurement of the compensation buffer or acoustic arrival time."
+msgstr "보고된 출력 지연을 기준으로 추정한 값입니다. 보정 버퍼나 소리 도달 시간을 측정한 값이 아닙니다."
 
 msgid "Finishing rollback…"
 msgstr "롤백 완료 중…"

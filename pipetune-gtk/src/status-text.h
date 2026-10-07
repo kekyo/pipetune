@@ -66,6 +66,15 @@ RuntimeStatusText runtimeStatusText(const ApplicationState &state);
  */
 std::string outputVolumeText(const pipetune::OutputVolumeState *volume);
 
+/**
+ * Formats audio path activity and a clearly identified compensation estimate.
+ * @param timing Report for the current routing and connection, or null.
+ * @return Activity and estimated compensation in milliseconds, or unknown.
+ * @remarks An active path does not imply that its timing is available. The
+ * estimate does not measure the internal buffer or acoustic arrival time.
+ */
+std::string outputTimingText(const pipetune::OutputTimingState *timing);
+
 } // namespace pipetune_gtk
 
 #endif

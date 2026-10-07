@@ -232,6 +232,12 @@ volume. Channel gains show a minimum–maximum range when they differ. These
 values are read-only; unavailable controls or disconnected devices show
 `Unknown`. Hover over the values for an explanation.
 
+Selected devices in multiple mode also show audio path activity and estimated
+delay compensation. An active path can still have an unknown estimate when
+timing information is unavailable. The estimate uses reported output latency;
+it does not measure the compensation buffer or acoustic arrival time. Live
+updates preserve channel labels being edited and do not save settings.
+
 List the audio outputs in the current PipeWire session, including each output's
 active profile and all channel positions:
 
