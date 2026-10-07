@@ -8,6 +8,7 @@
 
 #include "pipetune/dsp_idle.h"
 #include "pipetune/dsp_pipeline.h"
+#include "pipetune/output_configuration.h"
 #include "pipetune/sample_rate.h"
 
 #include <cstdint>
@@ -45,7 +46,7 @@ struct PipeWirePipelineOptions {
   std::uint32_t dspSampleRate;
   /** Initial automatic/fixed graph-rate policy. */
   SampleRatePolicy ratePolicy;
-  /** Fixed planar channel count, from one through sixteen. */
+  /** DSP and output planar channel count, from one through sixteen. */
   std::uint32_t channelCount;
   /** Largest DSP block processed in one call; must be at least 32. */
   std::uint32_t maxFrames;
@@ -69,6 +70,10 @@ struct PipeWirePipelineOptions {
       DspSimdVariant::automatic;
   /** Initial persisted automatic DSP suspension policy. */
   DspIdlePolicy dspIdlePolicy = {};
+  /** Input width, at most channelCount; zero uses channelCount for both streams. */
+  std::uint32_t inputChannelCount = 0;
+  /** Fixed multiple-output routing; single mode retains OS-managed selection. */
+  OutputConfiguration outputConfiguration = {};
 };
 
 /**
@@ -103,9 +108,16 @@ struct PipeWireRunResult {
  * The supplied DSP pipeline must have been prepared for the same sample rate,
  * at least channelCount channels, and at least maxFrames frames. A fixed rate
  * policy additionally requires dspSampleRate to equal ratePolicy.fixedRate.
+ * A nonzero inputChannelCount selects a narrower capture stream. Additional
+ * DSP channels receive silence on every block, including while bypassed;
+ * only the preset can create audio in those output channels.
  * Ownership is retained for the complete run so control requests can replace
- * the pipeline. WirePlumber owns target selection and volume policy. This
- * function blocks according to mode and does not allocate in PipeWire process
+ * the pipeline. In single mode, WirePlumber owns target selection and volume
+ * policy. Multiple mode requires two input channels and channelCount equal to
+ * outputDspChannelCount(outputConfiguration). It exposes one public input,
+ * applies master gain after DSP, and distributes numbered output channels to
+ * uniquely matched devices. Missing or disabled outputs receive no fallback.
+ * This function blocks according to mode and does not allocate in PipeWire process
  * callbacks.
  *
  * @param pipeline Owned prepared native EffeTune pipeline.

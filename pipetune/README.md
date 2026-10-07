@@ -9,6 +9,8 @@ It uses the formal `.effetune_preset` format.
 
 ## Audio path
 
+Single mode keeps the existing OS-managed output path:
+
 ```text
 desktop applications
         |
@@ -31,6 +33,14 @@ WirePlumber default-output policy and system volume
         v
 selected PipeWire sink
 ```
+
+Multiple mode takes the same stereo input through one DSP pipeline, then
+applies the OS master gain and mute before distributing final DSP channels to
+the devices selected in PipeTune. The Output page shows which device and
+physical channel receives each final channel. Additional outputs are generated
+by the EffeTune preset; bypass leaves them silent. See
+[choosing audio outputs](../README.md#choosing-audio-outputs) for setup and CLI
+commands.
 
 Ubuntu 24.04 uses PipeWire with `pipewire-pulse` by default. PulseAudio
 applications therefore enter the same PipeWire graph and do not require a
@@ -75,13 +85,20 @@ not supported by this MVP.
 - Publishes initial and changed runtime state to same-user local subscribers.
 - Starts the managed daemon without a preset and passes audio through unchanged.
 - Automates per-user service, GTK, and autostart setup and removal.
-- Leaves default-device selection, hotplug routing, and master volume entirely
-  under WirePlumber and the desktop sound controls.
+- Keeps OS output selection in single mode and supports simultaneous device
+  selection in multiple mode with fixed channel assignments through Ch 16.
+- Preserves reserved channel numbers across disconnects and disabled devices,
+  with explicit review before renumbering or assigning another device.
+- Shows physical device controls, path activity, and clearly labeled delay
+  compensation estimates; unavailable observations remain unknown.
+- Keeps OS master volume and mute after DSP. Multiple mode exposes one logical
+  output and restores physical output selection when it ends.
 
 The default rate policy is Automatic: PipeTune follows the graph rate
 negotiated for its two filter nodes. Stereo remains the default channel
-layout, and direct runs accept one through sixteen channels. PipeWire performs
-any conversion required by applications or the selected device.
+layout; multiple mode derives DSP width from the saved channel slots while
+keeping desktop input stereo. Direct runs accept one through sixteen channels.
+PipeWire performs conversion required by applications or the selected devices.
 
 ## Requirements
 
@@ -90,15 +107,16 @@ On Ubuntu 24.04:
 ```sh
 sudo apt install \
   build-essential cmake dbus-x11 desktop-file-utils git \
-  libgdk-pixbuf2.0-bin libgtk-3-dev libpipewire-0.3-dev \
-  libsamplerate0-dev nodejs pkg-config x11-utils xvfb
+  libgdk-pixbuf2.0-bin libgtk-3-dev libpipewire-0.3-dev libpulse-dev \
+  libsamplerate0-dev nodejs pipewire-pulse pkg-config x11-utils xvfb
 ```
 
 PipeTune requires CMake 3.24 or newer, a C++20 GCC toolchain, Node.js, PipeWire
-0.3 and libsamplerate development files, GTK 3 development files, and a
+1.0.5 or later and libsamplerate development files, GTK 3 development files, and a
 WirePlumber 0.4 or 0.5 desktop session. The complete test suite
 also uses `systemd-analyze`, an isolated D-Bus session, Xvfb, X11 utilities,
-`desktop-file-validate`, and the GdkPixbuf thumbnailer.
+`desktop-file-validate`, the GdkPixbuf thumbnailer, and the libpulse development
+files and `pipewire-pulse` executable for isolated desktop-audio integration tests.
 
 Clone with both pinned dependencies:
 
@@ -310,11 +328,11 @@ structure as `scheme-cd-ripper`. They create one `pipetune` package containing
 the daemon, GTK application, systemd user unit, desktop and XDG autostart
 entries, icon, configuration example, documentation, and license notices.
 
-The supported package matrix is:
+Packages require PipeWire 1.0.5 or later, including its matching module package
+for automatic output delay compensation. The supported package matrix is:
 
 | Distribution | Release | Architectures |
 | --- | --- | --- |
-| Debian | bookworm | amd64, i386, arm64, armhf |
 | Debian | trixie | amd64, i386, arm64, armhf, riscv64 |
 | Ubuntu | 24.04 | amd64, arm64 |
 | Ubuntu | 26.04 | amd64, arm64 |
@@ -403,7 +421,7 @@ pipetune setup
 
 Plain `setup` first checks whether the current user's integration is already
 current. It returns successfully without repeating setup when the installed
-PipeTune version, all six managed WirePlumber files, the GTK autostart state,
+PipeTune version, all seven managed WirePlumber files, the GTK autostart state,
 and the enabled and active service are ready. Run the existing setup workflow
 unconditionally with either form:
 

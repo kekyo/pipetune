@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstring>
 
 namespace pipetune {
 
@@ -54,6 +55,32 @@ void retirePipeWireCaptureBuffer(spa_buffer &buffer) noexcept {
       buffer.datas[index].chunk->size = 0;
     }
   }
+}
+
+bool copyPipeWireCaptureBlock(const spa_buffer &buffer, std::uint32_t inputChannels,
+    std::uint32_t sourceFrame, std::uint32_t frameCount, std::uint32_t dspChannels,
+    std::span<float> destination) noexcept {
+  auto availableFrames = std::uint32_t{0};
+  if (inputChannels == 0 || inputChannels > dspChannels || dspChannels > 16 || frameCount == 0 ||
+      destination.size() != static_cast<std::uint64_t>(dspChannels) * frameCount ||
+      !inspectPipeWireCaptureBuffer(buffer, inputChannels, availableFrames) ||
+      sourceFrame > availableFrames || frameCount > availableFrames - sourceFrame) return false;
+  for (auto channel = std::uint32_t{0}; channel < dspChannels; ++channel) {
+    auto target = destination.subspan(static_cast<std::size_t>(channel) * frameCount, frameCount);
+    if (channel >= inputChannels || (buffer.datas[channel].chunk->flags & SPA_CHUNK_FLAG_EMPTY) != 0) {
+      std::fill(target.begin(), target.end(), 0.0F);
+      continue;
+    }
+    const auto &plane = buffer.datas[channel];
+    const auto byteCount = target.size_bytes();
+    const auto sourceByte = static_cast<std::uint32_t>(
+        (static_cast<std::uint64_t>(plane.chunk->offset) + static_cast<std::uint64_t>(sourceFrame) * sizeof(float)) % plane.maxsize);
+    const auto firstBytes = std::min(byteCount, static_cast<std::size_t>(plane.maxsize - sourceByte));
+    const auto *source = static_cast<const std::uint8_t *>(plane.data);
+    std::memcpy(target.data(), source + sourceByte, firstBytes);
+    std::memcpy(reinterpret_cast<std::uint8_t *>(target.data()) + firstBytes, source, byteCount - firstBytes);
+  }
+  return true;
 }
 
 } // namespace pipetune

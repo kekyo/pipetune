@@ -18,6 +18,15 @@ namespace pipetune {
 std::string_view wirePlumber04CompatibilityPolicy() noexcept;
 
 /**
+ * Returns the WirePlumber 0.4 stream configuration for public PipeTune inputs.
+ *
+ * @return Complete main.lua.d fragment contents.
+ * @remarks PipeTune retains its master controls while rebuilding processing
+ * nodes. The session manager must not replace them with saved stream defaults.
+ */
+std::string_view wirePlumber04StreamConfiguration() noexcept;
+
+/**
  * Returns the WirePlumber 0.4 endpoint-client compatibility script.
  *
  * @return Complete runtime Lua script contents.

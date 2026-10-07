@@ -95,6 +95,12 @@ static bool testFixedGraphRateContract() {
 }
 
 int main() {
-  return testSmartFilterPairContract() && testFixedGraphRateContract() ? 0
+  const auto wide = pipetune::makeFilterGraphProperties({
+      .nodeName = "pipetune", .nodeDescription = "PipeTune", .fixedSampleRate = {},
+      .channelCount = 4, .forceRate = false, .inputChannelCount = 2});
+  return check(property(wide.input, "audio.channels") == "2" &&
+               property(wide.output, "audio.channels") == "4",
+               "a four-channel DSP must be able to receive stereo input") &&
+         testSmartFilterPairContract() && testFixedGraphRateContract() ? 0
                                                                        : 1;
 }

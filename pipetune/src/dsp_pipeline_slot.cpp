@@ -293,6 +293,17 @@ std::uint64_t DspPipelineSlot::activeGeneration() const noexcept {
 }
 
 void DspPipelineSlot::replace(std::unique_ptr<DspPipeline> replacement) {
+  if (stagedPrevious_ != nullptr) {
+    if (replacement == nullptr) throw std::invalid_argument("replacement DSP pipeline must not be null");
+    // Negotiation can change the sample rate of a staged output layout. Keep
+    // its original rollback target while replacing only the tentative recipe.
+    auto superseded = std::move(current_);
+    current_ = std::move(replacement);
+    activate(current_.get());
+    superseded_.push_back(std::move(superseded));
+    reclaimSuperseded();
+    return;
+  }
   stageReplacement(std::move(replacement));
   commitStaged();
 }

@@ -10,6 +10,7 @@
 #include <array>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <string_view>
 
@@ -31,6 +32,29 @@ static bool replaceOnce(std::string &value, std::string_view from,
 }
 
 static bool testRequests() {
+  for (const auto json : {
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"preset":null})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"preset":"/tmp/music.effetune_preset","expectedRevision":7})"}) {
+    if (!check(pipetune::parseControlRequest(json).error.empty(),
+               "output changes must optionally carry processing choices for atomic restoration")) return false;
+  }
+  const auto output = pipetune::parseControlRequest(
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]}})");
+  if (!check(output.error.empty() && output.request.command == pipetune::ControlCommand::setOutput &&
+             output.request.outputConfiguration == pipetune::OutputConfiguration{},
+             "valid output configuration requests must be accepted")) return false;
+  const auto guardedOutput = pipetune::parseControlRequest(
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"expectedRevision":7})");
+  if (!check(guardedOutput.error.empty() && guardedOutput.request.expectedRevision == 7 &&
+             !output.request.expectedRevision.has_value(),
+             "output requests must accept an expected configuration revision")) return false;
+  for (const auto &preset : {std::optional<std::filesystem::path>{},
+                            std::optional<std::filesystem::path>{std::filesystem::path{}},
+                            std::optional<std::filesystem::path>{"/tmp/音楽\".effetune_preset"}}) {
+    const auto parsed = pipetune::parseControlRequest(pipetune::makeSetOutputControlRequest({}, 7, preset));
+    if (!check(parsed.error.empty() && parsed.request.outputPreset == preset && parsed.request.expectedRevision == 7,
+               "joint changes must distinguish preserved processing, bypass, and a preset path")) return false;
+  }
   const auto statusJson = pipetune::makeStatusControlRequest();
   const auto status = pipetune::parseControlRequest(statusJson);
   if (!check(status.error.empty(), status.error) ||
@@ -805,8 +829,129 @@ static bool testPresetEntries() {
                "an empty preset must round-trip without entries");
 }
 
+static bool testOutputStatus() {
+  auto status = pipetune::ControlRuntimeStatus{};
+  status.outputConfiguration = {
+      .mode = pipetune::OutputMode::multiple,
+      .outputs = {{.id = "saved", .enabled = true,
+          .device = {.identity = {.api = "alsa", .location = "usb:1", .port = "pcm:0:0",
+                                 .vendor = "", .product = "", .serial = ""},
+                     .name = "Saved \"出力\"", .profile = "analog-stereo", .channelPositions = {"FL", "FR"}}}},
+      .channels = {{"", 0, "Reserved"}, {"saved", 0, "Left"}, {"saved", 1, "Right"}}};
+  status.availableOutputs = {{status.outputConfiguration.outputs[0].device, "current-node", 73, UINT64_MAX}};
+  status.outputInventoryReady = true;
+  const auto request = pipetune::parseControlRequest(pipetune::makeSetOutputControlRequest(status.outputConfiguration, UINT64_MAX));
+  if (!check(request.error.empty() && request.request.command == pipetune::ControlCommand::setOutput &&
+             request.request.outputConfiguration == status.outputConfiguration && request.request.expectedRevision == UINT64_MAX,
+             "output requests must preserve every fixed assignment")) return false;
+  for (const auto json : {
+      R"({"command":"set-output"})",
+      R"({"command":"set-output","configuration":null})",
+      R"({"command":"set-output","configuration":{"mode":"multiple","outputs":[],"channels":[]}})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"expectedRevision":-1})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"expectedRevision":1.5})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"expectedRevision":"7"})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"expectedRevision":null})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"expectedRevision":0,"expectedRevision":1})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"preset":""})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"preset":false})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"preset":"path\u0000suffix"})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"preset":null,"preset":"path"})",
+      R"({"command":"set-output","configuration":{"mode":"single","outputs":[],"channels":[]},"extra":true})"}) {
+    if (!check(!pipetune::parseControlRequest(json).error.empty(), "incomplete or invalid output requests must fail")) return false;
+  }
+  // An unsupported live profile still belongs in the inventory. It must not
+  // be silently truncated to the DSP's sixteen-channel selection limit.
+  auto wide = status.availableOutputs[0];
+  wide.nodeName = "wide-node";
+  wide.nodeId = 74;
+  wide.nodeSerial = 75;
+  wide.device.identity.location = "usb:2";
+  wide.device.channelPositions.resize(18, "UNKNOWN");
+  status.availableOutputs.push_back(wide);
+  status.outputVolumes = {{UINT64_MAX, true, 0.5F, {0.125F, 0.25F}}, {75, {}, {}, {}}};
+  status.outputTimings = {{"saved", UINT64_MAX, pipetune::OutputPathActivity::active, 1250000.5, 0}};
+  for (const auto event : {false, true}) {
+    const auto encoded = event ? pipetune::makeControlStatusEvent(status) : pipetune::makeControlSuccessResponse(status, {});
+    const auto parsed = pipetune::parseControlResponse(encoded);
+    if (!check(parsed.valid && parsed.success && parsed.status.outputConfiguration == status.outputConfiguration &&
+               parsed.status.availableOutputs == status.availableOutputs && parsed.status.outputInventoryReady &&
+               parsed.status.outputVolumes == status.outputVolumes && parsed.status.outputTimings == status.outputTimings,
+               "status and events must preserve saved mappings and the complete live inventory")) return false;
+    const auto resolved = pipetune::resolveConfiguredOutputs(parsed.status.outputConfiguration, parsed.status.availableOutputs);
+    if (!check(resolved[0].state == pipetune::OutputConnectionState::connected && resolved[0].inventoryIndex == 0,
+               "clients must be able to resolve assignments against the reported inventory")) return false;
+    for (const auto &[from, to] : std::vector<std::pair<std::string_view, std::string_view>>{
+        {"\"outputInventoryReady\":true", "\"outputInventoryReady\":null"},
+        {"\"outputInventoryError\":null", "\"outputInventoryError\":7"},
+        {"\"activity\":\"active\"", "\"activity\":\"unknown-state\""},
+        {"\"activity\":\"active\"", "\"activity\":\"idle\""},
+        {"\"estimatedCompensationNanoseconds\":0.0", "\"estimatedCompensationNanoseconds\":-1"},
+        {"\"reportedLatencyNanoseconds\":1250000.5", "\"reportedLatencyNanoseconds\":null"},
+        {"\"muted\":true", "\"muted\":1"},
+        {"\"volume\":0.5", "\"volume\":-0.5"},
+        {"\"volume\":0.5", "\"volume\":1e100"},
+        {"\"channelVolumes\":[0.125,0.25]", "\"channelVolumes\":[-1,0.25]"},
+        {"\"channelVolumes\":[0.125,0.25]", "\"channelVolumes\":[true,0.25]"},
+        {"\"deviceChannel\":1", "\"deviceChannel\":16"},
+        {"\"nodeSerial\":\"18446744073709551615\"", "\"nodeSerial\":18446744073709551615"},
+        {"\"nodeId\":73", "\"nodeId\":-1"}}) {
+      auto invalid = encoded;
+      if (!check(replaceOnce(invalid, from, to) && !pipetune::parseControlResponse(invalid).valid,
+                 "malformed output status must be rejected")) return false;
+    }
+  }
+  const auto validVolumes = status.outputVolumes;
+  const auto validTimings = status.outputTimings;
+  for (auto kind = 0; kind < 6; ++kind) {
+    status.outputTimings = validTimings;
+    if (kind == 0) status.outputTimings[0].nodeSerial = 75;
+    if (kind == 1) status.outputTimings[0].outputId = "missing";
+    if (kind == 2) status.outputTimings.push_back(validTimings[0]);
+    if (kind == 3) status.outputTimings[0].estimatedCompensationNanoseconds = -1;
+    if (kind == 4) status.outputTimings[0].reportedLatencyNanoseconds = std::numeric_limits<double>::infinity();
+    if (kind == 5) status.outputTimings[0].activity = static_cast<pipetune::OutputPathActivity>(-1);
+    const auto invalid = pipetune::parseControlResponse(pipetune::makeControlSuccessResponse(status, {}));
+    if (!check(invalid.valid && !invalid.success, "stale, duplicate or invalid timing must not be published")) return false;
+  }
+  for (const auto activity : {pipetune::OutputPathActivity::pending, pipetune::OutputPathActivity::idle,
+      pipetune::OutputPathActivity::active, pipetune::OutputPathActivity::error}) {
+    status.outputTimings = {{"saved", UINT64_MAX, activity, {}, {}}};
+    const auto parsed = pipetune::parseControlResponse(pipetune::makeControlStatusEvent(status));
+    if (!check(parsed.valid && parsed.success && parsed.status.outputTimings == status.outputTimings,
+        "every route state must support unavailable timing")) return false;
+  }
+  status.outputTimings = validTimings;
+  auto invalidVolumes = std::vector<std::vector<pipetune::OutputVolumeState>>{
+      {{0, {}, {}, {}}}, {{123, {}, {}, {}}},
+      {validVolumes[0], validVolumes[0]},
+      {{UINT64_MAX, false, -1, {}}},
+      {{UINT64_MAX, {}, std::numeric_limits<float>::infinity(), {}}},
+      {{UINT64_MAX, {}, {}, {std::numeric_limits<float>::quiet_NaN()}}},
+      {{UINT64_MAX, {}, {}, std::vector<float>(65, 1)}}};
+  for (const auto &volumes : invalidVolumes) {
+    status.outputVolumes = volumes;
+    const auto invalid = pipetune::parseControlResponse(pipetune::makeControlSuccessResponse(status, {}));
+    if (!check(invalid.valid && !invalid.success,
+               "invalid, duplicated or stale volume reports must never be published")) return false;
+  }
+  status.outputVolumes = {{UINT64_MAX, false, 0, {0, 2}}, {75, {}, {}, std::vector<float>(64, 1)}};
+  const auto boundary = pipetune::parseControlResponse(pipetune::makeControlStatusEvent(status));
+  if (!check(boundary.valid && boundary.success && boundary.status.outputVolumes == status.outputVolumes,
+             "unknown controls, silence, amplification and all 64 physical channels must round-trip")) return false;
+  status.availableOutputs.clear();
+  status.outputVolumes.clear();
+  status.outputTimings.clear();
+  status.outputInventoryError = "Output enumeration failed";
+  const auto failed = pipetune::parseControlResponse(pipetune::makeControlSuccessResponse(status, {}));
+  return check(failed.valid && failed.success && failed.status.outputInventoryError == status.outputInventoryError &&
+               failed.status.outputConfiguration == status.outputConfiguration && failed.status.availableOutputs.empty(),
+               "an inventory failure must preserve saved assignments and report its cause");
+}
+
 int main() {
   if (!testPresetEntries()) return 1;
+  if (!testOutputStatus()) return 1;
   return testRequests() && testRejectedRequests() && testSuccessResponse() &&
                  testStatusEvent() && testBypassStatus() &&
                  testDspBackendFallbackStatus() &&

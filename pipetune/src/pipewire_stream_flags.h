@@ -7,7 +7,6 @@
 #define PIPETUNE_PIPEWIRE_STREAM_FLAGS_H
 
 #include <pipewire/stream.h>
-#include <pipewire/version.h>
 
 #include <cstdint>
 
@@ -26,9 +25,7 @@ inline pw_stream_flags makePipeWireStreamFlags(
   auto flags = std::uint32_t{PW_STREAM_FLAG_MAP_BUFFERS} |
                std::uint32_t{PW_STREAM_FLAG_RT_PROCESS};
   if (direction == PW_DIRECTION_INPUT) {
-#if PW_CHECK_VERSION(0, 3, 73)
     flags |= std::uint32_t{PW_STREAM_FLAG_ASYNC};
-#endif
   } else {
     flags |= std::uint32_t{PW_STREAM_FLAG_TRIGGER};
   }

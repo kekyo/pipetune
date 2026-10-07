@@ -179,6 +179,20 @@ void setControlDspIdleAsync(ControlClient *client,
                             ControlClientReplyCallback callback,
                             void *userData);
 
+/**
+ * Requests a guarded output change with an optional joint processing change.
+ * @param client Client used for the request.
+ * @param configuration Complete selected outputs and fixed slots.
+ * @param preset No value preserves processing; empty path requests bypass.
+ * @param expectedRevision Live revision that must still be current.
+ * @param callback Non-null completion callback.
+ * @param userData Opaque callback argument.
+ */
+void setControlOutputAsync(ControlClient *client,
+    const pipetune::OutputConfiguration &configuration,
+    const std::optional<std::filesystem::path> &preset, std::uint64_t expectedRevision,
+    ControlClientReplyCallback callback, void *userData);
+
 } // namespace pipetune_gtk
 
 #endif

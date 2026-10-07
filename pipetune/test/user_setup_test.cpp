@@ -68,6 +68,9 @@ static pipetune::UserManagementPaths makePaths(
       .wirePlumberPolicyPath =
           directory / "config" / "wireplumber" / "policy.lua.d" /
           "60-pipetune-filter.lua",
+      .wirePlumber04StreamConfigurationPath =
+          directory / "config" / "wireplumber" / "main.lua.d" /
+          "60-pipetune-streams.lua",
       .wirePlumberClientScriptPath =
           directory / "config" / "wireplumber" / "scripts" /
           "pipetune-endpoint-client.lua",
@@ -83,6 +86,8 @@ static pipetune::UserManagementPaths makePaths(
       .wirePlumber05VisibilityScriptPath =
           directory / "data" / "wireplumber" / "scripts" /
           "pipetune-node-visibility.lua",
+      .pipeWirePresentationPath = directory / "config" / "pipewire" /
+          "pipewire.conf.d" / "60-pipetune-presentation.conf",
       .setupStatePath = directory / "state" / "pipetune" / "setup-state",
       .managementLockPath =
           directory / "state" / "pipetune" / "management.lock",
@@ -234,6 +239,9 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
   const auto visibilityConfiguration =
       readFile(paths.wirePlumber05PolicyPath);
   return check(result.success, result.error) &&
+         check(std::filesystem::exists(paths.configPath.parent_path().parent_path() /
+                   "pipewire/pipewire.conf.d/60-pipetune-presentation.conf"),
+               "setup must enable desktop route presentation") &&
          check(std::filesystem::exists(paths.setupStatePath),
                "successful setup must record its current completion state") &&
          check(loaded.error.empty() && loaded.found &&
@@ -244,6 +252,9 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
                "setup must restore a backed-up custom autostart override") &&
          check(std::filesystem::exists(paths.wirePlumberPolicyPath),
                "setup must install the WirePlumber 0.4 compatibility policy") &&
+         check(std::filesystem::exists(
+                   paths.wirePlumber04StreamConfigurationPath),
+               "setup must install master-control rules before streams are restored") &&
          check(policy.find("endpoint.pipetune.playback") !=
                        std::string::npos &&
                    policy.find("endpoint.pipetune.capture") !=
@@ -416,13 +427,34 @@ static bool testSetupSkipsCurrentStateAndForceRepeats(
        .processRunner = fakeRunProcess,
        .processUserData = &forcedRunner});
   return check(forced.success, forced.error) &&
-         check(forcedRunner.invocations.size() == 6,
-               "forced setup must repeat service setup without relaunching GTK") &&
+         check(forcedRunner.invocations.size() == 7 &&
+                   audioStackRestartMatches(forcedRunner.invocations[3]),
+               "forced setup must reload the installed PipeWire module") &&
          check(invocationMatches(
                    forcedRunner.invocations[2], "/test/systemctl",
                    {"--user", "daemon-reload"},
                    pipetune::ProcessWaitMode::wait),
                "forced setup must perform the existing setup workflow");
+}
+
+static bool testUpgradeReloadsPresentation(const std::filesystem::path &directory) {
+  const auto paths = makePaths(directory / "upgrade");
+  auto runner = FakeProcessRunner{.results = {}, .invocations = {}};
+  const auto request = pipetune::UserSetupRequest{
+      .effectiveUserId = 1000, .force = false, .launchGtk = false,
+      .presetSpecified = false, .presetPath = {}, .paths = paths,
+      .processRunner = fakeRunProcess, .processUserData = &runner};
+  const auto initial = pipetune::executeUserSetup(request);
+  if (!check(initial.success, initial.error)) return false;
+  const auto currentState = readFile(paths.setupStatePath);
+  writeFile(paths.setupStatePath, "schema=1\nversion=0.0.0\n");
+  runner.invocations.clear();
+  const auto upgraded = pipetune::executeUserSetup(request);
+  return check(upgraded.success, upgraded.error) &&
+      check(runner.invocations.size() == 7 && audioStackRestartMatches(runner.invocations[3]),
+            "upgrades must reload the server module even when policy text is unchanged") &&
+      check(readFile(paths.setupStatePath) == currentState,
+            "upgrades must record the new installation after restarting audio");
 }
 
 static bool testExplicitPresetAndValidation(
@@ -498,6 +530,8 @@ static bool testSetupRollback(const std::filesystem::path &directory) {
                "failed setup must restore the previous configuration") &&
          check(!std::filesystem::exists(paths.wirePlumberPolicyPath),
                "failed setup must restore the previous WirePlumber policy") &&
+         check(!std::filesystem::exists(paths.wirePlumber04StreamConfigurationPath),
+               "failed setup must restore the previous master-control stream configuration") &&
          check(!std::filesystem::exists(paths.wirePlumberClientScriptPath),
                "failed setup must restore the previous client policy") &&
          check(!std::filesystem::exists(paths.wirePlumberDeviceScriptPath),
@@ -510,6 +544,8 @@ static bool testSetupRollback(const std::filesystem::path &directory) {
                "failed setup must restore all visibility policy files") &&
          check(!std::filesystem::exists(paths.setupStatePath),
                "failed setup must not retain its completion state") &&
+         check(!std::filesystem::exists(paths.pipeWirePresentationPath),
+               "failed setup must restore the previous PipeWire module configuration") &&
          check(runner.invocations.size() == 9,
                "setup rollback invocation count differs") &&
          check(audioStackRestartMatches(runner.invocations[6]) &&
@@ -527,7 +563,12 @@ static bool testSetupRollback(const std::filesystem::path &directory) {
 
 static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
   const auto paths = makePaths(directory / "unsetup");
+  const auto presentation = paths.configPath.parent_path().parent_path() /
+      "pipewire/pipewire.conf.d/60-pipetune-presentation.conf";
+  writeFile(presentation, "managed presentation module");
   writeFile(paths.wirePlumberPolicyPath, "managed policy");
+  const auto streamConfiguration = paths.wirePlumber04StreamConfigurationPath;
+  writeFile(streamConfiguration, "managed stream configuration");
   writeFile(paths.wirePlumberClientScriptPath, "managed client script");
   writeFile(paths.wirePlumberDeviceScriptPath, "managed device script");
   writeFile(paths.wirePlumber04VisibilityScriptPath,
@@ -554,6 +595,8 @@ static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
        .processRunner = fakeRunProcess,
        .processUserData = &runner});
   return check(result.success, result.error) &&
+         check(!std::filesystem::exists(presentation),
+               "unsetup must disable desktop route presentation") &&
          check(runner.invocations.size() == 3,
                "unsetup process invocation count differs") &&
          check(invocationMatches(
@@ -570,6 +613,8 @@ static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
                "policy") &&
          check(!std::filesystem::exists(paths.wirePlumberPolicyPath),
                "unsetup must remove the WirePlumber 0.4 compatibility policy") &&
+         check(!std::filesystem::exists(streamConfiguration),
+               "unsetup must remove the master-control stream configuration") &&
          check(!std::filesystem::exists(paths.wirePlumberClientScriptPath),
                "unsetup must remove the WirePlumber 0.4 client policy") &&
          check(!std::filesystem::exists(paths.wirePlumberDeviceScriptPath),
@@ -619,6 +664,8 @@ static bool testUnsetupStopFailurePreservesConfiguration(
 static bool testUnsetupRestartFailureRestoresPolicies(
     const std::filesystem::path &directory) {
   const auto paths = makePaths(directory / "unsetup-rollback");
+  const auto streamConfiguration = paths.wirePlumber04StreamConfigurationPath;
+  writeFile(streamConfiguration, "stream rules");
   writeFile(paths.wirePlumberPolicyPath, "policy");
   writeFile(paths.wirePlumberClientScriptPath, "client");
   writeFile(paths.wirePlumberDeviceScriptPath, "device");
@@ -638,6 +685,7 @@ static bool testUnsetupRestartFailureRestoresPolicies(
   return check(!result.success,
                "audio stack restart failure must fail unsetup") &&
          check(readFile(paths.wirePlumberPolicyPath) == "policy" &&
+                   readFile(streamConfiguration) == "stream rules" &&
                    readFile(paths.wirePlumberClientScriptPath) == "client" &&
                    readFile(paths.wirePlumberDeviceScriptPath) == "device" &&
                    readFile(paths.wirePlumber04VisibilityScriptPath) ==
@@ -684,6 +732,7 @@ int main() {
   passed =
       testSetupPreservesConfigurationAndRestoresAutostart(directory) && passed;
   passed = testSetupSkipsCurrentStateAndForceRepeats(directory) && passed;
+  passed = testUpgradeReloadsPresentation(directory) && passed;
   passed = testExplicitPresetAndValidation(directory) && passed;
   passed = testSetupRollback(directory) && passed;
   passed = testUnsetupAndPurge(directory) && passed;

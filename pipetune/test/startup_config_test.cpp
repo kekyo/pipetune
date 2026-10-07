@@ -434,6 +434,63 @@ static bool testRejectedInputForms(const std::filesystem::path &configPath) {
                "startup configurations larger than 64 KiB must be rejected");
 }
 
+static bool testOutputSnapshot(const std::filesystem::path &configPath) {
+  auto configuration = pipetune::StartupConfig{
+      .presetFound = true, .presetPath = "/tmp/Output \"配置\".effetune_preset",
+      .ratePolicy = {.mode = pipetune::SampleRateMode::fixed, .fixedRate = 96000,
+                     .enforcement = pipetune::SampleRateEnforcement::suggest}};
+  configuration.outputConfiguration = {
+      .mode = pipetune::OutputMode::multiple,
+      .outputs = {{.id = "dac", .enabled = true,
+          .device = {.identity = {.api = "alsa", .location = "usb:1", .port = "pcm:0:0",
+                                 .vendor = "", .product = "", .serial = ""},
+                     .name = "USB \"出力\"", .profile = "analog-stereo", .channelPositions = {"FL", "FR"}}}},
+      .channels = {{"", 0, "Reserved"}, {"dac", 0, "左\nnear \\ wall"}, {"dac", 1, "右"}}};
+  const auto saved = pipetune::saveStartupConfig(configPath, configuration);
+  const auto loaded = pipetune::loadStartupConfig(configPath);
+  if (!check(saved.empty() && loaded.error.empty(), "complete output snapshot must save and load") ||
+      !check(loaded.config.outputConfiguration == configuration.outputConfiguration &&
+             loaded.config.presetPath == configuration.presetPath &&
+             loaded.config.ratePolicy == configuration.ratePolicy,
+             "output mapping and processing choices must round-trip together")) return false;
+
+  if (!check(pipetune::clearStartupPreset(configPath).empty() &&
+             pipetune::saveSampleRatePolicy(configPath, {}).empty() &&
+             pipetune::saveDspBackendSelection(configPath, pipetune::DspBackendKind::scalar,
+                                             pipetune::DspSimdVariant::automatic).empty() &&
+             pipetune::saveDspIdlePolicy(configPath, {.timeoutMilliseconds = 100}).empty(),
+             "other setting operations must succeed with an output configuration")) return false;
+  const auto preserved = pipetune::loadStartupConfig(configPath);
+  if (!check(preserved.error.empty() && !preserved.config.presetFound &&
+             preserved.config.outputConfiguration == configuration.outputConfiguration,
+             "other setting operations must retain every output slot")) return false;
+  const auto readBytes = [&]() {
+    auto stream = std::ifstream(configPath, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(stream), {});
+  };
+  const auto previousBytes = readBytes();
+  auto invalid = configuration;
+  invalid.outputConfiguration.channels.pop_back();
+  if (!check(!pipetune::saveStartupConfig(configPath, invalid).empty() && readBytes() == previousBytes,
+             "invalid output mappings must leave the saved snapshot unchanged")) return false;
+  invalid = configuration;
+  invalid.outputConfiguration.channels[0].label.assign(64000, '"');
+  if (!check(!pipetune::saveStartupConfig(configPath, invalid).empty() && readBytes() == previousBytes,
+             "a snapshot exceeding the read limit after escaping must not replace saved settings")) return false;
+
+  writeConfig(configPath, previousBytes + "PIPETUNE_OUTPUT=[]\n");
+  const auto duplicate = pipetune::loadStartupConfig(configPath);
+  writeConfig(configPath, "PIPETUNE_PRESET=/tmp/valid.effetune_preset\nPIPETUNE_OUTPUT=[]\n");
+  const auto malformed = pipetune::loadStartupConfig(configPath);
+  if (!check(!duplicate.error.empty() && !malformed.error.empty() && !malformed.config.presetFound &&
+             malformed.config.outputConfiguration == pipetune::OutputConfiguration{},
+             "duplicate or malformed output assignments must reject the whole snapshot")) return false;
+  if (!check(pipetune::resetStartupConfig(configPath).empty(), "reset must replace an invalid output configuration")) return false;
+  const auto reset = pipetune::loadStartupConfig(configPath);
+  return check(reset.error.empty() && reset.config.outputConfiguration == pipetune::OutputConfiguration{},
+               "reset must restore OS-managed single mode without reserved assignments");
+}
+
 int main() {
   const auto directory =
       std::filesystem::temp_directory_path() /
@@ -443,6 +500,7 @@ int main() {
   const auto passed =
       testPathResolution() && testPrivateRoundTrip(configPath) &&
       testFullSnapshotRoundTrip(configPath) &&
+      testOutputSnapshot(configPath) &&
       testRatePolicyRoundTripPreservesOtherChoices(configPath) &&
       testDspBackendRoundTripPreservesOtherChoices(configPath) &&
       testDspIdlePolicyRoundTripPreservesOtherChoices(configPath) &&

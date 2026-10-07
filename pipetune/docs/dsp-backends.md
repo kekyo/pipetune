@@ -60,7 +60,7 @@ emits ELF directives with `@progbits` and `@object`, while GNU Arm assembly uses
 `@` for comments. PipeTune compiles a build-tree copy with those directive
 suffixes changed to `%progbits` and `%object`. The conversion uses npm/npx,
 `funcity-cli@1.5.0`, `funcity@1.5.0`, and `commander@12.1.0`; the last pin
-keeps the CLI usable with bookworm's Node 18. The upstream sources, binary
+keeps the CLI usable with Ubuntu 24.04's Node 18. The upstream sources, binary
 models, validation, and original generated files are preserved. A generated-file
 dependency chain serializes these conversions so first-use npx installs cannot
 race in their shared cache; model generation and compilation remain parallel.

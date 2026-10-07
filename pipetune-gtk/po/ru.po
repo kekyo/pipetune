@@ -98,14 +98,38 @@ msgstr "Активные плагины"
 msgid "Advanced"
 msgstr "Дополнительно"
 
+msgid "After"
+msgstr "После"
+
 msgid "All"
 msgstr "Все"
 
 msgid "All settings saved"
 msgstr "Все настройки сохранены"
 
+msgid "Ambiguous device"
+msgstr "Неоднозначное устройство"
+
 msgid "Apply"
 msgstr "Применить"
+
+msgid "Audio outputs changed"
+msgstr "Аудиовыходы изменены"
+
+msgid "Audio path active"
+msgstr "Аудиотракт активен"
+
+msgid "Audio path error"
+msgstr "Ошибка аудиотракта"
+
+msgid "Audio path idle"
+msgstr "Аудиотракт простаивает"
+
+msgid "Audio path pending"
+msgstr "Аудиотракт в ожидании"
+
+msgid "Audio path unavailable"
+msgstr "Аудиотракт недоступен"
 
 msgid "Automatic"
 msgstr "Автоматически"
@@ -113,8 +137,14 @@ msgstr "Автоматически"
 msgid "Automatic — follow PipeWire graph sampling frequency"
 msgstr "Автоматически — следовать частоте дискретизации графа PipeWire"
 
+msgid "Available"
+msgstr "Доступно"
+
 msgid "Baseline"
 msgstr "Исходное состояние"
+
+msgid "Before"
+msgstr "До"
 
 msgid "Bypass"
 msgstr "Обход"
@@ -140,6 +170,12 @@ msgstr "Не удалось сохранить настройки"
 msgid "Cannot use saved language preference"
 msgstr "Не удалось использовать сохранённый выбор языка"
 
+msgid "Changing audio outputs"
+msgstr "Изменение аудиовыходов"
+
+msgid "Changing audio outputs failed"
+msgstr "Не удалось изменить аудиовыходы"
+
 msgid "Changing DSP backend"
 msgstr "Изменение бэкенда DSP"
 
@@ -163,6 +199,10 @@ msgstr "Изменение приостановки при тишине"
 
 msgid "Changing silence suspension failed"
 msgstr "Не удалось изменить приостановку при тишине"
+
+#, brace-format
+msgid "Channel gains: {0}"
+msgstr "Усиление каналов: {0}"
 
 msgid "Choose a preset before enabling DSP processing"
 msgstr "Выберите предустановку перед включением обработки DSP"
@@ -243,6 +283,27 @@ msgstr "Значения по умолчанию применяются в ре�
 msgid "Defaults selected"
 msgstr "Выбраны значения по умолчанию"
 
+msgid "Device"
+msgstr "Устройство"
+
+msgid "Device channel"
+msgstr "Канал устройства"
+
+msgid "Device mute unknown"
+msgstr "Состояние отключения звука устройства неизвестно"
+
+msgid "Device muted"
+msgstr "Звук устройства отключён"
+
+msgid "Device presence is separate from audio activity. Double-click a purpose cell to edit its label."
+msgstr "Наличие устройства не означает передачу звука. Дважды щёлкните ячейку назначения, чтобы изменить подпись."
+
+msgid "Device unmuted"
+msgstr "Звук устройства включён"
+
+msgid "Disabled"
+msgstr "Отключено"
+
 msgid "Disconnected"
 msgstr "Отключено"
 
@@ -295,6 +356,9 @@ msgstr "Фактический бэкенд недоступен"
 msgid "EffeTune DSP control"
 msgstr "Управление DSP EffeTune"
 
+msgid "EffeTune final output channels"
+msgstr "Конечные выходные каналы EffeTune"
+
 msgid "EffeTune presets"
 msgstr "Предустановки EffeTune"
 
@@ -309,6 +373,13 @@ msgstr "Английский"
 
 msgid "Errors"
 msgstr "Ошибки"
+
+#, brace-format
+msgid "Estimated compensation: {0}"
+msgstr "Оценка компенсации: {0}"
+
+msgid "Estimated from reported output latency. This is not a measurement of the compensation buffer or acoustic arrival time."
+msgstr "Оценка на основе сообщённой задержки вывода. Это не измерение буфера компенсации или времени прихода звука."
 
 msgid "Finishing rollback…"
 msgstr "Завершение отката…"
@@ -342,6 +413,12 @@ msgstr "Входной формат"
 
 msgid "Input sampling frequency"
 msgstr "Частота дискретизации входа"
+
+msgid "Input uses Ch 1 and Ch 2. Create additional outputs in your EffeTune preset. Disabled devices keep their Ch numbers."
+msgstr "Вход использует Ch 1 и Ch 2. Создайте дополнительные выходы в пресете EffeTune. Отключённые устройства сохраняют номера каналов."
+
+msgid "Inventory unavailable"
+msgstr "Список устройств недоступен"
 
 msgid "Language"
 msgstr "Язык"
@@ -388,6 +465,15 @@ msgstr "Нагрузка"
 msgid "Measured frame rate"
 msgstr "Измеренная частота кадров"
 
+msgid "Move down"
+msgstr "Переместить вниз"
+
+msgid "Move up"
+msgstr "Переместить вверх"
+
+msgid "Multiple — outputs selected in PipeTune"
+msgstr "Несколько — выходы выбираются в PipeTune"
+
 msgid "Native backend"
 msgstr "Нативный бэкенд"
 
@@ -397,11 +483,26 @@ msgstr "Никогда"
 msgid "None"
 msgstr "Нет"
 
+msgid "Not connected"
+msgstr "Не подключено"
+
 msgid "Off"
 msgstr "Выключено"
 
 msgid "Open PipeTune"
 msgstr "Открыть PipeTune"
+
+msgid "Output"
+msgstr "Выход"
+
+msgid "Output devices"
+msgstr "Устройства вывода"
+
+msgid "Output mode"
+msgstr "Режим вывода"
+
+msgid "Output settings changed. Reopen the mapping review."
+msgstr "Настройки вывода изменились. Откройте проверку назначений заново."
 
 #, brace-format
 msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
@@ -453,6 +554,9 @@ msgstr "Применение PipeWire"
 msgid "PipeWire graph sampling frequency"
 msgstr "Частота дискретизации графа PipeWire"
 
+msgid "Presence"
+msgstr "Состояние"
+
 msgid "Preset"
 msgstr "Предустановка"
 
@@ -468,6 +572,9 @@ msgstr "Требуется предустановка"
 msgid "Preset warnings"
 msgstr "Предупреждения предустановки"
 
+msgid "Preview mapping"
+msgstr "Предпросмотр назначений"
+
 msgid "Processing"
 msgstr "Обработка"
 
@@ -480,8 +587,23 @@ msgstr "Режим обработки изменён"
 msgid "Processing time"
 msgstr "Время обработки"
 
+msgid "Profile changed"
+msgstr "Профиль изменён"
+
+msgid "Purpose"
+msgstr "Назначение"
+
 msgid "Quit"
 msgstr "Выход"
+
+msgid "Reassign device…"
+msgstr "Переназначить устройство…"
+
+msgid "Reported device controls, separate from the OS master volume. Channel gains show the minimum and maximum across the device."
+msgstr "Значения, сообщённые устройством, отдельно от общей громкости ОС. Для усиления каналов показаны минимальное и максимальное значения устройства."
+
+msgid "Reserved"
+msgstr "Зарезервировано"
 
 msgid "Restart now"
 msgstr "Перезапустить сейчас"
@@ -503,6 +625,12 @@ msgstr "Восстановление текущих настроек, зафик
 
 msgid "Restoring the previous live settings…"
 msgstr "Восстановление предыдущих текущих настроек…"
+
+msgid "Review channel mapping"
+msgstr "Проверка назначений каналов"
+
+msgid "Review where each final EffeTune channel will play. Your preset is unchanged. Preview this mapping, then use Apply in the main window to save it."
+msgstr "Проверьте, куда будет выводиться каждый конечный канал EffeTune. Пресет останется без изменений. Проверьте звучание с этими назначениями, затем нажмите «Применить» в главном окне для сохранения."
 
 msgid "Rollback requested"
 msgstr "Запрошен откат"
@@ -538,8 +666,18 @@ msgstr "Сохранение всех настроек"
 msgid "Scalar"
 msgstr "Scalar"
 
+#, brace-format
+msgid "Scalar gain: {0}"
+msgstr "Общий коэффициент усиления: {0}"
+
 msgid "seconds"
 msgstr "секунды"
+
+msgid "Select a replacement output device."
+msgstr "Выберите устройство вывода для замены."
+
+msgid "Select at least one output device."
+msgstr "Выберите хотя бы одно устройство вывода."
 
 msgid "Setting up PipeTune for this user…"
 msgstr "Настройка PipeTune для этого пользователя…"
@@ -558,6 +696,9 @@ msgstr "Приостановка при тишине изменена"
 
 msgid "SIMD variant"
 msgstr "Вариант SIMD"
+
+msgid "Single — output selected by the OS"
+msgstr "Один — выход выбирается ОС"
 
 msgid "Some preset sources are unavailable"
 msgstr "Некоторые источники предустановок недоступны"
@@ -597,11 +738,23 @@ msgstr "Система"
 msgid "System default"
 msgstr "Система по умолчанию"
 
+msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
+msgstr "Выход выбирается операционной системой. Сохранённые ниже назначения для нескольких выходов неактивны."
+
+msgid "The selected device cannot be identified uniquely."
+msgstr "Выбранное устройство невозможно однозначно идентифицировать."
+
+msgid "The selected output is no longer available with this profile. Reopen the mapping review."
+msgstr "Выбранный выход больше недоступен с этим профилем. Откройте проверку назначений заново."
+
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "Изменение языка интерфейса вступит в силу после перезапуска PipeTune GTK."
 
 msgid "Turn off to pass audio through without an EffeTune preset."
 msgstr "Отключите, чтобы пропускать звук без предустановки EffeTune."
+
+msgid "Unassigned"
+msgstr "Не назначено"
 
 msgid "unavailable"
 msgstr "недоступно"
@@ -621,6 +774,9 @@ msgstr "Неизвестно"
 msgid "Unknown sample format"
 msgstr "Неизвестный формат выборки"
 
+msgid "Unsupported channel count"
+msgstr "Неподдерживаемое число каналов"
+
 msgid "Updating settings"
 msgstr "Обновление настроек"
 
@@ -632,6 +788,9 @@ msgstr "Версии"
 
 msgid "Waiting for live PipeTune state…"
 msgstr "Ожидание текущего состояния PipeTune…"
+
+msgid "Waiting for output devices…"
+msgstr "Ожидание устройств вывода…"
 
 msgid "Warnings"
 msgstr "Предупреждения"

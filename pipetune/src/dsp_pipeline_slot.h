@@ -126,6 +126,8 @@ public:
    *
    * Superseded objects are reclaimed here when the process callback has
    * released them; reclamation never occurs in process().
+   * If a replacement is staged, this revises the tentative pipeline without
+   * discarding its original rollback target or completing the transaction.
    *
    * @param replacement New non-null pipeline.
    * @throws std::invalid_argument when replacement is null.

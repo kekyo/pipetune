@@ -602,7 +602,85 @@ static bool testActionLogHistory() {
   return check(log.entries.empty(), "Clear must remove visible log history");
 }
 
+static bool testOutputSnapshotPreservation() {
+  auto status = pipetune::ControlRuntimeStatus{};
+  status.outputConfiguration = {
+      .mode = pipetune::OutputMode::multiple,
+      .outputs = {{.id = "dac", .enabled = true,
+          .device = {.identity = {.api = "node", .location = "dac", .port = "dac",
+                                 .vendor = "", .product = "", .serial = ""},
+                     .name = "Saved DAC", .profile = "", .channelPositions = {"MONO"}}}},
+      .channels = {{"", 0, "Reserved"}, {"dac", 0, "Subwoofer"}}};
+  const auto live = pipetune_gtk::startupConfigFromRuntime(status);
+  if (!check(live.outputConfiguration == status.outputConfiguration,
+             "runtime output mappings must survive conversion to the saved snapshot")) return false;
+  auto transaction = pipetune_gtk::beginSettingsTransaction({}, live, 1, true);
+  if (!check(pipetune_gtk::settingsTransactionCanApply(transaction) &&
+             pipetune_gtk::settingsTransactionIsDirty(transaction),
+             "live output choices differing from saved choices must count as unsaved settings")) return false;
+  pipetune_gtk::completeSettingsPersistence(transaction, true, {});
+  return check(transaction.saved.outputConfiguration == status.outputConfiguration &&
+               !pipetune_gtk::settingsTransactionIsDirty(transaction),
+               "Apply must retain the complete output snapshot");
+}
+
+static bool testOutputPreviewAndJointCancel() {
+  const auto baseline = baseConfig();
+  auto incomplete = baseline;
+  incomplete.outputConfiguration.mode = pipetune::OutputMode::multiple;
+  auto draft = pipetune_gtk::beginSettingsTransaction(baseline, baseline, 1, true);
+  pipetune_gtk::editSettingsTransaction(draft, incomplete);
+  if (!check(pipetune_gtk::nextSettingsOperation(draft) == pipetune_gtk::SettingsOperation::none &&
+             !pipetune_gtk::settingsTransactionCanApply(draft),
+             "multiple mode must wait for a device selection before preview or Apply")) return false;
+  auto desired = baseline;
+  desired.outputConfiguration = {
+      .mode = pipetune::OutputMode::multiple,
+      .outputs = {{.id = "dac", .enabled = true,
+          .device = {.identity = {.api = "node", .location = "dac", .port = "dac",
+                                 .vendor = "", .product = "", .serial = ""},
+                     .name = "DAC", .profile = "", .channelPositions = {"FL", "FR"}}}},
+      .channels = {{"dac", 0, "Left"}, {"dac", 1, "Right"}, {"", 0, "Reserved"}, {"", 0, "Reserved"}}};
+  auto transaction = pipetune_gtk::beginSettingsTransaction(baseline, baseline, 1, true);
+  pipetune_gtk::editSettingsTransaction(transaction, desired);
+  const auto outputOperation = pipetune_gtk::nextSettingsOperation(transaction);
+  if (!check(outputOperation != pipetune_gtk::SettingsOperation::none &&
+             pipetune_gtk::beginSettingsOperation(transaction, outputOperation),
+             "editing outputs must schedule a live preview before Apply")) return false;
+  pipetune_gtk::completeSettingsOperation(transaction, true, desired, 2, {});
+  if (!check(pipetune_gtk::settingsTransactionCanApply(transaction), "confirmed output choices must enable Apply")) return false;
+  desired.presetPath = "/tmp/four-channel.effetune_preset";
+  pipetune_gtk::editSettingsTransaction(transaction, desired);
+  const auto presetOperation = pipetune_gtk::nextSettingsOperation(transaction);
+  pipetune_gtk::beginSettingsOperation(transaction, presetOperation);
+  pipetune_gtk::completeSettingsOperation(transaction, true, desired, 3, {});
+  pipetune_gtk::requestSettingsCancel(transaction);
+  if (!check(pipetune_gtk::nextSettingsOperation(transaction) == outputOperation &&
+             pipetune_gtk::beginSettingsOperation(transaction, outputOperation),
+             "Cancel must restore output width and processing with one joint operation")) return false;
+  auto partial = desired;
+  partial.outputConfiguration = baseline.outputConfiguration;
+  pipetune_gtk::completeSettingsOperation(transaction, true, partial, 4, {});
+  if (!check(transaction.liveChangeFailed && !pipetune_gtk::settingsTransactionShouldClose(transaction),
+             "restoring only output choices must not confirm joint cancellation")) return false;
+  pipetune_gtk::requestSettingsCancel(transaction);
+  pipetune_gtk::beginSettingsOperation(transaction, outputOperation);
+  pipetune_gtk::completeSettingsOperation(transaction, true, baseline, 5, {});
+  if (!check(pipetune_gtk::settingsTransactionShouldClose(transaction) &&
+             transaction.saved.outputConfiguration == baseline.outputConfiguration,
+             "Cancel must close only after complete restoration without saving the preview")) return false;
+  transaction = pipetune_gtk::beginSettingsTransaction(baseline, baseline, 1, true);
+  pipetune_gtk::editSettingsTransaction(transaction, desired);
+  pipetune_gtk::beginSettingsOperation(transaction, outputOperation);
+  pipetune_gtk::completeSettingsOperation(transaction, false, baseline, 1, "connection failed");
+  return check(transaction.confirmedLive.outputConfiguration == baseline.outputConfiguration &&
+               !pipetune_gtk::settingsTransactionCanApply(transaction) && transaction.liveChangeFailed,
+               "failed output application must retain confirmed choices and block Apply");
+}
+
 int main() {
+  if (!testOutputPreviewAndJointCancel()) return 1;
+  if (!testOutputSnapshotPreservation()) return 1;
   return testLiveCoalescingApplyAndCancel() &&
                  testDspIdleLiveApplyAndCancel() &&
                  testFailuresDisconnectAndConflict() &&

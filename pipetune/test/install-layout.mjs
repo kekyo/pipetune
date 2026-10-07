@@ -30,6 +30,7 @@ const [
   libraryDirectory,
   documentationDirectory,
   testService,
+  pipewireModuleDirectory,
 ] = process.argv.slice(2);
 if (
   !cmake ||
@@ -40,7 +41,7 @@ if (
   !systemdUserUnitDirectory ||
   !libraryDirectory ||
   !documentationDirectory ||
-  !testService
+  !testService || !pipewireModuleDirectory
 ) {
   fail("install layout test arguments are incomplete");
 } else {
@@ -111,6 +112,8 @@ if (
         }
         accessSync(dspBackendDocumentation, constants.R_OK);
         accessSync(copyright, constants.R_OK);
+        accessSync(installPath(pipewireModuleDirectory,
+          "libpipewire-module-pipetune-presentation.so"), constants.R_OK);
       } catch (error) {
         fail(`installed PipeTune layout is incomplete: ${error.message}`);
       }

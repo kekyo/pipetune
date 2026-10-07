@@ -57,6 +57,24 @@ InputStatusText inputStatusText(const ApplicationState &state,
  */
 RuntimeStatusText runtimeStatusText(const ApplicationState &state);
 
+/**
+ * Formats reported physical controls independently of the OS master volume.
+ * @param volume Report for the current connection, or null when unavailable.
+ * @return Mute, scalar gain, and the range of effective channel gains in dB.
+ * @remarks Channel gains are summarized without assuming their report order
+ * matches the saved routing. Unknown controls never imply unity or unmuted.
+ */
+std::string outputVolumeText(const pipetune::OutputVolumeState *volume);
+
+/**
+ * Formats audio path activity and a clearly identified compensation estimate.
+ * @param timing Report for the current routing and connection, or null.
+ * @return Activity and estimated compensation in milliseconds, or unknown.
+ * @remarks An active path does not imply that its timing is available. The
+ * estimate does not measure the internal buffer or acoustic arrival time.
+ */
+std::string outputTimingText(const pipetune::OutputTimingState *timing);
+
 } // namespace pipetune_gtk
 
 #endif

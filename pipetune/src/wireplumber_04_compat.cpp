@@ -9,6 +9,22 @@
 
 namespace pipetune {
 
+constexpr auto kWirePlumber04StreamConfiguration = std::string_view{R"wp04lua(-- Managed by PipeTune.
+-- WirePlumber 0.4 compares this setting to the Lua boolean false. Set it
+-- through a rule because PipeWire node properties carry string values.
+-- PipeTune publishes its retained master controls when recreating this sink.
+table.insert(stream_defaults.rules, {
+  matches = {
+    {
+      { "node.pipetune.public-input", "equals", "true" },
+    },
+  },
+  apply_properties = {
+    ["state.restore-props"] = false,
+  },
+})
+)wp04lua"};
+
 constexpr auto kWirePlumber04Policy = std::string_view{R"wp04lua(-- Managed by PipeTune.
 -- WirePlumber 0.5 ignores policy.lua.d and uses PipeTune's smart-filter
 -- properties directly. WirePlumber 0.4 uses these endpoints and compatibility
@@ -83,6 +99,7 @@ self.scanning = false
 self.pending_rescan = false
 self.syncing = false
 self.pending_sync = false
+local recovering_ports = {}
 
 function rescan ()
   for si in linkables_om:iterate() do
@@ -158,6 +175,30 @@ function findRole(role, tmc)
 end
 
 function findTargetEndpoint (node, media_class, role)
+  if media_class == "Stream/Output/Audio" then
+    for input in public_inputs_om:iterate() do
+      -- A multi-output public input must be the stream's actual peer, so
+      -- PulseAudio can complete playback without exposing internal sinks.
+      return input
+    end
+    -- The distribution outlives a public-input rate rebuild. Wait for that
+    -- input instead of briefly routing application audio around the DSP.
+    if aggregates_om:get_n_objects() > 0 then return nil end
+    local requested = node.properties["target.object"]
+    if requested and node.properties["node.dont-fallback"] == "true" then
+      local available = false
+      for target in target_nodes_om:iterate() do
+        local props = target.properties
+        if props["node.name"] == requested or props["object.serial"] == requested then
+          available = true
+          break
+        end
+      end
+      -- The daemon's control socket can be ready before its audio nodes.
+      -- A pinned application must wait for that target, not use the endpoint.
+      if not available then return nil end
+    end
+  end
   local target_class_assoc = {
     ["Stream/Input/Audio"] = "Audio/Source",
     ["Stream/Output/Audio"] = "Audio/Sink",
@@ -217,7 +258,7 @@ function createLink (si, si_target_ep)
     ["out.item.port.context"] = "output",
     ["in.item.port.context"] = "input",
     ["is.policy.endpoint.client.link"] = true,
-    ["media.role"] = target_ep_props["role"],
+    ["media.role"] = target_ep_props["role"] or "PipeTune-Playback",
     ["target.media.class"] = target_ep_props["media.class"],
     ["item.plugged.usec"] = si_props["item.plugged.usec"],
   } then
@@ -257,6 +298,35 @@ function handleLinkable (si)
   end
 
   local node = si:get_associated_proxy ("node")
+  if recovering_ports[si.id] then return end
+  local _, mode = si:get_ports_format()
+  if (mode == nil or mode == "") and node:get_n_ports() > 0 then
+    -- After a policy restart the stream can retain its old DSP ports while
+    -- the new adapter has no format state. Reapplying the same DSP layout
+    -- can wait forever for a ports-changed event. First select the stream's
+    -- raw format so the normal link setup can create fresh DSP ports.
+    for current in node:iterate_params("Format") do
+      local parsed = current:parse()
+      local media_type = parsed and parsed.properties.mediaType
+      local media_subtype = parsed and parsed.properties.mediaSubtype
+      -- Fixed values may still be represented as SPA Choice.None pods.
+      if type(media_type) == "table" then media_type = media_type[1] end
+      if type(media_subtype) == "table" then media_subtype = media_subtype[1] end
+      if media_type == "audio" and media_subtype == "raw" then
+        local id = si.id
+        recovering_ports[id] = true
+        si:set_ports_format(current, "passthrough", function(item, error)
+          recovering_ports[id] = nil
+          if error then
+            Log.warning(item, "cannot recover stream ports: " .. tostring(error))
+          else
+            scheduleSynchronizedRescan()
+          end
+        end)
+        return
+      end
+    end
+  end
   local media_class = node.properties["media.class"] or ""
   local media_role = node.properties["media.role"] or "Default"
   Log.info (si, "handling item " .. tostring(node.properties["node.name"]) ..
@@ -275,26 +345,17 @@ function handleLinkable (si)
     local in_id = tonumber(link.properties["in.item.id"])
     if out_id == si.id or in_id == si.id then
       local is_out = out_id == si.id and true or false
-      for peer_ep in endpoints_om:iterate() do
-        if peer_ep.id == (is_out and in_id or out_id) then
-
-          if peer_ep.id == si_target_ep.id then
-            Log.info (si, "... already linked to proper target endpoint")
-            return
-          end
-
-          -- remove old link if active, otherwise schedule rescan
-          if ((link:get_active_features() & Feature.SessionItem.ACTIVE) ~= 0) then
-            link:remove ()
-            Log.info (si, "... moving to new target")
-          else
-            scheduleRescan ()
-            Log.info (si, "... scheduled rescan")
-            return
-          end
-
-        end
+      local peer_id = is_out and in_id or out_id
+      if peer_id == si_target_ep.id then
+        Log.info (si, "... already linked to proper target endpoint")
+        return
       end
+
+      -- Remove the old target's link even if activation is still pending.
+      -- A public input can appear while the endpoint link is negotiating;
+      -- that obsolete link may never activate, so waiting prevents rerouting.
+      link:remove ()
+      Log.info (si, "... moving to new target")
     end
   end
 
@@ -322,6 +383,16 @@ function unhandleLinkable (si)
 end
 
 endpoints_om = ObjectManager { Interest { type = "SiEndpoint" }}
+target_nodes_om = ObjectManager { Interest { type = "node" } }
+aggregates_om = ObjectManager { Interest {
+  type = "node",
+  Constraint { "node.pipetune.aggregate", "=", "true", type = "pw" },
+} }
+public_inputs_om = ObjectManager { Interest {
+  type = "SiLinkable",
+  Constraint { "node.pipetune.public-input", "=", "true", type = "pw-global" },
+  Constraint { "active-features", "!", 0, type = "gobject" },
+} }
 linkables_om = ObjectManager { Interest { type = "SiLinkable",
   -- only handle si-audio-adapter and si-node
   Constraint {
@@ -345,11 +416,26 @@ endpoints_om:connect("objects-changed", function (om)
   scheduleSynchronizedRescan ()
 end)
 
+public_inputs_om:connect("objects-changed", function ()
+  scheduleSynchronizedRescan ()
+end)
+
+aggregates_om:connect("objects-changed", function ()
+  scheduleSynchronizedRescan ()
+end)
+
+target_nodes_om:connect("objects-changed", function ()
+  scheduleSynchronizedRescan ()
+end)
+
 linkables_om:connect("object-removed", function (om, si)
   unhandleLinkable (si)
 end)
 
 endpoints_om:activate()
+target_nodes_om:activate()
+aggregates_om:activate()
+public_inputs_om:activate()
 linkables_om:activate()
 links_om:activate()
 scheduleSynchronizedRescan ()
@@ -481,7 +567,10 @@ function createLink (si_ep, si_target, is_filter)
   local ep_props = si_ep.properties
   local target_props = si_target.properties
 
-  if target_props["item.node.direction"] == "input" then
+  -- A default capture source can be a sink monitor. The endpoint's media
+  -- class determines direction; the target's main ports can be inputs.
+  if ep_props["media.class"] ~= "Audio/Source" and
+      ep_props["media.class"] ~= "Video/Source" then
     -- playback
     out_item = si_ep
     in_item = si_target
@@ -531,6 +620,29 @@ function handleFilter(filter)
   handleLinkable(filter)
 end
 
+function findManagedOutputTarget(si)
+  local node = si:get_associated_proxy("node")
+  if not node or not node.properties or
+      node.properties["node.pipetune.managed-output"] ~= "true" then
+    return false, nil
+  end
+
+  -- Multi-device outputs are pinned to one named target. Never send a
+  -- disconnected device's channels to the default sink or the aggregate.
+  local target = node.properties["target.object"]
+  if target then
+    for item in linkables_om:iterate() do
+      local target_node = item:get_associated_proxy("node")
+      local props = target_node and target_node.properties
+      if props and (props["node.name"] == target or
+          props["object.serial"] == target) then
+        return true, item
+      end
+    end
+  end
+  return true, nil
+end
+
 function handleLinkable (si)
   local si_props = si.properties
   local is_filter = (si_props["node.link-group"] ~= nil)
@@ -541,7 +653,10 @@ function handleLinkable (si)
   end
 
   -- find proper target item
-  local si_target = findUndefinedTarget (si)
+  local is_managed, si_target = findManagedOutputTarget(si)
+  if not is_managed then
+    si_target = findUndefinedTarget (si)
+  end
   if not si_target then
     Log.info (si, "... target item not found")
     return
@@ -640,6 +755,10 @@ endpoints_om:connect("object-added", function (om)
   scheduleRescan ()
 end)
 
+streams_om:connect("objects-changed", function (om)
+  scheduleRescan ()
+end)
+
 linkables_om:connect("object-removed", function (om, si)
   unhandleLinkable (si)
 end)
@@ -652,6 +771,10 @@ streams_om:activate()
 
 std::string_view wirePlumber04CompatibilityPolicy() noexcept {
   return kWirePlumber04Policy;
+}
+
+std::string_view wirePlumber04StreamConfiguration() noexcept {
+  return kWirePlumber04StreamConfiguration;
 }
 
 std::string_view wirePlumber04EndpointClientPolicy() noexcept {

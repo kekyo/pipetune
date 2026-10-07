@@ -31,6 +31,8 @@ struct UserManagementPaths {
   std::filesystem::path autostartBackupPath;
   /** WirePlumber 0.4 endpoint policy fragment managed by PipeTune. */
   std::filesystem::path wirePlumberPolicyPath;
+  /** WirePlumber 0.4 rules preserving PipeTune's public master controls. */
+  std::filesystem::path wirePlumber04StreamConfigurationPath;
   /** WirePlumber 0.4 application-to-endpoint policy managed by PipeTune. */
   std::filesystem::path wirePlumberClientScriptPath;
   /** WirePlumber 0.4 endpoint-to-device policy managed by PipeTune. */
@@ -41,6 +43,8 @@ struct UserManagementPaths {
   std::filesystem::path wirePlumber05PolicyPath;
   /** WirePlumber 0.5 internal-node visibility policy. */
   std::filesystem::path wirePlumber05VisibilityScriptPath;
+  /** PipeWire server fragment presenting only input card routes in Multiple. */
+  std::filesystem::path pipeWirePresentationPath;
   /** Versioned completion state for conditional setup. */
   std::filesystem::path setupStatePath;
   /** Advisory lock serializing setup and unsetup for one user. */

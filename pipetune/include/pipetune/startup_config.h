@@ -8,6 +8,7 @@
 
 #include "pipetune/dsp_backend.h"
 #include "pipetune/dsp_idle.h"
+#include "pipetune/output_configuration.h"
 #include "pipetune/sample_rate.h"
 
 #include <filesystem>
@@ -54,6 +55,8 @@ struct StartupConfig {
   DspSimdVariant dspSimdVariant = DspSimdVariant::automatic;
   /** Automatic DSP suspension policy after continuous silent input. */
   DspIdlePolicy dspIdlePolicy = {};
+  /** Output mode, saved devices, and fixed DSP channel assignments. */
+  OutputConfiguration outputConfiguration = {};
 };
 
 /**

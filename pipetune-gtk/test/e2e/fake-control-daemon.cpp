@@ -7,6 +7,7 @@
 #include "pipetune/control_socket.h"
 #include "pipetune/startup_config.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -30,6 +31,9 @@ struct FakeDaemonState {
   std::string rejectedCommand;
   std::uint64_t dspTelemetrySequence;
   std::uint64_t manualStatusSequence;
+  std::string outputInventoryState = "connected";
+  std::string outputVolumeState = "normal";
+  std::string outputTimingState = "normal";
 };
 
 static std::string environmentValue(const char *name) {
@@ -138,6 +142,17 @@ makeStatus(const pipetune::StartupConfig &config,
             .cpuSupported = true,
             .cpuRequirement = "Arm SVE",
             .error = {}}},
+      .outputConfiguration = config.outputConfiguration,
+      .availableOutputs = {
+          {.device = {.identity = {.api = "node", .location = "fake-dac-a", .port = "fake-dac-a",
+                                   .vendor = "", .product = "", .serial = ""},
+                      .name = "DAC A", .profile = "Stereo", .channelPositions = {"FL", "FR"}},
+           .nodeName = "fake-dac-a", .nodeId = 73, .nodeSerial = 73},
+          {.device = {.identity = {.api = "node", .location = "fake-dac-b", .port = "fake-dac-b",
+                                   .vendor = "", .product = "", .serial = ""},
+                      .name = "DAC B", .profile = "Stereo", .channelPositions = {"FL", "FR"}},
+           .nodeName = "fake-dac-b", .nodeId = 74, .nodeSerial = 74}},
+      .outputInventoryReady = true,
   };
 }
 
@@ -154,6 +169,55 @@ static pipetune::ControlRuntimeStatus snapshotStatus(
     stale = true;
   }
   auto status = makeStatus(config, revision);
+  if (state.outputInventoryState == "missing") {
+    status.availableOutputs.erase(status.availableOutputs.begin());
+  } else if (state.outputInventoryState == "profileChanged") {
+    status.availableOutputs.front().device.channelPositions = {"AUX0", "AUX1"};
+  } else if (state.outputInventoryState == "ambiguous") {
+    auto duplicate = status.availableOutputs.front();
+    duplicate.nodeName = "fake-dac-duplicate";
+    duplicate.nodeId = 75;
+    duplicate.nodeSerial = 75;
+    status.availableOutputs.push_back(std::move(duplicate));
+  } else if (state.outputInventoryState == "unavailable") {
+    status.availableOutputs.clear();
+    status.outputInventoryError = "E2E inventory unavailable";
+  } else if (state.outputInventoryState == "pending") {
+    status.availableOutputs.clear();
+    status.outputInventoryReady = false;
+  } else if (state.outputInventoryState == "reversed") {
+    std::swap(status.availableOutputs[0], status.availableOutputs[1]);
+  }
+  for (const auto &output : status.availableOutputs) {
+    auto volume = pipetune::OutputVolumeState{output.nodeSerial, false, 1, {1, 1}};
+    if (output.nodeSerial == 73) {
+      if (state.outputVolumeState == "muted") volume = {73, true, 1, {0.25F, 0.5F}};
+      else if (state.outputVolumeState == "unknown") volume = {73, {}, {}, {}};
+    }
+    status.outputVolumes.push_back(std::move(volume));
+  }
+  if (config.outputConfiguration.mode == pipetune::OutputMode::multiple) {
+    const auto resolved = pipetune::resolveConfiguredOutputs(config.outputConfiguration, status.availableOutputs);
+    auto maximumLatency = 0.0;
+    for (const auto &output : resolved) {
+      if (!output.inventoryIndex) continue;
+      const auto serial = status.availableOutputs[*output.inventoryIndex].nodeSerial;
+      auto timing = pipetune::OutputTimingState{output.outputId, serial, pipetune::OutputPathActivity::active, {}, {}};
+      if (state.outputTimingState == "pending") timing.activity = pipetune::OutputPathActivity::pending;
+      else if (state.outputTimingState == "idle") timing.activity = pipetune::OutputPathActivity::idle;
+      else if (state.outputTimingState == "error") timing.activity = pipetune::OutputPathActivity::error;
+      else if (state.outputTimingState != "unknown") {
+        timing.reportedLatencyNanoseconds = serial == 73 ? 1'000'000.0 : 3'000'000.0;
+        maximumLatency = std::max(maximumLatency, *timing.reportedLatencyNanoseconds);
+      }
+      status.outputTimings.push_back(std::move(timing));
+    }
+    for (auto &timing : status.outputTimings) {
+      if (timing.reportedLatencyNanoseconds) {
+        timing.estimatedCompensationNanoseconds = maximumLatency - *timing.reportedLatencyNanoseconds;
+      }
+    }
+  }
   if (stale) {
     status.configurationError = "E2E stale status";
   } else if (state.manualStatusSequence != 0) {
@@ -188,6 +252,8 @@ static std::string commandName(pipetune::ControlCommand command) {
     return "setDspBackend";
   case pipetune::ControlCommand::setDspIdle:
     return "setDspIdle";
+  case pipetune::ControlCommand::setOutput:
+    return "setOutput";
   case pipetune::ControlCommand::subscribe:
     return "subscribe";
   }
@@ -263,6 +329,15 @@ static pipetune::ControlMessageResult handleRequest(
       break;
     case pipetune::ControlCommand::setDspIdle:
       state.liveConfig.dspIdlePolicy = parsed.request.dspIdlePolicy;
+      break;
+    case pipetune::ControlCommand::setOutput:
+      if (parsed.request.expectedRevision.has_value() && *parsed.request.expectedRevision != state.configurationRevision)
+        return closeResponse(pipetune::makeControlErrorResponse("configuration changed"), false);
+      state.liveConfig.outputConfiguration = parsed.request.outputConfiguration;
+      if (parsed.request.outputPreset.has_value()) {
+        state.liveConfig.presetPath = *parsed.request.outputPreset;
+        state.liveConfig.presetFound = !state.liveConfig.presetPath.empty();
+      }
       break;
     case pipetune::ControlCommand::status:
     case pipetune::ControlCommand::subscribe:
@@ -340,6 +415,7 @@ static int inspectConfig(const std::filesystem::path &path) {
               ? std::to_string(
                     config.dspIdlePolicy.timeoutMilliseconds)
               : "null")
+      << ",\"outputConfiguration\":" << pipetune::formatOutputConfiguration(config.outputConfiguration)
       << "}\n";
   return 0;
 }
@@ -397,6 +473,27 @@ int main(int argc, char **argv) {
   std::cout << "READY\n" << std::flush;
   auto input = std::string{};
   while (std::getline(std::cin, input)) {
+    if (input.starts_with("output-timing ")) {
+      {
+        auto lock = std::scoped_lock(state.mutex);
+        state.outputTimingState = input.substr(14);
+      }
+      pipetune::publishControlStatus(started.server.get());
+    }
+    if (input.starts_with("output-volume ")) {
+      {
+        auto lock = std::scoped_lock(state.mutex);
+        state.outputVolumeState = input.substr(14);
+      }
+      pipetune::publishControlStatus(started.server.get());
+    }
+    if (input.starts_with("output-inventory ")) {
+      {
+        auto lock = std::scoped_lock(state.mutex);
+        state.outputInventoryState = input.substr(17);
+      }
+      pipetune::publishControlStatus(started.server.get());
+    }
     if (input == "publish-status") {
       {
         auto lock = std::scoped_lock(state.mutex);

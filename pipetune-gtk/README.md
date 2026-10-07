@@ -25,8 +25,8 @@ fixed installed CLI path is invoked directly without a shell, and
 ## Controls and status
 
 The main window uses a persistent two-pane layout. The left pane remains
-visible while the right pane switches between Processing, Rate, DSP, and
-Advanced settings. The default window size is
+visible while the right pane switches between Processing, Rate, DSP, Output,
+and Advanced settings. The default window size is
 1080 × 680 pixels and its supported minimum is 900 × 560 pixels. Both panes
 scroll independently at compact sizes.
 
@@ -68,8 +68,56 @@ dependency order:
 
 1. sample-rate policy;
 2. DSP backend;
-3. silence-suspension policy; and
-4. processing mode or preset.
+3. silence-suspension policy;
+4. output configuration, together with a changed processing mode or preset; and
+5. processing mode or preset when no output change is needed.
+
+The Output page selects either the existing OS-managed single mode or multiple
+devices managed by PipeTune. It lists saved and available devices with profile,
+channel count, fixed EffeTune Ch numbers, and presence. Missing devices remain
+visible, and clearing a check box reserves its numbers. The device list uses
+the remaining panel height. `EffeTune final output channels` starts collapsed;
+opening it reveals the mapping controls and an independently scrolling table
+below the device list. Collapsing it returns that space to the device list
+without changing any output settings. The channel table shows
+the device and physical channel for each final DSP output, plus an editable
+purpose label. Double-click the label cell, or select it and press Enter, to
+edit it. The stereo desktop input uses Ch 1 and Ch 2; additional outputs must be
+created by the EffeTune preset. Single mode keeps the saved multiple-output
+mapping visible but inactive.
+
+Each device row shows its reported mute, scalar gain, and effective channel
+gains in dB, independently of the OS master volume. Unequal channel gains appear
+as a minimum–maximum range. Zero gain is `-∞ dB`; missing controls are `Unknown`.
+Hover over the values for an explanation. The values are read-only and do not
+change the routing or interrupt purpose-label editing when they update.
+Disconnected, changed-profile, and ambiguous devices show unknown controls;
+losing the daemon connection also clears the live volume display.
+
+Selected outputs in multiple mode show audio path activity separately from
+device presence: pending, idle, active, or error. Their estimated compensation
+is shown in milliseconds, or `Unknown` when timing is unavailable. An active
+path alone does not establish its delay. The tooltip explains that the estimate
+uses reported output latency and does not measure the compensation buffer or
+acoustic arrival time. Disconnects and unavailable inventory clear stale
+reports. These updates preserve in-progress purpose edits and never save settings.
+
+Select a channel to move it up or down with its purpose label, or use
+`Reassign device…` to replace the device assigned to that channel. Both actions
+open a before/after review. `Preview mapping` sends the proposed configuration;
+Cancel or Escape in the review leaves it unchanged. The main window's Apply
+still performs the save, and its Cancel restores the confirmed baseline.
+Device replacement retains the device's enabled state and all other devices'
+numbers. Removed physical channels leave reserved slots with their labels;
+new channels append after the existing slots. Replacements exceeding sixteen
+slots or duplicating another output fail. If the selected profile disappears
+while reviewing, reopen the review and select a current output.
+
+Presence distinguishes missing hardware, changed profiles, ambiguous matches,
+pending enumeration, and enumeration errors. It describes device matching, not
+audio activity or measured delay compensation. Live presence changes never
+renumber saved channels. A multiple-mode draft without an enabled device waits
+for a selection before previewing and cannot be applied.
 
 The global **Apply** button becomes available only after the daemon has
 confirmed every requested live change. It atomically writes the complete
@@ -276,7 +324,8 @@ protocol, and runs the dialog under Xvfb. The scenarios verify:
 
 - per-user setup from primary, application-menu, and hidden startup paths;
 - setup failure diagnostics followed by an ordinary control connection;
-- the persistent status pane, all four settings pages, and minimum geometry;
+- the persistent status pane, all five settings pages, and minimum geometry;
+- responsive preset and device lists, and collapsible channel assignments;
 - the DSP Load meter's accessible range, measured value, responsive
   right-aligned width, rendered fill, and hue;
 - the silence-suspension range, live preview, retained disabled value, and

@@ -163,7 +163,9 @@ static bool checkSettingsPages(const pipetune_gtk::MainWindowUi &ui) {
       gtk_container_get_children(GTK_CONTAINER(ui.settingsStack));
   const auto count = g_list_length(children);
   g_list_free(children);
-  return check(count == 4, "settings page count differs") &&
+  return check(count == 5, "settings page count differs") &&
+         check(gtk_stack_get_child_by_name(GTK_STACK(ui.settingsStack), "output") != nullptr,
+               "output configuration page is missing") &&
          check(gtk_stack_get_child_by_name(GTK_STACK(ui.settingsStack),
                                            "processing") != nullptr,
                "processing page is missing") &&

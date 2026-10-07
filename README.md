@@ -40,8 +40,8 @@ you can then immediately apply them in PipeTune to apply effects to all Linux so
 
 ### Supported systems
 
-PipeTune requires a PipeWire desktop session managed by WirePlumber and
-systemd user services. WirePlumber 0.4 and 0.5 are supported. A standalone
+PipeTune requires PipeWire 1.0.5 or later in a desktop session managed by
+WirePlumber and systemd user services. WirePlumber 0.4 and 0.5 are supported.
 
 > Note: This applies to the standard Debian and Ubuntu distributions.
 > It may also work on other distributions if they meet the system requirements.
@@ -50,7 +50,6 @@ Prebuilt Debian packages are published for:
 
 | Distribution | Release | Architectures |
 | :--- | :--- | :--- |
-| Debian | bookworm | amd64, i386, arm64, armhf |
 | Debian | trixie | amd64, i386, arm64, armhf, riscv64 |
 | Ubuntu | 24.04 | amd64, arm64 |
 | Ubuntu | 26.04 | amd64, arm64 |
@@ -124,7 +123,7 @@ the settings window opens so you can still control PipeTune.
 ## PipeTune settings window
 
 The PipeTune settings window always displays PipeTune's status, divided into
-sections, on the left, while the Processing, Rate, DSP, and Advanced settings
+sections, on the left, while the Processing, Rate, DSP, Output, and Advanced settings
 are shown on the right.
 
 ![PipeTune UI Window](./images/pipetune-ui-window.png)
@@ -210,6 +209,117 @@ From the CLI, you can specify either a preset file path or bypass mode:
 pipetune setup --preset /absolute/path/to/example.effetune_preset
 pipetune bypass
 ```
+
+## Choosing audio outputs
+
+The settings window's `Output` page switches between OS-managed single output
+and multiple outputs selected in PipeTune. In multiple mode, check the devices
+you want to use. Each device lists its active profile, channel count, assigned
+Ch numbers, and presence. The device list grows with the available panel height.
+Open the initially collapsed `EffeTune final output channels` section below it
+to view the channel table and editing controls. The table scrolls independently
+and maps final EffeTune channels to each device's physical channels.
+Double-click a purpose cell to add your own label.
+Select a channel and use `Move up` or `Move down` to change its number, or
+`Reassign device…` to choose a replacement output for its device. Review the
+before/after table, then choose `Preview mapping`. The EffeTune preset itself
+is unchanged. Reassignment retains other devices' channel numbers and keeps
+removed channels reserved; additional channels are appended.
+Changes preview live; use `Apply` to save or `Cancel` to restore the previous
+configuration. Selecting multiple mode without a device leaves an unfinished
+draft and does not change the live output.
+
+Device rows also show reported mute and gain separately from the OS master
+volume. Channel gains show a minimum–maximum range when they differ. These
+values are read-only; unavailable controls or disconnected devices show
+`Unknown`. Hover over the values for an explanation.
+
+Selected devices in multiple mode also show audio path activity and estimated
+delay compensation. An active path can still have an unknown estimate when
+timing information is unavailable. The estimate uses reported output latency;
+it does not measure the compensation buffer or acoustic arrival time. Live
+updates preserve channel labels being edited and do not save settings.
+
+List the audio outputs in the current PipeWire session, including each output's
+active profile and all channel positions:
+
+```sh
+pipetune output list
+pipetune output list --json
+```
+
+The command works while the PipeTune daemon is stopped and leaves routing,
+profiles, and volume unchanged. Internal PipeTune nodes and audio inputs are
+excluded. The JSON includes device identity separately from the temporary
+PipeWire node ID, plus a diagnostic for layouts that cannot be selected, such
+as outputs exceeding the sixteen-channel DSP limit.
+
+Single mode keeps physical output selection in the OS sound settings and hides
+PipeTune's internal outputs. Multiple mode shows only `PipeTune Processed Audio`
+as the selected OS output; choose its devices in PipeTune's Output panel or with
+the commands below. Input device selection and controls remain available in both
+modes. To use multiple devices, select their node names from `output list`:
+
+```sh
+pipetune output select 'NODE_NAME_A' 'NODE_NAME_B'
+pipetune output get
+pipetune output get --json
+pipetune output mode single
+pipetune output mode multiple
+```
+
+`select` enables multiple mode and assigns every channel in each selected
+output's current profile. The initial order determines the EffeTune Ch numbers.
+Later selections preserve those numbers and labels: deselected outputs keep
+their slots, and new outputs are appended. The sixteen-channel limit includes
+reserved slots. Switching to single mode retains the multiple-output choices.
+
+In multiple mode, the OS master volume and mute apply after DSP to all selected
+outputs. Their settings are remembered across PipeTune restarts. A WirePlumber
+restart retains the running daemon's current volume and mute.
+
+`get` shows the live mode and a table linking each final EffeTune channel to its
+device, device channel, profile, presence, and optional purpose label. A missing
+device keeps its assignments; its channels are not redirected to another
+output. Other selected devices continue playing, and a returning device resumes
+its saved channels. Rebuilding the output paths can cause a short fade or dropout.
+Even if every selected device disappears, multiple mode and its assignments remain
+active. Presence describes matching hardware, not measured audio transport or
+delay compensation. A changed profile or ambiguous identity pauses only the
+affected output until the saved configuration matches again or you explicitly
+reassign it.
+
+`get` also shows each available device's reported mute, scalar gain, and channel
+gains in dB, separately from the OS master volume. `0.0 dB` is unity gain and
+`-inf dB` is silence; `unknown` means the device has not reported that control.
+The JSON response retains linear gains in `outputVolumes`. These are device
+reports, not measurements of the sound leaving the speakers.
+
+In multiple mode, `get` also shows each selected output's path activity and
+estimated compensation in milliseconds. The estimate uses reported downstream
+latency and the actual graph clock. It is separate from the internal compensation
+buffer size and acoustic arrival time. `unknown` means a current timing basis is
+unavailable, for example during reconnection or when the server does not expose
+its graph clock. JSON clients receive these observations in `outputTimings`;
+latency and compensation values are nanoseconds, with `null` for unavailable values.
+
+Desktop input remains stereo on Ch 1 and Ch 2. Use the EffeTune preset to create
+the additional outputs, for example with Matrix; Bypass leaves extra channels
+silent. PipeTune does not automatically copy stereo audio to every device.
+
+For explicit reassignment, slot ordering, or labels, `output set` accepts a
+complete routing JSON object as one argument, for example
+`pipetune output set "$(cat routing.json)"`. The object has the same format as
+the `outputConfiguration` field from `output get --json`; pass that field,
+not the whole status response.
+
+Changes are applied to the running daemon and saved for future starts. If the
+daemon is stopped, they are saved for its next start. A rejected or unconfirmed
+live change is not saved. If saving fails after live application, PipeTune
+attempts to restore the previous routing and reports whether restoration
+succeeded. `--socket PATH` selects another daemon for `get`, `select`, `mode`,
+and `set`; the three modifying commands also accept `--config PATH` for its
+startup settings.
 
 ## Choosing the PCM rate
 
@@ -365,6 +475,14 @@ automatically. The startup preset selection is preserved.
 
 Use `pipetune unsetup --purge` to also remove PipeTune's application
 configuration.
+
+With WirePlumber 0.4.17, restarting WirePlumber can leave an application's
+existing audio stream silent, including streams using `stream.dont-remix=true`.
+Reopen the application's audio output or restart that application. This also
+occurs without PipeTune; the equivalent PipeTune playback test resumes on
+WirePlumber 0.5.8. See the upstream audio adapter implementations for
+[0.4.17](https://github.com/PipeWire/wireplumber/blob/0.4.17/modules/module-si-audio-adapter.c)
+and [0.5.8](https://github.com/PipeWire/wireplumber/blob/0.5.8/modules/module-si-audio-adapter.c).
 
 ## Logs
 

@@ -173,6 +173,30 @@ static bool responseHasLivePreset(std::string_view response,
   return matches;
 }
 
+static bool testIndependentInputWidth(bool connect) {
+  for (const auto width : {4U, 16U}) {
+    auto created = pipetune::createBypassDspPipeline({
+        .sampleRate = 48000, .maxChannels = width, .maxFrames = 8192});
+    if (!check(created.pipeline != nullptr, created.error)) return false;
+    auto notifications = 0;
+    const auto result = pipetune::runPipeWirePipeline(std::move(created.pipeline), {
+        .filterName = "pipetune_input_width_test",
+        .filterDescription = "PipeTune stereo input test", .initialPresetPath = {},
+        .initialConfigurationError = {}, .controlSocketPath = {},
+        .dspSampleRate = connect ? 48000U : 96000U,
+        .ratePolicy = pipetune::defaultSampleRatePolicy(), .channelCount = width,
+        .maxFrames = 8192, .ringCapacityFrames = 16384,
+        .readyCallback = countReadyNotification, .readyUserData = &notifications,
+        .inputChannelCount = connect ? 2U : width + 1}, pipetune::PipeWireRunMode::untilReady);
+    if (connect) {
+      if (!check(result.success && result.processingErrors == 0 && notifications == 1,
+                 "stereo input and wider DSP/output must negotiate independently: " + result.error)) return false;
+    } else if (!check(!result.success && result.error == "PipeWire input channel count must not exceed the DSP width",
+                      "invalid input width must fail before DSP format or PipeWire connection checks")) return false;
+  }
+  return true;
+}
+
 static std::optional<pipetune::ControlRuntimeStatus>
 waitForInactiveGraph(const std::filesystem::path &socketPath) {
   const auto deadline = std::chrono::steady_clock::now() +
@@ -738,13 +762,14 @@ static bool testOrderlySignalShutdown(
 
 int main() {
   if (!testMismatchedFixedDspRateIsRejected() ||
-      !testSixteenChannelPipeWireBounds()) {
+      !testSixteenChannelPipeWireBounds() || !testIndependentInputWidth(false)) {
     return 1;
   }
   if (!pipeWireSessionIsAvailable()) {
     std::cout << "PipeWire session socket is unavailable; skipping integration test\n";
     return 77;
   }
+  if (!testIndependentInputWidth(true)) return 1;
 
   const auto processId = std::to_string(static_cast<long long>(getpid()));
   const auto directory =

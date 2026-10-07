@@ -8,6 +8,9 @@
 
 #include "pipetune/dsp_backend.h"
 #include "pipetune/dsp_idle.h"
+#include "pipetune/output_configuration.h"
+#include "pipetune/output_timing.h"
+#include "pipetune/output_volume.h"
 #include "pipetune/preset_entry.h"
 #include "pipetune/sample_rate.h"
 
@@ -39,6 +42,8 @@ enum class ControlCommand {
   setDspBackend,
   /** Replace the automatic DSP suspension policy. */
   setDspIdle,
+  /** Replace the live output mode and complete fixed channel mapping. */
+  setOutput,
   /** Keep the connection open and publish status changes. */
   subscribe
 };
@@ -59,6 +64,13 @@ struct ControlRequest {
   DspSimdVariant dspSimdVariant = DspSimdVariant::automatic;
   /** Requested automatic suspension policy for setDspIdle. */
   DspIdlePolicy dspIdlePolicy = {};
+  /** Complete replacement for setOutput; persistence is a separate operation. */
+  OutputConfiguration outputConfiguration = {};
+  /** Optional revision guard for setOutput; a mismatch leaves live state intact. */
+  std::optional<std::uint64_t> expectedRevision = std::nullopt;
+  /** Optional processing choice for setOutput: empty path means bypass;
+   * no value preserves the current pipeline recipe. */
+  std::optional<std::filesystem::path> outputPreset = std::nullopt;
 };
 
 /**
@@ -200,6 +212,18 @@ struct ControlRuntimeStatus {
        .cpuSupported = false,
        .cpuRequirement = "unknown",
        .error = "SIMD DSP variant availability was not reported"}};
+  /** Live output mode and fixed assignments, independent of device presence. */
+  OutputConfiguration outputConfiguration = {};
+  /** Current selectable and unsupported devices; never inferred from settings. */
+  std::vector<AvailableOutput> availableOutputs = {};
+  /** True after the first complete inventory snapshot has arrived. */
+  bool outputInventoryReady = false;
+  /** Enumeration diagnostic, or empty for a successful or pending inventory. */
+  std::string outputInventoryError = {};
+  /** Physical output controls, independent of saved routing and master gain. */
+  std::vector<OutputVolumeState> outputVolumes = {};
+  /** Current resolved output paths and explicitly estimated delay compensation. */
+  std::vector<OutputTimingState> outputTimings = {};
 };
 
 /**
@@ -305,6 +329,18 @@ makeSetDspBackendControlRequest(DspBackendKind kind,
  * @return Encoded request, or an empty string for invalid input or failure.
  */
 std::string makeSetDspIdleControlRequest(const DspIdlePolicy &policy);
+
+/**
+ * Encodes a complete live output configuration without a framing newline.
+ * @param configuration Valid output mode, selected devices, and fixed slots.
+ * @param expectedRevision Require this live revision, or omit the guard.
+ * @param preset Optional preset to prepare at the new width; an empty path
+ * requests bypass and no value preserves the active processing recipe.
+ * @return Encoded request, or empty for invalid input or allocation failure.
+ */
+std::string makeSetOutputControlRequest(const OutputConfiguration &configuration,
+    std::optional<std::uint64_t> expectedRevision = std::nullopt,
+    const std::optional<std::filesystem::path> &preset = std::nullopt);
 
 /**
  * Returns a JSON live-preset request without framing newline.

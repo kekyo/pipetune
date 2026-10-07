@@ -9,6 +9,7 @@
 #include "pipetune/dsp_backend.h"
 #include "pipetune/dsp_idle.h"
 #include "pipetune/dsp_pipeline.h"
+#include "pipetune/output_configuration.h"
 #include "pipetune/sample_rate.h"
 
 #include <filesystem>
@@ -54,6 +55,8 @@ struct StartupPipelineResult {
   bool dspBackendFallback = false;
   /** Backend availability or compatibility diagnostic. */
   std::string dspBackendError = {};
+  /** Persisted output mode, devices, and fixed channel assignments. */
+  OutputConfiguration outputConfiguration = {};
 };
 
 /**
@@ -66,6 +69,7 @@ struct StartupPipelineResult {
  * @param configPath Startup configuration file path.
  * @param options Automatic-mode initial rate and maximum processing format.
  * A fixed configured policy replaces options.sampleRate before construction.
+ * The output configuration determines maxChannels, including reserved slots.
  * @return Prepared startup pipeline and diagnostics.
  */
 StartupPipelineResult
@@ -81,6 +85,7 @@ prepareStartupPipeline(const std::filesystem::path &configPath,
  * @param configPath Startup configuration file path.
  * @param options Automatic-mode initial rate and maximum processing format.
  * A fixed configured policy replaces options.sampleRate before construction.
+ * The output configuration determines maxChannels, including reserved slots.
  * @param backends Independently discovered scalar and SIMD backends.
  * @return Prepared startup pipeline and diagnostics.
  */

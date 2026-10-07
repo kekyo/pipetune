@@ -92,8 +92,23 @@ endif()
 
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
-pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3)
+pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET "libpipewire-0.3>=1.0.5")
+pkg_get_variable(PIPETUNE_PIPEWIRE_MODULE_DIR libpipewire-0.3 moduledir)
 pkg_check_modules(SAMPLERATE REQUIRED IMPORTED_TARGET samplerate)
+
+add_library(pipetune_presentation MODULE src/pipewire_presentation.c)
+target_link_libraries(pipetune_presentation PRIVATE PkgConfig::PIPEWIRE)
+set_target_properties(pipetune_presentation PROPERTIES
+  OUTPUT_NAME "pipewire-module-pipetune-presentation")
+target_compile_options(pipetune_presentation PRIVATE -Wall -Wextra -Werror)
+if(BUILD_TESTING)
+  add_executable(pipetune_device_presentation_fixture test/device_presentation_fixture.c)
+  target_link_libraries(pipetune_device_presentation_fixture PRIVATE PkgConfig::PIPEWIRE)
+  target_compile_options(pipetune_device_presentation_fixture PRIVATE -Wall -Wextra -Werror)
+  add_executable(pipetune_device_route_probe test/device_route_probe.c)
+  target_link_libraries(pipetune_device_route_probe PRIVATE PkgConfig::PIPEWIRE)
+  target_compile_options(pipetune_device_route_probe PRIVATE -Wall -Wextra -Werror)
+endif()
 
 find_program(PIPETUNE_NODE_EXECUTABLE node REQUIRED)
 find_program(PIPETUNE_SYSTEMCTL_EXECUTABLE systemctl REQUIRED)
@@ -182,6 +197,8 @@ add_library(
   src/dsp_pipeline.cpp
   src/generated_fir_asset.cpp
   src/measurement_store.cpp
+  src/output_configuration.cpp
+  src/output_configuration_json.cpp
   src/crosstalk_fir.cpp
   src/sample_rate.cpp
   src/startup_config.cpp
@@ -231,8 +248,14 @@ add_library(
   src/dsp_pipeline_slot.cpp
   src/filter_graph_properties.cpp
   src/input_telemetry.cpp
+  src/output_inventory.cpp
+  src/output_command.cpp
+  src/output_distribution.cpp
   src/pipewire_buffer_io.cpp
+  src/pipewire_graph_clock.cpp
   src/pipewire_latency.cpp
+  src/pipewire_output_inventory.cpp
+  src/pipewire_output_paths.cpp
   src/pipewire_pipeline.cpp
   src/process_runner.cpp
   src/rate_command.cpp
@@ -307,6 +330,9 @@ set(
   "${CMAKE_INSTALL_DATADIR}/doc/pipetune")
 
 install(TARGETS pipetune RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+# PipeWire 1.0 discovers server modules in its configured module directory,
+# independently of the executable prefix. No existing module is replaced.
+install(TARGETS pipetune_presentation LIBRARY DESTINATION "${PIPETUNE_PIPEWIRE_MODULE_DIR}")
 install(
   TARGETS ${PIPETUNE_DSP_BACKEND_TARGETS}
   LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/pipetune")
@@ -779,9 +805,154 @@ if(BUILD_TESTING)
     COMMAND pipetune_user_setup_tests)
 
   find_program(PIPETUNE_PIPEWIRE_EXECUTABLE pipewire REQUIRED)
+  add_executable(pipetune_output_inventory_observer_tests test/output_inventory_observer_test.cpp)
+  target_include_directories(pipetune_output_inventory_observer_tests PRIVATE src)
+  target_link_libraries(pipetune_output_inventory_observer_tests PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE)
+  target_compile_options(pipetune_output_inventory_observer_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_output_inventory
+    COMMAND ${PIPETUNE_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/output-inventory.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE} $<TARGET_FILE:pipetune>
+      $<TARGET_FILE:pipetune_output_inventory_observer_tests>)
+  set_tests_properties(pipetune_output_inventory PROPERTIES TIMEOUT 30)
+  add_executable(pipetune_output_configuration_tests test/output_configuration_test.cpp)
+  target_link_libraries(pipetune_output_configuration_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_output_configuration_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_output_configuration_tests COMMAND pipetune_output_configuration_tests)
+  add_executable(pipetune_output_timing_tests test/output_timing_test.cpp)
+  target_include_directories(pipetune_output_timing_tests PRIVATE src)
+  target_link_libraries(pipetune_output_timing_tests PRIVATE pipetune_pipewire)
+  target_compile_options(pipetune_output_timing_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_output_timing_tests COMMAND pipetune_output_timing_tests)
   find_program(PIPETUNE_WIREPLUMBER_EXECUTABLE wireplumber REQUIRED)
+  find_program(PIPETUNE_PW_CLI_EXECUTABLE pw-cli REQUIRED)
+  find_program(PIPETUNE_PW_DUMP_EXECUTABLE pw-dump REQUIRED)
+  find_program(PIPETUNE_PW_CAT_EXECUTABLE pw-cat REQUIRED)
+  find_program(PIPETUNE_PW_LINK_EXECUTABLE pw-link REQUIRED)
+  add_test(NAME pipetune_device_presentation
+    COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/device-presentation.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+      $<TARGET_FILE:pipetune_device_presentation_fixture>
+      $<TARGET_FILE_DIR:pipetune_presentation>
+      ${PIPETUNE_PIPEWIRE_MODULE_DIR} ${PIPETUNE_PW_DUMP_EXECUTABLE} ${PIPETUNE_PW_CLI_EXECUTABLE}
+      $<TARGET_FILE:pipetune_device_route_probe>)
+  set_tests_properties(pipetune_device_presentation PROPERTIES TIMEOUT 45)
+  add_test(NAME pipetune_device_presentation_pcm
+    COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/device-presentation.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+      $<TARGET_FILE:pipetune_device_presentation_fixture>
+      $<TARGET_FILE_DIR:pipetune_presentation>
+      ${PIPETUNE_PIPEWIRE_MODULE_DIR} ${PIPETUNE_PW_DUMP_EXECUTABLE} ${PIPETUNE_PW_CLI_EXECUTABLE}
+      $<TARGET_FILE:pipetune_device_route_probe> ${PIPETUNE_PW_CAT_EXECUTABLE} ${PIPETUNE_PW_LINK_EXECUTABLE} --pcm)
+  set_tests_properties(pipetune_device_presentation_pcm PROPERTIES TIMEOUT 60)
   find_program(PIPETUNE_PW_CAT_EXECUTABLE pw-cat REQUIRED)
   find_program(PIPETUNE_PW_DUMP_EXECUTABLE pw-dump REQUIRED)
+  find_program(PIPETUNE_PULSE_EXECUTABLE pipewire-pulse REQUIRED)
+  pkg_check_modules(PULSE REQUIRED IMPORTED_TARGET libpulse)
+  add_executable(pipetune_desktop_output_probe test/desktop_output_probe.c)
+  target_link_libraries(pipetune_desktop_output_probe PRIVATE PkgConfig::PULSE)
+  target_compile_options(pipetune_desktop_output_probe PRIVATE -Wall -Wextra -Werror)
+  add_test(NAME pipetune_desktop_output_visibility COMMAND
+    ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/device-presentation.mjs
+    ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+    $<TARGET_FILE:pipetune_device_presentation_fixture> $<TARGET_FILE_DIR:pipetune_presentation>
+    ${PIPETUNE_PIPEWIRE_MODULE_DIR} ${PIPETUNE_PW_DUMP_EXECUTABLE} ${PIPETUNE_PW_CLI_EXECUTABLE}
+    $<TARGET_FILE:pipetune_device_route_probe> ${PIPETUNE_PW_CAT_EXECUTABLE} ${PIPETUNE_PW_LINK_EXECUTABLE}
+    $<TARGET_FILE:pipetune_wireplumber_policy_fixture> ${PIPETUNE_PULSE_EXECUTABLE}
+    $<TARGET_FILE:pipetune_desktop_output_probe> --desktop)
+  set_tests_properties(pipetune_desktop_output_visibility PROPERTIES TIMEOUT 60)
+  add_executable(pipetune_pulse_output_probe tools/pulse-output-probe.cpp)
+  target_link_libraries(pipetune_pulse_output_probe PRIVATE PkgConfig::PULSE)
+  target_compile_options(pipetune_pulse_output_probe PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_executable(
+    pipetune_multi_device_output_probe
+    tools/multi-device-output-probe.cpp)
+  target_link_libraries(
+    pipetune_multi_device_output_probe PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE)
+  target_include_directories(pipetune_multi_device_output_probe PRIVATE src)
+  target_compile_options(
+    pipetune_multi_device_output_probe PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+  add_executable(pipetune_product_output_tests test/product_output_test.cpp)
+  target_link_libraries(pipetune_product_output_tests PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE)
+  target_include_directories(pipetune_product_output_tests PRIVATE src)
+  target_link_options(pipetune_product_output_tests PRIVATE -Wl,--wrap=pw_stream_connect)
+  target_compile_options(pipetune_product_output_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  foreach(scenario product-bypass product-matrix product-slots product-sixteen product-volume product-disconnected product-reconnect product-profile product-restart product-restart-mute product-latency product-latency-units product-latency-reconnect product-time-alignment product-controls product-output-clock product-output-clock-alt product-output-clock-unavailable product-output-change product-output-timeout product-output-status product-output-status-single product-output-recovery)
+    add_test(NAME pipetune_${scenario}
+      COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+        ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+        $<TARGET_FILE:pipetune_product_output_tests> ${scenario}
+        $<TARGET_FILE:pipetune_wireplumber_policy_fixture> "" "" ""
+        $<TARGET_FILE_DIR:pipetune_presentation> ${PIPETUNE_PIPEWIRE_MODULE_DIR})
+    set_tests_properties(pipetune_${scenario} PROPERTIES TIMEOUT 45)
+  endforeach()
+  foreach(scenario product-daemon product-daemon-volume product-daemon-volume-zero)
+    add_test(
+      NAME pipetune_${scenario}
+      COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+        ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+        $<TARGET_FILE:pipetune_product_output_tests> ${scenario}
+        $<TARGET_FILE:pipetune_wireplumber_policy_fixture> "" "" $<TARGET_FILE:pipetune>
+        $<TARGET_FILE_DIR:pipetune_presentation> ${PIPETUNE_PIPEWIRE_MODULE_DIR})
+    set_tests_properties(pipetune_${scenario} PROPERTIES TIMEOUT 45)
+  endforeach()
+  add_test(
+    NAME pipetune_multi_device_output
+    COMMAND
+      ${PIPETUNE_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE}
+      ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+      $<TARGET_FILE:pipetune_multi_device_output_probe>)
+  set_tests_properties(pipetune_multi_device_output PROPERTIES TIMEOUT 60)
+  add_test(
+    NAME pipetune_multi_device_reconnect
+    COMMAND
+      ${PIPETUNE_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE}
+      ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+      $<TARGET_FILE:pipetune_multi_device_output_probe>
+      reconnect)
+  set_tests_properties(pipetune_multi_device_reconnect PROPERTIES TIMEOUT 60)
+  add_test(
+    NAME pipetune_multi_device_volume
+    COMMAND
+      ${PIPETUNE_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE}
+      ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+      $<TARGET_FILE:pipetune_multi_device_output_probe>
+      volume)
+  set_tests_properties(pipetune_multi_device_volume PROPERTIES TIMEOUT 60)
+  foreach(scenario IN ITEMS latency latency-off latency-change latency-reconnect)
+    add_test(
+      NAME pipetune_multi_device_${scenario}
+      COMMAND
+        ${PIPETUNE_NODE_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+        ${PIPETUNE_PIPEWIRE_EXECUTABLE}
+        ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+        $<TARGET_FILE:pipetune_multi_device_output_probe>
+        ${scenario})
+    set_tests_properties(pipetune_multi_device_${scenario} PROPERTIES TIMEOUT 60)
+  endforeach()
+  foreach(scenario policy-pulse policy-pulse-volume)
+    add_test(
+      NAME pipetune_multi_device_${scenario}
+      COMMAND
+        ${PIPETUNE_NODE_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+        ${PIPETUNE_PIPEWIRE_EXECUTABLE}
+        ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+        $<TARGET_FILE:pipetune_multi_device_output_probe>
+        ${scenario}
+        $<TARGET_FILE:pipetune_wireplumber_policy_fixture>
+        ${PIPETUNE_PULSE_EXECUTABLE}
+        $<TARGET_FILE:pipetune_pulse_output_probe>)
+    set_tests_properties(pipetune_multi_device_${scenario} PROPERTIES TIMEOUT 60)
+  endforeach()
   add_executable(
     pipetune_wireplumber_policy_fixture
     test/wireplumber_policy_fixture.cpp)
@@ -789,6 +960,21 @@ if(BUILD_TESTING)
     pipetune_wireplumber_policy_fixture PRIVATE src)
   target_link_libraries(
     pipetune_wireplumber_policy_fixture PRIVATE pipetune_pipewire)
+  foreach(scenario policy policy-volume policy-reconnect policy-visibility policy-recovery
+      policy-defaults policy-defaults-empty policy-defaults-external policy-defaults-equivalent policy-defaults-recovery
+      policy-restart policy-restart-volume policy-restart-mute)
+    add_test(
+      NAME pipetune_multi_device_${scenario}
+      COMMAND
+        ${PIPETUNE_NODE_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+        ${PIPETUNE_PIPEWIRE_EXECUTABLE}
+        ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+        $<TARGET_FILE:pipetune_multi_device_output_probe>
+        ${scenario}
+        $<TARGET_FILE:pipetune_wireplumber_policy_fixture>)
+    set_tests_properties(pipetune_multi_device_${scenario} PROPERTIES TIMEOUT 60)
+  endforeach()
   if(MSVC)
     target_compile_options(
       pipetune_wireplumber_policy_fixture PRIVATE /W4 /WX)
@@ -812,6 +998,12 @@ if(BUILD_TESTING)
     PROPERTIES
       SKIP_RETURN_CODE 77
       TIMEOUT 30)
+
+  add_executable(pipetune_output_command_tests test/output_command_test.cpp)
+  target_include_directories(pipetune_output_command_tests PRIVATE src)
+  target_link_libraries(pipetune_output_command_tests PRIVATE pipetune_pipewire)
+  target_compile_options(pipetune_output_command_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_output_command_tests COMMAND pipetune_output_command_tests)
 
   add_executable(
     pipetune_rate_command_tests
@@ -870,7 +1062,8 @@ if(BUILD_TESTING)
   endif()
   add_test(
     NAME pipetune_pipewire_buffer_io_tests
-    COMMAND pipetune_pipewire_buffer_io_tests)
+    COMMAND pipetune_pipewire_buffer_io_tests
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/presets/stereo-to-four.effetune_preset)
 
   add_executable(
     pipetune_pipewire_latency_tests
@@ -908,24 +1101,6 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_pipewire_stream_flags_tests
     COMMAND pipetune_pipewire_stream_flags_tests)
-
-  add_executable(
-    pipetune_pipewire_pre_0_3_73_stream_flags_tests
-    test/pipewire_stream_flags_test.cpp)
-  target_include_directories(
-    pipetune_pipewire_pre_0_3_73_stream_flags_tests PRIVATE
-    test/fixtures/pipewire-pre-0.3.73 src)
-  if(MSVC)
-    target_compile_options(
-      pipetune_pipewire_pre_0_3_73_stream_flags_tests PRIVATE /W4 /WX)
-  else()
-    target_compile_options(
-      pipetune_pipewire_pre_0_3_73_stream_flags_tests PRIVATE
-      -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(
-    NAME pipetune_pipewire_pre_0_3_73_stream_flags_tests
-    COMMAND pipetune_pipewire_pre_0_3_73_stream_flags_tests)
 
   add_executable(
     pipetune_sample_rate_converter_tests
@@ -1069,7 +1244,8 @@ if(BUILD_TESTING)
       ${PIPETUNE_SYSTEMD_USER_UNIT_DIR}
       ${CMAKE_INSTALL_LIBDIR}
       ${PIPETUNE_DOCUMENTATION_DIR}
-      ${CMAKE_CURRENT_BINARY_DIR}/pipetune.test.service)
+      ${CMAKE_CURRENT_BINARY_DIR}/pipetune.test.service
+      ${PIPETUNE_PIPEWIRE_MODULE_DIR})
 
   add_test(
     NAME pipetune_component_build

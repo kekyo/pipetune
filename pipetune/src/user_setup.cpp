@@ -105,7 +105,7 @@ static std::string acquireUserManagementLock(
   return {};
 }
 
-static std::array<ManagedFileState, 6> makeWirePlumberFiles(
+static std::array<ManagedFileState, 8> makeAudioPolicyFiles(
     const UserManagementPaths &paths) {
   const auto emptySnapshot = FileSnapshot{
       .exists = false, .contents = {}, .mode = 0600, .error = {}};
@@ -113,6 +113,12 @@ static std::array<ManagedFileState, 6> makeWirePlumberFiles(
       {.path = paths.wirePlumberPolicyPath,
        .contents = wirePlumber04CompatibilityPolicy(),
        .description = "WirePlumber 0.4 compatibility policy",
+       .snapshot = emptySnapshot,
+       .needsUpdate = false,
+       .mutated = false},
+      {.path = paths.wirePlumber04StreamConfigurationPath,
+       .contents = wirePlumber04StreamConfiguration(),
+       .description = "WirePlumber 0.4 master-control stream configuration",
        .snapshot = emptySnapshot,
        .needsUpdate = false,
        .mutated = false},
@@ -143,6 +149,13 @@ static std::array<ManagedFileState, 6> makeWirePlumberFiles(
       {.path = paths.wirePlumber05VisibilityScriptPath,
        .contents = wirePlumberNodeVisibilityPolicy(),
        .description = "WirePlumber 0.5 visibility policy",
+       .snapshot = emptySnapshot,
+       .needsUpdate = false,
+       .mutated = false},
+      {.path = paths.pipeWirePresentationPath,
+       .contents = "# Managed by PipeTune.\ncontext.modules = [\n"
+                   "  { name = libpipewire-module-pipetune-presentation flags = [ ifexists ] }\n]\n",
+       .description = "PipeWire desktop route presentation",
        .snapshot = emptySnapshot,
        .needsUpdate = false,
        .mutated = false},
@@ -358,7 +371,7 @@ static void rollbackSetup(const UserSetupRequest &request,
                           const FileSnapshot &configurationSnapshot,
                           bool restoreSetupState,
                           const FileSnapshot &setupStateSnapshot,
-                          std::span<const ManagedFileState> wirePlumberFiles,
+                          std::span<const ManagedFileState> audioPolicyFiles,
                           bool restartAudioStack,
                           bool serviceMutationStarted, bool wasEnabled,
                           bool wasActive,
@@ -377,7 +390,7 @@ static void rollbackSetup(const UserSetupRequest &request,
       warnings.push_back("setup rollback: " + error);
     }
   }
-  restoreMutatedManagedFiles(wirePlumberFiles, "setup rollback: ", warnings);
+  restoreMutatedManagedFiles(audioPolicyFiles, "setup rollback: ", warnings);
   if (restartAudioStack) {
     const auto result = restartUserAudioStack(
         request.processRunner, request.processUserData, request.paths);
@@ -454,6 +467,9 @@ UserManagementPathResult resolveUserManagementPaths(
               .wirePlumberPolicyPath =
                   xdgRoot / "wireplumber" / "policy.lua.d" /
                   "60-pipetune-filter.lua",
+              .wirePlumber04StreamConfigurationPath =
+                  xdgRoot / "wireplumber" / "main.lua.d" /
+                  "60-pipetune-streams.lua",
               .wirePlumberClientScriptPath =
                   xdgRoot / "wireplumber" / "scripts" /
                   "pipetune-endpoint-client.lua",
@@ -469,6 +485,9 @@ UserManagementPathResult resolveUserManagementPaths(
               .wirePlumber05VisibilityScriptPath =
                   xdgDataRoot / "wireplumber" / "scripts" /
                   "pipetune-node-visibility.lua",
+              .pipeWirePresentationPath =
+                  xdgRoot / "pipewire" / "pipewire.conf.d" /
+                  "60-pipetune-presentation.conf",
               .setupStatePath =
                   xdgStateRoot / "pipetune" / "setup-state",
               .managementLockPath =
@@ -525,13 +544,13 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
             .error = lockError};
   }
 
-  auto wirePlumberFiles = makeWirePlumberFiles(request.paths);
-  const auto wirePlumberInspectionError =
-      inspectManagedFiles(wirePlumberFiles);
-  if (!wirePlumberInspectionError.empty()) {
+  auto audioPolicyFiles = makeAudioPolicyFiles(request.paths);
+  const auto audioPolicyInspectionError =
+      inspectManagedFiles(audioPolicyFiles);
+  if (!audioPolicyInspectionError.empty()) {
     return {.success = false,
             .warnings = std::move(warnings),
-            .error = wirePlumberInspectionError};
+            .error = audioPolicyInspectionError};
   }
 
   const auto expectedSetupState = currentSetupStateContents();
@@ -583,7 +602,7 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
   const auto wasActive = activeProbe.exitCode == 0;
 
   auto managedFilesCurrent = true;
-  for (const auto &file : wirePlumberFiles) {
+  for (const auto &file : audioPolicyFiles) {
     managedFilesCurrent = managedFilesCurrent && !file.needsUpdate;
   }
   if (!request.force && !request.presetSpecified && setupStateCurrent &&
@@ -605,12 +624,12 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
   }
 
   auto serviceMutationStarted = false;
-  auto wirePlumberMutated = false;
+  auto audioPolicyMutated = false;
   auto audioStackRestartAttempted = false;
   auto setupStateMutated = false;
   const auto failSetup = [&](std::string error) {
     rollbackSetup(request, request.presetSpecified, configurationSnapshot,
-                  setupStateMutated, setupStateSnapshot, wirePlumberFiles,
+                  setupStateMutated, setupStateSnapshot, audioPolicyFiles,
                   audioStackRestartAttempted, serviceMutationStarted,
                   wasEnabled, wasActive, warnings);
     return UserManagementResult{.success = false,
@@ -626,7 +645,7 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
     return failSetup(processFailure("cannot reload systemd user units", reload));
   }
 
-  for (auto &file : wirePlumberFiles) {
+  for (auto &file : audioPolicyFiles) {
     if (!file.needsUpdate) {
       continue;
     }
@@ -641,9 +660,11 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
                        ": " + fileError);
     }
     file.mutated = true;
-    wirePlumberMutated = true;
+    audioPolicyMutated = true;
   }
-  if (wirePlumberMutated) {
+  if (audioPolicyMutated || !setupStateCurrent || request.force) {
+    // The server retains its loaded module until it restarts, even when an
+    // upgrade leaves the configuration text unchanged.
     audioStackRestartAttempted = true;
     const auto restartAudioStack = restartUserAudioStack(
         request.processRunner, request.processUserData, request.paths);
@@ -743,13 +764,13 @@ UserManagementResult executeUserUnsetup(
             .error = lockError};
   }
 
-  auto wirePlumberFiles = makeWirePlumberFiles(request.paths);
-  const auto wirePlumberInspectionError =
-      inspectManagedFiles(wirePlumberFiles);
-  if (!wirePlumberInspectionError.empty()) {
+  auto audioPolicyFiles = makeAudioPolicyFiles(request.paths);
+  const auto audioPolicyInspectionError =
+      inspectManagedFiles(audioPolicyFiles);
+  if (!audioPolicyInspectionError.empty()) {
     return {.success = false,
             .warnings = {},
-            .error = wirePlumberInspectionError};
+            .error = audioPolicyInspectionError};
   }
 
   auto autostart = maskGtkAutostart(
@@ -780,27 +801,27 @@ UserManagementResult executeUserUnsetup(
                 processFailure("cannot disable pipetune.service", disable)};
   }
 
-  auto wirePlumberFilesRemoved = false;
-  for (auto &file : wirePlumberFiles) {
+  auto audioPolicyFilesRemoved = false;
+  for (auto &file : audioPolicyFiles) {
     if (!file.snapshot.exists) {
       continue;
     }
     const auto fileError = removeConfigFile(file.path);
     if (!fileError.empty()) {
-      restoreMutatedManagedFiles(wirePlumberFiles, "unsetup rollback: ",
+      restoreMutatedManagedFiles(audioPolicyFiles, "unsetup rollback: ",
                                  warnings);
       return {.success = false,
               .warnings = std::move(warnings),
               .error = fileError};
     }
     file.mutated = true;
-    wirePlumberFilesRemoved = true;
+    audioPolicyFilesRemoved = true;
   }
-  if (wirePlumberFilesRemoved) {
+  if (audioPolicyFilesRemoved) {
     const auto restartAudioStack = restartUserAudioStack(
         request.processRunner, request.processUserData, request.paths);
     if (!processSucceeded(restartAudioStack)) {
-      restoreMutatedManagedFiles(wirePlumberFiles, "unsetup rollback: ",
+      restoreMutatedManagedFiles(audioPolicyFiles, "unsetup rollback: ",
                                  warnings);
       const auto rollbackRestart = restartUserAudioStack(
           request.processRunner, request.processUserData, request.paths);

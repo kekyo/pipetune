@@ -16,7 +16,8 @@ static bool configMatches(const pipetune::StartupConfig &left,
          left.ratePolicy == right.ratePolicy &&
          left.dspBackend == right.dspBackend &&
          left.dspSimdVariant == right.dspSimdVariant &&
-         left.dspIdlePolicy == right.dspIdlePolicy;
+         left.dspIdlePolicy == right.dspIdlePolicy &&
+         left.outputConfiguration == right.outputConfiguration;
 }
 
 static bool operationMatches(
@@ -33,6 +34,9 @@ static bool operationMatches(
            left.dspSimdVariant == right.dspSimdVariant;
   case SettingsOperation::dspIdle:
     return left.dspIdlePolicy == right.dspIdlePolicy;
+  case SettingsOperation::output:
+    return left.outputConfiguration == right.outputConfiguration &&
+           left.presetFound == right.presetFound && left.presetPath == right.presetPath;
   case SettingsOperation::processing:
     return left.presetFound == right.presetFound &&
            left.presetPath == right.presetPath;
@@ -48,6 +52,8 @@ static std::string confirmationDiagnostic(SettingsOperation operation) {
     return "Daemon did not confirm the requested DSP backend";
   case SettingsOperation::dspIdle:
     return "Daemon did not confirm the requested DSP suspension policy";
+  case SettingsOperation::output:
+    return "Daemon did not confirm the requested outputs and processing mode";
   case SettingsOperation::processing:
     return "Daemon did not confirm the requested processing mode";
   case SettingsOperation::none:
@@ -106,6 +112,12 @@ nextSettingsOperation(const SettingsTransaction &transaction) {
       transaction.conflict || transaction.liveChangeFailed) {
     return SettingsOperation::none;
   }
+  // Mode selection precedes the first device check, so an incomplete draft
+  // must remain editable without sending a request the daemon will reject.
+  if (!pipetune::validateOutputConfiguration(
+           transaction.desiredLive.outputConfiguration).empty()) {
+    return SettingsOperation::none;
+  }
   if (!operationMatches(SettingsOperation::rate,
                         transaction.confirmedLive,
                         transaction.desiredLive)) {
@@ -120,6 +132,11 @@ nextSettingsOperation(const SettingsTransaction &transaction) {
                         transaction.confirmedLive,
                         transaction.desiredLive)) {
     return SettingsOperation::dspIdle;
+  }
+  if (transaction.confirmedLive.outputConfiguration != transaction.desiredLive.outputConfiguration) {
+    // Output width and preset may be mutually incompatible with the current
+    // configuration. Restore them together instead of ordering partial edits.
+    return SettingsOperation::output;
   }
   if (!operationMatches(SettingsOperation::processing,
                         transaction.confirmedLive,
@@ -277,6 +294,7 @@ pipetune::StartupConfig startupConfigFromRuntime(
       .dspBackend = status.configuredDspBackend,
       .dspSimdVariant = status.configuredDspSimdVariant,
       .dspIdlePolicy = status.dspIdlePolicy,
+      .outputConfiguration = status.outputConfiguration,
   };
 }
 
