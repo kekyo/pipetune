@@ -50,15 +50,23 @@ static bool createOutput(TestState &state, unsigned channels) {
 
 // This fixture reports device controls directly. An inactive converter may
 // defer volume notifications until its audio formats have been negotiated.
+// Like ALSA adapters, a node may enumerate multiple Props objects: controls
+// can span reports followed by hardware properties that contain no volume.
 static bool publishVolume(TestState &state, bool muted) {
   auto storage = std::array<std::uint8_t, 1024>{};
   auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
   const auto gains = std::array<float, 6>{0, 0.125F, 0.25F, 0.5F, 1, 2};
   const auto *parameter = static_cast<const spa_pod *>(spa_pod_builder_add_object(
       &builder, SPA_TYPE_OBJECT_Props, SPA_PARAM_Props,
-      SPA_PROP_mute, SPA_POD_Bool(muted), SPA_PROP_volume, SPA_POD_Float(1.0F),
+      SPA_PROP_mute, SPA_POD_Bool(muted), SPA_PROP_volume, SPA_POD_Float(1.0F)));
+  const auto *channels = static_cast<const spa_pod *>(spa_pod_builder_add_object(
+      &builder, SPA_TYPE_OBJECT_Props, SPA_PARAM_Props,
       SPA_PROP_channelVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, gains.size(), gains.data())));
-  return pw_stream_update_params(state.stream, &parameter, 1) >= 0;
+  const auto *device = static_cast<const spa_pod *>(spa_pod_builder_add_object(
+      &builder, SPA_TYPE_OBJECT_Props, SPA_PARAM_Props,
+      SPA_PROP_device, SPA_POD_String("test:device")));
+  auto parameters = std::array<const spa_pod *, 3>{parameter, channels, device};
+  return pw_stream_update_params(state.stream, parameters.data(), parameters.size()) >= 0;
 }
 
 static void changed(const pipetune::OutputInventoryResult &snapshot, void *data) {
@@ -120,7 +128,8 @@ static void changed(const pipetune::OutputInventoryResult &snapshot, void *data)
     state.step = 9;
     if (!publishVolume(state, true)) fail(state, "could not report test device gain and mute");
   } else if (state.step == 9 && volume != snapshot.volumes.end() && volume->muted == true) {
-    if (volume->channelVolumes != std::vector<float>{0, 0.125F, 0.25F, 0.5F, 1, 2})
+    if (volume->volume != 1.0F ||
+        volume->channelVolumes != std::vector<float>{0, 0.125F, 0.25F, 0.5F, 1, 2})
       return fail(state, "device gain reports must retain every channel, including silence and amplification");
     state.step = 10;
     if (!publishVolume(state, false)) fail(state, "could not unmute the test device");

@@ -226,19 +226,23 @@ static void nodeInfo(void *data, const pw_node_info *info) {
 static void nodeParam(void *data, int, std::uint32_t id, std::uint32_t, std::uint32_t, const spa_pod *param) {
   auto &node = *static_cast<InventoryObject *>(data);
   if (id == SPA_PARAM_Props) {
-    // Enumeration returns a complete report. Unsupported or malformed controls
-    // remain unknown rather than retaining values from an older profile.
-    auto volume = OutputVolumeState{};
+    // A single enumeration can contain separate mixer and device parameter
+    // objects. Merge the controls reported by all of them; nodeInfo resets
+    // the snapshot before enumeration so an old profile cannot leave stale values.
+    auto &volume = node.volume;
     if (param != nullptr && spa_pod_is_object_type(param, SPA_TYPE_OBJECT_Props)) {
       if (const auto *property = spa_pod_find_prop(param, nullptr, SPA_PROP_mute)) {
+        volume.muted.reset();
         auto muted = false;
         if (spa_pod_get_bool(&property->value, &muted) >= 0) volume.muted = muted;
       }
       if (const auto *property = spa_pod_find_prop(param, nullptr, SPA_PROP_volume)) {
+        volume.volume.reset();
         auto gain = 0.0F;
         if (spa_pod_get_float(&property->value, &gain) >= 0 && std::isfinite(gain) && gain >= 0) volume.volume = gain;
       }
       if (const auto *property = spa_pod_find_prop(param, nullptr, SPA_PROP_channelVolumes)) {
+        volume.channelVolumes.clear();
         auto gains = std::array<float, SPA_AUDIO_MAX_CHANNELS>{};
         const auto validArray = spa_pod_is_array(&property->value) &&
             SPA_POD_ARRAY_VALUE_SIZE(&property->value) == sizeof(float) &&
@@ -249,7 +253,6 @@ static void nodeParam(void *data, int, std::uint32_t id, std::uint32_t, std::uin
           volume.channelVolumes.assign(gains.begin(), gains.begin() + count);
       }
     }
-    node.volume = std::move(volume);
     return;
   }
   auto *format = param;
