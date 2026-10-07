@@ -1058,12 +1058,14 @@ describe('PipeTune GTK dialog', () => {
     await waitForConnected();
     const window = await getElement('mainWindow', 'window');
     const table = await getElement('presetEntryView', 'table');
+    // Measure the viewport; tree content relayouts while scrollbars appear.
+    const presetViewport = await getWidget('presetEntryScroll');
     await window.resizeTo(1080, 740);
-    const compact = await table.capture();
+    const compact = await presetViewport.capture();
 
     await window.resizeTo(1080, 880);
     await toPass(async () => {
-      const expanded = await table.capture();
+      const expanded = await presetViewport.capture();
       expect(expanded.bounds.height - compact.bounds.height).toBe(140);
       expect(expanded.clipped).toBe(false);
     });
@@ -1076,13 +1078,15 @@ describe('PipeTune GTK dialog', () => {
 
     await window.resizeTo(1080, 740);
     await toPass(async () => {
-      expect((await table.capture()).bounds.height).toBe(compact.bounds.height);
+      expect((await presetViewport.capture()).bounds.height).toBe(
+        compact.bounds.height
+      );
     });
     await window.resizeTo(900, 560);
     await expectInsideWindow(await getWidget('applyButton'), window);
 
     await selectSettingsPage(3);
-    const devices = await getElement('outputDeviceList', 'list');
+    const devices = await getWidget('outputDeviceScroll');
     const channels = await getElement('outputChannelsExpander', 'expander');
     expect(await channels.isExpanded()).toBe(false);
     await window.resizeTo(1080, 740);
