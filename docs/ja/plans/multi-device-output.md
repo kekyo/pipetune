@@ -1112,3 +1112,20 @@ SPA Deviceのラッパーで既存のデバイス実装へ処理を委譲し、�
 4. WirePlumber 0.4/0.5の対応環境、PulseAudio/PipeWireの製品経路、実カードのGNOME表示で検証する。全体テストを実行した修正コミットを現在のセッションへ反映して照合し、初めてOS統合と最新要件の完了チェックを更新する。
 
 この要件確定で変更したのは計画文書であり、表示名・可視性を含む製品コードとインストール済み環境は変更していない。ドキュメントのみの変更なのでビルド・テストは再実行していない。直前の217件成功は既存コードの検証結果であり、今回の未実装の表示要件に対する合格とは扱わない。
+
+### 実装反復1: クライアントごとの端子公開（2026-10-07）
+
+SPAデバイス全体の列挙結果を変更する方式から、PipeWireサーバーのDevice resourceで通知を委譲する方式へ具体化した。`pipewire_presentation.c`をサーバーモジュールとして追加し、既存のWirePlumberポリシーと同じ集約ノードの存続期間をMultipleとして扱う。カード・入力ノード・PCM経路を再作成せず、デスクトップクライアントの`EnumRoute`に限って出力方向を除く。WirePlumberとPipeTuneには元の全経路を渡し、`Route`・`Profile`・設定操作は元の実装へ委譲する。
+
+公開された[Implementation API](https://docs.pipewire.org/group__api__pw__impl.html)、[Resource APIとコメント](https://github.com/PipeWire/pipewire/blob/1.0.5/src/pipewire/resource.h)、[SPA interfaceとhookのAPI・コメント](https://github.com/PipeWire/pipewire/blob/1.0.5/spa/include/spa/utils/hook.h)、[Device APIとコメント](https://github.com/PipeWire/pipewire/blob/1.0.5/src/pipewire/device.h)を確認した。`pw_resource_call`が公開するSPA interfaceのイベントコールバックを保持して委譲し、リソース破棄とモジュール終了時に戻す。元のメソッドhookも隔離・委譲・復元し、ライブラリの非公開構造体や外部コードの改変は使わない。モジュールは外部クライアントが接続する前にサーバーへ読み込む設計とし、導入時の設定・再起動・削除は反復3以降で統合する。
+
+既存クライアントには出力端子一覧の変更だけを通知し、経路管理クライアントへ表示切替を理由とした再選択を要求しない。明示的な件数制限付き列挙では、非表示端子が取得件数を消費しないよう、元のインデックス・要求フィルターを維持して可視の応答件数を制限する。元のPipeWire実装による非同期要求の直列化を維持する。[1.0.5のDevice列挙・busy処理](https://github.com/PipeWire/pipewire/blob/1.0.5/src/pipewire/impl-device.c)
+
+回帰テスト`pipetune_device_presentation`と、独自のduplexカードおよび1件ずつ列挙するクライアントを追加した。未修正相当のモジュールなしでは出力端子2件が残るREDを確認し、初期実装では1件ずつの列挙が入力を取得できないREDも確認した。修正後は以下を満たす。
+
+- 接続済みと新規接続のデスクトップにはMultiple時に入力2端子だけ、経路管理用クライアントには全4端子が見える。
+- モード往復でカードID、入力端子の内容、現在の入出力端子、音量・ミュート・保存フラグを維持し、Singleで元の一覧へ戻る。
+- Multiple中の出力音量変更をWirePlumberが保存し、検証カードを再接続すると、入出力の選択端子と音量を保存値へ復元する。再接続したカードも現在の表示モードに従う。
+- PipeWire 1.0.5 / WirePlumber 0.4.17と、PipeWire 1.4.2 / WirePlumber 0.5.8で同じテストが成功する。後者は既存のDebian trixie分離コンテナーを使用し、ホスト向けにビルドしたモジュールも読み込めることを確認する。
+
+成果物はモジュールと再現可能なテストドライバーであり、まだセットアップへ組み込んでいない。実セッションのサービスと保存設定は変更していない。実GNOMEの入力操作・PCMの照合、Singleの内部出力対策、公開名の統一、配布物、異常終了・全台喪失復旧、最終全体テストと実セッションへの反映は後続の反復で扱う。OS統合の完了チェックは未完了を維持する。

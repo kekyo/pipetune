@@ -93,7 +93,22 @@ endif()
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET "libpipewire-0.3>=1.0.5")
+pkg_get_variable(PIPETUNE_PIPEWIRE_MODULE_DIR libpipewire-0.3 moduledir)
 pkg_check_modules(SAMPLERATE REQUIRED IMPORTED_TARGET samplerate)
+
+add_library(pipetune_presentation MODULE src/pipewire_presentation.c)
+target_link_libraries(pipetune_presentation PRIVATE PkgConfig::PIPEWIRE)
+set_target_properties(pipetune_presentation PROPERTIES
+  OUTPUT_NAME "pipewire-module-pipetune-presentation")
+target_compile_options(pipetune_presentation PRIVATE -Wall -Wextra -Werror)
+if(BUILD_TESTING)
+  add_executable(pipetune_device_presentation_fixture test/device_presentation_fixture.c)
+  target_link_libraries(pipetune_device_presentation_fixture PRIVATE PkgConfig::PIPEWIRE)
+  target_compile_options(pipetune_device_presentation_fixture PRIVATE -Wall -Wextra -Werror)
+  add_executable(pipetune_device_route_probe test/device_route_probe.c)
+  target_link_libraries(pipetune_device_route_probe PRIVATE PkgConfig::PIPEWIRE)
+  target_compile_options(pipetune_device_route_probe PRIVATE -Wall -Wextra -Werror)
+endif()
 
 find_program(PIPETUNE_NODE_EXECUTABLE node REQUIRED)
 find_program(PIPETUNE_SYSTEMCTL_EXECUTABLE systemctl REQUIRED)
@@ -807,6 +822,16 @@ if(BUILD_TESTING)
   target_compile_options(pipetune_output_timing_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME pipetune_output_timing_tests COMMAND pipetune_output_timing_tests)
   find_program(PIPETUNE_WIREPLUMBER_EXECUTABLE wireplumber REQUIRED)
+  find_program(PIPETUNE_PW_CLI_EXECUTABLE pw-cli REQUIRED)
+  find_program(PIPETUNE_PW_DUMP_EXECUTABLE pw-dump REQUIRED)
+  add_test(NAME pipetune_device_presentation
+    COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/device-presentation.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+      $<TARGET_FILE:pipetune_device_presentation_fixture>
+      $<TARGET_FILE_DIR:pipetune_presentation>
+      ${PIPETUNE_PIPEWIRE_MODULE_DIR} ${PIPETUNE_PW_DUMP_EXECUTABLE} ${PIPETUNE_PW_CLI_EXECUTABLE}
+      $<TARGET_FILE:pipetune_device_route_probe>)
+  set_tests_properties(pipetune_device_presentation PROPERTIES TIMEOUT 45)
   find_program(PIPETUNE_PW_CAT_EXECUTABLE pw-cat REQUIRED)
   find_program(PIPETUNE_PW_DUMP_EXECUTABLE pw-dump REQUIRED)
   find_program(PIPETUNE_PULSE_EXECUTABLE pipewire-pulse REQUIRED)
