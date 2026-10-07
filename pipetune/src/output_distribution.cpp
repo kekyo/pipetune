@@ -49,6 +49,7 @@ OutputDistributionArguments makeOutputDistributionArguments(
       !yyjson_mut_obj_add_bool(document.get(), stream, "node.dont-fallback", true) ||
       !yyjson_mut_obj_add_bool(document.get(), stream, "node.dont-move", true) ||
       !yyjson_mut_obj_add_bool(document.get(), stream, "node.pipetune.managed-output", true) ||
+      !add(stream, "node.pipetune.public-target", publicInputName) ||
       !add(stream, "media.role", "PipeTune-Filter-Output")) return allocationError;
   for (auto slot = 0U; slot < outputDspChannelCount(configuration); ++slot) {
     const auto position = "AUX" + std::to_string(slot);
@@ -68,7 +69,10 @@ OutputDistributionArguments makeOutputDistributionArguments(
     auto *target = yyjson_mut_obj_add_arr(document.get(), create, "audio.position");
     if (rule == nullptr || matches == nullptr || match == nullptr || actions == nullptr || create == nullptr ||
         source == nullptr || target == nullptr ||
-        !add(match, "object.serial", std::to_string(available.nodeSerial))) return allocationError;
+        !add(match, "object.serial", std::to_string(available.nodeSerial)) ||
+        !add(create, "node.pipetune.output-id", output.id) ||
+        !add(create, "node.pipetune.target-serial", std::to_string(available.nodeSerial)) ||
+        !add(create, "node.pipetune.output-channels", std::to_string(output.device.channelPositions.size()))) return allocationError;
     // Match this exact connection generation. Reused node IDs or names cannot
     // redirect a saved mapping before a fresh identity resolution is complete.
     for (auto channel = std::size_t{0}; channel < output.device.channelPositions.size(); ++channel) {

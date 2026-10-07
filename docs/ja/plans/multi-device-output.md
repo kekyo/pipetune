@@ -790,6 +790,16 @@ WirePlumberの共通ポリシーに公開出力名ごとの全体ゲイン・ミ
 
 Profilerのない分離サーバーでも音声を再生でき、観測結果は空のままとなる。PipeWire 1.4.2の設定にはモジュールの条件指定があるため、試験用の無効化はその指定を保ったまま行う方式に調整した。全ターゲットのビルド、製品経路24件、PipeWire 1.4.2 / WirePlumber 0.5.8での周波数変更・取得不可・再接続の4ケースが成功した（`output-clock-lifecycle-build.log`、`output-clock-regression.log`、`output-clock-optional-module.log`、`output-clock-final-wp05.log`の周波数変更2件、`output-clock-lifecycle-wp05.log`）。この成果物は実行可能な製品経路の検証ドライバーから観測できる基盤であり、下流遅延・リンク状態との統合、補償量の目安の算出とCLI・GTK表示は引き続き実装する。
 
+### フェーズ2: 出力経路と下流遅延の観測
+
+分配ストリームへ所有元の公開入力名、保存された出力ID、対象デバイスの接続世代、必要なチャンネル数を付与した。公開Node・Port・Link APIで各チャンネルの接続先と状態を観測し、ノードと全リンクが稼働している場合だけ経路を稼働中とする。未完成・休止・エラーを別の状態で保持し、接続先の世代がなくなった場合は稼働中としない。モジュールの置き換え中に複数世代が見える場合も別の観測として返し、利用側が古い経路を合成しないための情報を保つ。[Node API](https://docs.pipewire.org/group__pw__node.html)、[Port API](https://docs.pipewire.org/group__pw__port.html)、[Link API](https://docs.pipewire.org/group__pw__link.html)
+
+出力ポートに伝播する下流のLatencyパラメーターを通知で取得する。申告範囲の中間値を用い、処理周期単位・グラフのフレーム数・ナノ秒を各ストリームの実クロックで換算する。未取得、休止、接続不成立、不正な申告では値を返さない。Profilerがない場合もリンク状態は確認でき、遅延の目安だけが未取得となる。この部品は内部補償バッファを参照せず、音声スレッドへ観測処理を追加しない。[遅延伝播の仕様](https://docs.pipewire.org/page_latency.html)
+
+観測部品の未実装でREDを確認した後（`output-path-red.log`）、製品DSP経路の仮想2出力で63・127・31フレームの申告差を確認した。既存のPCM比較は独立して実行し、Time Alignmentによる意図的な遅延、遅いデバイスの切断・再接続も検証する。3種類の単位と最小・最大の異なる範囲を組み合わせる試験も追加した。PipeWire 1.0.5ではナノ秒から整数フレームへの切り捨てがcombine streamの丸めより先に行われるため、試験の8フレーム相当のナノ秒値を切り上げた。PCMの許容範囲や表示用換算を丸め誤差へ合わせて緩和していない。[1.0.5の時刻取得と単位換算](https://github.com/PipeWire/pipewire/blob/1.0.5/src/pipewire/stream.c)
+
+周波数変更の試験では0.5処理周期・64フレーム・1 msの申告を組み合わせ、48 kHz・256フレーム、44.1 kHz・512フレーム、96 kHz・512または1024フレームで換算値が追従することを確認した。全ターゲットのビルドと製品経路25件が成功した（`output-path-rate-build.log`、`output-path-regression.log`）。PipeWire 1.4.2 / WirePlumber 0.5.8でも遅延・複数単位・再接続・Time Alignment・周波数変更・Profiler不在の各ケースが成功した（`output-path-wp05.log`、最終調整後の`output-path-rate-wp05.log`）。現在は検証ドライバーから利用できる観測基盤であり、製品デーモンの状態通知、出力間の補償量の目安、CLI・GTK表示は残作業とする。
+
 ### 全体テストと残作業
 
 音量検証までを実装した段階で`make test`を実行し、169件中168件が成功した。GTK E2Eも成功した。1件の`pipetune_component_build`は、実行中のコミットによってGit履歴から求める版番号が変わり、先にビルドされた実行ファイルの版番号と一致しなかったため失敗した。コミット`36db494`で再構成・全ターゲットの再ビルドを行い、コミットを追加せずに同テストを再実行して成功した。製品コードやテストの比較条件を変更する対処は行っていない。

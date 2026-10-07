@@ -6,6 +6,7 @@
 #include "pipetune/pipewire_pipeline.h"
 #include "pipetune/control_socket.h"
 #include "pipewire_graph_clock.h"
+#include "pipewire_output_paths.h"
 
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
@@ -205,6 +206,7 @@ struct AudioTest {
   bool restartMuted = false;
   bool restartResumed = false;
   bool latency = false;
+  bool latencyUnits = false;
   bool latencyReconnect = false;
   bool intentionalDelay = false;
   bool controls = false;
@@ -218,6 +220,7 @@ struct AudioTest {
   unsigned initialGraphRate = 48000;
   unsigned graphQuantum = 256;
   std::vector<pipetune::PipeWireNodeClock> clocks;
+  std::vector<pipetune::PipeWireOutputPath> paths;
   std::array<unsigned, 9> observedGraphRates = {};
   std::array<std::uint64_t, 9> observedGraphQuanta = {};
   std::uint64_t singleModeFrames = 0;
@@ -352,6 +355,21 @@ static void captureLatency(TestOutput &output, pw_buffer &buffer) {
     return;
   }
   if (a.frames < 32768 || (!single && b.frames < 32768)) return;
+  auto latencies = std::array<double, 2>{};
+  for (auto index = 0U; index < 2; ++index) {
+    const auto id = "pipetune_product_device_" + std::to_string(index);
+    const auto path = std::find_if(test.paths.begin(), test.paths.end(),
+        [&](const auto &item) { return item.outputId == id; });
+    if (single && index == 1) {
+      if (path != test.paths.end()) return;
+    } else {
+      if (path == test.paths.end() || path->activity != pipetune::OutputPathActivity::active ||
+          path->targetNodeId != pw_stream_get_node_id(test.outputs[index].stream) ||
+          path->targetSerial == 0 || path->streamSerial == 0 || !path->reportedLatencyNanoseconds) return;
+      latencies[index] = *path->reportedLatencyNanoseconds;
+    }
+  }
+  if (!single && std::abs(latencies[1] - latencies[0] - test.declaredLatency * 1000000000.0 / 48000) > 1.0) return;
   test.stageFrames[test.stage] = {a.frames, b.frames};
   test.compensation[test.stage] = compensation;
   if (test.stage == 2) return static_cast<void>(pw_main_loop_quit(test.loop));
@@ -474,6 +492,21 @@ static void capture(void *data) {
       if (std::any_of(test.clocks.begin(), test.clocks.end(), [](const auto &clock) {
           return clock.nodeName == "pipetune_product_device_2";
         })) return fail(test, "idle unselected output retained a graph clock");
+      for (auto index = 0U; index < 2; ++index) {
+        const auto id = "pipetune_product_device_" + std::to_string(index);
+        const auto path = std::find_if(test.paths.begin(), test.paths.end(),
+            [&](const auto &item) { return item.outputId == id; });
+        if (test.clockReconnect && test.stage == 2 && index == 0) {
+          if (path != test.paths.end()) return;
+        } else {
+          if (path == test.paths.end() || path->activity != pipetune::OutputPathActivity::active ||
+              path->targetNodeId != pw_stream_get_node_id(test.outputs[index].stream) ||
+              path->targetSerial == 0 || path->streamSerial == 0) return;
+          if (test.clockUnavailable) {
+            if (path->reportedLatencyNanoseconds) return fail(test, "missing graph clock must leave latency unknown");
+          } else if (!path->reportedLatencyNanoseconds) return;
+        }
+      }
     }
     if (test.clockReconnect) {
       const auto name = std::string_view("output.pipetune_product_input.distribution_pipetune_product_device_0");
@@ -506,6 +539,7 @@ static void capture(void *data) {
         const auto expectedRate = test.stage == 0 ? test.initialGraphRate : test.stage < 8 ? 96000U : 48000U;
         // PipeWire scales the configured cycle size when the graph rate changes.
         const auto expectedQuantum = test.stage > 0 && test.stage < 8 ? test.graphQuantum * 2 : test.graphQuantum;
+        auto latencies = std::array<double, 2>{};
         for (auto index = 0U; index < 2; ++index) {
           const auto name = "output.pipetune_product_input.distribution_pipetune_product_device_" + std::to_string(index);
           const auto clock = std::find_if(test.clocks.begin(), test.clocks.end(),
@@ -514,7 +548,13 @@ static void capture(void *data) {
               clock->rateDenominator != expectedRate || clock->quantum != expectedQuantum) return;
           test.observedGraphRates[test.stage] = clock->rateDenominator;
           test.observedGraphQuanta[test.stage] = clock->quantum;
+          const auto outputId = "pipetune_product_device_" + std::to_string(index);
+          const auto path = std::find_if(test.paths.begin(), test.paths.end(),
+              [&](const auto &item) { return item.outputId == outputId; });
+          latencies[index] = *path->reportedLatencyNanoseconds;
         }
+        const auto expectedDelay = (0.5 * expectedQuantum + 64) * 1000000000.0 / expectedRate + 1000000;
+        if (std::abs(latencies[1] - latencies[0] - expectedDelay) > 1.0) return;
       }
       test.stageFrames[test.stage] = {test.outputs[0].frames, test.outputs[1].frames};
       if (test.stage == (test.outputTimeout ? 2U : 8U)) pw_main_loop_quit(test.loop);
@@ -589,12 +629,28 @@ static void startSource(void *data, int) {
 
 static void outputParameterChanged(void *data, std::uint32_t id, const spa_pod *parameter) {
   auto &output = *static_cast<TestOutput *>(data);
-  if (!output.test->latency || (id != SPA_PARAM_Format && id != SPA_PARAM_Latency)) return;
+  if ((!output.test->latency && !output.test->graphClock) || (id != SPA_PARAM_Format && id != SPA_PARAM_Latency)) return;
   auto storage = std::array<std::uint8_t, 512>{};
   auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
   auto downstream = spa_latency_info{};
   downstream.direction = SPA_DIRECTION_INPUT;
   downstream.min_rate = downstream.max_rate = output.index == 1 ? output.test->declaredLatency : 0;
+  if (output.test->latencyUnits && output.index == 1) {
+    // At 48 kHz / 256 frames the midpoints contribute eight frames from
+    // quantum, declaredLatency - 16 frames from rate, and eight from ns.
+    downstream.min_quantum = 0;
+    downstream.max_quantum = 0.0625F;
+    downstream.min_rate = output.test->declaredLatency - 24;
+    downstream.max_rate = output.test->declaredLatency - 8;
+    downstream.min_ns = 0;
+    // Round up: 1.0.5 truncates ns to frames before combine's second rounding.
+    downstream.max_ns = 333334;
+  }
+  if (output.test->graphClock && output.index == 1) {
+    downstream.min_quantum = downstream.max_quantum = 0.5F;
+    downstream.min_rate = downstream.max_rate = 64;
+    downstream.min_ns = downstream.max_ns = 1000000;
+  }
   auto upstream = spa_latency_info{};
   upstream.direction = SPA_DIRECTION_OUTPUT;
   auto parameters = std::array<const spa_pod *, 2>{spa_latency_build(&builder, SPA_PARAM_Latency, &downstream), nullptr};
@@ -695,7 +751,8 @@ static int runAudio(std::string_view scenario) {
   test.reconnect = scenario == "product-reconnect" || test.profile || test.restart;
   test.intentionalDelay = scenario == "product-time-alignment";
   test.latencyReconnect = scenario == "product-latency-reconnect";
-  test.latency = scenario == "product-latency" || test.intentionalDelay || test.latencyReconnect;
+  test.latencyUnits = scenario == "product-latency-units";
+  test.latency = scenario == "product-latency" || test.latencyUnits || test.intentionalDelay || test.latencyReconnect;
   test.graphClock = scenario == "product-output-clock" || scenario == "product-output-clock-alt";
   test.clockUnavailable = scenario == "product-output-clock-unavailable";
   test.clockReconnect = scenario == "product-reconnect";
@@ -727,6 +784,13 @@ static int runAudio(std::string_view scenario) {
   test.core = pw_context_connect(test.context, nullptr, 0);
   if (test.core == nullptr) return 1;
   auto clockObserver = pipetune::PipeWireGraphClockPtr{};
+  auto pathObserver = pipetune::PipeWireOutputPathsPtr{};
+  if (test.latency || test.graphClock || test.clockUnavailable || test.clockReconnect) {
+    pathObserver = pipetune::observePipeWireOutputPaths(test.core, test.inputName, [](const auto &paths, void *data) {
+      static_cast<AudioTest *>(data)->paths = paths;
+    }, &test);
+    if (pathObserver == nullptr) return 1;
+  }
   if (test.graphClock || test.clockUnavailable || test.clockReconnect) {
     clockObserver = pipetune::observePipeWireGraphClocks(test.core, [](const auto &clocks, void *data) {
       auto &test = *static_cast<AudioTest *>(data);
@@ -812,6 +876,7 @@ static int runAudio(std::string_view scenario) {
   pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), signal);
   pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), resume);
   clockObserver.reset();
+  pathObserver.reset();
   pw_core_disconnect(test.core); pw_context_destroy(test.context); pw_main_loop_destroy(test.loop); pw_deinit();
   if (!test.error.empty()) std::cerr << test.error << '\n';
   std::cout << "{\"receivedFrames\":[" << test.outputs[0].frames << ',' << test.outputs[1].frames
