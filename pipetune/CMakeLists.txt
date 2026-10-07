@@ -824,6 +824,8 @@ if(BUILD_TESTING)
   find_program(PIPETUNE_WIREPLUMBER_EXECUTABLE wireplumber REQUIRED)
   find_program(PIPETUNE_PW_CLI_EXECUTABLE pw-cli REQUIRED)
   find_program(PIPETUNE_PW_DUMP_EXECUTABLE pw-dump REQUIRED)
+  find_program(PIPETUNE_PW_CAT_EXECUTABLE pw-cat REQUIRED)
+  find_program(PIPETUNE_PW_LINK_EXECUTABLE pw-link REQUIRED)
   add_test(NAME pipetune_device_presentation
     COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/device-presentation.mjs
       ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
@@ -832,6 +834,14 @@ if(BUILD_TESTING)
       ${PIPETUNE_PIPEWIRE_MODULE_DIR} ${PIPETUNE_PW_DUMP_EXECUTABLE} ${PIPETUNE_PW_CLI_EXECUTABLE}
       $<TARGET_FILE:pipetune_device_route_probe>)
   set_tests_properties(pipetune_device_presentation PROPERTIES TIMEOUT 45)
+  add_test(NAME pipetune_device_presentation_pcm
+    COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/device-presentation.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+      $<TARGET_FILE:pipetune_device_presentation_fixture>
+      $<TARGET_FILE_DIR:pipetune_presentation>
+      ${PIPETUNE_PIPEWIRE_MODULE_DIR} ${PIPETUNE_PW_DUMP_EXECUTABLE} ${PIPETUNE_PW_CLI_EXECUTABLE}
+      $<TARGET_FILE:pipetune_device_route_probe> ${PIPETUNE_PW_CAT_EXECUTABLE} ${PIPETUNE_PW_LINK_EXECUTABLE} --pcm)
+  set_tests_properties(pipetune_device_presentation_pcm PROPERTIES TIMEOUT 60)
   find_program(PIPETUNE_PW_CAT_EXECUTABLE pw-cat REQUIRED)
   find_program(PIPETUNE_PW_DUMP_EXECUTABLE pw-dump REQUIRED)
   find_program(PIPETUNE_PULSE_EXECUTABLE pipewire-pulse REQUIRED)

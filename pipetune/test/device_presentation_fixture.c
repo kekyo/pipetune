@@ -29,6 +29,8 @@ struct fixture {
     float volumes[2][2];
     bool mute[2];
     bool save[2];
+    int active_profile;
+    bool save_profile;
 };
 
 static const struct spa_dict_item properties[] = {
@@ -66,15 +68,16 @@ static int sync_device(void *object, int seq) {
     return 0;
 }
 
-static struct spa_pod *profile(struct spa_pod_builder *builder, uint32_t id) {
+static struct spa_pod *profile(struct fixture *self, struct spa_pod_builder *builder, uint32_t id, int index) {
     struct spa_pod_frame frames[2];
     const int output = 0, input = 1;
     spa_pod_builder_push_object(builder, &frames[0], SPA_TYPE_OBJECT_ParamProfile, id);
     spa_pod_builder_add(builder,
-        SPA_PARAM_PROFILE_index, SPA_POD_Int(0),
-        SPA_PARAM_PROFILE_name, SPA_POD_String("duplex"),
-        SPA_PARAM_PROFILE_description, SPA_POD_String("Stereo duplex"),
-        SPA_PARAM_PROFILE_priority, SPA_POD_Int(100),
+        SPA_PARAM_PROFILE_index, SPA_POD_Int(index),
+        SPA_PARAM_PROFILE_name, SPA_POD_String(index == 0 ? "duplex" : "duplex-alternative"),
+        SPA_PARAM_PROFILE_description, SPA_POD_String(index == 0 ? "Stereo duplex" : "Alternative stereo duplex"),
+        SPA_PARAM_PROFILE_priority, SPA_POD_Int(index == 0 ? 100 : 90),
+        SPA_PARAM_PROFILE_save, SPA_POD_Bool(self->save_profile),
         SPA_PARAM_PROFILE_available, SPA_POD_Id(SPA_PARAM_AVAILABILITY_yes), 0);
     spa_pod_builder_prop(builder, SPA_PARAM_PROFILE_classes, 0);
     spa_pod_builder_push_struct(builder, &frames[1]);
@@ -90,7 +93,8 @@ static struct spa_pod *profile(struct spa_pod_builder *builder, uint32_t id) {
 static struct spa_pod *route(struct fixture *self, struct spa_pod_builder *builder, uint32_t id, uint32_t index) {
     const char *names[] = { "fixture-output-analog", "fixture-output-hdmi", "fixture-input-mic", "fixture-input-line" };
     const char *descriptions[] = { "Fixture Analog Output", "Fixture HDMI Output", "Fixture Microphone", "Fixture Line Input" };
-    const int profile_index = 0, device = index < 2 ? 0 : 1;
+    const int profiles[] = {0, 1};
+    const int device = index < 2 ? 0 : 1;
     struct spa_pod_frame frame;
     spa_pod_builder_push_object(builder, &frame, SPA_TYPE_OBJECT_ParamRoute, id);
     spa_pod_builder_add(builder,
@@ -100,12 +104,12 @@ static struct spa_pod *route(struct fixture *self, struct spa_pod_builder *build
         SPA_PARAM_ROUTE_description, SPA_POD_String(descriptions[index]),
         SPA_PARAM_ROUTE_priority, SPA_POD_Int(100),
         SPA_PARAM_ROUTE_available, SPA_POD_Id(SPA_PARAM_AVAILABILITY_yes),
-        SPA_PARAM_ROUTE_profiles, SPA_POD_Array(sizeof(int), SPA_TYPE_Int, 1, &profile_index),
+        SPA_PARAM_ROUTE_profiles, SPA_POD_Array(sizeof(int), SPA_TYPE_Int, 2, profiles),
         SPA_PARAM_ROUTE_devices, SPA_POD_Array(sizeof(int), SPA_TYPE_Int, 1, &device), 0);
     if (id == SPA_PARAM_Route) {
         spa_pod_builder_add(builder,
             SPA_PARAM_ROUTE_device, SPA_POD_Int(device),
-            SPA_PARAM_ROUTE_profile, SPA_POD_Int(profile_index),
+            SPA_PARAM_ROUTE_profile, SPA_POD_Int(self->active_profile),
             SPA_PARAM_ROUTE_save, SPA_POD_Bool(self->save[device]), 0);
         const uint32_t map[] = {SPA_AUDIO_CHANNEL_FL, SPA_AUDIO_CHANNEL_FR};
         spa_pod_builder_prop(builder, SPA_PARAM_ROUTE_props, 0);
@@ -121,14 +125,15 @@ static struct spa_pod *route(struct fixture *self, struct spa_pod_builder *build
 static int enum_params(void *object, int seq, uint32_t id, uint32_t start,
         uint32_t maximum, const struct spa_pod *filter) {
     struct fixture *self = object;
-    const uint32_t length = id == SPA_PARAM_EnumRoute ? 4 : id == SPA_PARAM_Route ? 2 : 1;
+    const uint32_t length = id == SPA_PARAM_EnumRoute ? 4 :
+        (id == SPA_PARAM_Route || id == SPA_PARAM_EnumProfile) ? 2 : 1;
     uint32_t emitted = 0;
     for (uint32_t index = start; index < length && emitted < maximum; ++index) {
         uint8_t buffer[4096];
         struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
         struct spa_pod *pod;
         if (id == SPA_PARAM_EnumProfile || id == SPA_PARAM_Profile)
-            pod = profile(&builder, id);
+            pod = profile(self, &builder, id, id == SPA_PARAM_Profile ? self->active_profile : (int) index);
         else if (id == SPA_PARAM_EnumRoute || id == SPA_PARAM_Route)
             pod = route(self, &builder, id, id == SPA_PARAM_Route ? (uint32_t)self->active_routes[index] : index);
         else return -ENOENT;
@@ -143,7 +148,24 @@ static int enum_params(void *object, int seq, uint32_t id, uint32_t start,
 static int set_param(void *object, uint32_t id, uint32_t flags, const struct spa_pod *param) {
     (void)flags;
     struct fixture *self = object;
-    if (id == SPA_PARAM_Profile) return 0;
+    if (id == SPA_PARAM_Profile) {
+        int index = -1;
+        bool save = self->save_profile;
+        if (spa_pod_parse_object(param, SPA_TYPE_OBJECT_ParamProfile, NULL,
+                SPA_PARAM_PROFILE_index, SPA_POD_Int(&index),
+                SPA_PARAM_PROFILE_save, SPA_POD_OPT_Bool(&save)) < 0 || index < 0 || index > 1)
+            return -EINVAL;
+        if (index != self->active_profile || save != self->save_profile) {
+            self->active_profile = index;
+            self->save_profile = save;
+            self->params[1].flags ^= SPA_PARAM_INFO_SERIAL;
+            self->params[3].flags ^= SPA_PARAM_INFO_SERIAL;
+            emit_info(self);
+        }
+        printf("profile-set index=%d save=%d\n", index, save);
+        fflush(stdout);
+        return 0;
+    }
     if (id != SPA_PARAM_Route) return -ENOENT;
     int index = -1, device = -1;
     bool save = false;

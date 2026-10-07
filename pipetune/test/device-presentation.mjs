@@ -8,6 +8,7 @@ import {
   watch,
   existsSync,
   copyFileSync,
+  statSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -23,6 +24,8 @@ const [
   pwDump,
   pwCli,
   routeProbe,
+  pwCat,
+  pwLink,
 ] = process.argv.slice(2);
 assert.ok(
   pipewire &&
@@ -46,6 +49,7 @@ for (const path of [
 ])
   mkdirSync(path, { recursive: true, mode: 0o700 });
 const useModule = !process.argv.includes("--without-module");
+const checkPcm = process.argv.includes("--pcm");
 copyFileSync(pwDump, join(directory, "pipetune"));
 mkdirSync(join(directory, "controller"));
 copyFileSync(pwCli, join(directory, "controller/pipetune"));
@@ -80,7 +84,7 @@ const start = (name, command, args) => {
     env: environment,
     stdio: ["pipe", "pipe", "pipe"],
   });
-  const record = { child, stdout: "", stderr: "" };
+  const record = { name, child, stdout: "", stderr: "" };
   children.push(record);
   child.stdout.on("data", (chunk) => {
     record.stdout += chunk;
@@ -156,7 +160,17 @@ const waitMessage = async (record, predicate) => {
       if (predicate(record.stdout)) finish();
     };
     const timer = setTimeout(
-      () => finish(new Error(record.stdout + "\n" + record.stderr)),
+      () =>
+        finish(
+          new Error(
+            "Waiting for " +
+              record.name +
+              " failed. See " +
+              directory +
+              "; " +
+              record.stderr.slice(-1500),
+          ),
+        ),
       10000,
     );
     const finish = (error) => {
@@ -191,6 +205,170 @@ const monitorCard = (id) => {
       }
   });
   return { record, state };
+};
+const startAudio = async () => {
+  assert.ok(pwCat && pwLink);
+  const samples = Buffer.alloc(44 + 48000 * 60 * 8);
+  samples.write("RIFF");
+  samples.writeUInt32LE(samples.length - 8, 4);
+  samples.write("WAVEfmt ", 8);
+  samples.writeUInt32LE(16, 16);
+  samples.writeUInt16LE(3, 20);
+  samples.writeUInt16LE(2, 22);
+  samples.writeUInt32LE(48000, 24);
+  samples.writeUInt32LE(48000 * 8, 28);
+  samples.writeUInt16LE(8, 32);
+  samples.writeUInt16LE(32, 34);
+  samples.write("data", 36);
+  samples.writeUInt32LE(samples.length - 44, 40);
+  for (let offset = 44; offset < samples.length; offset += 8) {
+    samples.writeFloatLE(0.125, offset);
+    samples.writeFloatLE(0.25, offset + 4);
+  }
+  const signalPath = join(directory, "signal.wav");
+  writeFileSync(signalPath, samples);
+  const observer = start("audio-observer", pwCli, []);
+  await waitMessage(observer, (text) => text.includes("remote 0 is named"));
+  start("feed", pwCat, [
+    "--playback",
+    "--target",
+    "0",
+    "--latency",
+    "256",
+    "--properties",
+    "media.class=Audio/Source node.name=presentation.feed node.virtual=true priority.session=0 node.autoconnect=false",
+    signalPath,
+  ]);
+  await waitMessage(observer, (text) =>
+    text.includes('node.name = "presentation.feed"'),
+  );
+  const graph = JSON.parse(await run(join(directory, "pipetune"), [], {}));
+  const feed = graph.find(
+    (item) => item.info?.props?.["node.name"] === "presentation.feed",
+  );
+  assert.ok(feed);
+  const input = graph.find(
+    (item) => item.info?.props?.["node.name"] === "fixture.input",
+  );
+  assert.ok(input);
+  await run(
+    pwCli,
+    [
+      "set-param",
+      String(feed.id),
+      "PortConfig",
+      "{ direction=Output mode=dsp monitor=false format={ mediaType=audio mediaSubtype=raw format=F32P rate=48000 channels=2 position=[FL FR] } }",
+    ],
+    {},
+  );
+  await waitMessage(observer, (text) =>
+    text.includes("presentation.feed:capture_0"),
+  );
+  for (const channel of ["FL", "FR"]) {
+    await run(
+      pwLink,
+      [
+        `presentation.feed:capture_${channel}`,
+        `fixture.input:input_${channel}`,
+      ],
+      {},
+    );
+    await run(
+      pwLink,
+      [
+        `presentation.feed:capture_${channel}`,
+        `fixture.output:playback_${channel}`,
+      ],
+      {},
+    );
+  }
+  const captures = ["input", "output"].map((direction) => {
+    const path = join(directory, `capture-${direction}.wav`);
+    const record = start("capture-" + direction, pwCat, [
+      "--record",
+      "--target",
+      "fixture." + direction,
+      "--rate",
+      "48000",
+      "--channels",
+      "2",
+      "--channel-map",
+      "FL,FR",
+      "--format",
+      "f32",
+      "--latency",
+      "256",
+      "--properties",
+      // Measure the specified device even when WirePlumber follows a new default.
+      `node.name=presentation.capture.${direction} node.dont-fallback=true node.dont-move=true stream.capture.sink=${direction === "output"}`,
+      path,
+    ]);
+    return { path, record };
+  });
+  const verify = async (inputGain, outputGain) => {
+    for (const [index, { path, record }] of captures.entries()) {
+      const initialSize = statSync(path, { throwIfNoEntry: false })?.size ?? 0;
+      const gain = index === 0 ? inputGain : outputGain;
+      const matches = () => {
+        if (
+          (statSync(path, { throwIfNoEntry: false })?.size ?? 0) <
+          initialSize + 8192 * 8
+        )
+          return false;
+        assert.equal(
+          record.child.exitCode,
+          null,
+          "recording must remain active",
+        );
+        const bytes = readFileSync(path);
+        let dataOffset = 12;
+        while (
+          dataOffset + 8 <= bytes.length &&
+          bytes.toString("ascii", dataOffset, dataOffset + 4) !== "data"
+        ) {
+          const size = bytes.readUInt32LE(dataOffset + 4);
+          dataOffset += 8 + size + (size % 2);
+        }
+        dataOffset += 8;
+        const end =
+          dataOffset + Math.floor((bytes.length - dataOffset) / 8) * 8;
+        for (let offset = end - 4096 * 8; offset < end; offset += 8)
+          if (
+            Math.abs(bytes.readFloatLE(offset) - 0.125 * gain) > 1e-6 ||
+            Math.abs(bytes.readFloatLE(offset + 4) - 0.25 * gain) > 1e-6
+          )
+            return false;
+        return true;
+      };
+      await new Promise((resolveReady, reject) => {
+        const observer = watch(directory, () => {
+          if (matches()) finish();
+        });
+        const timer = setTimeout(
+          () =>
+            finish(
+              new Error("PCM controls mismatch: " + path + " gain=" + gain),
+            ),
+          10000,
+        );
+        const finish = (error) => {
+          clearTimeout(timer);
+          observer.close();
+          error ? reject(error) : resolveReady();
+        };
+        if (matches()) finish();
+      });
+    }
+    const current = JSON.parse(await run(join(directory, "pipetune"), [], {}));
+    assert.equal(
+      current.find(
+        (item) => item.info?.props?.["node.name"] === "fixture.input",
+      )?.id,
+      input.id,
+      "mode changes and control operations preserve the input node",
+    );
+  };
+  return { verify };
 };
 try {
   const version = await run(wireplumber, ["--version"], {});
@@ -264,6 +442,8 @@ try {
       Math.abs(savedVolume(text, "fixture-input-line") - 0.63) < 1e-6,
   );
   const selected = await dump(true);
+  const audio = checkPcm ? await startAudio() : undefined;
+  if (audio) await audio.verify(0.63, 0.42);
   const monitor = monitorCard(before.id);
   await waitMessage(
     monitor.record,
@@ -272,9 +452,6 @@ try {
   const owner = start("owner", pwCli, []);
   owner.child.stdin.write(
     "create-node adapter { factory.name=support.null-audio-sink node.name=pipetune.presentation.mode media.class=Audio/Sink node.pipetune.aggregate=true audio.position=[FL FR] }\n",
-  );
-  await waitMessage(owner, (text) =>
-    text.includes("pipetune.presentation.mode:playback_0"),
   );
   await waitMessage(
     monitor.record,
@@ -312,6 +489,50 @@ try {
     selected.info.params.Route,
     "presentation must not change input/output selection, volume, mute or save flags",
   );
+  if (audio) {
+    await audio.verify(0.63, 0.42);
+    for (const profile of [1, 0]) {
+      await run(
+        pwCli,
+        [
+          "set-param",
+          String(before.id),
+          "Profile",
+          `{ index=${profile} save=true }`,
+        ],
+        {},
+      );
+      await waitMessage(
+        monitor.record,
+        () => monitor.state.card?.params?.Profile?.[0]?.index === profile,
+      );
+    }
+    await audio.verify(0.63, 0.42);
+    await run(
+      join(directory, "controller/pipetune"),
+      [
+        "set-param",
+        String(before.id),
+        "Route",
+        "{ index=3 device=1 save=true props={ mute=true } }",
+      ],
+      {},
+    );
+    await audio.verify(0, 0.42);
+    await run(
+      join(directory, "controller/pipetune"),
+      [
+        "set-param",
+        String(before.id),
+        "Route",
+        "{ index=3 device=1 save=true props={ mute=false channelVolumes=[0.5 0.5] } }",
+      ],
+      {},
+    );
+    await audio.verify(0.5, 0.42);
+    await select(3, 1, 0.63);
+    await audio.verify(0.63, 0.42);
+  }
   await waitState(
     (text) =>
       text.includes("fixture-output-hdmi") &&
@@ -330,6 +551,7 @@ try {
     "Single restores output routes",
   );
   assert.deepEqual(restored.info.params.Route, selected.info.params.Route);
+  if (audio) await audio.verify(0.63, 0.42);
   assert.equal(
     monitor.state.removed,
     false,

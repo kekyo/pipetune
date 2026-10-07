@@ -1129,3 +1129,13 @@ SPAデバイス全体の列挙結果を変更する方式から、PipeWireサー
 - PipeWire 1.0.5 / WirePlumber 0.4.17と、PipeWire 1.4.2 / WirePlumber 0.5.8で同じテストが成功する。後者は既存のDebian trixie分離コンテナーを使用し、ホスト向けにビルドしたモジュールも読み込めることを確認する。
 
 成果物はモジュールと再現可能なテストドライバーであり、まだセットアップへ組み込んでいない。実セッションのサービスと保存設定は変更していない。実GNOMEの入力操作・PCMの照合、Singleの内部出力対策、公開名の統一、配布物、異常終了・全台喪失復旧、最終全体テストと実セッションへの反映は後続の反復で扱う。OS統合の完了チェックは未完了を維持する。
+
+### 実装反復2: 入力操作と連続録音の検証（2026-10-07）
+
+検証カードに同じ入出力を持つ2つのduplexプロファイルを追加し、`Profile`の変更・保存指定を扱えるようにした。`pipetune_device_presentation_pcm`は実際のPCM信号を入出力へ送り、モード往復、プロファイル往復、入力音量・ミュート操作の間も同じ入力ノードと録音ストリームを保持することを確認する。録音した左右のサンプル値で音量とミュートを判定し、出力側の信号が入力操作の影響を受けないことも確認する。PipeWire 1.0.5 / WirePlumber 0.4.17と1.4.2 / 0.5.8の両方で成功した。
+
+0.5で当初停止したのは出力測定用ストリームだった。詳細ログで、経路再走査時にWirePlumberが`target.node=-1`を設定して既定出力への追従へ切り替え、その後`node.dont-fallback`により破棄することを確認した。検証ストリームには測定対象を固定する`node.dont-move=true`を追加した。表示モジュールや製品の経路処理へ回避策は加えていない。[WirePlumberの接続プロパティ](https://pipewire.pages.freedesktop.org/wireplumber/policies/linking.html)、[0.5.8の接続準備](https://github.com/PipeWire/wireplumber/blob/0.5.8/src/scripts/linking/prepare-link.lua)、[既定出力追従処理](https://github.com/PipeWire/wireplumber/blob/0.5.8/src/scripts/lib/linking-utils.lua)
+
+実GNOME 46.7の分離セッションでも、表示モジュールを読み込んだ状態でSingleの物理出力変更、Multipleへの切替、入力音量・ミュート・端子変更、Singleへの復帰を再生・録音と同時に検証した。Multipleの出力選択肢は1件になり、入力2端子のIDと録音を維持した。入力の実PCMはGUI操作に従い、処理エラーは0件だった。プロファイル検証は上記のネイティブ試験で行ったもので、ALSA実カードのプロファイル切替を模擬した保証とはしない。
+
+記録は`artifacts/output-visibility/duplex-488733/`と`pipetune-presentation-Qq0l8g/`に保存した。GNOME画面は目視確認済み。公開名はまだ旧名であり、新規GNOME起動時のSingleの内部出力露出も反復3の修正対象として残る。反復2の完了条件である入力の選択・音量・ミュート・端子・プロファイル操作と録音の検証を満たした。実セッションへはまだ反映していない。
