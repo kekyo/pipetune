@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <csignal>
 #include <cstdlib>
@@ -180,6 +181,8 @@ struct TestOutput {
   bool ready = false;
   bool matched = false;
   std::uint64_t frames = 0;
+  std::uint64_t zeroFrames = 0;
+  std::uint64_t longestSilence = 0;
   std::int64_t previousTag = -1;
   std::int64_t blockTime = 0;
   std::uint32_t blockFrames = 0;
@@ -212,6 +215,7 @@ struct AudioTest {
   bool controls = false;
   bool outputChange = false;
   bool outputTimeout = false;
+  bool recovery = false;
   bool graphClock = false;
   bool clockUnavailable = false;
   bool clockReconnect = false;
@@ -232,7 +236,10 @@ struct AudioTest {
   spa_source *graphEvent = nullptr;
   std::uint32_t publicInputId = PW_ID_ANY;
   unsigned stage = 0;
-  std::array<std::array<std::uint64_t, 2>, 9> stageFrames = {};
+  std::array<std::array<std::uint64_t, 2>, 12> stageFrames = {};
+  std::array<std::array<std::uint64_t, 2>, 12> recoverySilence = {};
+  std::array<double, 12> recoveryMilliseconds = {};
+  std::chrono::steady_clock::time_point recoveryStarted = std::chrono::steady_clock::now();
   pw_registry *registry = nullptr;
   spa_hook registryListener = {};
   pw_node *control = nullptr;
@@ -442,22 +449,53 @@ static void capture(void *data) {
       if (test.stage == 7) expected = output.index == 2 ? (channel == 0 ? 0.25F : 0.5F) : 0.0F;
     }
     if (test.outputTimeout && test.stage == 2 && output.index == 1) expected = 0.0F;
+    if (test.recovery && test.stage == 7 && output.index == 0) expected = 0.0F;
+    if (test.recovery && (test.stage == 9 || test.stage == 10))
+      expected = output.index == 2 ? (channel == 0 ? 0.25F : 0.5F) : 0.0F;
     for (auto frame = 0U; frame < frames; ++frame) {
       auto sample = 0.0F;
       std::memcpy(&sample, static_cast<const char *>(plane.data) + plane.chunk->offset + frame * sizeof(float), sizeof(float));
+      if (test.recovery && channel == 0 && !test.awaitingControl) {
+        output.zeroFrames = sample == 0.0F ? output.zeroFrames + 1 : 0;
+        output.longestSilence = std::max(output.longestSilence, output.zeroFrames);
+      }
       if (test.restoredVolume && test.stage == 2 && sample != 0.0F)
         fail(test, "muted daemon restart emitted audio before restoring the controls");
       if (test.profile && test.stage == 3 && output.index == 0 && sample != 0)
         fail(test, "profile mismatch received audio");
       if (test.disconnected && sample != 0) fail(test, "unresolved or disabled output received fallback audio");
+      // A Single-to-Multiple change may drain already queued Single audio.
+      // The next verified steady window ends that transition allowance.
       if (output.index == 2 && sample != 0 &&
+          !(test.recovery && (test.stage == 9 || test.stage == 10)) &&
+          !(test.recovery && test.stage == 11 && !test.awaitingControl) &&
           !(test.outputChange && (test.stage >= 7 || test.awaitingControl))) fail(test, "unselected device received audio");
+      if (test.recovery && test.stage == 7 && output.index == 0 && sample != 0)
+        fail(test, "mismatched recovery profile received audio");
       matches = matches && (test.controls && expected != 0.0F ? std::abs(sample - expected) < 0.000001F : sample == expected);
     }
   }
   queued->size = frames;
   pw_stream_queue_buffer(output.stream, queued);
   if (!valid) return fail(test, "invalid stereo capture buffer");
+  if (test.recovery) {
+    if (test.awaitingControl) return;
+    const auto required = test.stage == 2 ? 0U :
+        test.stage == 1 || test.stage == 3 || test.stage == 7 ? 2U :
+        test.stage == 9 || test.stage == 10 ? 4U : 3U;
+    if ((required & (1U << output.index)) == 0) return;
+    output.frames = matches ? output.frames + frames : 0;
+    for (auto index = 0U; index < test.outputs.size(); ++index)
+      if ((required & (1U << index)) != 0 && test.outputs[index].frames < 32768) return;
+    test.stageFrames[test.stage] = {test.outputs[0].frames, test.outputs[1].frames};
+    test.recoverySilence[test.stage] = {test.outputs[0].longestSilence, test.outputs[1].longestSilence};
+    test.recoveryMilliseconds[test.stage] = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - test.recoveryStarted).count();
+    if (required == 4) test.singleModeFrames = test.outputs[2].frames;
+    test.awaitingControl = true;
+    std::cerr << "product:recovery-stage-" << test.stage << '\n' << std::flush;
+    return;
+  }
   if (output.index == 2 && !(test.outputChange && test.stage >= 7)) return;
   if (test.awaitingControl) return;
   if (test.outputChange && test.stage == 7) {
@@ -685,6 +723,7 @@ static bool createTestOutput(TestOutput &output) {
       "node.want-driver", "true", "node.pause-on-idle", "false",
       "audio.channels", "2", "audio.position", "[ FL FR ]",
       "node.device.profile.name", ((output.test->profile && output.test->stage == 3) ||
+          (output.test->recovery && output.test->stage == 7) ||
           (output.test->inventory && output.test->stage == 2)) && output.index == 0 ? "changed" : "", nullptr));
   if (output.stream == nullptr) return false;
   output.listener = {};
@@ -694,6 +733,26 @@ static bool createTestOutput(TestOutput &output) {
 
 static void changeOutputGraph(void *data, std::uint64_t) {
   auto &test = *static_cast<AudioTest *>(data);
+  if (test.recovery) {
+    const auto index = test.stage == 2 || test.stage == 3 ? 1U :
+        test.stage == 5 || test.stage == 6 ? 2U : 0U;
+    if (test.stage != 11) {
+      auto &output = test.outputs[index];
+      if (output.stream != nullptr) {
+        spa_hook_remove(&output.listener);
+        pw_stream_destroy(output.stream);
+        output.stream = nullptr;
+        output.ready = false;
+      }
+      if (test.stage != 1 && test.stage != 2 && test.stage != 5 && test.stage != 9 &&
+          !createTestOutput(output)) return fail(test, "cannot recover test output");
+    }
+    if (test.stage == 2) {
+      test.awaitingControl = true;
+      std::cerr << "product:recovery-stage-2\n" << std::flush;
+    }
+    return;
+  }
   if (test.inventory) {
     auto &output = test.outputs[0];
     if (output.stream != nullptr) {
@@ -767,6 +826,7 @@ static int runAudio(std::string_view scenario) {
   test.controls = scenario == "product-controls" || test.graphClock;
   test.outputChange = scenario == "product-output-change";
   test.outputTimeout = scenario == "product-output-timeout";
+  test.recovery = scenario == "product-output-recovery";
   test.inventory = scenario.starts_with("product-output-status");
   test.loop = pw_main_loop_new(nullptr);
   if (test.loop == nullptr) return 1;
@@ -774,6 +834,19 @@ static int runAudio(std::string_view scenario) {
   auto *signal = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR1, startSource, &test);
   auto *resume = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR2, [](void *data, int) {
     auto &test = *static_cast<AudioTest *>(data);
+    if (test.recovery) {
+      if (!test.awaitingControl) return fail(test, "unexpected recovery transition");
+      if (test.stage == 11) return static_cast<void>(pw_main_loop_quit(test.loop));
+      test.awaitingControl = false;
+      ++test.stage;
+      test.recoveryStarted = std::chrono::steady_clock::now();
+      for (auto &output : test.outputs) {
+        output.frames = 0; output.matched = false;
+        output.zeroFrames = 0; output.longestSilence = 0;
+      }
+      pw_loop_signal_event(pw_main_loop_get_loop(test.loop), test.graphEvent);
+      return;
+    }
     if (test.clockUnavailable || (test.graphClock && test.stage == 8)) {
       if (!test.awaitingControl) return fail(test, "unexpected final timing acknowledgement");
       pw_main_loop_quit(test.loop);
@@ -846,7 +919,7 @@ static int runAudio(std::string_view scenario) {
     value.global_remove = [](void *data, std::uint32_t id) {
       auto &test = *static_cast<AudioTest *>(data);
       if (id == test.publicInputId) {
-        if (test.reconnect && !test.restart)
+        if ((test.reconnect && !test.restart) || (test.recovery && test.stage < 9))
           fail(test, "public input disappeared during device reconnection");
         if (test.control != nullptr) {
           spa_hook_remove(&test.controlListener);
@@ -870,7 +943,7 @@ static int runAudio(std::string_view scenario) {
   auto *timer = pw_loop_add_timer(pw_main_loop_get_loop(test.loop), [](void *data, std::uint64_t) {
     fail(*static_cast<AudioTest *>(data), "product PCM test timed out");
   }, &test);
-  auto deadline = timespec{.tv_sec = test.outputTimeout ? 30 : 15, .tv_nsec = 0}; auto interval = timespec{};
+  auto deadline = timespec{.tv_sec = test.outputTimeout || test.recovery ? 30 : 15, .tv_nsec = 0}; auto interval = timespec{};
   if (timer == nullptr || signal == nullptr ||
       pw_loop_update_timer(pw_main_loop_get_loop(test.loop), timer, &deadline, &interval, false) < 0) return 1;
   pw_main_loop_run(test.loop);
@@ -911,6 +984,19 @@ static int runAudio(std::string_view scenario) {
     std::cout << ']';
   }
   if (test.clockReconnect) std::cout << ",\"clockGenerations\":[" << test.clockGenerations[0] << ',' << test.clockGenerations[1] << ']';
+  if (test.recovery) {
+    std::cout << ",\"recoveryMilliseconds\":[";
+    for (auto stage = 0U; stage <= test.stage; ++stage) {
+      if (stage != 0) std::cout << ',';
+      std::cout << test.recoveryMilliseconds[stage];
+    }
+    std::cout << "],\"maximumSilenceFrames\":[";
+    for (auto stage = 0U; stage <= test.stage; ++stage) {
+      if (stage != 0) std::cout << ',';
+      std::cout << '[' << test.recoverySilence[stage][0] << ',' << test.recoverySilence[stage][1] << ']';
+    }
+    std::cout << ']';
+  }
   std::cout << "}\n";
   return test.error.empty() ? 0 : 1;
 }

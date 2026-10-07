@@ -254,8 +254,11 @@ excluded. The JSON includes device identity separately from the temporary
 PipeWire node ID, plus a diagnostic for layouts that cannot be selected, such
 as outputs exceeding the sixteen-channel DSP limit.
 
-Single mode keeps physical output selection in the OS sound settings. To use
-multiple devices, select their node names from `output list`:
+Single mode keeps physical output selection in the OS sound settings and hides
+PipeTune's internal outputs. Multiple mode shows only `PipeTune Processed Audio`
+as the selected OS output; choose its devices in PipeTune's Output panel or with
+the commands below. Input device selection and controls remain available in both
+modes. To use multiple devices, select their node names from `output list`:
 
 ```sh
 pipetune output select 'NODE_NAME_A' 'NODE_NAME_B'
@@ -278,9 +281,13 @@ restart retains the running daemon's current volume and mute.
 `get` shows the live mode and a table linking each final EffeTune channel to its
 device, device channel, profile, presence, and optional purpose label. A missing
 device keeps its assignments; its channels are not redirected to another
-output. Presence describes matching hardware, not measured audio transport or
-delay compensation. Changed profiles and ambiguous identities require explicit
-reassignment.
+output. Other selected devices continue playing, and a returning device resumes
+its saved channels. Rebuilding the output paths can cause a short fade or dropout.
+Even if every selected device disappears, multiple mode and its assignments remain
+active. Presence describes matching hardware, not measured audio transport or
+delay compensation. A changed profile or ambiguous identity pauses only the
+affected output until the saved configuration matches again or you explicitly
+reassign it.
 
 `get` also shows each available device's reported mute, scalar gain, and channel
 gains in dB, separately from the OS master volume. `0.0 dB` is unity gain and

@@ -8,7 +8,7 @@ import { once } from "node:events";
 import { createInterface } from "node:readline";
 
 const [pipewire, wireplumber, driver, scenario = "channels", policyFixture,
-  pulseServer, pulseDriver, productDaemon] = process.argv.slice(2);
+  pulseServer, pulseDriver, productDaemon, presentationDirectory, systemModuleDirectory] = process.argv.slice(2);
 assert.ok(pipewire && wireplumber && driver, "PipeWire, WirePlumber and probe paths are required");
 const version = spawnSync(wireplumber, ["--version"], { encoding: "utf8" });
 assert.equal(version.status, 0, version.stderr);
@@ -60,6 +60,11 @@ writeConfiguration("pipewire/pipewire.conf.d/99-pipetune-test.conf", `context.pr
   default.clock.max-quantum = ${graphQuantum}
 }
 `);
+if (presentationDirectory) {
+  environment.PIPEWIRE_MODULE_DIR = presentationDirectory + ":" + systemModuleDirectory;
+  writeConfiguration("pipewire/pipewire.conf.d/60-pipetune-presentation.conf",
+    "context.modules = [ { name = libpipewire-module-pipetune-presentation } ]\n");
+}
 if (scenario.startsWith("policy-pulse")) {
   assert.ok(pulseServer && pulseDriver, "PulseAudio server and client probe paths are required");
   writeConfiguration("pipewire/pipewire-pulse.conf.d/99-pipetune-test.conf", `pulse.properties = {
@@ -295,7 +300,6 @@ try {
       assert.equal(response.ok, true, status.stdout);
       assert.equal(response.processingMode, "preset", status.stdout);
       assert.deepEqual(JSON.parse(await cli(["get", "--json", "--socket", socket])).outputConfiguration, routing);
-      assertPublicOutput();
       if (attempt === 0 && !volumeRestore) {
         assert.match(await cli(["mode", "single", ...endpoints]), /OS selects/u);
         assert.match(await cli(["mode", "multiple", ...endpoints]), /Ch 4/u);
@@ -313,6 +317,9 @@ try {
       audio.child.kill("SIGUSR1");
       assert.equal((await audio.completion).code, 0, `${audio.stdout}\n${audio.stderr}`);
       const report = JSON.parse(audio.stdout);
+      // The control socket precedes asynchronous graph publication at startup.
+      // Successful PCM is the readiness barrier for a fresh desktop query.
+      assertPublicOutput();
       assert.ok(report.receivedFrames.every((frames) => frames >= 32768));
       if (volumeRestore) {
         assert.equal(report.stages.length, attempt === 0 ? 3 : 4);
@@ -362,7 +369,7 @@ try {
     const runtime = start("product runtime", driver, ["runtime", scenario === "product-bypass" ? "bypass" : preset, scenario]);
     await waitForMessage(runtime, "product:runtime-ready");
     audio.child.kill("SIGUSR1");
-    if (graphClockTest || ["product-controls", "product-output-change", "product-output-timeout", "product-output-clock-unavailable"].includes(scenario)) {
+    if (graphClockTest || ["product-controls", "product-output-change", "product-output-timeout", "product-output-clock-unavailable", "product-output-recovery"].includes(scenario)) {
       const control = async (request, success = true) => {
         const client = start("product control", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET, JSON.stringify(request)]);
         const timeout = setTimeout(() => terminate(client, "SIGTERM"), scenario === "product-output-timeout" ? 20000 : 10000);
@@ -417,7 +424,62 @@ try {
         assert.equal(transportError, undefined);
         assert.ok(observed, `stage ${stage} must publish both active paths and the estimated compensation`);
       };
-      if (scenario === "product-output-clock-unavailable") {
+      if (scenario === "product-output-recovery") {
+        const initial = await control({ command: "status" });
+        const inventories = [[0,1,2], [1,2], [2], [1,2], [0,1,2], [0,1],
+          [0,1,2], [0,1,2], [0,1,2], [1,2], [0,1,2], [0,1,2]];
+        for (let stage = 0; stage < inventories.length; ++stage) {
+          if (stage === 11) await control({ command: "set-output", configuration: initial.outputConfiguration });
+          if (stage > 0) audio.child.kill("SIGUSR2");
+          const single = stage === 9 || stage === 10;
+          if (stage === 9) await control({ command: "set-output",
+            configuration: { ...initial.outputConfiguration, mode: single ? "single" : "multiple" } });
+          const client = createConnection(environment.PIPETUNE_PRODUCT_SOCKET);
+          const deadline = setTimeout(() => client.destroy(new Error(`inventory stage ${stage} stalled`)), 10000);
+          const lines = createInterface({ input: client });
+          let transportError;
+          client.on("error", (error) => { transportError = error; lines.close(); });
+          let observed;
+          try {
+            await once(client, "connect");
+            client.write(`${JSON.stringify({ command: "subscribe" })}\n`);
+            for await (const line of lines) {
+              const status = JSON.parse(line);
+              assert.equal(status.ok, true, line);
+              assert.deepEqual(status.outputConfiguration, { ...initial.outputConfiguration,
+                mode: single ? "single" : "multiple" }, "hotplug must preserve every saved device and channel");
+              assert.equal(status.preset, initial.preset);
+              assert.equal(status.processingMode, "preset");
+              assert.equal(status.activePluginCount, initial.activePluginCount);
+              assert.equal(status.configurationRevision, initial.configurationRevision + (stage >= 11 ? 2 : stage >= 9 ? 1 : 0));
+              const outputs = status.availableOutputs.filter((output) => output.nodeName.startsWith("pipetune_product_device_"));
+              const names = outputs.map((output) => Number(output.nodeName.slice(-1))).sort();
+              if (JSON.stringify(names) !== JSON.stringify(inventories[stage])) continue;
+              if (outputs.some((output) => output.device.profile !== (stage === 7 && output.nodeName.endsWith("_0") ? "changed" : ""))) continue;
+              observed = status;
+              break;
+            }
+          } finally {
+            clearTimeout(deadline);
+            lines.close();
+            client.destroy();
+          }
+          assert.equal(transportError, undefined);
+          assert.ok(observed, `inventory stage ${stage} must complete`);
+          await waitForMessage(audio, `product:recovery-stage-${stage}`);
+          const dump = spawnSync("pw-dump", ["--no-colors"], { env: environment, encoding: "utf8" });
+          assert.equal(dump.status, 0, dump.stderr);
+          const graph = JSON.parse("[" + dump.stdout.replace(/\]\s*\[/gu, "],[") + "]").flat();
+          if (!single) {
+            const output = graph.find((item) => item.info?.props?.["node.name"] === "pipetune_product_input");
+            assert.equal(output?.info.props["node.description"], "PipeTune Processed Audio");
+            assert.ok(graph.some((item) => item.metadata?.some((entry) =>
+              entry.key === "default.audio.sink" && entry.value?.name === "pipetune_product_input")),
+              "the public output must stay selected even when every configured device is absent");
+          }
+        }
+        audio.child.kill("SIGUSR2");
+      } else if (scenario === "product-output-clock-unavailable") {
         await next(0);
         audio.child.kill("SIGUSR2");
       } else if (scenario === "product-output-timeout") {
@@ -591,16 +653,18 @@ try {
     const report = JSON.parse(audio.stdout);
     assert.ok(report.receivedFrames.every((frames) => scenario === "product-disconnected" ? frames === 0 : frames >= 32768));
     assert.ok(report.producedFrames >= 32768);
-    assert.equal(report.stages.length, graphClockTest || ["product-controls", "product-output-change"].includes(scenario) ? 9 : scenario === "product-profile" ? 5 : ["product-restart", "product-latency", "product-latency-units", "product-latency-reconnect", "product-time-alignment", "product-output-timeout"].includes(scenario) ? 3 :
+    assert.equal(report.stages.length, scenario === "product-output-recovery" ? 12 : graphClockTest || ["product-controls", "product-output-change"].includes(scenario) ? 9 : scenario === "product-profile" ? 5 : ["product-restart", "product-latency", "product-latency-units", "product-latency-reconnect", "product-time-alignment", "product-output-timeout"].includes(scenario) ? 3 :
       ["product-volume", "product-reconnect", "product-restart-mute"].includes(scenario) ? 4 : 1);
     assert.ok(report.stages.every((stage, index) => stage.every((frames, device) =>
       scenario === "product-disconnected" || (scenario === "product-output-change" && index === 7) || (scenario === "product-latency-reconnect" && index === 1 && device === 1) ||
+      (scenario === "product-output-recovery" && ([2,9,10].includes(index) || ([1,3,7].includes(index) && device === 0))) ||
       ((["product-reconnect", "product-profile"].includes(scenario) && index === 2 || scenario === "product-profile" && index === 3) && device === 0) ? frames === 0 : frames >= 32768)));
     if (scenario === "product-latency-reconnect") {
       assert.equal(report.compensationFrames[1], -1, "a missing output has no measured relative delay");
       for (const index of [0, 2]) assert.ok(report.compensationFrames[index] >= 62 && report.compensationFrames[index] <= 63);
     }
     if (scenario === "product-output-change") assert.ok(report.singleModeFrames >= 32768);
+    if (scenario === "product-output-recovery") assert.ok(report.singleModeFrames >= 32768);
     if (graphClockTest) {
       assert.deepEqual(report.graphRates, [graphRate, ...Array(7).fill(96000), 48000]);
       assert.deepEqual(report.graphQuanta, [graphQuantum, ...Array(7).fill(graphQuantum * 2), graphQuantum]);

@@ -556,6 +556,12 @@ validate_deb_package() {
 		assert_file "$tmp_dir/$required_file"
 	done
 	assert_dsp_backend_set "$tmp_dir/usr/lib/pipetune" "$expected_arch"
+	[ "$(count_matching_files "$tmp_dir/usr/lib" 'libpipewire-module-pipetune-presentation.so')" -eq 1 ] ||
+		fail "Missing or duplicate PipeWire presentation module"
+	presentation_module=$(find "$tmp_dir/usr/lib" -type f -name 'libpipewire-module-pipetune-presentation.so')
+	readelf -h "$presentation_module" >"$tmp_dir/readelf-presentation.txt"
+	assert_contains "$tmp_dir/readelf-presentation.txt" "$(expected_elf_class "$expected_arch")"
+	assert_contains "$tmp_dir/readelf-presentation.txt" "$(expected_elf_machine "$expected_arch")"
 
 	readelf -h "$tmp_dir/usr/bin/pipetune" >"$tmp_dir/readelf-pipetune.txt"
 	assert_contains "$tmp_dir/readelf-pipetune.txt" "$(expected_elf_class "$expected_arch")"

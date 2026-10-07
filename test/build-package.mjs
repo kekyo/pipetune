@@ -112,6 +112,7 @@ const createPackageStage = (
     "DEBIAN",
     "usr/bin",
     "usr/lib/pipetune",
+    "usr/lib/pipewire-0.3",
     "usr/lib/systemd/user",
     "usr/share/applications",
     "usr/share/icons/hicolor/scalable/apps",
@@ -138,6 +139,7 @@ Description: PipeWire system-wide DSP and GTK control application
   );
   copyFileSync("/bin/true", join(stageRoot, "usr/bin/pipetune"));
   copyFileSync("/bin/true", join(stageRoot, "usr/bin/pipetune-gtk"));
+  copyFileSync("/bin/true", join(stageRoot, "usr/lib/pipewire-0.3/libpipewire-module-pipetune-presentation.so"));
   if (includeDspBackends) {
     for (const backend of dspBackendsForArchitecture(debianArchitecture)) {
       if (backend !== omittedDspBackend) {
@@ -783,6 +785,18 @@ validate_deb_package "$2" "$3"
     validateGoodPackage,
     "complete deb package did not pass validation",
   );
+  const missingPresentationStage = join(temporaryRoot, "missing-presentation-stage");
+  const missingPresentationPackage = join(temporaryRoot, "missing-presentation.deb");
+  cpSync(goodStage, missingPresentationStage, { recursive: true });
+  rmSync(join(missingPresentationStage, "usr/lib/pipewire-0.3/libpipewire-module-pipetune-presentation.so"));
+  assertSuccess(run(dpkgDeb, ["--root-owner-group", "--build", missingPresentationStage, missingPresentationPackage], process.env),
+    "could not create a package without the presentation module");
+  const missingPresentation = runSourced(`
+VERSION=1.2.3
+validate_deb_package "$2" "$3"
+`, [missingPresentationPackage, canonicalHostArchitecture], process.env);
+  if (missingPresentation.status === 0) fail("package without desktop presentation passed validation");
+  assertIncludes(missingPresentation.stderr, "presentation", "validation must identify the missing server module");
   const validateBadPackage = runSourced(
     `
 VERSION=1.2.3
