@@ -12,6 +12,9 @@ const [pipewire, wireplumber, driver, scenario = "channels", policyFixture,
 assert.ok(pipewire && wireplumber && driver, "PipeWire, WirePlumber and probe paths are required");
 const version = spawnSync(wireplumber, ["--version"], { encoding: "utf8" });
 assert.equal(version.status, 0, version.stderr);
+const graphClockTest = ["product-output-clock", "product-output-clock-alt"].includes(scenario);
+const graphRate = scenario === "product-output-clock-alt" ? 44100 : 48000;
+const graphQuantum = scenario === "product-output-clock-alt" ? 512 : 256;
 
 const directory = mkdtempSync(join(tmpdir(), "pipetune-multi-output-"));
 const runtime = join(directory, "runtime");
@@ -40,12 +43,21 @@ const writeConfiguration = (relative, contents) => {
   mkdirSync(join(config, ...components), { recursive: true });
   writeFileSync(join(config, relative), contents);
 };
+if (scenario === "product-output-clock-unavailable") {
+  const serverConfiguration = readFileSync("/usr/share/pipewire/pipewire.conf", "utf8");
+  // Keep newer versions' conditional module options intact. A missing optional
+  // test module suppresses the Profiler on both supported configuration formats.
+  const withoutProfiler = serverConfiguration.replace(/name\s*=\s*libpipewire-module-profiler\b/u,
+    "name = libpipewire-module-pipetune-test-unavailable flags = [ ifexists nofail ]");
+  assert.ok(serverConfiguration !== withoutProfiler, "the fixture must suppress the server Profiler module");
+  writeConfiguration("pipewire/pipewire.conf", withoutProfiler);
+}
 writeConfiguration("pipewire/pipewire.conf.d/99-pipetune-test.conf", `context.properties = {
   core.name = "${remote}"
-  default.clock.rate = 48000
-  default.clock.quantum = 256
-  default.clock.min-quantum = 256
-  default.clock.max-quantum = 256
+  default.clock.rate = ${graphRate}
+  default.clock.quantum = ${graphQuantum}
+  default.clock.min-quantum = ${graphQuantum}
+  default.clock.max-quantum = ${graphQuantum}
 }
 `);
 if (scenario.startsWith("policy-pulse")) {
@@ -340,7 +352,7 @@ try {
     const runtime = start("product runtime", driver, ["runtime", scenario === "product-bypass" ? "bypass" : preset, scenario]);
     await waitForMessage(runtime, "product:runtime-ready");
     audio.child.kill("SIGUSR1");
-    if (["product-controls", "product-output-change", "product-output-timeout"].includes(scenario)) {
+    if (graphClockTest || ["product-controls", "product-output-change", "product-output-timeout"].includes(scenario)) {
       const control = async (request, success = true) => {
         const client = start("product control", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET, JSON.stringify(request)]);
         const timeout = setTimeout(() => terminate(client, "SIGTERM"), scenario === "product-output-timeout" ? 20000 : 10000);
@@ -469,7 +481,7 @@ try {
         assert.equal(unchanged.configurationRevision, revision);
         audio.child.kill("SIGUSR2");
       } else {
-      const rate = (sampleRate) => control({ command: "set-rate", rateMode: "fixed", sampleRate, enforcement: "suggest" });
+      const rate = (sampleRate) => control({ command: "set-rate", rateMode: "fixed", sampleRate, enforcement: graphClockTest ? "force" : "suggest" });
       const backend = (backend) => control({ command: "set-dsp-backend", backend, simdVariant: "auto" });
       await next(0);
       assert.equal((await rate(96000)).dspSampleRate, 96000);
@@ -519,7 +531,7 @@ try {
     const report = JSON.parse(audio.stdout);
     assert.ok(report.receivedFrames.every((frames) => scenario === "product-disconnected" ? frames === 0 : frames >= 32768));
     assert.ok(report.producedFrames >= 32768);
-    assert.equal(report.stages.length, ["product-controls", "product-output-change"].includes(scenario) ? 9 : scenario === "product-profile" ? 5 : ["product-restart", "product-latency", "product-latency-reconnect", "product-time-alignment", "product-output-timeout"].includes(scenario) ? 3 :
+    assert.equal(report.stages.length, graphClockTest || ["product-controls", "product-output-change"].includes(scenario) ? 9 : scenario === "product-profile" ? 5 : ["product-restart", "product-latency", "product-latency-reconnect", "product-time-alignment", "product-output-timeout"].includes(scenario) ? 3 :
       ["product-volume", "product-reconnect", "product-restart-mute"].includes(scenario) ? 4 : 1);
     assert.ok(report.stages.every((stage, index) => stage.every((frames, device) =>
       scenario === "product-disconnected" || (scenario === "product-output-change" && index === 7) || (scenario === "product-latency-reconnect" && index === 1 && device === 1) ||
@@ -529,6 +541,14 @@ try {
       for (const index of [0, 2]) assert.ok(report.compensationFrames[index] >= 62 && report.compensationFrames[index] <= 63);
     }
     if (scenario === "product-output-change") assert.ok(report.singleModeFrames >= 32768);
+    if (graphClockTest) {
+      assert.deepEqual(report.graphRates, [graphRate, ...Array(7).fill(96000), 48000]);
+      assert.deepEqual(report.graphQuanta, [graphQuantum, ...Array(7).fill(graphQuantum * 2), graphQuantum]);
+    }
+    if (scenario === "product-reconnect") {
+      assert.ok(report.clockGenerations.every((serial) => serial > 0));
+      assert.notEqual(report.clockGenerations[0], report.clockGenerations[1]);
+    }
     if (["product-latency", "product-time-alignment"].includes(scenario)) {
       for (const [index, declared] of [63, 127, 31].entries())
         assert.ok(report.compensationFrames[index] <= declared && declared - report.compensationFrames[index] <= 1,

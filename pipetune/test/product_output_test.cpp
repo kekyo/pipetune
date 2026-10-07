@@ -5,6 +5,7 @@
  */
 #include "pipetune/pipewire_pipeline.h"
 #include "pipetune/control_socket.h"
+#include "pipewire_graph_clock.h"
 
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
@@ -209,6 +210,16 @@ struct AudioTest {
   bool controls = false;
   bool outputChange = false;
   bool outputTimeout = false;
+  bool graphClock = false;
+  bool clockUnavailable = false;
+  bool clockReconnect = false;
+  bool clockSnapshot = false;
+  std::array<std::uint64_t, 2> clockGenerations = {};
+  unsigned initialGraphRate = 48000;
+  unsigned graphQuantum = 256;
+  std::vector<pipetune::PipeWireNodeClock> clocks;
+  std::array<unsigned, 9> observedGraphRates = {};
+  std::array<std::uint64_t, 9> observedGraphQuanta = {};
   std::uint64_t singleModeFrames = 0;
   bool inventory = false;
   bool awaitingControl = false;
@@ -457,6 +468,29 @@ static void capture(void *data) {
   if (matches && frames != 0) { output.matched = true; output.frames += frames; }
   if ((test.outputs[0].frames >= 32768 || (test.reconnect && !test.restart && (test.stage == 2 || (test.profile && test.stage == 3)))) && test.outputs[1].frames >= 32768 &&
       (!test.outputChange || test.stage != 8 || test.outputs[2].frames >= 32768)) {
+    if (test.graphClock || test.clockUnavailable || test.clockReconnect) {
+      if (!test.clockSnapshot) return;
+      if (test.clockUnavailable && !test.clocks.empty()) return fail(test, "unavailable Profiler reported a graph clock");
+      if (std::any_of(test.clocks.begin(), test.clocks.end(), [](const auto &clock) {
+          return clock.nodeName == "pipetune_product_device_2";
+        })) return fail(test, "idle unselected output retained a graph clock");
+    }
+    if (test.clockReconnect) {
+      const auto name = std::string_view("output.pipetune_product_input.distribution_pipetune_product_device_0");
+      const auto clock = std::find_if(test.clocks.begin(), test.clocks.end(),
+          [&](const auto &item) { return item.nodeName == name; });
+      if (test.stage == 2) {
+        if (clock != test.clocks.end()) return;
+      } else {
+        if (clock == test.clocks.end() || clock->nodeSerial == 0 || clock->rateNumerator != 1 ||
+            clock->rateDenominator != 48000 || clock->quantum != 256) return;
+        if (test.stage == 0) test.clockGenerations[0] = clock->nodeSerial;
+        if (test.stage == 3) {
+          if (clock->nodeSerial == test.clockGenerations[0]) return fail(test, "reconnected output retained its old graph clock generation");
+          test.clockGenerations[1] = clock->nodeSerial;
+        }
+      }
+    }
     if (test.daemonVolume) {
       if (test.produced < 32768) return;
       if (test.visibleGain != (test.stage == 0 ? 1.0F : test.savedMasterGain) || test.visibleMute != (test.stage == 2))
@@ -468,6 +502,20 @@ static void capture(void *data) {
       }
     }
     if (test.controls || test.outputChange || test.outputTimeout) {
+      if (test.graphClock) {
+        const auto expectedRate = test.stage == 0 ? test.initialGraphRate : test.stage < 8 ? 96000U : 48000U;
+        // PipeWire scales the configured cycle size when the graph rate changes.
+        const auto expectedQuantum = test.stage > 0 && test.stage < 8 ? test.graphQuantum * 2 : test.graphQuantum;
+        for (auto index = 0U; index < 2; ++index) {
+          const auto name = "output.pipetune_product_input.distribution_pipetune_product_device_" + std::to_string(index);
+          const auto clock = std::find_if(test.clocks.begin(), test.clocks.end(),
+              [&](const auto &clock) { return clock.nodeName == name; });
+          if (clock == test.clocks.end() || clock->nodeSerial == 0 || clock->rateNumerator != 1 ||
+              clock->rateDenominator != expectedRate || clock->quantum != expectedQuantum) return;
+          test.observedGraphRates[test.stage] = clock->rateDenominator;
+          test.observedGraphQuanta[test.stage] = clock->quantum;
+        }
+      }
       test.stageFrames[test.stage] = {test.outputs[0].frames, test.outputs[1].frames};
       if (test.stage == (test.outputTimeout ? 2U : 8U)) pw_main_loop_quit(test.loop);
       else {
@@ -648,7 +696,12 @@ static int runAudio(std::string_view scenario) {
   test.intentionalDelay = scenario == "product-time-alignment";
   test.latencyReconnect = scenario == "product-latency-reconnect";
   test.latency = scenario == "product-latency" || test.intentionalDelay || test.latencyReconnect;
-  test.controls = scenario == "product-controls";
+  test.graphClock = scenario == "product-output-clock" || scenario == "product-output-clock-alt";
+  test.clockUnavailable = scenario == "product-output-clock-unavailable";
+  test.clockReconnect = scenario == "product-reconnect";
+  test.initialGraphRate = scenario.ends_with("-alt") ? 44100 : 48000;
+  test.graphQuantum = scenario.ends_with("-alt") ? 512 : 256;
+  test.controls = scenario == "product-controls" || test.graphClock;
   test.outputChange = scenario == "product-output-change";
   test.outputTimeout = scenario == "product-output-timeout";
   test.inventory = scenario.starts_with("product-output-status");
@@ -673,6 +726,15 @@ static int runAudio(std::string_view scenario) {
   if (test.context == nullptr) return 1;
   test.core = pw_context_connect(test.context, nullptr, 0);
   if (test.core == nullptr) return 1;
+  auto clockObserver = pipetune::PipeWireGraphClockPtr{};
+  if (test.graphClock || test.clockUnavailable || test.clockReconnect) {
+    clockObserver = pipetune::observePipeWireGraphClocks(test.core, [](const auto &clocks, void *data) {
+      auto &test = *static_cast<AudioTest *>(data);
+      test.clocks = clocks;
+      test.clockSnapshot = true;
+    }, &test);
+    if (clockObserver == nullptr) return 1;
+  }
   test.registry = pw_core_get_registry(test.core, PW_VERSION_REGISTRY, 0);
   static const auto registryEvents = [] {
     auto value = pw_registry_events{};
@@ -749,6 +811,7 @@ static int runAudio(std::string_view scenario) {
   pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), timer);
   pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), signal);
   pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), resume);
+  clockObserver.reset();
   pw_core_disconnect(test.core); pw_context_destroy(test.context); pw_main_loop_destroy(test.loop); pw_deinit();
   if (!test.error.empty()) std::cerr << test.error << '\n';
   std::cout << "{\"receivedFrames\":[" << test.outputs[0].frames << ',' << test.outputs[1].frames
@@ -757,7 +820,22 @@ static int runAudio(std::string_view scenario) {
     if (stage != 0) std::cout << ',';
     std::cout << '[' << test.stageFrames[stage][0] << ',' << test.stageFrames[stage][1] << ']';
   }
-  std::cout << "],\"singleModeFrames\":" << test.singleModeFrames << ",\"compensationFrames\":[" << test.compensation[0] << ',' << test.compensation[1] << ',' << test.compensation[2] << "]}\n";
+  std::cout << "],\"singleModeFrames\":" << test.singleModeFrames << ",\"compensationFrames\":[" << test.compensation[0] << ',' << test.compensation[1] << ',' << test.compensation[2] << ']';
+  if (test.graphClock) {
+    std::cout << ",\"graphRates\":[";
+    for (auto stage = 0U; stage < test.observedGraphRates.size(); ++stage) {
+      if (stage != 0) std::cout << ',';
+      std::cout << test.observedGraphRates[stage];
+    }
+    std::cout << "],\"graphQuanta\":[";
+    for (auto stage = 0U; stage < test.observedGraphQuanta.size(); ++stage) {
+      if (stage != 0) std::cout << ',';
+      std::cout << test.observedGraphQuanta[stage];
+    }
+    std::cout << ']';
+  }
+  if (test.clockReconnect) std::cout << ",\"clockGenerations\":[" << test.clockGenerations[0] << ',' << test.clockGenerations[1] << ']';
+  std::cout << "}\n";
   return test.error.empty() ? 0 : 1;
 }
 
