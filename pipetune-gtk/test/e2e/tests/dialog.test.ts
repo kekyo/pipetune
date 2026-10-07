@@ -359,7 +359,8 @@ describe('PipeTune GTK dialog', () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     await (await getElement('mainWindow', 'window')).resizeTo(1080, 800);
-    await selectSettingsPage(4);
+    await selectSettingsPage(3);
+    await (await getElement('outputChannelsExpander', 'expander')).expand();
     await selectComboItem('outputModeCombo', 1);
     await (await getElement('output-device-0', 'checkbox')).toggle();
     await (await getElement('output-device-1', 'checkbox')).toggle();
@@ -476,7 +477,8 @@ describe('PipeTune GTK dialog', () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     await (await getElement('mainWindow', 'window')).resizeTo(1080, 800);
-    await selectSettingsPage(4);
+    await selectSettingsPage(3);
+    await (await getElement('outputChannelsExpander', 'expander')).expand();
     await selectComboItem('outputModeCombo', 1);
     await (await getElement('output-device-0', 'checkbox')).toggle();
     const table = await getElement('outputChannelView', 'table');
@@ -575,7 +577,8 @@ describe('PipeTune GTK dialog', () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     await (await getElement('mainWindow', 'window')).resizeTo(1080, 800);
-    await selectSettingsPage(4);
+    await selectSettingsPage(3);
+    await (await getElement('outputChannelsExpander', 'expander')).expand();
     await selectComboItem('outputModeCombo', 1);
     await (await getElement('output-device-0', 'checkbox')).toggle();
     await (await getElement('output-device-1', 'checkbox')).toggle();
@@ -682,7 +685,8 @@ describe('PipeTune GTK dialog', () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     const initial = await session.inspectConfig();
-    await selectSettingsPage(4);
+    await selectSettingsPage(3);
+    await (await getElement('outputChannelsExpander', 'expander')).expand();
     await selectComboItem('outputModeCombo', 1);
     await waitForLabel(
       'outputErrorLabel',
@@ -781,7 +785,8 @@ describe('PipeTune GTK dialog', () => {
     expect(await session.inspectConfig()).toEqual(saved);
     await session.restartApplication();
     await waitForConnected();
-    await selectSettingsPage(4);
+    await selectSettingsPage(3);
+    await (await getElement('outputChannelsExpander', 'expander')).expand();
     expect(
       await (await getElement('outputModeCombo', 'comboBox')).isChildSelected(1)
     ).toBe(true);
@@ -804,7 +809,8 @@ describe('PipeTune GTK dialog', () => {
     session = await launchPipeTuneGtk({ rejectedCommand: 'setOutput' });
     await waitForConnected();
     const initial = await session.inspectConfig();
-    await selectSettingsPage(4);
+    await selectSettingsPage(3);
+    await (await getElement('outputChannelsExpander', 'expander')).expand();
     await selectComboItem('outputModeCombo', 1);
     await (await getElement('output-device-0', 'checkbox')).toggle();
     await waitForLabel(
@@ -825,7 +831,8 @@ describe('PipeTune GTK dialog', () => {
   it('keeps output channel assignments when device presence changes', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
-    await selectSettingsPage(4);
+    await selectSettingsPage(3);
+    await (await getElement('outputChannelsExpander', 'expander')).expand();
     await selectComboItem('outputModeCombo', 1);
     // DAC B is selected first and moves above the still-unselected DAC A.
     await (await getElement('output-device-1', 'checkbox')).toggle();
@@ -912,13 +919,13 @@ describe('PipeTune GTK dialog', () => {
       ['processingEnabledSwitch', 'presetCombo', 'presetChooser'],
       ['rateCombo', 'rateEnforcementCombo'],
       ['dspBackendCombo', 'dspIdleEnabledSwitch', 'dspIdleTimeoutSpin'],
+      ['outputModeCombo', 'outputDeviceList'],
       [
         'languageCombo',
         'restoreDefaultsButton',
         'pipeTuneVersionLink',
         'effetuneVersionLink',
       ],
-      ['outputModeCombo', 'outputDeviceList'],
     ] as const;
 
     for (const [width, height] of [
@@ -1046,7 +1053,7 @@ describe('PipeTune GTK dialog', () => {
     );
   });
 
-  it('resizes the preset configuration with the available window height', async () => {
+  it('resizes preset and device lists while folding the channel assignments', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     const window = await getElement('mainWindow', 'window');
@@ -1072,6 +1079,44 @@ describe('PipeTune GTK dialog', () => {
       expect((await table.capture()).bounds.height).toBe(compact.bounds.height);
     });
     await window.resizeTo(900, 560);
+    await expectInsideWindow(await getWidget('applyButton'), window);
+
+    await selectSettingsPage(3);
+    const devices = await getElement('outputDeviceList', 'list');
+    const channels = await getElement('outputChannelsExpander', 'expander');
+    expect(await channels.isExpanded()).toBe(false);
+    await window.resizeTo(1080, 740);
+    const compactDevices = await devices.capture();
+    await window.resizeTo(1080, 880);
+    await toPass(async () => {
+      const expanded = await devices.capture();
+      expect(expanded.bounds.height - compactDevices.bounds.height).toBe(140);
+      expect(expanded.clipped).toBe(false);
+    });
+    const collapsedHeight = (await devices.capture()).bounds.height;
+    const saved = await session.inspectConfig();
+    await session.clearRequests();
+    await channels.expand();
+    await toPass(async () => {
+      expect(await channels.isExpanded()).toBe(true);
+      expect((await devices.capture()).bounds.height).toBeLessThan(
+        collapsedHeight
+      );
+      await expectInsideWindow(await getWidget('outputChannelView'), window);
+      await expectInsideWindow(await getWidget('outputMoveUpButton'), window);
+    });
+    await selectSettingsPage(4);
+    await selectSettingsPage(3);
+    expect(await channels.isExpanded()).toBe(true);
+    await channels.collapse();
+    await toPass(async () => {
+      expect(await channels.isExpanded()).toBe(false);
+      expect((await devices.capture()).bounds.height).toBe(collapsedHeight);
+    });
+    expect(await session.inspectConfig()).toEqual(saved);
+    expect(await session.readRequests()).toHaveLength(0);
+    await window.resizeTo(900, 560);
+    await expectInsideWindow(channels, window);
     await expectInsideWindow(await getWidget('applyButton'), window);
   });
 
@@ -1463,7 +1508,7 @@ describe('PipeTune GTK dialog', () => {
     await waitForConnected();
     await session.clearRequests();
     const initial = await session.inspectConfig();
-    await selectSettingsPage(3);
+    await selectSettingsPage(4);
     const restore = await getElement('restoreDefaultsButton', 'button');
     await restore.click();
     await selectSettingsPage(0);
@@ -1515,7 +1560,7 @@ describe('PipeTune GTK dialog', () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     const initial = await session.inspectConfig();
-    await selectSettingsPage(3);
+    await selectSettingsPage(4);
     await selectComboItem('languageCombo', 6);
     const apply = await getElement('applyButton', 'button');
     await toPass(
@@ -1587,7 +1632,7 @@ describe('PipeTune GTK dialog', () => {
     await session.restartApplication();
     await waitForLabel('statusHeadingLabel', 'PipeTune の状態');
     await waitForLabel('status-system-connection', '接続済み');
-    await selectSettingsPage(3);
+    await selectSettingsPage(4);
     const combo = await getElement('languageCombo', 'comboBox');
     expect(await combo.isChildSelected(6)).toBe(true);
     expect(await session.inspectConfig()).toEqual(initial);
@@ -1596,7 +1641,7 @@ describe('PipeTune GTK dialog', () => {
   it('restarts immediately with the saved UI language', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
-    await selectSettingsPage(3);
+    await selectSettingsPage(4);
     await selectComboItem('languageCombo', 6);
     await (await getElement('applyButton', 'button')).click();
     await (
@@ -1605,7 +1650,7 @@ describe('PipeTune GTK dialog', () => {
 
     await waitForLabel('statusHeadingLabel', 'PipeTune の状態');
     await waitForLabel('status-system-connection', '接続済み');
-    await selectSettingsPage(3);
+    await selectSettingsPage(4);
     expect(
       await (await getElement('languageCombo', 'comboBox')).isChildSelected(6)
     ).toBe(true);
@@ -1614,7 +1659,7 @@ describe('PipeTune GTK dialog', () => {
   it('discards a staged UI language when Cancel closes the dialog', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
-    await selectSettingsPage(3);
+    await selectSettingsPage(4);
     await selectComboItem('languageCombo', 6);
     await (await getElement('cancelButton', 'button')).click();
     await waitForResult(
@@ -1633,7 +1678,7 @@ describe('PipeTune GTK dialog', () => {
 
     await session.restartApplication();
     await waitForConnected();
-    await selectSettingsPage(3);
+    await selectSettingsPage(4);
     const combo = await getElement('languageCombo', 'comboBox');
     expect(await combo.isChildSelected(0)).toBe(true);
   });
@@ -1642,7 +1687,7 @@ describe('PipeTune GTK dialog', () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     await session.blockLanguagePreferenceSave();
-    await selectSettingsPage(3);
+    await selectSettingsPage(4);
     await selectComboItem('languageCombo', 6);
     const combo = await getElement('languageCombo', 'comboBox');
     const apply = await getElement('applyButton', 'button');
@@ -1748,7 +1793,7 @@ describe('PipeTune GTK dialog', () => {
   it('keeps Restore defaults usable while disconnected', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
-    await selectSettingsPage(3);
+    await selectSettingsPage(4);
     await session.clearRequests();
 
     await session.disconnectDaemon();

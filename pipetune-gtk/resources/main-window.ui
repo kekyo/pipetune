@@ -647,6 +647,143 @@
                         <property name="hscrollbar-policy">never</property>
                         <property name="vscrollbar-policy">automatic</property>
                         <child>
+                          <object class="GtkBox" id="outputPage">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">10</property>
+                            <property name="margin">14</property>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">Output mode</property>
+                                <property name="xalign">0</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkComboBoxText" id="outputModeCombo">
+                                <items>
+                                  <item translatable="yes">Single — output selected by the OS</item>
+                                  <item translatable="yes">Multiple — outputs selected in PipeTune</item>
+                                </items>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="outputModeNotice">
+                                <property name="xalign">0</property>
+                                <property name="wrap">True</property>
+                                <property name="max-width-chars">45</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="outputErrorLabel">
+                                <property name="xalign">0</property>
+                                <property name="wrap">True</property>
+                                <property name="max-width-chars">45</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">Output devices</property>
+                                <property name="xalign">0</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkScrolledWindow">
+                                <property name="hscrollbar-policy">never</property>
+                                <property name="min-content-height">120</property>
+                                <property name="vexpand">True</property>
+                                <property name="shadow-type">in</property>
+                                <child>
+                                  <object class="GtkListBox" id="outputDeviceList">
+                                    <property name="selection-mode">none</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkExpander" id="outputChannelsExpander">
+                                <property name="label" translatable="yes">EffeTune final output channels</property>
+                                <property name="expanded">False</property>
+                                <property name="vexpand">False</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">10</property>
+                                    <property name="margin-top">10</property>
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="spacing">6</property>
+                                        <child><object class="GtkButton" id="outputMoveUpButton"><property name="label" translatable="yes">Move up</property></object></child>
+                                        <child><object class="GtkButton" id="outputMoveDownButton"><property name="label" translatable="yes">Move down</property></object></child>
+                                        <child><object class="GtkButton" id="outputReassignButton"><property name="label" translatable="yes">Reassign device…</property></object></child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkScrolledWindow">
+                                        <property name="min-content-height">150</property>
+                                        <property name="vexpand">False</property>
+                                        <property name="shadow-type">in</property>
+                                        <child>
+                                          <object class="GtkTreeView" id="outputChannelView">
+                                            <property name="model">outputChannelStore</property>
+                                            <property name="tooltip-column">1</property>
+                                            <child>
+                                              <object class="GtkTreeViewColumn">
+                                                <property name="title">Ch</property>
+                                                <child><object class="GtkCellRendererText"/><attributes><attribute name="text">0</attribute></attributes></child>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkTreeViewColumn">
+                                                <property name="title" translatable="yes">Device</property>
+                                                <property name="sizing">fixed</property><property name="fixed-width">150</property><property name="resizable">True</property>
+                                                <child><object class="GtkCellRendererText"><property name="ellipsize">end</property></object><attributes><attribute name="text">1</attribute></attributes></child>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkTreeViewColumn">
+                                                <property name="title" translatable="yes">Device channel</property>
+                                                <child><object class="GtkCellRendererText"/><attributes><attribute name="text">2</attribute></attributes></child>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkTreeViewColumn">
+                                                <property name="title" translatable="yes">Purpose</property>
+                                                <property name="sizing">fixed</property><property name="fixed-width">120</property><property name="resizable">True</property>
+                                                <child><object class="GtkCellRendererText" id="outputLabelRenderer"><property name="editable">True</property><property name="ellipsize">end</property></object><attributes><attribute name="text">3</attribute></attributes></child>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkTreeViewColumn">
+                                                <property name="title" translatable="yes">Presence</property>
+                                                <child><object class="GtkCellRendererText"/><attributes><attribute name="text">4</attribute></attributes></child>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label" translatable="yes">Device presence is separate from audio activity. Double-click a purpose cell to edit its label.</property>
+                                        <property name="xalign">0</property><property name="wrap">True</property><property name="max-width-chars">45</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="name">output</property>
+                        <property name="title" translatable="yes">Output</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">never</property>
+                        <property name="vscrollbar-policy">automatic</property>
+                        <child>
                           <object class="GtkListBox" id="advancedSettingsList">
                             <property name="selection-mode">none</property>
                             <property name="margin-start">22</property>
@@ -851,134 +988,6 @@
                       <packing>
                         <property name="name">advanced</property>
                         <property name="title" translatable="yes">Advanced</property>
-                      </packing>
-                    </child>
-                    <child>
-                      <object class="GtkScrolledWindow">
-                        <property name="hscrollbar-policy">never</property>
-                        <property name="vscrollbar-policy">automatic</property>
-                        <child>
-                          <object class="GtkBox" id="outputPage">
-                            <property name="orientation">vertical</property>
-                            <property name="spacing">10</property>
-                            <property name="margin">14</property>
-                            <child>
-                              <object class="GtkLabel">
-                                <property name="label" translatable="yes">Output mode</property>
-                                <property name="xalign">0</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkComboBoxText" id="outputModeCombo">
-                                <items>
-                                  <item translatable="yes">Single — output selected by the OS</item>
-                                  <item translatable="yes">Multiple — outputs selected in PipeTune</item>
-                                </items>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkLabel" id="outputModeNotice">
-                                <property name="xalign">0</property>
-                                <property name="wrap">True</property>
-                                <property name="max-width-chars">45</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkLabel" id="outputErrorLabel">
-                                <property name="xalign">0</property>
-                                <property name="wrap">True</property>
-                                <property name="max-width-chars">45</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkLabel">
-                                <property name="label" translatable="yes">Output devices</property>
-                                <property name="xalign">0</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkScrolledWindow">
-                                <property name="hscrollbar-policy">never</property>
-                                <property name="min-content-height">120</property>
-                                <property name="shadow-type">in</property>
-                                <child>
-                                  <object class="GtkListBox" id="outputDeviceList">
-                                    <property name="selection-mode">none</property>
-                                  </object>
-                                </child>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkLabel">
-                                <property name="label" translatable="yes">EffeTune final output channels</property>
-                                <property name="xalign">0</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkBox">
-                                <property name="spacing">6</property>
-                                <child><object class="GtkButton" id="outputMoveUpButton"><property name="label" translatable="yes">Move up</property></object></child>
-                                <child><object class="GtkButton" id="outputMoveDownButton"><property name="label" translatable="yes">Move down</property></object></child>
-                                <child><object class="GtkButton" id="outputReassignButton"><property name="label" translatable="yes">Reassign device…</property></object></child>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkScrolledWindow">
-                                <property name="min-content-height">150</property>
-                                <property name="vexpand">True</property>
-                                <property name="shadow-type">in</property>
-                                <child>
-                                  <object class="GtkTreeView" id="outputChannelView">
-                                    <property name="model">outputChannelStore</property>
-                                    <property name="tooltip-column">1</property>
-                                    <child>
-                                      <object class="GtkTreeViewColumn">
-                                        <property name="title">Ch</property>
-                                        <child><object class="GtkCellRendererText"/><attributes><attribute name="text">0</attribute></attributes></child>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkTreeViewColumn">
-                                        <property name="title" translatable="yes">Device</property>
-                                        <property name="sizing">fixed</property><property name="fixed-width">150</property><property name="resizable">True</property>
-                                        <child><object class="GtkCellRendererText"><property name="ellipsize">end</property></object><attributes><attribute name="text">1</attribute></attributes></child>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkTreeViewColumn">
-                                        <property name="title" translatable="yes">Device channel</property>
-                                        <child><object class="GtkCellRendererText"/><attributes><attribute name="text">2</attribute></attributes></child>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkTreeViewColumn">
-                                        <property name="title" translatable="yes">Purpose</property>
-                                        <property name="sizing">fixed</property><property name="fixed-width">120</property><property name="resizable">True</property>
-                                        <child><object class="GtkCellRendererText" id="outputLabelRenderer"><property name="editable">True</property><property name="ellipsize">end</property></object><attributes><attribute name="text">3</attribute></attributes></child>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkTreeViewColumn">
-                                        <property name="title" translatable="yes">Presence</property>
-                                        <child><object class="GtkCellRendererText"/><attributes><attribute name="text">4</attribute></attributes></child>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkLabel">
-                                <property name="label" translatable="yes">Device presence is separate from audio activity. Double-click a purpose cell to edit its label.</property>
-                                <property name="xalign">0</property><property name="wrap">True</property><property name="max-width-chars">45</property>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                      </object>
-                      <packing>
-                        <property name="name">output</property>
-                        <property name="title" translatable="yes">Output</property>
                       </packing>
                     </child>
                   </object>

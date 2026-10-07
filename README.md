@@ -123,7 +123,7 @@ the settings window opens so you can still control PipeTune.
 ## PipeTune settings window
 
 The PipeTune settings window always displays PipeTune's status, divided into
-sections, on the left, while the Processing, Rate, DSP, Advanced, and Output settings
+sections, on the left, while the Processing, Rate, DSP, Output, and Advanced settings
 are shown on the right.
 
 ![PipeTune UI Window](./images/pipetune-ui-window.png)
@@ -215,8 +215,11 @@ pipetune bypass
 The settings window's `Output` page switches between OS-managed single output
 and multiple outputs selected in PipeTune. In multiple mode, check the devices
 you want to use. Each device lists its active profile, channel count, assigned
-Ch numbers, and presence. The table below maps final EffeTune channels to each
-device's physical channels. Double-click a purpose cell to add your own label.
+Ch numbers, and presence. The device list grows with the available panel height.
+Open the initially collapsed `EffeTune final output channels` section below it
+to view the channel table and editing controls. The table scrolls independently
+and maps final EffeTune channels to each device's physical channels.
+Double-click a purpose cell to add your own label.
 Select a channel and use `Move up` or `Move down` to change its number, or
 `Reassign device…` to choose a replacement output for its device. Review the
 before/after table, then choose `Preview mapping`. The EffeTune preset itself
