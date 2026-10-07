@@ -1153,3 +1153,7 @@ Multipleでは公開出力以外の通常sinkを、仮想sinkも含めてOSの�
 GNOME 46.7の分離セッションで、開いたままのSingle → Multiple → Single、および各モードでの新規起動を確認した。Singleは物理出力3項目、Multipleは`PipeTune Processed Audio`1項目を選択表示し、入力2端子とLine Inputの選択を維持した。再生中の入力音量・ミュート・端子変更も録音PCMで再確認した。新規起動の試験は、Gvcの初期列挙途中を判定しないようREADYと既定入出力の到着を待ち、GNOMEのコントロール描画後に画面を目視確認した。
 
 記録は`artifacts/output-visibility/duplex-502476/`、`phase3-gnome-warm.log`、`phase3-gnome-cold.log`、`phase3-tests.log`、`phase3-public-name.log`に保存した。ネイティブの録音中一覧テストはWirePlumber 0.4.17 / 0.5.8の両方で成功した。反復3の完了条件を満たし、復旧・配布・全体テスト・実機セッションへの反映を次の反復へ進める。
+
+#### 反復4の更新処理: 読み込み済みモジュールの再起動
+
+サーバーモジュールの導入により、設定ファイルの内容が変わらない更新でも、PipeWireの再起動が必要になった。旧バージョンのセットアップ完了記録を使う試験と`setup --force`の試験を先に変更し、音声サービスを再起動しないREDを確認した。設定変更時に加えてバージョン変更時と明示的なforceでも再起動するよう修正し、`pipetune_user_setup_tests`が成功した。設定・バージョン・サービス状態がすべて一致した通常の再実行は従来どおり何も変更しない。

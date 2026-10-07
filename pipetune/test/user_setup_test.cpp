@@ -427,13 +427,34 @@ static bool testSetupSkipsCurrentStateAndForceRepeats(
        .processRunner = fakeRunProcess,
        .processUserData = &forcedRunner});
   return check(forced.success, forced.error) &&
-         check(forcedRunner.invocations.size() == 6,
-               "forced setup must repeat service setup without relaunching GTK") &&
+         check(forcedRunner.invocations.size() == 7 &&
+                   audioStackRestartMatches(forcedRunner.invocations[3]),
+               "forced setup must reload the installed PipeWire module") &&
          check(invocationMatches(
                    forcedRunner.invocations[2], "/test/systemctl",
                    {"--user", "daemon-reload"},
                    pipetune::ProcessWaitMode::wait),
                "forced setup must perform the existing setup workflow");
+}
+
+static bool testUpgradeReloadsPresentation(const std::filesystem::path &directory) {
+  const auto paths = makePaths(directory / "upgrade");
+  auto runner = FakeProcessRunner{.results = {}, .invocations = {}};
+  const auto request = pipetune::UserSetupRequest{
+      .effectiveUserId = 1000, .force = false, .launchGtk = false,
+      .presetSpecified = false, .presetPath = {}, .paths = paths,
+      .processRunner = fakeRunProcess, .processUserData = &runner};
+  const auto initial = pipetune::executeUserSetup(request);
+  if (!check(initial.success, initial.error)) return false;
+  const auto currentState = readFile(paths.setupStatePath);
+  writeFile(paths.setupStatePath, "schema=1\nversion=0.0.0\n");
+  runner.invocations.clear();
+  const auto upgraded = pipetune::executeUserSetup(request);
+  return check(upgraded.success, upgraded.error) &&
+      check(runner.invocations.size() == 7 && audioStackRestartMatches(runner.invocations[3]),
+            "upgrades must reload the server module even when policy text is unchanged") &&
+      check(readFile(paths.setupStatePath) == currentState,
+            "upgrades must record the new installation after restarting audio");
 }
 
 static bool testExplicitPresetAndValidation(
@@ -711,6 +732,7 @@ int main() {
   passed =
       testSetupPreservesConfigurationAndRestoresAutostart(directory) && passed;
   passed = testSetupSkipsCurrentStateAndForceRepeats(directory) && passed;
+  passed = testUpgradeReloadsPresentation(directory) && passed;
   passed = testExplicitPresetAndValidation(directory) && passed;
   passed = testSetupRollback(directory) && passed;
   passed = testUnsetupAndPurge(directory) && passed;

@@ -662,7 +662,9 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
     file.mutated = true;
     audioPolicyMutated = true;
   }
-  if (audioPolicyMutated) {
+  if (audioPolicyMutated || !setupStateCurrent || request.force) {
+    // The server retains its loaded module until it restarts, even when an
+    // upgrade leaves the configuration text unchanged.
     audioStackRestartAttempted = true;
     const auto restartAudioStack = restartUserAudioStack(
         request.processRunner, request.processUserData, request.paths);
