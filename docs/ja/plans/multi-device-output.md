@@ -915,10 +915,31 @@ TXの公開ProcessLatencyへ128フレームの既知の申告オフセットを�
 | 複数出力とCh 1〜16、入力幅との分離 | 製品PCMテストの通常・16ch・番号変更・Bypass、2台4chの実機測定 |
 | 対応表、固定番号、識別、復元 | GTK E2Eと製品GTK、切断・再接続・異なるプロファイル・曖昧な識別の回帰テスト |
 | 同期、意図的なDSP遅延、補償表示 | 仮想環境でのフレーム照合と遅延変更、44.1/48 kHz実機、600秒測定、GTKの補償量の目安 |
-| 全体音量と物理音量、OSの選択制限・復旧 | 製品PCM、GNOMEと個別デバイス制御による8段階の実機操作、通常終了・SIGKILL・再起動の確認 |
+| 全体音量と物理音量、OSの選択制限・復旧 | 音量・復旧の確認は成功。OS一覧の制限は2026-10-07の再調査で未達成と判明したため、下記の追加検証を要する |
 | プレビュー、Apply、Cancel、失敗時の復元 | 製品GTKと設定・制御の回帰テスト、保存失敗・接続失敗・期限超過の復元 |
 | WirePlumber両系列、PulseAudioとPipeWire | 1.0.5/0.4.17と1.4.2/0.5.8の検証、PulseAudioアプリとPipeWireアプリの製品経路 |
 | 必要版、配布、利用者文書 | PipeWire 1.0.5以上の依存関係、Ubuntu 24.04・Debian trixie amd64の構築・インストール検証、英日READMEと内部文書 |
 | 全体テストと実機結果 | 217/217成功、実機記録とホスト復元の機械的な最終照合に成功 |
 
 最終照合の結果は`final-result.json`と`final-check.log`に保存した。WirePlumber 0.4の再起動後に既存アプリケーションの音声出力を開き直す場合がある制約、および0.4の既存endpointの一時公開は前述の記録・利用説明に従う。全9配布対象のパッケージ構築と音響的な測定は、実施済みとする検証範囲に含めない。
+
+### 追加調査: 実セッションのGNOME出力一覧（2026-10-07）
+
+2.12.64を使用中の利用者から、Multiple modeでもUSB・HDMIがGNOMEの「設定 → サウンド」に表示され、Single modeへ戻した後もPipeTune Multiple Outputsが残るとの報告を受けた。従来の仮想出力による一覧検証では、実カードの端子一覧を検証していなかった。前述のOS一覧に関する完了判定は、この条件に対して不十分だった。
+
+ホストのPipeWire 1.0.5 / WirePlumber 0.4.17 / GNOME Settings 46.7で設定を退避して往復した。Multiple modeで権限変更が反映された後、PipeWireの出力ノードと新規Gvcクライアントのsink一覧はpipetune_sinkだけになる。一方、Gvcの出力選択肢にはHDMI端子3件、USBのAnalog Output / Digital Outputなどが残る。GNOMEはsinkとは別にカードの端子情報からも選択肢を作り、sinkが消えてもカードに属する端子を残すためである。[GNOME 46の端子作成・sink削除処理](https://github.com/GNOME/libgnome-volume-control/blob/91f3f41490666a526ed78af744507d7ee1134323/gvc-mixer-control.c)
+
+検証用Gvcクライアントだけに対してUR22mkIIのカード閲覧権限を取り消すと、出力端子と同時に入力端子も一覧から削除された。物理入力ノードそのものは引き続き存在する。したがって、既存のノード非表示にカード非表示を単純追加するだけでは、出力以外のUIにも影響する。権限はPipeWireオブジェクト単位であり、現在使っているAPIはカードの入出力端子別の可視性指定ではない。[PipeWireアクセス制御](https://docs.pipewire.org/page_access.html)、[WirePlumberのクライアント権限API](https://pipewire.pages.freedesktop.org/wireplumber/scripting/lua_api/lua_proxies_api.html#Client.update_permissions)
+
+追加の小実験では、その検証用クライアントにだけ入力ノードを非表示・再公開すると、現在のUR22mkII入力が端子なしの入力としてGvcに再表示された。これは表示更新の可能性を調べた実験であり、既存録音の継続、入力音量・ミュート、入力端子・プロファイル選択、復元時の重複解消は未検証である。入力UIを維持できる修正として採用済みとは扱わない。利用者には入力の選択肢を維持する方針と、複数モード中の兼用機器の入力非表示を許容する方針を提示し、選好を確認している。
+
+Single modeでは公開集約ノードの削除とGvcのoutput-removed通知を観測し、新規クライアントのsink一覧にPipeTune Multiple Outputsが存在しないことを確認した。利用者が開いていた設定画面に残る症状の発生条件は未確定であり、これを解消済みとは扱わない。0.4の音声ストリーム所有者向け権限によってSingle modeのPipeTune Processed Audioや既存endpointが表示される現象も観測したが、報告された表示名と区別する。
+
+調査記録は`artifacts/output-visibility/`の`host-check.log`、`host-check-gnome.log`、`multiple-gvc.jsonl`、`single-gvc.jsonl`、`host-gvc-watch.jsonl`、`gnome-debug.log`、`card-reannounce.mjs`とその観測記録に保存した。検証用クライアントと追加の設定画面は終了し、出力構成を開始時のSingle modeへ復元した。処理エラーは0、構成エラーはなし。製品コードとインストール済みポリシーはこの調査では変更していない。
+
+次の反復と完了条件は以下とする。
+
+1. 入力の扱いを確定し、カードと端子を持つデバイスでGNOMEの実際の選択肢を検証する再現テストを追加する。sink数だけの検証で置き換えず、既存コードで失敗を確認する。Single modeで表示が残る症状は独立して再現条件を絞る。
+2. 確定した入力の扱いを満たす表示制御を実装する。Multiple modeでは未選択のUSB・HDMI端子も含めて出力選択肢から消え、Single modeでは公開集約出力が消えて物理出力が戻ることを完了条件とする。GNOMEを開いたままの往復と、各モードでGNOMEを後から起動した場合を確認する。
+3. 入力を維持する方式を採る場合は、表示名だけでなく既存録音、入力の選択、音量・ミュート、端子・プロファイル操作への影響を確認する。通常終了・異常終了・WirePlumber再起動時の復元と0.4/0.5双方の回帰検証を行う。
+4. 修正したコミットを固定して全体テストを実行し、現在のGNOMEセッションへ反映する。利用者の保存設定を保持し、実際の「設定 → サウンド」で両モードの一覧が一致することを確認するまで、OS統合を完了扱いに戻さない。
