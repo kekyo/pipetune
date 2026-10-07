@@ -31,6 +31,7 @@ struct FakeDaemonState {
   std::uint64_t dspTelemetrySequence;
   std::uint64_t manualStatusSequence;
   std::string outputInventoryState = "connected";
+  std::string outputVolumeState = "normal";
 };
 
 static std::string environmentValue(const char *name) {
@@ -184,6 +185,14 @@ static pipetune::ControlRuntimeStatus snapshotStatus(
     status.outputInventoryReady = false;
   } else if (state.outputInventoryState == "reversed") {
     std::swap(status.availableOutputs[0], status.availableOutputs[1]);
+  }
+  for (const auto &output : status.availableOutputs) {
+    auto volume = pipetune::OutputVolumeState{output.nodeSerial, false, 1, {1, 1}};
+    if (output.nodeSerial == 73) {
+      if (state.outputVolumeState == "muted") volume = {73, true, 1, {0.25F, 0.5F}};
+      else if (state.outputVolumeState == "unknown") volume = {73, {}, {}, {}};
+    }
+    status.outputVolumes.push_back(std::move(volume));
   }
   if (stale) {
     status.configurationError = "E2E stale status";
@@ -440,6 +449,13 @@ int main(int argc, char **argv) {
   std::cout << "READY\n" << std::flush;
   auto input = std::string{};
   while (std::getline(std::cin, input)) {
+    if (input.starts_with("output-volume ")) {
+      {
+        auto lock = std::scoped_lock(state.mutex);
+        state.outputVolumeState = input.substr(14);
+      }
+      pipetune::publishControlStatus(started.server.get());
+    }
     if (input.starts_with("output-inventory ")) {
       {
         auto lock = std::scoped_lock(state.mutex);

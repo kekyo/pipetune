@@ -355,6 +355,105 @@ const hideWithKeyboard = async (method: 'escape' | 'close'): Promise<void> => {
 };
 
 describe('PipeTune GTK dialog', () => {
+  it('updates physical device controls while retaining channel editing', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await (await getElement('mainWindow', 'window')).resizeTo(1080, 800);
+    await selectSettingsPage(4);
+    await selectComboItem('outputModeCombo', 1);
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    const table = await getElement('outputChannelView', 'table');
+    await toPass(async () => {
+      expect(await table.getRowCount()).toBe(2);
+      expect(
+        (await (await getElement('applyButton', 'button')).info()).states
+      ).toContain('sensitive');
+    });
+    await waitForLabel(
+      'output-volume-0',
+      'Device unmuted · Scalar gain: 0.0 dB · Channel gains: 0.0 dB'
+    );
+    const saved = await session.inspectConfig();
+    await session.clearRequests();
+    const purpose = await table.cellAt(0, 3);
+    if (purpose === undefined) throw new Error('Purpose cell is unavailable');
+    const bounds = (await purpose.capture()).bounds;
+    await (await getElement('mainWindow', 'window')).activate();
+    await session.app.input.moveMouseTo(
+      bounds.x + Math.floor(bounds.width / 2),
+      bounds.y + Math.floor(bounds.height / 2)
+    );
+    await session.app.input.setMouseButton('left', true);
+    await session.app.input.setMouseButton('left', false);
+    await session.app.input.pressKey('Return');
+    await session.app.input.pressKey('s');
+    await session.setOutputVolume('muted');
+    await waitForLabel(
+      'output-volume-0',
+      'Device muted · Scalar gain: 0.0 dB · Channel gains: -12.0 dB … -6.0 dB'
+    );
+    expect(
+      (await session.readRequests()).filter(
+        (request) => request.command === 'set-output'
+      )
+    ).toHaveLength(0);
+    await session.app.input.pressKey('u');
+    await session.app.input.pressKey('b');
+    await session.app.input.pressKey('Return');
+    await toPass(async () => {
+      expect((await (await table.cellAt(0, 3))?.info())?.name).toBe('sub');
+      expect(
+        (await (await getElement('applyButton', 'button')).info()).states
+      ).toContain('sensitive');
+      expect(
+        (await session?.readRequests())
+          ?.filter((request) => request.command === 'set-output')
+          .at(-1)?.configuration
+      ).toMatchObject({ channels: [{ label: 'sub' }, {}] });
+    });
+    await session.clearRequests();
+    await session.setOutputVolume('unknown');
+    await waitForLabel(
+      'output-volume-0',
+      'Device mute unknown · Scalar gain: Unknown · Channel gains: Unknown'
+    );
+    await session.setOutputVolume('normal');
+    await waitForLabel(
+      'output-volume-0',
+      'Device unmuted · Scalar gain: 0.0 dB · Channel gains: 0.0 dB'
+    );
+    expect(
+      (await session.readRequests()).filter(
+        (request) => request.command === 'set-output'
+      )
+    ).toHaveLength(0);
+    expect(await session.inspectConfig()).toEqual(saved);
+    for (const [state, presence] of [
+      ['missing', 'Not connected'],
+      ['profileChanged', 'Profile changed'],
+      ['ambiguous', 'Ambiguous device'],
+    ] as const) {
+      await session.setOutputInventory(state);
+      await toPass(async () => {
+        expect((await (await table.cellAt(0, 4))?.info())?.name).toBe(presence);
+      });
+      await waitForLabel(
+        'output-volume-0',
+        'Device mute unknown · Scalar gain: Unknown · Channel gains: Unknown'
+      );
+    }
+    await session.setOutputInventory('connected');
+    await waitForLabel(
+      'output-volume-0',
+      'Device unmuted · Scalar gain: 0.0 dB · Channel gains: 0.0 dB'
+    );
+    await session.disconnectDaemon();
+    await waitForLabel(
+      'output-volume-0',
+      'Device mute unknown · Scalar gain: Unknown · Channel gains: Unknown'
+    );
+  });
+
   it('reviews channel moves and device reassignment before previewing them', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();

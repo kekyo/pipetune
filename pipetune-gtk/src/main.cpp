@@ -14,6 +14,7 @@
 #include "localization.h"
 #include "main-window.h"
 #include "output-mapping-model.h"
+#include "status-text.h"
 #include "preset-catalog.h"
 #include "preset-file-monitor.h"
 #include "rate-selection-model.h"
@@ -79,6 +80,8 @@ struct OutputDeviceWidgets {
   GtkWidget *row;
   GtkWidget *button;
   GtkWidget *details;
+  GtkWidget *volume;
+  std::string volumeText;
 };
 
 struct OutputMappingReview {
@@ -830,7 +833,7 @@ static void renderOutputControls(GtkRuntime *runtime) {
       return row.device.identity == device.identity && row.device.profile == device.profile &&
           row.device.channelPositions == device.channelPositions;
     });
-    auto widgets = OutputDeviceWidgets{device, nullptr, nullptr, nullptr};
+    auto widgets = OutputDeviceWidgets{device, nullptr, nullptr, nullptr, nullptr, {}};
     if (previous != oldRows.end()) {
       widgets = std::move(*previous);
       oldRows.erase(previous);
@@ -840,11 +843,16 @@ static void renderOutputControls(GtkRuntime *runtime) {
       gtk_container_set_border_width(GTK_CONTAINER(box), 6);
       widgets.button = gtk_check_button_new_with_label(device.name.c_str());
       widgets.details = gtk_label_new(nullptr);
+      widgets.volume = gtk_label_new(nullptr);
       gtk_label_set_xalign(GTK_LABEL(widgets.details), 0);
       gtk_label_set_ellipsize(GTK_LABEL(widgets.details), PANGO_ELLIPSIZE_END);
       gtk_label_set_max_width_chars(GTK_LABEL(widgets.details), 45);
       gtk_box_pack_start(GTK_BOX(box), widgets.button, FALSE, FALSE, 0);
       gtk_box_pack_start(GTK_BOX(box), widgets.details, FALSE, FALSE, 0);
+      gtk_label_set_xalign(GTK_LABEL(widgets.volume), 0);
+      gtk_label_set_line_wrap(GTK_LABEL(widgets.volume), TRUE);
+      gtk_label_set_max_width_chars(GTK_LABEL(widgets.volume), 45);
+      gtk_box_pack_start(GTK_BOX(box), widgets.volume, FALSE, FALSE, 0);
       gtk_container_add(GTK_CONTAINER(ui.outputDeviceList), box);
       widgets.row = gtk_widget_get_parent(box);
       g_signal_connect(widgets.button, "toggled", G_CALLBACK(onOutputDeviceToggled), runtime);
@@ -861,6 +869,7 @@ static void renderOutputControls(GtkRuntime *runtime) {
     g_object_set_data(G_OBJECT(widgets.row), "output-order", GUINT_TO_POINTER(static_cast<guint>(rowIndex)));
 #ifdef PIPETUNE_GTK_E2E_ACCESSIBILITY
     gestament_gtk_assign_accessible_id(button, ("output-device-" + std::to_string(rowIndex)).c_str());
+    gestament_gtk_assign_accessible_id(widgets.volume, ("output-volume-" + std::to_string(rowIndex)).c_str());
 #endif
     ++rowIndex;
     gtk_label_set_text(GTK_LABEL(widgets.details), details.c_str());
@@ -920,6 +929,32 @@ static void renderOutputControls(GtkRuntime *runtime) {
     const auto number = "Ch " + std::to_string(index + 1);
     gtk_list_store_insert_with_values(model, nullptr, -1, 0, number.c_str(), 1, device.c_str(),
         2, channel.c_str(), 3, slot.label.c_str(), 4, state, 5, static_cast<guint>(index), -1);
+  }
+}
+
+static void renderOutputVolumes(GtkRuntime *runtime) {
+  const auto &status = runtime->state.runtime;
+  const auto ready = runtime->state.connection == ControlConnectionState::connected &&
+      status.outputInventoryReady && status.outputInventoryError.empty();
+  for (auto &row : runtime->outputDeviceRows) {
+    const auto matches = [&row](const auto &output) {
+      return output.device.identity == row.device.identity && output.device.profile == row.device.profile &&
+          output.device.channelPositions == row.device.channelPositions;
+    };
+    const pipetune::OutputVolumeState *volume = nullptr;
+    if (ready && std::count_if(status.availableOutputs.begin(), status.availableOutputs.end(), matches) == 1) {
+      const auto output = std::find_if(status.availableOutputs.begin(), status.availableOutputs.end(), matches);
+      const auto report = std::find_if(status.outputVolumes.begin(), status.outputVolumes.end(),
+          [&output](const auto &entry) { return entry.nodeSerial == output->nodeSerial; });
+      if (report != status.outputVolumes.end()) volume = &*report;
+    }
+    const auto text = outputVolumeText(volume);
+    if (row.volumeText == text) continue;
+    row.volumeText = text;
+    gtk_label_set_text(GTK_LABEL(row.volume), text.c_str());
+    const auto tooltip = text + '\n' + translate(
+        "Reported device controls, separate from the OS master volume. Channel gains show the minimum and maximum across the device.");
+    gtk_widget_set_tooltip_text(row.volume, tooltip.c_str());
   }
 }
 
@@ -1054,6 +1089,7 @@ static void renderSettingsControls(GtkRuntime *runtime) {
   runtime->updatingControls = true;
   renderPresetControls(runtime);
   renderOutputControls(runtime);
+  renderOutputVolumes(runtime);
   renderOutputMappingActions(runtime);
   renderRateControls(runtime);
   renderDspControls(runtime);

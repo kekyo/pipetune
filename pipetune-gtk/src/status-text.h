@@ -57,6 +57,15 @@ InputStatusText inputStatusText(const ApplicationState &state,
  */
 RuntimeStatusText runtimeStatusText(const ApplicationState &state);
 
+/**
+ * Formats reported physical controls independently of the OS master volume.
+ * @param volume Report for the current connection, or null when unavailable.
+ * @return Mute, scalar gain, and the range of effective channel gains in dB.
+ * @remarks Channel gains are summarized without assuming their report order
+ * matches the saved routing. Unknown controls never imply unity or unmuted.
+ */
+std::string outputVolumeText(const pipetune::OutputVolumeState *volume);
+
 } // namespace pipetune_gtk
 
 #endif

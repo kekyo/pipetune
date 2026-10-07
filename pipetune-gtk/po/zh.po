@@ -183,6 +183,10 @@ msgstr "正在更改静音暂停"
 msgid "Changing silence suspension failed"
 msgstr "更改静音暂停失败"
 
+#, brace-format
+msgid "Channel gains: {0}"
+msgstr "通道增益：{0}"
+
 msgid "Choose a preset before enabling DSP processing"
 msgstr "启用 DSP 处理前请选择预设"
 
@@ -268,8 +272,17 @@ msgstr "设备"
 msgid "Device channel"
 msgstr "设备通道"
 
+msgid "Device mute unknown"
+msgstr "设备静音状态未知"
+
+msgid "Device muted"
+msgstr "设备已静音"
+
 msgid "Device presence is separate from audio activity. Double-click a purpose cell to edit its label."
 msgstr "设备连接状态不代表音频正在播放。双击用途单元格可编辑标签。"
+
+msgid "Device unmuted"
+msgstr "设备未静音"
 
 msgid "Disabled"
 msgstr "已禁用"
@@ -562,6 +575,9 @@ msgstr "退出"
 msgid "Reassign device…"
 msgstr "重新分配设备…"
 
+msgid "Reported device controls, separate from the OS master volume. Channel gains show the minimum and maximum across the device."
+msgstr "设备报告的控制值，与操作系统的主音量相互独立。通道增益显示设备内各通道的最小值和最大值。"
+
 msgid "Reserved"
 msgstr "已保留"
 
@@ -625,6 +641,10 @@ msgstr "正在保存所有设置"
 
 msgid "Scalar"
 msgstr "Scalar"
+
+#, brace-format
+msgid "Scalar gain: {0}"
+msgstr "整体增益：{0}"
 
 msgid "seconds"
 msgstr "秒"

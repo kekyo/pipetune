@@ -188,6 +188,10 @@ msgstr "جارٍ تغيير تعليق DSP عند الصمت"
 msgid "Changing silence suspension failed"
 msgstr "فشل تغيير تعليق DSP عند الصمت"
 
+#, brace-format
+msgid "Channel gains: {0}"
+msgstr "كسب القنوات: {0}"
+
 msgid "Choose a preset before enabling DSP processing"
 msgstr "اختر إعدادًا مسبقًا قبل تمكين معالجة DSP"
 
@@ -273,8 +277,17 @@ msgstr "الجهاز"
 msgid "Device channel"
 msgstr "قناة الجهاز"
 
+msgid "Device mute unknown"
+msgstr "حالة كتم الجهاز غير معروفة"
+
+msgid "Device muted"
+msgstr "الجهاز مكتوم"
+
 msgid "Device presence is separate from audio activity. Double-click a purpose cell to edit its label."
 msgstr "وجود الجهاز لا يعني أن الصوت نشط. انقر نقرًا مزدوجًا على خلية الغرض لتعديل تسميتها."
+
+msgid "Device unmuted"
+msgstr "الجهاز غير مكتوم"
 
 msgid "Disabled"
 msgstr "معطّل"
@@ -567,6 +580,9 @@ msgstr "إنهاء"
 msgid "Reassign device…"
 msgstr "إعادة تعيين الجهاز…"
 
+msgid "Reported device controls, separate from the OS master volume. Channel gains show the minimum and maximum across the device."
+msgstr "قيم التحكم التي أبلغ عنها الجهاز، وهي منفصلة عن مستوى الصوت الرئيسي لنظام التشغيل. يعرض كسب القنوات الحدين الأدنى والأقصى عبر الجهاز."
+
 msgid "Reserved"
 msgstr "محجوز"
 
@@ -630,6 +646,10 @@ msgstr "جارٍ حفظ جميع الإعدادات"
 
 msgid "Scalar"
 msgstr "Scalar"
+
+#, brace-format
+msgid "Scalar gain: {0}"
+msgstr "الكسب العام: {0}"
 
 msgid "seconds"
 msgstr "ثوانٍ"

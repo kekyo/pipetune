@@ -9,6 +9,7 @@
 #include "ui-message.h"
 
 #include <cmath>
+#include <algorithm>
 #include <cstdint>
 #include <ctime>
 #include <iomanip>
@@ -56,6 +57,25 @@ static std::string fixedDecimal(double value, int precision) {
   auto stream = std::ostringstream{};
   stream << std::fixed << std::setprecision(precision) << value;
   return stream.str();
+}
+
+std::string outputVolumeText(const pipetune::OutputVolumeState *volume) {
+  const auto &state = volume == nullptr ? pipetune::OutputVolumeState{} : *volume;
+  const auto gainText = [](std::optional<float> gain) -> std::string {
+    if (!gain || !std::isfinite(*gain) || *gain < 0) return translate("Unknown");
+    return *gain == 0 ? "-∞ dB" : fixedDecimal(20.0 * std::log10(*gain), 1) + " dB";
+  };
+  const auto *mute = translate("Device mute unknown");
+  if (state.muted) mute = *state.muted ? translate("Device muted") : translate("Device unmuted");
+  auto channels = std::string(translate("Unknown"));
+  if (!state.channelVolumes.empty() && std::all_of(state.channelVolumes.begin(), state.channelVolumes.end(),
+      [](float gain) { return std::isfinite(gain) && gain >= 0; })) {
+    const auto [minimum, maximum] = std::minmax_element(state.channelVolumes.begin(), state.channelVolumes.end());
+    channels = gainText(*minimum);
+    if (*minimum != *maximum) channels += " … " + gainText(*maximum);
+  }
+  return std::string(mute) + " · " + formatUiMessage(localizedMessage("Scalar gain: {0}", {gainText(state.volume)})) +
+      " · " + formatUiMessage(localizedMessage("Channel gains: {0}", {channels}));
 }
 
 static std::string dspProcessingTimeText(

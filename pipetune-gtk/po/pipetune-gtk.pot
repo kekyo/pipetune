@@ -179,6 +179,10 @@ msgstr ""
 msgid "Changing silence suspension failed"
 msgstr ""
 
+#, brace-format
+msgid "Channel gains: {0}"
+msgstr ""
+
 msgid "Choose a preset before enabling DSP processing"
 msgstr ""
 
@@ -264,7 +268,16 @@ msgstr ""
 msgid "Device channel"
 msgstr ""
 
+msgid "Device mute unknown"
+msgstr ""
+
+msgid "Device muted"
+msgstr ""
+
 msgid "Device presence is separate from audio activity. Double-click a purpose cell to edit its label."
+msgstr ""
+
+msgid "Device unmuted"
 msgstr ""
 
 msgid "Disabled"
@@ -558,6 +571,9 @@ msgstr ""
 msgid "Reassign device…"
 msgstr ""
 
+msgid "Reported device controls, separate from the OS master volume. Channel gains show the minimum and maximum across the device."
+msgstr ""
+
 msgid "Reserved"
 msgstr ""
 
@@ -620,6 +636,10 @@ msgid "Saving all settings"
 msgstr ""
 
 msgid "Scalar"
+msgstr ""
+
+#, brace-format
+msgid "Scalar gain: {0}"
 msgstr ""
 
 msgid "seconds"

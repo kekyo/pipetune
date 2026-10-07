@@ -185,6 +185,10 @@ msgstr "Изменение приостановки при тишине"
 msgid "Changing silence suspension failed"
 msgstr "Не удалось изменить приостановку при тишине"
 
+#, brace-format
+msgid "Channel gains: {0}"
+msgstr "Усиление каналов: {0}"
+
 msgid "Choose a preset before enabling DSP processing"
 msgstr "Выберите предустановку перед включением обработки DSP"
 
@@ -270,8 +274,17 @@ msgstr "Устройство"
 msgid "Device channel"
 msgstr "Канал устройства"
 
+msgid "Device mute unknown"
+msgstr "Состояние отключения звука устройства неизвестно"
+
+msgid "Device muted"
+msgstr "Звук устройства отключён"
+
 msgid "Device presence is separate from audio activity. Double-click a purpose cell to edit its label."
 msgstr "Наличие устройства не означает передачу звука. Дважды щёлкните ячейку назначения, чтобы изменить подпись."
+
+msgid "Device unmuted"
+msgstr "Звук устройства включён"
 
 msgid "Disabled"
 msgstr "Отключено"
@@ -564,6 +577,9 @@ msgstr "Выход"
 msgid "Reassign device…"
 msgstr "Переназначить устройство…"
 
+msgid "Reported device controls, separate from the OS master volume. Channel gains show the minimum and maximum across the device."
+msgstr "Значения, сообщённые устройством, отдельно от общей громкости ОС. Для усиления каналов показаны минимальное и максимальное значения устройства."
+
 msgid "Reserved"
 msgstr "Зарезервировано"
 
@@ -627,6 +643,10 @@ msgstr "Сохранение всех настроек"
 
 msgid "Scalar"
 msgstr "Scalar"
+
+#, brace-format
+msgid "Scalar gain: {0}"
+msgstr "Общий коэффициент усиления: {0}"
 
 msgid "seconds"
 msgstr "секунды"

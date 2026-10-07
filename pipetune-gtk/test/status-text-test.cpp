@@ -136,7 +136,28 @@ static bool testRuntimeText() {
                "runtime counter text differs");
 }
 
+static bool testOutputVolumeText() {
+  const auto unknown = std::string("Device mute unknown · Scalar gain: Unknown · Channel gains: Unknown");
+  auto volume = pipetune::OutputVolumeState{};
+  if (!check(pipetune_gtk::outputVolumeText(nullptr) == unknown &&
+             pipetune_gtk::outputVolumeText(&volume) == unknown,
+             "unavailable device controls must remain unknown")) return false;
+  volume = {73, true, 1, {0.25F, 0.5F}};
+  if (!check(pipetune_gtk::outputVolumeText(&volume) ==
+             "Device muted · Scalar gain: 0.0 dB · Channel gains: -12.0 dB … -6.0 dB",
+             "mute and unequal channel gains must remain distinct from the master volume")) return false;
+  volume = {73, false, {}, {0, 2}};
+  if (!check(pipetune_gtk::outputVolumeText(&volume) ==
+             "Device unmuted · Scalar gain: Unknown · Channel gains: -∞ dB … 6.0 dB",
+             "zero and amplified channel gains must be reported without clamping")) return false;
+  volume = {73, false, 0.5F, {1, 1, 1}};
+  return check(pipetune_gtk::outputVolumeText(&volume) ==
+             "Device unmuted · Scalar gain: -6.0 dB · Channel gains: 0.0 dB",
+             "uniform channel gains must not be multiplied by a separate scalar report");
+}
+
 int main() {
+  if (!testOutputVolumeText()) return 1;
   return testActiveText() && testUnavailableAndIdleText() &&
                  testRuntimeText()
              ? 0

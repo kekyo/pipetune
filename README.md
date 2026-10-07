@@ -227,6 +227,11 @@ Changes preview live; use `Apply` to save or `Cancel` to restore the previous
 configuration. Selecting multiple mode without a device leaves an unfinished
 draft and does not change the live output.
 
+Device rows also show reported mute and gain separately from the OS master
+volume. Channel gains show a minimum–maximum range when they differ. These
+values are read-only; unavailable controls or disconnected devices show
+`Unknown`. Hover over the values for an explanation.
+
 List the audio outputs in the current PipeWire session, including each output's
 active profile and all channel positions:
 

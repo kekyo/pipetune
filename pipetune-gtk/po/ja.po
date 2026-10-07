@@ -183,6 +183,10 @@ msgstr "無音時の休止を変更中"
 msgid "Changing silence suspension failed"
 msgstr "無音時の休止の変更に失敗しました"
 
+#, brace-format
+msgid "Channel gains: {0}"
+msgstr "チャンネルゲイン: {0}"
+
 msgid "Choose a preset before enabling DSP processing"
 msgstr "DSP処理を有効にする前にプリセットを選択してください"
 
@@ -268,8 +272,17 @@ msgstr "デバイス"
 msgid "Device channel"
 msgstr "デバイス内チャンネル"
 
+msgid "Device mute unknown"
+msgstr "デバイス: ミュート状態不明"
+
+msgid "Device muted"
+msgstr "デバイス: ミュート中"
+
 msgid "Device presence is separate from audio activity. Double-click a purpose cell to edit its label."
 msgstr "接続状態と音声の稼働状態は異なります。用途名はセルをダブルクリックして編集できます。"
+
+msgid "Device unmuted"
+msgstr "デバイス: ミュートなし"
 
 msgid "Disabled"
 msgstr "無効"
@@ -562,6 +575,9 @@ msgstr "終了"
 msgid "Reassign device…"
 msgstr "デバイスを再割り当て…"
 
+msgid "Reported device controls, separate from the OS master volume. Channel gains show the minimum and maximum across the device."
+msgstr "デバイスが報告した制御値です。OSの全体音量とは別の値です。チャンネルゲインにはデバイス内の最小値と最大値を表示します。"
+
 msgid "Reserved"
 msgstr "予約済み"
 
@@ -625,6 +641,10 @@ msgstr "すべての設定を保存中"
 
 msgid "Scalar"
 msgstr "スカラー"
+
+#, brace-format
+msgid "Scalar gain: {0}"
+msgstr "デバイス全体のゲイン: {0}"
 
 msgid "seconds"
 msgstr "秒"

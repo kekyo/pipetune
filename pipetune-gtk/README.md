@@ -82,6 +82,14 @@ edit it. The stereo desktop input uses Ch 1 and Ch 2; additional outputs must be
 created by the EffeTune preset. Single mode keeps the saved multiple-output
 mapping visible but inactive.
 
+Each device row shows its reported mute, scalar gain, and effective channel
+gains in dB, independently of the OS master volume. Unequal channel gains appear
+as a minimum–maximum range. Zero gain is `-∞ dB`; missing controls are `Unknown`.
+Hover over the values for an explanation. The values are read-only and do not
+change the routing or interrupt purpose-label editing when they update.
+Disconnected, changed-profile, and ambiguous devices show unknown controls;
+losing the daemon connection also clears the live volume display.
+
 Select a channel to move it up or down with its purpose label, or use
 `Reassign device…` to replace the device assigned to that channel. Both actions
 open a before/after review. `Preview mapping` sends the proposed configuration;
