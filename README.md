@@ -263,6 +263,10 @@ Later selections preserve those numbers and labels: deselected outputs keep
 their slots, and new outputs are appended. The sixteen-channel limit includes
 reserved slots. Switching to single mode retains the multiple-output choices.
 
+In multiple mode, the OS master volume and mute apply after DSP to all selected
+outputs. Their settings are remembered across PipeTune restarts. A WirePlumber
+restart retains the running daemon's current volume and mute.
+
 `get` shows the live mode and a table linking each final EffeTune channel to its
 device, device channel, profile, presence, and optional purpose label. A missing
 device keeps its assignments; its channels are not redirected to another

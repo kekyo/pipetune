@@ -45,6 +45,74 @@ local default_restoring = false
 local default_update_pending = false
 local configured_key = "default.configured.audio.sink"
 
+-- Restore a newly started daemon once. A surviving daemon owns its current
+-- controls, including when this policy restarts before a delayed save finishes.
+local master_state = State("pipetune-master-output")
+local saved_master = master_state:load()
+local master_save = nil
+
+local function finite_gain(value)
+  return type(value) == "number" and value >= 0 and value <= 3.4028234663852886e38
+end
+
+local function store_master(name, gain, muted)
+  local gain_key, mute_key = name .. ":gain", name .. ":mute"
+  local gain_value, mute_value = string.format("%.17g", gain), tostring(muted)
+  if saved_master[gain_key] == gain_value and saved_master[mute_key] == mute_value then return end
+  saved_master[gain_key], saved_master[mute_key] = gain_value, mute_value
+  if master_save then master_save:destroy() end
+  master_save = Core.timeout_add(1000, function()
+    master_save = nil
+    local ok, error = master_state:save(saved_master)
+    if not ok then Log.warning("cannot save PipeTune master output: " .. tostring(error)) end
+    return false
+  end)
+end
+
+local function monitor_master(node)
+  local properties = node.properties
+  local mode = properties["node.pipetune.master-state"]
+  local name = properties["node.name"]
+  if name == nil or (mode ~= "restore" and mode ~= "retained") then return end
+  local restoring = mode == "restore"
+  local gain = tonumber(saved_master[name .. ":gain"])
+  if not finite_gain(gain) then gain = 1.0 end
+  -- Lua preserves integers when parsing "0" or "1" from the state file.
+  -- Pod.Array requires floating-point values for its Spa:Float elements.
+  gain = gain + 0.0
+  local muted = saved_master[name .. ":mute"] == "true"
+  local function changed(node, id)
+    if id ~= "Props" then return end
+    for param in node:iterate_params("Props") do
+      local parsed = param:parse()
+      if parsed.pod_type == "Object" and parsed.object_id == "Props" then
+        local props = parsed.properties
+        local channels = props.channelVolumes
+        if props.volume == 1.0 and type(props.mute) == "boolean" and
+            type(channels) == "table" and #channels == 2 and
+            finite_gain(channels[1]) and channels[1] == channels[2] then
+          -- Ignore the initial cached defaults until the requested controls
+          -- have made a complete round trip through PipeTune's normalization.
+          if restoring and (props.mute ~= muted or
+              math.abs(channels[1] - gain) > math.max(1, gain) * 0.000001) then return end
+          restoring = false
+          store_master(name, channels[1], props.mute)
+        end
+      end
+    end
+  end
+  node:connect("params-changed", changed)
+  if restoring then
+    node:set_param("Props", Pod.Object {
+      "Spa:Pod:Object:Param:Props", "Props",
+      volume = 1.0, mute = muted,
+      channelVolumes = Pod.Array { "Spa:Float", gain, gain },
+    })
+  else
+    changed(node, "Props")
+  end
+end
+
 local function output_name(value)
   if value == nil then return nil end
   local json = Json.Raw(value)
@@ -280,6 +348,7 @@ pipetune_nodes_om:connect("object-added", function(om, node)
   local owner_id = tonumber(proxy_property(node, "client.id"))
   local aggregate = proxy_property(node, "node.pipetune.aggregate")
   if aggregate == "true" or aggregate == true then
+    monitor_master(node)
     pipetune_aggregate_owners[node_id] = owner_id or -1
     if proxy_property(node, "node.pipetune.manage-default") == "true" then
       -- A private distribution node keeps the public target's lease alive

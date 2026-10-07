@@ -140,6 +140,30 @@ configuration path and uses the smart-filter properties instead. `pipetune
 unsetup` removes all six files and restarts the same audio stack when
 necessary.
 
+### Multiple-output master controls
+
+The multiple-output path exposes one stereo input sink and applies its master
+gain and mute after DSP, before distributing the numbered DSP channels. The
+input's software gain remains unity. The daemon keeps these controls outside
+the lifetime of its PipeWire nodes, so rate changes and policy recovery retain
+the current values.
+
+The shared WirePlumber policy persists normalized gain and mute per public
+node name in the `pipetune-master-output` State file. Changes are coalesced for
+one second in the policy process; no audio callback performs file I/O. A new
+daemon publishes `node.pipetune.master-state=restore` and keeps its output
+silent until it receives the initial controls. After accepting them it
+publishes `retained`, including on replacement nodes. Policy restarts observe
+and save those live controls instead of applying older disk state. This also
+avoids sharing the generic `DSP` role's standard volume restore key.
+
+`state.restore-props=false` remains in effect for the standard restore policy.
+Simply enabling it restores saved controls again when WirePlumber rediscovers
+a surviving daemon, which can overwrite newer values that have not yet been
+written. The dedicated policy uses the public
+[State API](https://pipewire.pages.freedesktop.org/wireplumber/scripting/lua_api/lua_state_api.html)
+and [node parameter notifications](https://pipewire.pages.freedesktop.org/wireplumber/library/c_api/pipewire_object_api.html).
+
 ## Real-time data flow
 
 The two PipeWire streams use F32P PCM with one plane per channel:

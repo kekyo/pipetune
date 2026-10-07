@@ -147,6 +147,9 @@ struct AudioTest {
   bool matrix = false;
   bool slots = false;
   bool volume = false;
+  bool daemonVolume = false;
+  bool restoredVolume = false;
+  float savedMasterGain = 0.5F;
   bool disconnected = false;
   bool reconnect = false;
   bool profile = false;
@@ -304,7 +307,14 @@ static void setMasterVolume(AudioTest &test) {
   if (test.control == nullptr) return fail(test, "public input is unavailable for master control");
   auto storage = std::array<std::uint8_t, 256>{};
   auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
-  const auto gain = test.reconnect || test.stage == 1 ? 0.5F : 1.0F;
+  if (test.restoredVolume) {
+    // Unmute without sending a gain: the recovered value must remain in use.
+    const auto *parameter = static_cast<const spa_pod *>(spa_pod_builder_add_object(
+        &builder, SPA_TYPE_OBJECT_Props, SPA_PARAM_Props, SPA_PROP_mute, SPA_POD_Bool(false)));
+    if (pw_node_set_param(test.control, SPA_PARAM_Props, 0, parameter) < 0) fail(test, "cannot unmute restored master volume");
+    return;
+  }
+  const auto gain = test.daemonVolume ? test.savedMasterGain : test.reconnect || test.stage == 1 ? 0.5F : 1.0F;
   const auto volumes = std::array<float, 2>{gain, gain};
   const auto *parameter = static_cast<const spa_pod *>(spa_pod_builder_add_object(
       &builder, SPA_TYPE_OBJECT_Props, SPA_PARAM_Props,
@@ -339,7 +349,7 @@ static void capture(void *data) {
     if ((test.volume || test.reconnect) && output.index < 2) {
       expected += 0.125F;
       expected *= test.reconnect ? (test.stage == 0 ? 1.0F : 0.5F) :
-          test.stage == 2 ? 0.0F : test.stage == 1 ? 0.5F : 1.0F;
+          test.stage == 2 ? 0.0F : test.daemonVolume && test.stage > 0 ? test.savedMasterGain : test.stage == 1 ? 0.5F : 1.0F;
     }
     if (test.restartMuted && (test.stage == 1 || test.stage == 2)) expected = 0.0F;
     if (test.profile && test.stage == 3 && output.index == 0) expected = 0.0F;
@@ -357,6 +367,8 @@ static void capture(void *data) {
     for (auto frame = 0U; frame < frames; ++frame) {
       auto sample = 0.0F;
       std::memcpy(&sample, static_cast<const char *>(plane.data) + plane.chunk->offset + frame * sizeof(float), sizeof(float));
+      if (test.restoredVolume && test.stage == 2 && sample != 0.0F)
+        fail(test, "muted daemon restart emitted audio before restoring the controls");
       if (test.profile && test.stage == 3 && output.index == 0 && sample != 0)
         fail(test, "profile mismatch received audio");
       if (test.disconnected && sample != 0) fail(test, "unresolved or disabled output received fallback audio");
@@ -396,6 +408,16 @@ static void capture(void *data) {
   if (matches && frames != 0) { output.matched = true; output.frames += frames; }
   if ((test.outputs[0].frames >= 32768 || (test.reconnect && !test.restart && (test.stage == 2 || (test.profile && test.stage == 3)))) && test.outputs[1].frames >= 32768 &&
       (!test.outputChange || test.stage != 8 || test.outputs[2].frames >= 32768)) {
+    if (test.daemonVolume) {
+      if (test.produced < 32768) return;
+      if (test.visibleGain != (test.stage == 0 ? 1.0F : test.savedMasterGain) || test.visibleMute != (test.stage == 2))
+        return fail(test, "visible master controls do not match the daemon restart PCM stage");
+      if (!test.restoredVolume && test.stage == 2) {
+        test.stageFrames[test.stage] = {test.outputs[0].frames, test.outputs[1].frames};
+        pw_main_loop_quit(test.loop);
+        return;
+      }
+    }
     if (test.controls || test.outputChange) {
       test.stageFrames[test.stage] = {test.outputs[0].frames, test.outputs[1].frames};
       if (test.stage == 8) pw_main_loop_quit(test.loop);
@@ -564,7 +586,11 @@ static int runAudio(std::string_view scenario) {
   if (const auto *name = std::getenv("PIPETUNE_PRODUCT_INPUT")) test.inputName = name;
   test.matrix = scenario != "product-bypass";
   test.slots = scenario == "product-slots";
-  test.volume = scenario == "product-volume";
+  test.daemonVolume = scenario.starts_with("product-daemon-volume");
+  test.restoredVolume = test.daemonVolume && !scenario.ends_with("-save");
+  test.savedMasterGain = scenario.find("-zero-") != std::string_view::npos ? 0.0F : 0.5F;
+  test.volume = scenario == "product-volume" || test.daemonVolume;
+  if (test.restoredVolume) test.stage = scenario.ends_with("-unmuted") ? 3 : 2;
   test.disconnected = scenario == "product-disconnected";
   test.profile = scenario == "product-profile";
   test.restartMuted = scenario == "product-restart-mute";

@@ -205,8 +205,9 @@ struct PipeWireRuntime {
   bool outputPolicyReset = false;
   float masterVolume = 1.0F;
   bool masterMute = false;
+  bool masterControlsInitialized = false;
   bool publishingMasterVolume = false;
-  std::atomic<float> masterOutputGain{1.0F};
+  std::atomic<float> masterOutputGain{0.0F};
   std::mutex outputRequestMutex;
   std::condition_variable outputRequestCondition;
   std::optional<OutputConfiguration> requestedOutput;
@@ -901,7 +902,10 @@ static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
 static bool publishMasterVolume(PipeWireRuntime &runtime) {
   // Parameter callbacks own the visible controls; the audio callback receives
   // their effective gain in one lock-free update, including mute transitions.
-  runtime.masterOutputGain.store(runtime.masterMute ? 0.0F : runtime.masterVolume, std::memory_order_release);
+  // A new daemon starts silently until the policy has restored its controls.
+  // Recreated nodes keep the already initialized in-process master state.
+  runtime.masterOutputGain.store(!runtime.masterControlsInitialized || runtime.masterMute ? 0.0F : runtime.masterVolume,
+      std::memory_order_release);
   auto storage = std::array<std::uint8_t, 256>{};
   auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
   const auto volumes = std::array<float, 2>{runtime.masterVolume, runtime.masterVolume};
@@ -935,7 +939,17 @@ static void updateMasterVolume(PipeWireRuntime &runtime, const spa_pod *paramete
     }
   }
   runtime.masterVolume *= volume;
-  if (!publishMasterVolume(runtime)) failRuntime(runtime, "cannot publish multiple-output master volume");
+  const auto initializing = !runtime.masterControlsInitialized;
+  runtime.masterControlsInitialized = true;
+  if (!publishMasterVolume(runtime)) return failRuntime(runtime, "cannot publish multiple-output master volume");
+  if (initializing) {
+    // Mark initialization after publishing normalized controls, so a policy
+    // restart preserves this daemon's current values.
+    const auto property = spa_dict_item{"node.pipetune.master-state", "retained"};
+    const auto properties = spa_dict{0, 1, &property};
+    if (pw_stream_update_properties(runtime.inputStream, &properties) < 0)
+      return failRuntime(runtime, "cannot acknowledge master control initialization");
+  }
 }
 
 static void streamParameterChanged(void *data, std::uint32_t id,
@@ -1341,7 +1355,7 @@ static FilterGraphProperties currentFilterGraphProperties(
                   SampleRateEnforcement::force;
     }
   }
-  return makeFilterGraphProperties(
+  auto graph = makeFilterGraphProperties(
       {.nodeName = runtime.options.filterName,
        .nodeDescription = runtime.options.outputConfiguration.mode == OutputMode::multiple
            ? "PipeTune Multiple Outputs" : runtime.singleOutputDescription,
@@ -1350,6 +1364,9 @@ static FilterGraphProperties currentFilterGraphProperties(
        .forceRate = forceRate,
        .inputChannelCount = streamChannelCount(runtime.options, true),
        .multipleOutputs = runtime.options.outputConfiguration.mode == OutputMode::multiple});
+  if (runtime.options.outputConfiguration.mode == OutputMode::multiple)
+    graph.input.emplace_back("node.pipetune.master-state", runtime.masterControlsInitialized ? "retained" : "restore");
+  return graph;
 }
 
 static std::string connectStream(PipeWireRuntime &runtime, pw_stream *stream,

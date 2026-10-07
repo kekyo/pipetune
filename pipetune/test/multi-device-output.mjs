@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createConnection } from "node:net";
@@ -129,9 +129,13 @@ const terminate = (record, signal) => {
     if (error.code !== "ESRCH") throw error;
   }
 };
-const socketReady = async (socket) => {
+const socketReady = async (socket, previousCreation) => {
   await new Promise((resolve, reject) => {
-    const observer = watch(dirname(socket), () => { if (existsSync(socket)) finish(); });
+    const changed = () => {
+      const current = statSync(socket, { bigint: true, throwIfNoEntry: false });
+      if (current !== undefined && current.ctimeNs !== previousCreation) finish();
+    };
+    const observer = watch(dirname(socket), changed);
     const timeout = setTimeout(() => finish(new Error(`isolated audio socket was not created: ${socket}`)), 15000);
     const finish = (error) => {
       clearTimeout(timeout);
@@ -139,7 +143,7 @@ const socketReady = async (socket) => {
       if (error) reject(error);
       else resolve();
     };
-    if (existsSync(socket)) finish();
+    changed();
   });
 };
 
@@ -165,10 +169,10 @@ const waitForMessage = async (record, message) => {
 
 try {
   start("PipeWire", pipewire, []);
-  await socketReady(join(runtime, remote));
+  await socketReady(join(runtime, remote), undefined);
   if (scenario.startsWith("policy-pulse")) {
     start("PulseAudio protocol server", "dbus-run-session", ["--", pulseServer]);
-    await socketReady(join(runtime, "pulse-native"));
+    await socketReady(join(runtime, "pulse-native"), undefined);
   }
   const manager = start("WirePlumber", "dbus-run-session", ["--", wireplumber]);
   if (scenario.startsWith("product-output-status")) {
@@ -222,15 +226,19 @@ try {
     terminate(product, "SIGTERM");
     assert.equal((await product.completion).code, 0, product.stderr);
     process.stdout.write(`${JSON.stringify({ inventoryStages: stage, configuration: saved })}\n`);
-  } else if (scenario === "product-daemon") {
+  } else if (scenario.startsWith("product-daemon")) {
     assert.ok(productDaemon, "the product daemon executable is required");
+    const volumeRestore = scenario.startsWith("product-daemon-volume");
+    const savedMasterGain = scenario.endsWith("-zero") ? 0 : 0.5;
     environment.PIPETUNE_PRODUCT_INPUT = "pipetune_sink";
     const socket = join(runtime, "pipetune", "control.sock");
     mkdirSync(dirname(socket), { recursive: true });
     const preset = join(directory, "saved.effetune_preset");
-    writeFileSync(preset, JSON.stringify({ pipeline: [
+    const pipeline = [
       { name: "Matrix", enabled: true, channel: "All", parameters: { mx: "001102p13" } },
-    ] }));
+    ];
+    if (volumeRestore) pipeline.push({ name: "DC Offset", enabled: true, channel: "All", parameters: { of: 0.125 } });
+    writeFileSync(preset, JSON.stringify({ pipeline }));
     const outputs = [0, 1].map((index) => {
       const name = `pipetune_product_device_${index}`;
       return { id: name, enabled: true, device: {
@@ -250,22 +258,24 @@ try {
     const endpoints = ["--socket", socket, "--config", join(config, "pipetune", "environment")];
     // Restart both the daemon and fixtures. The next run must recover saved
     // routing after the devices have been recreated as new runtime objects.
-    for (let attempt = 0; attempt < 2; ++attempt) {
-      const audio = start("daemon audio fixture", driver, ["audio", scenario]);
+    for (let attempt = 0; attempt < (volumeRestore ? 3 : 2); ++attempt) {
+      const audioScenario = volumeRestore ? `${scenario}-${["save", "restored", "unmuted"][attempt]}` : scenario;
+      const audio = start("daemon audio fixture", driver, ["audio", audioScenario]);
       await waitForMessage(audio, "product:devices-ready");
-      if (attempt === 0) {
+      if (attempt === 0 && !volumeRestore) {
         assert.match(await cli(["mode", "single", ...endpoints]), /next daemon start/u);
         assert.match(await cli(["select", ...outputs.map((output) => output.id), ...endpoints]), /next daemon start/u);
       }
+      const previousCreation = statSync(socket, { bigint: true, throwIfNoEntry: false })?.ctimeNs;
       const daemon = start("product daemon", productDaemon, ["daemon", "--config", join(config, "pipetune", "environment")]);
-      await socketReady(socket);
+      await socketReady(socket, previousCreation);
       const status = start("daemon status", driver, ["control", socket, JSON.stringify({ command: "status" })]);
       assert.equal((await status.completion).code, 0, status.stderr);
       const response = JSON.parse(status.stdout);
       assert.equal(response.ok, true, status.stdout);
       assert.equal(response.processingMode, "preset", status.stdout);
       assert.deepEqual(JSON.parse(await cli(["get", "--json", "--socket", socket])).outputConfiguration, routing);
-      if (attempt === 0) {
+      if (attempt === 0 && !volumeRestore) {
         assert.match(await cli(["mode", "single", ...endpoints]), /OS selects/u);
         assert.match(await cli(["mode", "multiple", ...endpoints]), /Ch 4/u);
         // Selecting the existing devices in reverse order must retain their
@@ -282,8 +292,39 @@ try {
       assert.equal((await audio.completion).code, 0, `${audio.stdout}\n${audio.stderr}`);
       const report = JSON.parse(audio.stdout);
       assert.ok(report.receivedFrames.every((frames) => frames >= 32768));
-      terminate(daemon, "SIGTERM");
-      assert.equal((await daemon.completion).code, 0, daemon.stderr);
+      if (volumeRestore) {
+        assert.equal(report.stages.length, attempt === 0 ? 3 : 4);
+        assert.ok(report.stages.slice([0, 2, 3][attempt]).every((stage) => stage.every((frames) => frames >= 32768)),
+          "both outputs must preserve the saved gain and mute, including the DSP's added DC component");
+      }
+      const killed = volumeRestore && attempt === 1;
+      terminate(daemon, killed ? "SIGKILL" : "SIGTERM");
+      const result = await daemon.completion;
+      assert.equal(killed ? result.signal : result.code, killed ? "SIGKILL" : 0, daemon.stderr);
+      if (killed) {
+        // Observe the durable state before restarting its owner. No fixed
+        // sleep or process-local cache can establish persistence here.
+        const path = join(state, "wireplumber", "pipetune-master-output");
+        await new Promise((resolve, reject) => {
+          const changed = () => {
+            if (!existsSync(path)) return;
+            const saved = readFileSync(path, "utf8").split(/\r?\n/u);
+            if (saved.includes(`pipetune_sink:gain=${savedMasterGain}`) && saved.includes("pipetune_sink:mute=false")) finish();
+          };
+          const observer = watch(dirname(path), changed);
+          const deadline = setTimeout(() => finish(new Error("master controls were not saved to disk")), 10000);
+          const finish = (error) => {
+            clearTimeout(deadline);
+            observer.close();
+            if (error) reject(error);
+            else resolve();
+          };
+          changed();
+        });
+        terminate(manager, "SIGTERM");
+        await manager.completion;
+        start("restarted WirePlumber", "dbus-run-session", ["--", wireplumber]);
+      }
       process.stdout.write(`${JSON.stringify({ attempt, ...report })}\n`);
     }
   } else if (scenario.startsWith("product")) {
