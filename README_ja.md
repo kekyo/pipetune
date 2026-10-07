@@ -36,7 +36,7 @@ EffeTune上で、環境音を構成してプリセットとして保存すれば
 
 ### 対応システム
 
-PipeTuneには、WirePlumberが管理するPipeWireデスクトップセッションと
+PipeTuneには、WirePlumberが管理するPipeWire 1.0.5以降のデスクトップセッションと
 systemdユーザーサービスが必要です。WirePlumber 0.4と0.5に対応します。
 
 > 注釈: 標準ディストリビューションのDebian及びUbuntuが該当します。
@@ -46,7 +46,6 @@ systemdユーザーサービスが必要です。WirePlumber 0.4と0.5に対応�
 
 | ディストリビューション | リリース | アーキテクチャ |
 | :--- | :--- | :--- |
-| Debian | bookworm | amd64, i386, arm64, armhf |
 | Debian | trixie | amd64, i386, arm64, armhf, riscv64 |
 | Ubuntu | 24.04 | amd64, arm64 |
 | Ubuntu | 26.04 | amd64, arm64 |

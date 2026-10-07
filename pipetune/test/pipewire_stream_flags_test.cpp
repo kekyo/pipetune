@@ -36,12 +36,8 @@ static bool testInputUsesSupportedAsynchronousScheduling() {
              "input stream must not become the triggered output")) {
     return false;
   }
-#if PW_CHECK_VERSION(0, 3, 73)
   return check(hasFlag(flags, PW_STREAM_FLAG_ASYNC),
                "supported PipeWire must use asynchronous input");
-#else
-  return true;
-#endif
 }
 
 static bool testOutputOwnsProcessingTrigger() {

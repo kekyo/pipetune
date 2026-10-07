@@ -231,8 +231,8 @@ require_command node
 
 pkg-config --exists gtk+-3.0 ||
 	fail 'Missing required pkg-config module: gtk+-3.0'
-pkg-config --exists libpipewire-0.3 ||
-	fail 'Missing required pkg-config module: libpipewire-0.3'
+pkg-config --exists 'libpipewire-0.3 >= 1.0.5' ||
+	fail 'Missing required pkg-config module: libpipewire-0.3 >= 1.0.5'
 pkg-config --exists samplerate ||
 	fail 'Missing required pkg-config module: samplerate'
 
@@ -260,7 +260,7 @@ copy_docs "$stage_dir"
 
 deb_arch=$(dpkg-architecture -qDEB_HOST_ARCH)
 shlib_depends=$(calculate_shlibdeps)
-runtime_depends='systemd, dbus-user-session, pipewire, wireplumber, hicolor-icon-theme'
+runtime_depends='systemd, dbus-user-session, pipewire (>= 1.0.5), wireplumber, hicolor-icon-theme'
 control_dir="$stage_dir/DEBIAN"
 mkdir -p "$control_dir"
 write_control_file "$control_dir/control" "$shlib_depends, $runtime_depends"

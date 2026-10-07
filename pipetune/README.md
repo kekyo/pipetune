@@ -95,7 +95,7 @@ sudo apt install \
 ```
 
 PipeTune requires CMake 3.24 or newer, a C++20 GCC toolchain, Node.js, PipeWire
-0.3 and libsamplerate development files, GTK 3 development files, and a
+1.0.5 or later and libsamplerate development files, GTK 3 development files, and a
 WirePlumber 0.4 or 0.5 desktop session. The complete test suite
 also uses `systemd-analyze`, an isolated D-Bus session, Xvfb, X11 utilities,
 `desktop-file-validate`, the GdkPixbuf thumbnailer, and the libpulse development
@@ -311,11 +311,11 @@ structure as `scheme-cd-ripper`. They create one `pipetune` package containing
 the daemon, GTK application, systemd user unit, desktop and XDG autostart
 entries, icon, configuration example, documentation, and license notices.
 
-The supported package matrix is:
+Packages require PipeWire 1.0.5 or later, including its matching module package
+for automatic output delay compensation. The supported package matrix is:
 
 | Distribution | Release | Architectures |
 | --- | --- | --- |
-| Debian | bookworm | amd64, i386, arm64, armhf |
 | Debian | trixie | amd64, i386, arm64, armhf, riscv64 |
 | Ubuntu | 24.04 | amd64, arm64 |
 | Ubuntu | 26.04 | amd64, arm64 |

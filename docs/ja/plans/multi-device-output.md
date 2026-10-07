@@ -200,7 +200,7 @@ OSに物理出力も残し、「PipeTune 複数出力」を選択したときだ
 
 PipeWireのバージョン差を先に解決する。現行配布対象に含まれる[Debian bookwormの標準PipeWireは0.3.65系](https://packages.debian.org/bookworm/pipewire)であり、[0.3.65のcombine stream](https://github.com/PipeWire/pipewire/blob/0.3.65/src/modules/module-combine-stream.c)には`combine.latency-compensate`の実装がない。[1.0.5の実装](https://github.com/PipeWire/pipewire/blob/1.0.5/src/modules/module-combine-stream.c)には存在する。最新の文書にある設定を全配布環境で利用可能とは扱わない。
 
-ビルドと実行の基準をPipeWire 1.0.5以降とする。これは使用する公開APIと標準補償を合わせて検証した下限であり、補償機能だけが導入された最初の版という意味ではない。WirePlumber 0.4と0.5は引き続き対象とする。配布はUbuntu 24.04以降とDebian trixieを基準とし、標準PipeWire 0.3.65のbookwormは対象から外す案で進める。利用者にはbookworm維持の希望を確認中であり、配布スクリプトを変更する前に回答があれば反映する。補償を無効化して同じ複数モードとして提供する方式は採用しない。
+ビルドと実行の基準をPipeWire 1.0.5以降とする。これは使用する公開APIと標準補償を合わせて検証した下限であり、補償機能だけが導入された最初の版という意味ではない。WirePlumber 0.4と0.5は引き続き対象とする。配布はUbuntu 24.04以降とDebian trixieを基準とし、標準PipeWire 0.3.65のbookwormは対象から外す。bookworm維持の希望に回答がないため、保存済みの案に従って配布スクリプトもこの範囲へ合わせる。補償を無効化して同じ複数モードとして提供する方式は採用しない。
 
 ### 出力ストリームをPipeTuneで複数管理する案
 
@@ -832,6 +832,14 @@ GTK表示の実装後、現在の製品経路の再生ストリームに`stream.
 
 外部コードを変更しない方針に従い、この制約とアプリケーションの音声出力を開き直す回復手順を英日READMEへ記載した。WirePlumber 0.4・0.5の対応範囲は維持する。通常のステレオ再生設定での製品経路の自動復旧・音量維持については既存の成功結果を維持し、0.4の上記条件まで自動復旧できた扱いにはしない。検証中はホストのWirePlumberや音声設定を変更していない。
 
+### フェーズ3: 配布対象とPipeWireの必要版の統一
+
+配布スクリプトと利用者文書をPipeWire 1.0.5以降へそろえた。Debian trixieの5アーキテクチャ、Ubuntu 24.04と26.04の各2アーキテクチャを残し、標準PipeWireが下限を満たさないbookwormの4対象を除いた。前提イメージの作成とパッケージ構築の検証もtrixieを使う。パッケージの依存関係に`pipewire (>= 1.0.5)`を明示し、版指定なし・古い下限のパッケージは検証で拒否する。対象ディストリビューションの`pipewire`は同じ版のモジュールを依存関係に持つため、実行ライブラリだけ新しくても補償モジュールが古い構成を前提にしない。[Debianのpipewireパッケージ](https://packages.debian.org/trixie/pipewire)
+
+入力ストリームの非同期フラグについて、0.3.73より前のヘッダーでは指定を省く分岐と、その旧環境専用ビルドを除いた。現在の下限では常に非同期入力フラグを使用できる。[Stream API](https://docs.pipewire.org/group__pw__stream.html)とホストのAPIコメントで確認した。Arm向け生成処理で使うNode 18互換の依存版固定は、Ubuntu 24.04の前提イメージにもNode 18.19.1があるため維持し、文書の理由を更新した。
+
+削除前には、旧ディストリビューションの選択と古いヘッダーでのコンパイルが成功するREDを確認し、削除後に両方が拒否されるGREENを確認した（`package-legacy-red.log`、`package-legacy-green.log`）。実際に作成したdebを使う依存関係検査も、下限なしを受け入れるREDから、正しい下限だけを受け入れるGREENへ変わった（`package-minimum-red.log`、`package-minimum-green.log`）。全ターゲットのビルドとパッケージ・音声経路の関連28件が成功し、PipeWire 1.4.2ヘッダーでもストリームのフラグ検証が成功した（`package-minimum-configure.log`、`package-minimum-build.log`、`package-minimum-regression.log`、`package-stream-flags-wp05.log`）。対象コンテナでの実パッケージの構築・インストール検証と最終の全体テストは引き続き実施する。
+
 ### 全体テストと残作業
 
 音量検証までを実装した段階で`make test`を実行し、169件中168件が成功した。GTK E2Eも成功した。1件の`pipetune_component_build`は、実行中のコミットによってGit履歴から求める版番号が変わり、先にビルドされた実行ファイルの版番号と一致しなかったため失敗した。コミット`36db494`で再構成・全ターゲットの再ビルドを行い、コミットを追加せずに同テストを再実行して成功した。製品コードやテストの比較条件を変更する対処は行っていない。
@@ -845,5 +853,5 @@ GTK表示の実装後、現在の製品経路の再生ストリームに`stream.
 - フェーズ2・3: 実デバイスでの申告遅延差、補償状態、レート変更、長時間動作と物理デバイス音量との関係を測定する。全体音量・ミュートの製品デーモン再起動・永続化とWirePlumber再起動からの復旧は仮想出力で確認済みとし、実機のOS操作でも確認する。
 - フェーズ3: チャンネル対応表を含むGTK、Apply・Cancel、GNOMEの出力選択・音量操作、製品デーモンの通常終了・異常終了後の復旧、利用者文書。
 - フェーズ3: PulseAudio・PipeWireアプリケーションの再接続を最終UI・OS統合でも確認する。WirePlumber 0.4.17での既存アプリケーションの待機状態は、PipeTuneなしでも再現する制約として切り分け済みであり、音声出力の開き直しを回復手順として公開する。
-- CMakeで引き上げたPipeWireの必要版を配布依存関係へ反映し、旧版向け互換コードの整理と対象環境の検証を行う。bookworm維持の希望に回答があれば配布対象の決定へ反映する。
+- PipeWireの必要版を配布依存関係へ反映し、旧版向け互換コードとbookwormの配布対象を整理した。対象コンテナで実パッケージの構築・インストールを確認する。
 - 最終作業ツリーを固定した全体`make test`と、最終完了条件全項目の照合。

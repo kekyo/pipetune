@@ -40,8 +40,8 @@ you can then immediately apply them in PipeTune to apply effects to all Linux so
 
 ### Supported systems
 
-PipeTune requires a PipeWire desktop session managed by WirePlumber and
-systemd user services. WirePlumber 0.4 and 0.5 are supported. A standalone
+PipeTune requires PipeWire 1.0.5 or later in a desktop session managed by
+WirePlumber and systemd user services. WirePlumber 0.4 and 0.5 are supported.
 
 > Note: This applies to the standard Debian and Ubuntu distributions.
 > It may also work on other distributions if they meet the system requirements.
@@ -50,7 +50,6 @@ Prebuilt Debian packages are published for:
 
 | Distribution | Release | Architectures |
 | :--- | :--- | :--- |
-| Debian | bookworm | amd64, i386, arm64, armhf |
 | Debian | trixie | amd64, i386, arm64, armhf, riscv64 |
 | Ubuntu | 24.04 | amd64, arm64 |
 | Ubuntu | 26.04 | amd64, arm64 |

@@ -10,11 +10,7 @@ PACKAGE_DESCRIPTION="PipeWire system-wide DSP and GTK control application."
 DEFAULT_MAINTAINER="PipeTune packager <packager@localhost>"
 DEFAULT_PARALLEL_JOB_CAP=14
 
-LINUX_MATRIX='debian bookworm x86_64 linux/amd64
-debian bookworm i686 linux/386
-debian bookworm arm64 linux/arm64
-debian bookworm armv7l linux/arm/v7
-debian trixie x86_64 linux/amd64
+LINUX_MATRIX='debian trixie x86_64 linux/amd64
 debian trixie i686 linux/386
 debian trixie arm64 linux/arm64
 debian trixie armv7l linux/arm/v7
@@ -152,7 +148,7 @@ canonical_release() {
 	value=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
 
 	case $value in
-		bookworm | trixie | 24.04 | 26.04)
+		trixie | 24.04 | 26.04)
 			printf '%s\n' "$value"
 			;;
 		noble)
@@ -535,7 +531,7 @@ validate_deb_package() {
 	for required_dependency in \
 		systemd \
 		dbus-user-session \
-		pipewire \
+		'pipewire(>=1.0.5)' \
 		wireplumber \
 		hicolor-icon-theme; do
 		assert_deb_dependency "$depends_value" "$required_dependency"
