@@ -330,14 +330,14 @@ GTKの検証は既存のテスト基盤に追加する。ブラウザを介す�
 - [x] デバイス間の遅延差とクロック差を扱い、定めた測定条件で同期と再接続を確認している。
 - [x] EffeTuneの意図的な遅延と物理出力の補償を区別し、補償状態を表示している。
 - [x] OSの全体音量とミュートがDSP後段で全出力へ作用する。
-- [ ] GNOMEの単一モードでは物理出力を選択でき、`PipeTune Processed Audio`と`PipeTune-Playback Playback Audio`を含む内部出力が一覧に出ない。
-- [ ] GNOMEの複数モードでは`PipeTune Processed Audio`だけが一覧に出て選択され、モード往復・画面再起動・デバイス喪失復帰でも整合する。入力の選択肢と操作を維持する。
-- [ ] 全選択デバイスの喪失・復帰を含め、構成を保持して自動復帰する。残った出力の短いフェード・瞬断は許容するが、再生停止の継続、誤転送、チャンネル構成のリセットは発生しない。
-- [ ] 単一モード・通常終了・異常終了で物理出力の表示とOSによる選択を復旧する。実カードの端子一覧に対する未達成事項は末尾の追加調査を参照。
+- [x] GNOMEの単一モードでは物理出力を選択でき、`PipeTune Processed Audio`と`PipeTune-Playback Playback Audio`を含む内部出力が一覧に出ない。
+- [x] GNOMEの複数モードでは`PipeTune Processed Audio`だけが一覧に出て選択され、モード往復・画面再起動・デバイス喪失復帰でも整合する。入力の選択肢と操作を維持する。
+- [x] 全選択デバイスの喪失・復帰を含め、構成を保持して自動復帰する。残った出力の短いフェード・瞬断は許容するが、再生停止の継続、誤転送、チャンネル構成のリセットは発生しない。
+- [x] 単一モード・通常終了・異常終了で物理出力の表示とOSによる選択を復旧する。実カードの端子一覧も反復5で確認済み。
 - [x] 出力構成が既存のプレビュー、Apply、Cancelと整合し、変更・保存失敗時に旧状態を失わない。
 - [x] WirePlumber 0.4と0.5、PulseAudio経由とPipeWireの経路を検証している。
 - [x] 採用方式と必要なPipeWireバージョンを明示し、配布対象と依存関係が整合している。
-- [ ] 最新の表示・復帰要件を満たす修正後の関連テストと全体の`make test`が成功し、実機での確認結果と利用者文書が揃っている。既存コードの217件成功は実施記録として維持する。
+- [x] 最新の表示・復帰要件を満たす修正後の関連テストと全体の`make test`が成功し、実機での確認結果と利用者文書が揃っている。反復5で221件成功。既存コードの217件成功は過去の実施記録として維持する。
 
 ## 着手前または各フェーズで確定する事項
 
@@ -1175,3 +1175,27 @@ GNOME 46.7を開いたまま、同じ12段階と独立した入力録音を同�
 配布検証では、モジュールを含まないdebが受理されるREDを追加し、モジュールの個数とELFアーキテクチャを確認する修正後にGREENを確認した。実際のCMakeインストールを隔離したDESTDIRへ行い、配置されたモジュールで録音中の一覧テストに成功した。続いてインストールマニフェストを再構築して隔離先のアプリとモジュールを削除し、無関係なファイルを保持することを確認した。ホストの既存インストールには触れていない。記録は`package-module-red.log`、`package-module-green.log`、`staged-install.log`、`staged-module-test.log`、`staged-uninstall.log`に保存した。
 
 READMEの利用者向け説明を、モード別のOS表示と固定チャンネルへの自動復帰に合わせた。次はコミットを固定して全体テストを実行し、GTKのApply/Cancelを含む既存の回帰確認と、現在のGNOMEセッションへの反映を完了する。
+
+### 実装反復5: 全体テストと現在のセッションへの反映（2026-10-08）
+
+コミット`9d68448`を固定し、`PREFIX=/home/kouji/.local dbus-run-session -- node artifacts/output-tab-order/run-tests.mjs full`を実行した。分離した音声環境で`make test`の221/221件が成功し、所要時間は269.95秒だった。GTKの実操作によるプレビュー・Apply・Cancel、出力喪失中の対応表維持、保存拒否も含む。ログは`artifacts/output-visibility/full-test-final.log`に保存した。
+
+同じコミットを既存の`build/session-install`でReleaseビルドし、現在のユーザー領域へPipeTune / PipeTune GTK 2.12.74を反映した。設定・プリセット・旧バイナリを退避し、インストール成果物は先にDESTDIRへ配置して確認してから更新した。アプリは既存どおり`~/.local/bin`、DSPライブラリは`~/.local/lib/pipetune`を使用する。
+
+今回の実機は管理者権限を使わず導入されているため、表示モジュールは`~/.local/lib/pipewire-0.3/libpipewire-module-pipetune-presentation.so`へ配置した。このローカル導入に限り、`~/.config/systemd/user/pipewire.service.d/60-pipetune-local-module.conf`で`PIPEWIRE_MODULE_DIR`へそのディレクトリと既存の標準ディレクトリを指定した。通常のCMake/debの配置先は反復3で決めた標準モジュールディレクトリのままである。[PipeWireのモジュール検索環境変数](https://docs.pipewire.org/page_man_pipewire_1.html)、[1.0.5の検索実装とAPIコメント](https://github.com/PipeWire/pipewire/blob/1.0.5/src/pipewire/impl-module.c)
+
+`pipetune setup --no-launch-gtk`でユーザーの音声サービスを再起動し、新しいモジュールの読み込みと各サービスの稼働を確認した。保存済みの出力構成、プリセット、96 kHz force、DSPバックエンド、アイドル設定を保持した。セットアップは既存のautostartファイルを管理外の設定として保持した旨を報告した。PipeTune GTKも更新版を起動し、現在のGNOMEセッションからパネルを開ける状態にした。
+
+実機のTX 384kb HiFi、Steinberg UR22mkII、Cam Link 4Kが接続された状態で、次を照合した。
+
+- Singleでは通常の出力端子4項目を列挙し、TXのAnalog Outputを選択した。内部出力は列挙されない。
+- Multipleでは`PipeTune Processed Audio`1件だけを列挙し、同じ名前の公開出力を選択した。
+- Singleへ戻すと通常の4項目と元の選択を復元した。入力4端子、選択中のCam Link、入力音量・ミュート、モード往復中の入力IDを維持した。
+- 無音の再生ストリームを使い、両モードで入力フレームの増加、Multipleの選択出力への経路がactiveとなること、処理エラーが0であることを確認した。実機のスピーカー到達時間の測定とはしない。
+- 再生中に開いたまま往復する場合と、各モードでGNOMEを新規起動する場合の表示が一致した。実セッションが画面ロック中になったため、最終的な画面の照合には、同じ実機のPipeWire / PulseAudioセッションへ接続した分離表示上のGNOME 46.7を使用した。ロック解除や入力ミュートの変更は行っていない。
+
+実機でのmode変更は制御プロトコルによる一時的な変更とし、終了時に元のSingle構成へ戻した。`~/.config/pipetune/environment`が更新前とバイト単位で一致し、ライブ状態も元の構成と一致することを確認した。機器喪失・逆順復帰の非ゼロPCMと入力の音量・ミュート・端子操作は、反復2〜4の分離したduplex検証および製品試験で確認している。Bluetoothなど今回接続していない実機に対する測定結果へ一般化しない。
+
+実機の状態と画面は`artifacts/output-visibility/host-ui-*.json` / `host-ui-*.png`、ログは`host-ui.log`、配置先は`host-installation.json`、退避した状態は`host-backup/`と`host-installed-files-before/`に保存した。今回専用のモジュール配置と検索先を撤去する場合は、上記のローカルモジュールとdrop-inを削除し、ユーザーのsystemd設定を再読込して音声サービスを再起動する。これらは通常パッケージのインストールマニフェストとは別に記録した。
+
+反復1〜5の完了条件を照合し、最新のモード別表示・入力維持・固定チャンネル復帰・全体テスト・現在のセッションへの反映を満たしたため、OS統合を含む最終完了チェックを更新した。この最後の変更は検証記録とチェックの更新だけであり、テスト済み・導入済みの製品コードは変更していない。
