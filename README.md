@@ -467,6 +467,14 @@ automatically. The startup preset selection is preserved.
 Use `pipetune unsetup --purge` to also remove PipeTune's application
 configuration.
 
+With WirePlumber 0.4.17, restarting WirePlumber can leave an application's
+existing audio stream silent, including streams using `stream.dont-remix=true`.
+Reopen the application's audio output or restart that application. This also
+occurs without PipeTune; the equivalent PipeTune playback test resumes on
+WirePlumber 0.5.8. See the upstream audio adapter implementations for
+[0.4.17](https://github.com/PipeWire/wireplumber/blob/0.4.17/modules/module-si-audio-adapter.c)
+and [0.5.8](https://github.com/PipeWire/wireplumber/blob/0.5.8/modules/module-si-audio-adapter.c).
+
 ## Logs
 
 View daemon logs with:

@@ -400,6 +400,11 @@ sudo apt remove pipetune
 
 PipeTuneのアプリケーション設定も削除する場合は、`pipetune unsetup --purge`を使用します。
 
+WirePlumber 0.4.17では、WirePlumberを再起動すると、アプリケーションが開いていた音声出力が無音のままになる場合があります。
+`stream.dont-remix=true`を使う再生経路でも確認しています。その場合はアプリケーションの音声出力を開き直すか、アプリケーションを再起動してください。
+PipeTuneを起動しない環境でも再現し、WirePlumber 0.5.8では同じPipeTune再生試験が復帰することを確認しました。
+関連する上流の音声アダプター実装は[0.4.17](https://github.com/PipeWire/wireplumber/blob/0.4.17/modules/module-si-audio-adapter.c)と[0.5.8](https://github.com/PipeWire/wireplumber/blob/0.5.8/modules/module-si-audio-adapter.c)を参照してください。
+
 ## ログ
 
 デーモンのログは次のコマンドで確認出来ます。

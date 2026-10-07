@@ -822,6 +822,16 @@ Outputページの選択中の各デバイスに、音声経路の準備中・�
 
 全ターゲットのビルド、表示文字列のテスト、追加した実操作とコンパクト表示の2ケースが成功した（`output-timing-ui-green-build.log`、`output-timing-ui-text-green.log`、`output-timing-ui-green.log`）。画面のPNGを取得して目視確認した（`output-timing-ui-capture.log`、`output-timing-gtk.png`）。最後に全ターゲットを再ビルドし、GTK関連32件すべての成功を確認した。GTK E2Eは追加ケースを含む31ケースである（`output-timing-ui-regression-build.log`、`output-timing-ui-regression.log`、`output-timing-ui-e2e.log`）。製品デーモンを含むUI・OS統合、実機の最終検証、全体の`make test`は完了した扱いにしない。
 
+### フェーズ3: WirePlumber 0.4再起動後の既存アプリケーションの制約
+
+GTK表示の実装後、現在の製品経路の再生ストリームに`stream.dont-remix=true`を追加して、WirePlumber 0.4.17の再起動後に再生が停止する現象を再確認した。再起動前の通常・減衰段階では両出力32768フレーム以上の一致したPCMを受信し、再起動後は0フレームで期限に達した（`restart-dont-remix-current.log`）。同じ検証実行ファイルと設定をPipeWire 1.4.2 / WirePlumber 0.5.8で実行すると、再起動後も両出力32768フレームを受信した（`restart-dont-remix-wp05.log`）。
+
+切り分けには分離したPipeWire 1.0.5 / WirePlumber 0.4.17と、標準の`pw-cat`、`pw-cli`の仮想出力だけを使った。PipeTuneの製品・ポリシー・DSPは起動していない。再生ノードと出力がrunning、左右のリンクがactiveであることを確認した後にWirePlumberを再起動し、出力を新しい接続世代で再作成した。既存の再生ノードは同じ接続世代でsuspendedとなり、5秒の観測中にリンクが復旧しなかった。同じファイルを新しく開くと、再生ノードと左右のリンクがrunning / activeへ戻った（`restart-plain.mjs`、`restart-plain-true.log`と同名ディレクトリの前後グラフ）。この分離検証では`stream.dont-remix=false`でも同じ現象を確認したため、発生条件を同プロパティだけに限定しない（`restart-plain-false.log`）。
+
+上流コードでは、0.4.17の音声アダプターは既存ポートと同じ形式を設定した後も、新しいポートの変更通知で構成完了する前提を持つ。0.5.8には既存ポートについてパラメーター通知から構成完了する処理がある。観測された停止はこの差と整合するが、すべての再生アプリケーションに共通する唯一の原因とまでは断定しない。[0.4.17の音声アダプター](https://github.com/PipeWire/wireplumber/blob/0.4.17/modules/module-si-audio-adapter.c)、[0.5.8の既存ポート処理](https://github.com/PipeWire/wireplumber/blob/0.5.8/modules/module-si-audio-adapter.c#L552)
+
+外部コードを変更しない方針に従い、この制約とアプリケーションの音声出力を開き直す回復手順を英日READMEへ記載した。WirePlumber 0.4・0.5の対応範囲は維持する。通常のステレオ再生設定での製品経路の自動復旧・音量維持については既存の成功結果を維持し、0.4の上記条件まで自動復旧できた扱いにはしない。検証中はホストのWirePlumberや音声設定を変更していない。
+
 ### 全体テストと残作業
 
 音量検証までを実装した段階で`make test`を実行し、169件中168件が成功した。GTK E2Eも成功した。1件の`pipetune_component_build`は、実行中のコミットによってGit履歴から求める版番号が変わり、先にビルドされた実行ファイルの版番号と一致しなかったため失敗した。コミット`36db494`で再構成・全ターゲットの再ビルドを行い、コミットを追加せずに同テストを再実行して成功した。製品コードやテストの比較条件を変更する対処は行っていない。
@@ -834,6 +844,6 @@ Outputページの選択中の各デバイスに、音声経路の準備中・�
 - フェーズ2・3: 経路状態と補償量の目安の通知、CLI表示、レート・バックエンド・プリセット・休止操作との整合は製品経路で確認済み。GTK表示と通知中の編集保持も確認済みとし、製品デーモンと実機の統合検証へ進む。
 - フェーズ2・3: 実デバイスでの申告遅延差、補償状態、レート変更、長時間動作と物理デバイス音量との関係を測定する。全体音量・ミュートの製品デーモン再起動・永続化とWirePlumber再起動からの復旧は仮想出力で確認済みとし、実機のOS操作でも確認する。
 - フェーズ3: チャンネル対応表を含むGTK、Apply・Cancel、GNOMEの出力選択・音量操作、製品デーモンの通常終了・異常終了後の復旧、利用者文書。
-- フェーズ3: PulseAudio・PipeWireアプリケーションの再接続を確認し、`stream.dont-remix=true`を指定するアプリケーションとWirePlumber 0.4.17の再起動時に観測した待機状態を調査する。
+- フェーズ3: PulseAudio・PipeWireアプリケーションの再接続を最終UI・OS統合でも確認する。WirePlumber 0.4.17での既存アプリケーションの待機状態は、PipeTuneなしでも再現する制約として切り分け済みであり、音声出力の開き直しを回復手順として公開する。
 - CMakeで引き上げたPipeWireの必要版を配布依存関係へ反映し、旧版向け互換コードの整理と対象環境の検証を行う。bookworm維持の希望に回答があれば配布対象の決定へ反映する。
 - 最終作業ツリーを固定した全体`make test`と、最終完了条件全項目の照合。
