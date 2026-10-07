@@ -16,6 +16,7 @@
 #include "pipewire_buffer_io.h"
 #include "pipewire_latency.h"
 #include "pipewire_output_inventory.h"
+#include "pipewire_output_paths.h"
 #include "pipewire_stream_flags.h"
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
@@ -193,6 +194,8 @@ struct PipeWireRuntime {
   std::string error;
   PipeWireOutputInventoryPtr outputInventory;
   OutputInventoryResult availableOutputs;
+  PipeWireOutputPathsPtr outputPaths;
+  std::vector<PipeWireOutputPath> outputPathSnapshots;
   // The PipeWire loop owns inventory updates; the control thread copies a
   // complete snapshot under this mutex. Audio callbacks never acquire it.
   std::mutex outputStateMutex;
@@ -299,6 +302,7 @@ struct PipeWireRuntime {
     controlServer.reset();
     presetFileMonitor.reset();
     outputInventory.reset();
+    outputPaths.reset();
     // Capture triggers the output from the data loop. Stop those callbacks
     // before releasing the stream that they may still be using.
     if (inputStream != nullptr) static_cast<void>(pw_stream_set_active(inputStream, false));
@@ -1511,6 +1515,15 @@ static void distributionDestroyed(void *data) {
   failRuntime(runtime, "PipeWire output distribution stopped unexpectedly");
 }
 
+static void outputPathsChanged(const std::vector<PipeWireOutputPath> &paths, void *data) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  {
+    auto lock = std::scoped_lock(runtime.outputStateMutex);
+    runtime.outputPathSnapshots = paths;
+  }
+  requestControlStatusUpdate(runtime);
+}
+
 static std::string replaceOutputDistribution(PipeWireRuntime &runtime, const std::string &arguments) {
   // Retain the previous default-output lease until a replacement module has
   // been constructed. Explicitly removed modules must not report a failure.
@@ -1531,6 +1544,12 @@ static std::string replaceOutputDistribution(PipeWireRuntime &runtime, const std
     }();
     runtime.outputDistributionListener = {};
     pw_impl_module_add_listener(replacement, &runtime.outputDistributionListener, &events, &runtime);
+    if (runtime.outputPaths == nullptr)
+      runtime.outputPaths = observePipeWireOutputPaths(runtime.core, runtime.options.filterName, outputPathsChanged, &runtime);
+  } else {
+    runtime.outputPaths.reset();
+    auto lock = std::scoped_lock(runtime.outputStateMutex);
+    runtime.outputPathSnapshots.clear();
   }
   return {};
 }
@@ -1848,11 +1867,14 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
   auto outputConfiguration = OutputConfiguration{};
   auto outputInventory = OutputInventoryResult{};
   auto outputInventoryReady = false;
+  auto outputTimings = std::vector<OutputTimingState>{};
   {
     auto lock = std::scoped_lock(runtime.outputStateMutex);
     outputConfiguration = runtime.options.outputConfiguration;
     outputInventory = runtime.availableOutputs;
     outputInventoryReady = runtime.outputInventoryReady;
+    if (outputInventoryReady && outputInventory.error.empty() && !rateTransitioning && !runtime.previousOutput)
+      outputTimings = summarizeOutputTiming(outputConfiguration, outputInventory.outputs, runtime.outputPathSnapshots);
   }
   return {.processingMode = runtime.processingMode,
           .dspActivity = idleState.activity,
@@ -1894,7 +1916,8 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .availableOutputs = outputInventory.error.empty() ? std::move(outputInventory.outputs) : std::vector<AvailableOutput>{},
           .outputInventoryReady = outputInventoryReady,
           .outputInventoryError = outputInventory.error,
-          .outputVolumes = outputInventory.error.empty() ? std::move(outputInventory.volumes) : std::vector<OutputVolumeState>{}};
+          .outputVolumes = outputInventory.error.empty() ? std::move(outputInventory.volumes) : std::vector<OutputVolumeState>{},
+          .outputTimings = std::move(outputTimings)};
 }
 
 static ControlMessageResult closeControlResponse(std::string response,

@@ -570,6 +570,16 @@ std::string makeSetOutputControlRequest(const OutputConfiguration &configuration
   return writeDocument(document.get());
 }
 
+static std::string_view outputActivityName(OutputPathActivity activity) noexcept {
+  switch (activity) {
+  case OutputPathActivity::pending: return "pending";
+  case OutputPathActivity::idle: return "idle";
+  case OutputPathActivity::active: return "active";
+  case OutputPathActivity::error: return "error";
+  }
+  return {};
+}
+
 static bool outputStatusIsConsistent(const ControlRuntimeStatus &status) {
   auto serials = std::set<std::uint64_t>{};
   const auto validGain = [](float value) { return std::isfinite(value) && value >= 0; };
@@ -579,6 +589,21 @@ static bool outputStatusIsConsistent(const ControlRuntimeStatus &status) {
             [&volume](const auto &output) { return output.nodeSerial == volume.nodeSerial; }) ||
         (volume.volume && !validGain(*volume.volume)) || volume.channelVolumes.size() > 64 ||
         !std::all_of(volume.channelVolumes.begin(), volume.channelVolumes.end(), validGain)) return false;
+  }
+  auto ids = std::set<std::string>{};
+  const auto resolved = resolveConfiguredOutputs(status.outputConfiguration, status.availableOutputs);
+  for (const auto &timing : status.outputTimings) {
+    if (status.outputConfiguration.mode != OutputMode::multiple || timing.nodeSerial == 0 ||
+        !ids.insert(timing.outputId).second || outputActivityName(timing.activity).empty()) return false;
+    const auto output = std::find_if(resolved.begin(), resolved.end(),
+        [&](const auto &entry) { return entry.outputId == timing.outputId; });
+    if (output == resolved.end() || !output->inventoryIndex ||
+        status.availableOutputs[*output->inventoryIndex].nodeSerial != timing.nodeSerial) return false;
+    const auto valid = [](const auto &value) { return !value || (std::isfinite(*value) && *value >= 0); };
+    if (!valid(timing.reportedLatencyNanoseconds) || !valid(timing.estimatedCompensationNanoseconds) ||
+        (timing.estimatedCompensationNanoseconds && !timing.reportedLatencyNanoseconds) ||
+        (timing.activity != OutputPathActivity::active &&
+         (timing.reportedLatencyNanoseconds || timing.estimatedCompensationNanoseconds))) return false;
   }
   return validateOutputConfiguration(status.outputConfiguration).empty() &&
       status.outputInventoryError.find('\0') == std::string::npos &&
@@ -727,6 +752,22 @@ static std::string makeControlStatusMessage(
       if (!yyjson_mut_arr_add_real(document.get(), channels, gain))
         return makeControlErrorResponse("cannot encode device channel volumes");
     }
+  }
+
+  auto *timings = yyjson_mut_obj_add_arr(document.get(), root, "outputTimings");
+  if (timings == nullptr) return makeControlErrorResponse("cannot encode output timing");
+  for (const auto &timing : status.outputTimings) {
+    auto *item = yyjson_mut_arr_add_obj(document.get(), timings);
+    if (item == nullptr || !addString(document.get(), item, "outputId", timing.outputId) ||
+        !addString(document.get(), item, "nodeSerial", std::to_string(timing.nodeSerial)) ||
+        !addString(document.get(), item, "activity", outputActivityName(timing.activity)) ||
+        !(timing.reportedLatencyNanoseconds ? yyjson_mut_obj_add_real(document.get(), item,
+            "reportedLatencyNanoseconds", *timing.reportedLatencyNanoseconds) :
+            yyjson_mut_obj_add_null(document.get(), item, "reportedLatencyNanoseconds")) ||
+        !(timing.estimatedCompensationNanoseconds ? yyjson_mut_obj_add_real(document.get(), item,
+            "estimatedCompensationNanoseconds", *timing.estimatedCompensationNanoseconds) :
+            yyjson_mut_obj_add_null(document.get(), item, "estimatedCompensationNanoseconds")))
+      return makeControlErrorResponse("cannot encode output timing");
   }
 
   auto *presetEntries =
@@ -1236,6 +1277,39 @@ static bool readOutputVolumes(yyjson_val *array, std::vector<OutputVolumeState> 
   return true;
 }
 
+static bool readTimingNumber(yyjson_val *value, std::optional<double> &number) {
+  if (yyjson_is_null(value)) return true;
+  if (!yyjson_is_num(value)) return false;
+  const auto parsed = yyjson_get_num(value);
+  if (!std::isfinite(parsed) || parsed < 0) return false;
+  number = parsed;
+  return true;
+}
+
+static bool readOutputTimings(yyjson_val *array, std::vector<OutputTimingState> &timings) {
+  if (!yyjson_is_arr(array)) return false;
+  for (auto index = std::size_t{0}; index < yyjson_arr_size(array); ++index) {
+    auto *item = yyjson_arr_get(array, index);
+    auto timing = OutputTimingState{};
+    auto serial = std::string{};
+    auto activity = std::string{};
+    if (!yyjson_is_obj(item) || yyjson_obj_size(item) != 5 ||
+        !readStringField(item, "outputId", timing.outputId) || !readStringField(item, "nodeSerial", serial) ||
+        !readStringField(item, "activity", activity) ||
+        !readTimingNumber(yyjson_obj_get(item, "reportedLatencyNanoseconds"), timing.reportedLatencyNanoseconds) ||
+        !readTimingNumber(yyjson_obj_get(item, "estimatedCompensationNanoseconds"), timing.estimatedCompensationNanoseconds)) return false;
+    const auto parsed = std::from_chars(serial.data(), serial.data() + serial.size(), timing.nodeSerial);
+    if (parsed.ec != std::errc{} || parsed.ptr != serial.data() + serial.size()) return false;
+    if (activity == "pending") timing.activity = OutputPathActivity::pending;
+    else if (activity == "idle") timing.activity = OutputPathActivity::idle;
+    else if (activity == "active") timing.activity = OutputPathActivity::active;
+    else if (activity == "error") timing.activity = OutputPathActivity::error;
+    else return false;
+    timings.push_back(std::move(timing));
+  }
+  return true;
+}
+
 static bool readOutputStatus(yyjson_val *root, ControlRuntimeStatus &status) {
   auto configuration = parseOutputConfigurationJson(yyjson_obj_get(root, "outputConfiguration"));
   auto *outputs = yyjson_obj_get(root, "availableOutputs");
@@ -1257,7 +1331,8 @@ static bool readOutputStatus(yyjson_val *root, ControlRuntimeStatus &status) {
     if (parsed.ec != std::errc{} || parsed.ptr != serial.data() + serial.size()) return false;
     status.availableOutputs.push_back(std::move(output));
   }
-  return readOutputVolumes(yyjson_obj_get(root, "outputVolumes"), status.outputVolumes) && outputStatusIsConsistent(status);
+  return readOutputVolumes(yyjson_obj_get(root, "outputVolumes"), status.outputVolumes) &&
+      readOutputTimings(yyjson_obj_get(root, "outputTimings"), status.outputTimings) && outputStatusIsConsistent(status);
 }
 
 ControlResponseParseResult parseControlResponse(std::string_view json) {

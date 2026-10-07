@@ -18,6 +18,44 @@
 
 namespace pipetune {
 
+std::vector<OutputTimingState> summarizeOutputTiming(const OutputConfiguration &configuration,
+    std::span<const AvailableOutput> inventory, std::span<const PipeWireOutputPath> paths) {
+  auto timings = std::vector<OutputTimingState>{};
+  if (configuration.mode != OutputMode::multiple) return timings;
+  const auto resolved = resolveConfiguredOutputs(configuration, inventory);
+  auto complete = true;
+  auto maximum = 0.0;
+  for (auto index = std::size_t{0}; index < resolved.size(); ++index) {
+    if (!resolved[index].inventoryIndex) continue;
+    const auto &output = configuration.outputs[index];
+    const auto &available = inventory[*resolved[index].inventoryIndex];
+    auto timing = OutputTimingState{.outputId = output.id, .nodeSerial = available.nodeSerial,
+        .activity = OutputPathActivity::pending, .reportedLatencyNanoseconds = {}, .estimatedCompensationNanoseconds = {}};
+    auto slots = std::vector<std::uint32_t>(output.device.channelPositions.size(), UINT32_MAX);
+    for (auto slot = std::size_t{0}; slot < configuration.channels.size(); ++slot) {
+      const auto &channel = configuration.channels[slot];
+      if (channel.outputId == output.id && channel.deviceChannel < slots.size())
+        slots[channel.deviceChannel] = static_cast<std::uint32_t>(slot);
+    }
+    const auto matches = [&](const auto &path) { return path.outputId == output.id && path.targetSerial == available.nodeSerial; };
+    if (std::count_if(paths.begin(), paths.end(), matches) == 1) {
+      const auto &path = *std::find_if(paths.begin(), paths.end(), matches);
+      if (path.streamSerial != 0 && path.targetNodeId == available.nodeId && path.channelSlots == slots) {
+        timing.activity = path.activity;
+        if (path.activity == OutputPathActivity::active && path.reportedLatencyNanoseconds &&
+            std::isfinite(*path.reportedLatencyNanoseconds) && *path.reportedLatencyNanoseconds >= 0)
+          timing.reportedLatencyNanoseconds = path.reportedLatencyNanoseconds;
+      }
+    }
+    complete = complete && timing.reportedLatencyNanoseconds.has_value();
+    if (timing.reportedLatencyNanoseconds) maximum = std::max(maximum, *timing.reportedLatencyNanoseconds);
+    timings.push_back(std::move(timing));
+  }
+  if (complete) for (auto &timing : timings)
+    timing.estimatedCompensationNanoseconds = maximum - *timing.reportedLatencyNanoseconds;
+  return timings;
+}
+
 using PathProperties = std::map<std::string, std::string, std::less<>>;
 
 struct PathBinding {
@@ -96,6 +134,21 @@ static std::uint64_t unsignedValue(std::string_view text) {
   return parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size() ? value : 0;
 }
 
+static std::vector<std::uint32_t> channelSlots(std::string_view text) {
+  auto slots = std::vector<std::uint32_t>{};
+  while (!text.empty()) {
+    auto value = std::uint32_t{};
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (parsed.ec != std::errc{} || value >= 16 || slots.size() >= 16 ||
+        std::find(slots.begin(), slots.end(), value) != slots.end()) return {};
+    slots.push_back(value);
+    if (parsed.ptr == text.data() + text.size()) return slots;
+    if (*parsed.ptr != ',' || parsed.ptr + 1 == text.data() + text.size()) return {};
+    text.remove_prefix(static_cast<std::size_t>(parsed.ptr + 1 - text.data()));
+  }
+  return {};
+}
+
 static void scheduleSnapshot(PipeWireOutputPaths &observer) {
   observer.pending = pw_core_sync(observer.core, PW_ID_CORE, 0);
 }
@@ -104,10 +157,12 @@ static PipeWireOutputPath describePath(const PipeWireOutputPaths &observer,
                                      std::uint32_t id, const PathNode &node) {
   auto path = PipeWireOutputPath{};
   path.outputId = property(node.properties, "node.pipetune.output-id");
+  path.channelSlots = channelSlots(property(node.properties, "node.pipetune.output-slots"));
   path.streamSerial = unsignedValue(property(node.properties, PW_KEY_OBJECT_SERIAL));
   path.targetSerial = unsignedValue(property(node.properties, "node.pipetune.target-serial"));
   const auto channels = unsignedValue(property(node.properties, "node.pipetune.output-channels"));
-  if (path.streamSerial == 0 || path.targetSerial == 0 || channels == 0 || channels > 16) return path;
+  if (path.streamSerial == 0 || path.targetSerial == 0 || channels == 0 || channels > 16 ||
+      path.channelSlots.size() != channels) return path;
   const auto target = std::find_if(observer.nodes.begin(), observer.nodes.end(), [&](const auto &item) {
     return unsignedValue(property(item.second->properties, PW_KEY_OBJECT_SERIAL)) == path.targetSerial;
   });

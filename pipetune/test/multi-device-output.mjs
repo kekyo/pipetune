@@ -352,7 +352,7 @@ try {
     const runtime = start("product runtime", driver, ["runtime", scenario === "product-bypass" ? "bypass" : preset, scenario]);
     await waitForMessage(runtime, "product:runtime-ready");
     audio.child.kill("SIGUSR1");
-    if (graphClockTest || ["product-controls", "product-output-change", "product-output-timeout"].includes(scenario)) {
+    if (graphClockTest || ["product-controls", "product-output-change", "product-output-timeout", "product-output-clock-unavailable"].includes(scenario)) {
       const control = async (request, success = true) => {
         const client = start("product control", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET, JSON.stringify(request)]);
         const timeout = setTimeout(() => terminate(client, "SIGTERM"), scenario === "product-output-timeout" ? 20000 : 10000);
@@ -363,8 +363,54 @@ try {
         assert.equal(response.ok, success, client.stdout);
         return response;
       };
-      const next = (stage) => waitForMessage(audio, `product:controls-stage-${stage}`);
-      if (scenario === "product-output-timeout") {
+      const next = async (stage) => {
+        await waitForMessage(audio, `product:controls-stage-${stage}`);
+        const clockUnavailable = scenario === "product-output-clock-unavailable";
+        if (!graphClockTest && !clockUnavailable) return;
+        const rate = stage === 0 ? graphRate : stage === 8 ? 48000 : 96000;
+        const quantum = stage === 0 || stage === 8 ? graphQuantum : graphQuantum * 2;
+        const expected = (0.5 * quantum + 64) * 1e9 / rate + 1e6;
+        const client = createConnection(environment.PIPETUNE_PRODUCT_SOCKET);
+        const deadline = setTimeout(() => client.destroy(), 10000);
+        let lines;
+        let transportError;
+        let observed = false;
+        client.on("error", (error) => { transportError = error; });
+        client.on("close", () => lines?.close());
+        try {
+          await once(client, "connect");
+          lines = createInterface({ input: client, crlfDelay: Infinity });
+          client.write(`${JSON.stringify({ command: "subscribe" })}\n`);
+          for await (const line of lines) {
+            const status = JSON.parse(line);
+            assert.equal(status.ok, true, line);
+            const a = status.outputTimings.find((entry) => entry.outputId === "pipetune_product_device_0");
+            const b = status.outputTimings.find((entry) => entry.outputId === "pipetune_product_device_1");
+            if (a?.activity !== "active" || b?.activity !== "active") continue;
+            if (clockUnavailable) {
+              for (const entry of [a, b]) {
+                assert.equal(entry.reportedLatencyNanoseconds, null);
+                assert.equal(entry.estimatedCompensationNanoseconds, null);
+              }
+            } else if (a.estimatedCompensationNanoseconds === null || b.estimatedCompensationNanoseconds === null ||
+                Math.abs(a.estimatedCompensationNanoseconds - expected) > 1 || b.estimatedCompensationNanoseconds !== 0) continue;
+            assert.equal(status.outputTimings.length, 2);
+            for (const entry of [a, b]) assert.ok(status.availableOutputs.some((output) => output.nodeSerial === entry.nodeSerial));
+            observed = true;
+            break;
+          }
+        } finally {
+          clearTimeout(deadline);
+          lines?.close();
+          client.destroy();
+        }
+        assert.equal(transportError, undefined);
+        assert.ok(observed, `stage ${stage} must publish both active paths and the estimated compensation`);
+      };
+      if (scenario === "product-output-clock-unavailable") {
+        await next(0);
+        audio.child.kill("SIGUSR2");
+      } else if (scenario === "product-output-timeout") {
         await next(0);
         const initial = await control({ command: "status" });
         const wide = structuredClone(initial.outputConfiguration);
@@ -517,6 +563,10 @@ try {
       assert.equal((await rate(48000)).dspSampleRate, 48000);
       assert.equal((await backend("scalar")).effectiveDspBackend, "scalar");
       audio.child.kill("SIGUSR2");
+      if (graphClockTest) {
+        await next(8);
+        audio.child.kill("SIGUSR2");
+      }
       }
     }
     if (scenario.startsWith("product-restart")) {

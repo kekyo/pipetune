@@ -75,13 +75,17 @@ OutputDistributionArguments makeOutputDistributionArguments(
         !add(create, "node.pipetune.output-channels", std::to_string(output.device.channelPositions.size()))) return allocationError;
     // Match this exact connection generation. Reused node IDs or names cannot
     // redirect a saved mapping before a fresh identity resolution is complete.
+    auto channelSlots = std::string{};
     for (auto channel = std::size_t{0}; channel < output.device.channelPositions.size(); ++channel) {
       const auto slot = std::find_if(configuration.channels.begin(), configuration.channels.end(),
           [&](const auto &candidate) { return candidate.outputId == output.id && candidate.deviceChannel == channel; });
       const auto position = "AUX" + std::to_string(slot - configuration.channels.begin());
+      if (!channelSlots.empty()) channelSlots += ',';
+      channelSlots += std::to_string(slot - configuration.channels.begin());
       if (!yyjson_mut_arr_add_strcpy(document.get(), source, position.c_str()) ||
           !yyjson_mut_arr_add_strcpy(document.get(), target, output.device.channelPositions[channel].c_str())) return allocationError;
     }
+    if (!add(create, "node.pipetune.output-slots", channelSlots)) return allocationError;
   }
   auto length = std::size_t{0};
   auto *encoded = yyjson_mut_write(document.get(), YYJSON_WRITE_ESCAPE_UNICODE, &length);

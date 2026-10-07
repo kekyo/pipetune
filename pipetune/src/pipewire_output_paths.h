@@ -6,6 +6,9 @@
 #ifndef PIPETUNE_PIPEWIRE_OUTPUT_PATHS_H
 #define PIPETUNE_PIPEWIRE_OUTPUT_PATHS_H
 
+#include "pipetune/output_configuration.h"
+#include "pipetune/output_timing.h"
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -16,22 +19,12 @@ struct pw_core;
 
 namespace pipetune {
 
-/** Observed routing activity, independent of device identity resolution. */
-enum class OutputPathActivity {
-  /** Nodes or all required channel links have not become ready. */
-  pending,
-  /** The complete path is linked but paused or suspended. */
-  idle,
-  /** The stream and every required link to the target are running. */
-  active,
-  /** A node or link reports an error, or a link targets another device. */
-  error
-};
-
 /** One owned distribution stream and its observed physical output path. */
 struct PipeWireOutputPath {
   /** Saved output identifier stamped on the distribution stream. */
   std::string outputId;
+  /** Zero-based DSP slots in device channel order, identifying this routing layout. */
+  std::vector<std::uint32_t> channelSlots;
   /** Distribution stream generation; distinguishes graph replacements. */
   std::uint64_t streamSerial = 0;
   /** Target device generation requested by this stream. */
@@ -77,6 +70,18 @@ using PipeWireOutputPathsCallback = void (*)(const std::vector<PipeWireOutputPat
  */
 PipeWireOutputPathsPtr observePipeWireOutputPaths(pw_core *core,
     const std::string &publicInputName, PipeWireOutputPathsCallback callback, void *userData);
+
+/**
+ * Estimates compensation only from unambiguous, current output paths.
+ * @param configuration Current saved choices and DSP channel mapping.
+ * @param inventory Current device generations and identities.
+ * @param paths Observations, including any generations pending removal.
+ * @return One timing entry per resolved enabled output, in configured order.
+ * @remarks Single mode returns no entries. Missing or stale paths remain pending;
+ * any unresolved timing basis suppresses estimates for all resolved outputs.
+ */
+std::vector<OutputTimingState> summarizeOutputTiming(const OutputConfiguration &configuration,
+    std::span<const AvailableOutput> inventory, std::span<const PipeWireOutputPath> paths);
 
 } // namespace pipetune
 

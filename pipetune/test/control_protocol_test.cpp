@@ -870,12 +870,13 @@ static bool testOutputStatus() {
   wide.device.channelPositions.resize(18, "UNKNOWN");
   status.availableOutputs.push_back(wide);
   status.outputVolumes = {{UINT64_MAX, true, 0.5F, {0.125F, 0.25F}}, {75, {}, {}, {}}};
+  status.outputTimings = {{"saved", UINT64_MAX, pipetune::OutputPathActivity::active, 1250000.5, 0}};
   for (const auto event : {false, true}) {
     const auto encoded = event ? pipetune::makeControlStatusEvent(status) : pipetune::makeControlSuccessResponse(status, {});
     const auto parsed = pipetune::parseControlResponse(encoded);
     if (!check(parsed.valid && parsed.success && parsed.status.outputConfiguration == status.outputConfiguration &&
                parsed.status.availableOutputs == status.availableOutputs && parsed.status.outputInventoryReady &&
-               parsed.status.outputVolumes == status.outputVolumes,
+               parsed.status.outputVolumes == status.outputVolumes && parsed.status.outputTimings == status.outputTimings,
                "status and events must preserve saved mappings and the complete live inventory")) return false;
     const auto resolved = pipetune::resolveConfiguredOutputs(parsed.status.outputConfiguration, parsed.status.availableOutputs);
     if (!check(resolved[0].state == pipetune::OutputConnectionState::connected && resolved[0].inventoryIndex == 0,
@@ -883,6 +884,10 @@ static bool testOutputStatus() {
     for (const auto &[from, to] : std::vector<std::pair<std::string_view, std::string_view>>{
         {"\"outputInventoryReady\":true", "\"outputInventoryReady\":null"},
         {"\"outputInventoryError\":null", "\"outputInventoryError\":7"},
+        {"\"activity\":\"active\"", "\"activity\":\"unknown-state\""},
+        {"\"activity\":\"active\"", "\"activity\":\"idle\""},
+        {"\"estimatedCompensationNanoseconds\":0.0", "\"estimatedCompensationNanoseconds\":-1"},
+        {"\"reportedLatencyNanoseconds\":1250000.5", "\"reportedLatencyNanoseconds\":null"},
         {"\"muted\":true", "\"muted\":1"},
         {"\"volume\":0.5", "\"volume\":-0.5"},
         {"\"volume\":0.5", "\"volume\":1e100"},
@@ -897,6 +902,26 @@ static bool testOutputStatus() {
     }
   }
   const auto validVolumes = status.outputVolumes;
+  const auto validTimings = status.outputTimings;
+  for (auto kind = 0; kind < 6; ++kind) {
+    status.outputTimings = validTimings;
+    if (kind == 0) status.outputTimings[0].nodeSerial = 75;
+    if (kind == 1) status.outputTimings[0].outputId = "missing";
+    if (kind == 2) status.outputTimings.push_back(validTimings[0]);
+    if (kind == 3) status.outputTimings[0].estimatedCompensationNanoseconds = -1;
+    if (kind == 4) status.outputTimings[0].reportedLatencyNanoseconds = std::numeric_limits<double>::infinity();
+    if (kind == 5) status.outputTimings[0].activity = static_cast<pipetune::OutputPathActivity>(-1);
+    const auto invalid = pipetune::parseControlResponse(pipetune::makeControlSuccessResponse(status, {}));
+    if (!check(invalid.valid && !invalid.success, "stale, duplicate or invalid timing must not be published")) return false;
+  }
+  for (const auto activity : {pipetune::OutputPathActivity::pending, pipetune::OutputPathActivity::idle,
+      pipetune::OutputPathActivity::active, pipetune::OutputPathActivity::error}) {
+    status.outputTimings = {{"saved", UINT64_MAX, activity, {}, {}}};
+    const auto parsed = pipetune::parseControlResponse(pipetune::makeControlStatusEvent(status));
+    if (!check(parsed.valid && parsed.success && parsed.status.outputTimings == status.outputTimings,
+        "every route state must support unavailable timing")) return false;
+  }
+  status.outputTimings = validTimings;
   auto invalidVolumes = std::vector<std::vector<pipetune::OutputVolumeState>>{
       {{0, {}, {}, {}}}, {{123, {}, {}, {}}},
       {validVolumes[0], validVolumes[0]},
@@ -916,6 +941,7 @@ static bool testOutputStatus() {
              "unknown controls, silence, amplification and all 64 physical channels must round-trip")) return false;
   status.availableOutputs.clear();
   status.outputVolumes.clear();
+  status.outputTimings.clear();
   status.outputInventoryError = "Output enumeration failed";
   const auto failed = pipetune::parseControlResponse(pipetune::makeControlSuccessResponse(status, {}));
   return check(failed.valid && failed.success && failed.status.outputInventoryError == status.outputInventoryError &&

@@ -57,6 +57,8 @@ using PipeWireGraphClockCallback = void (*)(const std::vector<PipeWireNodeClock>
  * @remarks Calls start when the core loop dispatches events. Nodes without a
  * current profile are omitted, including idle or removed nodes. An unavailable
  * Profiler yields an empty snapshot; preferred node rates are never substituted.
+ * The local protocol extension is loaded once and owned by the context until
+ * its destruction; releasing an observer only stops its remote subscriptions.
  */
 PipeWireGraphClockPtr observePipeWireGraphClocks(
     pw_core *core, PipeWireGraphClockCallback callback, void *userData);

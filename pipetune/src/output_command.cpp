@@ -195,6 +195,16 @@ static std::string deviceGainText(std::optional<float> gain) {
   return text.str();
 }
 
+static std::string_view outputActivityText(OutputPathActivity activity) {
+  switch (activity) {
+  case OutputPathActivity::pending: return "pending";
+  case OutputPathActivity::idle: return "idle";
+  case OutputPathActivity::active: return "active";
+  case OutputPathActivity::error: return "error";
+  }
+  return "unavailable";
+}
+
 std::string formatOutputStatus(const ControlRuntimeStatus &status) {
   const auto &configuration = status.outputConfiguration;
   const auto single = configuration.mode == OutputMode::single;
@@ -225,6 +235,24 @@ std::string formatOutputStatus(const ControlRuntimeStatus &status) {
     text << " | " << tableCell(slot.label) << '\n';
   }
   if (configuration.channels.empty()) text << "No saved multiple-output assignments.\n";
+  if (!single) {
+    text << "Output paths and estimated compensation (reported latency; not acoustic arrival or measured buffer size):\n";
+    for (auto index = std::size_t{0}; index < configuration.outputs.size(); ++index) {
+      const auto &output = configuration.outputs[index];
+      if (!output.enabled) continue;
+      const auto found = std::find_if(status.outputTimings.begin(), status.outputTimings.end(), [&](const auto &entry) {
+        return entry.outputId == output.id && resolved[index].inventoryIndex &&
+            status.availableOutputs[*resolved[index].inventoryIndex].nodeSerial == entry.nodeSerial;
+      });
+      const auto available = status.outputInventoryReady && status.outputInventoryError.empty() && found != status.outputTimings.end();
+      text << tableCell(output.device.name) << " | " << (available ? outputActivityText(found->activity) : "unavailable")
+           << " | estimated compensation: ";
+      if (available && found->estimatedCompensationNanoseconds)
+        text << std::fixed << std::setprecision(3) << *found->estimatedCompensationNanoseconds / 1000000 << " ms";
+      else text << "unknown";
+      text << '\n';
+    }
+  }
   if (!status.availableOutputs.empty()) {
     text << "Physical output controls (reported; separate from master volume):\n";
     for (const auto &output : status.availableOutputs) {

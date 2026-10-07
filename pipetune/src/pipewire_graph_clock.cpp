@@ -39,8 +39,6 @@ struct ClockNode {
 };
 
 struct PipeWireGraphClock {
-  pw_core *core = nullptr;
-  pw_impl_module *profilerModule = nullptr;
   pw_registry *registry = nullptr;
   pw_profiler *profiler = nullptr;
   std::uint32_t profilerId = PW_ID_ANY;
@@ -179,14 +177,17 @@ PipeWireGraphClockPtr observePipeWireGraphClocks(
     pw_core *core, PipeWireGraphClockCallback callback, void *userData) {
   if (core == nullptr || callback == nullptr) return {};
   auto observer = PipeWireGraphClockPtr(new PipeWireGraphClock{});
-  observer->core = core;
   observer->callback = callback;
   observer->userData = userData;
-  // The local module registers the public Profiler protocol marshalling, as in
-  // pw-top. Loading it here does not modify the remote server configuration.
-  observer->profilerModule = pw_context_load_module(
-      pw_core_get_context(core), PW_EXTENSION_MODULE_PROFILER, nullptr, nullptr);
-  if (observer->profilerModule == nullptr) return {};
+  // Protocol marshal tables belong to the context and point into this module.
+  // Keep one context-owned module until context destruction, even while all
+  // observers are stopped. Unloading it earlier leaves dangling marshal tables.
+  auto *context = pw_core_get_context(core);
+  constexpr auto profilerKey = "pipetune.profiler-protocol";
+  if (pw_context_get_object(context, profilerKey) == nullptr) {
+    auto *module = pw_context_load_module(context, PW_EXTENSION_MODULE_PROFILER, nullptr, nullptr);
+    if (module == nullptr || pw_context_set_object(context, profilerKey, module) < 0) return {};
+  }
   observer->registry = pw_core_get_registry(core, PW_VERSION_REGISTRY, 0);
   if (observer->registry == nullptr) return {};
   static const auto events = pw_registry_events{
@@ -223,7 +224,6 @@ void PipeWireGraphClockDeleter::operator()(PipeWireGraphClock *observer) const n
     spa_hook_remove(&observer->coreListener);
     pw_proxy_destroy(reinterpret_cast<pw_proxy *>(observer->registry));
   }
-  if (observer->profilerModule != nullptr) pw_impl_module_destroy(observer->profilerModule);
   delete observer;
 }
 

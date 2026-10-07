@@ -524,6 +524,12 @@ static void capture(void *data) {
         }
       }
     }
+    if (test.clockUnavailable) {
+      test.stageFrames[0] = {test.outputs[0].frames, test.outputs[1].frames};
+      test.awaitingControl = true;
+      std::cerr << "product:controls-stage-0\n" << std::flush;
+      return;
+    }
     if (test.daemonVolume) {
       if (test.produced < 32768) return;
       if (test.visibleGain != (test.stage == 0 ? 1.0F : test.savedMasterGain) || test.visibleMute != (test.stage == 2))
@@ -557,7 +563,7 @@ static void capture(void *data) {
         if (std::abs(latencies[1] - latencies[0] - expectedDelay) > 1.0) return;
       }
       test.stageFrames[test.stage] = {test.outputs[0].frames, test.outputs[1].frames};
-      if (test.stage == (test.outputTimeout ? 2U : 8U)) pw_main_loop_quit(test.loop);
+      if (!test.graphClock && test.stage == (test.outputTimeout ? 2U : 8U)) pw_main_loop_quit(test.loop);
       else {
         test.awaitingControl = true;
         std::cerr << "product:controls-stage-" << test.stage << '\n' << std::flush;
@@ -768,6 +774,11 @@ static int runAudio(std::string_view scenario) {
   auto *signal = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR1, startSource, &test);
   auto *resume = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR2, [](void *data, int) {
     auto &test = *static_cast<AudioTest *>(data);
+    if (test.clockUnavailable || (test.graphClock && test.stage == 8)) {
+      if (!test.awaitingControl) return fail(test, "unexpected final timing acknowledgement");
+      pw_main_loop_quit(test.loop);
+      return;
+    }
     if (test.inventory && ++test.stage == 4) return static_cast<void>(pw_main_loop_quit(test.loop));
     if (test.controls || test.outputChange || test.outputTimeout) {
       if (!test.awaitingControl) return fail(test, "unexpected control transition");

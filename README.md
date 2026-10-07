@@ -280,6 +280,14 @@ gains in dB, separately from the OS master volume. `0.0 dB` is unity gain and
 The JSON response retains linear gains in `outputVolumes`. These are device
 reports, not measurements of the sound leaving the speakers.
 
+In multiple mode, `get` also shows each selected output's path activity and
+estimated compensation in milliseconds. The estimate uses reported downstream
+latency and the actual graph clock. It is separate from the internal compensation
+buffer size and acoustic arrival time. `unknown` means a current timing basis is
+unavailable, for example during reconnection or when the server does not expose
+its graph clock. JSON clients receive these observations in `outputTimings`;
+latency and compensation values are nanoseconds, with `null` for unavailable values.
+
 Desktop input remains stereo on Ch 1 and Ch 2. Use the EffeTune preset to create
 the additional outputs, for example with Matrix; Bypass leaves extra channels
 silent. PipeTune does not automatically copy stereo audio to every device.
