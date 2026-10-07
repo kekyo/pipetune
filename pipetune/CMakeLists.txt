@@ -330,6 +330,9 @@ set(
   "${CMAKE_INSTALL_DATADIR}/doc/pipetune")
 
 install(TARGETS pipetune RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+# PipeWire 1.0 discovers server modules in its configured module directory,
+# independently of the executable prefix. No existing module is replaced.
+install(TARGETS pipetune_presentation LIBRARY DESTINATION "${PIPETUNE_PIPEWIRE_MODULE_DIR}")
 install(
   TARGETS ${PIPETUNE_DSP_BACKEND_TARGETS}
   LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/pipetune")
@@ -846,6 +849,18 @@ if(BUILD_TESTING)
   find_program(PIPETUNE_PW_DUMP_EXECUTABLE pw-dump REQUIRED)
   find_program(PIPETUNE_PULSE_EXECUTABLE pipewire-pulse REQUIRED)
   pkg_check_modules(PULSE REQUIRED IMPORTED_TARGET libpulse)
+  add_executable(pipetune_desktop_output_probe test/desktop_output_probe.c)
+  target_link_libraries(pipetune_desktop_output_probe PRIVATE PkgConfig::PULSE)
+  target_compile_options(pipetune_desktop_output_probe PRIVATE -Wall -Wextra -Werror)
+  add_test(NAME pipetune_desktop_output_visibility COMMAND
+    ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/device-presentation.mjs
+    ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+    $<TARGET_FILE:pipetune_device_presentation_fixture> $<TARGET_FILE_DIR:pipetune_presentation>
+    ${PIPETUNE_PIPEWIRE_MODULE_DIR} ${PIPETUNE_PW_DUMP_EXECUTABLE} ${PIPETUNE_PW_CLI_EXECUTABLE}
+    $<TARGET_FILE:pipetune_device_route_probe> ${PIPETUNE_PW_CAT_EXECUTABLE} ${PIPETUNE_PW_LINK_EXECUTABLE}
+    $<TARGET_FILE:pipetune_wireplumber_policy_fixture> ${PIPETUNE_PULSE_EXECUTABLE}
+    $<TARGET_FILE:pipetune_desktop_output_probe> --desktop)
+  set_tests_properties(pipetune_desktop_output_visibility PROPERTIES TIMEOUT 60)
   add_executable(pipetune_pulse_output_probe tools/pulse-output-probe.cpp)
   target_link_libraries(pipetune_pulse_output_probe PRIVATE PkgConfig::PULSE)
   target_compile_options(pipetune_pulse_output_probe PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -1227,7 +1242,8 @@ if(BUILD_TESTING)
       ${PIPETUNE_SYSTEMD_USER_UNIT_DIR}
       ${CMAKE_INSTALL_LIBDIR}
       ${PIPETUNE_DOCUMENTATION_DIR}
-      ${CMAKE_CURRENT_BINARY_DIR}/pipetune.test.service)
+      ${CMAKE_CURRENT_BINARY_DIR}/pipetune.test.service
+      ${PIPETUNE_PIPEWIRE_MODULE_DIR})
 
   add_test(
     NAME pipetune_component_build

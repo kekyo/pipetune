@@ -289,8 +289,7 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
   const auto result = pipetune::runPipeWirePipeline(
       std::move(prepared.pipeline),
       {.filterName = "pipetune_sink",
-       .filterDescription = prepared.outputConfiguration.mode == pipetune::OutputMode::multiple
-           ? "PipeTune Multiple Outputs" : "PipeTune Processed Audio",
+       .filterDescription = "PipeTune Processed Audio",
        .initialPresetPath = prepared.activePresetPath,
        .initialConfigurationError = prepared.configurationError,
        .controlSocketPath = socket.path,

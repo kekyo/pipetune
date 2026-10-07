@@ -268,6 +268,14 @@ try {
       return command.stdout;
     };
     const endpoints = ["--socket", socket, "--config", join(config, "pipetune", "environment")];
+    const assertPublicOutput = () => {
+      const dump = spawnSync("pw-dump", ["--no-colors"], { env: environment, encoding: "utf8" });
+      assert.equal(dump.status, 0, dump.stderr);
+      const graph = JSON.parse("[" + dump.stdout.replace(/\]\s*\[/gu, "],[") + "]").flat();
+      const output = graph.find((item) => item.info?.props?.["node.name"] === "pipetune_sink");
+      assert.equal(output?.info.props["node.description"], "PipeTune Processed Audio",
+        "startup and live mode switches must publish the same output name");
+    };
     // Restart both the daemon and fixtures. The next run must recover saved
     // routing after the devices have been recreated as new runtime objects.
     for (let attempt = 0; attempt < (volumeRestore ? 3 : 2); ++attempt) {
@@ -287,9 +295,11 @@ try {
       assert.equal(response.ok, true, status.stdout);
       assert.equal(response.processingMode, "preset", status.stdout);
       assert.deepEqual(JSON.parse(await cli(["get", "--json", "--socket", socket])).outputConfiguration, routing);
+      assertPublicOutput();
       if (attempt === 0 && !volumeRestore) {
         assert.match(await cli(["mode", "single", ...endpoints]), /OS selects/u);
         assert.match(await cli(["mode", "multiple", ...endpoints]), /Ch 4/u);
+        assertPublicOutput();
         // Selecting the existing devices in reverse order must retain their
         // saved Ch numbers; labels then survive a real daemon restart.
         await cli(["select", outputs[1].id, outputs[0].id, ...endpoints]);

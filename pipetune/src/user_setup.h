@@ -43,6 +43,8 @@ struct UserManagementPaths {
   std::filesystem::path wirePlumber05PolicyPath;
   /** WirePlumber 0.5 internal-node visibility policy. */
   std::filesystem::path wirePlumber05VisibilityScriptPath;
+  /** PipeWire server fragment presenting only input card routes in Multiple. */
+  std::filesystem::path pipeWirePresentationPath;
   /** Versioned completion state for conditional setup. */
   std::filesystem::path setupStatePath;
   /** Advisory lock serializing setup and unsetup for one user. */

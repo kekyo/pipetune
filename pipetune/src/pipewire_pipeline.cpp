@@ -1362,7 +1362,7 @@ static FilterGraphProperties currentFilterGraphProperties(
   auto graph = makeFilterGraphProperties(
       {.nodeName = runtime.options.filterName,
        .nodeDescription = runtime.options.outputConfiguration.mode == OutputMode::multiple
-           ? "PipeTune Multiple Outputs" : runtime.singleOutputDescription,
+           ? "PipeTune Processed Audio" : runtime.singleOutputDescription,
        .fixedSampleRate = fixedSampleRate,
        .channelCount = runtime.options.channelCount,
        .forceRate = forceRate,

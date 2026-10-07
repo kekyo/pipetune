@@ -26,6 +26,9 @@ const [
   routeProbe,
   pwCat,
   pwLink,
+  policyFixture,
+  pulseServer,
+  desktopProbe,
 ] = process.argv.slice(2);
 assert.ok(
   pipewire &&
@@ -50,6 +53,7 @@ for (const path of [
   mkdirSync(path, { recursive: true, mode: 0o700 });
 const useModule = !process.argv.includes("--without-module");
 const checkPcm = process.argv.includes("--pcm");
+const checkDesktop = process.argv.includes("--desktop");
 copyFileSync(pwDump, join(directory, "pipetune"));
 mkdirSync(join(directory, "controller"));
 copyFileSync(pwCli, join(directory, "controller/pipetune"));
@@ -128,6 +132,33 @@ const run = async (command, args, props) => {
   const [code] = await once(child, "close");
   assert.equal(code, 0, stderr + stdout);
   return stdout;
+};
+const graph = async (backend) => {
+  const text = await run(
+    backend ? join(directory, "pipetune") : pwDump,
+    [],
+    {},
+  );
+  const objects = new Map();
+  for (const item of JSON.parse(
+    "[" + text.replace(/\]\s*\[/gu, "],[") + "]",
+  ).flat()) {
+    if (item.info === null) objects.delete(item.id);
+    else {
+      const previous = objects.get(item.id);
+      objects.set(item.id, {
+        ...previous,
+        ...item,
+        info: {
+          ...previous?.info,
+          ...item.info,
+          props: { ...previous?.info?.props, ...item.info?.props },
+          params: { ...previous?.info?.params, ...item.info?.params },
+        },
+      });
+    }
+  }
+  return [...objects.values()];
 };
 const waitState = async (predicate) => {
   const file = join(directory, "state/wireplumber/default-routes");
@@ -381,16 +412,76 @@ try {
       "wireplumber.profiles = { main = { monitor.alsa=disabled monitor.bluez=disabled monitor.bluez-midi=disabled monitor.v4l2=disabled monitor.libcamera=disabled } }\n",
     );
   }
+  if (checkDesktop) {
+    const policy = async (part) => await run(policyFixture, [part], {});
+    const write = (path, text) => {
+      const full = join(config, path);
+      mkdirSync(join(full, ".."), { recursive: true });
+      writeFileSync(full, text);
+    };
+    if (version.includes("libwireplumber 0.4.")) {
+      write(
+        "wireplumber/policy.lua.d/60-pipetune.lua",
+        await policy("configuration"),
+      );
+      for (const part of [
+        "endpoint-client",
+        "endpoint-device",
+        "node-visibility",
+      ])
+        write(
+          `wireplumber/scripts/pipetune-${part}.lua`,
+          await policy(part === "node-visibility" ? "visibility" : part),
+        );
+    } else {
+      environment.XDG_DATA_HOME = join(directory, "data");
+      mkdirSync(join(environment.XDG_DATA_HOME, "wireplumber/scripts"), {
+        recursive: true,
+      });
+      writeFileSync(
+        join(
+          environment.XDG_DATA_HOME,
+          "wireplumber/scripts/pipetune-node-visibility.lua",
+        ),
+        await policy("visibility"),
+      );
+      write(
+        "wireplumber/wireplumber.conf.d/60-pipetune.conf",
+        await policy("visibility-configuration"),
+      );
+    }
+  }
   start("pw", pipewire, []);
   await ready(join(runtime, "pipewire-0"));
   start("wp", wireplumber, []);
   const fixture = start("fixture", fixturePath, []);
   await waitMessage(fixture, (text) => text.includes("card-bound="));
   await waitMessage(fixture, (text) => text.includes("route-set device=1"));
-  const dump = async (backend) => {
-    const data = JSON.parse(
-      await run(backend ? join(directory, "pipetune") : pwDump, [], {}),
+  const desktopOutputs = async () =>
+    (await run(desktopProbe, [], {})).trim().split("\n").sort();
+  if (checkDesktop) {
+    start("pulse", pulseServer, []);
+    await ready(join(runtime, "pulse/native"));
+    const internal = start("internal", pwCli, []);
+    for (const [name, properties] of [
+      ["pipetune_sink", "node.pipetune.internal=true"],
+      ["control.endpoint.pipetune.playback", "node.pipetune.internal=true"],
+      ["fixture.virtual", "node.virtual=true"],
+    ])
+      internal.child.stdin.write(
+        `create-node adapter { factory.name=support.null-audio-sink node.name=${name} media.class=Audio/Sink audio.position=[FL FR] ${properties} }\n`,
+      );
+    await waitMessage(internal, (text) =>
+      text.includes("fixture.virtual:playback"),
     );
+    assert.deepEqual(
+      await desktopOutputs(),
+      ["fixture.output", "fixture.virtual"],
+      "an active input peak meter must not expose internal outputs in Single",
+    );
+  }
+  const dump = async (backend) => {
+    const data = await graph(backend);
     const card = data.find(
       (item) =>
         item.info?.props?.["device.name"] === "pipetune.visibility.fixture",
@@ -459,6 +550,12 @@ try {
   );
   const desktop = await dump(false),
     backend = await dump(true);
+  if (checkDesktop)
+    assert.deepEqual(
+      await desktopOutputs(),
+      ["pipetune.presentation.mode"],
+      "Multiple must expose only the public output, including to recording clients",
+    );
   await run(routeProbe, [String(before.id)], {});
   writeFileSync(
     join(directory, "routes.json"),
@@ -545,6 +642,12 @@ try {
     () => monitor.state.card?.params?.EnumRoute?.length === 4,
   );
   const restored = await dump(false);
+  if (checkDesktop)
+    assert.deepEqual(
+      await desktopOutputs(),
+      ["fixture.output", "fixture.virtual"],
+      "Single must restore normal outputs without internal endpoints",
+    );
   assert.deepEqual(
     restored.info.params.EnumRoute,
     before.info.params.EnumRoute,

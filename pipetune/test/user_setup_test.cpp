@@ -86,6 +86,8 @@ static pipetune::UserManagementPaths makePaths(
       .wirePlumber05VisibilityScriptPath =
           directory / "data" / "wireplumber" / "scripts" /
           "pipetune-node-visibility.lua",
+      .pipeWirePresentationPath = directory / "config" / "pipewire" /
+          "pipewire.conf.d" / "60-pipetune-presentation.conf",
       .setupStatePath = directory / "state" / "pipetune" / "setup-state",
       .managementLockPath =
           directory / "state" / "pipetune" / "management.lock",
@@ -237,6 +239,9 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
   const auto visibilityConfiguration =
       readFile(paths.wirePlumber05PolicyPath);
   return check(result.success, result.error) &&
+         check(std::filesystem::exists(paths.configPath.parent_path().parent_path() /
+                   "pipewire/pipewire.conf.d/60-pipetune-presentation.conf"),
+               "setup must enable desktop route presentation") &&
          check(std::filesystem::exists(paths.setupStatePath),
                "successful setup must record its current completion state") &&
          check(loaded.error.empty() && loaded.found &&
@@ -518,6 +523,8 @@ static bool testSetupRollback(const std::filesystem::path &directory) {
                "failed setup must restore all visibility policy files") &&
          check(!std::filesystem::exists(paths.setupStatePath),
                "failed setup must not retain its completion state") &&
+         check(!std::filesystem::exists(paths.pipeWirePresentationPath),
+               "failed setup must restore the previous PipeWire module configuration") &&
          check(runner.invocations.size() == 9,
                "setup rollback invocation count differs") &&
          check(audioStackRestartMatches(runner.invocations[6]) &&
@@ -535,6 +542,9 @@ static bool testSetupRollback(const std::filesystem::path &directory) {
 
 static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
   const auto paths = makePaths(directory / "unsetup");
+  const auto presentation = paths.configPath.parent_path().parent_path() /
+      "pipewire/pipewire.conf.d/60-pipetune-presentation.conf";
+  writeFile(presentation, "managed presentation module");
   writeFile(paths.wirePlumberPolicyPath, "managed policy");
   const auto streamConfiguration = paths.wirePlumber04StreamConfigurationPath;
   writeFile(streamConfiguration, "managed stream configuration");
@@ -564,6 +574,8 @@ static bool testUnsetupAndPurge(const std::filesystem::path &directory) {
        .processRunner = fakeRunProcess,
        .processUserData = &runner});
   return check(result.success, result.error) &&
+         check(!std::filesystem::exists(presentation),
+               "unsetup must disable desktop route presentation") &&
          check(runner.invocations.size() == 3,
                "unsetup process invocation count differs") &&
          check(invocationMatches(

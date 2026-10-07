@@ -1139,3 +1139,17 @@ SPAデバイス全体の列挙結果を変更する方式から、PipeWireサー
 実GNOME 46.7の分離セッションでも、表示モジュールを読み込んだ状態でSingleの物理出力変更、Multipleへの切替、入力音量・ミュート・端子変更、Singleへの復帰を再生・録音と同時に検証した。Multipleの出力選択肢は1件になり、入力2端子のIDと録音を維持した。入力の実PCMはGUI操作に従い、処理エラーは0件だった。プロファイル検証は上記のネイティブ試験で行ったもので、ALSA実カードのプロファイル切替を模擬した保証とはしない。
 
 記録は`artifacts/output-visibility/duplex-488733/`と`pipetune-presentation-Qq0l8g/`に保存した。GNOME画面は目視確認済み。公開名はまだ旧名であり、新規GNOME起動時のSingleの内部出力露出も反復3の修正対象として残る。反復2の完了条件である入力の選択・音量・ミュート・端子・プロファイル操作と録音の検証を満たした。実セッションへはまだ反映していない。
+
+### 実装反復3: モード別の表示とセットアップ統合（2026-10-07）
+
+Singleで内部出力が現れる原因は、録音ストリームの所有者にも内部出力のアクセスを許可していたことだった。GNOMEと同様に、入力ピークメーターと出力一覧を同一PulseAudio接続で扱う試験を追加した。未修正では`pipetune_sink`と内部再生endpointが列挙されるREDを確認し、方向ごとに再生・録音の所有数を管理する修正後は、録音中も通常の出力だけを返す。従来必要だった再生クライアントの接続用アクセスは維持する。
+
+Multipleでは公開出力以外の通常sinkを、仮想sinkも含めてOSの選択肢から除く。入出力カードの出力端子は反復1のモジュールが除外し、入力端子と経路管理には元の情報を残す。公開名は起動時とライブ切替時とも`PipeTune Processed Audio`へ統一し、製品デーモンの回帰テストでも名称を検証する。
+
+サーバーモジュールはpkg-configが示すPipeWireの標準モジュールディレクトリへインストールする。PipeWire 1.0のモジュール検索は実行ファイルのインストールprefixとは独立しているため、この配置で既存の検索パスやsystemd環境変数を上書きせず読み込める。[PipeWire 1.0.5のモジュール検索](https://github.com/PipeWire/pipewire/blob/1.0.5/src/pipewire/impl-module.c)
+
+`setup`はユーザーの`pipewire/pipewire.conf.d/60-pipetune-presentation.conf`を既存の音声ポリシーと同じトランザクションで管理する。セットアップ失敗時に戻し、`unsetup`で削除し、既存の音声サービス再起動で反映する。パッケージだけが削除されても残った設定でPipeWireの起動を妨げないよう`ifexists`を指定した。設定生成・削除とインストール成果物の欠落をREDで確認し、修正後の関連テストが成功した。[PipeWireの設定とモジュールフラグ](https://docs.pipewire.org/page_daemon.html)
+
+GNOME 46.7の分離セッションで、開いたままのSingle → Multiple → Single、および各モードでの新規起動を確認した。Singleは物理出力3項目、Multipleは`PipeTune Processed Audio`1項目を選択表示し、入力2端子とLine Inputの選択を維持した。再生中の入力音量・ミュート・端子変更も録音PCMで再確認した。新規起動の試験は、Gvcの初期列挙途中を判定しないようREADYと既定入出力の到着を待ち、GNOMEのコントロール描画後に画面を目視確認した。
+
+記録は`artifacts/output-visibility/duplex-502476/`、`phase3-gnome-warm.log`、`phase3-gnome-cold.log`、`phase3-tests.log`、`phase3-public-name.log`に保存した。ネイティブの録音中一覧テストはWirePlumber 0.4.17 / 0.5.8の両方で成功した。反復3の完了条件を満たし、復旧・配布・全体テスト・実機セッションへの反映を次の反復へ進める。

@@ -21,7 +21,7 @@ constexpr auto kWirePlumberNodeVisibilityPolicy =
 pipetune_hidden_nodes = {}
 pipetune_audio_stream_owners = {}
 pipetune_audio_stream_counts = {}
-pipetune_physical_outputs = {}
+pipetune_other_outputs = {}
 pipetune_aggregate_owners = {}
 
 -- PipeWire keeps client permissions when WirePlumber exits. Persist each
@@ -194,10 +194,11 @@ local function is_internal_node(node)
       name == "control.endpoint.pipetune.capture"
 end
 
-local function is_audio_stream(node)
+local function audio_stream_direction(node)
   local media_class = proxy_property(node, "media.class")
-  return media_class == "Stream/Output/Audio" or
-      media_class == "Stream/Input/Audio"
+  if media_class == "Stream/Output/Audio" then return "output" end
+  if media_class == "Stream/Input/Audio" then return "input" end
+  return nil
 end
 
 local function is_wireplumber(client)
@@ -226,9 +227,12 @@ local function update_node_permissions(client, node_id, owner_id)
   local id = client_id(client)
   local hidden = pipetune_hidden_nodes[node_id]
   local private_output = next(pipetune_aggregate_owners) ~= nil and hidden and hidden.output
-  if id ~= nil and pipetune_audio_stream_counts[id] ~= nil and not private_output then
+  local counts = id ~= nil and pipetune_audio_stream_counts[id] or nil
+  local direction = hidden and hidden.output and "output" or "input"
+  if counts ~= nil and counts[direction] > 0 and not private_output then
     -- WirePlumber 0.4 cannot express PipeWire's link-only permission.
-    -- Temporarily restore access so this client's stream can link.
+    -- Restore only the direction needed by this client's streams. An input
+    -- peak meter in a desktop selector must not reveal internal outputs.
     client:update_permissions { [node_id] = "all" }
   else
     client:update_permissions { [node_id] = "-" }
@@ -243,7 +247,7 @@ local function permission_key(client, output)
   return server_cookie .. ":" .. tostring(serial) .. ":" .. tostring(output.serial)
 end
 
-local function update_physical_permissions(client)
+local function update_output_permissions(client)
   if not nodes_installed or not clients_installed then return end
   local id = client_id(client)
   -- Desktop selectors and pipewire-pulse use unrestricted clients. Do not
@@ -254,7 +258,7 @@ local function update_physical_permissions(client)
     if id == owner_id then owns_aggregate = true end
   end
   local updates, added, hidden, restored = {}, {}, {}, {}
-  for node_id, output in pairs(pipetune_physical_outputs) do
+  for node_id, output in pairs(pipetune_other_outputs) do
     local key = permission_key(client, output)
     if key ~= nil then
       local hide = next(pipetune_aggregate_owners) ~= nil and
@@ -315,7 +319,7 @@ local function forget_permissions(client_serial, node_serial)
 end
 
 local function update_client_permissions(client)
-  update_physical_permissions(client)
+  update_output_permissions(client)
   for node_id, hidden_node in pairs(pipetune_hidden_nodes) do
     update_node_permissions(client, node_id, hidden_node.owner_id)
   end
@@ -360,21 +364,22 @@ pipetune_nodes_om:connect("object-added", function(om, node)
     update_all_client_permissions()
     if not is_internal_node(node) then return end
   end
-  local virtual = proxy_property(node, "node.virtual")
   if proxy_property(node, "media.class") == "Audio/Sink" and
-      virtual ~= "true" and virtual ~= true and not is_internal_node(node) then
-    pipetune_physical_outputs[node_id] = {
+      not is_internal_node(node) then
+    pipetune_other_outputs[node_id] = {
       owner_id = owner_id,
       serial = proxy_property(node, "object.serial"),
     }
     update_all_client_permissions()
     return
   end
-  if is_audio_stream(node) then
+  local direction = audio_stream_direction(node)
+  if direction ~= nil then
     if owner_id ~= nil then
-      pipetune_audio_stream_owners[node_id] = owner_id
-      pipetune_audio_stream_counts[owner_id] =
-          (pipetune_audio_stream_counts[owner_id] or 0) + 1
+      pipetune_audio_stream_owners[node_id] = { id = owner_id, direction = direction }
+      local counts = pipetune_audio_stream_counts[owner_id] or { input = 0, output = 0 }
+      counts[direction] = counts[direction] + 1
+      pipetune_audio_stream_counts[owner_id] = counts
       update_client_by_id(owner_id)
     end
     return
@@ -396,11 +401,11 @@ end)
 pipetune_nodes_om:connect("object-removed", function(om, node)
   local node_id = node["bound-id"]
   pipetune_hidden_nodes[node_id] = nil
-  local output = pipetune_physical_outputs[node_id]
+  local output = pipetune_other_outputs[node_id]
   if output ~= nil and output.serial ~= nil then
     forget_permissions(nil, tostring(output.serial))
   end
-  pipetune_physical_outputs[node_id] = nil
+  pipetune_other_outputs[node_id] = nil
   if pipetune_aggregate_owners[node_id] ~= nil then
     pipetune_aggregate_owners[node_id] = nil
     managed_defaults[node_id] = nil
@@ -410,18 +415,17 @@ pipetune_nodes_om:connect("object-removed", function(om, node)
     update_all_client_permissions()
   end
 
-  local owner_id = pipetune_audio_stream_owners[node_id]
-  if owner_id == nil then
+  local owner = pipetune_audio_stream_owners[node_id]
+  if owner == nil then
     return
   end
   pipetune_audio_stream_owners[node_id] = nil
-  local count = pipetune_audio_stream_counts[owner_id] or 0
-  if count <= 1 then
-    pipetune_audio_stream_counts[owner_id] = nil
-    update_client_by_id(owner_id)
-  else
-    pipetune_audio_stream_counts[owner_id] = count - 1
+  local counts = pipetune_audio_stream_counts[owner.id]
+  counts[owner.direction] = counts[owner.direction] - 1
+  if counts.input == 0 and counts.output == 0 then
+    pipetune_audio_stream_counts[owner.id] = nil
   end
+  update_client_by_id(owner.id)
 end)
 
 pipetune_clients_om:connect("object-added", function(om, client)
@@ -439,7 +443,7 @@ local function restore_initial_permissions()
   -- absent, or that a saved object pair no longer exists.
   local live = {}
   for client in pipetune_clients_om:iterate() do
-    for _, output in pairs(pipetune_physical_outputs) do
+    for _, output in pairs(pipetune_other_outputs) do
       local key = permission_key(client, output)
       if key ~= nil then live[key] = true end
     end
