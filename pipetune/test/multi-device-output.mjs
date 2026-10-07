@@ -201,6 +201,9 @@ try {
         if (!expected) continue;
         assert.equal(status.availableOutputs.length, stage === 1 ? 2 : 3,
           `internal nodes must not enter the inventory: ${status.availableOutputs.map((output) => output.nodeName).join(", ")}`);
+        assert.deepEqual(status.outputVolumes.map((output) => output.nodeSerial).sort(),
+          status.availableOutputs.map((output) => output.nodeSerial).sort(),
+          "volume reports must belong to the current output generation without retaining disconnected devices");
         if (first) {
           assert.deepEqual(first.device.channelPositions, ["FL", "FR"]);
           assert.equal(typeof first.nodeSerial, "string");

@@ -10,12 +10,14 @@
 #include <spa/param/audio/raw-types.h>
 #include <spa/param/format.h>
 #include <spa/param/port-config.h>
+#include <spa/param/props.h>
 #include <spa/pod/parser.h>
 
 #include <algorithm>
 #include <array>
 #include <charconv>
 #include <cerrno>
+#include <cmath>
 #include <cstring>
 #include <map>
 #include <optional>
@@ -33,6 +35,7 @@ struct InventoryObject {
   // Each parameter family is replaced when the node announces a change.
   std::map<std::uint32_t, std::vector<std::vector<std::string>>> layouts;
   bool canEnumerate = false;
+  OutputVolumeState volume;
 
   ~InventoryObject() {
     if (proxy != nullptr) {
@@ -208,11 +211,12 @@ static void nodeInfo(void *data, const pw_node_info *info) {
   if ((info->change_mask & PW_NODE_CHANGE_MASK_PROPS) != 0) updateProperties(node.properties, info->props);
   if ((info->change_mask & PW_NODE_CHANGE_MASK_PARAMS) != 0 && node.canEnumerate) {
     node.layouts.clear();
+    node.volume = {};
     for (auto index = std::uint32_t{0}; index < info->n_params; ++index) {
       const auto &parameter = info->params[index];
       if ((parameter.flags & SPA_PARAM_INFO_READ) == 0 ||
           (parameter.id != SPA_PARAM_PortConfig && parameter.id != SPA_PARAM_Format &&
-           parameter.id != SPA_PARAM_EnumFormat)) continue;
+           parameter.id != SPA_PARAM_EnumFormat && parameter.id != SPA_PARAM_Props)) continue;
       pw_node_enum_params(reinterpret_cast<pw_node *>(node.proxy), 0, parameter.id, 0, UINT32_MAX, nullptr);
     }
   }
@@ -221,6 +225,33 @@ static void nodeInfo(void *data, const pw_node_info *info) {
 
 static void nodeParam(void *data, int, std::uint32_t id, std::uint32_t, std::uint32_t, const spa_pod *param) {
   auto &node = *static_cast<InventoryObject *>(data);
+  if (id == SPA_PARAM_Props) {
+    // Enumeration returns a complete report. Unsupported or malformed controls
+    // remain unknown rather than retaining values from an older profile.
+    auto volume = OutputVolumeState{};
+    if (param != nullptr && spa_pod_is_object_type(param, SPA_TYPE_OBJECT_Props)) {
+      if (const auto *property = spa_pod_find_prop(param, nullptr, SPA_PROP_mute)) {
+        auto muted = false;
+        if (spa_pod_get_bool(&property->value, &muted) >= 0) volume.muted = muted;
+      }
+      if (const auto *property = spa_pod_find_prop(param, nullptr, SPA_PROP_volume)) {
+        auto gain = 0.0F;
+        if (spa_pod_get_float(&property->value, &gain) >= 0 && std::isfinite(gain) && gain >= 0) volume.volume = gain;
+      }
+      if (const auto *property = spa_pod_find_prop(param, nullptr, SPA_PROP_channelVolumes)) {
+        auto gains = std::array<float, SPA_AUDIO_MAX_CHANNELS>{};
+        const auto validArray = spa_pod_is_array(&property->value) &&
+            SPA_POD_ARRAY_VALUE_SIZE(&property->value) == sizeof(float) &&
+            SPA_POD_ARRAY_N_VALUES(&property->value) <= gains.size();
+        const auto count = validArray ? spa_pod_copy_array(&property->value, SPA_TYPE_Float, gains.data(), gains.size()) : 0U;
+        if (count > 0 && std::all_of(gains.begin(), gains.begin() + count,
+            [](float gain) { return std::isfinite(gain) && gain >= 0; }))
+          volume.channelVolumes.assign(gains.begin(), gains.begin() + count);
+      }
+    }
+    node.volume = std::move(volume);
+    return;
+  }
   auto *format = param;
   if (id == SPA_PARAM_PortConfig) {
     auto direction = std::uint32_t{SPA_ID_INVALID};
@@ -290,7 +321,14 @@ static void coreDone(void *data, std::uint32_t id, int sequence) {
   if (id != PW_ID_CORE || sequence != inventory.pending) return;
   auto snapshot = OutputInventoryResult{};
   for (const auto &[nodeId, node] : inventory.nodes) {
-    if (isOutput(node->properties)) snapshot.outputs.push_back(describeOutput(nodeId, *node, inventory));
+    if (!isOutput(node->properties)) continue;
+    auto output = describeOutput(nodeId, *node, inventory);
+    if (output.nodeSerial != 0) {
+      auto volume = node->volume;
+      volume.nodeSerial = output.nodeSerial;
+      snapshot.volumes.push_back(std::move(volume));
+    }
+    snapshot.outputs.push_back(std::move(output));
   }
   std::sort(snapshot.outputs.begin(), snapshot.outputs.end(), [](const auto &left, const auto &right) {
     return left.nodeName < right.nodeName || (left.nodeName == right.nodeName && left.nodeId < right.nodeId);

@@ -10,6 +10,8 @@
 #include "pipetune/startup_config.h"
 
 #include <algorithm>
+#include <cmath>
+#include <iomanip>
 #include <set>
 #include <sstream>
 #include <utility>
@@ -185,6 +187,14 @@ static std::string_view connectionName(OutputConnectionState state) {
   return "unknown";
 }
 
+static std::string deviceGainText(std::optional<float> gain) {
+  if (!gain) return "unknown";
+  if (*gain == 0) return "-inf dB";
+  auto text = std::ostringstream{};
+  text << std::fixed << std::setprecision(1) << 20.0 * std::log10(*gain) << " dB";
+  return text.str();
+}
+
 std::string formatOutputStatus(const ControlRuntimeStatus &status) {
   const auto &configuration = status.outputConfiguration;
   const auto single = configuration.mode == OutputMode::single;
@@ -215,6 +225,22 @@ std::string formatOutputStatus(const ControlRuntimeStatus &status) {
     text << " | " << tableCell(slot.label) << '\n';
   }
   if (configuration.channels.empty()) text << "No saved multiple-output assignments.\n";
+  if (!status.availableOutputs.empty()) {
+    text << "Physical output controls (reported; separate from master volume):\n";
+    for (const auto &output : status.availableOutputs) {
+      const auto found = std::find_if(status.outputVolumes.begin(), status.outputVolumes.end(),
+          [&output](const auto &entry) { return entry.nodeSerial == output.nodeSerial; });
+      const auto &volume = found == status.outputVolumes.end() ? OutputVolumeState{} : *found;
+      text << tableCell(output.device.name) << " | " << (volume.muted ? (*volume.muted ? "muted" : "unmuted") : "mute unknown")
+           << " | scalar gain: " << deviceGainText(volume.volume) << " | channel gains: ";
+      if (volume.channelVolumes.empty()) text << "unknown";
+      for (auto index = std::size_t{0}; index < volume.channelVolumes.size(); ++index) {
+        if (index != 0) text << ", ";
+        text << deviceGainText(volume.channelVolumes[index]);
+      }
+      text << '\n';
+    }
+  }
   return text.str();
 }
 

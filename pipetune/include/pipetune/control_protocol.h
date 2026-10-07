@@ -9,6 +9,7 @@
 #include "pipetune/dsp_backend.h"
 #include "pipetune/dsp_idle.h"
 #include "pipetune/output_configuration.h"
+#include "pipetune/output_volume.h"
 #include "pipetune/preset_entry.h"
 #include "pipetune/sample_rate.h"
 
@@ -218,6 +219,8 @@ struct ControlRuntimeStatus {
   bool outputInventoryReady = false;
   /** Enumeration diagnostic, or empty for a successful or pending inventory. */
   std::string outputInventoryError = {};
+  /** Physical output controls, independent of saved routing and master gain. */
+  std::vector<OutputVolumeState> outputVolumes = {};
 };
 
 /**

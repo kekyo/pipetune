@@ -265,6 +265,12 @@ output. Presence describes matching hardware, not measured audio transport or
 delay compensation. Changed profiles and ambiguous identities require explicit
 reassignment.
 
+`get` also shows each available device's reported mute, scalar gain, and channel
+gains in dB, separately from the OS master volume. `0.0 dB` is unity gain and
+`-inf dB` is silence; `unknown` means the device has not reported that control.
+The JSON response retains linear gains in `outputVolumes`. These are device
+reports, not measurements of the sound leaving the speakers.
+
 Desktop input remains stereo on Ch 1 and Ch 2. Use the EffeTune preset to create
 the additional outputs, for example with Matrix; Bypass leaves extra channels
 silent. PipeTune does not automatically copy stereo audio to every device.

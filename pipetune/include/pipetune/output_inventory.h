@@ -7,6 +7,7 @@
 #define PIPETUNE_OUTPUT_INVENTORY_H
 
 #include "pipetune/output_configuration.h"
+#include "pipetune/output_volume.h"
 
 namespace pipetune {
 
@@ -16,6 +17,8 @@ struct OutputInventoryResult {
   std::vector<AvailableOutput> outputs;
   /** Empty on success; an enumeration failure is never an empty success. */
   std::string error;
+  /** Reported controls for current outputs; absent controls remain unknown. */
+  std::vector<OutputVolumeState> volumes = {};
 };
 
 /**

@@ -1703,8 +1703,11 @@ static void applyOutputInventory(void *data, std::uint64_t) {
 
 static void outputInventoryChanged(const OutputInventoryResult &snapshot, void *data) {
   auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  auto inventoryChanged = false;
   {
     auto lock = std::scoped_lock(runtime.outputStateMutex);
+    inventoryChanged = !runtime.outputInventoryReady || runtime.availableOutputs.outputs != snapshot.outputs ||
+        runtime.availableOutputs.error != snapshot.error;
     runtime.availableOutputs = snapshot;
     runtime.outputInventoryReady = true;
   }
@@ -1715,6 +1718,7 @@ static void outputInventoryChanged(const OutputInventoryResult &snapshot, void *
     runtime.outputPolicyGeneration = generation;
     runtime.outputPolicyReset = true;
   }
+  if (!inventoryChanged && !runtime.outputPolicyReset) return;
   pw_loop_signal_event(pw_main_loop_get_loop(runtime.mainLoop), runtime.outputGraphSource);
 }
 
@@ -1872,7 +1876,8 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .outputConfiguration = std::move(outputConfiguration),
           .availableOutputs = outputInventory.error.empty() ? std::move(outputInventory.outputs) : std::vector<AvailableOutput>{},
           .outputInventoryReady = outputInventoryReady,
-          .outputInventoryError = std::move(outputInventory.error)};
+          .outputInventoryError = outputInventory.error,
+          .outputVolumes = outputInventory.error.empty() ? std::move(outputInventory.volumes) : std::vector<OutputVolumeState>{}};
 }
 
 static ControlMessageResult closeControlResponse(std::string response,

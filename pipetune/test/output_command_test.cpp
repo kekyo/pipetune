@@ -58,11 +58,15 @@ static bool testSelectionAndDisplay() {
   status.outputConfiguration = changed.configuration;
   status.availableOutputs = {inventory[0], inventory[2]};
   status.outputInventoryReady = true;
+  status.outputVolumes = {{1, true, 1, {0, 0.5F}}, {3, false, {}, {}}};
   const auto display = pipetune::formatOutputStatus(status);
   if (!check(display.find("Ch 3 | DAC b | 1 (FL)") != std::string::npos &&
              display.find("サブ左") != std::string::npos && display.find("missing") != std::string::npos &&
              display.find("disabled") != std::string::npos && display.find("connected") != std::string::npos,
              "the table must show fixed EffeTune numbers, device channels, labels, and actual presence")) return false;
+  if (!check(display.find("DAC a | muted | scalar gain: 0.0 dB | channel gains: -inf dB, -6.0 dB") != std::string::npos &&
+             display.find("DAC c | unmuted | scalar gain: unknown | channel gains: unknown") != std::string::npos,
+             "device controls must distinguish mute, channel attenuation and unavailable reports")) return false;
   status.outputConfiguration.mode = pipetune::OutputMode::single;
   return check(pipetune::formatOutputStatus(status).find("OS selects") != std::string::npos &&
                pipetune::formatOutputStatus(status).find("inactive") != std::string::npos,

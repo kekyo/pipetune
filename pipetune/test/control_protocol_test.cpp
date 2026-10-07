@@ -10,6 +10,7 @@
 #include <array>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <string_view>
 
@@ -868,11 +869,13 @@ static bool testOutputStatus() {
   wide.device.identity.location = "usb:2";
   wide.device.channelPositions.resize(18, "UNKNOWN");
   status.availableOutputs.push_back(wide);
+  status.outputVolumes = {{UINT64_MAX, true, 0.5F, {0.125F, 0.25F}}, {75, {}, {}, {}}};
   for (const auto event : {false, true}) {
     const auto encoded = event ? pipetune::makeControlStatusEvent(status) : pipetune::makeControlSuccessResponse(status, {});
     const auto parsed = pipetune::parseControlResponse(encoded);
     if (!check(parsed.valid && parsed.success && parsed.status.outputConfiguration == status.outputConfiguration &&
-               parsed.status.availableOutputs == status.availableOutputs && parsed.status.outputInventoryReady,
+               parsed.status.availableOutputs == status.availableOutputs && parsed.status.outputInventoryReady &&
+               parsed.status.outputVolumes == status.outputVolumes,
                "status and events must preserve saved mappings and the complete live inventory")) return false;
     const auto resolved = pipetune::resolveConfiguredOutputs(parsed.status.outputConfiguration, parsed.status.availableOutputs);
     if (!check(resolved[0].state == pipetune::OutputConnectionState::connected && resolved[0].inventoryIndex == 0,
@@ -880,6 +883,11 @@ static bool testOutputStatus() {
     for (const auto &[from, to] : std::vector<std::pair<std::string_view, std::string_view>>{
         {"\"outputInventoryReady\":true", "\"outputInventoryReady\":null"},
         {"\"outputInventoryError\":null", "\"outputInventoryError\":7"},
+        {"\"muted\":true", "\"muted\":1"},
+        {"\"volume\":0.5", "\"volume\":-0.5"},
+        {"\"volume\":0.5", "\"volume\":1e100"},
+        {"\"channelVolumes\":[0.125,0.25]", "\"channelVolumes\":[-1,0.25]"},
+        {"\"channelVolumes\":[0.125,0.25]", "\"channelVolumes\":[true,0.25]"},
         {"\"deviceChannel\":1", "\"deviceChannel\":16"},
         {"\"nodeSerial\":\"18446744073709551615\"", "\"nodeSerial\":18446744073709551615"},
         {"\"nodeId\":73", "\"nodeId\":-1"}}) {
@@ -888,7 +896,26 @@ static bool testOutputStatus() {
                  "malformed output status must be rejected")) return false;
     }
   }
+  const auto validVolumes = status.outputVolumes;
+  auto invalidVolumes = std::vector<std::vector<pipetune::OutputVolumeState>>{
+      {{0, {}, {}, {}}}, {{123, {}, {}, {}}},
+      {validVolumes[0], validVolumes[0]},
+      {{UINT64_MAX, false, -1, {}}},
+      {{UINT64_MAX, {}, std::numeric_limits<float>::infinity(), {}}},
+      {{UINT64_MAX, {}, {}, {std::numeric_limits<float>::quiet_NaN()}}},
+      {{UINT64_MAX, {}, {}, std::vector<float>(65, 1)}}};
+  for (const auto &volumes : invalidVolumes) {
+    status.outputVolumes = volumes;
+    const auto invalid = pipetune::parseControlResponse(pipetune::makeControlSuccessResponse(status, {}));
+    if (!check(invalid.valid && !invalid.success,
+               "invalid, duplicated or stale volume reports must never be published")) return false;
+  }
+  status.outputVolumes = {{UINT64_MAX, false, 0, {0, 2}}, {75, {}, {}, std::vector<float>(64, 1)}};
+  const auto boundary = pipetune::parseControlResponse(pipetune::makeControlStatusEvent(status));
+  if (!check(boundary.valid && boundary.success && boundary.status.outputVolumes == status.outputVolumes,
+             "unknown controls, silence, amplification and all 64 physical channels must round-trip")) return false;
   status.availableOutputs.clear();
+  status.outputVolumes.clear();
   status.outputInventoryError = "Output enumeration failed";
   const auto failed = pipetune::parseControlResponse(pipetune::makeControlSuccessResponse(status, {}));
   return check(failed.valid && failed.success && failed.status.outputInventoryError == status.outputInventoryError &&

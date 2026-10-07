@@ -7,6 +7,7 @@
 
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
+#include <spa/param/props.h>
 
 #include <algorithm>
 #include <array>
@@ -37,7 +38,7 @@ static bool configureOutput(TestState &state, unsigned channels, bool connect) {
   const auto *parameter = spa_format_audio_raw_build(&builder, SPA_PARAM_EnumFormat, &format);
   if (!connect) return pw_stream_update_params(state.stream, &parameter, 1) >= 0;
   return pw_stream_connect(state.stream, PW_DIRECTION_INPUT, PW_ID_ANY,
-      PW_STREAM_FLAG_INACTIVE, &parameter, 1) >= 0;
+      static_cast<pw_stream_flags>(PW_STREAM_FLAG_INACTIVE | PW_STREAM_FLAG_NO_CONVERT), &parameter, 1) >= 0;
 }
 
 static bool createOutput(TestState &state, unsigned channels) {
@@ -47,12 +48,27 @@ static bool createOutput(TestState &state, unsigned channels) {
   return state.stream != nullptr && configureOutput(state, channels, true);
 }
 
+// This fixture reports device controls directly. An inactive converter may
+// defer volume notifications until its audio formats have been negotiated.
+static bool publishVolume(TestState &state, bool muted) {
+  auto storage = std::array<std::uint8_t, 1024>{};
+  auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
+  const auto gains = std::array<float, 6>{0, 0.125F, 0.25F, 0.5F, 1, 2};
+  const auto *parameter = static_cast<const spa_pod *>(spa_pod_builder_add_object(
+      &builder, SPA_TYPE_OBJECT_Props, SPA_PARAM_Props,
+      SPA_PROP_mute, SPA_POD_Bool(muted), SPA_PROP_volume, SPA_POD_Float(1.0F),
+      SPA_PROP_channelVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, gains.size(), gains.data())));
+  return pw_stream_update_params(state.stream, &parameter, 1) >= 0;
+}
+
 static void changed(const pipetune::OutputInventoryResult &snapshot, void *data) {
   auto &state = *static_cast<TestState *>(data);
   if (!snapshot.error.empty()) return fail(state, snapshot.error);
   const auto output = std::find_if(snapshot.outputs.begin(), snapshot.outputs.end(),
       [](const auto &entry) { return entry.nodeName == "inventory.dynamic"; });
   const auto present = output != snapshot.outputs.end();
+  const auto volume = present ? std::find_if(snapshot.volumes.begin(), snapshot.volumes.end(),
+      [&output](const auto &entry) { return entry.nodeSerial == output->nodeSerial; }) : snapshot.volumes.end();
   if (state.step == 0) {
     state.step = 1;
     if (!createOutput(state, 6)) fail(state, "could not create the dynamic output");
@@ -102,6 +118,27 @@ static void changed(const pipetune::OutputInventoryResult &snapshot, void *data)
         pipetune::OutputConnectionState::connected || state.saved.channels.size() != 6)
       return fail(state, "reconnection must restore the original binding and six fixed slots");
     state.step = 9;
+    if (!publishVolume(state, true)) fail(state, "could not report test device gain and mute");
+  } else if (state.step == 9 && volume != snapshot.volumes.end() && volume->muted == true) {
+    if (volume->channelVolumes != std::vector<float>{0, 0.125F, 0.25F, 0.5F, 1, 2})
+      return fail(state, "device gain reports must retain every channel, including silence and amplification");
+    state.step = 10;
+    if (!publishVolume(state, false)) fail(state, "could not unmute the test device");
+  } else if (state.step == 10 && volume != snapshot.volumes.end() && volume->muted == false) {
+    if (volume->channelVolumes != std::vector<float>{0, 0.125F, 0.25F, 0.5F, 1, 2} ||
+        pipetune::resolveConfiguredOutputs(state.saved, snapshot.outputs)[0].state !=
+            pipetune::OutputConnectionState::connected)
+      return fail(state, "a mute-only change must retain device gains and saved routing");
+    state.step = 11;
+    pw_stream_destroy(state.stream);
+    state.stream = nullptr;
+  } else if (state.step == 11 && !present) {
+    for (const auto &entry : snapshot.volumes) {
+      if (std::none_of(snapshot.outputs.begin(), snapshot.outputs.end(),
+          [&entry](const auto &device) { return device.nodeSerial == entry.nodeSerial; }))
+        return fail(state, "disconnected devices must not leave stale volume reports");
+    }
+    state.step = 12;
     pw_main_loop_quit(state.loop);
   }
 }
@@ -135,5 +172,5 @@ int main() {
   pw_main_loop_destroy(state.loop);
   pw_deinit();
   if (!state.error.empty()) std::cerr << state.error << '\n';
-  return state.error.empty() && state.step == 9 ? 0 : 1;
+  return state.error.empty() && state.step == 12 ? 0 : 1;
 }

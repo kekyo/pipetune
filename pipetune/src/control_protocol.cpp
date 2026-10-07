@@ -9,10 +9,13 @@
 #include <yyjson.h>
 
 #include <cstdlib>
+#include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <cstring>
 #include <memory>
 #include <limits>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -568,6 +571,15 @@ std::string makeSetOutputControlRequest(const OutputConfiguration &configuration
 }
 
 static bool outputStatusIsConsistent(const ControlRuntimeStatus &status) {
+  auto serials = std::set<std::uint64_t>{};
+  const auto validGain = [](float value) { return std::isfinite(value) && value >= 0; };
+  for (const auto &volume : status.outputVolumes) {
+    if (volume.nodeSerial == 0 || !serials.insert(volume.nodeSerial).second ||
+        std::none_of(status.availableOutputs.begin(), status.availableOutputs.end(),
+            [&volume](const auto &output) { return output.nodeSerial == volume.nodeSerial; }) ||
+        (volume.volume && !validGain(*volume.volume)) || volume.channelVolumes.size() > 64 ||
+        !std::all_of(volume.channelVolumes.begin(), volume.channelVolumes.end(), validGain)) return false;
+  }
   return validateOutputConfiguration(status.outputConfiguration).empty() &&
       status.outputInventoryError.find('\0') == std::string::npos &&
       (status.outputInventoryReady || (status.availableOutputs.empty() && status.outputInventoryError.empty())) &&
@@ -698,6 +710,23 @@ static std::string makeControlStatusMessage(
         !yyjson_mut_obj_add_uint(document.get(), item, "nodeId", output.nodeId) ||
         !addString(document.get(), item, "nodeSerial", std::to_string(output.nodeSerial)))
       return makeControlErrorResponse("cannot encode available outputs");
+  }
+  auto *volumes = yyjson_mut_obj_add_arr(document.get(), root, "outputVolumes");
+  if (volumes == nullptr) return makeControlErrorResponse("cannot encode device volumes");
+  for (const auto &volume : status.outputVolumes) {
+    auto *item = yyjson_mut_arr_add_obj(document.get(), volumes);
+    auto *channels = yyjson_mut_obj_add_arr(document.get(), item, "channelVolumes");
+    if (item == nullptr || channels == nullptr ||
+        !addString(document.get(), item, "nodeSerial", std::to_string(volume.nodeSerial)) ||
+        !(volume.muted ? yyjson_mut_obj_add_bool(document.get(), item, "muted", *volume.muted) :
+                         yyjson_mut_obj_add_null(document.get(), item, "muted")) ||
+        !(volume.volume ? yyjson_mut_obj_add_real(document.get(), item, "volume", *volume.volume) :
+                          yyjson_mut_obj_add_null(document.get(), item, "volume")))
+      return makeControlErrorResponse("cannot encode device volumes");
+    for (const auto gain : volume.channelVolumes) {
+      if (!yyjson_mut_arr_add_real(document.get(), channels, gain))
+        return makeControlErrorResponse("cannot encode device channel volumes");
+    }
   }
 
   auto *presetEntries =
@@ -1168,6 +1197,45 @@ static bool readPresetEntries(yyjson_val *root,
   return true;
 }
 
+static bool readOutputGain(yyjson_val *value, float &gain) {
+  if (!yyjson_is_num(value)) return false;
+  const auto number = yyjson_get_num(value);
+  if (!std::isfinite(number) || number < 0 || number > std::numeric_limits<float>::max()) return false;
+  gain = static_cast<float>(number);
+  return true;
+}
+
+static bool readOutputVolumes(yyjson_val *array, std::vector<OutputVolumeState> &volumes) {
+  if (!yyjson_is_arr(array)) return false;
+  for (auto index = std::size_t{0}; index < yyjson_arr_size(array); ++index) {
+    auto *item = yyjson_arr_get(array, index);
+    auto state = OutputVolumeState{};
+    auto serial = std::string{};
+    if (!yyjson_is_obj(item) || yyjson_obj_size(item) != 4 ||
+        !readStringField(item, "nodeSerial", serial)) return false;
+    const auto parsed = std::from_chars(serial.data(), serial.data() + serial.size(), state.nodeSerial);
+    if (parsed.ec != std::errc{} || parsed.ptr != serial.data() + serial.size()) return false;
+    auto *muted = yyjson_obj_get(item, "muted");
+    if (yyjson_is_bool(muted)) state.muted = yyjson_get_bool(muted);
+    else if (!yyjson_is_null(muted)) return false;
+    auto *volume = yyjson_obj_get(item, "volume");
+    if (!yyjson_is_null(volume)) {
+      auto gain = 0.0F;
+      if (!readOutputGain(volume, gain)) return false;
+      state.volume = gain;
+    }
+    auto *channels = yyjson_obj_get(item, "channelVolumes");
+    if (!yyjson_is_arr(channels) || yyjson_arr_size(channels) > 64) return false;
+    for (auto channel = std::size_t{0}; channel < yyjson_arr_size(channels); ++channel) {
+      auto gain = 0.0F;
+      if (!readOutputGain(yyjson_arr_get(channels, channel), gain)) return false;
+      state.channelVolumes.push_back(gain);
+    }
+    volumes.push_back(std::move(state));
+  }
+  return true;
+}
+
 static bool readOutputStatus(yyjson_val *root, ControlRuntimeStatus &status) {
   auto configuration = parseOutputConfigurationJson(yyjson_obj_get(root, "outputConfiguration"));
   auto *outputs = yyjson_obj_get(root, "availableOutputs");
@@ -1189,7 +1257,7 @@ static bool readOutputStatus(yyjson_val *root, ControlRuntimeStatus &status) {
     if (parsed.ec != std::errc{} || parsed.ptr != serial.data() + serial.size()) return false;
     status.availableOutputs.push_back(std::move(output));
   }
-  return outputStatusIsConsistent(status);
+  return readOutputVolumes(yyjson_obj_get(root, "outputVolumes"), status.outputVolumes) && outputStatusIsConsistent(status);
 }
 
 ControlResponseParseResult parseControlResponse(std::string_view json) {
