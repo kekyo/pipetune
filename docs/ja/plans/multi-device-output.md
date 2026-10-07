@@ -1006,3 +1006,55 @@ SPA Deviceのラッパーで既存のデバイス実装へ処理を委譲し、�
 5. 修正したコミットを固定して全体テストを実行し、現在のGNOMEセッションへ反映する。利用者の保存設定を保持し、実機で両モードの出力一覧と入力の維持を照合する。全体テストと実機確認が完了するまで、OS統合の完了チェックを戻さない。
 
 本検討による追跡対象の変更はこの計画文書のみである。製品コードの修正・デプロイと全体テストの再実行は行っておらず、既報の2つの表示不具合は未解消として扱う。
+
+### 追加検証: GNOMEの選択表示・実音声・入力操作の同時計測（2026-10-07）
+
+利用者の依頼に基づき、前述の曖昧な観測を検証した。対象はコミット`03a8806aeae371fd7ff67cee3be03b4cc0e6bcf2`の製品コードと生成されたWirePlumberポリシーである。以前のデバッグ時の原因を特定する検証ではなく、現在のコードで表示と音声がどのように分離して変化するか、入力を残せる条件は何かを調べる検証とした。
+
+#### 環境と判定方法
+
+ホストと独立したPipeWire 1.0.5、WirePlumber 0.4.17、pipewire-pulse、D-Bus、Xvfbで、実際のGNOME Settings 46.7の「Sound」を起動した。物理ALSA・Bluetooth機器は開かず、出力2端子・入力2端子を持つ検証カード、別の出力ノード、現行PipeTune daemonを使用した。製品とホストの保存設定・サービス・インストール済みファイルは変更していない。
+
+検証カードには再生・録音できるノードを追加し、Routeの入力音量・ミュート操作をノードへ反映した。入力には997 Hz、出力アプリには431 Hzの別々の信号を与え、48 kHz / 2 chで録音した。入力録音は通常権限のpw-catから現行の録音経路を使用し、出力は各出力ノードのmonitorを別々に取得した。合成機器の所有者には、実機の所有者であるWirePlumberと同様に内部録音endpointを参照できる権限を与えた。GNOMEと録音クライアントの権限を一括解除する検証ではない。
+
+各操作後に、GNOMEの画像、Gvcの端子・sink/source一覧、既定先メタデータ、PipeWireノード・リンク、製品status、PCMを同じ段階の記録へ保存した。入力音量・ミュート・端子切替はGNOMEのウィジェットを操作した。録音データの増加を待って比較し、ノードの状態がrunningであることだけを音声到達の証拠にはしていない。
+
+#### 比較結果
+
+| 条件 | 出力の表示・選択 | 再生と入力への影響 |
+| --- | --- | --- |
+| Single modeで既定出力を変更 | 検証カードからOther Outputへ変更 | 431 Hzの信号も選択したノードへ移動。入力2端子と997 Hzの録音を維持 |
+| 現行Multiple mode、ノード権限のみ | 既定sinkは`pipetune_sink`、物理sinkはGvcから消えるがカードの出力2端子は残る | 指定した検証カードへ再生。入力2端子と録音を維持 |
+| 集約出力を選択したまま、出力EnumRouteだけを除外 | GNOMEはPipeTune Multiple Outputsを選択表示。Gvcの出力選択肢は1件 | 指定先へ再生し、入力2端子の名前・ID・既定入力・PCMを維持 |
+| 上記の状態でGNOMEの入力音量・ミュートを操作 | 音量低下、ミュート、復元が表示に反映 | 録音の振幅低下・無音・元の振幅への復元を確認 |
+| 上記の状態でMicrophoneからLine Inputへ変更 | GNOMEと実際のRouteがLine Inputへ変更 | 入力ノードと録音ストリームを再作成せず録音を継続。Singleへ戻してもLine Inputを維持 |
+| 残っている物理端子をMultiple modeで選択 | GNOMEの選択表示はFixture Analog Outputへ変わるが、実効の既定sinkは`pipetune_sink`のまま | 指定した検証カードへの再生が継続。入力は維持 |
+| その選択中の物理端子をEnumRouteから削除 | GNOMEはNo Output Devicesになる。一方、独立GvcにはPipeTune Multiple Outputsが1件残る | 431 Hzの再生と997 Hzの録音がともに継続。表示上の未選択と、実際の音声経路なしは一致しない |
+| カード全体をGNOMEと観測Gvcから非公開 | 出力端子だけでなく入力端子も消え、GNOMEはNo Input Devicesを表示 | 録音ノードと既存録音は残る。入力UI維持の要件には不適合。カード再公開後の入力UI IDも別になる |
+| 出力端子のavailableをnoへ変更 | 出力2端子が一覧から消える | 録音は継続したが、検証カードでは入力の選択がLineからMicrophoneへ戻った。下記の検証ドライバーの制限に注意 |
+
+選択中のデバイスがなくなるとGNOMEは出力グループを隠してNo Output Devicesを表示する。これは選択中デバイスの有無によるUI分岐であり、全sinkや実リンクの不存在を確認する処理ではない。端子削除時のコンボボックス更新と合わせ、今回の観測と整合する。[GNOME Settings 46.7の出力表示](https://github.com/GNOME/gnome-control-center/blob/46.7/panels/sound/cc-sound-panel.c)、[デバイス選択の更新](https://github.com/GNOME/gnome-control-center/blob/46.7/panels/sound/cc-device-combo-box.c)
+
+出力の通常時RMSは約0.004999、入力は約0.035355だった。入力音量を65536から32074へ下げると録音RMSは約0.004145となり、ミュートでは0、音量復元後は約0.035355へ戻った。出力録音に431 Hz、入力録音に997 Hzの成分があることも別途確認し、入力用の信号が再生結果へ混ざった測定を採用していない。
+
+出力端子の除外・復元とSingle/Multiple往復の区間で、入力ノードのID/serialは40/40、録音ノードは112/117のままだった。Gvcの入力2端子のIDも3、4を維持し、これらの削除通知はカード全体を隠す比較実験まで発生しなかった。該当する入力PCM区間の連続ゼロは最大1フレームで、正弦波のゼロ交差を超える無音区間を検出しなかった。ただし実験全体では、通常の出力先変更時とカード全体非公開時にそれぞれ256フレーム、約5.3 msのゼロ区間も観測した。原因は未特定であり、実験全体の無欠落や実機での音響的連続性を保証したとは扱わない。
+
+開いたままのGNOMEではSingleへ戻すとPipeTune Multiple Outputsが消え、物理端子を選択表示した。新しく起動したGNOMEでも、出力端子除外後のMultiple modeはPipeTune Multiple Outputsを表示し、Single modeでは同名の集約出力は消えた。ただし新規起動のSingle画面ではPipeTune Processed Audioが選択表示される場合を今回も観測した。これは0.4の内部endpoint一時公開に関する既報の現象であり、Multiple Outputs残留とは区別する。GNOMEを新規起動した確認は表示の追加確認で、上記の連続録音とは別に実施した。
+
+#### この結果から判断できる範囲
+
+「出力一覧が消えても入力一覧・録音は残り、再生も続く」という状態は、現在のコードを使った分離環境で再現できた。また、集約出力が選択されている条件では、出力端子だけを除外して入力の操作と録音を保つことも確認できた。従って、入力に影響がなかったという利用者の記憶と矛盾しない。ただし当時の操作・カード・モードが不明なため、今回と同じ原因だったとは断定しない。
+
+このドライバーは1つのduplexプロファイルしか持たず、Routeのsaveをfalseとして公開する。端子選択の永続化・プロファイル変更・ALSAの実際の入出力切替までは模擬していない。available変更時の入力端子再選択はこの条件での観測であり、実機でも同じ入力端子へ戻ると一般化しない。availableは標準経路ポリシーの再選択に使う状態であり、表示専用のフラグとしては扱わない。[WirePlumber 0.4.17の経路再選択・保存処理](https://github.com/PipeWire/wireplumber/blob/0.4.17/src/scripts/policy-device-routes.lua)、[RouteのAPIコメント](https://github.com/PipeWire/pipewire/blob/1.0.5/spa/include/spa/param/route.h)
+
+また、この実験のEnumRoute除外は全クライアントに作用する。デスクトップ用の一覧だけを変更し、WirePlumberには全経路を残す公開境界は、前述のとおり未実装・未検証である。今回の成功を根拠にそのまま実機へ導入しない。製品方式を決める次の反復1の完了条件は未達であり、プロファイル操作、端子設定の保存・復元、異常終了時の復元、WirePlumber 0.5、実カードでの往復確認も残る。
+
+今回の検証の完了条件である、実GNOMEとPCMの同時計測、ノード非公開・端子情報変更・カード全体非公開の比較、入力の一覧と実操作の区別、記録保存を満たした。既報のMultiple modeで物理端子が残る問題は再現したが未修正であり、Single modeでMultiple Outputsが残るという利用者の症状は今回も再現できていない。OS統合の完了チェックは戻さない。
+
+#### 記録と再実行
+
+採用した観測記録は`artifacts/output-visibility/duplex-466203/`に保存した。`duplex-results.json`に17段階のstatus・Gvc・ノード・リンク・PCM集計、各段階のPNGとgraph JSON、`duplex-gvc-events.json`、`input-continuity.json`、`tone-results.json`、`cold-results.json`、録音WAVを含む。使用した検証ドライバーとスクリプトのコピーは同じディレクトリの`used-*`に置いた。準備中の失敗・未成立の測定は別の記録として扱い、上記の成功判定に含めない。
+
+再実行は`make -C artifacts/output-visibility duplex-card`、`node artifacts/output-visibility/duplex-session.mjs`で分離環境を起動してREADYを待ち、別の端末から`node artifacts/output-visibility/duplex-check.mjs`、続いて`node artifacts/output-visibility/duplex-cold.mjs`を実行する。終了時は`duplex-current`が指すディレクトリへ`done`ファイルを作成する。検証用のプロセスと音声サービスはすべて終了済みで、追跡対象の変更は本計画文書のみとする。
+
+全体テストは上記のコードコミットを固定し、別の分離音声環境で`dbus-run-session -- node artifacts/output-tab-order/run-tests.mjs full`を実行した。`make test`の217/217件が成功し、所要時間は269.36秒だった。ログは`artifacts/output-visibility/full-test-duplex.log`に保存した。製品コードの修正・実セッションへのデプロイは行っていない。
