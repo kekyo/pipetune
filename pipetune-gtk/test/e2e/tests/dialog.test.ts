@@ -1057,13 +1057,26 @@ describe('PipeTune GTK dialog', () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     const window = await getElement('mainWindow', 'window');
+    const content = await getWidget('windowContent');
+    const resize = async (width: number, height: number): Promise<void> => {
+      const bounds = await window.resizeTo(width, height);
+      // X11 acknowledges the resize before GTK allocates its child widgets.
+      await toPass(async () => {
+        const allocated = (await content.capture()).bounds;
+        const border = allocated.x - bounds.x;
+        expect(allocated.width).toBe(bounds.width - border * 2);
+        expect(allocated.y + allocated.height).toBe(
+          bounds.y + bounds.height - border
+        );
+      });
+    };
     const table = await getElement('presetEntryView', 'table');
     // Measure the viewport; tree content relayouts while scrollbars appear.
     const presetViewport = await getWidget('presetEntryScroll');
-    await window.resizeTo(1080, 740);
+    await resize(1080, 740);
     const compact = await presetViewport.capture();
 
-    await window.resizeTo(1080, 880);
+    await resize(1080, 880);
     await toPass(async () => {
       const expanded = await presetViewport.capture();
       expect(expanded.bounds.height - compact.bounds.height).toBe(140);
@@ -1076,22 +1089,22 @@ describe('PipeTune GTK dialog', () => {
       (await table.capture()).visibleBounds
     );
 
-    await window.resizeTo(1080, 740);
+    await resize(1080, 740);
     await toPass(async () => {
       expect((await presetViewport.capture()).bounds.height).toBe(
         compact.bounds.height
       );
     });
-    await window.resizeTo(900, 560);
+    await resize(900, 560);
     await expectInsideWindow(await getWidget('applyButton'), window);
 
     await selectSettingsPage(3);
     const devices = await getWidget('outputDeviceScroll');
     const channels = await getElement('outputChannelsExpander', 'expander');
     expect(await channels.isExpanded()).toBe(false);
-    await window.resizeTo(1080, 740);
+    await resize(1080, 740);
     const compactDevices = await devices.capture();
-    await window.resizeTo(1080, 880);
+    await resize(1080, 880);
     await toPass(async () => {
       const expanded = await devices.capture();
       expect(expanded.bounds.height - compactDevices.bounds.height).toBe(140);
@@ -1119,7 +1132,7 @@ describe('PipeTune GTK dialog', () => {
     });
     expect(await session.inspectConfig()).toEqual(saved);
     expect(await session.readRequests()).toHaveLength(0);
-    await window.resizeTo(900, 560);
+    await resize(900, 560);
     await expectInsideWindow(channels, window);
     await expectInsideWindow(await getWidget('applyButton'), window);
   });
