@@ -66,18 +66,12 @@ struct MainWindowUi {
   GtkWidget *outputModeNotice = nullptr;
   /** Pending selection, enumeration, or selection-validation diagnostic. */
   GtkWidget *outputErrorLabel = nullptr;
-  /** Selected, missing, and newly available output choices. */
+  /** Device parents with expandable channel controls in one scrolling tree. */
   GtkWidget *outputDeviceList = nullptr;
-  /** Fixed final DSP channel to physical channel mapping. */
-  GtkWidget *outputChannelView = nullptr;
-  /** Editable purpose-label cells, borrowed from the builder. */
-  GtkCellRenderer *outputLabelRenderer = nullptr;
-  /** Proposes moving the selected slot to the previous channel number. */
-  GtkWidget *outputMoveUpButton = nullptr;
-  /** Proposes moving the selected slot to the next channel number. */
-  GtkWidget *outputMoveDownButton = nullptr;
-  /** Opens a replacement chooser for the selected slot's saved device. */
-  GtkWidget *outputReassignButton = nullptr;
+  /** Tree branch retaining slots left without a physical output. */
+  GtkWidget *outputReservedExpander = nullptr;
+  /** Channel editors within the reserved branch. */
+  GtkWidget *outputReservedGrid = nullptr;
   /** Modal before/after review, retained and hidden between uses. */
   GtkWidget *outputMappingDialog = nullptr;
   /** Current replacement-device choices; hidden for channel moves. */

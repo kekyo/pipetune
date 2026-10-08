@@ -108,6 +108,9 @@ msgstr "所有设置已保存"
 msgid "Ambiguous device"
 msgstr "设备标识不唯一"
 
+msgid "Ambiguous device. Reassign device to choose the output."
+msgstr "无法唯一识别设备。请重新分配设备以选择输出。"
+
 msgid "Apply"
 msgstr "应用"
 
@@ -281,9 +284,6 @@ msgstr "正在实时应用默认值；请使用“应用”保存"
 msgid "Defaults selected"
 msgstr "已选择默认值"
 
-msgid "Device"
-msgstr "设备"
-
 msgid "Device channel"
 msgstr "设备通道"
 
@@ -293,14 +293,14 @@ msgstr "设备静音状态未知"
 msgid "Device muted"
 msgstr "设备已静音"
 
-msgid "Device presence is separate from audio activity. Double-click a purpose cell to edit its label."
-msgstr "设备连接状态不代表音频正在播放。双击用途单元格可编辑标签。"
-
 msgid "Device unmuted"
 msgstr "设备未静音"
 
 msgid "Disabled"
 msgstr "已禁用"
+
+msgid "Disabled; channel numbers are retained."
+msgstr "已禁用；保留通道编号。"
 
 msgid "Disconnected"
 msgstr "已断开连接"
@@ -354,8 +354,8 @@ msgstr "实际后端不可用"
 msgid "EffeTune DSP control"
 msgstr "EffeTune DSP 控制"
 
-msgid "EffeTune final output channels"
-msgstr "EffeTune 最终输出通道"
+msgid "EffeTune output"
+msgstr "EffeTune 输出"
 
 msgid "EffeTune presets"
 msgstr "EffeTune 预设"
@@ -463,12 +463,6 @@ msgstr "负载"
 msgid "Measured frame rate"
 msgstr "实测帧率"
 
-msgid "Move down"
-msgstr "下移"
-
-msgid "Move up"
-msgstr "上移"
-
 msgid "Multiple — outputs selected in PipeTune"
 msgstr "多设备 — 在 PipeTune 中选择输出"
 
@@ -483,6 +477,9 @@ msgstr "无"
 
 msgid "Not connected"
 msgstr "未连接"
+
+msgid "Not connected. Reconnect it or reassign this device."
+msgstr "未连接。请重新连接或重新分配此设备。"
 
 msgid "Off"
 msgstr "关闭"
@@ -552,9 +549,6 @@ msgstr "PipeWire 强制策略"
 msgid "PipeWire graph sampling frequency"
 msgstr "PipeWire 图采样频率"
 
-msgid "Presence"
-msgstr "连接状态"
-
 msgid "Preset"
 msgstr "预设"
 
@@ -569,6 +563,9 @@ msgstr "需要预设"
 
 msgid "Preset warnings"
 msgstr "预设警告"
+
+msgid "Press Enter or leave the field to preview the purpose label."
+msgstr "按 Enter 或离开输入框以预览用途标签。"
 
 msgid "Preview mapping"
 msgstr "预览分配"
@@ -588,6 +585,9 @@ msgstr "处理时间"
 msgid "Profile changed"
 msgstr "配置已更改"
 
+msgid "Profile changed. Reassign device to update these channels."
+msgstr "配置文件已更改。请重新分配设备以更新这些通道。"
+
 msgid "Purpose"
 msgstr "用途"
 
@@ -602,6 +602,9 @@ msgstr "设备报告的控制值，与操作系统的主音量相互独立。通
 
 msgid "Reserved"
 msgstr "已保留"
+
+msgid "Reserved EffeTune channels"
+msgstr "保留的 EffeTune 通道"
 
 msgid "Restart now"
 msgstr "立即重启"
@@ -677,6 +680,9 @@ msgstr "请选择替换的输出设备。"
 msgid "Select at least one output device."
 msgstr "请至少选择一个输出设备。"
 
+msgid "Select the saved device whose channels this output will use."
+msgstr "请选择此输出将接替其通道的已保存设备。"
+
 msgid "Setting up PipeTune for this user…"
 msgstr "正在为此用户设置 PipeTune…"
 
@@ -736,6 +742,9 @@ msgstr "系统"
 msgid "System default"
 msgstr "系统默认"
 
+msgid "The 16-channel limit includes disabled and reserved channels. Use existing channels to replace a saved device."
+msgstr "16 通道上限包括已禁用和保留的通道。请使用现有通道来替换已保存的设备。"
+
 msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
 msgstr "由操作系统选择输出。下方保存的多设备输出分配当前未启用。"
 
@@ -780,6 +789,9 @@ msgstr "正在更新设置"
 
 msgid "Updating settings failed"
 msgstr "更新设置失败"
+
+msgid "Use existing channels…"
+msgstr "使用现有通道…"
 
 msgid "Versions"
 msgstr "版本"

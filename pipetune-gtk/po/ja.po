@@ -108,6 +108,9 @@ msgstr "すべての設定を保存しました"
 msgid "Ambiguous device"
 msgstr "デバイスを特定できません"
 
+msgid "Ambiguous device. Reassign device to choose the output."
+msgstr "デバイスを一意に識別できません。デバイスを再割り当てして出力先を選択してください。"
+
 msgid "Apply"
 msgstr "適用"
 
@@ -281,9 +284,6 @@ msgstr "既定値をライブ適用中です。保存するには「適用」を
 msgid "Defaults selected"
 msgstr "既定値を選択しました"
 
-msgid "Device"
-msgstr "デバイス"
-
 msgid "Device channel"
 msgstr "デバイス内チャンネル"
 
@@ -293,14 +293,14 @@ msgstr "デバイス: ミュート状態不明"
 msgid "Device muted"
 msgstr "デバイス: ミュート中"
 
-msgid "Device presence is separate from audio activity. Double-click a purpose cell to edit its label."
-msgstr "接続状態と音声の稼働状態は異なります。用途名はセルをダブルクリックして編集できます。"
-
 msgid "Device unmuted"
 msgstr "デバイス: ミュートなし"
 
 msgid "Disabled"
 msgstr "無効"
+
+msgid "Disabled; channel numbers are retained."
+msgstr "無効です。チャンネル番号は保持されています。"
 
 msgid "Disconnected"
 msgstr "未接続"
@@ -354,8 +354,8 @@ msgstr "実効バックエンドを取得できません"
 msgid "EffeTune DSP control"
 msgstr "EffeTune DSPコントロール"
 
-msgid "EffeTune final output channels"
-msgstr "EffeTuneの最終出力チャンネル"
+msgid "EffeTune output"
+msgstr "EffeTune出力"
 
 msgid "EffeTune presets"
 msgstr "EffeTuneプリセット"
@@ -463,12 +463,6 @@ msgstr "負荷"
 msgid "Measured frame rate"
 msgstr "実測フレームレート"
 
-msgid "Move down"
-msgstr "下へ移動"
-
-msgid "Move up"
-msgstr "上へ移動"
-
 msgid "Multiple — outputs selected in PipeTune"
 msgstr "複数 — PipeTuneで出力先を選択"
 
@@ -483,6 +477,9 @@ msgstr "なし"
 
 msgid "Not connected"
 msgstr "未接続"
+
+msgid "Not connected. Reconnect it or reassign this device."
+msgstr "未接続です。再接続するか、このデバイスを再割り当てしてください。"
 
 msgid "Off"
 msgstr "オフ"
@@ -552,9 +549,6 @@ msgstr "PipeWire強制方式"
 msgid "PipeWire graph sampling frequency"
 msgstr "PipeWireグラフのサンプリング周波数"
 
-msgid "Presence"
-msgstr "接続状態"
-
 msgid "Preset"
 msgstr "プリセット"
 
@@ -569,6 +563,9 @@ msgstr "プリセットが必要です"
 
 msgid "Preset warnings"
 msgstr "プリセット警告"
+
+msgid "Press Enter or leave the field to preview the purpose label."
+msgstr "Enterキーを押すか入力欄からフォーカスを移すと、用途名をプレビューします。"
 
 msgid "Preview mapping"
 msgstr "割り当てをプレビュー"
@@ -588,6 +585,9 @@ msgstr "処理時間"
 msgid "Profile changed"
 msgstr "プロファイル不一致"
 
+msgid "Profile changed. Reassign device to update these channels."
+msgstr "プロファイルが変更されています。デバイスを再割り当てしてチャンネルを更新してください。"
+
 msgid "Purpose"
 msgstr "用途名"
 
@@ -602,6 +602,9 @@ msgstr "デバイスが報告した制御値です。OSの全体音量とは別�
 
 msgid "Reserved"
 msgstr "予約済み"
+
+msgid "Reserved EffeTune channels"
+msgstr "予約済みのEffeTuneチャンネル"
 
 msgid "Restart now"
 msgstr "今すぐ再起動"
@@ -677,6 +680,9 @@ msgstr "再割り当て先の出力デバイスを選択してください。"
 msgid "Select at least one output device."
 msgstr "出力デバイスを1つ以上選択してください。"
 
+msgid "Select the saved device whose channels this output will use."
+msgstr "この出力がチャンネルを引き継ぐ保存済みデバイスを選択してください。"
+
 msgid "Setting up PipeTune for this user…"
 msgstr "このユーザー向けに PipeTune をセットアップしています…"
 
@@ -736,6 +742,9 @@ msgstr "システム"
 msgid "System default"
 msgstr "システム設定"
 
+msgid "The 16-channel limit includes disabled and reserved channels. Use existing channels to replace a saved device."
+msgstr "16チャンネルの上限には無効・予約済みのチャンネルも含まれます。「既存のチャンネルを使用」で保存済みデバイスを置き換えてください。"
+
 msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
 msgstr "出力先はOSが選択します。以下の保存済みの複数出力の割り当ては使用しません。"
 
@@ -780,6 +789,9 @@ msgstr "設定を更新中"
 
 msgid "Updating settings failed"
 msgstr "設定の更新に失敗しました"
+
+msgid "Use existing channels…"
+msgstr "既存のチャンネルを使用…"
 
 msgid "Versions"
 msgstr "バージョン"

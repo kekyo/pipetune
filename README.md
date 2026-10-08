@@ -215,16 +215,20 @@ pipetune bypass
 The settings window's `Output` page switches between OS-managed single output
 and multiple outputs selected in PipeTune. In multiple mode, check the devices
 you want to use. Each device lists its active profile, channel count, assigned
-Ch numbers, and presence. The device list grows with the available panel height.
-Open the initially collapsed `EffeTune final output channels` section below it
-to view the channel table and editing controls. The table scrolls independently
-and maps final EffeTune channels to each device's physical channels.
-Double-click a purpose cell to add your own label.
-Select a channel and use `Move up` or `Move down` to change its number, or
-`Reassign device…` to choose a replacement output for its device. Review the
+Ch numbers, and presence. Selecting a device expands its physical channels in
+the same scrolling list. Choose an `EffeTune output` number beside each channel
+to move its assignment, and enter an optional purpose label. Press Enter or
+leave the purpose field to preview it. Collapsing a device keeps its assignments.
+Use `Reassign device…` on the device row to choose a replacement output, even
+while its channels are collapsed. Unavailable choices explain the reason on
+their row. `Use existing channels…` lets an available device take over a saved
+device's assignments, including disabled ones that still count toward the
+16-channel limit. Review the
 before/after table, then choose `Preview mapping`. The EffeTune preset itself
 is unchanged. Reassignment retains other devices' channel numbers and keeps
-removed channels reserved; additional channels are appended.
+removed channels in the `Reserved EffeTune channels` branch; additional channels
+are appended. Changing a channel number moves its assignment and purpose label,
+shifting the intervening assignments as shown in the review.
 Changes preview live; use `Apply` to save or `Cancel` to restore the previous
 configuration. Selecting multiple mode without a device leaves an unfinished
 draft and does not change the live output.

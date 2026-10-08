@@ -110,6 +110,9 @@ msgstr "Все настройки сохранены"
 msgid "Ambiguous device"
 msgstr "Неоднозначное устройство"
 
+msgid "Ambiguous device. Reassign device to choose the output."
+msgstr "Устройство определено неоднозначно. Переназначьте устройство, чтобы выбрать выход."
+
 msgid "Apply"
 msgstr "Применить"
 
@@ -283,9 +286,6 @@ msgstr "Значения по умолчанию применяются в ре�
 msgid "Defaults selected"
 msgstr "Выбраны значения по умолчанию"
 
-msgid "Device"
-msgstr "Устройство"
-
 msgid "Device channel"
 msgstr "Канал устройства"
 
@@ -295,14 +295,14 @@ msgstr "Состояние отключения звука устройства 
 msgid "Device muted"
 msgstr "Звук устройства отключён"
 
-msgid "Device presence is separate from audio activity. Double-click a purpose cell to edit its label."
-msgstr "Наличие устройства не означает передачу звука. Дважды щёлкните ячейку назначения, чтобы изменить подпись."
-
 msgid "Device unmuted"
 msgstr "Звук устройства включён"
 
 msgid "Disabled"
 msgstr "Отключено"
+
+msgid "Disabled; channel numbers are retained."
+msgstr "Отключено; номера каналов сохранены."
 
 msgid "Disconnected"
 msgstr "Отключено"
@@ -356,8 +356,8 @@ msgstr "Фактический бэкенд недоступен"
 msgid "EffeTune DSP control"
 msgstr "Управление DSP EffeTune"
 
-msgid "EffeTune final output channels"
-msgstr "Конечные выходные каналы EffeTune"
+msgid "EffeTune output"
+msgstr "Выход EffeTune"
 
 msgid "EffeTune presets"
 msgstr "Предустановки EffeTune"
@@ -465,12 +465,6 @@ msgstr "Нагрузка"
 msgid "Measured frame rate"
 msgstr "Измеренная частота кадров"
 
-msgid "Move down"
-msgstr "Переместить вниз"
-
-msgid "Move up"
-msgstr "Переместить вверх"
-
 msgid "Multiple — outputs selected in PipeTune"
 msgstr "Несколько — выходы выбираются в PipeTune"
 
@@ -485,6 +479,9 @@ msgstr "Нет"
 
 msgid "Not connected"
 msgstr "Не подключено"
+
+msgid "Not connected. Reconnect it or reassign this device."
+msgstr "Не подключено. Подключите заново или переназначьте это устройство."
 
 msgid "Off"
 msgstr "Выключено"
@@ -554,9 +551,6 @@ msgstr "Применение PipeWire"
 msgid "PipeWire graph sampling frequency"
 msgstr "Частота дискретизации графа PipeWire"
 
-msgid "Presence"
-msgstr "Состояние"
-
 msgid "Preset"
 msgstr "Предустановка"
 
@@ -571,6 +565,9 @@ msgstr "Требуется предустановка"
 
 msgid "Preset warnings"
 msgstr "Предупреждения предустановки"
+
+msgid "Press Enter or leave the field to preview the purpose label."
+msgstr "Нажмите Enter или покиньте поле, чтобы предварительно применить название назначения."
 
 msgid "Preview mapping"
 msgstr "Предпросмотр назначений"
@@ -590,6 +587,9 @@ msgstr "Время обработки"
 msgid "Profile changed"
 msgstr "Профиль изменён"
 
+msgid "Profile changed. Reassign device to update these channels."
+msgstr "Профиль изменён. Переназначьте устройство, чтобы обновить эти каналы."
+
 msgid "Purpose"
 msgstr "Назначение"
 
@@ -604,6 +604,9 @@ msgstr "Значения, сообщённые устройством, отде�
 
 msgid "Reserved"
 msgstr "Зарезервировано"
+
+msgid "Reserved EffeTune channels"
+msgstr "Зарезервированные каналы EffeTune"
 
 msgid "Restart now"
 msgstr "Перезапустить сейчас"
@@ -679,6 +682,9 @@ msgstr "Выберите устройство вывода для замены."
 msgid "Select at least one output device."
 msgstr "Выберите хотя бы одно устройство вывода."
 
+msgid "Select the saved device whose channels this output will use."
+msgstr "Выберите сохранённое устройство, каналы которого будет использовать этот выход."
+
 msgid "Setting up PipeTune for this user…"
 msgstr "Настройка PipeTune для этого пользователя…"
 
@@ -738,6 +744,9 @@ msgstr "Система"
 msgid "System default"
 msgstr "Система по умолчанию"
 
+msgid "The 16-channel limit includes disabled and reserved channels. Use existing channels to replace a saved device."
+msgstr "Лимит в 16 каналов включает отключённые и зарезервированные каналы. Используйте существующие каналы для замены сохранённого устройства."
+
 msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
 msgstr "Выход выбирается операционной системой. Сохранённые ниже назначения для нескольких выходов неактивны."
 
@@ -782,6 +791,9 @@ msgstr "Обновление настроек"
 
 msgid "Updating settings failed"
 msgstr "Не удалось обновить настройки"
+
+msgid "Use existing channels…"
+msgstr "Использовать существующие каналы…"
 
 msgid "Versions"
 msgstr "Версии"

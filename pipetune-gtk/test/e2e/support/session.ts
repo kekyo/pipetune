@@ -107,6 +107,7 @@ export interface PipeTuneGtkTestSession {
       | 'connected'
       | 'missing'
       | 'profileChanged'
+      | 'wide'
       | 'ambiguous'
       | 'unavailable'
       | 'pending'

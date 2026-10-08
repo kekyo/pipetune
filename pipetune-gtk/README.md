@@ -75,14 +75,13 @@ dependency order:
 The Output page selects either the existing OS-managed single mode or multiple
 devices managed by PipeTune. It lists saved and available devices with profile,
 channel count, fixed EffeTune Ch numbers, and presence. Missing devices remain
-visible, and clearing a check box reserves its numbers. The device list uses
-the remaining panel height. `EffeTune final output channels` starts collapsed;
-opening it reveals the mapping controls and an independently scrolling table
-below the device list. Collapsing it returns that space to the device list
-without changing any output settings. The channel table shows
-the device and physical channel for each final DSP output, plus an editable
-purpose label. Double-click the label cell, or select it and press Enter, to
-edit it. The stereo desktop input uses Ch 1 and Ch 2; additional outputs must be
+visible, and clearing a check box reserves its numbers. The device tree uses
+the remaining panel height and scrolls as one list. Selecting a device expands
+its physical channels. Each child has an `EffeTune output` number selector and
+an optional purpose field; press Enter or leave the field to preview the label.
+The arrow beside the device folds its channel controls without changing any
+assignments. Presence and any selection problem remain visible on the parent.
+The stereo desktop input uses Ch 1 and Ch 2; additional outputs must be
 created by the EffeTune preset. Single mode keeps the saved multiple-output
 mapping visible but inactive.
 
@@ -102,13 +101,19 @@ uses reported output latency and does not measure the compensation buffer or
 acoustic arrival time. Disconnects and unavailable inventory clear stale
 reports. These updates preserve in-progress purpose edits and never save settings.
 
-Select a channel to move it up or down with its purpose label, or use
-`Reassign device…` to replace the device assigned to that channel. Both actions
+Choose a different `EffeTune output` number to move the physical channel and its
+purpose label to that position. Intervening assignments move as shown in the
+review. Use `Reassign device…` on the parent row to replace that device, including
+when its channels are collapsed or its profile has changed. An available
+device's `Use existing channels…` action selects a saved device to replace and
+enables the new output. This also works with disabled assignments at the
+16-channel limit. Channel moves and device replacements
 open a before/after review. `Preview mapping` sends the proposed configuration;
 Cancel or Escape in the review leaves it unchanged. The main window's Apply
 still performs the save, and its Cancel restores the confirmed baseline.
-Device replacement retains the device's enabled state and all other devices'
-numbers. Removed physical channels leave reserved slots with their labels;
+`Reassign device…` retains the device's enabled state and all other devices'
+numbers. Removed physical channels appear in the `Reserved EffeTune channels`
+branch with their labels;
 new channels append after the existing slots. Replacements exceeding sixteen
 slots or duplicating another output fail. If the selected profile disappears
 while reviewing, reopen the review and select a current output.

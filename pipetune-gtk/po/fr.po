@@ -109,6 +109,9 @@ msgstr "Tous les paramètres sont enregistrés"
 msgid "Ambiguous device"
 msgstr "Appareil ambigu"
 
+msgid "Ambiguous device. Reassign device to choose the output."
+msgstr "Appareil ambigu. Réaffectez l’appareil pour choisir la sortie."
+
 msgid "Apply"
 msgstr "Appliquer"
 
@@ -282,9 +285,6 @@ msgstr "Les valeurs par défaut sont appliquées en direct ; utilisez Appliquer 
 msgid "Defaults selected"
 msgstr "Valeurs par défaut sélectionnées"
 
-msgid "Device"
-msgstr "Appareil"
-
 msgid "Device channel"
 msgstr "Canal de l’appareil"
 
@@ -294,14 +294,14 @@ msgstr "État muet de l’appareil inconnu"
 msgid "Device muted"
 msgstr "Appareil muet"
 
-msgid "Device presence is separate from audio activity. Double-click a purpose cell to edit its label."
-msgstr "La présence de l’appareil ne reflète pas l’activité audio. Double-cliquez sur une cellule d’usage pour modifier son libellé."
-
 msgid "Device unmuted"
 msgstr "Appareil non muet"
 
 msgid "Disabled"
 msgstr "Désactivé"
+
+msgid "Disabled; channel numbers are retained."
+msgstr "Désactivé ; les numéros de canaux sont conservés."
 
 msgid "Disconnected"
 msgstr "Déconnecté"
@@ -355,8 +355,8 @@ msgstr "Moteur effectif indisponible"
 msgid "EffeTune DSP control"
 msgstr "Contrôle DSP EffeTune"
 
-msgid "EffeTune final output channels"
-msgstr "Canaux de sortie finaux d’EffeTune"
+msgid "EffeTune output"
+msgstr "Sortie EffeTune"
 
 msgid "EffeTune presets"
 msgstr "Préréglages EffeTune"
@@ -464,12 +464,6 @@ msgstr "Charge"
 msgid "Measured frame rate"
 msgstr "Cadence d'images mesurée"
 
-msgid "Move down"
-msgstr "Descendre"
-
-msgid "Move up"
-msgstr "Monter"
-
 msgid "Multiple — outputs selected in PipeTune"
 msgstr "Multiple — sorties choisies dans PipeTune"
 
@@ -484,6 +478,9 @@ msgstr "Aucun"
 
 msgid "Not connected"
 msgstr "Non connecté"
+
+msgid "Not connected. Reconnect it or reassign this device."
+msgstr "Non connecté. Reconnectez ou réaffectez cet appareil."
 
 msgid "Off"
 msgstr "Désactivé"
@@ -553,9 +550,6 @@ msgstr "Application PipeWire"
 msgid "PipeWire graph sampling frequency"
 msgstr "Fréquence d'échantillonnage du graphe PipeWire"
 
-msgid "Presence"
-msgstr "Présence"
-
 msgid "Preset"
 msgstr "Préréglage"
 
@@ -570,6 +564,9 @@ msgstr "Préréglage requis"
 
 msgid "Preset warnings"
 msgstr "Avertissements du préréglage"
+
+msgid "Press Enter or leave the field to preview the purpose label."
+msgstr "Appuyez sur Entrée ou quittez le champ pour prévisualiser le libellé d’usage."
 
 msgid "Preview mapping"
 msgstr "Prévisualiser l’affectation"
@@ -589,6 +586,9 @@ msgstr "Temps de traitement"
 msgid "Profile changed"
 msgstr "Profil modifié"
 
+msgid "Profile changed. Reassign device to update these channels."
+msgstr "Le profil a changé. Réaffectez l’appareil pour mettre à jour ces canaux."
+
 msgid "Purpose"
 msgstr "Usage"
 
@@ -603,6 +603,9 @@ msgstr "Valeurs signalées par l’appareil, distinctes du volume principal du s
 
 msgid "Reserved"
 msgstr "Réservé"
+
+msgid "Reserved EffeTune channels"
+msgstr "Canaux EffeTune réservés"
 
 msgid "Restart now"
 msgstr "Redémarrer maintenant"
@@ -678,6 +681,9 @@ msgstr "Sélectionnez un appareil de sortie de remplacement."
 msgid "Select at least one output device."
 msgstr "Sélectionnez au moins un appareil de sortie."
 
+msgid "Select the saved device whose channels this output will use."
+msgstr "Sélectionnez l’appareil enregistré dont cette sortie utilisera les canaux."
+
 msgid "Setting up PipeTune for this user…"
 msgstr "Configuration de PipeTune pour cet utilisateur…"
 
@@ -737,6 +743,9 @@ msgstr "Système"
 msgid "System default"
 msgstr "Valeur par défaut du système"
 
+msgid "The 16-channel limit includes disabled and reserved channels. Use existing channels to replace a saved device."
+msgstr "La limite de 16 canaux inclut les canaux désactivés et réservés. Utilisez les canaux existants pour remplacer un appareil enregistré."
+
 msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
 msgstr "Le système choisit la sortie. Les affectations de sorties multiples enregistrées ci-dessous sont inactives."
 
@@ -781,6 +790,9 @@ msgstr "Mise à jour des paramètres"
 
 msgid "Updating settings failed"
 msgstr "Échec de la mise à jour des paramètres"
+
+msgid "Use existing channels…"
+msgstr "Utiliser les canaux existants…"
 
 msgid "Versions"
 msgstr "Versions"

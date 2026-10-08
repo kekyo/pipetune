@@ -173,6 +173,10 @@ static pipetune::ControlRuntimeStatus snapshotStatus(
     status.availableOutputs.erase(status.availableOutputs.begin());
   } else if (state.outputInventoryState == "profileChanged") {
     status.availableOutputs.front().device.channelPositions = {"AUX0", "AUX1"};
+  } else if (state.outputInventoryState == "wide") {
+    auto &positions = status.availableOutputs.front().device.channelPositions;
+    positions.clear();
+    for (auto index = 0; index < 16; ++index) positions.push_back("AUX" + std::to_string(index));
   } else if (state.outputInventoryState == "ambiguous") {
     auto duplicate = status.availableOutputs.front();
     duplicate.nodeName = "fake-dac-duplicate";

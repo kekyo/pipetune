@@ -104,6 +104,9 @@ msgstr ""
 msgid "Ambiguous device"
 msgstr ""
 
+msgid "Ambiguous device. Reassign device to choose the output."
+msgstr ""
+
 msgid "Apply"
 msgstr ""
 
@@ -277,9 +280,6 @@ msgstr ""
 msgid "Defaults selected"
 msgstr ""
 
-msgid "Device"
-msgstr ""
-
 msgid "Device channel"
 msgstr ""
 
@@ -289,13 +289,13 @@ msgstr ""
 msgid "Device muted"
 msgstr ""
 
-msgid "Device presence is separate from audio activity. Double-click a purpose cell to edit its label."
-msgstr ""
-
 msgid "Device unmuted"
 msgstr ""
 
 msgid "Disabled"
+msgstr ""
+
+msgid "Disabled; channel numbers are retained."
 msgstr ""
 
 msgid "Disconnected"
@@ -350,7 +350,7 @@ msgstr ""
 msgid "EffeTune DSP control"
 msgstr ""
 
-msgid "EffeTune final output channels"
+msgid "EffeTune output"
 msgstr ""
 
 msgid "EffeTune presets"
@@ -459,12 +459,6 @@ msgstr ""
 msgid "Measured frame rate"
 msgstr ""
 
-msgid "Move down"
-msgstr ""
-
-msgid "Move up"
-msgstr ""
-
 msgid "Multiple — outputs selected in PipeTune"
 msgstr ""
 
@@ -478,6 +472,9 @@ msgid "None"
 msgstr ""
 
 msgid "Not connected"
+msgstr ""
+
+msgid "Not connected. Reconnect it or reassign this device."
 msgstr ""
 
 msgid "Off"
@@ -548,9 +545,6 @@ msgstr ""
 msgid "PipeWire graph sampling frequency"
 msgstr ""
 
-msgid "Presence"
-msgstr ""
-
 msgid "Preset"
 msgstr ""
 
@@ -564,6 +558,9 @@ msgid "Preset required"
 msgstr ""
 
 msgid "Preset warnings"
+msgstr ""
+
+msgid "Press Enter or leave the field to preview the purpose label."
 msgstr ""
 
 msgid "Preview mapping"
@@ -584,6 +581,9 @@ msgstr ""
 msgid "Profile changed"
 msgstr ""
 
+msgid "Profile changed. Reassign device to update these channels."
+msgstr ""
+
 msgid "Purpose"
 msgstr ""
 
@@ -597,6 +597,9 @@ msgid "Reported device controls, separate from the OS master volume. Channel gai
 msgstr ""
 
 msgid "Reserved"
+msgstr ""
+
+msgid "Reserved EffeTune channels"
 msgstr ""
 
 msgid "Restart now"
@@ -673,6 +676,9 @@ msgstr ""
 msgid "Select at least one output device."
 msgstr ""
 
+msgid "Select the saved device whose channels this output will use."
+msgstr ""
+
 msgid "Setting up PipeTune for this user…"
 msgstr ""
 
@@ -732,6 +738,9 @@ msgstr ""
 msgid "System default"
 msgstr ""
 
+msgid "The 16-channel limit includes disabled and reserved channels. Use existing channels to replace a saved device."
+msgstr ""
+
 msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
 msgstr ""
 
@@ -775,6 +784,9 @@ msgid "Updating settings"
 msgstr ""
 
 msgid "Updating settings failed"
+msgstr ""
+
+msgid "Use existing channels…"
 msgstr ""
 
 msgid "Versions"

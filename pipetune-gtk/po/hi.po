@@ -109,6 +109,9 @@ msgstr "सभी सेटिंग सहेजी गईं"
 msgid "Ambiguous device"
 msgstr "डिवाइस की पहचान अस्पष्ट है"
 
+msgid "Ambiguous device. Reassign device to choose the output."
+msgstr "डिवाइस की पहचान अस्पष्ट है। आउटपुट चुनने के लिए डिवाइस फिर से असाइन करें।"
+
 msgid "Apply"
 msgstr "लागू करें"
 
@@ -282,9 +285,6 @@ msgstr "डिफ़ॉल्ट सीधे लागू हो रहे ह�
 msgid "Defaults selected"
 msgstr "डिफ़ॉल्ट चुने गए"
 
-msgid "Device"
-msgstr "डिवाइस"
-
 msgid "Device channel"
 msgstr "डिवाइस चैनल"
 
@@ -294,14 +294,14 @@ msgstr "डिवाइस की म्यूट स्थिति अज्�
 msgid "Device muted"
 msgstr "डिवाइस म्यूट है"
 
-msgid "Device presence is separate from audio activity. Double-click a purpose cell to edit its label."
-msgstr "डिवाइस की मौजूदगी और ऑडियो गतिविधि अलग हैं। लेबल बदलने के लिए उपयोग वाले सेल पर डबल-क्लिक करें।"
-
 msgid "Device unmuted"
 msgstr "डिवाइस म्यूट नहीं है"
 
 msgid "Disabled"
 msgstr "अक्षम"
+
+msgid "Disabled; channel numbers are retained."
+msgstr "अक्षम है; चैनल नंबर सुरक्षित रखे गए हैं।"
 
 msgid "Disconnected"
 msgstr "डिस्कनेक्टेड"
@@ -355,8 +355,8 @@ msgstr "प्रभावी बैकएंड अनुपलब्ध"
 msgid "EffeTune DSP control"
 msgstr "EffeTune DSP नियंत्रण"
 
-msgid "EffeTune final output channels"
-msgstr "EffeTune के अंतिम आउटपुट चैनल"
+msgid "EffeTune output"
+msgstr "EffeTune आउटपुट"
 
 msgid "EffeTune presets"
 msgstr "EffeTune प्रीसेट"
@@ -464,12 +464,6 @@ msgstr "लोड"
 msgid "Measured frame rate"
 msgstr "मापी गई फ़्रेम दर"
 
-msgid "Move down"
-msgstr "नीचे ले जाएँ"
-
-msgid "Move up"
-msgstr "ऊपर ले जाएँ"
-
 msgid "Multiple — outputs selected in PipeTune"
 msgstr "एकाधिक — PipeTune में चुने गए आउटपुट"
 
@@ -484,6 +478,9 @@ msgstr "कोई नहीं"
 
 msgid "Not connected"
 msgstr "कनेक्ट नहीं है"
+
+msgid "Not connected. Reconnect it or reassign this device."
+msgstr "कनेक्ट नहीं है। इसे दोबारा कनेक्ट करें या इस डिवाइस को फिर से असाइन करें।"
 
 msgid "Off"
 msgstr "बंद"
@@ -553,9 +550,6 @@ msgstr "PipeWire प्रवर्तन"
 msgid "PipeWire graph sampling frequency"
 msgstr "PipeWire ग्राफ़ नमूनाकरण आवृत्ति"
 
-msgid "Presence"
-msgstr "कनेक्शन स्थिति"
-
 msgid "Preset"
 msgstr "प्रीसेट"
 
@@ -570,6 +564,9 @@ msgstr "प्रीसेट आवश्यक"
 
 msgid "Preset warnings"
 msgstr "प्रीसेट चेतावनियाँ"
+
+msgid "Press Enter or leave the field to preview the purpose label."
+msgstr "उद्देश्य का लेबल प्रीव्यू करने के लिए Enter दबाएँ या फ़ील्ड से बाहर जाएँ।"
 
 msgid "Preview mapping"
 msgstr "असाइनमेंट का पूर्वावलोकन"
@@ -589,6 +586,9 @@ msgstr "प्रोसेसिंग समय"
 msgid "Profile changed"
 msgstr "प्रोफ़ाइल बदल गई"
 
+msgid "Profile changed. Reassign device to update these channels."
+msgstr "प्रोफ़ाइल बदल गई है। इन चैनलों को अपडेट करने के लिए डिवाइस फिर से असाइन करें।"
+
 msgid "Purpose"
 msgstr "उपयोग"
 
@@ -603,6 +603,9 @@ msgstr "डिवाइस द्वारा बताए गए नियं�
 
 msgid "Reserved"
 msgstr "आरक्षित"
+
+msgid "Reserved EffeTune channels"
+msgstr "आरक्षित EffeTune चैनल"
 
 msgid "Restart now"
 msgstr "अभी पुनः आरंभ करें"
@@ -678,6 +681,9 @@ msgstr "बदलने के लिए नया आउटपुट डिव�
 msgid "Select at least one output device."
 msgstr "कम से कम एक आउटपुट डिवाइस चुनें।"
 
+msgid "Select the saved device whose channels this output will use."
+msgstr "वह सहेजा गया डिवाइस चुनें जिसके चैनल यह आउटपुट इस्तेमाल करेगा।"
+
 msgid "Setting up PipeTune for this user…"
 msgstr "इस उपयोगकर्ता के लिए PipeTune सेट अप किया जा रहा है…"
 
@@ -737,6 +743,9 @@ msgstr "सिस्टम"
 msgid "System default"
 msgstr "सिस्टम डिफ़ॉल्ट"
 
+msgid "The 16-channel limit includes disabled and reserved channels. Use existing channels to replace a saved device."
+msgstr "16 चैनलों की सीमा में अक्षम और आरक्षित चैनल भी शामिल हैं। सहेजे गए डिवाइस को बदलने के लिए मौजूदा चैनलों का उपयोग करें।"
+
 msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
 msgstr "OS आउटपुट चुनता है। नीचे सहेजे गए एकाधिक आउटपुट के असाइनमेंट निष्क्रिय हैं।"
 
@@ -781,6 +790,9 @@ msgstr "सेटिंग अपडेट हो रही हैं"
 
 msgid "Updating settings failed"
 msgstr "सेटिंग अपडेट करना विफल रहा"
+
+msgid "Use existing channels…"
+msgstr "मौजूदा चैनलों का उपयोग करें…"
 
 msgid "Versions"
 msgstr "संस्करण"
