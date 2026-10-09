@@ -6,7 +6,9 @@ PipeTuneが参照するEffeTuneを、公式アプリタグ`v2.12.0`（`1d4d33b2e
 
 調査基準は2026-10-09時点のPipeTune HEAD `d4d13b4e0b17ccb9454b807b2172a3118db6f22c`。アプリ2.13.0に同梱されるDSPライブラリの版は0.13.0である。今回の両タグは同じコミットへ解決されるが、これは今回の一致であり、今後の追従方針を変えるものではない。[公式アプリリリース](https://github.com/Frieve-A/effetune/releases/tag/v2.13.0)、[アプリタグ間差分](https://github.com/Frieve-A/effetune/compare/v2.12.0...v2.13.0)
 
-Adaptive Predictionの追加、Cassette ArtifactsとRhythm Analyzerの変更、ネイティブバックエンド、既存DSP、現在の複数出力機能までを検証対象とする。SFZ Note Playerは実現方法を比較中であり、警告付き除外の継続も音源読込の実装も、現時点では確定していない。後述の選択工程を確定してから、その工程の実装へ進む。
+Adaptive Predictionの追加、Cassette ArtifactsとRhythm Analyzerの変更、ネイティブバックエンド、既存DSP、現在の複数出力機能までを検証対象とする。SFZ Note Playerは、EffeTuneの登録情報を自動参照するA案と、準備処理をC++で実装するC案を組み合わせ、変換結果をキャッシュする方式に確定した。初回読込、キャッシュ再生成、再生のいずれにもNode.jsを実行時依存として要求しない。
+
+追加指示に従い、現在外部アセットを理由に除外しているIR ReverbとRoom EQも今回対応する。既存のCrosstalk Cancellationとパラメータから生成するFIRも同時に回帰検証する。SFZのJS由来処理はPipeTuneのホスト機能から構造的に分離し、将来上流に対応するC++実装が追加された際に置き換えられる構成とする。上流の将来の移植は利用者の予想であり、発表済みの予定とは扱わない。
 
 この作業段階の成果物は計画書である。製品コード、サブモジュールの参照、配布物は変更せず、実装後の検証結果と計画を区別する。
 
@@ -15,7 +17,8 @@ Adaptive Predictionの追加、Cassette ArtifactsとRhythm Analyzerの変更、�
 | 対象 | アプリ2.12.0からの変更 | PipeTuneでの対応 |
 | --- | --- | --- |
 | Adaptive Prediction | 学習による予測・残差出力・自己帰還音の生成を追加 | 通常の加工DSPとして実行し、処理幅を1〜2chに制限する |
-| SFZ Note Player | 入力音から音符を推定し、外部SFZ音源で再生 | カタログとバックエンドへ取り込み、製品での音源読込方式は比較案から選ぶ |
+| SFZ Note Player | 入力音から音符を推定し、外部SFZ音源で再生 | 登録情報の自動参照、独立したC++準備処理、キャッシュ、音源再生まで実装する |
+| IR Reverb / Room EQ | 従来から存在する外部アセットDSP | 今回の追加範囲として、IRライブラリ読込と測定に基づく補正FIR生成を実装する |
 | Cassette Artifacts | `md`による5種類の処理モードを追加 | 新しいパラメータ配置と各モードの音声を検証する |
 | Rhythm Analyzer | Rd6系の解析へ移行、モデルとクリック検証を更新 | 拍検出後のクリック、無音、非対応レートの契約を検証する |
 | Note Spectrogram | HarmNetへ移行し、既定の音域を変更 | カタログ・配布バックエンドへ反映し、製品では解析除外を維持する |
@@ -26,13 +29,13 @@ Adaptive Predictionの追加、Cassette ArtifactsとRhythm Analyzerの変更、�
 
 登録カーネルは110から112になる。無警告で除外する解析専用DSPは既存の9種類を維持する。登録数は、音源なしで利用できるDSP数ではない。[registry](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/registry.inc)
 
-パラメータ編集UI、ライブオートメーション、音符・スペクトル表示、ホストの音楽トランスポート連携、Room EQ / IR Reverbの読込、旧DSPを選択する互換モード、PipeTune自身のリリース番号変更は対象外とする。SFZの読込を選んだ場合も、そのための音源指定・診断を超えて編集UIを追加しない。
+パラメータ編集UI、ライブオートメーション、音符・スペクトル表示、ホストの音楽トランスポート連携、独立した音源管理・事前取込みUI、旧DSPを選択する互換モード、PipeTune自身のリリース番号変更は対象外とする。外部アセットの利用に必要な診断は既存CLI / GTKへ追加する。
 
 ## 現行コードに必要な統合変更
 
 ### カタログと共有バックエンド
 
-`pipetune/tools/generate-dsp-catalog.mjs`の`nativeAssetCapacity`は現在、`32 MiB convolution cap`だけを受け付ける。SFZの`1 GiB bank and index cap`を認識し、slot 0の容量を1,073,741,824 bytesとして生成する必要がある。SFZを製品で除外する場合にも必要な変更であり、既存の畳み込みアセットの上限は32 MiBのままとする。未知の容量表記を推測で解釈する処理は追加しない。
+`pipetune/tools/generate-dsp-catalog.mjs`の`nativeAssetCapacity`は現在、`32 MiB convolution cap`だけを受け付ける。SFZの`1 GiB bank and index cap`を認識し、slot 0の容量を1,073,741,824 bytesとして生成する。既存の畳み込みアセットの上限は32 MiBのままとする。未知の容量表記を推測で解釈する処理は追加しない。
 
 カタログは引き続き上流のregistry・manifest・パラメータ仕様から生成する。新規・変更型の手書きパッカーは作らない。重要な契約は次のとおりである。
 
@@ -53,7 +56,7 @@ Adaptive Predictionの追加、Cassette ArtifactsとRhythm Analyzerの変更、�
 
 公開C ABIの版は1のままで、遅延のrefresh / reserve APIなどが追加されている。PipeTuneは設定変更時にパイプラインを作り直すため、今回これらのAPIをローダーの必須シンボルへ追加する必要はない。既存のエクスポート境界とアセットコピーABIを維持し、最終的にロードされる共有ライブラリで確認する。
 
-`et_instance_set_analysis_source`はヘッダーで`App-internal`と明記されているため使わない。SFZを実行する場合はカーネル内の独立した音符解析を使い、Note Spectrogramを実行必須にしない。音楽トランスポートも今回供給しない。[C ABIとコメント](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/include/effetune/abi.h)、[ProcessInfoとカーネル契約](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/include/effetune/kernel.h)
+`et_instance_set_analysis_source`はヘッダーで`App-internal`と明記されているため使わない。SFZはカーネル内の独立した音符解析を使い、Note Spectrogramを実行必須にしない。音楽トランスポートも今回供給しない。[C ABIとコメント](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/include/effetune/abi.h)、[ProcessInfoとカーネル契約](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/include/effetune/kernel.h)
 
 既存の`abi-engine-access.patch`は対象タグの一時コピーへの`patch --dry-run --fuzz=0`で適用可能だった。実装時には通常のビルド生成物での適用とアセット転送を確認する。`deps/`内の外部ソース・vendorは編集しない。参照更新は指定の公式アプリコミットへの変更だけとする。
 
@@ -79,42 +82,123 @@ Adaptive Predictionの追加、Cassette ArtifactsとRhythm Analyzerの変更、�
 
 履歴領域の確保量はサンプリング周波数に応じて増えるため、Releaseで48 / 96 / 384 kHzの初期化時間、RSS、定常処理負荷を測る。プリセット再構築時の旧・新パイプライン共存も測定に含める。[上流nativeテスト](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/plugins/resonator/adaptive_prediction_effect/native_test.cpp)
 
-## SFZ Note Playerの実現案
+## 外部アセットDSPを今回対応する範囲
 
-### 現行コードから使える部分
+対象タグのパラメータ仕様でアセットを持つDSPは9種類である。`requiresExternalAssets`を一律に解除するのではなく、各DSPに必要な準備処理を実装してから製品経路へ接続する。アセットをコピーできることと、プリセットから正しいアセットを作れることを別々に検証する。
 
-プリセットが持つ`parameters.sf`は24桁の音源IDで、SFZ本文や音声データではない。デスクトップ版はEffeTuneのユーザーデータ下の`sfz-references.json`に`id`、`name`、`root`、`path`を保存し、元の音源フォルダーを読む。ブラウザ版は別の音源ストレージを使う。[プリセットとの連携](https://github.com/Frieve-A/effetune/blob/v2.13.0/plugins/others/sfz_note_player.js)、[デスクトップ版の登録形式](https://github.com/Frieve-A/effetune/blob/v2.13.0/electron/sfz-library-ipc.js)、[利用者向け説明](https://github.com/Frieve-A/effetune/blob/v2.13.0/docs/plugins/others.md#sfz-note-player)
+| DSP | 入力と現行状態 | 今回の成果物 |
+| --- | --- | --- |
+| SFZ Note Player | `sf`の音源ID。新規で未対応 | 登録フォルダーのSFZ・include・サンプルから再生用バンクを生成 |
+| IR Reverb | `ir`のIRライブラリID。警告付き除外 | 保存された原音から、プリセットの加工・経路・レートに対応するIRを生成 |
+| Room EQ | `ms`と`ms0`〜`ms15`の測定ID。警告付き除外 | 保存測定の周波数応答・IRから補正FIRを設計 |
+| Crosstalk Cancellation | `ll` / `lr` / `rl` / `rr`の測定ID。既に対応 | 読込・変更監視を新しい共通部分へ接続し、既存の補正動作を維持 |
+| Bass Management、FIR Crossover、5Band FIR PEQ、Group Delay EQ、Group Delay PEQ | パラメータからアセットを生成。既に対応 | 外部ファイル不要の生成経路を維持し、他の外部アセットDSPとの混在を検証 |
 
-SFZの読込には、音源IDの解決、SFZとincludeの解析、サンプル音声のデコード、再生領域のテーブル化が必要になる。上流はJavaScript側にこれらの処理を分離し、C++カーネルには変換済みバンクを渡している。PipeTuneの既存`pipetune_effetune_instance_asset_copy_v1`は、そのバンクを渡す経路として再利用できる。現在のCrosstalk用測定データ読込は外部データを解決する先例だが、SFZの解析・デコード機能までは持たない。
+外部データの出発点は、現行の`resolveEffeTuneDirectory`が参照する`$XDG_CONFIG_HOME/effetune`、未指定時は`~/.config/effetune`とする。EffeTuneの登録情報・原音・測定バックアップは読取専用で利用し、Electronの起動やIPC接続を要求しない。プリセットには実データが含まれないため、ブラウザ内にしかないIDや他PCにしかないファイルは自動取得できない。EffeTuneデスクトップ版に対象データを登録し、その環境で保存したプリセットを利用する前提とする。独自のID登録・事前取込み機能は今回追加しない。[SFZ保存形式](https://github.com/Frieve-A/effetune/blob/v2.13.0/electron/sfz-library-ipc.js)、[IR保存形式](https://github.com/Frieve-A/effetune/blob/v2.13.0/electron/ir-library-ipc.js)、[測定ストア](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/measurement-store/client.js)
 
-### 方式の比較
+### 共通の読込・デコード・キャッシュ
 
-| 案 | 利用者の操作と実装方法 | 長所 | 主な追加作業と制約 |
-| --- | --- | --- | --- |
-| A EffeTuneの登録音源を自動参照 | デスクトップ版で登録したIDを`sfz-references.json`から解決し、プリセット読込時に元フォルダーから変換する | 既存のEffeTuneプリセットを使う流れに合い、音源を二重登録しなくてよい | SFZ解析・音声デコード用の補助処理と、EffeTune登録形式への追従が必要。ブラウザ版のIDだけでは解決できない |
-| B PipeTuneへ事前取込み | CLIなどでSFZフォルダーと対象IDを指定し、再生用バンクと対応表を保存する。再生時は保存データを読む | 変換処理を再生プロセスから分離でき、C++デーモンにNode.jsを常駐させる必要がない | 初回取込み、元音源更新時の再取込み、バンク版・容量・IDの管理が必要 |
-| C C++で直接読込み | PipeTune側で音源パスを登録し、C++のSFZ解析・音声デコーダーから上流形式のバンクを構築する | Node.jsを実行時依存にせず、読込から再生までネイティブ側で扱える | 実装量が最も大きい。include、階層的な設定、ループ、音量・音域・ベロシティ等の解釈を上流へ追従させる必要がある |
+`PipelineLoadContext`を測定ディレクトリーだけの指定から、EffeTuneデータルートとPipeTuneキャッシュの解決に必要な設定へ拡張する。試験では一時ディレクトリーを注入できるようにする。`measurement_store.cpp`のJSON・base64・有限PCMの検証は再利用するが、Crosstalk専用の測定条件は個別検証へ残す。
 
-Aの音源解決とBの事前変換は組み合わせられる。既存のEffeTune利用を優先するなら、登録情報を自動参照し、読込時に必要なものだけ変換・キャッシュする構成が候補になる。完全に独立した運用を優先するならBが適している。これらは今回追加する機能の案であり、EffeTuneにPipeTune向けのバンク書出し操作が既にあるという意味ではない。
+新規I/Oは制御側で`cardio`による非同期処理とし、取得済みバイト列をネイティブ音声デコーダーへ渡す。デコーダーはSFZとIRで共用し、元レート・チャンネル順を保持したplanar float32 PCMと実際のフレーム数を返す。SFZのmono / stereo制約とIRの1〜16ch制約は各準備処理で検証する。デコード後のサイズ・有限値を確認し、メタデータだけを信用した無制限確保をしない。
 
-A / Bでは、アプリタグに固定した上流`js/sfz/parser.js`と`asset.js`などを無改変で利用する補助ツールを検討する。ファイル読込と音声デコードのアダプターが必要で、上流プラグインが使う`OfflineAudioContext`をC++デーモンへそのまま持ち込むことはできない。採用時に依存範囲、公開された呼出し口とコメント、Node.jsでの実行性を確認する。Cを選ぶ場合も再生エンジンは上流SFZカーネルを使用し、SFZ一般仕様すべてを独自実装することは目標にしない。[SFZパーサー](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/parser.js)、[バンク生成](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/asset.js)、[ファイル読込の分離](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/native-service.js)
+音声デコーダーにはFFmpegのネイティブライブラリを使う方針とする。WAV（`.irs`を含む）・AIFF・FLACに加え、IRで使われるMP3・Ogg・M4Aも配布先のデコーダーで検証する。`libavformat` / `libavcodec`等の公開APIを小さなアダプターに隠し、メモリ入力とPCM形式の変換を行う。`ffmpeg`コマンドやNode.jsを実行時に起動しない。既存のストリーム用レート変換とアセット準備用の変換は契約を分け、上流の解析・窓付きsinc等を別アルゴリズムへ無条件に置き換えない。ブラウザのデコーダーとの丸め差は、同一PCMによる準備処理の比較と実ファイルのデコード試験を分けて評価する。[libavformat公式文書](https://ffmpeg.org/libavformat.html)、[libavcodec公式文書](https://ffmpeg.org/libavcodec.html)、[メモリ入力例](https://ffmpeg.org/doxygen/trunk/avio_read_callback_8c-example.html)、[I/O APIと所有権コメント](https://ffmpeg.org/doxygen/trunk/avio_8h_source.html)
 
-### 音源読込を選ぶ場合の共通設計
+キャッシュは`$XDG_CACHE_HOME/pipetune`、未指定時は`~/.cache/pipetune`の配下に置く。EffeTune自身のPCMキャッシュへ書き込まず、原本から再生成できるPipeTune専用データとして扱う。次を共通契約とする。
 
-- 音源IDとファイルの対応を解決し、定義・include・サンプルを制御側で読み込む。EffeTuneの登録情報を使う場合は読取専用とし、登録されていないブラウザ版IDは元のフォルダーを別途指定する。
-- 上流と同じ音域・ループ・エンベロープ等を持つバンクを生成し、既存のコピーABIへ渡す。既定256 MiB・上限1 GiBという上流の容量設計を基に、索引とデコード後PCMを含めた上限を定める。上限超過時の部分取込みを再現するか、明示的なエラーにするかは方式選択時に確定する。
-- 音源を有効化してから新パイプラインを交換する。準備中の状態は上流の処理フレームに基づいて進め、固定sleepや音声コールバックでの読込を使わない。再読込失敗時は既存パイプラインと設定を保持する。
-- 音源・キャッシュ・登録情報の変更を検出する単位を定める。レート・バックエンド切替で再利用できるバンクと、再構築が必要なDSP状態を区別する。キャッシュにはアプリコミットとバンク形式を記録し、異なる形式をそのまま渡さない。
-- SFZの音符推定はカーネル自身に任せる。解析専用Note Spectrogramの除外を維持し、`App-internal`な解析共有APIは使わない。
-- SFZの報告遅延を既存のホスト補償へ取り込む。既定Timingで約80 msの遅延があり、負のTimingではdryの遅延が増える。値はカーネルから取得し、固定値として実装しない。[カーネルとアセット契約](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/plugins/others/sfz_note_player/kernel.cpp)、[バンク形式コメント](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/plugins/others/sfz_note_player/bank.h)
+- キーにアプリコミット、準備処理の版、アセット形式、元データの内容ハッシュ、デコーダーの版、加工パラメータを含める。Room EQ / IRには生成レート・実効処理幅・経路も含める。SFZは元レートのPCMを保持し、生成に影響しない再生レートやSIMDの違いでバンクを分けない。
+- 有効なキャッシュでも参照元の存在・変更を確認する。登録IDの再割当、include追加、サンプル差替え、IR原音・測定の変更を検出する。読込中に原本が変化した結果を完成品として保存・公開しない。
+- 一時ファイルからの原子的な置換、形式・長さ・ハッシュ検証を行う。破損・旧版キャッシュは原本から作り直す。容量不足や書込不可の場合も、準備が成功したアセットはメモリ上で使用できるようにする。
+- 単一アセットの上限と、準備中のPCM・旧新パイプライン共存・キャッシュの合計を区別して管理する。同一入力の準備を重複させず、不要なコピーを減らす。キャッシュ総量は既定2 GiBを上限に古い未使用項目から回収し、削除は稼働中アセットの所有権に影響させない。
 
-最小成果物は、合成した小さなSFZ音源を読み込み、既存CLIドライバーから入力音に応じた楽器音を確認できる状態とする。その後にID解決、複数サンプル、欠損・不正データ、容量、再読込、遅延、GTK状態表示を積み上げる。方式選択後、この順序で実行可能な工程と完了条件を追記する。
+### ファイル監視、準備状態、エラー
 
-### 音源読込を今回見送る場合
+`DspPipeline::measurementFiles()`と`PipelineLoadResult.measurementFiles`を汎用の依存ファイル一覧へ変更し、`ActivePresetFileMonitor`と全呼出し元を揃える。監視対象はSFZ登録情報・定義・include・参照サンプル、IR indexと対象原音、Room EQ / Crosstalkの測定JSON。容量選別の判断に使ったSFZサンプルも依存に含める。未作成ファイルと親ディレクトリーの差替えを扱う既存inotify実装を使い、生成キャッシュは監視しない。
 
-`requiresExternalAssets`による既存の警告付き除外を適用する。SFZを解析専用の無警告除外へ追加しない。有効ノードはignoredと外部アセット警告、無効ノードや無効Section内はoffという現行の規則を維持する。除外によって音声、バス転送、遅延、有効ノード数が変わらないことを確認する。
+準備は既存パイプラインを動かしたまま行い、コピーABIで転送後、必要なwarmupを処理フレーム数で進め、アセットが有効になったことを確認してからreset・交換する。既存のパイプライン変更処理を、重い準備中ずっと変更用mutexを保持する構造にしない。準備開始時のプリセット・レート・バックエンド・ch構成を世代で識別し、設定変更や終了で不要になった結果を公開しない。音声コールバックでの読込・デコード・確保・解放、固定sleep、ポーリング、新規の場当たり的なワーカースレッドを追加しない。
 
-どちらの製品方針でも、SFZカーネルの登録・パラメータ・容量、上流nativeテストは検証する。公式11 goldenのバンクありケースを独自共有バックエンドでも検証する場合は、既存のIR専用goldenアセット生成に小さな合成SFZバンクを追加する。これは配布バックエンドの検証であり、製品の音源管理を実装したことにはならない。[上流の合成音源](https://github.com/Frieve-A/effetune/blob/v2.13.0/tools/dsp-parity/runners.mjs)
+新規対応の3種類では、指定された参照を解決できない、デコード・設計・アセット転送に失敗した、設定に矛盾がある等により準備結果が成立しない場合を読込エラーにする。上流が認める部分音源・縮小は次段落の警告として扱う。未指定の場合は上流の未読込動作を保ち、音源・測定未設定の診断を出す。空IDと、指定済みIDが見つからない状態を区別する。Room EQの意図的な未割当chも区別し、割当済みchの欠損を単位インパルスで隠さない。再読込失敗時は既存パイプライン・実効設定・遅延・音声を保持する。現在のCrosstalkの不正測定時の警告付き除外は今回変更しない。
+
+有効な部分音源や補正の縮小を上流が認める場合は、稼働中ノードにも準備時の警告を表示する。現在の`PipelineWarning`は「除外理由」の契約なので、そのまま流用せず、稼働状態と診断を区別できるよう型・CLI / GTK表示を拡張する。無効ノード・無効Sectionはoffのままとし、外部データを読まない。失敗した準備で分かった依存先も現在の監視対象に追加し、ファイル復旧時に再試行できるようにする。
+
+## SFZ Note Playerの採用方式と分離設計
+
+### 比較した方式と確定事項
+
+| 案 | 役割と利用者の操作 | 評価と採否 |
+| --- | --- | --- |
+| A EffeTuneの登録音源を自動参照 | デスクトップ版の`sfz-references.json`からIDを元フォルダーへ解決 | 採用。既存プリセットを使え、音源の二重登録が不要 |
+| B PipeTuneへ事前取込み | CLI等でIDと音源を指定し、再生用バンクを先に保存 | 今回は不採用。初回操作と再取込み管理が増えるため、自動準備・キャッシュを選ぶ |
+| C C++で直接準備 | SFZ解析、音声デコード、容量選別、バンク生成をネイティブ側で実行 | 採用。Aと組み合わせ、初回読込を含めNode.jsへの実行時依存をなくす |
+
+当初のA＋キャッシュ案は上流JSを動かす補助ツールを想定していたが、利用者との確認によりA＋C＋キャッシュへ変更した。Node.jsは従来のビルド処理と上流JSとの比較テストにのみ使用する。配布製品の初回変換をNode.jsへ逃がす構成にはしない。
+
+プリセットの`parameters.sf`は24桁のIDで、SFZ本文や音声ではない。登録情報の`id`、`name`、`root`、`path`から元の`.sfz`を特定する。定義・include・サンプルは登録root内で解決し、相対パス、区切り文字、root外参照、循環includeを上流契約に合わせて扱う。上流の`.sfzbank`ソース格納形式を、PCM入りの再生用バンクとして誤って渡さない。[プラグイン](https://github.com/Frieve-A/effetune/blob/v2.13.0/plugins/others/sfz_note_player.js)、[登録情報の検証](https://github.com/Frieve-A/effetune/blob/v2.13.0/electron/sfz-library-ipc.js)、[ソース格納形式](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/bank.js)
+
+### モジュール境界と将来の差替え
+
+準備アルゴリズムは`pipetune/asset-preparation/`配下に置き、`sfz/`、`ir/`、`room-eq/`を個別の非公開C++ターゲットとしてビルドする。これらとメモリ入力のドライバーは、PipeWire / GTKや製品全体をビルドせずに実行できる構成にする。実際に共有するPCM・アセット記述等の小さな値型だけを共通部分へ置く。ホストの大きなクラスを継承する汎用フレームワークは作らない。
+
+| 層 | 担当 | 依存させないもの |
+| --- | --- | --- |
+| SFZ準備モジュール | 文書解析、領域の正規化、必要サンプルの列挙、容量選別、バンク生成、準備時の診断 | PipeWire、GTK、`DspPipeline`、XDG、登録JSON、キャッシュ、ファイル監視、デコーダー実装 |
+| PipeTuneのアセット連携層 | ID解決、非同期I/O、デコード依頼、入力スナップショット、キャッシュ、監視対象、世代と所有権 | SFZ opcodeの解釈、領域選別、バンクの内部レイアウト |
+| バックエンド接続 | 準備結果の記述から既存コピーABIへの変換、warmup、ACTIVE確認、遅延取得 | SFZの構文、元ファイルの探索 |
+
+SFZ準備モジュールへの入力はメモリ上の文書集合・サンプルのメタデータ・デコード済みPCMと制限値にし、不足する文書・PCMの要求を連携層が満たす。出力は所有権が明確なバンクバイト列、形式・容量情報、診断とする。yyjsonの木、FFmpegの型、EffeTuneエンジンのポインター、ホストの寿命を境界の外へ漏らさない。I/Oを行わず、メモリ入力だけで動かせるドライバーを最初の実装単位に含める。
+
+`parser`、`selection`、`bank`の責務をファイルで分け、上流の`parser.js`、`service.js`、`asset.js`との対応を追えるようにする。ETA1ヘッダーとSFZテーブルv2のエンコードは`bank`側へ局所化し、ホストが数値オフセットを扱わない。移植元のアプリコミット・ファイル・対応する関数と、PipeTune固有の差を内部文書と必要なDoxygenコメントに記録し、上流由来のライセンス表示を保つ。[パーサー](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/parser.js)、[容量選別](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/service.js)、[バンク生成](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/asset.js)、[ネイティブ連携側](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/native-service.js)
+
+将来上流へ同等の公開C++機能が入った場合は、この小さな準備インターフェイスへ接続するアダプターを置き、同じ適合テストを通した後にPipeTune側の重複実装を削除する。登録情報・キャッシュ・監視・DSPライフサイクルはそのまま使う。現時点で存在しないAPIを想定した実装、実行時の旧新切替、恒久的な二重実装は作らない。
+
+### 2.13.0との意味上の一致
+
+SFZ全仕様の実装ではなく、指定アプリタグのSFZ読込の動作を基準にする。
+
+- `#include`、`#define`、コメント・引用文字列、`control/default_path`、global / master / group / regionの継承を扱う。includeは読み込んだ文書から、サンプルは選択SFZとdefault_pathの規則から解決する。上流の深さ32・展開回数10,000の制限も検証する。
+- 音域・ベロシティ・ランダム範囲・シーケンス、ピッチ中心・追従・transpose / tune、volume / pan / amp_veltrack、offset / end、4種類のloop_mode、ループ境界、ADSHRを対応するopcode単位で比較する。初期CCと`set_ccN`、`sw_default`を反映し、releaseトリガーや動的条件等の非対応領域は上流の除外・警告を再現する。
+- バンク予算は既定256 MiB、64 / 128 / 256 / 512 / 1024 MiBを指定できる設定とする。元ファイル総量、デコード後PCM、バンクと索引の容量を別々に検証する。上限1 GiBの判定に索引を含める。
+- 予算内で全再生可能キーを残す上流の縮小を実装する。ベロシティ64近傍等の選別順と同順位の決定、ランダム・ラウンドロビンの簡略化、診断を一致させる。全キーを覆う最小構成でも収まらない場合は失敗にし、黙って音域を失わない。
+- デコードした元レートとチャンネル順を保持する。テーブルの整数ビット列、ソート順、ループの補正・無効領域、フレーム境界は上流と照合する。文字列の順序をC++のバイト順に置換するだけでは非ASCII名で一致しない点も検証する。
+
+上流JSを変更せずにテスト時だけ実行し、同一の文書・メタデータ・PCMから領域、選別結果、警告区分、バンクを比較する。純粋な解析・パックは決定的な一致を確認し、演算がある値は根拠のある数値許容誤差を定める。テストはソースの文字列を検索するものにせず、生成バンクを実カーネルで再生した音も検証する。
+
+### 再生とライフサイクル
+
+再生エンジンは上流SFZカーネルを使い、独自のサンプラーを作らない。既存の`pipetune_effetune_instance_asset_copy_v1`で転送し、準備処理がACTIVEになるまでオフラインで進めてから使用する。reset後は音符・履歴を消し、読込済みバンクは再利用する。レート・バックエンド切替ではバンクの再利用とDSPインスタンスの再構築を分ける。
+
+報告遅延はカーネルから取得する。既定Timingで約80 ms、負のTimingではdry遅延が増えるため、値を固定せず既存の遅延補償へ渡す。音符を検出できる長さの合成入力、dry / wet、Timing、選択chと未選択ch、端数ブロック、reset・休止・切替を実製品経路で確認する。[カーネル](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/plugins/others/sfz_note_player/kernel.cpp)、[バンク契約](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/plugins/others/sfz_note_player/bank.h)
+
+公式11 goldenを独自共有バックエンドでもすべて検証する。既存のIR専用goldenアセット生成へ、公式の`sfz-sine-v1`に対応する合成バンクを追加する。バンクなしのgoldenと、実ファイル・登録IDから楽器音が出る製品試験を分け、dry出力だけで音源対応が成功したと判定しない。[上流goldenランナー](https://github.com/Frieve-A/effetune/blob/v2.13.0/tools/dsp-parity/runners.mjs)
+
+## IR Reverb
+
+`parameters.ir`をEffeTuneデータ下の`ir-library/index.json`から解決し、entryの`originals`が示す原音を読む。単一ファイルとL / Rのペアを扱い、保存名・サイズ・ハッシュ・compositionを検証する。IDは単一原音のSHA-256先頭24桁、ペアは左右のハッシュを連結して再ハッシュした先頭24桁という上流の規則で照合する。SFZのランダムIDとは混同しない。上流の解析sidecarやPCMキャッシュがなくても原音から準備できるようにする。[ライブラリ形式](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/ir-library/ir-library-store.js)、[ID生成](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/ir-library/ir-library-id.js)、[原音解決](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/ir-library/service.js)
+
+原音読込だけではアプリと同じ効果にならないため、`ir/`モジュールで次の準備処理を実装する。
+
+- `cm`のAuto / Mono / Independent / True Stereo / Diagonal Matrixを、実効処理chとIRのch数から解決する。4ch・2ch選択時のAutoはLL / LR / RL / RRとして扱う。ペア原音は各2chを検証し、同一レート化、短い側のゼロ詰め、LL / LR / RL / RRの順に結合する。
+- `lt`と`cr`から畳み込みレート・head blockを決める。Zero latencyはFullのみ、Quarterは176.4 kHz以上という上流の制約を明示的に検証する。Autoとレート変更時の解決結果もキャッシュ・遅延へ反映する。
+- `dc` / `co` / `dt` / `tr`に対応するDirect Cut、Cut Offset、Decay、Trim、フェード、トポロジーごとの正規化を移植する。Direct Cut後の正規化は未切断の原音を基準にする。加工後の解析と実IRを上流JSへ比較する。
+- ETA1 payloadを生成し、32 MiBの上限はPCM長だけでなく畳み込み器のcommit時メモリ見積りで確認する。上流どおり必要な長さへ制限・フェードして、縮小を診断する。原音64 MiB・デコードPCM64 MiB・最大16chの読込制限も別途適用する。
+
+チャンネル数不一致を自動的な混合で隠さない。Wet / Dry Enabled / Dry Level / Pre DelayはDSPパラメータとして接続し、wetのみの既知IRにインパルスを通して、各経路の振幅・到達時刻・残響を検証する。mono、独立2ch、多ch、true stereoとL / Rペア、選択ch・バス、レート変換、加工設定、縮小、欠損・更新・再読込を含める。[準備処理](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/ir-library/ir-preparation.js)、[処理設定と容量計算](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/ir-library/ir-plugin-contract.js)、[ペア結合](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/ir-library/ir-true-stereo-pair.js)、[アプリ側の接続](https://github.com/Frieve-A/effetune/blob/v2.13.0/plugins/reverb/ir_reverb.js)
+
+## Room EQ
+
+`measurement-backups/<id>.json`から共有測定`ms`とch別測定`ms0`〜`ms15`を解決する。選択chの開始位置と実効処理幅に対応するスロットだけを使い、ch別の空欄は共有測定へフォールバックする。既存Crosstalkの「4測定・1点・所定の耳ch」という制約を適用しない。複数測定点、平均周波数応答、各点のIR・レート・基準スケールを読み取る。割当済みIDを1つでも解決できなければ全体を失敗とする。[測定選択と設定](https://github.com/Frieve-A/effetune/blob/v2.13.0/plugins/eq/room_eq.js)
+
+測定IRは部屋の応答であり、そのまま畳み込む補正フィルターではない。`room-eq/`モジュールで`design-core.js`と必要な群遅延・平滑化等の処理を移植し、次を実装する。
+
+- Minimum / Linearの振幅補正から開始し、Taps、Smoothing、補正帯域、Max Boost、Level Correction、5バンドAdditional EQを反映する。Max Boostは自動反転のboostにだけ適用し、cutや意図的なAdditional EQと区別する。
+- Correctionでは全測定点の有効なIRを要求し、直接音のexcess phase、Direct Window、Phase Correction、低域位相拡張、Reverb Correction / Window / Max Freq / Smoothingを対応する。Minimum / Linearでは周波数応答のみの測定も使える。
+- Consensusと指定Reference Pointを分ける。複数点の振幅合成、時間整列、信頼度を使った位相合成、欠落したReference Pointのフォールバックを上流へ合わせる。
+- 観測窓が不足する場合と、設計した補正がFIRの時間範囲へ収まらない場合を分ける。上流が補正を縮小・省略して残りを使用する場合は、その診断と出力を再現する。Correctionで必要なIRそのものが不足する場合は、別モードへ黙って切り替えない。
+- 選択chに対応するmono / independent FIRとETA1 payloadを作り、実際のtap数から`fd`を導出する。Minimumは0、その他は実効tap数の半分とする。Allで8chを超えるときの65,536 taps上限、32 MiBのcommit制限、Gain / Delay・レート変更を扱う。プリセットに古いレートの派生値が残っていても再計算する。
+
+FFTは既存の設計処理で使う数値基盤を調査して、小さな演算インターフェイス経由で接続する。WASMを製品へ持ち込まず、演算精度やFFTの正規化を上流JSとの比較で固定する。IR Reverb向けの残響正規化・Direct CutをRoom EQの補正FIRへ適用してはならない。[設計本体](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/room-eq/design-core.js)、[群遅延解析](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/room-eq/group-delay-analysis.js)、[公式の効果・制約](https://github.com/Frieve-A/effetune/blob/v2.13.0/docs/dsp/effects/room-eq/index.md)
+
+上流JSと同一の合成測定を使い、生成FIR、実際の畳み込み出力、補正後周波数応答、位相・遅延、警告区分を比較する。平坦測定、既知のピーク・ディップ、複数点、ch別の異なる測定、IRなし、短いIR、Correctionの縮小を含める。Scalarと実行可能SIMDの実共有バックエンドを通し、フィルターが存在するだけの試験にしない。
 
 ## Cassette ArtifactsとRhythm Analyzer
 
@@ -136,11 +220,13 @@ A / Bでは、アプリタグに固定した上流`js/sfz/parser.js`と`asset.js
 
 ## 段階的な実施計画
 
-### 0 基準状態とSFZの範囲を確定する
+### 0 基準状態と入力データの契約を記録する
 
-現行2.12.0で`make test`を実行し、既存失敗と今回の差分を分ける。環境、CPUで実行可能なISA、パッケージ生成環境、必要なツールを記録する。SFZはA / B / Cまたは見送りを選び、読込・デコード・容量・更新検出の範囲を本書へ反映する。
+現行2.12.0で`make test`を実行し、既存失敗と今回の差分を分ける。環境、CPUで実行可能なISA、現行9配布構成のデコーダー・非同期I/O・ハッシュ依存と公開APIを確認する。使用するAPIは、対象環境の版の公式文書とヘッダーコメントの両方を読む。不足パッケージがあればインストールを促す。
 
-成果物は基準ログと確定した工程。完了条件は、既存問題を識別できることと、SFZの選択工程が実装可能な粒度で決まっていること。文書変更は`doc: finalize EffeTune 2.13.0 integration scope`としてコミットする。
+EffeTune登録形式に従う最小SFZ、単一・ペアIR、周波数応答のみ・複数点IR付き測定を、テスト側で生成できる入力として整理する。外部の大容量音源を検証の前提にしない。上流JSとの対応表と、デコード・準備アルゴリズム・DSPそれぞれの数値比較条件を記録する。SFZのA＋C＋キャッシュとIR Reverb / Room EQの対応は確定済みであり、方式選択を再度求めない。
+
+成果物は基準ログ、入力契約、依存と比較条件の記録。完了条件は、既存問題を識別でき、後続工程の合成入力と実行環境を用意できること。記録のコミットは`doc: record EffeTune asset preparation contracts`。
 
 ### 1 アプリタグを更新し最小プリセットを実行する
 
@@ -162,33 +248,66 @@ Cassetteの5モード・全18 goldenと、Rhythmの全6 golden・長時間クリ
 
 完了条件は、上流の変更を新しい仕様のまま実行でき、既存のレート・ch・ブロック分割・reset検証が成功すること。コミットは`feat: validate EffeTune 2.13 processor changes`。製品の不具合が見つかった場合は、根本修正を独立した`fix:`コミットにする。
 
-### 4 選択したSFZ対応を完成させる
+### 4 IR Reverbを動かし、共通の外部アセット経路を作る
 
-見送りを選ぶ場合は、警告・ignored / off表示、他DSPとの混在、PCM・バス・遅延への非干渉を検証し、利用者文書へ制約を記載する。
+各小段階で振る舞いのテストを先に実行してREDを確認し、その段階の実装・GREEN・コミットまで終えてから進む。共通基盤だけを先に完成させる工程にはしない。
 
-音源読込を選ぶ場合は、最小音源の再生、選択したID解決・取込み方式、失敗時の保持、レート・バックエンド切替、インストール後の読込を順に完成させる。各単位で再現テストのREDからGREENへ進み、実際に音を出せる成果物をコミットする。合成音源による入力音符と再生音、dry / wet、Timing、未選択ch、reset、容量境界を検証する。複雑なGUI管理画面を先に作る工程にはしない。
+| 小段階 | 実装と観測できる成果物 | 完了条件とコミット |
+| --- | --- | --- |
+| 4.1 最小の実ファイル読込 | データルート、非同期原音読込、ネイティブデコーダー、単一IRの解決と標準加工を実装。最小mono WAVを登録したプリセットをCLIドライバーで処理 | wetのみのインパルス応答が期待どおりで、上流の標準準備結果に一致する。`feat: load native IR Reverb assets` |
+| 4.2 IRの全設定 | 各chモード、L / Rペア、レート、Direct Cut / Decay / Trim、容量計算、各音声形式を追加。IR準備モジュールと上流JS比較ドライバーを独立して実行 | 設定ごとの経路・加工・遅延・制限が一致し、不正設定と欠損を診断する。`feat: support IR Reverb preparation modes` |
+| 4.3 共通の依存・キャッシュ | 汎用依存一覧とキャッシュ、稼働中ノードの診断、世代を持つ準備・交換を接続。既存Crosstalkの読込も同じ監視へ移す | 原音差替えで音が更新され、再起動時のキャッシュ使用・破損時再生成・失敗時旧音声保持を確認する。Crosstalkは従来の音声と診断を維持。`feat: cache and monitor external DSP assets` |
 
-完了条件は、選択した方針が製品のPCMと状態表示で確認できること。音源読込を実装する場合は、公式11 goldenを実共有バックエンドで検証し、アセット未読込時のdry出力だけを再生成功と判定しない。コミット例は`feat: load SFZ Note Player assets`、見送りなら`feat: classify SFZ Note Player preset entries`。詳細は段階0の選択結果で置き換える。
+この段階では、既存の未対応DSPのうちIR Reverbが実プリセットから使用できる状態を成果物とする。後続SFZ / Room EQ用の空の抽象だけを実装して終わらせない。
 
-### 5 既存機能と実運用経路を回帰検証する
+### 5 SFZの独立C++準備と製品再生を完成させる
+
+| 小段階 | 実装と観測できる成果物 | 完了条件とコミット |
+| --- | --- | --- |
+| 5.1 最小バンクと音源再生 | `sfz/`の独立ターゲット、最小regionの解析、PCMからのバンク生成、ドライバーを実装。段階4のデコーダーで小さなWAVを読み、実カーネルへ渡す | PipeWire / GTKなしでも入力音から楽器音を得られ、dryとは異なるPCMを確認できる。`feat: add isolated native SFZ preparation` |
+| 5.2 上流の読込動作 | include / define・スコープ・opcode・初期条件・ループ・容量選別と診断を追加。上流JS比較とデコード済みPCMによる検証を実行 | 正規化領域、選別、バンク、実音声が上流に一致する。全キーを保持できない容量不足を明示する。`feat: match EffeTune SFZ preparation semantics` |
+| 5.3 登録IDとキャッシュ | `sfz-references.json`から解決し、共通の非同期読込・キャッシュ・依存監視へ接続。予算設定と診断を既存の設定・状態表示へ追加 | デスクトップ版のプリセットを再登録なしで再生し、空キャッシュ・include更新・サンプル差替え・ID変更・欠損後の復旧を確認する。`feat: resolve and cache registered SFZ instruments` |
+| 5.4 製品ライフサイクル | warmup、reset、遅延、dry / wet、ch選択、切替・休止を検証し、goldenランナーに合成バンクを追加 | 公式11 goldenと実ファイル試験が成功し、Node.jsなしの初回読込・再生成・再生が成立する。`feat: integrate SFZ playback lifecycle` |
+
+各小段階はRED → 実装 → GREENでコミットする。独立モジュールのテストと実共有バックエンドの再生ドライバーを毎段階実行できること、ホストにSFZ解釈が漏れていないことをレビューする。
+
+### 6 Room EQの測定読込と補正設計を完成させる
+
+| 小段階 | 実装と観測できる成果物 | 完了条件とコミット |
+| --- | --- | --- |
+| 6.1 Minimum / Linear | 汎用測定読込とCrosstalk固有検証を分離し、周波数応答からの補正、追加EQ、FIR出力を独立ターゲットで実装。共有`ms`から実DSPを動かす | 合成ピーク・ディップが設定どおり補正され、生成FIR・遅延・PCMが上流比較を満たす。Crosstalkの回帰が成功する。`feat: design Room EQ filters from measurements` |
+| 6.2 Correction | 複数点IR、直接音・低域・残響の位相補正、Reference PointとConsensus、縮小判定・診断を追加 | 既知の位相・群遅延と補正後応答を確認でき、IR不足と有効な縮小を区別する。`feat: support Room EQ phase correction` |
+| 6.3 ch割当と再読込 | `ms0`〜`ms15`、選択ペア・単一ch・All、実効tap数、Gain / Delay、キャッシュと全依存監視を接続 | ch別の測定が正しい出力だけを補正し、変更・欠損・レート切替・再起動を反映する。Node.jsなしで初回設計と再設計が成功する。`feat: integrate multichannel Room EQ assets` |
+
+各小段階で上流JSとの比較・製品プリセットの音声処理を実行し、RED → 実装 → GREENを確認する。IRをコピーしただけ、FIR配列が非空というだけでは完成としない。
+
+### 7 外部アセット全体の運用を検証する
+
+SFZ・IR Reverb・Room EQ・Crosstalk・生成FIRを混在させたプリセットを使用する。再起動、レート・バックエンド・ch構成変更、原本の原子的な差替え、連続変更、準備中の別プリセット選択と終了、欠損復旧、キャッシュ破損・書込不可を検証する。欠損時の旧パイプラインと監視の保持、準備結果の世代、警告がある稼働中ノードとoff / ignoredの区別を確認する。
+
+Node.jsと`ffmpeg`実行ファイルがない実行環境へインストール済み製品・必要な共有ライブラリ・原本だけを置き、空キャッシュから3種類すべてを動かす。開発時に作ったバンクが残ることで実行時依存が隠れないようにする。冷たいキャッシュ・再利用・再生成時の時間とピークRSSを記録し、32bitを含め容量超過を確保前に検出する。上限境界は合成メタデータによる試験と実際の小規模デコードを分け、常に巨大な音源を要求するテストにしない。
+
+完了条件は、9種類のアセットDSPが、それぞれの有効な入力により実際に加工し、未対応という理由で除外される型がなく、故障時の契約とリアルタイム制約を満たすこと。コミットは`feat: verify external asset lifecycle`。
+
+### 8 既存機能と実運用経路を回帰検証する
 
 FIR・オーバーサンプリング共通処理、Brickwall Limiter、MD / MP3 Codec Simulator、Click Remover、遅延線、変更された既存DSPを上流native・parityと製品テストで確認する。既存goldenにはPCM自体の変更もあるため、JSONの参照ハッシュ更新と区別する。AM Radio、Vinyl、Phaser、Tube Simulatorの対象ケースもアプリタグの参照PCMを基準に比較する。
 
 レート・バックエンド変更、プリセット再読込、エラー時の旧状態保持、入力遅延補償、複数出力へのチャンネル配分、無音時休止、GTKのenabled / off / ignoredを確認する。Debugの割当・解放監視を無効化せず、失敗した場合は音声経路での操作を特定する。
 
-ReleaseでAdaptive、Rhythm、既存オーバーサンプリングDSPの処理時間、初期化、メモリ、共有ライブラリサイズを記録する。SFZを対応する場合はバンク読込と再構築時のピークも測る。コンパイルと負荷測定を競合させない。
+ReleaseでAdaptive、Rhythm、既存オーバーサンプリングDSPの処理時間、初期化、メモリ、共有ライブラリサイズを記録する。SFZのバンク読込、IR加工、Room EQ設計と、旧新パイプライン共存時のピークも測る。コンパイルと負荷測定を競合させない。
 
 完了条件は、実行時の切替・遅延・状態表示と既存DSPに説明できない退行がなく、ホスト全体テストが成功し、測定条件と結果が揃うこと。コミットは`feat: verify EffeTune 2.13 runtime integration`。不要な試行修正は残さない。
 
-### 6 利用者文書と配布検証を完了する
+### 9 利用者文書と配布検証を完了する
 
-英日README、`docs/en/details.md`、`docs/ja/details.md`、`pipetune/README.md`を更新し、Adaptiveの処理幅・学習・休止、Cassetteのモード、Rhythmの非対応レートと内部無音reset、選んだSFZ方針を利用者の視点で説明する。内部のモデル・ABI・検証方法は既存`pipetune/docs/dsp-backends.md`と必要な`architecture.md`へ反映する。過去の計画は履歴として残す。
+英日README、`docs/en/details.md`、`docs/ja/details.md`、`pipetune/README.md`を更新し、Adaptiveの処理幅・学習・休止、Cassetteのモード、Rhythmの非対応レートと内部無音reset、SFZ / IR / 測定データの保存先と読込条件を利用者の視点で説明する。現在のRoom EQ / IR Reverb未対応という記述を更新し、実行時Node.js不要、音声形式、予算と縮小の診断、再読込失敗時の保持を記載する。内部のモデル・ABI・検証方法は既存`pipetune/docs/dsp-backends.md`と必要な`architecture.md`へ反映する。SFZ等の移植対応表・差替え境界は内部文書へ保存する。過去の計画は履歴として残す。
 
-NOTICEと実際の配布ソースを照合する。今回の上流NOTICEの追加にはWASM用Emscripten・muslが含まれるため、ネイティブのみの製品へ一律に転記しない。Rhythmのfdlibm由来コードは`g2_math.h`から`rd6_math.h`へ移っており、引き続き表示対象である。SFZの補助ツールやデコーダーを配布する場合は、それらの出典・ライセンス表示も含める。[上流NOTICE](https://github.com/Frieve-A/effetune/blob/v2.13.0/plugins/dsp/NOTICE.txt)、[Rhythmの数学処理](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/plugins/analyzer/rhythm_analyzer/rd6_math.h)
+NOTICEと実際の配布ソースを照合する。今回の上流NOTICEの追加にはWASM用Emscripten・muslが含まれるため、ネイティブのみの製品へ一律に転記しない。Rhythmのfdlibm由来コードは`g2_math.h`から`rd6_math.h`へ移っており、引き続き表示対象である。移植した準備処理の出典・ライセンス、デコーダー等の共有ライブラリの配布条件とパッケージ依存を確認する。Node.jsは製品の実行時パッケージ依存へ追加しない。[上流NOTICE](https://github.com/Frieve-A/effetune/blob/v2.13.0/plugins/dsp/NOTICE.txt)、[Rhythmの数学処理](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/plugins/analyzer/rhythm_analyzer/rd6_math.h)、[FFmpegのライセンス構成](https://ffmpeg.org/legal.html)
 
 作業ツリーを固定し、Debug全体、クリーンRelease全体、単独ビルド、GTK E2E、一時DESTDIRへのインストール、現行9構成のパッケージ生成・ロード・PCMを確認する。最終完了条件を照合し、実行していないISAと実機未検証範囲を記録する。
 
-完了条件は、選択したSFZ範囲を含む最終条件を満たし、文書と検証記録が揃うこと。コミットは`doc: describe EffeTune 2.13.0 support`。パッケージ実装の修正が必要なら`fix:`または`chore:`として分離する。
+完了条件は、SFZ・IR Reverb・Room EQを含む最終条件を満たし、文書と検証記録が揃うこと。コミットは`doc: describe EffeTune 2.13.0 support`。パッケージ実装の修正が必要なら`fix:`または`chore:`として分離する。
 
 ## 検証方法と実施条件
 
@@ -206,7 +325,8 @@ DESTDIR="$PWD/artifacts/verification/effetune-2.13.0/install" cmake --install bu
 - 現在の`build_package.sh`はDebian trixieのx86_64 / i686 / arm64 / armv7l / riscv64、Ubuntu 24.04 / 26.04のx86_64 / arm64の9構成。前回計画の13構成を流用してbookwormを復活させない。
 - ホスト全体テストには上流native、全DSPパッカー、上流native parity、独自共有バックエンドgolden、単独ビルド、インストール、GTK E2Eを含める。新規nativeテストとモデル検証のCTest登録を確認する。
 - 新しい公式golden、既存の更新PCM、製品プリセットの挙動をそれぞれ記録する。goldenは各メタデータのフレーム数・パラメータ・イベント・許容誤差に従い、今回のために参照PCMを再生成しない。
-- 各配布先でScalarと実行可能SIMDをロードし、Adaptive・Cassette・RhythmとSFZの選択範囲を検証する。前回記録にあるi686の旧golden差は今回も更新前後比較で切り分け、新しい失敗を既知の差として処理しない。
+- 各配布先でScalarと実行可能SIMDをロードし、Adaptive・Cassette・Rhythm、SFZ・IR Reverb・Room EQと既存の外部アセット処理を検証する。デコーダーを含む必要な共有ライブラリと対応形式も配布物から確認する。前回記録にあるi686の旧golden差は今回も更新前後比較で切り分け、新しい失敗を既知の差として処理しない。
+- SFZ・IR準備・Room EQ設計は同一入力による上流JSとの比較、実ファイルの参照解決・デコード、実共有バックエンドのPCMを分けて検証する。JSランナーは開発テスト専用とし、Node.jsなしの製品試験を別に実行する。
 - 長い学習・拍検出は処理フレーム数で時間を進める。エミュレーションを含む実測速度からタイムアウトを設定し、時間がかかることを理由に検証を省略しない。
 - GTKの既存表示とE2E基盤を使う。ブラウザを介する試行が必要になった場合はPlaywright MCPを使い、UIの時間軸の問題が見つかった場合は動画による検証を追加する。画像マスターを変更する場合は目視確認する。
 - 追加パッケージが不足している場合はインストールを促す。新規のTypeScript / JavaScriptツールはnpm、TypeScript、Vite、Vitest、`prettier-max`、`resolved-killer`のプロジェクト規則に従う。C++側の新規I/Oが必要なら`cardio`の非同期処理を使う。外部APIは公式文書とAPIコメントの両方を確認する。
@@ -222,7 +342,13 @@ DESTDIR="$PWD/artifacts/verification/effetune-2.13.0/install" cmake --install bu
 - [ ] 新しいコア、HarmNet、3モデルの埋め込み、ARM生成物が単独ビルドと配布物で利用できる。
 - [ ] Adaptiveの学習・音声・1〜2ch制約・reset・休止を製品経路で確認し、17 goldenが成功する。
 - [ ] Cassetteの5モードと18 golden、Rhythmの6 goldenと長時間クリック・非対応レート・無音後の再検出が成功する。
-- [ ] SFZの対応方式または見送りが確定し、その音声・警告・状態表示・配布の条件を満たす。
+- [ ] SFZはA＋C＋キャッシュで登録済み音源を再生し、上流JSの解析・容量選別・バンク生成との適合と公式11 goldenを満たす。
+- [ ] SFZのJS由来C++処理をホストから分離し、独立ビルド・メモリ入力のドライバー・適合テスト・移植対応表が揃い、差替え境界をレビューした。
+- [ ] IR Reverbは単一 / L・Rペア原音、各ch・レート・加工モードと容量制約を反映し、期待するwet音声を出力する。
+- [ ] Room EQは共有 / ch別・複数点測定から3位相モードの補正FIRを設計し、周波数応答・位相・遅延と診断が上流比較を満たす。
+- [ ] 9種類のアセットDSPに未対応を理由とした除外がなく、無効ノードを読み込まず、未設定・部分対応警告・読込失敗を状態表示で区別する。
+- [ ] 原本変更・キャッシュ破損・欠損復旧・準備中の切替を扱い、失敗時は旧パイプラインを保ち、音声コールバックで準備処理をしない。
+- [ ] Node.jsとffmpeg実行ファイルがない配布環境で、空キャッシュからSFZ / IR / Room EQの初回準備・再生成・再生が成功する。
 - [ ] 解析9種類の除外、既存DSP、生成FIR、遅延補償、複数出力、再構築・失敗時の保持に退行がない。
 - [ ] Debug / Release全体、単独ビルド、GTK E2E、インストール、現行9配布構成の結果を記録した。
 - [ ] 利用者文書、著作権表示、性能・メモリの測定条件と未検証範囲が揃っている。
@@ -231,8 +357,10 @@ DESTDIR="$PWD/artifacts/verification/effetune-2.13.0/install" cmake --install bu
 
 - [x] 追従先を利用者指定のアプリタグに固定した。
 - [x] 現行コード、公式タグ間差分、対象版の文書・APIコメントを基に対応箇所を整理した。
-- [x] 各共通工程に実行可能な成果物、TDD・回帰検証、コミット、完了条件を定義した。
-- [x] SFZについて、既存連携を再利用できる部分と追加が必要な部分を分け、3案を比較した。
-- [ ] SFZの採用方式または見送りを確定し、段階4を具体化した。
+- [x] 各工程・小段階に実行可能な成果物、TDD・回帰検証、コミット、完了条件を定義した。
+- [x] SFZの3案とNode.js依存の議論を保存し、A＋C＋キャッシュに確定した。
+- [x] SFZのJS由来処理の構造的分離、移植元との適合テスト、将来の上流C++への差替え方針を定義した。
+- [x] アセットを持つ9種類を洗い出し、IR Reverb・Room EQの未対応を今回解消する工程を追加した。
+- [x] 共通のネイティブ読込・キャッシュ・監視と、初回準備を含めた実行時Node.js不要の条件を定義した。
 
-計画段階では本書のみを追加する。ビルドに影響しない文書変更のため、この段階のビルド・テストは行わない。
+計画段階では本書のみを更新する。ビルドに影響しない文書変更のため、この段階のビルド・テストは行わない。上記の計画段階の条件を満たしたことを差分レビューで確認し、実装の最終完了条件は未実施として残す。
