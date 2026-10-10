@@ -42,9 +42,22 @@ void AssetMemoryReservation::shrink(std::uint64_t bytes) {
   bytes_ = bytes;
 }
 
+void AssetMemoryReservation::resize(std::uint64_t bytes, std::uint64_t maximumBytes) {
+  if (bytes <= bytes_) { shrink(bytes); return; }
+  auto increase = AssetMemoryReservation(bytes - bytes_, maximumBytes);
+  increase.bytes_ = 0;
+  bytes_ = bytes;
+}
+
 AssetPreparationPool &assetPreparationPool() {
   static auto pool = AssetPreparationPool{};
   return pool;
+}
+
+std::uint64_t availableAssetMemoryBytes(std::uint64_t maximumBytes) {
+  const auto limit = std::min(maximumBytes, kDefaultAssetMemoryBytes);
+  const auto used = reservedAssetBytes.load();
+  return used >= limit ? 0 : limit - used;
 }
 
 } // namespace pipetune

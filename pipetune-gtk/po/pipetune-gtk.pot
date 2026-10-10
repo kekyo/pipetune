@@ -800,3 +800,7 @@ msgstr ""
 
 msgid "Warnings"
 msgstr ""
+
+#: src/status-model.cpp
+msgid "SFZ bank budget"
+msgstr ""

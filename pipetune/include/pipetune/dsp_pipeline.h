@@ -88,13 +88,17 @@ struct PipelineLoadContext {
   AssetCacheOptions assetCache = {};
   /** Combined asset working data and live native footprints; may lower the process default. */
   std::uint64_t assetMemoryBytes = kDefaultAssetMemoryBytes;
+  /** Per-instrument original, PCM, and bank/index budget; defaults to the app's 256 MiB. */
+  std::uint64_t sfzMaximumBytes = std::uint64_t{kDefaultSfzMaxSizeMiB} * 1024 * 1024;
 };
 
 /**
  * Resolves measurement storage from XDG_CONFIG_HOME and HOME.
+ * @param sfzMaxSizeMiB Supported per-instrument SFZ budget in MiB.
  * @return Context with an empty directory when neither variable is available.
+ * @throws std::invalid_argument When the SFZ budget is unsupported.
  */
-PipelineLoadContext defaultPipelineLoadContext();
+PipelineLoadContext defaultPipelineLoadContext(std::uint32_t sfzMaxSizeMiB = kDefaultSfzMaxSizeMiB);
 
 /**
  * Owns one prepared EffeTune native DSP pipeline.

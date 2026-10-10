@@ -77,6 +77,9 @@ static bool testConfiguredPreset(const std::filesystem::path &configPath,
       configPath, pipetune::DspBackendKind::simd);
   const auto savedDspIdle = pipetune::saveDspIdlePolicy(
       configPath, {.timeoutMilliseconds = 300});
+  auto config = pipetune::loadStartupConfig(configPath).config;
+  config.sfzMaxSizeMiB = 512;
+  if (!check(pipetune::saveStartupConfig(configPath, config).empty(), "cannot save SFZ budget")) return false;
   if (!check(saved.empty(), saved) ||
       !check(savedBackend.empty(), savedBackend) ||
       !check(savedDspIdle.empty(), savedDspIdle)) {
@@ -104,6 +107,7 @@ static bool testConfiguredPreset(const std::filesystem::path &configPath,
              "configured preset must prepare its DSP node") ||
       !check(prepared.dspIdlePolicy.timeoutMilliseconds == 300,
              "configured DSP idle policy must reach the runtime") ||
+      !check(prepared.sfzMaxSizeMiB == 512, "SFZ budget must reach the runtime") ||
       !check(prepared.configuredDspBackend ==
                      pipetune::DspBackendKind::simd &&
                  prepared.effectiveDspBackend ==

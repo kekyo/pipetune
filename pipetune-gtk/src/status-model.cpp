@@ -393,6 +393,8 @@ std::vector<StatusSection> buildStatusSections(
               textItem("saved.dsp-idle",
                        translate("Silence suspension"),
                        dspIdlePolicyText(saved.dspIdlePolicy)),
+              textItem("saved.sfz-budget", translate("SFZ bank budget"),
+                       std::to_string(saved.sfzMaxSizeMiB) + " MiB"),
           },
   });
   sections.push_back({
@@ -490,6 +492,9 @@ std::vector<StatusSection> buildStatusSections(
                             : "—",
                   unavailable),
               dspLatencyItem(state),
+              textItem("dsp.sfz-budget", translate("SFZ bank budget"),
+                       connected ? std::to_string(state.runtime.sfzMaxSizeMiB) + " MiB" : "—",
+                       unavailable),
               dspTimeItem(state),
               dspLoadItem(state),
               textItem(

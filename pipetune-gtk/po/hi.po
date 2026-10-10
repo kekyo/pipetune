@@ -805,3 +805,7 @@ msgstr "आउटपुट डिवाइस की प्रतीक्षा
 
 msgid "Warnings"
 msgstr "चेतावनियाँ"
+
+#: src/status-model.cpp
+msgid "SFZ bank budget"
+msgstr "SFZ बैंक की मेमोरी सीमा"

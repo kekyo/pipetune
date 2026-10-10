@@ -804,3 +804,7 @@ msgstr "出力デバイスを確認中…"
 
 msgid "Warnings"
 msgstr "警告"
+
+#: src/status-model.cpp
+msgid "SFZ bank budget"
+msgstr "SFZバンクの容量上限"

@@ -33,6 +33,8 @@ public:
   AssetMemoryReservation &operator=(const AssetMemoryReservation &) = delete;
   /** Reduces a working reservation to the bytes retained by its immutable result. */
   void shrink(std::uint64_t bytes);
+  /** Changes a phase's reservation before allocation; a rejected growth leaves the old lease intact. */
+  void resize(std::uint64_t bytes, std::uint64_t maximumBytes);
 };
 
 /** Immutable preparation shared only while pipeline construction needs its host payload. */
@@ -51,6 +53,9 @@ struct AssetPreparationPool {
 
 /** Returns the process-wide preparation pool; its promises remain local to each waiter. */
 AssetPreparationPool &assetPreparationPool();
+
+/** Returns unreserved bytes under the process limit; a subsequent reservation still validates atomically. */
+std::uint64_t availableAssetMemoryBytes(std::uint64_t maximumBytes);
 
 /** Conservative IR working reservation including bounded source, decode, and analysis buffers. */
 inline constexpr std::uint64_t kIrWorkingMemoryBytes = 768ull * 1024 * 1024;

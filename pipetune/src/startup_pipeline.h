@@ -57,6 +57,8 @@ struct StartupPipelineResult {
   std::string dspBackendError = {};
   /** Persisted output mode, devices, and fixed channel assignments. */
   OutputConfiguration outputConfiguration = {};
+  /** Persisted per-instrument SFZ budget in MiB. */
+  std::uint32_t sfzMaxSizeMiB = kDefaultSfzMaxSizeMiB;
 };
 
 /**

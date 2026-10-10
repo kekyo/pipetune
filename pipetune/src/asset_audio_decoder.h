@@ -16,7 +16,7 @@ namespace pipetune {
 
 /**
  * Decodes an in-memory audio file without opening additional files or URLs.
- * @param bytes Complete original file.
+ * @param bytes Complete original file, at most 1 GiB; each asset loader enforces its own smaller limit.
  * @param maximumPcmBytes Maximum decoded float32 storage, checked incrementally.
  * @return Finite planar PCM at the original rate and channel order.
  * @throws std::runtime_error Invalid, unsupported, or oversized audio.

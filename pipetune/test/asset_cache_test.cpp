@@ -61,6 +61,7 @@ static pipetune::PreparedDspAsset makeImpulse(std::size_t frames = 512) {
       .footprint_bytes = static_cast<std::uint32_t>(prepared.footprintBytes),
       .byte_size = static_cast<std::uint32_t>(prepared.payload.size())};
   asset.payload = std::move(prepared.payload);
+  asset.warmupFrames = 37;
   return asset;
 }
 
@@ -77,7 +78,8 @@ static cardio::promise<void> testCache(const std::filesystem::path &directory) {
   auto cached = co_await pipetune::readAssetCache(options, keyA, 32 * 1024 * 1024);
   require(cached && cached->asset.payload == asset.payload &&
       cached->asset.info.footprint_bytes == asset.info.footprint_bytes &&
-      cached->asset.info.processing_channels == 2 && cached->diagnostics == diagnostics,
+      cached->asset.info.processing_channels == 2 && cached->asset.warmupFrames == asset.warmupFrames &&
+      cached->diagnostics == diagnostics,
       "a cache hit must preserve the IR coefficients, copy contract, and diagnostics");
   require(!(co_await pipetune::readAssetCache(options, keyB, 32 * 1024 * 1024)), "a different source identity must miss");
   require(!(co_await pipetune::readAssetCache(options, keyA, 1)), "a cache hit must obey the caller's payload budget");

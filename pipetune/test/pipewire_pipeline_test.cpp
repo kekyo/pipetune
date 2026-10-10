@@ -333,6 +333,68 @@ static bool testIrReload(const std::filesystem::path &socketPath,
                             "cannot restore the preceding preset after IR recovery");
 }
 
+static bool testSfzReload(const std::filesystem::path &socketPath,
+                           const std::filesystem::path &precedingPreset) {
+  const auto directory = precedingPreset.parent_path();
+  const auto root = directory / "instrument";
+  std::filesystem::create_directories(root);
+  const auto registry = directory / "effetune" / "sfz-references.json";
+  const auto selected = root / "main.sfz", included = root / "voice.sfz", sample = root / "a.wav";
+  const auto path = directory / "sfz.effetune_preset";
+  auto wave = std::vector<std::uint8_t>(44 + 512 * 4);
+  const auto put = [&wave](std::size_t offset, std::uint32_t value, unsigned width) {
+    for (auto index = 0u; index < width; ++index) wave[offset + index] = value >> (8 * index);
+  };
+  for (const auto &[offset, text] : std::array{std::pair{0u, "RIFF"}, std::pair{8u, "WAVE"},
+      std::pair{12u, "fmt "}, std::pair{36u, "data"}}) std::copy_n(text, 4, wave.begin() + offset);
+  put(4, wave.size() - 8, 4); put(16, 16, 4); put(20, 3, 2); put(22, 1, 2);
+  put(24, 48000, 4); put(28, 192000, 4); put(32, 4, 2); put(34, 32, 2);
+  put(40, 512 * 4, 4); put(44, std::bit_cast<std::uint32_t>(0.5F), 4);
+  std::ofstream(sample, std::ios::binary).write(reinterpret_cast<const char *>(wave.data()), wave.size());
+  std::ofstream(registry) << "[{\"id\":\"0123456789abcdef01234567\",\"name\":\"Live SFZ\",\"root\":\"" <<
+      root.string() << "\",\"path\":\"" << selected.string() << "\"}]";
+  const auto region = std::string("<region> sample=a.wav key=83 amp_veltrack=0 loop_mode=loop_continuous");
+  if (!writePresetContents(selected, "#include \"voice.sfz\"") || !writePresetContents(included, region) ||
+      !writePresetContents(path, R"({"pipeline":[{"name":"SFZ Note Player","parameters":{"sf":"0123456789abcdef01234567","mn":83,"mx":83}}]})")) return false;
+  const auto loaded = pipetune::parseControlResponse(pipetune::exchangeControlMessage(
+      socketPath, pipetune::makeLoadPresetControlRequest(path)).response);
+  if (!check(loaded.success && loaded.status.activePluginCount == 1 && loaded.status.dspLatencyFrames > 0 &&
+      loaded.status.sfzMaxSizeMiB == 128, "registered SFZ did not activate with the startup budget")) return false;
+  auto revision = loaded.status.configurationRevision;
+  const auto latency = loaded.status.dspLatencyFrames;
+  for (const auto &dependency : {registry, selected, included, sample}) {
+    const auto saved = std::filesystem::path(dependency.string() + ".saved");
+    std::filesystem::rename(dependency, saved);
+    const auto failed = waitForStatus(socketPath, [](const auto &status) { return !status.configurationError.empty(); });
+    if (!check(failed && failed->configurationRevision == revision && failed->activePreset == path.string() &&
+        failed->activePluginCount == 1 && failed->dspLatencyFrames == latency && failed->sfzMaxSizeMiB == 128,
+        "a missing SFZ dependency replaced the prior pipeline or its effective settings")) return false;
+    std::filesystem::rename(saved, dependency);
+    const auto restored = waitForStatus(socketPath, [revision](const auto &status) {
+      return status.configurationError.empty() && status.configurationRevision > revision;
+    });
+    if (!check(restored && restored->dspLatencyFrames == latency && restored->activePluginCount == 1,
+        "restoring an SFZ dependency did not recover automatic reload")) return false;
+    revision = restored->configurationRevision;
+  }
+  if (!replacePresetContents(included, region + " volume=-6\n<region> sample=later.wav key=84")) return false;
+  const auto partial = waitForStatus(socketPath, [revision](const auto &status) {
+    return status.configurationRevision > revision && status.activePluginCount == 1 &&
+        !status.presetEntries.empty() && !status.presetEntries.front().diagnostics.empty();
+  });
+  if (!check(partial.has_value(), "partial SFZ must remain active with a missing-sample warning")) return false;
+  std::ofstream(root / "later.wav", std::ios::binary).write(reinterpret_cast<const char *>(wave.data()), wave.size());
+  const auto completed = waitForStatus(socketPath, [&partial](const auto &status) {
+    return status.configurationRevision > partial->configurationRevision && status.configurationError.empty() &&
+        !status.presetEntries.empty() && status.presetEntries.front().diagnostics.empty();
+  });
+  if (!check(completed && completed->dspLatencyFrames == latency,
+      "a previously missing sample was not watched and restored automatically")) return false;
+  const auto previous = pipetune::parseControlResponse(pipetune::exchangeControlMessage(
+      socketPath, pipetune::makeLoadPresetControlRequest(precedingPreset)).response);
+  return check(previous.success, "cannot restore the preceding preset after SFZ recovery");
+}
+
 static bool testCrosstalkReload(const std::filesystem::path &socketPath,
                                 const std::filesystem::path &presetPath) {
   const auto root = presetPath.parent_path() / "effetune" / "measurement-backups";
@@ -549,7 +611,8 @@ static int runSignalChild(std::string_view processId, const std::filesystem::pat
          .maxFrames = 8192,
          .ringCapacityFrames = 16384,
          .readyCallback = reportReadyToParent,
-         .readyUserData = &readyDescriptor},
+         .readyUserData = &readyDescriptor,
+         .sfzMaxSizeMiB = 128},
         pipetune::PipeWireRunMode::untilInterrupted);
     if (!result.success) {
       std::cerr << result.error << '\n';
@@ -811,6 +874,7 @@ static bool testOrderlySignalShutdown(
   }
 
   if (!testIrReload(socketPath, replacementPresetPath) ||
+      !testSfzReload(socketPath, replacementPresetPath) ||
       !testCrosstalkReload(socketPath, replacementPresetPath) ||
       !testBassManagementLiveRejection(socketPath, replacementPresetPath) ||
       !testMeasurementLiveChanges(socketPath, replacementPresetPath) ||

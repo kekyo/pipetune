@@ -21,6 +21,8 @@
 
 namespace pipetune {
 
+static constexpr auto kSfzBudgetAssignment = std::string_view{"PIPETUNE_SFZ_MAX_SIZE_MIB="};
+
 constexpr auto kPresetAssignment = std::string_view{"PIPETUNE_PRESET="};
 constexpr auto kDspBackendAssignment =
     std::string_view{"PIPETUNE_DSP_BACKEND="};
@@ -199,6 +201,8 @@ static std::string writeAll(int descriptor, std::string_view contents) {
 std::string saveStartupConfig(const std::filesystem::path &configPath,
                               const StartupConfig &config) {
   auto contents = std::string("# Managed by PipeTune.\n");
+  if (!sfzMaxSizeMiBIsValid(config.sfzMaxSizeMiB)) return "SFZ budget must be 64, 128, 256, 512, or 1024 MiB";
+  contents += std::string(kSfzBudgetAssignment) + std::to_string(config.sfzMaxSizeMiB) + "\n";
   if (config.presetFound) {
     const auto validation = validatePresetPath(config.presetPath);
     if (!validation.empty()) {
@@ -341,6 +345,7 @@ loadStartupConfig(const std::filesystem::path &configPath) {
   auto dspBackendFound = false;
   auto dspSimdVariantFound = false;
   auto dspIdleTimeoutFound = false;
+  auto sfzBudgetFound = false;
   auto rateFound = false;
   auto enforcementFound = false;
   auto outputFound = false;
@@ -405,6 +410,15 @@ loadStartupConfig(const std::filesystem::path &configPath) {
           return fail("DSP idle timeout assignment is invalid");
         }
         dspIdleTimeoutFound = true;
+      } else if (line.starts_with(kSfzBudgetAssignment)) {
+        if (sfzBudgetFound) return fail("startup configuration contains duplicate PIPETUNE_SFZ_MAX_SIZE_MIB assignments");
+        const auto value = line.substr(kSfzBudgetAssignment.size());
+        const auto parsed = std::from_chars(value.data(), value.data() + value.size(), config.sfzMaxSizeMiB);
+        if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() ||
+            !sfzMaxSizeMiBIsValid(config.sfzMaxSizeMiB)) {
+          return fail("SFZ budget must be 64, 128, 256, 512, or 1024 MiB");
+        }
+        sfzBudgetFound = true;
       } else if (line.starts_with(kRateAssignment)) {
         if (rateFound) {
           return fail("startup configuration contains duplicate "

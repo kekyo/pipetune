@@ -10,6 +10,7 @@
 #include "dsp_catalog.h"
 #include "generated_fir_asset.h"
 #include "ir_asset_loader.h"
+#include "sfz_asset_loader.h"
 #include "asset_file.h"
 #include "preparation_dispatcher.h"
 #include "measurement_store.h"
@@ -72,7 +73,8 @@ struct DspPipeline::Impl {
   }
 };
 
-PipelineLoadContext defaultPipelineLoadContext() {
+PipelineLoadContext defaultPipelineLoadContext(std::uint32_t sfzMaxSizeMiB) {
+  if (!sfzMaxSizeMiBIsValid(sfzMaxSizeMiB)) throw std::invalid_argument("SFZ budget is invalid");
   const auto *xdg = std::getenv("XDG_CONFIG_HOME");
   const auto *home = std::getenv("HOME");
   const auto directory = resolveEffeTuneDirectory(xdg == nullptr ? "" : xdg, home == nullptr ? "" : home);
@@ -81,7 +83,8 @@ PipelineLoadContext defaultPipelineLoadContext() {
       std::filesystem::path(xdgCache) : home != nullptr && *home != '\0' ? std::filesystem::path(home) / ".cache" : std::filesystem::path{};
   if (!cache.empty()) cache /= "pipetune";
   return {.measurementDirectory = directory.empty() ? std::filesystem::path{} : directory / "measurement-backups",
-          .effetuneDirectory = directory, .assetCache = {.directory = std::move(cache)}};
+          .effetuneDirectory = directory, .assetCache = {.directory = std::move(cache)},
+          .sfzMaximumBytes = std::uint64_t{sfzMaxSizeMiB} * 1024 * 1024};
 }
 
 std::span<const std::filesystem::path> DspPipeline::dependencyFiles() const noexcept {
@@ -586,7 +589,8 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
     }
     const auto bassManagement = node.name == "Bass Management";
     const auto irReverb = node.name == "IR Reverb";
-    const auto generatedAssetDsp = irReverb || bassManagement || crosstalk || supportsGeneratedFirAsset(node.name);
+    const auto sfzPlayer = node.name == "SFZ Note Player";
+    const auto generatedAssetDsp = irReverb || sfzPlayer || bassManagement || crosstalk || supportsGeneratedFirAsset(node.name);
     if (definition->requiresExternalAssets && !generatedAssetDsp) {
       warnings.push_back({.nodeIndex = index,
                           .pluginName = std::string(node.name),
@@ -634,26 +638,38 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
     auto ownedAsset = PreparedDspAsset{};
     auto sharedAsset = std::shared_ptr<const SharedPreparedAsset>{};
     if (generatedAssetDsp) {
-      if (!irReverb) {
+      if (!irReverb && !sfzPlayer) {
         try { generatedMemory = AssetMemoryReservation(512ull * 1024 * 1024, context.assetMemoryBytes); }
         catch (const std::exception &error) { co_return fail(nodeError(index, error.what()), std::move(warnings)); }
       }
       const auto processingChannels =
           selectedProcessingChannels(channelSpec, options.maxChannels);
-      if (irReverb) {
+      if (irReverb || sfzPlayer) {
         const auto firstChannel = channelSpec >= 16 ? static_cast<std::uint32_t>(channelSpec - 16) * 2u :
                                   channelSpec >= 0 ? static_cast<std::uint32_t>(channelSpec) : 0u;
         const auto availableChannels = firstChannel < options.maxChannels &&
             processingChannels <= options.maxChannels - firstChannel ? processingChannels : 0u;
-        auto loadedIr = std::move(co_await loadIrAssetAsync(context.effetuneDirectory, node.parameters,
-            options.sampleRate, availableChannels, context.assetCache, cancellation, context.assetMemoryBytes));
-        if (loadedIr.cacheHit) ++cachedAssetCount;
-        for (const auto &file : loadedIr.files)
-          if (std::ranges::find(implementation->dependencyFiles, file) == implementation->dependencyFiles.end())
-            implementation->dependencyFiles.push_back(file);
-        if (!loadedIr.error.empty()) co_return fail(nodeError(index, loadedIr.error), std::move(warnings));
-        for (auto &snapshot : loadedIr.snapshots) sourceSnapshots.push_back(std::move(snapshot));
-        sharedAsset = std::move(loadedIr.prepared);
+        const auto collect = [&](auto &loaded) {
+          if (loaded.cacheHit) ++cachedAssetCount;
+          for (const auto &file : loaded.files)
+            if (std::ranges::find(implementation->dependencyFiles, file) == implementation->dependencyFiles.end())
+              implementation->dependencyFiles.push_back(file);
+          for (auto &snapshot : loaded.snapshots) sourceSnapshots.push_back(std::move(snapshot));
+          sharedAsset = std::move(loaded.prepared);
+          return loaded.error;
+        };
+        auto error = std::string{};
+        if (irReverb) {
+          auto loaded = std::move(co_await loadIrAssetAsync(context.effetuneDirectory, node.parameters,
+              options.sampleRate, availableChannels, context.assetCache, cancellation, context.assetMemoryBytes));
+          error = collect(loaded);
+        } else {
+          if (!availableChannels) co_return fail(nodeError(index, "selected SFZ processing channels are unavailable"), std::move(warnings));
+          auto loaded = std::move(co_await loadSfzAssetAsync(context.effetuneDirectory, node.parameters,
+              context.sfzMaximumBytes, context.assetCache, cancellation, context.assetMemoryBytes));
+          error = collect(loaded);
+        }
+        if (!error.empty()) co_return fail(nodeError(index, error), std::move(warnings));
         preparedAssets.push_back(sharedAsset);
         if (sharedAsset->cachePin) implementation->assetCachePins.push_back(sharedAsset->cachePin);
         for (const auto &diagnostic : sharedAsset->diagnostics)
@@ -680,7 +696,7 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
         co_return fail(nodeError(index, generatedAsset.error),
                          std::move(warnings));
       }
-      if (!bassManagement && !irReverb && !generatedAsset.payload.empty() &&
+      if (!bassManagement && !irReverb && !sfzPlayer && !generatedAsset.payload.empty() &&
           (!replacePackedParameter(
                packed, "lt", packedHeadBlock(generatedAsset.info.head_block)) ||
            !replacePackedParameter(
@@ -743,11 +759,12 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
                                              "native DSP rejected the generated FIR asset"),
             std::move(warnings));
       }
-      if (irReverb) {
-        const auto width = generatedAsset.info.processing_channels;
+      if (irReverb || sfzPlayer) {
+        const auto width = sfzPlayer ? selectedProcessingChannels(channelSpec, options.maxChannels) :
+                                      generatedAsset.info.processing_channels;
         auto silence = std::vector<float>(width * options.maxFrames);
-        const auto frameBudget = static_cast<std::uint64_t>(std::max(4096u, generatedAsset.info.frames)) *
-                                 generatedAsset.info.channels * 16u;
+        const auto frameBudget = generatedAsset.warmupFrames ? static_cast<std::uint64_t>(generatedAsset.warmupFrames) + options.maxFrames :
+            static_cast<std::uint64_t>(std::max(4096u, generatedAsset.info.frames)) * generatedAsset.info.channels * 16u;
         auto processed = std::uint64_t{0};
         while (api.instanceAssetState(implementation->engine, instance, 0u) == ET_ASSET_STATE_PREPARING &&
                processed < frameBudget) {
@@ -759,7 +776,7 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
         }
         if (api.instanceAssetState(implementation->engine, instance, 0u) != ET_ASSET_STATE_ACTIVE ||
             api.instanceReset(implementation->engine, instance) != ET_OK)
-          co_return fail(nodeError(index, "IR preparation did not reach ACTIVE"), std::move(warnings));
+          co_return fail(nodeError(index, std::string(node.name) + " preparation did not reach ACTIVE"), std::move(warnings));
       }
     }
     activeNodes.push_back({.instance = instance,
@@ -783,10 +800,7 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
 
   co_await preparationCheckpoint(cancellation);
   try {
-    auto maximumSourceBytes = std::uint64_t{0};
-    for (const auto &snapshot : sourceSnapshots) maximumSourceBytes = std::max(maximumSourceBytes,
-        static_cast<std::uint64_t>(snapshot.bytes));
-    const auto verification = AssetMemoryReservation(maximumSourceBytes, context.assetMemoryBytes);
+    const auto verification = AssetMemoryReservation(sourceSnapshots.empty() ? 0 : 128 * 1024, context.assetMemoryBytes);
     co_await verifyAssetSnapshots(sourceSnapshots, cancellation);
   } catch (const cardio::canceled_exception &) { throw; }
   catch (const std::exception &error) { co_return fail(error.what(), std::move(warnings)); }

@@ -7,6 +7,7 @@
 
 #include "effetune_backend_abi.h"
 #include "dsp_catalog.h"
+#include "sfz/bank.h"
 
 #include <dlfcn.h>
 
@@ -21,6 +22,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -534,8 +536,23 @@ static std::vector<float> goldenInput(const GoldenCase &testCase) {
   return audio;
 }
 
+static bool activateGoldenAsset(const BackendApi &api, et_engine engine, et_instance instance,
+    const GoldenCase &testCase, const pipetune_effetune_asset_info_v1 &info,
+    std::span<const std::uint8_t> bytes, std::uint32_t slot, std::uint32_t format) {
+  if (api.instanceAssetCopy(engine, instance, slot, &info, bytes.data(), bytes.size(), format) != ET_OK) return false;
+  const auto frames = std::max(32u, testCase.blockSize);
+  auto silence = std::vector<float>(testCase.channelCount * frames, 0.0F);
+  auto assetState = api.instanceAssetState(engine, instance, slot) & 0xffu;
+  for (auto calls = 0u; assetState == ET_ASSET_STATE_PREPARING && calls < 100000u; ++calls) {
+    std::fill(silence.begin(), silence.end(), 0.0F);
+    if (api.instanceProcess(engine, instance, silence.data(), testCase.channelCount, frames, 0.0) != ET_OK) return false;
+    assetState = api.instanceAssetState(engine, instance, slot) & 0xffu;
+  }
+  return assetState == ET_ASSET_STATE_ACTIVE && api.instanceReset(engine, instance) == ET_OK;
+}
+
 // Match tools/dsp-parity/runners.mjs and the native parity runner's preparation:
-// synthetic sparse IR, process until ACTIVE, then reset before the test signal.
+// synthetic sparse IR or quantized SFZ sine, ACTIVE, then reset before the signal.
 static bool prepareGoldenAsset(const BackendApi &api, et_engine engine,
                                 et_instance instance, const GoldenCase &testCase) {
   auto *asset = testCase.asset;
@@ -543,6 +560,29 @@ static bool prepareGoldenAsset(const BackendApi &api, et_engine engine,
   const auto integer = [](yyjson_val *object, const char *key) {
     return static_cast<std::uint32_t>(yyjson_get_uint(yyjson_obj_get(object, key)));
   };
+  if (auto *sfz = yyjson_obj_get(asset, "sfz"); yyjson_is_obj(sfz)) {
+    const auto *kind = yyjson_get_str(yyjson_obj_get(sfz, "kind"));
+    if (kind == nullptr || std::string_view(kind) != "sfz-sine-v1") return false;
+    auto sample = pipetune::assets::SfzSample{"synthetic-sine", {48000, {std::vector<float>(4096)}}};
+    for (auto frame = 0u; frame < 4096; ++frame) {
+      const auto value = std::sin(2 * std::numbers::pi * 1000 * frame / 48000.0) * 0.2 * 32768;
+      sample.audio.channels.front()[frame] = static_cast<float>(std::floor(value + 0.5) / 32768);
+    }
+    auto region = pipetune::assets::SfzRegion{};
+    region.sample = sample.path;
+    region.pitch_keycenter = 83;
+    region.amp_veltrack = 0;
+    region.end = 4095;
+    region.loop_mode = 2;
+    region.loop_end = 4095;
+    const auto bank = pipetune::assets::packSfzBank(std::span(&region, 1), std::span(&sample, 1),
+        pipetune::assets::kMaximumSfzBytes);
+    const auto info = pipetune_effetune_asset_info_v1{.channels = 1, .frames = bank.samples,
+        .topology = 0, .head_block = 0, .rate_divider = 1, .path_count = 0, .input_count = 0,
+        .processing_channels = testCase.channelCount, .footprint_bytes = static_cast<std::uint32_t>(bank.footprintBytes),
+        .byte_size = static_cast<std::uint32_t>(bank.payload.size())};
+    return activateGoldenAsset(api, engine, instance, testCase, info, bank.payload, 0, ET_ASSET_F32_MULTICH);
+  }
   auto *ir = yyjson_obj_get(asset, "ir");
   const auto *kind = yyjson_get_str(yyjson_obj_get(ir, "kind"));
   if (kind == nullptr || std::string_view(kind) != "sparse-decay-v1") return false;
@@ -593,18 +633,7 @@ static bool prepareGoldenAsset(const BackendApi &api, et_engine engine,
   }
   for (const auto sample : samples) { write(offset, std::bit_cast<std::uint32_t>(sample)); offset += 4u; }
   info.byte_size = static_cast<std::uint32_t>(bytes.size());
-  const auto slot = integer(asset, "slot");
-  if (api.instanceAssetCopy(engine, instance, slot, &info, bytes.data(), bytes.size(),
-                            integer(asset, "format")) != ET_OK) return false;
-  const auto frames = std::max(32u, testCase.blockSize);
-  auto silence = std::vector<float>(testCase.channelCount * frames, 0.0F);
-  auto assetState = api.instanceAssetState(engine, instance, slot) & 0xffu;
-  for (auto calls = 0u; assetState == ET_ASSET_STATE_PREPARING && calls < 100000u; ++calls) {
-    std::fill(silence.begin(), silence.end(), 0.0F);
-    if (api.instanceProcess(engine, instance, silence.data(), testCase.channelCount, frames, 0.0) != ET_OK) return false;
-    assetState = api.instanceAssetState(engine, instance, slot) & 0xffu;
-  }
-  return assetState == ET_ASSET_STATE_ACTIVE && api.instanceReset(engine, instance) == ET_OK;
+  return activateGoldenAsset(api, engine, instance, testCase, info, bytes, integer(asset, "slot"), integer(asset, "format"));
 }
 
 static std::vector<float> renderGoldenCase(const BackendApi &api,
@@ -738,6 +767,8 @@ static std::vector<float> renderGoldenCase(const BackendApi &api,
 
 static void checkGoldenCase(const BackendApi &api, std::uint32_t variant,
                             const GoldenCase &testCase) {
+  if (const auto *type = std::getenv("PIPETUNE_GOLDEN_TYPE"); type != nullptr &&
+      std::string_view(type) != testCase.typeName) return;
   const auto actual = renderGoldenCase(api, testCase);
   if (actual.size() != testCase.expected.size()) {
     std::fprintf(stderr, "EffeTune backend artifact check failed: %s output "
@@ -1043,6 +1074,8 @@ int main(int argc, char **argv) {
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "reverb/ir_reverb/golden", 13u);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "others/sfz_note_player/golden", 11u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "analyzer/analog_meter/golden", 5u);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "eq/tonal_balance_eq/golden", 6u);
@@ -1097,6 +1130,7 @@ int main(int argc, char **argv) {
         checkMetadataGoldens(simd, expected, std::filesystem::path(argv[3]).parent_path(), 18u);
         checkMetadataGoldens(simd, expected, pluginRoot / "resonator/adaptive_prediction_effect/golden", 17u);
         checkMetadataGoldens(simd, expected, pluginRoot / "reverb/ir_reverb/golden", 13u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "others/sfz_note_player/golden", 11u);
         checkMetadataGoldens(simd, expected, pluginRoot / "analyzer/analog_meter/golden", 5u);
         checkMetadataGoldens(simd, expected, pluginRoot / "eq/tonal_balance_eq/golden", 6u);
         checkGoldenCases(simd, expected, goldenCases);

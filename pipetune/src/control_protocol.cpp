@@ -528,7 +528,7 @@ static std::string_view dspActivityName(DspActivity activity) noexcept {
 static bool dspIdleStatusIsConsistent(
     const ControlRuntimeStatus &status) noexcept {
   if (dspActivityName(status.dspActivity).empty() ||
-      !dspIdlePolicyIsValid(status.dspIdlePolicy)) {
+      !dspIdlePolicyIsValid(status.dspIdlePolicy) || !sfzMaxSizeMiBIsValid(status.sfzMaxSizeMiB)) {
     return false;
   }
   if (status.processingMode == ProcessingMode::bypass) {
@@ -645,6 +645,7 @@ static std::string makeControlStatusMessage(
                               processingMode) ||
       !addString(document.get(), root, "dspActivity",
                  dspActivityName(status.dspActivity)) ||
+      !yyjson_mut_obj_add_uint(document.get(), root, "sfzMaxSizeMiB", status.sfzMaxSizeMiB) ||
       (dspIdlePolicyIsEnabled(status.dspIdlePolicy)
            ? !yyjson_mut_obj_add_uint(
                  document.get(), root, "dspIdleTimeoutMilliseconds",
@@ -1422,6 +1423,7 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
   if (!readProcessingMode(root, status.processingMode) ||
       !readDspActivity(root, status.dspActivity) ||
       !readDspIdlePolicy(root, status.dspIdlePolicy) ||
+      !readUint32Field(root, "sfzMaxSizeMiB", status.sfzMaxSizeMiB) ||
       !readNullableStringField(root, "preset", status.activePreset) ||
       !readNullableStringField(root, "configurationError",
                                status.configurationError) ||
