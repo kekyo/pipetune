@@ -208,6 +208,7 @@ add_library(
   src/generated_fir_asset.cpp
   src/ir_asset_loader.cpp
   src/sfz_asset_loader.cpp
+  src/room_asset_loader.cpp
   src/measurement_store.cpp
   src/output_configuration.cpp
   src/output_configuration_json.cpp
@@ -226,7 +227,7 @@ target_include_directories(
 target_link_libraries(
   pipetune_core
   PUBLIC yyjson PkgConfig::ASSET_GIO
-  PRIVATE "${CMAKE_DL_LIBS}" pipetune_asset_ir pipetune_asset_sfz pipetune_ffmpeg PkgConfig::SAMPLERATE)
+  PRIVATE "${CMAKE_DL_LIBS}" pipetune_asset_ir pipetune_asset_sfz pipetune_asset_room pipetune_ffmpeg PkgConfig::SAMPLERATE)
 target_include_directories(pipetune_core SYSTEM PUBLIC "${PIPETUNE_DEPS_DIR}/cardio/include")
 target_compile_definitions(pipetune_core PUBLIC CARDIO_WITH_GLIB=1 CARDIO_WITH_GIO=1)
 
@@ -661,6 +662,7 @@ if(BUILD_TESTING)
     COMMAND "${CMAKE_COMMAND}" -E env
       "PIPETUNE_ASSET_DRIVER=$<TARGET_FILE:pipetune_asset_pipeline_driver>"
       "PIPETUNE_IR_DRIVER=$<TARGET_FILE:pipetune_ir_preparation_driver>"
+      "PIPETUNE_ROOM_DRIVER=$<TARGET_FILE:pipetune_room_preparation_driver>"
       "PIPETUNE_SFZ_DRIVER=$<TARGET_FILE:pipetune_sfz_preparation_driver>"
       "PIPETUNE_SFZ_PLAYBACK_DRIVER=$<TARGET_FILE:pipetune_sfz_playback_driver>"
       "PIPETUNE_IR_CACHE_DRIVER=$<TARGET_FILE:pipetune_ir_cache_driver>"

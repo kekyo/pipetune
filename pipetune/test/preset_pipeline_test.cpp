@@ -99,9 +99,9 @@ static bool testCanonicalPreset(const std::filesystem::path &directory) {
   if (!check(result.warnings.size() == 3 &&
                  std::ranges::count_if(result.warnings, [](const auto &warning) {
                    return warning.state == pipetune::PresetEntryState::ignored;
-                 }) == 2,
-             "canonical preset must report two skipped DSPs and the unassigned active IR") ||
-      !check(result.pipeline->activePluginCount() == 2,
+                 }) == 1,
+             "canonical preset must report the unknown DSP and the unassigned active IR and Room EQ") ||
+      !check(result.pipeline->activePluginCount() == 3,
              "disabled sections must omit their DSP nodes")) {
     return false;
   }
@@ -243,15 +243,15 @@ static bool testEffeTune26Pipeline(const std::filesystem::path &directory) {
       path,
       {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
   if (!check(result.pipeline != nullptr, result.error) ||
-      !check(result.pipeline->activePluginCount() == 25,
+      !check(result.pipeline->activePluginCount() == 26,
              "EffeTune generated-asset DSP nodes must become active") ||
       !check(result.warnings.size() == 2 &&
                  std::ranges::count_if(result.warnings, [](const auto &warning) {
                    return warning.state == pipetune::PresetEntryState::ignored;
-                 }) == 1,
-             "unsupported assets must be omitted while unassigned IR stays active") ||
+                 }) == 0,
+             "unassigned Room EQ and IR must remain active with diagnostics") ||
       !check(containsWarning(result.warnings, "Room EQ"),
-             "every omitted asset-dependent DSP must be identified")) {
+             "unassigned Room EQ must be identified as active with a warning")) {
     return false;
   }
 

@@ -19,7 +19,24 @@ target_include_directories(pipetune_asset_sfz PUBLIC "${CMAKE_CURRENT_SOURCE_DIR
 target_compile_features(pipetune_asset_sfz PUBLIC cxx_std_20)
 target_compile_options(pipetune_asset_sfz PRIVATE -Wall -Wextra -Wpedantic -Werror -ffp-contract=off)
 
+add_library(pipetune_asset_measurement STATIC common/resample.cpp)
+target_include_directories(pipetune_asset_measurement PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_features(pipetune_asset_measurement PUBLIC cxx_std_20)
+target_compile_options(pipetune_asset_measurement PRIVATE -Wall -Wextra -Wpedantic -Werror -ffp-contract=off)
+
+add_library(pipetune_asset_room STATIC room-eq/design.cpp room-eq/fft.cpp room-eq/analysis.cpp
+  room-eq/numeric.cpp room-eq/group_delay.cpp room-eq/phase_spectrum.cpp room-eq/phase_timing.cpp
+  room-eq/phase.cpp room-eq/low_phase.cpp room-eq/reverb.cpp)
+target_link_libraries(pipetune_asset_room PUBLIC pipetune_asset_measurement)
+target_include_directories(pipetune_asset_room PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_features(pipetune_asset_room PUBLIC cxx_std_20)
+target_compile_options(pipetune_asset_room PRIVATE -Wall -Wextra -Wpedantic -Werror -ffp-contract=off)
+
 if(BUILD_TESTING)
+  add_executable(pipetune_room_preparation_driver test/room_driver.cpp)
+  target_link_libraries(pipetune_room_preparation_driver PRIVATE pipetune_asset_room)
+  target_compile_options(pipetune_room_preparation_driver PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_room_preparation COMMAND pipetune_room_preparation_driver)
   add_executable(pipetune_sfz_preparation_driver test/sfz_driver.cpp)
   target_link_libraries(pipetune_sfz_preparation_driver PRIVATE pipetune_asset_sfz)
   target_compile_options(pipetune_sfz_preparation_driver PRIVATE -Wall -Wextra -Wpedantic -Werror)

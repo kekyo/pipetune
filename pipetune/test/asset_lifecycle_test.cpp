@@ -9,6 +9,7 @@
 #include "asset_file.h"
 #include "ir_asset_loader.h"
 #include "sfz_asset_loader.h"
+#include "room_asset_loader.h"
 #include "preparation_dispatcher.h"
 #include "preparation_termination.h"
 
@@ -198,6 +199,52 @@ static cardio::promise<bool> testAsyncSfzPreparation(const std::filesystem::path
   co_return check(changed, "an omitted source changed after SFZ selection must prevent publication");
 }
 
+static cardio::promise<bool> testAsyncRoomPreparation(const std::filesystem::path &directory) {
+  const auto measurements = directory / "measurements";
+  std::filesystem::create_directories(measurements);
+  const auto source = measurements / "room.json";
+  const auto original = R"({"id":"room","averageFrequencyResponse":[[20,0],[1000,6],[20000,0]]})";
+  std::ofstream(source) << original;
+  const auto json = std::string(R"({"ms":"room","pm":"lin","tp":8192})");
+  const auto document = std::unique_ptr<yyjson_doc, decltype(&yyjson_doc_free)>(
+      yyjson_read(json.data(), json.size(), 0), yyjson_doc_free);
+  auto *parameters = yyjson_doc_get_root(document.get());
+  const auto cache = pipetune::AssetCacheOptions{};
+  auto cancel = cardio::cancellation_source{};
+  auto first = pipetune::loadRoomAssetAsync(measurements, parameters, 48000, 2, cache, {}, pipetune::kDefaultAssetMemoryBytes);
+  auto waiting = pipetune::loadRoomAssetAsync(measurements, parameters, 48000, 2, cache,
+      cancel.get_cancellation(), pipetune::kDefaultAssetMemoryBytes);
+  auto same = pipetune::loadRoomAssetAsync(measurements, parameters, 48000, 2, cache, {}, pipetune::kDefaultAssetMemoryBytes);
+  cancel.cancel();
+  auto canceled = false;
+  try { static_cast<void>(co_await waiting); }
+  catch (const cardio::canceled_exception &) { canceled = true; }
+  const auto prepared = std::move(co_await first);
+  const auto shared = std::move(co_await same);
+  if (!check(canceled && prepared.error.empty() && prepared.prepared &&
+      shared.prepared == prepared.prepared && shared.cacheHit,
+      "Room EQ must share immutable filters without persistence when another queued reader is canceled")) co_return false;
+  const auto faster = std::move(co_await pipetune::loadRoomAssetAsync(measurements, parameters, 96000, 2,
+      cache, {}, pipetune::kDefaultAssetMemoryBytes));
+  if (!check(faster.prepared && !faster.cacheHit && faster.prepared != prepared.prepared &&
+      faster.prepared->asset.payload != prepared.prepared->asset.payload,
+      "a Room EQ rate change must redesign its filter while retaining the older prepared result")) co_return false;
+  const auto moved = directory / "moved-measurements";
+  std::filesystem::create_directories(moved);
+  std::ofstream(moved / "room.json") << original;
+  const auto relocated = std::move(co_await pipetune::loadRoomAssetAsync(moved, parameters, 48000, 2,
+      cache, {}, pipetune::kDefaultAssetMemoryBytes));
+  if (!check(relocated.prepared && !relocated.cacheHit && relocated.prepared != prepared.prepared &&
+      relocated.prepared->asset.payload == prepared.prepared->asset.payload,
+      "identical measurements in different roots must retain separate source identities")) co_return false;
+  co_await pipetune::verifyAssetSnapshots(prepared.snapshots, {});
+  std::ofstream(source) << R"({"id":"room","averageFrequencyResponse":[[20,0],[1000,-6],[20000,0]]})";
+  auto changed = false;
+  try { co_await pipetune::verifyAssetSnapshots(prepared.snapshots, {}); }
+  catch (const std::runtime_error &) { changed = true; }
+  co_return check(changed, "a Room EQ measurement changed after design must prevent publication");
+}
+
 static bool testCombinedReservations() {
   auto previous = pipetune::AssetMemoryReservation(70, 100);
   if (!check(pipetune::availableAssetMemoryBytes(100) == 30,
@@ -316,6 +363,7 @@ static cardio::promise<void> testAsyncPreparation(cardio::dispatcher_group_glib 
   correct = check(changed, "a completed asset must not publish after an earlier source snapshot changes") && correct;
   std::ofstream(source, std::ios::binary).write(reinterpret_cast<const char *>(original.data()), original.size());
   correct = co_await testAsyncSfzPreparation(directory) && correct;
+  correct = co_await testAsyncRoomPreparation(directory) && correct;
   group.shutdown();
 }
 
