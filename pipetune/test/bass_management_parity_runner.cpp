@@ -67,7 +67,7 @@ static bool verifyPcm(Process process, std::span<const float> expected,
 
 static bool verifyNative(const pipetune::DspBackendApi &api, et_engine engine,
                          const pipetune::PackedParameters &packed,
-                         pipetune::GeneratedFirAsset &asset, float rate,
+                         pipetune::PreparedDspAsset &asset, float rate,
                          unsigned width, unsigned frames, std::span<const float> expected) {
   if (!check(api.enginePrepare(engine, rate, width, width == 16u ? 8192u : 257u, 0u) == ET_OK, "native engine prepare failed")) return false;
   const auto instance = api.instanceCreate(engine, "BassManagementPlugin");

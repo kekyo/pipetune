@@ -21,6 +21,9 @@
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
 #include "sample_rate_converter.h"
+#include "preparation_generation.h"
+#include "preparation_dispatcher.h"
+#include "preparation_termination.h"
 
 #include <pipewire/pipewire.h>
 #include <pipewire/impl-module.h>
@@ -40,7 +43,6 @@
 #include <cmath>
 #include <climits>
 #include <csignal>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -153,10 +155,12 @@ struct PipeWireRuntime {
   bool presetReloadPending;
   DspBackendRuntimeState dspBackendState;
   std::mutex pipelineMutationMutex;
+  PreparationGeneration preparationGeneration;
   std::mutex dspBackendStateMutex;
   std::mutex rateStateMutex;
   std::mutex rateRequestMutex;
-  std::condition_variable rateRequestCondition;
+  std::optional<cardio::promise_source<void>> rateRequestCompletion;
+  cardio::cancellation rateRequestCancellation;
   SampleRatePolicy configuredRatePolicy;
   SampleRatePolicy pendingRatePolicy;
   bool rateTransitioning;
@@ -212,7 +216,8 @@ struct PipeWireRuntime {
   bool publishingMasterVolume = false;
   std::atomic<float> masterOutputGain{0.0F};
   std::mutex outputRequestMutex;
-  std::condition_variable outputRequestCondition;
+  std::optional<cardio::promise_source<void>> outputRequestCompletion;
+  std::atomic<bool> outputTransitionActive{false};
   std::optional<OutputConfiguration> requestedOutput;
   std::optional<std::uint64_t> requestedOutputRevision;
   std::optional<std::filesystem::path> requestedOutputPreset;
@@ -270,7 +275,7 @@ struct PipeWireRuntime {
             runtimeOptions.configuredDspBackend,
             runtimeOptions.configuredDspSimdVariant)),
         pipelineMutationMutex(), dspBackendStateMutex(), rateStateMutex(),
-        rateRequestMutex(), rateRequestCondition(),
+        rateRequestMutex(), rateRequestCompletion(),
         configuredRatePolicy(runtimeOptions.ratePolicy),
         pendingRatePolicy(defaultSampleRatePolicy()),
         rateTransitioning(
@@ -299,6 +304,7 @@ struct PipeWireRuntime {
   }
 
   ~PipeWireRuntime() {
+    preparationGeneration.shutdown();
     controlServer.reset();
     presetFileMonitor.reset();
     outputInventory.reset();
@@ -431,8 +437,8 @@ static void completePendingRateRequest(PipeWireRuntime &runtime,
     }
     runtime.rateRequestError = std::move(error);
     runtime.rateRequestCompleted = true;
+    if (runtime.rateRequestCompletion) runtime.rateRequestCompletion->try_resolve();
   }
-  runtime.rateRequestCondition.notify_all();
 }
 
 static void failRuntime(PipeWireRuntime &runtime, std::string message) {
@@ -445,14 +451,15 @@ static void failRuntime(PipeWireRuntime &runtime, std::string message) {
     return;
   }
   runtime.error = std::move(message);
+  runtime.preparationGeneration.shutdown();
   completePendingRateRequest(runtime, runtime.error);
   {
     auto lock = std::scoped_lock(runtime.outputRequestMutex);
     runtime.outputRequestError = runtime.error;
     runtime.outputRequestCompleted = true;
     runtime.outputRequestsStopped = true;
+    if (runtime.outputRequestCompletion) runtime.outputRequestCompletion->try_resolve();
   }
-  runtime.outputRequestCondition.notify_all();
   if (runtime.mainLoop != nullptr) {
     pw_main_loop_quit(runtime.mainLoop);
   }
@@ -559,14 +566,15 @@ static void completeRuntime(PipeWireRuntime &runtime) {
     return;
   }
   runtime.completed = true;
+  runtime.preparationGeneration.shutdown();
   completePendingRateRequest(runtime, "PipeTune daemon stopped");
   {
     auto lock = std::scoped_lock(runtime.outputRequestMutex);
     runtime.outputRequestError = "PipeTune daemon stopped";
     runtime.outputRequestCompleted = true;
     runtime.outputRequestsStopped = true;
+    if (runtime.outputRequestCompletion) runtime.outputRequestCompletion->try_resolve();
   }
-  runtime.outputRequestCondition.notify_all();
   pw_main_loop_quit(runtime.mainLoop);
 }
 
@@ -808,6 +816,55 @@ static spa_pod *buildAutomaticFormatParameter(
   return static_cast<spa_pod *>(spa_pod_builder_pop(&builder, &frame));
 }
 
+static cardio::promise<PipelineLoadResult> prepareMainLoopReplacementAsync(
+    PipeWireRuntime &runtime, PipelineBuildOptions options, const PreparationTicket &ticket,
+    cardio::cancellation parent) {
+  const auto registration = parent.on_cancellation_requested([source = ticket.source]() mutable { source.cancel(); });
+  parent.throw_if_cancellation_requested();
+  const auto prepare = [&](cardio::cancellation cancellation) {
+    auto guard = std::scoped_lock(runtime.pipelineMutationMutex);
+    return runtime.pipeline.rebuildActiveAsync(options, {}, cancellation);
+  };
+  if (runtime.mode != PipeWireRunMode::untilInterrupted)
+    co_return std::move(co_await prepare(ticket.source.get_cancellation()));
+  auto interrupted = false;
+  try {
+    auto result = std::move(co_await withPreparationTermination<PipelineLoadResult>(prepare, ticket.source, interrupted));
+    if (interrupted) completeRuntime(runtime);
+    co_return result;
+  } catch (...) {
+    if (interrupted) completeRuntime(runtime);
+    throw;
+  }
+}
+
+// PipeWire's main loop has no cardio dispatcher. Capture the recipe on a
+// temporary GIO dispatcher, release the mutation mutex for preparation, and
+// restore the caller's lock before validating or publishing the candidate.
+static PipelineLoadResult prepareMainLoopReplacement(PipeWireRuntime &runtime,
+    PipelineBuildOptions options, std::unique_lock<std::mutex> &pipelineLock) {
+  const auto ticket = runtime.preparationGeneration.begin();
+  auto cancellation = cardio::cancellation{};
+  {
+    auto guard = std::scoped_lock(runtime.rateRequestMutex);
+    if (runtime.rateRequestPending) cancellation = runtime.rateRequestCancellation;
+  }
+  pipelineLock.unlock();
+  auto loaded = PipelineLoadResult{};
+  try {
+    loaded = runPreparation<PipelineLoadResult>([&] {
+      return prepareMainLoopReplacementAsync(runtime, options, ticket, cancellation);
+    });
+  } catch (const std::exception &error) { loaded.error = error.what(); }
+  pipelineLock.lock();
+  runtime.preparationGeneration.finish(ticket);
+  if (!runtime.preparationGeneration.current(ticket)) {
+    loaded.pipeline.reset();
+    loaded.error = "pipeline preparation was superseded or canceled";
+  }
+  return loaded;
+}
+
 static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
                                       std::uint32_t negotiatedRate) {
   if (negotiatedRate < kMinimumGraphSampleRate ||
@@ -816,11 +873,13 @@ static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
     return false;
   }
   auto policy = SampleRatePolicy{};
+  auto retainInputRate = false;
   {
     auto lock = std::scoped_lock(runtime.rateStateMutex);
     policy = runtime.configuredRatePolicy;
+    retainInputRate = !input && !runtime.rateError.empty();
   }
-  const auto bridgeRates =
+  auto bridgeRates =
       resolveSampleRateBridgeRates(policy, negotiatedRate);
   if (bridgeRates.streamSampleRate == 0 || bridgeRates.dspSampleRate == 0) {
     failRuntime(runtime, "cannot resolve PipeWire and DSP sample rates");
@@ -836,33 +895,42 @@ static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
   }
   const auto currentRate =
       runtime.dspSampleRate.load(std::memory_order_acquire);
+  if (retainInputRate && runtime.rateBridgeDspRate == currentRate &&
+      runtime.rateBridgeStreamRate == bridgeRates.streamSampleRate)
+    bridgeRates.dspSampleRate = currentRate;
   if (currentRate != bridgeRates.dspSampleRate) {
     auto pipelineLock =
         std::unique_lock<std::mutex>(runtime.pipelineMutationMutex);
-    auto rebuilt = runtime.pipeline.rebuildActive(
+    {
+      auto lock = std::scoped_lock(runtime.rateStateMutex);
+      runtime.rateTransitioning = true;
+    }
+    auto rebuilt = prepareMainLoopReplacement(runtime,
         {.sampleRate = static_cast<float>(bridgeRates.dspSampleRate),
          .maxChannels = runtime.options.channelCount,
-         .maxFrames = runtime.options.maxFrames});
+         .maxFrames = runtime.options.maxFrames}, pipelineLock);
     if (rebuilt.pipeline == nullptr) {
+      if (runtime.completed) return false;
       {
         auto lock = std::scoped_lock(runtime.rateStateMutex);
-        runtime.rateTransitioning = false;
         runtime.rateError = rebuilt.error;
       }
       completePendingRateRequest(runtime, rebuilt.error);
-      failRuntime(runtime, rebuilt.error);
-      return false;
+      // A negotiated graph rate can still be bridged to the retained DSP rate.
+      // An unavailable source must not destroy the working pipeline.
+      bridgeRates.dspSampleRate = currentRate;
+    } else {
+      runtime.pipeline.replace(std::move(rebuilt.pipeline));
+      runtime.pipeWireDspLatencyFrames.store(
+          runtime.pipeline.activeLatencyFrames(), std::memory_order_release);
+      runtime.dspIdleState.replaceActivity(
+          runtime.processingMode == ProcessingMode::preset
+              ? DspActivity::active
+              : DspActivity::bypassed);
+      runtime.dspSampleRate.store(bridgeRates.dspSampleRate,
+                                  std::memory_order_release);
+      runtime.processedInputFrames = 0;
     }
-    runtime.pipeline.replace(std::move(rebuilt.pipeline));
-    runtime.pipeWireDspLatencyFrames.store(
-        runtime.pipeline.activeLatencyFrames(), std::memory_order_release);
-    runtime.dspIdleState.replaceActivity(
-        runtime.processingMode == ProcessingMode::preset
-            ? DspActivity::active
-            : DspActivity::bypassed);
-    runtime.dspSampleRate.store(bridgeRates.dspSampleRate,
-                                std::memory_order_release);
-    runtime.processedInputFrames = 0;
   }
   if (input) {
     runtime.inputStreamSampleRate.store(negotiatedRate,
@@ -1559,8 +1627,8 @@ static void completeOutputRequest(PipeWireRuntime &runtime, std::string error) {
     auto lock = std::scoped_lock(runtime.outputRequestMutex);
     runtime.outputRequestError = std::move(error);
     runtime.outputRequestCompleted = true;
+    if (runtime.outputRequestCompletion) runtime.outputRequestCompletion->try_resolve();
   }
-  runtime.outputRequestCondition.notify_all();
 }
 
 static void finishOutputChange(PipeWireRuntime &runtime) {
@@ -1657,15 +1725,9 @@ static void outputChangeRequested(void *data, std::uint64_t) {
       }
     }
     const auto sampleRate = runtime.dspSampleRate.load(std::memory_order_acquire);
-    if (prepared != nullptr) {
-      if (prepared->sampleRate() != static_cast<float>(sampleRate))
-        return completeOutputRequest(runtime, "sample rate changed while preparing outputs; retry the change");
-    } else {
-      auto rebuilt = runtime.pipeline.rebuildActive({.sampleRate = static_cast<float>(sampleRate),
-          .maxChannels = width, .maxFrames = runtime.options.maxFrames});
-      if (rebuilt.pipeline == nullptr) return completeOutputRequest(runtime, rebuilt.error);
-      prepared = std::move(rebuilt.pipeline);
-    }
+    if (!prepared) return completeOutputRequest(runtime, "output replacement was not prepared");
+    if (prepared->sampleRate() != static_cast<float>(sampleRate))
+      return completeOutputRequest(runtime, "sample rate changed while preparing outputs; retry the change");
     auto buffers = std::unique_ptr<PipeWireAudioBuffers>{};
     try {
       buffers = std::make_unique<PipeWireAudioBuffers>(width, runtime.options.ringCapacityFrames, runtime.options.maxFrames);
@@ -1942,15 +2004,15 @@ static std::shared_ptr<const DspBackend> activeDspBackend(PipeWireRuntime &runti
   return {};
 }
 
-static PresetActivationResult activatePreset(
-    PipeWireRuntime &runtime, const std::filesystem::path &presetPath,
-    bool automaticReload) {
+static cardio::promise<PresetActivationResult> activatePreset(
+    PipeWireRuntime &runtime, std::filesystem::path presetPath,
+    bool automaticReload, cardio::cancellation cancellation) {
   auto pipelineLock =
       std::unique_lock<std::mutex>(runtime.pipelineMutationMutex);
   {
     auto rateLock = std::scoped_lock(runtime.rateStateMutex);
     if (runtime.rateTransitioning) {
-      return {
+      co_return PresetActivationResult{
           .warnings = {},
           .error = automaticReload
                        ? std::string{}
@@ -1960,6 +2022,10 @@ static PresetActivationResult activatePreset(
     }
   }
 
+  if (runtime.outputTransitionActive.load(std::memory_order_acquire))
+    co_return PresetActivationResult{{}, automaticReload ? "" : "output transition is pending", automaticReload};
+  if (automaticReload && runtime.preparationGeneration.pending())
+    co_return PresetActivationResult{{}, {}, true};
   auto backend = activeDspBackend(runtime);
   if (backend == nullptr) {
     const auto error =
@@ -1968,22 +2034,33 @@ static PresetActivationResult activatePreset(
       runtime.configurationError =
           "Automatic preset reload failed: " + std::string(error);
     }
-    return {.warnings = {}, .error = error, .deferred = false};
+    co_return PresetActivationResult{.warnings = {}, .error = error, .deferred = false};
   }
 
-  auto loaded = loadDspPipeline(
-      presetPath,
-      {.sampleRate = static_cast<float>(
+  const auto preparation = PreparationScope(runtime.preparationGeneration, cancellation);
+  const auto build = PipelineBuildOptions{.sampleRate = static_cast<float>(
            runtime.dspSampleRate.load(std::memory_order_acquire)),
        .maxChannels = runtime.options.channelCount,
-       .maxFrames = runtime.options.maxFrames},
-      std::move(backend));
+       .maxFrames = runtime.options.maxFrames};
+  pipelineLock.unlock();
+  auto loaded = std::move(co_await loadDspPipelineAsync(presetPath, build, std::move(backend),
+      defaultPipelineLoadContext(), preparation.ticket.source.get_cancellation()));
+  pipelineLock.lock();
+  if (!runtime.preparationGeneration.current(preparation.ticket)) throw cardio::canceled_exception();
   if (loaded.pipeline == nullptr) {
     if (automaticReload) {
       runtime.configurationError =
           "Automatic preset reload failed: " + loaded.error;
     }
-    return {.warnings = {},
+    if (runtime.presetFileMonitor != nullptr && runtime.activePreset == presetPath.string()) {
+      auto files = std::vector<std::filesystem::path>(runtime.pipeline.dependencyFiles().begin(),
+                                                     runtime.pipeline.dependencyFiles().end());
+      for (const auto &file : loaded.dependencyFiles)
+        if (std::ranges::find(files, file) == files.end()) files.push_back(file);
+      const auto monitorError = runtime.presetFileMonitor->setPaths(presetPath, files);
+      if (!monitorError.empty()) runtime.configurationError += "\n" + monitorError;
+    }
+    co_return PresetActivationResult{.warnings = {},
             .error = std::move(loaded.error),
             .deferred = false};
   }
@@ -1993,7 +2070,7 @@ static PresetActivationResult activatePreset(
   for (auto &warning : loaded.warnings) {
     warnings.push_back({.nodeIndex = warning.nodeIndex,
                         .pluginName = std::move(warning.pluginName),
-                        .reason = std::move(warning.reason)});
+                        .reason = std::move(warning.reason), .state = warning.state});
   }
   runtime.pipeline.replace(std::move(loaded.pipeline));
   refreshPipeWireDspLatency(runtime);
@@ -2005,214 +2082,257 @@ static PresetActivationResult activatePreset(
   runtime.presetReloadPending = false;
   if (automaticReload) {
     for (const auto &warning : warnings) {
+      if (warning.state != PresetEntryState::ignored) continue;
       if (!runtime.configurationError.empty()) runtime.configurationError += "\n";
       runtime.configurationError += "Skipped " + warning.pluginName + ": " + warning.reason;
     }
   }
   if (runtime.presetFileMonitor != nullptr) {
-    const auto monitorError = runtime.presetFileMonitor->setPaths(presetPath, runtime.pipeline.measurementFiles());
+    const auto monitorError = runtime.presetFileMonitor->setPaths(presetPath, runtime.pipeline.dependencyFiles());
     if (!monitorError.empty()) {
       runtime.configurationError = monitorError;
     }
   }
-  return {.warnings = std::move(warnings), .error = {}, .deferred = false};
+  co_return PresetActivationResult{.warnings = std::move(warnings), .error = {}, .deferred = false};
 }
 
-static bool retryPendingPresetReload(PipeWireRuntime &runtime) {
+static cardio::promise<bool> retryPendingPresetReload(PipeWireRuntime &runtime, cardio::cancellation cancellation) {
   if (!runtime.presetReloadPending) {
-    return false;
+    co_return false;
   }
   if (runtime.processingMode != ProcessingMode::preset ||
       runtime.activePreset.empty()) {
     runtime.presetReloadPending = false;
-    return false;
+    co_return false;
   }
-  const auto activated = activatePreset(
-      runtime, std::filesystem::path(runtime.activePreset), true);
+  const auto activated = std::move(co_await activatePreset(
+      runtime, std::filesystem::path(runtime.activePreset), true, cancellation));
   if (activated.deferred) {
-    return false;
+    co_return false;
   }
   runtime.presetReloadPending = false;
-  return true;
+  co_return true;
 }
 
-static bool handlePresetFileMonitorEvent(void *userData) {
+static cardio::promise<bool> handlePresetFileMonitorEvent(void *userData, cardio::cancellation cancellation) {
   auto &runtime = *static_cast<PipeWireRuntime *>(userData);
   if (runtime.presetFileMonitor == nullptr) {
-    return false;
+    co_return false;
   }
   const auto event = runtime.presetFileMonitor->consume();
   if (!event.error.empty()) {
     runtime.configurationError = event.error;
-    return true;
+    co_return true;
   }
   if (!event.changed || runtime.processingMode != ProcessingMode::preset ||
       runtime.activePreset.empty()) {
-    return false;
+    co_return false;
   }
-  const auto activated = activatePreset(
-      runtime, std::filesystem::path(runtime.activePreset), true);
+  const auto activated = std::move(co_await activatePreset(
+      runtime, std::filesystem::path(runtime.activePreset), true, cancellation));
   runtime.presetReloadPending = activated.deferred;
-  return !activated.deferred;
+  co_return !activated.deferred;
 }
 
 static std::string provideControlStatus(void *userData) {
   auto &runtime = *static_cast<PipeWireRuntime *>(userData);
-  static_cast<void>(retryPendingPresetReload(runtime));
   return makeControlStatusEvent(controlStatus(runtime));
 }
 
-static PresetActivationResult requestLiveOutputChange(PipeWireRuntime &runtime, const OutputConfiguration &configuration,
-    std::optional<std::uint64_t> expectedRevision, const std::optional<std::filesystem::path> &preset) {
+static cardio::promise<std::string> maintainControlStatus(void *userData, cardio::cancellation cancellation) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(userData);
+  try { static_cast<void>(co_await retryPendingPresetReload(runtime, cancellation)); }
+  catch (const cardio::canceled_exception &) { cancellation.throw_if_cancellation_requested(); }
+  co_return provideControlStatus(userData);
+}
+
+static cardio::promise<PresetActivationResult> requestLiveOutputChange(PipeWireRuntime &runtime,
+    OutputConfiguration configuration, std::optional<std::uint64_t> expectedRevision,
+    std::optional<std::filesystem::path> preset, cardio::cancellation cancellation) {
+  const auto validation = validateOutputConfiguration(configuration);
+  if (!validation.empty()) co_return PresetActivationResult{{}, validation, false};
+  auto pipelineLock = std::unique_lock(runtime.pipelineMutationMutex);
+  if (runtime.outputTransitionActive.load(std::memory_order_acquire))
+    co_return PresetActivationResult{{}, "another output change is already pending", false};
+  const auto revision = runtime.configurationRevision.load(std::memory_order_acquire);
+  if (expectedRevision && *expectedRevision != revision)
+    co_return PresetActivationResult{{}, "configuration changed; refresh output settings before applying them", false};
+  expectedRevision = revision;
+  {
+    auto rateLock = std::scoped_lock(runtime.rateStateMutex);
+    if (runtime.rateTransitioning)
+      co_return PresetActivationResult{{}, "cannot change output processing during sample-rate transition", false};
+  }
+  const auto preparation = PreparationScope(runtime.preparationGeneration, cancellation);
+  const auto build = PipelineBuildOptions{
+      static_cast<float>(runtime.dspSampleRate.load(std::memory_order_acquire)),
+      outputDspChannelCount(configuration), runtime.options.maxFrames};
   auto prepared = std::unique_ptr<DspPipeline>{};
   auto warnings = std::vector<ControlWarning>{};
-  const auto validation = validateOutputConfiguration(configuration);
-  if (!validation.empty()) return {{}, validation, false};
-  if (preset.has_value()) {
-    // Preset and measurement-file I/O stays on the existing control thread.
-    // The main loop receives an already prepared pipeline and checks that its
-    // revision and sample rate still describe the current runtime.
-    auto pipelineLock = std::scoped_lock(runtime.pipelineMutationMutex);
-    const auto revision = runtime.configurationRevision.load(std::memory_order_acquire);
-    if (expectedRevision.has_value() && *expectedRevision != revision)
-      return {{}, "configuration changed; refresh output settings before applying them", false};
-    expectedRevision = revision;
-    {
-      auto rateLock = std::scoped_lock(runtime.rateStateMutex);
-      if (runtime.rateTransitioning) return {{}, "cannot change output processing during sample-rate transition", false};
-    }
-    const auto build = PipelineBuildOptions{
-        .sampleRate = static_cast<float>(runtime.dspSampleRate.load(std::memory_order_acquire)),
-        .maxChannels = outputDspChannelCount(configuration), .maxFrames = runtime.options.maxFrames};
-    if (preset->empty()) {
-      auto created = createBypassDspPipeline(build);
-      if (created.pipeline == nullptr) return {{}, std::move(created.error), false};
-      prepared = std::move(created.pipeline);
-    } else {
-      auto backend = activeDspBackend(runtime);
-      if (backend == nullptr) return {{}, "cannot load a preset without a usable scalar DSP backend", false};
-      auto loaded = loadDspPipeline(*preset, build, std::move(backend));
-      if (loaded.pipeline == nullptr) return {{}, std::move(loaded.error), false};
-      prepared = std::move(loaded.pipeline);
-      for (auto &warning : loaded.warnings)
-        warnings.push_back({warning.nodeIndex, std::move(warning.pluginName), std::move(warning.reason)});
-    }
+  if (preset && preset->empty()) {
+    auto created = createBypassDspPipeline(build);
+    if (!created.pipeline) co_return PresetActivationResult{{}, std::move(created.error), false};
+    prepared = std::move(created.pipeline);
+  } else {
+    auto backend = activeDspBackend(runtime);
+    if (preset && !backend)
+      co_return PresetActivationResult{{}, "cannot load a preset without a usable scalar DSP backend", false};
+    auto operation = preset ?
+        loadDspPipelineAsync(*preset, build, std::move(backend), defaultPipelineLoadContext(),
+                             preparation.ticket.source.get_cancellation()) :
+        runtime.pipeline.rebuildActiveAsync(build, {}, preparation.ticket.source.get_cancellation());
+    pipelineLock.unlock();
+    auto loaded = std::move(co_await operation);
+    pipelineLock.lock();
+    if (!runtime.preparationGeneration.current(preparation.ticket)) throw cardio::canceled_exception();
+    if (!loaded.pipeline) co_return PresetActivationResult{{}, std::move(loaded.error), false};
+    prepared = std::move(loaded.pipeline);
+    for (auto &warning : loaded.warnings)
+      warnings.push_back({warning.nodeIndex, std::move(warning.pluginName), std::move(warning.reason), warning.state});
   }
+  if (*expectedRevision != runtime.configurationRevision.load(std::memory_order_acquire))
+    co_return PresetActivationResult{{}, "configuration changed while preparing outputs; retry the change", false};
+  runtime.outputTransitionActive.store(true, std::memory_order_release);
+  pipelineLock.unlock();
   auto lock = std::unique_lock(runtime.outputRequestMutex);
-  if (runtime.outputRequestsStopped) return {{}, "PipeTune daemon stopped", false};
-  if (runtime.requestedOutput.has_value()) return {{}, "another output change is already pending", false};
-  runtime.requestedOutput = configuration;
+  if (runtime.outputRequestsStopped) {
+    runtime.outputTransitionActive.store(false, std::memory_order_release);
+    co_return PresetActivationResult{{}, "PipeTune daemon stopped", false};
+  }
+  runtime.requestedOutput = std::move(configuration);
   runtime.requestedOutputRevision = expectedRevision;
   runtime.requestedOutputPreset = preset;
   runtime.requestedOutputPipeline = std::move(prepared);
   runtime.outputRequestCompleted = false;
   runtime.outputRequestError.clear();
-  const auto result = pw_loop_signal_event(pw_main_loop_get_loop(runtime.mainLoop), runtime.outputChangeSource);
-  if (result < 0) {
-    runtime.requestedOutput.reset();
-    runtime.requestedOutputPipeline.reset();
-    runtime.requestedOutputPreset.reset();
-    return {{}, systemError("cannot schedule output change", result), false};
+  runtime.outputRequestCompletion.emplace();
+  auto completion = runtime.outputRequestCompletion->get_promise();
+  const auto scheduled = pw_loop_signal_event(pw_main_loop_get_loop(runtime.mainLoop), runtime.outputChangeSource);
+  if (scheduled < 0) {
+    runtime.outputRequestError = systemError("cannot schedule output change", scheduled);
+    runtime.outputRequestCompletion->try_resolve();
   }
-  runtime.outputRequestCondition.wait(lock, [&runtime] { return runtime.outputRequestCompleted; });
+  lock.unlock();
+  // Once submitted, drain the graph transaction, including rollback, even if
+  // this client disconnects. A partially applied graph cannot be abandoned.
+  co_await completion;
+  lock.lock();
   runtime.requestedOutput.reset();
   runtime.requestedOutputPipeline.reset();
   runtime.requestedOutputPreset.reset();
+  runtime.outputRequestCompletion.reset();
   runtime.outputRequestCompleted = false;
   auto error = std::exchange(runtime.outputRequestError, {});
   lock.unlock();
-  if (error.empty() && preset.has_value() && runtime.presetFileMonitor != nullptr) {
-    auto pipelineLock = std::scoped_lock(runtime.pipelineMutationMutex);
+  runtime.outputTransitionActive.store(false, std::memory_order_release);
+  if (error.empty() && preset && runtime.presetFileMonitor) {
+    auto guard = std::scoped_lock(runtime.pipelineMutationMutex);
     if (preset->empty()) runtime.presetFileMonitor->clear();
     else {
-      const auto monitorError = runtime.presetFileMonitor->setPaths(*preset, runtime.pipeline.measurementFiles());
+      const auto monitorError = runtime.presetFileMonitor->setPaths(*preset, runtime.pipeline.dependencyFiles());
       if (!monitorError.empty()) runtime.configurationError = monitorError;
     }
   }
-  return {std::move(warnings), std::move(error), false};
+  co_return PresetActivationResult{std::move(warnings), std::move(error), false};
 }
 
-static std::string requestLiveRateChange(
-    PipeWireRuntime &runtime, const SampleRatePolicy &policy) {
-  auto lock = std::unique_lock<std::mutex>(runtime.rateRequestMutex);
-  if (runtime.rateRequestPending) {
-    return "another sample-rate request is already pending";
-  }
+static cardio::promise<std::string> requestLiveRateChange(
+    PipeWireRuntime &runtime, SampleRatePolicy policy, cardio::cancellation cancellation) {
+  auto lock = std::unique_lock(runtime.rateRequestMutex);
+  if (runtime.rateRequestPending) co_return "another sample-rate request is already pending";
   runtime.rateRequestPending = true;
   runtime.rateRequestCompleted = false;
   runtime.pendingRatePolicy = policy;
+  runtime.rateRequestCancellation = cancellation;
   runtime.rateRequestError.clear();
-  const auto result = pw_loop_signal_event(
-      pw_main_loop_get_loop(runtime.mainLoop), runtime.rateChangeSource);
-  if (result < 0) {
-    runtime.rateRequestPending = false;
-    return systemError("cannot schedule PipeWire rate change", result);
+  runtime.rateRequestCompletion.emplace();
+  auto completion = runtime.rateRequestCompletion->get_promise();
+  const auto scheduled = pw_loop_signal_event(pw_main_loop_get_loop(runtime.mainLoop), runtime.rateChangeSource);
+  if (scheduled < 0) {
+    runtime.rateRequestError = systemError("cannot schedule PipeWire rate change", scheduled);
+    runtime.rateRequestCompletion->try_resolve();
   }
-  runtime.rateRequestCondition.wait(
-      lock, [&runtime] { return runtime.rateRequestCompleted; });
+  lock.unlock();
+  co_await completion;
+  lock.lock();
   auto error = std::move(runtime.rateRequestError);
   runtime.rateRequestPending = false;
   runtime.rateRequestCompleted = false;
-  return error;
+  runtime.rateRequestCompletion.reset();
+  co_return error;
 }
 
-static ControlMessageResult handleControlRequest(std::string_view message,
-                                                 void *userData) {
+static cardio::promise<ControlMessageResult> handleControlRequest(std::string_view message,
+                                                 void *userData, cardio::cancellation cancellation) {
+  try {
   auto &runtime = *static_cast<PipeWireRuntime *>(userData);
   const auto request = parseControlRequest(message);
   if (!request.error.empty()) {
-    return closeControlResponse(makeControlErrorResponse(request.error), false);
+    co_return closeControlResponse(makeControlErrorResponse(request.error), false);
   }
   if (request.request.command == ControlCommand::subscribe) {
-    return {.response = provideControlStatus(&runtime),
+    co_return ControlMessageResult{.response = provideControlStatus(&runtime),
             .connectionMode = ControlConnectionMode::subscribe,
             .publishStatus = false};
   }
   if (request.request.command == ControlCommand::status) {
-    const auto reloaded = retryPendingPresetReload(runtime);
-    return closeControlResponse(
-        makeControlSuccessResponse(controlStatus(runtime), {}), reloaded);
+    co_return closeControlResponse(
+        makeControlSuccessResponse(controlStatus(runtime), {}), false);
   }
+  if (runtime.outputTransitionActive.load(std::memory_order_acquire))
+    co_return closeControlResponse(makeControlErrorResponse("cannot change DSP configuration during output transition"), false);
   auto warnings = std::vector<ControlWarning>{};
   if (request.request.command == ControlCommand::setOutput) {
-    const auto changed = requestLiveOutputChange(runtime, request.request.outputConfiguration,
-        request.request.expectedRevision, request.request.outputPreset);
-    if (!changed.error.empty()) return closeControlResponse(makeControlErrorResponse(changed.error), true);
-    return closeControlResponse(makeControlSuccessResponse(controlStatus(runtime), changed.warnings), true);
+    const auto changed = std::move(co_await requestLiveOutputChange(runtime, request.request.outputConfiguration,
+        request.request.expectedRevision, request.request.outputPreset, cancellation));
+    if (!changed.error.empty()) co_return closeControlResponse(makeControlErrorResponse(changed.error), true);
+    co_return closeControlResponse(makeControlSuccessResponse(controlStatus(runtime), changed.warnings), true);
   }
   if (request.request.command == ControlCommand::setRate) {
     const auto error =
-        requestLiveRateChange(runtime, request.request.ratePolicy);
+        std::move(co_await requestLiveRateChange(runtime, request.request.ratePolicy, cancellation));
     if (!error.empty()) {
-      return closeControlResponse(makeControlErrorResponse(error), false);
+      co_return closeControlResponse(makeControlErrorResponse(error), false);
     }
-    static_cast<void>(retryPendingPresetReload(runtime));
-    return closeControlResponse(
+    static_cast<void>(co_await retryPendingPresetReload(runtime, cancellation));
+    co_return closeControlResponse(
         makeControlSuccessResponse(controlStatus(runtime), warnings), true);
   }
   if (request.request.command == ControlCommand::setDspBackend) {
     auto switched = DspBackendSwitchResult{};
     {
-      auto pipelineLock =
-          std::unique_lock<std::mutex>(runtime.pipelineMutationMutex);
+      auto pipelineLock = std::unique_lock(runtime.pipelineMutationMutex);
       auto rateTransitioning = false;
       {
         auto rateLock = std::scoped_lock(runtime.rateStateMutex);
         rateTransitioning = runtime.rateTransitioning;
       }
-      auto backendLock =
-          std::scoped_lock(runtime.dspBackendStateMutex);
-      switched = switchDspBackend(
-          runtime.pipeline, runtime.dspBackendState,
-          request.request.dspBackend, request.request.dspSimdVariant,
-          {.sampleRate = static_cast<float>(
-               runtime.dspSampleRate.load(std::memory_order_acquire)),
-           .maxChannels = runtime.options.channelCount,
-           .maxFrames = runtime.options.maxFrames},
-          rateTransitioning);
+      auto backendLock = std::unique_lock(runtime.dspBackendStateMutex);
+      auto plan = planDspBackendSwitch(runtime.dspBackendState, request.request.dspBackend,
+                                       request.request.dspSimdVariant, rateTransitioning);
+      if (!plan.error.empty()) co_return closeControlResponse(makeControlErrorResponse(plan.error), false);
+      const auto preparation = PreparationScope(runtime.preparationGeneration, cancellation);
+      auto warnings = std::vector<PipelineWarning>{};
+      if (plan.rebuild && runtime.pipeline.backendKind().has_value()) {
+        auto operation = runtime.pipeline.rebuildActiveAsync(
+            {static_cast<float>(runtime.dspSampleRate.load(std::memory_order_acquire)),
+             runtime.options.channelCount, runtime.options.maxFrames},
+            plan.backend, preparation.ticket.source.get_cancellation());
+        backendLock.unlock();
+        pipelineLock.unlock();
+        auto rebuilt = std::move(co_await operation);
+        pipelineLock.lock();
+        backendLock.lock();
+        if (!runtime.preparationGeneration.current(preparation.ticket)) throw cardio::canceled_exception();
+        if (!rebuilt.pipeline) co_return closeControlResponse(makeControlErrorResponse(rebuilt.error), false);
+        warnings = std::move(rebuilt.warnings);
+        runtime.pipeline.replace(std::move(rebuilt.pipeline));
+      }
+      runtime.dspBackendState = std::move(plan.state);
+      switched = {plan.changed, std::move(warnings), {}};
     }
     if (!switched.error.empty()) {
-      return closeControlResponse(makeControlErrorResponse(switched.error),
+      co_return closeControlResponse(makeControlErrorResponse(switched.error),
                                   false);
     }
     if (switched.changed) {
@@ -2227,9 +2347,9 @@ static ControlMessageResult handleControlRequest(std::string_view message,
     for (auto &warning : switched.warnings) {
       warnings.push_back({.nodeIndex = warning.nodeIndex,
                           .pluginName = std::move(warning.pluginName),
-                          .reason = std::move(warning.reason)});
+                          .reason = std::move(warning.reason), .state = warning.state});
     }
-    return closeControlResponse(
+    co_return closeControlResponse(
         makeControlSuccessResponse(controlStatus(runtime), warnings),
         switched.changed);
   }
@@ -2243,7 +2363,7 @@ static ControlMessageResult handleControlRequest(std::string_view message,
       runtime.configurationRevision.fetch_add(1,
                                               std::memory_order_release);
     }
-    return closeControlResponse(
+    co_return closeControlResponse(
         makeControlSuccessResponse(controlStatus(runtime), warnings),
         changed);
   }
@@ -2253,19 +2373,20 @@ static ControlMessageResult handleControlRequest(std::string_view message,
     {
       auto rateLock = std::scoped_lock(runtime.rateStateMutex);
       if (runtime.rateTransitioning) {
-        return closeControlResponse(
+        co_return closeControlResponse(
             makeControlErrorResponse(
                 "cannot change DSP mode during sample-rate transition"),
             false);
       }
     }
+    runtime.preparationGeneration.invalidate();
     auto created = createBypassDspPipeline(
         {.sampleRate = static_cast<float>(
              runtime.dspSampleRate.load(std::memory_order_acquire)),
          .maxChannels = runtime.options.channelCount,
          .maxFrames = runtime.options.maxFrames});
     if (created.pipeline == nullptr) {
-      return closeControlResponse(makeControlErrorResponse(created.error),
+      co_return closeControlResponse(makeControlErrorResponse(created.error),
                                   false);
     }
     runtime.pipeline.replace(std::move(created.pipeline));
@@ -2281,22 +2402,25 @@ static ControlMessageResult handleControlRequest(std::string_view message,
     runtime.configurationRevision.fetch_add(1,
                                             std::memory_order_release);
     pipelineLock.unlock();
-    return closeControlResponse(
+    co_return closeControlResponse(
         makeControlSuccessResponse(controlStatus(runtime), warnings), true);
   }
   if (request.request.command == ControlCommand::loadPreset) {
     auto activated =
-        activatePreset(runtime, request.request.presetPath, false);
+        std::move(co_await activatePreset(runtime, request.request.presetPath, false, cancellation));
     if (!activated.error.empty()) {
-      return closeControlResponse(
+      co_return closeControlResponse(
           makeControlErrorResponse(activated.error), false);
     }
     warnings = std::move(activated.warnings);
-    return closeControlResponse(
+    co_return closeControlResponse(
         makeControlSuccessResponse(controlStatus(runtime), warnings), true);
   }
-  return closeControlResponse(
+  co_return closeControlResponse(
       makeControlSuccessResponse(controlStatus(runtime), warnings), false);
+  } catch (const cardio::canceled_exception &) {
+    co_return closeControlResponse(makeControlErrorResponse("pipeline preparation was superseded or canceled"), false);
+  }
 }
 
 static void rateChangeRequested(void *data, std::uint64_t) {
@@ -2321,7 +2445,10 @@ static void rateChangeRequested(void *data, std::uint64_t) {
   {
     auto lock = std::scoped_lock(runtime.rateStateMutex);
     previous = runtime.configuredRatePolicy;
-    if (requested == previous) {
+    if (requested == previous &&
+        (requested.mode != SampleRateMode::automatic ||
+         runtime.inputStreamSampleRate.load(std::memory_order_acquire) == 0 ||
+         runtime.inputStreamSampleRate.load(std::memory_order_acquire) == currentRate)) {
       runtime.rateError.clear();
       unchanged = true;
     } else {
@@ -2345,10 +2472,10 @@ static void rateChangeRequested(void *data, std::uint64_t) {
       std::unique_lock<std::mutex>(runtime.pipelineMutationMutex);
   if (requested.mode == SampleRateMode::fixed &&
       requested.fixedRate != currentRate) {
-    auto rebuilt = runtime.pipeline.rebuildActive(
+    auto rebuilt = prepareMainLoopReplacement(runtime,
         {.sampleRate = static_cast<float>(requested.fixedRate),
          .maxChannels = runtime.options.channelCount,
-         .maxFrames = runtime.options.maxFrames});
+         .maxFrames = runtime.options.maxFrames}, pipelineLock);
     if (rebuilt.pipeline == nullptr) {
       {
         auto lock = std::scoped_lock(runtime.rateStateMutex);
@@ -2401,16 +2528,19 @@ static bool createControlServer(PipeWireRuntime &runtime) {
   }
   runtime.presetFileMonitor = std::move(monitored.monitor);
   if (!runtime.activePreset.empty()) {
-    const auto error = runtime.presetFileMonitor->setPaths(runtime.activePreset, runtime.pipeline.measurementFiles());
+    const auto error = runtime.presetFileMonitor->setPaths(runtime.activePreset, runtime.pipeline.dependencyFiles());
     if (!error.empty()) { failRuntime(runtime, error); return false; }
   }
   auto started = startControlServer(
       runtime.options.controlSocketPath,
-      {.handler = handleControlRequest,
-       .statusProvider = provideControlStatus,
+      {.handler = nullptr,
+       .statusProvider = nullptr,
        .userData = &runtime,
        .eventDescriptor = runtime.presetFileMonitor->descriptor(),
-       .eventHandler = handlePresetFileMonitorEvent});
+       .eventHandler = nullptr,
+       .asyncHandler = handleControlRequest,
+       .asyncEventHandler = handlePresetFileMonitorEvent,
+       .asyncStatusProvider = maintainControlStatus});
   if (started.server == nullptr) {
     runtime.presetFileMonitor.reset();
     failRuntime(runtime,
@@ -2499,6 +2629,15 @@ static void readinessTimedOut(void *data, std::uint64_t) {
 
 static void interrupted(void *data, int) {
   completeRuntime(*static_cast<PipeWireRuntime *>(data));
+}
+
+std::string blockPipeWireTerminationSignals() {
+  auto signals = sigset_t{};
+  sigemptyset(&signals);
+  sigaddset(&signals, SIGINT);
+  sigaddset(&signals, SIGTERM);
+  const auto status = pthread_sigmask(SIG_BLOCK, &signals, nullptr);
+  return status == 0 ? std::string{} : systemError("cannot reserve PipeWire termination signals", -status);
 }
 
 static bool configureCompletionSources(PipeWireRuntime &runtime) {

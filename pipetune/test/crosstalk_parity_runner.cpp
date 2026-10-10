@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
     auto rebuilt = pipetune::rebuildDspPipeline(*loaded.pipeline, options);
     if (!rebuilt.pipeline || rebuilt.pipeline->activePluginCount() != 1u || !rebuilt.warnings.empty()) return 1;
     loaded = std::move(rebuilt);
-    if (loaded.pipeline->latencyFrames() != head + taps / 2u || loaded.measurementFiles.size() != 2u) {
+    if (loaded.pipeline->latencyFrames() != head + taps / 2u || loaded.dependencyFiles.size() != 2u) {
       std::cerr << "Crosstalk latency/dependencies differ\n"; return 1;
     }
     // Warm the upstream incremental convolver before injecting the test signal.

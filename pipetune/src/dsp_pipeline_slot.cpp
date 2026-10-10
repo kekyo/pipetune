@@ -319,6 +319,12 @@ PipelineLoadResult DspPipelineSlot::rebuildActive(
   return rebuildDspPipeline(*current_, options, std::move(backend));
 }
 
+cardio::promise<PipelineLoadResult> DspPipelineSlot::rebuildActiveAsync(
+    PipelineBuildOptions options, std::shared_ptr<const DspBackend> backend,
+    cardio::cancellation cancellation) const {
+  return rebuildDspPipelineAsync(*current_, options, std::move(backend), cancellation);
+}
+
 void DspPipelineSlot::stageReplacement(
     std::unique_ptr<DspPipeline> replacement) {
   if (replacement == nullptr) {
@@ -356,8 +362,8 @@ bool DspPipelineSlot::hasStagedReplacement() const noexcept {
   return stagedPrevious_ != nullptr;
 }
 
-std::span<const std::filesystem::path> DspPipelineSlot::measurementFiles() const noexcept {
-  return active_.load(std::memory_order_acquire)->measurementFiles();
+std::span<const std::filesystem::path> DspPipelineSlot::dependencyFiles() const noexcept {
+  return active_.load(std::memory_order_acquire)->dependencyFiles();
 }
 
 std::size_t DspPipelineSlot::activePluginCount() const noexcept {

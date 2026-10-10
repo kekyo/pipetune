@@ -227,15 +227,17 @@ struct ControlRuntimeStatus {
 };
 
 /**
- * Describes one preset node omitted while loading a pipeline.
+ * Describes one preparation warning and the affected node's effective state.
  */
 struct ControlWarning {
   /** Zero-based node index in the preset graph. */
   std::size_t nodeIndex;
   /** Preset plugin name. */
   std::string pluginName;
-  /** Human-readable reason the node was omitted. */
+  /** Human-readable preparation or omission diagnostic. */
   std::string reason;
+  /** Effective node state; enabled warnings leave the DSP running. */
+  PresetEntryState state = PresetEntryState::ignored;
 };
 
 /**

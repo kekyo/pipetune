@@ -176,6 +176,13 @@ void clearControlNotice(ApplicationState &state);
 bool isPresetApplied(const ApplicationState &state);
 
 /**
+ * Counts retained request warnings and current preparation diagnostics without duplication.
+ * @param state Confirmed runtime and most recent request information.
+ * @return Number of warnings to display for the prepared preset.
+ */
+std::size_t presetWarningCount(const ApplicationState &state);
+
+/**
  * Selects the tray icon semantics for the current state.
  *
  * @param state State to inspect.

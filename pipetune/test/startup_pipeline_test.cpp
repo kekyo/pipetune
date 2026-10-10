@@ -4,6 +4,7 @@
  * https://github.com/kekyo/pipetune/
  */
 #include "startup_pipeline.h"
+#include "preparation_dispatcher.h"
 
 #include "pipetune/dsp_backend.h"
 #include "pipetune/startup_config.h"
@@ -281,6 +282,17 @@ static bool testOutputConfiguration(const std::filesystem::path &directory) {
                "single-mode startup must use stereo and retain inactive multiple-mode choices");
 }
 
+static bool testCanceledStartup(const std::filesystem::path &configPath) {
+  auto cancellation = cardio::cancellation_source{};
+  cancellation.cancel();
+  try {
+    static_cast<void>(pipetune::runPreparation<pipetune::StartupPipelineResult>([&] {
+      return pipetune::prepareStartupPipelineAsync(configPath, {48000, 2, 128}, {}, cancellation.get_cancellation());
+    }));
+  } catch (const cardio::canceled_exception &) { return true; }
+  return check(false, "a terminated startup must not enter fail-open bypass or publish a preset");
+}
+
 int main() {
   const auto directory =
       std::filesystem::temp_directory_path() /
@@ -291,6 +303,7 @@ int main() {
   const auto presetPath = directory / "configured.effetune_preset";
   const auto missingPreset = directory / "missing.effetune_preset";
   const auto passed =
+      testCanceledStartup(configPath) &&
       testOutputConfiguration(directory) &&
       testUnsupportedStartupRate(directory, "TV Audio Simulator") &&
       testUnsupportedStartupRate(directory, "Bass Extender") &&

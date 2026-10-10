@@ -314,7 +314,7 @@ static void writeGeneratedFirUint32(std::span<std::uint8_t> bytes,
 }
 
 static bool buildGeneratedFirPayload(
-    GeneratedFirAsset &result,
+    PreparedDspAsset &result,
     std::span<const std::vector<float>> coefficientChannels,
     std::uint32_t sampleRate, std::uint32_t topology,
     std::span<const GeneratedFirPath> paths,
@@ -510,10 +510,10 @@ static bool designGeneratedFirImpulse(
   return true;
 }
 
-static GeneratedFirAsset designFirCrossover(
+static PreparedDspAsset designFirCrossover(
     yyjson_val *parameters, float requestedSampleRate,
     std::uint32_t processingChannels, const DspBackendApi &api) {
-  auto result = GeneratedFirAsset{};
+  auto result = PreparedDspAsset{};
   // EffeTune 2.9 passes stereo through without a convolution asset.
   if (processingChannels == 2u) {
     return result;
@@ -616,10 +616,10 @@ static GeneratedFirAsset designFirCrossover(
   return result;
 }
 
-GeneratedFirAsset designBassManagementAsset(
+PreparedDspAsset designBassManagementAsset(
     const BassManagementConfig &config, float requestedSampleRate,
     std::uint32_t maxFrames, const DspBackendApi &api) {
-  auto result = GeneratedFirAsset{};
+  auto result = PreparedDspAsset{};
   if (!config.error.empty()) {
     result.error = config.error;
     return result;
@@ -799,10 +799,10 @@ static double fiveBandFirMagnitude(const FiveBandFirCoefficients &coefficients,
                   kMinimumMagnitude);
 }
 
-static GeneratedFirAsset designFiveBandFirPeq(
+static PreparedDspAsset designFiveBandFirPeq(
     yyjson_val *parameters, float requestedSampleRate,
     std::uint32_t processingChannels, const DspBackendApi &api) {
-  auto result = GeneratedFirAsset{};
+  auto result = PreparedDspAsset{};
   static constexpr std::array allowedTaps = {
       8192u, 16384u, 32768u, 65536u, 131072u};
   static constexpr std::array allowedTypes = {
@@ -1157,10 +1157,10 @@ static bool designGroupDelayImpulse(const Curve &curve, std::uint32_t taps,
   return true;
 }
 
-static GeneratedFirAsset designGroupDelayEq(
+static PreparedDspAsset designGroupDelayEq(
     yyjson_val *parameters, float requestedSampleRate,
     std::uint32_t processingChannels, const DspBackendApi &api) {
-  auto result = GeneratedFirAsset{};
+  auto result = PreparedDspAsset{};
   static constexpr std::array allowedTaps = {4096u, 8192u, 16384u, 32768u};
   const auto sampleRate = static_cast<std::uint32_t>(std::clamp(
       std::round(static_cast<double>(requestedSampleRate)), 8000.0, 768000.0));
@@ -1192,10 +1192,10 @@ static GeneratedFirAsset designGroupDelayEq(
   return result;
 }
 
-static GeneratedFirAsset designGroupDelayPeq(
+static PreparedDspAsset designGroupDelayPeq(
     yyjson_val *parameters, float requestedSampleRate,
     std::uint32_t processingChannels, const DspBackendApi &api) {
-  auto result = GeneratedFirAsset{};
+  auto result = PreparedDspAsset{};
   static constexpr std::array allowedTaps = {4096u, 8192u, 16384u, 32768u};
   static constexpr std::array allowedTypes = {
       std::string_view{"pk"}, std::string_view{"ls"},
@@ -1281,10 +1281,10 @@ static GeneratedFirAsset designGroupDelayPeq(
   return result;
 }
 
-GeneratedFirAsset designCrosstalkAsset(const CrosstalkMeasurements &measurements,
+PreparedDspAsset designCrosstalkAsset(const CrosstalkMeasurements &measurements,
                                       yyjson_val *parameters, float sampleRate,
                                       std::uint32_t processingChannels) {
-  auto result = GeneratedFirAsset{};
+  auto result = PreparedDspAsset{};
   if (processingChannels != 2u) {
     result.omissionReason = "Crosstalk Cancellation requires a stereo channel selection";
     return result;
@@ -1307,7 +1307,7 @@ bool supportsGeneratedFirAsset(std::string_view displayName) noexcept {
          displayName == "Group Delay PEQ";
 }
 
-GeneratedFirAsset designGeneratedFirAsset(
+PreparedDspAsset designGeneratedFirAsset(
     std::string_view displayName, yyjson_val *parameters, float sampleRate,
     std::uint32_t processingChannels, const DspBackendApi &api) {
   if (displayName == "FIR Crossover") {
@@ -1324,7 +1324,7 @@ GeneratedFirAsset designGeneratedFirAsset(
     return designGroupDelayPeq(parameters, sampleRate, processingChannels,
                                api);
   }
-  auto result = GeneratedFirAsset{};
+  auto result = PreparedDspAsset{};
   result.error = "the DSP does not support generated FIR assets";
   return result;
 }

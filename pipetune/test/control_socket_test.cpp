@@ -6,6 +6,7 @@
 #include "pipetune/control_socket.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdlib>
 #include <filesystem>
@@ -16,6 +17,7 @@
 #include <string>
 #include <string_view>
 #include <sys/socket.h>
+#include <sys/eventfd.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -149,6 +151,61 @@ static bool testSocketPathResolution() {
                "XDG control socket resolution differs");
 }
 
+struct AsyncHandlerState {
+  int entered = eventfd(0, EFD_CLOEXEC);
+  int release = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+  std::atomic<bool> completed{false};
+  std::atomic<bool> canceled{false};
+  ~AsyncHandlerState() { close(entered); close(release); }
+};
+
+static cardio::promise<pipetune::ControlMessageResult> handleAsyncRequest(
+    std::string_view request, void *data, cardio::cancellation cancellation) {
+  auto &state = *static_cast<AsyncHandlerState *>(data);
+  if (request == "hold") {
+    static_cast<void>(eventfd_write(state.entered, 1));
+    try {
+      co_await cardio::from_fd(state.release, cardio::fd_event::read, cancellation);
+      auto value = eventfd_t{0};
+      static_cast<void>(eventfd_read(state.release, &value));
+      state.completed = true;
+    } catch (const cardio::canceled_exception &) {
+      state.canceled = true;
+      throw;
+    }
+  }
+  co_return pipetune::ControlMessageResult{
+      std::string(request), pipetune::ControlConnectionMode::close, false};
+}
+
+static bool testAsyncPreparation(const std::filesystem::path &path) {
+  auto state = AsyncHandlerState{};
+  auto server = pipetune::startControlServer(path,
+      {.handler = nullptr, .statusProvider = nullptr, .userData = &state,
+       .asyncHandler = handleAsyncRequest});
+  if (!check(server.server != nullptr, server.error)) return false;
+  const auto pending = connectToSocket(path);
+  static_cast<void>(writeLine(pending, "hold"));
+  auto value = eventfd_t{0};
+  static_cast<void>(eventfd_read(state.entered, &value));
+  const auto status = pipetune::exchangeControlMessage(path, "status");
+  const auto responsive = check(status.error.empty() && status.response == "status" && !state.completed,
+      "a suspended asynchronous preparation blocked an independent status request");
+  static_cast<void>(eventfd_write(state.release, 1));
+  const auto loaded = readLine(pending);
+  close(pending);
+  if (!responsive || !check(loaded == "hold" && state.completed, "suspended preparation did not resume"))
+    return false;
+
+  const auto canceled = connectToSocket(path);
+  static_cast<void>(writeLine(canceled, "hold"));
+  static_cast<void>(eventfd_read(state.entered, &value));
+  server.server.reset();
+  const auto closed = !readLine(canceled).has_value();
+  close(canceled);
+  return check(state.canceled && closed, "shutdown did not cancel and drain an in-flight handler");
+}
+
 int main() {
   if (!testSocketPathResolution()) {
     return 1;
@@ -172,6 +229,26 @@ int main() {
 
   auto started = pipetune::startControlServer(socketPath, options);
   if (!check(started.server != nullptr, started.error)) {
+    std::filesystem::remove_all(directory);
+    return 1;
+  }
+
+  // One incomplete request must not prevent other clients from obtaining status.
+  // Complete it after the second reply so failures cannot strand shutdown.
+  const auto incomplete = connectToSocket(socketPath);
+  const auto concurrent = connectToSocket(socketPath);
+  const auto partial = std::string_view("{\"command\":");
+  const auto sent = send(incomplete, partial.data(), partial.size(), MSG_NOSIGNAL);
+  const auto requested = writeLine(concurrent, R"json({"command":"status"})json");
+  const auto concurrentReply = readLine(concurrent);
+  static_cast<void>(writeLine(incomplete, R"json("status"})json"));
+  static_cast<void>(readLine(incomplete));
+  close(incomplete);
+  close(concurrent);
+  if (!check(sent == static_cast<ssize_t>(partial.size()) && requested &&
+             concurrentReply == R"json({"ok":true,"answer":42})json",
+             "an incomplete request blocked an independent status request")) {
+    started.server.reset();
     std::filesystem::remove_all(directory);
     return 1;
   }
@@ -274,6 +351,7 @@ int main() {
   const auto removed =
       check(!std::filesystem::exists(socketPath),
             "control socket must be removed when the server stops");
+  const auto asynchronous = testAsyncPreparation(socketPath);
   std::filesystem::remove_all(directory);
-  return removed && subscriberClosed ? 0 : 1;
+  return removed && subscriberClosed && asynchronous ? 0 : 1;
 }

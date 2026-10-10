@@ -155,6 +155,17 @@ public:
                 std::shared_ptr<const DspBackend> backend) const;
 
   /**
+   * Captures the active recipe and prepares a replacement asynchronously.
+   * @param options New maximum processing format.
+   * @param backend Explicit backend, or null to retain the active backend.
+   * @param cancellation Superseded preparation or shutdown notification.
+   * @return Owned replacement; no active engine is retained while awaiting.
+   * @remarks Protect this call against mutations, then release the lock before awaiting.
+   */
+  cardio::promise<PipelineLoadResult> rebuildActiveAsync(PipelineBuildOptions options,
+      std::shared_ptr<const DspBackend> backend, cardio::cancellation cancellation) const;
+
+  /**
    * Activates a replacement while retaining the previous pipeline.
    *
    * Exactly one staged replacement may exist until commitStaged() or
@@ -183,8 +194,8 @@ public:
   /** Returns whether a rollback-capable replacement is staged. */
   bool hasStagedReplacement() const noexcept;
 
-  /** Returns referenced measurement files. Call only on the replacement thread. */
-  std::span<const std::filesystem::path> measurementFiles() const noexcept;
+  /** Returns referenced asset source files. Call only on the replacement thread. */
+  std::span<const std::filesystem::path> dependencyFiles() const noexcept;
 
   /** Returns active preset entries. Call only on the replacement thread. */
   std::span<const PresetEntry> presetEntries() const noexcept;

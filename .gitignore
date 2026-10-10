@@ -1,6 +1,8 @@
 /build/
 /.build/
 /artifacts/
+/pipetune/asset-preparation/test/dist/
+/pipetune/asset-preparation/test/node_modules/
 /pipetune-gtk/test/e2e/dist/
 /pipetune-gtk/test/e2e/node_modules/
 /pipetune-gtk/test/e2e/test-results/

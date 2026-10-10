@@ -4,6 +4,7 @@
  * https://github.com/kekyo/pipetune/
  */
 #include "startup_pipeline.h"
+#include "preparation_dispatcher.h"
 
 #include "pipetune/startup_config.h"
 
@@ -81,12 +82,21 @@ StartupPipelineResult
 prepareStartupPipeline(const std::filesystem::path &configPath,
                        const PipelineBuildOptions &options,
                        DspBackends backends) {
+  return runPreparation<StartupPipelineResult>([&] {
+    return prepareStartupPipelineAsync(configPath, options, std::move(backends), {});
+  });
+}
+
+cardio::promise<StartupPipelineResult> prepareStartupPipelineAsync(
+    std::filesystem::path configPath, PipelineBuildOptions options,
+    DspBackends backends, cardio::cancellation cancellation) {
+  co_await preparationCheckpoint(cancellation);
   const auto configured = loadStartupConfig(configPath);
   if (!configured.error.empty()) {
     const auto selection =
         selectDspBackend(DspBackendKind::scalar,
                          DspSimdVariant::automatic, backends);
-    return prepareBypass(startupBuildOptions(options, {}), {},
+    co_return prepareBypass(startupBuildOptions(options, {}), {},
                          configured.error, std::move(backends), selection);
   }
   const auto &config = configured.config;
@@ -94,25 +104,25 @@ prepareStartupPipeline(const std::filesystem::path &configPath,
   const auto selection =
       selectDspBackend(config.dspBackend, config.dspSimdVariant, backends);
   if (!config.presetFound) {
-    return prepareBypass(startupOptions, config, {},
+    co_return prepareBypass(startupOptions, config, {},
                          std::move(backends), selection);
   }
   if (selection.effectiveBackend == nullptr) {
-    return prepareBypass(
+    co_return prepareBypass(
         startupOptions, config,
         "cannot load configured preset: " + selection.error,
         std::move(backends), selection);
   }
 
-  auto loaded = loadDspPipeline(config.presetPath, startupOptions,
-                                selection.effectiveBackend);
+  auto loaded = std::move(co_await loadDspPipelineAsync(config.presetPath, startupOptions,
+      selection.effectiveBackend, defaultPipelineLoadContext(), cancellation));
   if (loaded.pipeline == nullptr) {
-    return prepareBypass(
+    co_return prepareBypass(
         startupOptions, config,
         "cannot load configured preset: " + loaded.error,
         std::move(backends), selection);
   }
-  return {.pipeline = std::move(loaded.pipeline),
+  co_return StartupPipelineResult{.pipeline = std::move(loaded.pipeline),
           .activePresetPath = config.presetPath,
           .ratePolicy = config.ratePolicy,
           .dspIdlePolicy = config.dspIdlePolicy,

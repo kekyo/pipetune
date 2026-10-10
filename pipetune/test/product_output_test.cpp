@@ -1002,6 +1002,8 @@ static int runAudio(std::string_view scenario) {
 }
 
 int main(int argc, char **argv) {
+  const auto signals = pipetune::blockPipeWireTerminationSignals();
+  if (!signals.empty()) { std::cerr << signals << '\n'; return 1; }
   if (argc < 3) return 2;
   if (std::string_view(argv[1]) == "control" && argc == 4) {
     const auto result = pipetune::exchangeControlMessage(argv[2], argv[3]);

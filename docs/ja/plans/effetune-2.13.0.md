@@ -421,3 +421,9 @@ DESTDIR="$PWD/artifacts/verification/effetune-2.13-lgpl/install" cmake --install
 公式n6.1.6のサブモジュールを固定し、共有4ライブラリを生成した。新しいライセンス検証はホストのシステム版でGPLを検出して失敗し、自前版で成功した。相対RUNPATHの検証も失敗を確認してからconfigure引数の展開を修正し、実際に別ディレクトリーへ移したドライバーとライブラリで成功した。システムFFmpegへの参照はない。
 
 Ubuntu 24.04 x86_64の新しい前提コンテナーで依存試験2件が成功した。インストールに含まれるソースアーカイブと設定だけをGit管理外へ展開して再ビルドし、`LD_LIBRARY_PATH`による差し替えと移動後の実行も成功した。ライセンス・形式・デコーダー・ファイル／ネットワークプロトコル不在の条件を満たした（`ffmpeg-license-red.log`、`ffmpeg-relocation-red.log`、`ffmpeg-container-build.log`、`ffmpeg-source-rebuild.log`）。配布スクリプト試験とソース著作権ヘッダー検証も成功した。ホストのnasm導入待ちは継続中で、製品全体と9構成の検証は後続工程で行う。
+
+### IRと共通アセット処理
+
+旧IR・共通ライフサイクル工程を復元し、`pipetune_core`のデコーダー依存を私有FFmpegへ接続した。cardio、キャッシュ共有、非同期の準備・取消、失敗時の保持、IR純粋計算を維持した。ホストでは配布用コンテナーのnasm 2.16.01を一時的な`build/lgpl-tools/bin`へ取り出して利用し、OSのパッケージ構成を変更せずにDebugをビルドした。
+
+音声形式・IR適合、キャッシュ、ライフサイクル、PipeWire、制御ソケット、GTK状態、私有ライブラリの12試験が成功した（58.17秒、`assets-host-build.log`、`assets-host-tests.log`）。実行ファイルの参照先も4つすべてが自前の`-pipetune`ライブラリである（`assets-linked-libraries.txt`）。元の235件のCTest登録は比較用に保存しており、最終段階で維持を照合する。

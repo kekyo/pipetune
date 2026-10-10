@@ -20,6 +20,8 @@
 #include "process_runner.h"
 #include "rate_command.h"
 #include "startup_pipeline.h"
+#include "preparation_dispatcher.h"
+#include "preparation_termination.h"
 #include "user_setup.h"
 
 #include <cstdlib>
@@ -239,6 +241,8 @@ static int runControlClient(const pipetune::CommandLineOptions &options) {
 }
 
 static int runDaemon(const pipetune::CommandLineOptions &options) {
+  const auto signalError = pipetune::blockPipeWireTerminationSignals();
+  if (!signalError.empty()) { std::cerr << "pipetune: " << signalError << '\n'; return 1; }
   auto configPath = options.configPath;
   if (configPath.empty()) {
     const auto resolved = resolveUserStartupConfigPath();
@@ -249,11 +253,19 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
     configPath = resolved.path;
   }
 
-  auto prepared = pipetune::prepareStartupPipeline(
-      configPath,
-      {.sampleRate = static_cast<float>(kInitialSampleRate),
-       .maxChannels = 2,
-       .maxFrames = kMaximumProcessFrames});
+  auto prepared = pipetune::StartupPipelineResult{};
+  auto interrupted = false;
+  try {
+    prepared = pipetune::runPreparation<pipetune::StartupPipelineResult>([&] {
+      return pipetune::withPreparationTermination<pipetune::StartupPipelineResult>([&](cardio::cancellation cancellation) {
+        return pipetune::prepareStartupPipelineAsync(configPath,
+            {.sampleRate = static_cast<float>(kInitialSampleRate), .maxChannels = 2, .maxFrames = kMaximumProcessFrames},
+            pipetune::discoverDspBackends(), cancellation);
+      }, {}, interrupted);
+    });
+  } catch (const cardio::canceled_exception &) { return 0; }
+  catch (const std::exception &error) { std::cerr << "pipetune: " << error.what() << '\n'; return 1; }
+  if (interrupted) return 0;
   if (prepared.pipeline == nullptr) {
     std::cerr << "pipetune: " << prepared.error << '\n';
     return 1;
@@ -276,7 +288,8 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
   for (const auto &warning : prepared.warnings) {
     std::cerr << "pipetune: warning: preset node " << warning.nodeIndex
               << " (\"" << warning.pluginName
-              << "\") was skipped: " << warning.reason << '\n';
+              << (warning.state == pipetune::PresetEntryState::ignored ? "\") was skipped: " : "\"): ")
+              << warning.reason << '\n';
   }
   const auto initialDspSampleRate = static_cast<std::uint32_t>(
       prepared.pipeline->sampleRate());
@@ -591,6 +604,10 @@ int main(int argc, char **argv) {
   }
 
   auto backends = pipetune::discoverDspBackends();
+  if (!parsed.options.checkOnly) {
+    const auto signalError = pipetune::blockPipeWireTerminationSignals();
+    if (!signalError.empty()) { std::cerr << "pipetune: " << signalError << '\n'; return 1; }
+  }
   const auto selected = pipetune::selectDspBackend(
       parsed.options.dspBackend, parsed.options.dspSimdVariant,
       backends);
@@ -604,19 +621,29 @@ int main(int argc, char **argv) {
   }
   const auto initialDspSampleRate = pipetune::dspSampleRateForPolicy(
       parsed.options.ratePolicy, kInitialSampleRate);
-  auto loaded = pipetune::loadDspPipeline(
-      presetPath,
-      {.sampleRate = static_cast<float>(initialDspSampleRate),
-       .maxChannels = parsed.options.channelCount,
-       .maxFrames = kMaximumProcessFrames},
-      selected.effectiveBackend);
+  const auto buildOptions = pipetune::PipelineBuildOptions{.sampleRate = static_cast<float>(initialDspSampleRate),
+      .maxChannels = parsed.options.channelCount, .maxFrames = kMaximumProcessFrames};
+  auto loaded = pipetune::PipelineLoadResult{};
+  auto interrupted = false;
+  try {
+    if (parsed.options.checkOnly) loaded = pipetune::loadDspPipeline(presetPath, buildOptions, selected.effectiveBackend);
+    else loaded = pipetune::runPreparation<pipetune::PipelineLoadResult>([&] {
+      return pipetune::withPreparationTermination<pipetune::PipelineLoadResult>([&](cardio::cancellation cancellation) {
+        return pipetune::loadDspPipelineAsync(presetPath, buildOptions, selected.effectiveBackend,
+                                            pipetune::defaultPipelineLoadContext(), cancellation);
+      }, {}, interrupted);
+    });
+  } catch (const cardio::canceled_exception &) { return 0; }
+  catch (const std::exception &error) { std::cerr << "pipetune: " << error.what() << '\n'; return 1; }
+  if (interrupted) return 0;
   if (loaded.pipeline == nullptr) {
     std::cerr << "pipetune: " << loaded.error << '\n';
     return 1;
   }
   for (const auto &warning : loaded.warnings) {
     std::cerr << "pipetune: warning: preset node " << warning.nodeIndex << " (\""
-              << warning.pluginName << "\") was skipped: " << warning.reason
+              << warning.pluginName
+              << (warning.state == pipetune::PresetEntryState::ignored ? "\") was skipped: " : "\"): ") << warning.reason
               << '\n';
   }
 

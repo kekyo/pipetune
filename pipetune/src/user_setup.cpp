@@ -531,7 +531,7 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
     for (const auto &warning : loaded.warnings) {
       warnings.push_back(
           "preset node " + std::to_string(warning.nodeIndex) + " (\"" +
-          warning.pluginName + "\") was skipped: " + warning.reason);
+          warning.pluginName + (warning.state == PresetEntryState::ignored ? "\") was skipped: " : "\"): ") + warning.reason);
     }
   }
 
