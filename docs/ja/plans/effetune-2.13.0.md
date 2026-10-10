@@ -353,11 +353,11 @@ PipeTune自身はMITを維持する。GStreamer/avdec_aacはシステムFFmpeg�
 基本の入口は既存Makefileを使う。実装の最終段階で全体テストを省略しない。
 
 ```sh
-make test
-cmake -S . -B build/effetune-2.13-release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
-cmake --build build/effetune-2.13-release --parallel
-ctest --test-dir build/effetune-2.13-release --output-on-failure
-DESTDIR="$PWD/artifacts/verification/effetune-2.13-lgpl/install" cmake --install build/effetune-2.13-release --prefix /usr
+make test TEST_BUILD_DIR=build/lgpl-debug
+cmake -S . -B build/lgpl-release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build/lgpl-release --parallel
+ctest --test-dir build/lgpl-release --output-on-failure
+DESTDIR="$PWD/artifacts/verification/effetune-2.13-lgpl/final-install" cmake --install build/lgpl-release --prefix /usr
 ./build_package_all.sh
 ```
 
@@ -376,41 +376,41 @@ DESTDIR="$PWD/artifacts/verification/effetune-2.13-lgpl/install" cmake --install
 
 ## 実装の最終完了条件
 
-- [ ] 指定の公式アプリタグ`v2.13.0`を参照し、外部ソースを編集していない。
-- [ ] CLI / GTKの表示が2.13.0で、実行可能な各バックエンドの112カーネル・パラメータ・容量が一致する。
-- [ ] 新しいコア、HarmNet、3モデルの埋め込み、ARM生成物が単独ビルドと配布物で利用できる。
-- [ ] Adaptiveの学習・音声・1〜2ch制約・reset・休止を製品経路で確認し、17 goldenが成功する。
-- [ ] Cassetteの5モードと18 golden、Rhythmの6 goldenと長時間クリック・非対応レート・無音後の再検出が成功する。
-- [ ] SFZはA＋C＋キャッシュで登録済み音源を再生し、上流JSの解析・容量選別・バンク生成との適合と公式11 goldenを満たす。
-- [ ] SFZのJS由来C++処理をホストから分離し、独立ビルド・メモリ入力のドライバー・適合テスト・移植対応表が揃い、差替え境界をレビューした。
-- [ ] IR Reverbは単一 / L・Rペア原音、各ch・レート・加工モードと容量制約を反映し、期待するwet音声を出力する。
-- [ ] Room EQは共有 / ch別・複数点測定から3位相モードの補正FIRを設計し、周波数応答・位相・遅延と診断が上流比較を満たす。
-- [ ] 9種類のアセットDSPに未対応を理由とした除外がなく、無効ノードを読み込まず、未設定・部分対応警告・読込失敗を状態表示で区別する。
-- [ ] 原本変更・キャッシュ破損・欠損復旧・準備中の切替を扱い、失敗時は旧パイプラインを保ち、音声コールバックで準備処理をしない。
-- [ ] Node.jsとffmpeg実行ファイルがない配布環境で、空キャッシュからSFZ / IR / Room EQの初回準備・再生成・再生が成功する。
-- [ ] 解析9種類の除外、既存DSP、生成FIR、遅延補償、複数出力、再構築・失敗時の保持に退行がない。
-- [ ] Debug / Release全体、単独ビルド、GTK E2E、インストール、現行9配布構成の結果を記録した。
-- [ ] 利用者文書、著作権表示、性能・メモリの測定条件と未検証範囲が揃っている。
+- [x] 指定の公式アプリタグ`v2.13.0`を参照し、外部ソースを編集していない。
+- [x] CLI / GTKのEffeTune表示が2.13.0で、実行可能な各バックエンドの112カーネル・パラメータ・容量が一致する。
+- [x] 新しいコア、HarmNet、3モデルの埋め込み、ARM生成物が単独ビルドと配布物で利用できる。
+- [x] Adaptiveの学習・音声・1〜2ch制約・reset・休止を製品経路で確認し、17 goldenが成功する。
+- [x] Cassetteの5モードと18 golden、Rhythmの6 goldenと長時間クリック・非対応レート・無音後の再検出が成功する。
+- [x] SFZはA＋C＋キャッシュで登録済み音源を再生し、上流JSの解析・容量選別・バンク生成との適合と公式11 goldenを満たす。
+- [x] SFZのJS由来C++処理をホストから分離し、独立ビルド・メモリ入力のドライバー・適合テスト・移植対応表が揃い、差替え境界をレビューした。
+- [x] IR Reverbは単一 / L・Rペア原音、各ch・レート・加工モードと容量制約を反映し、期待するwet音声を出力する。
+- [x] Room EQは共有 / ch別・複数点測定から3位相モードの補正FIRを設計し、周波数応答・位相・遅延と診断が上流比較を満たす。
+- [x] 9種類のアセットDSPに未対応を理由とした除外がなく、無効ノードを読み込まず、未設定・部分対応警告・読込失敗を状態表示で区別する。
+- [x] 原本変更・キャッシュ破損・欠損復旧・準備中の切替を扱い、失敗時は旧パイプラインを保ち、音声コールバックで準備処理をしない。
+- [x] Node.jsとffmpeg実行ファイルがない配布環境で、空キャッシュからSFZ / IR / Room EQの初回準備・再生成・再生が成功する。
+- [x] 解析9種類の除外、既存DSP、生成FIR、遅延補償、複数出力、再構築・失敗時の保持に退行がない。
+- [x] Debug / Release全体、単独ビルド、GTK E2E、インストール、現行9配布構成の結果を記録した。
+- [x] 利用者文書、著作権表示、性能・メモリの測定条件と未検証範囲が揃っている。
 
-- [ ] 自前FFmpegが固定submoduleから再現でき、4共有ライブラリすべてがLGPL-2.1-or-later構成である。
-- [ ] ビルド・インストール・全9配布物の実参照先が私有FFmpegであり、システムGPL版へリンクしない。
-- [ ] LGPLライセンス・正確な対応ソース・構成・差替え手順を配布物へ同梱し、既存の音声・アセット・製品試験を維持した。
+- [x] 自前FFmpegが固定submoduleから再現でき、4共有ライブラリすべてがLGPL-2.1-or-later構成である。
+- [x] ビルド・インストール・全9配布物の実参照先が私有FFmpegであり、システムGPL版へリンクしない。
+- [x] LGPLライセンス・正確な対応ソース・構成・差替え手順を配布物へ同梱し、既存の音声・アセット・製品試験を維持した。
 
 ## 計画段階の確認
 
-- [ ] 追従先を利用者指定のアプリタグに固定した。
-- [ ] 現行コード、公式タグ間差分、対象版の文書・APIコメントを基に対応箇所を整理した。
-- [ ] 各工程・小段階に実行可能な成果物、TDD・回帰検証、コミット、完了条件を定義した。
-- [ ] SFZの3案とNode.js依存の議論を保存し、A＋C＋キャッシュに確定した。
-- [ ] SFZのJS由来処理の構造的分離、移植元との適合テスト、将来の上流C++への差替え方針を定義した。
-- [ ] アセットを持つ9種類を洗い出し、IR Reverb・Room EQの未対応を今回解消する工程を追加した。
-- [ ] 共通のネイティブ読込・キャッシュ・監視と、初回準備を含めた実行時Node.js不要の条件を定義した。
+- [x] 追従先を利用者指定のアプリタグに固定した。
+- [x] 現行コード、公式タグ間差分、対象版の文書・APIコメントを基に対応箇所を整理した。
+- [x] 各工程・小段階に実行可能な成果物、TDD・回帰検証、コミット、完了条件を定義した。
+- [x] SFZの3案とNode.js依存の議論を保存し、A＋C＋キャッシュに確定した。
+- [x] SFZのJS由来処理の構造的分離、移植元との適合テスト、将来の上流C++への差替え方針を定義した。
+- [x] アセットを持つ9種類を洗い出し、IR Reverb・Room EQの未対応を今回解消する工程を追加した。
+- [x] 共通のネイティブ読込・キャッシュ・監視と、初回準備を含めた実行時Node.js不要の条件を定義した。
 
 計画作成時は本書のみを更新した。ビルドに影響しない文書変更のため、計画段階のビルド・テストは行っていない。上記の計画段階の条件は差分レビューで確認した。
 
 ## LGPL再構成の実施結果
 
-開始時にタグ`ffmpeg`が`38c09d7`を保持し、作業ツリー・既存サブモジュールがクリーンであることを確認した。利用者の指示に従いdevelopを`b2a4911`へ戻した。ホストのnasmが未導入のため導入を依頼し、依存しない工程を先行する。
+開始時にタグ`ffmpeg`が`38c09d7`を保持し、作業ツリー・既存サブモジュールがクリーンであることを確認した。利用者の指示に従いdevelopを`b2a4911`へ戻した。ホストのnasmが未導入のため導入を依頼し、依存しない工程を先行した。
 
 ### アプリ更新・既存DSPの再構成
 
@@ -444,4 +444,95 @@ Ubuntu 24.04 x86_64の新しい前提コンテナーで依存試験2件が成功
 
 私有ライブラリの依存は`debian/shlibs.local`へ自パッケージとして対応付け、`dpkg-shlibdeps -x`で自依存だけを除く。同梱ライブラリ自身も走査してlibcなどの依存を残す。依存情報の欠損を一律に無視しない。[dpkg-shlibdeps公式マニュアル](https://manpages.debian.org/trixie/dpkg-dev/dpkg-shlibdeps.1.en.html)
 
-以後はソースを固定してDebug / Release全体と9構成を検証し、結果を追記する。
+この時点で製品ソースを`66f42c3192de0e690fd0d5f58cc5733e28daa703`に固定し、以下の最終検証を行った。
+
+### ホスト全体とテスト維持
+
+利用者によるnasm導入後、`/usr/bin/nasm`の2.16.01を確認した。一時利用した同版と実行ファイルのSHA-256が一致し、以後は通常のPATHでビルド・検証した。環境はUbuntu 24.04、GCC 13.3.0、CMake 3.28.3、Core i9-12900KSである（`final-environment.json`）。
+
+| 対象 | 成功数 / 実行数 | 実時間 | 備考 |
+| --- | ---: | ---: | --- |
+| Debug全体 | 237 / 237 | 1931.83秒 | 音声処理中の割当・解放監視を含む |
+| Release全体 | 236 / 236 | 1044.43秒 | Debug専用の割当監視1件以外は同じ登録 |
+| GTK E2E | 両構成で成功 | Debug 186.44秒 / Release 180.56秒 | 全体試験に含む |
+| コンポーネント単独ビルド | 両構成で成功 | Debug 312.42秒 / Release 307.35秒 | 全体試験に含む |
+
+スキップ・未実行はない。旧タグのDebug 235件をすべて保持し、`pipetune_ffmpeg_dependencies`と`pipetune_ffmpeg_relocation`だけを追加した。上流native、パッカー、独自共有バックエンドgolden、上流JSとの準備処理適合、PipeWire・GTK・設定・インストールを含む（`full-suite-summary.json`、`final-test-registration.json`、`final-debug-tests.log`、`final-release-tests.log`、各`LastTest.log`）。
+
+一時DESTDIRへインストールしたCLI / GTKも起動し、EffeTune 2.13.0と私有FFmpegの実参照先を確認した。検証成果物のPipeTune版は既存`screw-up`経路が算出する2.12.92であり、PipeTune自身のリリース番号やタグは変更していない（`final-install.log`、`final-install-linked-libraries.txt`）。
+
+### 全9配布構成
+
+新しい前提イメージと空のビルド領域から、標準の`./build_package_all.sh --jobs 9`を実行し、終了コード0で9パッケージを生成した。実行IDは`run-20261010094835-2189878`。全パッケージをそれぞれの一時コンテナーへ実際にインストールして、CLI / GTK起動、配布ライブラリのロード、音声処理を検証した。
+
+| 配布先 | 実行バックエンド | 全golden比較 | 今回の新規・変更golden比較 | 許容差超過 |
+| --- | --- | ---: | ---: | ---: |
+| Debian trixie x86_64 | Scalar / baseline / x86-64-v3 | 666 | 195 | 0 |
+| Debian trixie i686 | Scalar / baseline / x86-64-v3 | 666 | 195 | 既存3件 |
+| Debian trixie arm64 | Scalar / baseline / arm64-sve | 666 | 195 | 0 |
+| Debian trixie armv7l | Scalar / baseline | 444 | 130 | 0 |
+| Debian trixie riscv64 | Scalar / baseline | 444 | 130 | 0 |
+| Ubuntu 24.04 x86_64 | Scalar / baseline / x86-64-v3 | 666 | 195 | 0 |
+| Ubuntu 24.04 arm64 | Scalar / baseline / arm64-sve | 666 | 195 | 0 |
+| Ubuntu 26.04 x86_64 | Scalar / baseline / x86-64-v3 | 666 | 195 | 0 |
+| Ubuntu 26.04 arm64 | Scalar / baseline / arm64-sve | 666 | 195 | 0 |
+
+合計5550比較のうち5547が公式許容差内、今回の新規・変更1625比較はすべて成功した。i686 ScalarのVinyl Artifacts、TV Audioの`nicam-i-fallback-sweep-192000`、Bass Extenderの`automation`は従来と同じ差である。アプリ2.12.0を参照する基準コミット`d4d13b4`を別領域でビルドし、関連17ケースを新しい実配布ライブラリと比較したところ、すべてbitwise一致・最大絶対差0だった。参照PCMや許容差を変更して合格させていない（`final-i686-legacy-comparison.log`）。
+
+全9環境でNode.js / nodejs / ffmpeg実行ファイルを取り除き、ネイティブドライバーはさらに`PATH=/nonexistent`で実行した。空キャッシュからのCLI検証と、9アセットDSPを含む48 kHz・4ch・48,013フレームのPCM出力が成功した。初回 / キャッシュ使用 / 破損再生成のヒット数は0 / 3 / 0、出力差は0。SIMDとの差は全構成で最大`4.769e-7`、報告遅延は17,152フレームだった。96 kHz・16chでの旧新共存・再構築・resetも成功した。
+
+WAV float / WAV 24bit / 元WAV / IRS / AIFF / FLAC / MP3 / Ogg / M4Aの9ファイル、合計81デコードも配布ライブラリで成功した。48 kHz・2chを保持し、可逆形式の最大誤差は`1.155e-7`以下。非可逆形式は有限出力・フレーム数・周波数と振幅の契約を検証した。初回の検証用SFZ登録情報に残っていたホスト絶対パスはコンテナー用fixtureへ直して再実行しており、製品コードの修正はない。初回失敗ログも`fixture-path-failure/`へ保存した。
+
+集計は`final-matrix.json`、`final-matrix-summary.json`、パッケージ生成結果は`final-package-build.json`、各環境の生ログは`final-installed-*`に保存した。9パッケージは`final-packages/`に保持し、すべて`SHA256SUMS`との一致を確認した。パッケージサイズは13.90〜16.52 MiBである。
+
+### LGPL構成と対応ソースの検証
+
+各配布物の4ライブラリ、合計36ライブラリについて、公開license / configuration APIでLGPL version 2.1 or laterと必要な無効化条件を確認した。CLI / GTKとライブラリのELF、`ldd`の解決先は`-pipetune`名の私有共有ライブラリで、通常名のシステムlibav*へのリンクやパッケージ依存はない。各ライブラリは相対`$ORIGIN`で関連ライブラリを解決する。ホストにGPL構成FFmpegが存在しても私有版をロードした。
+
+全パッケージに、LGPL全文、上流LICENSE、構成・版情報、再ビルド用CMake設定、差替え手順、正確な対応ソースを同梱した。ソースアーカイブは10,275,424 bytes、SHA-256は`3db04abe9ce2195c52bf0121d63fdec69737768c5e0b90fa3ebdb6d054d25350`で全9構成が一致した。tarの記録するコミットもFFmpeg固定コミット`f1e3a2bf7a2f2cde936d1ed97f09a26853d20125`と一致する（`installed-source-commit.txt`）。配布ソースだけからの再ビルド、利用者指定ライブラリへの差替え、移動後ロードは前述の試験で確認済みである。
+
+### Releaseの性能とメモリ
+
+全コンパイルと配布検証の終了後、ホストReleaseを`taskset -c 8`でPコアの論理CPU 8へ固定して各条件3回測定した。時間は中央値、RSSは3回の最大ピーク値を記録する。準備時間はバックエンドのロード後からパイプライン準備終了までで、プロセス起動全体の時間ではない。RSSはプロセス全体を含む。固定前の測定は`performance-initial/`、固定後の条件・結果は`performance/conditions.json`、`performance/results.json`、`performance/summary.json`に保存した。
+
+| 条件 | 初回準備 ms / peak MiB | キャッシュ使用 ms / peak MiB | 破損再生成 ms / peak MiB | 旧新共存 ms / peak MiB |
+| --- | ---: | ---: | ---: | ---: |
+| Adaptive 48 kHz・2ch | 12.26 / 27.3 | — | — | 18.74 / 53.6 |
+| Adaptive 96 kHz・2ch | 17.15 / 39.5 | — | — | 18.24 / 53.4 |
+| Adaptive 384 kHz・2ch | 34.27 / 113.2 | — | — | 34.40 / 127.3 |
+| Rhythm 48 kHz・2ch | 11.35 / 15.9 | — | — | 11.39 / 18.7 |
+| Hard Clipping 4x・48 kHz・2ch | 11.15 / 14.9 | — | — | 9.96 / 16.8 |
+| SFZ 48 kHz・4ch | 22.03 / 18.6 | 18.70 / 17.7 | 26.15 / 18.6 | 36.00 / 22.8 |
+| IR 48 kHz・4ch | 12.19 / 17.1 | 9.69 / 15.9 | 16.74 / 17.1 | 12.81 / 23.6 |
+| Room EQ 48 kHz・4ch | 30.05 / 19.4 | 10.68 / 17.7 | 34.65 / 19.3 | 34.97 / 28.6 |
+| 9アセットDSP混在・48 kHz・4ch | 49.64 / 30.3 | 28.20 / 29.0 | 81.59 / 30.2 | 84.99 / 76.0 |
+
+共存条件では同じプリセットの16ch旧パイプラインを保持したまま、サンプリング周波数を変更して再構築する。SFZは4,800フレームのmonoサンプル、IRは512タップ、Room EQは8,192タップの合成fixtureを使用した。巨大バンク・最大同時発音や最悪時のメモリ保証を表す値ではない。
+
+定常処理は固定シード入力、256フレーム単位、1,000ブロックのウォームアップ後に2,000ブロックを測定した。Rhythmだけは検出状態まで進めるため20秒相当のウォームアップ後に10秒相当を測定した。値はns/frameで、指定chをまとめて処理する1フレームの負荷である。
+
+| 条件 | Scalar | baseline | x86-64-v3 |
+| --- | ---: | ---: | ---: |
+| Adaptive 48 kHz | 648.1 | 648.1 | 682.0 |
+| Adaptive 96 kHz | 650.3 | 652.6 | 684.6 |
+| Adaptive 384 kHz | 663.6 | 663.4 | 695.1 |
+| Rhythm | 359.8 | 351.4 | 355.1 |
+| Hard Clipping 4x | 117.2 | 117.1 | 133.3 |
+| SFZ | 774.6 | 744.4 | 728.5 |
+| IR | 32.8 | 26.2 | 26.1 |
+| Room EQ | 72.2 | 45.3 | 45.0 |
+| 9アセットDSP混在 | 1944.4 | 1732.0 | 1629.2 |
+
+固定前の準備時間は旧記録より大きかったため、旧GPL構成と新LGPL構成の保存済みReleaseバイナリを、同じfixtureで交互に5回測定した。CPUを固定しない条件の旧 / 新の中央値はAdaptive 31.04 / 31.34 ms、IR 28.43 / 26.35 ms、混在260.68 / 250.57 msだった。CPU 8固定の混在は40.64 / 40.22 msとなり、大きな差は今回のFFmpeg変更に固有の退行として再現しなかった（`performance-comparison/`）。
+
+旧新のコンパイラー・Releaseフラグを照合し、ScalarバックエンドとRoom EQ純粋計算ライブラリはバイナリのSHA-256まで一致した。定常IRもCPU固定後は旧記録の32.7 / 26.3 / 25.9 ns/frameと同程度となった。CPU固定だけでは周波数や他プロセスの干渉を完全に排除できないため、数ms単位の準備時間差を性能保証には用いない。
+
+strip後のDSPライブラリはScalar 3,410,528、baseline 3,410,544、x86-64-v3 3,369,568、x86-64-v4 3,496,544 bytesで、旧構成と同じだった。私有FFmpegはavformat 442,320、avcodec 1,146,328、avutil 936,672、swresample 129,392 bytesだった。
+
+### 履歴と完了条件の照合
+
+計画、アプリ・既存DSP、自前FFmpeg、IR・共通処理、SFZ、Room EQ、配布・最終検証を独立ブランチに分け、`develop`へ`--no-ff`で統合する構成とした。旧タグ`ffmpeg`とそのコミットは保持した。新履歴の開始点以降にはシステムFFmpegを要求するCMake設定がなく、旧GPL版の実装コミットも祖先へ含めていない（`history-license-audit.json`）。
+
+製品の`pipetune/src`、`pipetune/include`、`pipetune/asset-preparation`、GTKの`src`・`po`は旧タグと差分0であり、SFZのJS由来C++準備の分離、cardio非同期I/O、IR・Room EQと他のアセットDSPを維持した。4サブモジュールの作業ツリーはすべてクリーンで、外部コードは編集していない（`final-submodules.json`）。
+
+上記結果を本書の18項目の実装完了条件と7項目の計画条件へ照合し、すべて充足した。x86-64-v4はホストがAVX-512を持たないためビルド・パッケージ収録・ELFまでを確認し、実行試験はしていない。ARM / RISC-Vの配布試験はQEMUによるもので、実機の音声デバイスや処理時間は未検証である。これらを性能・実機互換の検証済み範囲に含めない。
