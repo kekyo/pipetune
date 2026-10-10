@@ -80,8 +80,8 @@ static void requireDecoded(int result, const char *operation) {
 
 assets::Audio decodeAssetAudio(std::span<const std::uint8_t> bytes,
                               std::size_t maximumPcmBytes) {
-  if (bytes.empty() || bytes.size() > 64u * 1024u * 1024u)
-    throw std::runtime_error("audio original exceeds the 64 MiB limit or is empty");
+  if (bytes.empty() || bytes.size() > 1024ull * 1024ull * 1024ull)
+    throw std::runtime_error("audio original exceeds the 1 GiB limit or is empty");
   auto state = AudioDecodeSession{.bytes = bytes};
   auto *buffer = static_cast<std::uint8_t *>(av_malloc(32768));
   if (buffer == nullptr) throw std::bad_alloc();

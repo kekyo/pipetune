@@ -6,22 +6,27 @@
 #include <pipetune/dsp_pipeline.h>
 
 #include <algorithm>
+#include <cmath>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <vector>
 
 int main(int argc, char **argv) {
-  if (argc != 6 && argc != 7) return 2;
+  if (argc != 6 && argc != 7 && argc != 8) return 2;
   const auto rate = std::stof(argv[2]);
   const auto channels = static_cast<std::uint32_t>(std::stoul(argv[3]));
   const auto frames = static_cast<std::uint32_t>(std::stoul(argv[4]));
   const auto inputChannel = static_cast<std::uint32_t>(std::stoul(argv[5]));
-  const auto kind = argc == 7 && std::string_view(argv[6]) == "simd" ?
+  const auto kind = argc >= 7 && std::string_view(argv[6]) == "simd" ?
       pipetune::DspBackendKind::simd : pipetune::DspBackendKind::scalar;
   const auto backend = pipetune::loadDspBackend(kind);
   if (backend.backend == nullptr) { std::cerr << backend.error << '\n'; return 1; }
+  auto context = pipetune::defaultPipelineLoadContext();
+  if (const auto *value = std::getenv("PIPETUNE_TEST_SFZ_BYTES")) context.sfzMaximumBytes = std::stoull(value);
+  if (const auto *value = std::getenv("PIPETUNE_TEST_ASSET_MEMORY_BYTES")) context.assetMemoryBytes = std::stoull(value);
   const auto loaded = pipetune::loadDspPipeline(argv[1],
-      {.sampleRate = rate, .maxChannels = channels, .maxFrames = 128u}, backend.backend);
+      {.sampleRate = rate, .maxChannels = channels, .maxFrames = 128u}, backend.backend, context);
   if (loaded.pipeline == nullptr) {
     std::cerr << loaded.error << '\n';
     return 1;
@@ -32,10 +37,14 @@ int main(int argc, char **argv) {
             << loaded.pipeline->latencyFrames() << '\n' << std::setprecision(9);
   auto output = std::vector<float>(channels * frames);
   auto block = std::vector<float>(channels * 128u);
+  const auto frequency = argc == 8 ? std::stod(argv[7]) : 0.0;
   for (auto offset = 0u; offset < frames; offset += 128u) {
     const auto count = std::min(128u, frames - offset);
     std::fill(block.begin(), block.end(), 0.0F);
     if (offset == 0u && inputChannel < channels) block[inputChannel * count] = 1.0F;
+    if (frequency > 0 && inputChannel < channels)
+      for (auto frame = 0u; frame < count; ++frame)
+        block[inputChannel * count + frame] = static_cast<float>(0.3 * std::sin(2 * 3.141592653589793 * frequency * (offset + frame) / rate));
     if (loaded.pipeline->process(std::span(block).first(channels * count), channels,
           count, offset / static_cast<double>(rate)) != pipetune::ProcessStatus::ok) return 3;
     for (auto channel = 0u; channel < channels; ++channel)

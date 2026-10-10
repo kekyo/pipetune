@@ -805,3 +805,7 @@ msgstr "Esperando dispositivos de salida…"
 
 msgid "Warnings"
 msgstr "Advertencias"
+
+#: src/status-model.cpp
+msgid "SFZ bank budget"
+msgstr "Límite de memoria del banco SFZ"

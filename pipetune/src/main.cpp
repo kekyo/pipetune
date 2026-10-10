@@ -319,7 +319,8 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
            prepared.configuredDspSimdVariant,
        .dspIdlePolicy = prepared.dspIdlePolicy,
        .inputChannelCount = 2,
-       .outputConfiguration = std::move(prepared.outputConfiguration)},
+       .outputConfiguration = std::move(prepared.outputConfiguration),
+       .sfzMaxSizeMiB = prepared.sfzMaxSizeMiB},
       pipetune::PipeWireRunMode::untilInterrupted);
   if (!result.success) {
     std::cerr << "pipetune: " << result.error << '\n';
@@ -626,11 +627,12 @@ int main(int argc, char **argv) {
   auto loaded = pipetune::PipelineLoadResult{};
   auto interrupted = false;
   try {
-    if (parsed.options.checkOnly) loaded = pipetune::loadDspPipeline(presetPath, buildOptions, selected.effectiveBackend);
+    if (parsed.options.checkOnly) loaded = pipetune::loadDspPipeline(presetPath, buildOptions, selected.effectiveBackend,
+        pipetune::defaultPipelineLoadContext(parsed.options.sfzMaxSizeMiB));
     else loaded = pipetune::runPreparation<pipetune::PipelineLoadResult>([&] {
       return pipetune::withPreparationTermination<pipetune::PipelineLoadResult>([&](cardio::cancellation cancellation) {
         return pipetune::loadDspPipelineAsync(presetPath, buildOptions, selected.effectiveBackend,
-                                            pipetune::defaultPipelineLoadContext(), cancellation);
+                                            pipetune::defaultPipelineLoadContext(parsed.options.sfzMaxSizeMiB), cancellation);
       }, {}, interrupted);
     });
   } catch (const cardio::canceled_exception &) { return 0; }
@@ -677,7 +679,8 @@ int main(int argc, char **argv) {
        .dspBackends = std::move(backends),
        .configuredDspBackend = parsed.options.dspBackend,
        .configuredDspSimdVariant =
-           parsed.options.dspSimdVariant},
+           parsed.options.dspSimdVariant,
+       .sfzMaxSizeMiB = parsed.options.sfzMaxSizeMiB},
       mode);
   if (!result.success) {
     std::cerr << "pipetune: " << result.error << '\n';

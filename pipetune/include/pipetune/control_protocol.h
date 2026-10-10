@@ -7,6 +7,7 @@
 #define PIPETUNE_CONTROL_PROTOCOL_H
 
 #include "pipetune/dsp_backend.h"
+#include "pipetune/asset_memory.h"
 #include "pipetune/dsp_idle.h"
 #include "pipetune/output_configuration.h"
 #include "pipetune/output_timing.h"
@@ -133,6 +134,8 @@ struct ControlRuntimeStatus {
   DspActivity dspActivity = DspActivity::bypassed;
   /** Configured automatic DSP suspension policy. */
   DspIdlePolicy dspIdlePolicy = {};
+  /** Active per-instrument SFZ budget in MiB, fixed at daemon startup. */
+  std::uint32_t sfzMaxSizeMiB = kDefaultSfzMaxSizeMiB;
   /** Active preset path, or empty while processingMode is bypass. */
   std::string activePreset;
   /** Startup configuration diagnostic, or empty when configuration is valid. */

@@ -389,6 +389,19 @@ function(
     PROPERTY COMPILE_OPTIONS
              "$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-ffp-contract=off>")
 
+  if(native_processor MATCHES "^(i[3-6]86|x86)$")
+    # SFZ and its shared note analysis require IEEE-width intermediates. The
+    # current i386 distribution (Debian trixie) already requires SSE2. Scope the
+    # math policy to these new kernels; PFFFT and other Scalar kernels keep their
+    # established implementations.
+    set_property(
+      SOURCE
+        "${EFFETUNE_DSP_DIR}/plugins/analyzer/note_spectrogram/kernel.cpp"
+        "${EFFETUNE_DSP_DIR}/plugins/others/sfz_note_player/kernel.cpp"
+      APPEND PROPERTY COMPILE_OPTIONS
+        "$<$<COMPILE_LANG_AND_ID:CXX,GNU>:-msse2;-mfpmath=sse>")
+  endif()
+
   pipetune_add_native_pffft(
     pipetune_effetune_pffft_scalar
     SCALAR

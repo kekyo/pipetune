@@ -74,6 +74,8 @@ struct PipeWirePipelineOptions {
   std::uint32_t inputChannelCount = 0;
   /** Fixed multiple-output routing; single mode retains OS-managed selection. */
   OutputConfiguration outputConfiguration = {};
+  /** Startup SFZ budget in MiB, retained for live preset loads and rebuilds. */
+  std::uint32_t sfzMaxSizeMiB = kDefaultSfzMaxSizeMiB;
 };
 
 /**

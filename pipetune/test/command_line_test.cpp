@@ -617,8 +617,29 @@ static bool testRejectedArguments() {
                "config reset must reject unknown options");
 }
 
+static bool testSfzBudget() {
+  for (const auto value : {"64", "128", "256", "512", "1024"}) {
+    const auto args = std::array<std::string_view, 4>{"--preset", "sfz.effetune_preset", "--sfz-max-size", value};
+    const auto result = pipetune::parseCommandLine(args);
+    if (!check(result.error.empty(), result.error) ||
+        !check(std::to_string(result.options.sfzMaxSizeMiB) == value, "SFZ budget differs")) return false;
+  }
+  for (const auto &args : std::vector<std::vector<std::string_view>>{
+      {"--preset", "x", "--sfz-max-size", "100"},
+      {"--preset", "x", "--sfz-max-size", "0"},
+      {"--preset", "x", "--sfz-max-size", "1025"},
+      {"--preset", "x", "--sfz-max-size", "64.0"},
+      {"--preset", "x", "--sfz-max-size"},
+      {"--preset", "x", "--sfz-max-size", "64", "--sfz-max-size", "128"},
+      {"--status", "--sfz-max-size", "64"},
+      {"--load-preset", "x", "--sfz-max-size", "64"}}) {
+    if (!check(!pipetune::parseCommandLine(args).error.empty(), "invalid SFZ options accepted")) return false;
+  }
+  return true;
+}
+
 int main() {
-  const auto passed = testRunDefaults() && testExplicitOptions() &&
+  const auto passed = testRunDefaults() && testExplicitOptions() && testSfzBudget() &&
                       testControlActions() && testDaemonAction() &&
                       testBypassAction() && testOutputActions() && testRateActions() &&
                       testDspActions() &&

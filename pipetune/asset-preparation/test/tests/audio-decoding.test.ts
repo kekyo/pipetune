@@ -57,6 +57,24 @@ const formats = [
   },
 ];
 
+test('SFZ-sized encoded originals retain their separate small decoded-PCM budget', () => {
+  const original = encodeWave([new Float32Array([0.25, -0.5, 1, 0])], 48000);
+  const padding = Buffer.alloc(64 * 1024 * 1024 + 8);
+  padding.write('JUNK');
+  padding.writeUInt32LE(padding.length - 8, 4);
+  const bytes = Buffer.concat([original, padding]);
+  bytes.writeUInt32LE(bytes.length - 8, 4);
+  const result = spawnSync(process.env.PIPETUNE_AUDIO_DRIVER!, ['16', '0'], {
+    input: bytes,
+    maxBuffer: 4096,
+    env: { ...process.env, PATH: '/nonexistent' },
+  });
+  expect(result.status, result.stderr.toString()).toBe(0);
+  const end = result.stdout.indexOf(10);
+  expect(result.stdout.subarray(0, end).toString()).toBe('48000 1 4');
+  expect(result.stdout.subarray(end + 1)).toEqual(original.subarray(44));
+});
+
 test.each(formats)(
   '$name decodes at the original rate with independent channel content',
   async (format) => {

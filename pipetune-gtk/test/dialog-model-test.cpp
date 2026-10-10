@@ -678,7 +678,47 @@ static bool testOutputPreviewAndJointCancel() {
                "failed output application must retain confirmed choices and block Apply");
 }
 
+static bool testSfzStartupBudget() {
+  auto saved = baseConfig();
+  saved.sfzMaxSizeMiB = 512;
+  auto live = saved;
+  live.sfzMaxSizeMiB = 128;
+  auto transaction = pipetune_gtk::beginSettingsTransaction(saved, live, 1, true);
+  if (!check(transaction.desiredLive.sfzMaxSizeMiB == 512 &&
+                 !pipetune_gtk::settingsTransactionIsDirty(transaction),
+             "opening settings must preserve an SFZ budget pending restart")) return false;
+  auto desired = transaction.desiredLive;
+  desired.dspIdlePolicy = {.timeoutMilliseconds = 2500};
+  pipetune_gtk::editSettingsTransaction(transaction, desired);
+  if (!pipetune_gtk::beginSettingsOperation(transaction, pipetune_gtk::SettingsOperation::dspIdle)) return false;
+  live.dspIdlePolicy = desired.dspIdlePolicy;
+  pipetune_gtk::completeSettingsOperation(transaction, true, live, 2, {});
+  if (!check(pipetune_gtk::settingsTransactionCanApply(transaction) &&
+                 transaction.desiredLive.sfzMaxSizeMiB == 512,
+             "live confirmation must not overwrite the saved SFZ budget")) return false;
+  pipetune_gtk::completeSettingsPersistence(transaction, true, {});
+  auto defaults = live;
+  defaults.sfzMaxSizeMiB = 256;
+  pipetune_gtk::restoreSettingsDefaults(transaction, defaults);
+  if (!check(pipetune_gtk::settingsTransactionCanApply(transaction) &&
+                 pipetune_gtk::nextSettingsOperation(transaction) == pipetune_gtk::SettingsOperation::none,
+             "restoring only the startup budget must enable Apply without live reload")) return false;
+  auto state = pipetune_gtk::initialApplicationState();
+  state.connection = pipetune_gtk::ControlConnectionState::connected;
+  state.hasRuntimeStatus = true;
+  state.runtime.sfzMaxSizeMiB = 128;
+  const auto sections = pipetune_gtk::buildStatusSections(state, saved, 0);
+  const auto *section = findSection(sections, "saved-configuration");
+  const auto *item = section == nullptr ? nullptr : findItem(*section, "saved.sfz-budget");
+  const auto *active = findSection(sections, "dsp-performance");
+  const auto *activeItem = active == nullptr ? nullptr : findItem(*active, "dsp.sfz-budget");
+  return check(item != nullptr && item->value == "512 MiB" &&
+                   activeItem != nullptr && activeItem->value == "128 MiB",
+               "saved and active SFZ budgets must be visible independently");
+}
+
 int main() {
+  if (!testSfzStartupBudget()) return 1;
   if (!testOutputPreviewAndJointCancel()) return 1;
   if (!testOutputSnapshotPreservation()) return 1;
   return testLiveCoalescingApplyAndCancel() &&

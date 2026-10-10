@@ -804,3 +804,7 @@ msgstr "正在等待输出设备…"
 
 msgid "Warnings"
 msgstr "警告"
+
+#: src/status-model.cpp
+msgid "SFZ bank budget"
+msgstr "SFZ 音色库内存上限"

@@ -1941,6 +1941,7 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
   return {.processingMode = runtime.processingMode,
           .dspActivity = idleState.activity,
           .dspIdlePolicy = idleState.policy,
+          .sfzMaxSizeMiB = runtime.options.sfzMaxSizeMiB,
           .activePreset = runtime.activePreset,
           .configurationError = runtime.configurationError,
           .configurationRevision = runtime.configurationRevision.load(
@@ -2044,7 +2045,7 @@ static cardio::promise<PresetActivationResult> activatePreset(
        .maxFrames = runtime.options.maxFrames};
   pipelineLock.unlock();
   auto loaded = std::move(co_await loadDspPipelineAsync(presetPath, build, std::move(backend),
-      defaultPipelineLoadContext(), preparation.ticket.source.get_cancellation()));
+      defaultPipelineLoadContext(runtime.options.sfzMaxSizeMiB), preparation.ticket.source.get_cancellation()));
   pipelineLock.lock();
   if (!runtime.preparationGeneration.current(preparation.ticket)) throw cardio::canceled_exception();
   if (loaded.pipeline == nullptr) {
@@ -2178,7 +2179,7 @@ static cardio::promise<PresetActivationResult> requestLiveOutputChange(PipeWireR
     if (preset && !backend)
       co_return PresetActivationResult{{}, "cannot load a preset without a usable scalar DSP backend", false};
     auto operation = preset ?
-        loadDspPipelineAsync(*preset, build, std::move(backend), defaultPipelineLoadContext(),
+        loadDspPipelineAsync(*preset, build, std::move(backend), defaultPipelineLoadContext(runtime.options.sfzMaxSizeMiB),
                              preparation.ticket.source.get_cancellation()) :
         runtime.pipeline.rebuildActiveAsync(build, {}, preparation.ticket.source.get_cancellation());
     pipelineLock.unlock();
@@ -2689,6 +2690,9 @@ static std::string validateOptions(const DspPipeline &pipeline,
   }
   if (!sampleRatePolicyIsValid(options.ratePolicy)) {
     return "sample-rate policy is invalid";
+  }
+  if (!sfzMaxSizeMiBIsValid(options.sfzMaxSizeMiB)) {
+    return "SFZ budget is invalid";
   }
   if (!dspIdlePolicyIsValid(options.dspIdlePolicy)) {
     return "DSP idle policy is invalid";

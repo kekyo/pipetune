@@ -809,3 +809,7 @@ msgstr "في انتظار أجهزة الإخراج…"
 
 msgid "Warnings"
 msgstr "التحذيرات"
+
+#: src/status-model.cpp
+msgid "SFZ bank budget"
+msgstr "حد ذاكرة بنك SFZ"

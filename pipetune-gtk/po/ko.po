@@ -804,3 +804,7 @@ msgstr "출력 장치를 기다리는 중…"
 
 msgid "Warnings"
 msgstr "경고"
+
+#: src/status-model.cpp
+msgid "SFZ bank budget"
+msgstr "SFZ 뱅크 메모리 한도"

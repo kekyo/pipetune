@@ -218,6 +218,7 @@ static bool testSuccessResponse() {
       {.processingMode = pipetune::ProcessingMode::preset,
        .dspActivity = pipetune::DspActivity::draining,
        .dspIdlePolicy = {.timeoutMilliseconds = 2500},
+       .sfzMaxSizeMiB = 512,
        .activePreset = "/tmp/live.effetune_preset",
        .configurationError = {},
        .configurationRevision = 41,
@@ -281,6 +282,10 @@ static bool testSuccessResponse() {
       warnings);
   const auto inspection = pipetune::inspectControlResponse(response);
   const auto parsed = pipetune::parseControlResponse(response);
+  auto invalidBudget = response;
+  if (!check(replaceOnce(invalidBudget, "\"sfzMaxSizeMiB\":512", "\"sfzMaxSizeMiB\":100") &&
+                 !pipetune::parseControlResponse(invalidBudget).valid,
+             "status must reject unsupported SFZ budgets")) return false;
   auto mismatchedPinnedVariant = response;
   if (!check(replaceOnce(
                  mismatchedPinnedVariant,
@@ -302,6 +307,7 @@ static bool testSuccessResponse() {
                      pipetune::DspActivity::draining &&
                  parsed.status.dspIdlePolicy.timeoutMilliseconds == 2500,
              "parsed response DSP idle state differs") ||
+      !check(parsed.status.sfzMaxSizeMiB == 512, "SFZ budget did not round-trip") ||
       !check(parsed.status.activePreset ==
                  "/tmp/live.effetune_preset",
              "parsed response preset differs") ||

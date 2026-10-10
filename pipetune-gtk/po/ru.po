@@ -806,3 +806,7 @@ msgstr "Ожидание устройств вывода…"
 
 msgid "Warnings"
 msgstr "Предупреждения"
+
+#: src/status-model.cpp
+msgid "SFZ bank budget"
+msgstr "Лимит памяти банка SFZ"

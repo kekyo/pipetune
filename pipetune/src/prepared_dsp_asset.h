@@ -19,6 +19,7 @@ struct PreparedDspAsset {
   std::uint32_t formatTag = ET_ASSET_F32_MULTICH; /**< Native asset format identifier. */
   std::uint32_t bandCount = 0; /**< Generated crossover band count, or zero. */
   std::uint32_t filterDelaySamples = 0; /**< Generated filter group delay in processing frames. */
+  std::uint32_t warmupFrames = 0; /**< Preparation frames from an asset producer, or zero for the convolution bound. */
   std::string omissionReason; /**< Non-fatal reason to omit the node, if applicable. */
   std::string error; /**< Fatal preparation diagnostic, or empty on success. */
 };

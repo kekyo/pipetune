@@ -11,6 +11,7 @@ namespace pipetune_gtk {
 
 static bool configMatches(const pipetune::StartupConfig &left,
                           const pipetune::StartupConfig &right) {
+  // The SFZ budget is a startup-only choice, independent of live confirmation.
   return left.presetFound == right.presetFound &&
          left.presetPath == right.presetPath &&
          left.ratePolicy == right.ratePolicy &&
@@ -66,10 +67,12 @@ SettingsTransaction beginSettingsTransaction(
     const pipetune::StartupConfig &saved,
     const pipetune::StartupConfig &live, std::uint64_t liveRevision,
     bool connected) {
+  auto desired = live;
+  desired.sfzMaxSizeMiB = saved.sfzMaxSizeMiB;
   return {
       .saved = saved,
       .baselineLive = live,
-      .desiredLive = live,
+      .desiredLive = std::move(desired),
       .confirmedLive = live,
       .confirmedRevision = liveRevision,
       .inFlight = SettingsOperation::none,
@@ -248,12 +251,13 @@ bool settingsTransactionCanApply(
          transaction.inFlight == SettingsOperation::none &&
          configMatches(transaction.desiredLive,
                        transaction.confirmedLive) &&
-         !configMatches(transaction.desiredLive, transaction.saved);
+         settingsTransactionIsDirty(transaction);
 }
 
 bool settingsTransactionIsDirty(
     const SettingsTransaction &transaction) {
-  return !configMatches(transaction.desiredLive, transaction.saved);
+  return !configMatches(transaction.desiredLive, transaction.saved) ||
+         transaction.desiredLive.sfzMaxSizeMiB != transaction.saved.sfzMaxSizeMiB;
 }
 
 void completeSettingsPersistence(
@@ -295,6 +299,7 @@ pipetune::StartupConfig startupConfigFromRuntime(
       .dspSimdVariant = status.configuredDspSimdVariant,
       .dspIdlePolicy = status.dspIdlePolicy,
       .outputConfiguration = status.outputConfiguration,
+      .sfzMaxSizeMiB = status.sfzMaxSizeMiB,
   };
 }
 

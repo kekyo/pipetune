@@ -8,6 +8,7 @@
 #include "preparation_generation.h"
 #include "asset_file.h"
 #include "ir_asset_loader.h"
+#include "sfz_asset_loader.h"
 #include "preparation_dispatcher.h"
 #include "preparation_termination.h"
 
@@ -137,14 +138,82 @@ static bool testSharedPreparation(const std::filesystem::path &directory) {
           "identical nodes must share prepared coefficients even when persistent caching is disabled") && bounded;
 }
 
+static bool testSharedSfzPreparation(const std::filesystem::path &directory) {
+  auto original = std::filesystem::path{};
+  for (const auto &entry : std::filesystem::directory_iterator(directory / "ir-library"))
+    if (entry.path().extension() == ".wav") original = entry.path();
+  if (original.empty()) return false;
+  const auto definition = directory / "shared.sfz";
+  const auto unused = directory / "unused.bin";
+  std::ofstream(unused) << std::string(5000, 'x');
+  std::ofstream(definition) << "<region> sample=ir-library/" << original.filename().string() <<
+      " key=83 amp_veltrack=0\n<region> sample=unused.bin key=83";
+  const auto registry = directory / "sfz-references.json";
+  std::ofstream(registry) << "[{\"id\":\"0123456789abcdef01234567\",\"name\":\"Shared\",\"root\":\"" <<
+      directory.string() << "\",\"path\":\"" << definition.string() << "\"}]";
+  const auto preset = directory / "shared-sfz.effetune_preset";
+  const auto node = R"({"name":"SFZ Note Player","parameters":{"sf":"0123456789abcdef01234567"}})";
+  std::ofstream(preset) << "{\"pipeline\":[" << node << ',' << node << "]}";
+  auto context = pipetune::PipelineLoadContext{directory / "measurements", directory};
+  context.sfzMaximumBytes = 3000;
+  auto loaded = pipetune::loadDspPipeline(preset, {48000, 2, 128}, context);
+  if (!check(loaded.pipeline != nullptr, loaded.error.c_str())) return false;
+  const auto dependencies = loaded.pipeline->dependencyFiles();
+  return check(loaded.cachedAssetCount == 1 && loaded.pipeline->activePluginCount() == 2 &&
+      loaded.warnings.size() == 2 && loaded.warnings.front().state == pipetune::PresetEntryState::enabled &&
+      loaded.warnings.front().reason.find("reduced-bank") != std::string::npos,
+      "identical SFZ nodes must share a reduced bank without a persistent cache") &&
+      check(std::ranges::find(dependencies, unused) != dependencies.end() &&
+            std::ranges::find(dependencies, definition) != dependencies.end() &&
+            std::ranges::find(dependencies, original) != dependencies.end() &&
+            std::ranges::find(dependencies, registry) != dependencies.end(),
+            "capacity selection must retain unused samples as watched dependencies");
+}
+
+static cardio::promise<bool> testAsyncSfzPreparation(const std::filesystem::path &directory) {
+  const auto json = std::string(R"({"sf":"0123456789abcdef01234567"})");
+  const auto document = std::unique_ptr<yyjson_doc, decltype(&yyjson_doc_free)>(
+      yyjson_read(json.data(), json.size(), 0), yyjson_doc_free);
+  auto *parameters = yyjson_doc_get_root(document.get());
+  const auto cache = pipetune::AssetCacheOptions{};
+  auto cancel = cardio::cancellation_source{};
+  auto first = pipetune::loadSfzAssetAsync(directory, parameters, 3000, cache, {}, pipetune::kDefaultAssetMemoryBytes);
+  auto waiting = pipetune::loadSfzAssetAsync(directory, parameters, 3000, cache,
+      cancel.get_cancellation(), pipetune::kDefaultAssetMemoryBytes);
+  auto same = pipetune::loadSfzAssetAsync(directory, parameters, 3000, cache, {}, pipetune::kDefaultAssetMemoryBytes);
+  cancel.cancel();
+  auto canceled = false;
+  try { static_cast<void>(co_await waiting); }
+  catch (const cardio::canceled_exception &) { canceled = true; }
+  const auto prepared = std::move(co_await first);
+  const auto shared = std::move(co_await same);
+  if (!check(canceled && prepared.error.empty() && prepared.prepared &&
+      shared.prepared == prepared.prepared && shared.cacheHit,
+      "SFZ preparation must survive cancellation of another queued reader")) co_return false;
+  co_await pipetune::verifyAssetSnapshots(prepared.snapshots, {});
+  std::ofstream(directory / "unused.bin") << std::string(5000, 'y');
+  auto changed = false;
+  try { co_await pipetune::verifyAssetSnapshots(prepared.snapshots, {}); }
+  catch (const std::runtime_error &) { changed = true; }
+  co_return check(changed, "an omitted source changed after SFZ selection must prevent publication");
+}
+
 static bool testCombinedReservations() {
   auto previous = pipetune::AssetMemoryReservation(70, 100);
+  if (!check(pipetune::availableAssetMemoryBytes(100) == 30,
+      "phase admission must subtract all existing asset leases")) return false;
   auto rejected = false;
   try { const auto next = pipetune::AssetMemoryReservation(31, 100); }
   catch (const std::length_error &) { rejected = true; }
   if (!check(rejected, "old and new assets must consume the same process memory budget")) return false;
   auto retained = std::move(previous);
   retained.shrink(60);
+  retained.resize(70, 100);
+  rejected = false;
+  try { retained.resize(101, 100); }
+  catch (const std::length_error &) { rejected = true; }
+  if (!check(rejected, "growing a phase reservation must preserve its old lease when the budget rejects it")) return false;
+  retained.resize(60, 100);
   {
     const auto exact = pipetune::AssetMemoryReservation(40, 100);
     rejected = false;
@@ -246,6 +315,7 @@ static cardio::promise<void> testAsyncPreparation(cardio::dispatcher_group_glib 
   catch (const std::runtime_error &) { changed = true; }
   correct = check(changed, "a completed asset must not publish after an earlier source snapshot changes") && correct;
   std::ofstream(source, std::ios::binary).write(reinterpret_cast<const char *>(original.data()), original.size());
+  correct = co_await testAsyncSfzPreparation(directory) && correct;
   group.shutdown();
 }
 
@@ -309,6 +379,7 @@ int main(int argc, char **argv) {
   const auto dependencies = testFailedDependencies(directory);
   const auto publication = testPublishedDiagnostics();
   const auto sharing = testSharedPreparation(directory);
+  const auto sfzSharing = testSharedSfzPreparation(directory);
   const auto reservations = testCombinedReservations();
   auto asynchronous = true;
   auto *context = g_main_context_new();
@@ -322,5 +393,5 @@ int main(int argc, char **argv) {
   g_main_context_pop_thread_default(context);
   g_main_context_unref(context);
   std::filesystem::remove_all(directory);
-  return diagnostics && dependencies && publication && sharing && reservations && asynchronous ? 0 : 1;
+  return diagnostics && dependencies && publication && sharing && sfzSharing && reservations && asynchronous ? 0 : 1;
 }

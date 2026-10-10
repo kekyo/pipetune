@@ -513,6 +513,7 @@ CommandLineParseResult parseCommandLine(
   auto sawDspBackend = false;
   auto sawDspVariant = false;
   auto sawCheck = false;
+  auto sawSfzBudget = false;
   for (auto index = std::size_t{0}; index < arguments.size(); ++index) {
     const auto argument = arguments[index];
     if (argument == "--status") {
@@ -533,7 +534,8 @@ CommandLineParseResult parseCommandLine(
 
     if (argument != "--preset" && argument != "--load-preset" &&
         argument != "--socket" && argument != "--channels" &&
-        argument != "--dsp-backend" && argument != "--dsp-variant") {
+        argument != "--dsp-backend" && argument != "--dsp-variant" &&
+        argument != "--sfz-max-size") {
       return parseError(std::move(options),
                         "unknown option: " + std::string(argument));
     }
@@ -576,6 +578,14 @@ CommandLineParseResult parseCommandLine(
       }
       sawSocket = true;
       options.controlSocketPath = std::string(value);
+      continue;
+    }
+    if (argument == "--sfz-max-size") {
+      if (sawSfzBudget) return parseError(std::move(options), "duplicate option: --sfz-max-size");
+      if (!parseUnsigned(value, options.sfzMaxSizeMiB) || !sfzMaxSizeMiBIsValid(options.sfzMaxSizeMiB)) {
+        return parseError(std::move(options), "--sfz-max-size must be 64, 128, 256, 512, or 1024 MiB");
+      }
+      sawSfzBudget = true;
       continue;
     }
     if (argument == "--dsp-backend") {
@@ -628,7 +638,7 @@ CommandLineParseResult parseCommandLine(
         "top-level action options are mutually exclusive");
   }
   if (sawLoadPreset || sawStatus) {
-    if (sawChannels || sawDspBackend || sawDspVariant || sawCheck) {
+    if (sawChannels || sawDspBackend || sawDspVariant || sawCheck || sawSfzBudget) {
       return parseError(
           std::move(options),
           "PipeWire run options cannot be used with control actions");
@@ -674,6 +684,7 @@ std::string_view commandLineUsage() noexcept {
          "  pipetune --preset FILE [--channels COUNT]\n"
          "           [--dsp-backend scalar|simd]\n"
          "           [--dsp-variant VARIANT]\n"
+         "           [--sfz-max-size MIB]\n"
          "           [--socket PATH] [--check]\n"
          "  pipetune --load-preset FILE [--socket PATH]\n"
          "  pipetune --status [--socket PATH]\n"
@@ -705,6 +716,7 @@ std::string_view commandLineUsage() noexcept {
          "                    Use scalar or simd for this direct run.\n"
          "  --dsp-variant VARIANT\n"
          "                    Use auto, baseline, x86-64-v3, x86-64-v4, or sve.\n"
+         "  --sfz-max-size MIB Set the SFZ bank budget: 64, 128, 256 (default), 512, or 1024 MiB.\n"
          "  --check           Verify stream negotiation, then exit.\n";
 }
 

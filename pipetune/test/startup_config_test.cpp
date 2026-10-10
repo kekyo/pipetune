@@ -491,6 +491,34 @@ static bool testOutputSnapshot(const std::filesystem::path &configPath) {
                "reset must restore OS-managed single mode without reserved assignments");
 }
 
+static bool testSfzBudget(const std::filesystem::path &path) {
+  for (const auto mib : {64u, 128u, 256u, 512u, 1024u}) {
+    writeConfig(path, "PIPETUNE_SFZ_MAX_SIZE_MIB=" + std::to_string(mib) + "\n");
+    const auto loaded = pipetune::loadStartupConfig(path);
+    if (!check(loaded.error.empty(), loaded.error) ||
+        !check(loaded.config.sfzMaxSizeMiB == mib, "SFZ budget did not load") ||
+        !check(pipetune::saveStartupPreset(path, "/tmp/sfz.effetune_preset").empty(),
+               "preset update rejected SFZ configuration") ||
+        !check(pipetune::saveDspIdlePolicy(path, {}).empty(), "idle update failed") ||
+        !check(pipetune::loadStartupConfig(path).config.sfzMaxSizeMiB == mib,
+               "updating other settings discarded the SFZ budget")) return false;
+    auto invalid = loaded.config;
+    invalid.sfzMaxSizeMiB = 100;
+    if (!check(!pipetune::saveStartupConfig(path, invalid).empty() &&
+                   pipetune::loadStartupConfig(path).config.sfzMaxSizeMiB == mib,
+               "invalid SFZ budgets must preserve the previous snapshot")) return false;
+  }
+  for (const auto value : {"0", "63", "100", "2048", "-64", "64.0", "64MiB", "4294967296"}) {
+    writeConfig(path, "PIPETUNE_SFZ_MAX_SIZE_MIB=" + std::string(value) + "\n");
+    if (!check(!pipetune::loadStartupConfig(path).error.empty(), "invalid SFZ budget accepted")) return false;
+  }
+  writeConfig(path, "PIPETUNE_SFZ_MAX_SIZE_MIB=64\nPIPETUNE_SFZ_MAX_SIZE_MIB=128\n");
+  if (!check(!pipetune::loadStartupConfig(path).error.empty(), "duplicate SFZ budget accepted")) return false;
+  return check(pipetune::resetStartupConfig(path).empty() &&
+                   pipetune::loadStartupConfig(path).config.sfzMaxSizeMiB == 256,
+               "reset must restore the 256 MiB SFZ default");
+}
+
 int main() {
   const auto directory =
       std::filesystem::temp_directory_path() /
@@ -500,7 +528,7 @@ int main() {
   const auto passed =
       testPathResolution() && testPrivateRoundTrip(configPath) &&
       testFullSnapshotRoundTrip(configPath) &&
-      testOutputSnapshot(configPath) &&
+      testOutputSnapshot(configPath) && testSfzBudget(configPath) &&
       testRatePolicyRoundTripPreservesOtherChoices(configPath) &&
       testDspBackendRoundTripPreservesOtherChoices(configPath) &&
       testDspIdlePolicyRoundTripPreservesOtherChoices(configPath) &&

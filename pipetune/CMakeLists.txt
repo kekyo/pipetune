@@ -207,6 +207,7 @@ add_library(
   src/dsp_pipeline.cpp
   src/generated_fir_asset.cpp
   src/ir_asset_loader.cpp
+  src/sfz_asset_loader.cpp
   src/measurement_store.cpp
   src/output_configuration.cpp
   src/output_configuration_json.cpp
@@ -225,7 +226,7 @@ target_include_directories(
 target_link_libraries(
   pipetune_core
   PUBLIC yyjson PkgConfig::ASSET_GIO
-  PRIVATE "${CMAKE_DL_LIBS}" pipetune_asset_ir pipetune_ffmpeg PkgConfig::SAMPLERATE)
+  PRIVATE "${CMAKE_DL_LIBS}" pipetune_asset_ir pipetune_asset_sfz pipetune_ffmpeg PkgConfig::SAMPLERATE)
 target_include_directories(pipetune_core SYSTEM PUBLIC "${PIPETUNE_DEPS_DIR}/cardio/include")
 target_compile_definitions(pipetune_core PUBLIC CARDIO_WITH_GLIB=1 CARDIO_WITH_GIO=1)
 
@@ -481,7 +482,7 @@ if(BUILD_TESTING)
       src
       "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
   target_link_libraries(
-    pipetune_effetune_backend_artifact_tests PRIVATE pipetune_core "${CMAKE_DL_LIBS}")
+    pipetune_effetune_backend_artifact_tests PRIVATE pipetune_core pipetune_asset_sfz "${CMAKE_DL_LIBS}")
   add_dependencies(
     pipetune_effetune_backend_artifact_tests
     ${PIPETUNE_DSP_BACKEND_TARGETS})
@@ -608,6 +609,12 @@ if(BUILD_TESTING)
   target_link_libraries(pipetune_asset_cache_tests PRIVATE pipetune_core PkgConfig::ASSET_GIO pipetune_asset_ir)
   target_compile_options(pipetune_asset_cache_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME pipetune_asset_cache_tests COMMAND pipetune_asset_cache_tests)
+  add_executable(pipetune_asset_source_tests test/asset_source_test.cpp)
+  target_link_libraries(pipetune_asset_source_tests PRIVATE pipetune_core)
+  target_include_directories(pipetune_asset_source_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_compile_options(pipetune_asset_source_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_asset_source_tests COMMAND pipetune_asset_source_tests)
+  set_tests_properties(pipetune_asset_source_tests PROPERTIES ENVIRONMENT "G_DEBUG=fatal-criticals")
   set_tests_properties(pipetune_asset_cache_tests PROPERTIES ENVIRONMENT "G_DEBUG=fatal-criticals")
   target_link_libraries(pipetune_asset_lifecycle_tests PRIVATE pipetune_core pipetune_control)
   target_include_directories(pipetune_asset_lifecycle_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
@@ -617,6 +624,18 @@ if(BUILD_TESTING)
   set_tests_properties(pipetune_asset_lifecycle_tests PROPERTIES ENVIRONMENT "G_DEBUG=fatal-criticals")
   add_executable(pipetune_asset_audio_driver test/asset_audio_driver.cpp)
   add_executable(pipetune_ir_cache_driver test/ir_cache_driver.cpp)
+  add_executable(pipetune_sfz_playback_driver test/sfz_playback_driver.cpp)
+  target_include_directories(pipetune_sfz_playback_driver PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_link_libraries(pipetune_sfz_playback_driver PRIVATE pipetune_core pipetune_asset_sfz)
+  target_compile_options(pipetune_sfz_playback_driver PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_sfz_playback_driver ${PIPETUNE_DSP_BACKEND_TARGETS})
+
+  add_executable(pipetune_sfz_runtime_tests test/sfz_runtime_test.cpp)
+  target_include_directories(pipetune_sfz_runtime_tests PRIVATE src)
+  target_link_libraries(pipetune_sfz_runtime_tests PRIVATE pipetune_pipewire)
+  target_compile_options(pipetune_sfz_runtime_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_sfz_runtime_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
+  add_test(NAME pipetune_sfz_runtime_tests COMMAND pipetune_sfz_runtime_tests)
   target_include_directories(pipetune_ir_cache_driver PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
   target_link_libraries(pipetune_ir_cache_driver PRIVATE pipetune_core)
   target_compile_options(pipetune_ir_cache_driver PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -642,6 +661,8 @@ if(BUILD_TESTING)
     COMMAND "${CMAKE_COMMAND}" -E env
       "PIPETUNE_ASSET_DRIVER=$<TARGET_FILE:pipetune_asset_pipeline_driver>"
       "PIPETUNE_IR_DRIVER=$<TARGET_FILE:pipetune_ir_preparation_driver>"
+      "PIPETUNE_SFZ_DRIVER=$<TARGET_FILE:pipetune_sfz_preparation_driver>"
+      "PIPETUNE_SFZ_PLAYBACK_DRIVER=$<TARGET_FILE:pipetune_sfz_playback_driver>"
       "PIPETUNE_IR_CACHE_DRIVER=$<TARGET_FILE:pipetune_ir_cache_driver>"
       "PIPETUNE_AUDIO_DRIVER=$<TARGET_FILE:pipetune_asset_audio_driver>"
       "PIPETUNE_FFMPEG_EXECUTABLE=${PIPETUNE_ASSET_FFMPEG_EXECUTABLE}"

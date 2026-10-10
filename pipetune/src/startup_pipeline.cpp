@@ -49,7 +49,8 @@ prepareBypass(const PipelineBuildOptions &options,
             .effectiveDspVariant = selection.effectiveVariant,
             .dspBackendFallback = selection.fallback,
             .dspBackendError = selection.error,
-            .outputConfiguration = config.outputConfiguration};
+            .outputConfiguration = config.outputConfiguration,
+            .sfzMaxSizeMiB = config.sfzMaxSizeMiB};
   }
   return {.pipeline = std::move(created.pipeline),
           .activePresetPath = {},
@@ -69,7 +70,8 @@ prepareBypass(const PipelineBuildOptions &options,
           .effectiveDspVariant = selection.effectiveVariant,
           .dspBackendFallback = selection.fallback,
           .dspBackendError = selection.error,
-          .outputConfiguration = config.outputConfiguration};
+          .outputConfiguration = config.outputConfiguration,
+          .sfzMaxSizeMiB = config.sfzMaxSizeMiB};
 }
 
 StartupPipelineResult
@@ -115,7 +117,7 @@ cardio::promise<StartupPipelineResult> prepareStartupPipelineAsync(
   }
 
   auto loaded = std::move(co_await loadDspPipelineAsync(config.presetPath, startupOptions,
-      selection.effectiveBackend, defaultPipelineLoadContext(), cancellation));
+      selection.effectiveBackend, defaultPipelineLoadContext(config.sfzMaxSizeMiB), cancellation));
   if (loaded.pipeline == nullptr) {
     co_return prepareBypass(
         startupOptions, config,
@@ -137,7 +139,8 @@ cardio::promise<StartupPipelineResult> prepareStartupPipelineAsync(
           .effectiveDspVariant = selection.effectiveVariant,
           .dspBackendFallback = selection.fallback,
           .dspBackendError = selection.error,
-          .outputConfiguration = config.outputConfiguration};
+          .outputConfiguration = config.outputConfiguration,
+          .sfzMaxSizeMiB = config.sfzMaxSizeMiB};
 }
 
 } // namespace pipetune

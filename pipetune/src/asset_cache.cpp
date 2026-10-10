@@ -69,7 +69,7 @@ static std::string metadata(const PreparedDspAsset &asset, std::string_view key,
   const auto &value = asset.info;
   const auto fields = std::array{value.channels, value.frames, value.topology, value.head_block,
       value.rate_divider, value.path_count, value.input_count, value.processing_channels,
-      value.footprint_bytes, value.byte_size, asset.formatTag, asset.bandCount, asset.filterDelaySamples};
+      value.footprint_bytes, value.byte_size, asset.formatTag, asset.bandCount, asset.filterDelaySamples, asset.warmupFrames};
   for (const auto field : fields)
     if (!yyjson_mut_arr_add_uint(document.get(), info, field)) throw std::bad_alloc();
   auto *messages = yyjson_mut_obj_add_arr(document.get(), root, "diagnostics");
@@ -133,13 +133,14 @@ static CachedDspAsset decodeEntry(std::vector<std::uint8_t> bytes, std::string_v
   auto *info = yyjson_obj_get(root, "info");
   auto *messages = yyjson_obj_get(root, "diagnostics");
   if (!yyjson_is_str(storedKey) || std::string_view(yyjson_get_str(storedKey), yyjson_get_len(storedKey)) != key ||
-      !yyjson_is_arr(info) || yyjson_arr_size(info) != 13 || !yyjson_is_arr(messages))
+      !yyjson_is_arr(info) || yyjson_arr_size(info) != 14 || !yyjson_is_arr(messages))
     throw std::runtime_error("invalid asset cache metadata");
   auto result = CachedDspAsset{};
   auto &value = result.asset.info;
   const auto fields = std::array{&value.channels, &value.frames, &value.topology, &value.head_block,
       &value.rate_divider, &value.path_count, &value.input_count, &value.processing_channels,
-      &value.footprint_bytes, &value.byte_size, &result.asset.formatTag, &result.asset.bandCount, &result.asset.filterDelaySamples};
+      &value.footprint_bytes, &value.byte_size, &result.asset.formatTag, &result.asset.bandCount, &result.asset.filterDelaySamples,
+      &result.asset.warmupFrames};
   for (auto index = std::size_t{0}; index < fields.size(); ++index) {
     auto *field = yyjson_arr_get(info, index);
     if (!yyjson_is_uint(field) || yyjson_get_uint(field) > std::numeric_limits<std::uint32_t>::max())
