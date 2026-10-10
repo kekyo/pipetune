@@ -370,7 +370,10 @@ static cardio::promise<void> testAsyncPreparation(cardio::dispatcher_group_glib 
 static cardio::promise<int> waitForPreparationCancellation(int ready, cardio::cancellation cancellation) {
   const auto descriptor = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
   if (descriptor < 0) throw std::runtime_error("cannot create preparation barrier");
-  static_cast<void>(write(ready, "R", 1));
+  if (write(ready, "R", 1) != 1) {
+    close(descriptor);
+    throw std::runtime_error("cannot announce the preparation barrier");
+  }
   auto failure = std::exception_ptr{};
   try { co_await cardio::from_fd(descriptor, cardio::fd_event::read, cancellation); }
   catch (...) { failure = std::current_exception(); }

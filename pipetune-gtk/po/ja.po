@@ -689,6 +689,9 @@ msgstr "このユーザー向けに PipeTune をセットアップしていま�
 msgid "Settings updated"
 msgstr "設定を更新しました"
 
+msgid "SFZ bank budget"
+msgstr "SFZバンクの容量上限"
+
 msgid "Silence duration"
 msgstr "無音時間"
 
@@ -804,7 +807,3 @@ msgstr "出力デバイスを確認中…"
 
 msgid "Warnings"
 msgstr "警告"
-
-#: src/status-model.cpp
-msgid "SFZ bank budget"
-msgstr "SFZバンクの容量上限"

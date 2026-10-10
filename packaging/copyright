@@ -49,13 +49,18 @@ Copyright: 2025-2026 Yoshiyuki Kobayashi
 License: MIT
 
 Files: pipetune/asset-preparation/common/convolution.cpp
+ pipetune/asset-preparation/common/resample.cpp
  pipetune/asset-preparation/ir/preparation.cpp
+ pipetune/asset-preparation/sfz/*
+ pipetune/asset-preparation/room-eq/*
 Copyright:
  2026 Kouji Matsui
  2025-2026 Yoshiyuki Kobayashi
 License: MIT
-Comment: Native adaptation of the EffeTune application v2.13.0 IR preparation.
+Comment: Native adaptations of EffeTune application v2.13.0 asset preparation.
  Source: https://github.com/Frieve-A/effetune/tree/v2.13.0/js/ir-library
+ SFZ: https://github.com/Frieve-A/effetune/tree/v2.13.0/js/sfz
+ Room EQ: https://github.com/Frieve-A/effetune/tree/v2.13.0/js/room-eq
 
 Files: deps/cardio/*
 Copyright: Kouji Matsui
@@ -67,12 +72,12 @@ Files: deps/yyjson/*
 Copyright: 2020 YaoYuan <ibireme@gmail.com>
 License: MIT
 
-Files: deps/effetune/dsp/plugins/analyzer/rhythm_analyzer/g2_math.h
+Files: deps/effetune/dsp/plugins/analyzer/rhythm_analyzer/rd6_math.h
 Copyright: 1993 Sun Microsystems, Inc. All rights reserved.
 License: fdlibm
 Comment: atan and atan2 are derived from fdlibm 5.3.
  Source: https://www.netlib.org/fdlibm/
- Upstream notice: https://github.com/Frieve-A/effetune/blob/v2.12.0/plugins/dsp/NOTICE.txt
+ Upstream notice: https://github.com/Frieve-A/effetune/blob/v2.13.0/plugins/dsp/NOTICE.txt
 
 Files: deps/effetune/dsp/vendor/pffft/*
 Copyright:

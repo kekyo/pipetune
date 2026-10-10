@@ -689,6 +689,9 @@ msgstr "正在为此用户设置 PipeTune…"
 msgid "Settings updated"
 msgstr "设置已更新"
 
+msgid "SFZ bank budget"
+msgstr "SFZ 音色库内存上限"
+
 msgid "Silence duration"
 msgstr "静音持续时间"
 
@@ -804,7 +807,3 @@ msgstr "正在等待输出设备…"
 
 msgid "Warnings"
 msgstr "警告"
-
-#: src/status-model.cpp
-msgid "SFZ bank budget"
-msgstr "SFZ 音色库内存上限"

@@ -9,6 +9,7 @@
 #include <pipewire/extensions/profiler.h>
 #include <pipewire/impl-module.h>
 #include <spa/param/profiler.h>
+#include <spa/pod/iter.h>
 #include <spa/pod/parser.h>
 
 #include <algorithm>

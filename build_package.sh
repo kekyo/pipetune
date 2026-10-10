@@ -528,6 +528,11 @@ validate_deb_package() {
 		fail "Unexpected Version field in $package_path"
 	depends_value=$(dpkg-deb -f "$package_path" Depends)
 	[ -n "$depends_value" ] || fail "Missing Depends field in $package_path"
+	case "$depends_value" in
+		*libavformat[0-9]* | *libavcodec[0-9]* | *libavutil[0-9]* | *libswresample[0-9]*)
+			fail "Package must use its private libraries, not system FFmpeg dependencies"
+			;;
+	esac
 	for required_dependency in \
 		systemd \
 		dbus-user-session \
@@ -556,6 +561,12 @@ validate_deb_package() {
 		assert_file "$tmp_dir/$required_file"
 	done
 	assert_dsp_backend_set "$tmp_dir/usr/lib/pipetune" "$expected_arch"
+	for component in avformat avcodec avutil swresample; do
+		assert_file "$tmp_dir/usr/lib/pipetune/lib${component}-pipetune.so"
+	done
+	for document in COPYING.LGPLv2.1 LICENSE.md REBUILD.md build-info.txt ConfigureFFmpeg.cmake ffmpeg-source.tar.xz; do
+		assert_file "$tmp_dir/usr/share/doc/pipetune/ffmpeg/$document"
+	done
 	[ "$(count_matching_files "$tmp_dir/usr/lib" 'libpipewire-module-pipetune-presentation.so')" -eq 1 ] ||
 		fail "Missing or duplicate PipeWire presentation module"
 	presentation_module=$(find "$tmp_dir/usr/lib" -type f -name 'libpipewire-module-pipetune-presentation.so')

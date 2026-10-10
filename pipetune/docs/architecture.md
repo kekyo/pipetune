@@ -377,7 +377,7 @@ The generated catalog packs JSON parameters into the exact native ABI expected
 by EffeTune. Tests compare those packed parameters with EffeTune's JavaScript
 packer and compare native PCM output with EffeTune's parity corpus.
 
-The pinned EffeTune 2.12.0 registry contains 110 native kernels. PipeTune supports
+The pinned EffeTune 2.13.0 registry contains 112 native kernels. PipeTune supports
 its 16-channel Multi Channel Panel layout, individual channels through 16,
 paired routes through 15/16, and hexadecimal Matrix routes. It can load MD
 Simulator and all nine effects added in 2.5.0. It regenerates and stages the
@@ -390,16 +390,22 @@ Tonal Balance EQ and Rhythm Analyzer use the normal preset pipeline with no
 external assets and zero reported latency. Rhythm remains active with its
 click disabled. Rate/backend rebuilds and preset reloads create fresh
 measurement state. Silence suspension resets both effects like other DSPs;
-Ignore continues processing without a host reset. Their [upstream contracts](https://github.com/Frieve-A/effetune/tree/v2.12.0/docs/dsp/effects)
+Ignore continues processing without a host reset. Their [upstream contracts](https://github.com/Frieve-A/effetune/tree/v2.13.0/docs/dsp/effects)
 define measurement and selected-channel behavior.
+
+Adaptive Prediction executes on one channel or a selected pair, with independent
+learning state per channel and zero reported latency. Active processing wider
+than two channels is rejected. Its learning state is not serialized: reload,
+rate/backend rebuild, and silence suspension reset it. Cassette Artifacts packs
+all five upstream processing modes through the generated parameter catalog.
 
 Attack Tonal Balance and Bass Extender use the normal preset pipeline. Bass
 Extender rejects processing widths above two channels; its supported rates
-are defined by the [upstream kernel](https://github.com/Frieve-A/effetune/blob/v2.12.0/dsp/plugins/saturation/bass_extender/kernel.cpp).
+are defined by the [upstream kernel](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/plugins/saturation/bass_extender/kernel.cpp).
 Bass Management requires explicit All selection and validates the packed
 roles, routes, subwoofer masks, and crossover slopes against the prepared
 stream width. IIR needs no asset. Linear generates diagonal low-pass FIR
-paths using the [upstream design](https://github.com/Frieve-A/effetune/blob/v2.12.0/js/bass-management/design-core.js)
+paths using the [upstream design](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/bass-management/design-core.js)
 and the existing pointer-safe asset-copy ABI. Design and allocation occur
 outside the audio callback. The 32 MiB check includes the asset, convolver,
 and processing buffers; preparation and activation are distinct states.
@@ -421,30 +427,49 @@ files and their existing ancestors, so backup creation and replacement trigger
 preparation away from the audio thread. Invalid measurements omit that node and
 are reported through the existing warning/status paths.
 
+SFZ Note Player, IR Reverb, and Room EQ also resolve registered sources from the
+EffeTune desktop directory. The host owns asynchronous reads, the native FFmpeg
+decoder, dependency watching, cache validation, and process-wide memory
+reservations. `asset-preparation/` owns the source-independent SFZ semantics,
+IR preparation, measurement analysis, and Room EQ filter design. These C++20
+libraries have no PipeWire, GTK, filesystem, or decoder dependency; their
+in-memory drivers build independently. See [asset preparation](asset-preparation.md)
+for the upstream port map and replacement boundary.
+
+Preparation runs on the existing control dispatcher through cardio/GIO, outside
+the audio callback. A cancellable asynchronous mutex serializes preparation;
+completed immutable payloads can be shared while pipelines are constructed.
+The old pipeline remains active until the candidate is ready and its source
+snapshots still match. Cache entries never substitute for missing originals.
+The process reserves preparation and retained/native asset footprints together,
+including old and new pipelines, before allocating bounded working buffers.
+The disk cache is separately limited to 2 GiB by default and is reconstructible.
+
 At load time, `src/dsp_pipeline.cpp`:
 
 1. bounds the input to 8 MiB and parses it with vendored yyjson;
 2. accepts the canonical `pipeline` array and EffeTune's legacy forms;
 3. applies enabled section, bus, and channel routing;
 4. omits disabled nodes;
-5. regenerates supported FIR assets and warns for unknown or unresolved
-   stored-asset nodes;
+5. asynchronously prepares registered assets or regenerates parameter-derived
+   FIRs, retaining source dependencies and diagnostics;
 6. creates up to 96 native DSP instances;
-7. copies generated assets through PipeTune's pointer-safe backend extension;
+7. copies prepared assets through PipeTune's pointer-safe backend extension
+   and finishes SFZ/IR/Room activation before publication;
 8. configures one EffeTune engine for the complete routed pipeline; and
 9. reads the configured pipeline latency from EffeTune's native ABI.
 
-EffeTune 2.12 computes latency per channel while configuring the pipeline. It
+EffeTune computes latency per channel while configuring the pipeline. It
 aligns the selected input channels before a DSP can mix them, as well as
 shorter additive-merge and output paths. A send aligns its working copy and
 preserves the source bus. The aggregate is reported through
 `et_pipeline_latency`; PipeTune uses that value directly. See the
-[upstream pipeline contract](https://github.com/Frieve-A/effetune/blob/v2.12.0/dsp/README.md).
+[upstream pipeline contract](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/README.md).
 Intentional Time Alignment delays remain outside this compensation.
 
 Reset preserves the preset's parameters and prepared assets without
 allocation. PipeTune retains structured parameter bytes and reapplies them
-after engine reset because the [upstream Matrix reset](https://github.com/Frieve-A/effetune/blob/v2.12.0/dsp/plugins/basics/matrix/kernel.cpp)
+after engine reset because the [upstream Matrix reset](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/plugins/basics/matrix/kernel.cpp)
 restores its default routes. This also preserves custom Matrix routing after
 silent-input suspension.
 
@@ -606,12 +631,10 @@ later explicit activation presents the existing singleton window.
   and [0.5 adapter](https://github.com/PipeWire/wireplumber/blob/0.5.8/modules/module-si-audio-adapter.c).
 - FIR Crossover requires an even output bus from 4 through 16 channels.
   PipeTune omits it with a warning when the active layout is incompatible.
-- Room EQ and IR Reverb remain unresolved stored-asset DSPs. Room EQ opens
-  EffeTune's browser-backed
-  [measurement store](https://github.com/Frieve-A/effetune/blob/bedc6c662a6edc88c9644b7e00cec9122a250cfb/plugins/eq/room_eq.js#L1593-L1629),
-  while IR Reverb looks up its serialized identifier in the
-  [IR library](https://github.com/Frieve-A/effetune/blob/bedc6c662a6edc88c9644b7e00cec9122a250cfb/plugins/reverb/ir_reverb.js#L766-L802).
-  Their source PCM is not carried by `.effetune_preset`, so PipeTune omits the
-  nodes with warnings.
+- Presets contain references rather than external source data. SFZ, IR Reverb,
+  and Room EQ require the desktop registration, originals, and measurement
+  backups described in the [user documentation](../../docs/en/details.md#external-assets).
+  Browser-only records are not accessible through these desktop storage
+  contracts.
 - PipeTune does not provide a machine-wide service shared by multiple logged-in
   users.
