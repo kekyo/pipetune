@@ -6,6 +6,7 @@
 #ifndef PIPETUNE_CONTROL_SOCKET_H
 #define PIPETUNE_CONTROL_SOCKET_H
 
+#include <cardio.h>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -84,10 +85,38 @@ using ControlStatusProvider = std::string (*)(void *userData);
 using ControlDescriptorEventHandler = bool (*)(void *userData);
 
 /**
+ * Handles a request on the service dispatcher while other clients remain usable.
+ * @param request Message kept alive until the returned promise completes.
+ * @param userData Application state.
+ * @param cancellation Requested on disconnect or server shutdown; must be observed.
+ * @return Response and connection behavior.
+ */
+using AsyncControlMessageHandler = cardio::promise<ControlMessageResult> (*)(
+    std::string_view request, void *userData, cardio::cancellation cancellation);
+
+/**
+ * Drains an application event descriptor and performs asynchronous follow-up work.
+ * @param userData Application state.
+ * @param cancellation Server shutdown notification.
+ * @return Whether subscribers need a fresh status publication.
+ */
+using AsyncControlDescriptorEventHandler = cardio::promise<bool> (*)(
+    void *userData, cardio::cancellation cancellation);
+
+/**
+ * Produces status after optional asynchronous maintenance.
+ * @param userData Application state.
+ * @param cancellation Server shutdown notification.
+ * @return Current status event without framing newline.
+ */
+using AsyncControlStatusProvider = cardio::promise<std::string> (*)(
+    void *userData, cardio::cancellation cancellation);
+
+/**
  * Configures callbacks for a control server.
  */
 struct ControlServerOptions {
-  /** Non-null request callback. */
+  /** Immediate request callback; null when asyncHandler is used. */
   ControlMessageHandler handler;
   /** Status callback required when subscriptions are accepted. */
   ControlStatusProvider statusProvider;
@@ -97,6 +126,12 @@ struct ControlServerOptions {
   int eventDescriptor = -1;
   /** Callback paired with eventDescriptor, or null when it is unused. */
   ControlDescriptorEventHandler eventHandler = nullptr;
+  /** Asynchronous alternative to handler; configure exactly one. */
+  AsyncControlMessageHandler asyncHandler = nullptr;
+  /** Asynchronous alternative to eventHandler; configure at most one. */
+  AsyncControlDescriptorEventHandler asyncEventHandler = nullptr;
+  /** Asynchronous alternative to statusProvider. */
+  AsyncControlStatusProvider asyncStatusProvider = nullptr;
 };
 
 struct ControlServerStartResult;

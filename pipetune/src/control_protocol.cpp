@@ -553,6 +553,14 @@ static std::string_view presetEntryStateName(PresetEntryState state) noexcept {
   return {};
 }
 
+static bool parsePresetEntryState(std::string_view name, PresetEntryState &state) {
+  if (name == "enabled") state = PresetEntryState::enabled;
+  else if (name == "off") state = PresetEntryState::off;
+  else if (name == "ignored") state = PresetEntryState::ignored;
+  else return false;
+  return true;
+}
+
 std::string makeSetOutputControlRequest(const OutputConfiguration &configuration,
     std::optional<std::uint64_t> expectedRevision, const std::optional<std::filesystem::path> &preset) {
   auto *root = static_cast<yyjson_mut_val *>(nullptr);
@@ -784,6 +792,11 @@ static std::string makeControlStatusMessage(
         !addString(document.get(), item, "state", state)) {
       return makeControlErrorResponse("cannot encode preset entries");
     }
+    auto *diagnostics = yyjson_mut_obj_add_arr(document.get(), item, "diagnostics");
+    if (diagnostics == nullptr) return makeControlErrorResponse("cannot encode preset diagnostics");
+    for (const auto &diagnostic : entry.diagnostics)
+      if (!yyjson_mut_arr_add_strcpy(document.get(), diagnostics, diagnostic.c_str()))
+        return makeControlErrorResponse("cannot encode preset diagnostics");
   }
 
   auto *backendArray =
@@ -839,7 +852,8 @@ static std::string makeControlStatusMessage(
         !yyjson_mut_obj_add_uint(document.get(), item, "nodeIndex",
                                  warning.nodeIndex) ||
         !addString(document.get(), item, "pluginName", warning.pluginName) ||
-        !addString(document.get(), item, "reason", warning.reason)) {
+        !addString(document.get(), item, "reason", warning.reason) ||
+        !addString(document.get(), item, "state", presetEntryStateName(warning.state))) {
       return makeControlErrorResponse("cannot encode control response");
     }
   }
@@ -1224,14 +1238,13 @@ static bool readPresetEntries(yyjson_val *root,
         !readStringField(item, "state", state)) {
       return false;
     }
-    if (state == "enabled") {
-      entry.state = PresetEntryState::enabled;
-    } else if (state == "off") {
-      entry.state = PresetEntryState::off;
-    } else if (state == "ignored") {
-      entry.state = PresetEntryState::ignored;
-    } else {
-      return false;
+    if (!parsePresetEntryState(state, entry.state)) return false;
+    auto *diagnostics = yyjson_obj_get(item, "diagnostics");
+    if (!yyjson_is_arr(diagnostics)) return false;
+    for (auto index = std::size_t{0}; index < yyjson_arr_size(diagnostics); ++index) {
+      auto *diagnostic = yyjson_arr_get(diagnostics, index);
+      if (!yyjson_is_str(diagnostic) || yyjson_get_len(diagnostic) == 0) return false;
+      entry.diagnostics.emplace_back(yyjson_get_str(diagnostic), yyjson_get_len(diagnostic));
     }
     entries.push_back(std::move(entry));
   }
@@ -1494,10 +1507,13 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
         .pluginName = {},
         .reason = {},
     };
+    auto state = std::string{};
     if (!yyjson_is_obj(item) ||
         !readSizeField(item, "nodeIndex", warning.nodeIndex) ||
         !readStringField(item, "pluginName", warning.pluginName) ||
-        !readStringField(item, "reason", warning.reason)) {
+        !readStringField(item, "reason", warning.reason) ||
+        !readStringField(item, "state", state) ||
+        !parsePresetEntryState(state, warning.state) || warning.state == PresetEntryState::off) {
       return responseError(
           "successful control response has an invalid warning");
     }

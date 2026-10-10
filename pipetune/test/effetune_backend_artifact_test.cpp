@@ -556,27 +556,34 @@ static bool prepareGoldenAsset(const BackendApi &api, et_engine engine,
   auto state = integer(ir, "seed");
   if (state == 0u) state = 0x49525631u;
   const auto next = [&state]() { state = state * 1664525u + 1013904223u; return state; };
-  const auto direct = yyjson_get_num(yyjson_obj_get(ir, "directGain"));
-  const auto tail = yyjson_get_num(yyjson_obj_get(ir, "tailGain"));
+  const auto number = [ir](const char *key, double fallback) {
+    auto *value = yyjson_obj_get(ir, key);
+    return yyjson_is_num(value) ? yyjson_get_num(value) : fallback;
+  };
+  const auto direct = number("directGain", 0.7);
+  const auto tail = number("tailGain", 0.45);
+  const auto tapCount = static_cast<std::uint32_t>(number("tapCount", 17));
   for (auto channel = 0u; channel < info.channels; ++channel) {
     const auto gain = 1.0 - channel * 0.12;
     samples[channel * info.frames] = static_cast<float>(direct * gain);
-    for (auto tap = 1u; tap < integer(ir, "tapCount"); ++tap) {
-      const auto frame = 1u + next() % (info.frames - 1u);
+    for (auto tap = 1u; tap < tapCount; ++tap) {
+      const auto frame = 1u + next() % std::max(1u, info.frames - 1u);
       const auto sign = (next() & 1u) == 0u ? 1.0 : -1.0;
       auto &sample = samples[channel * info.frames + frame];
       sample = static_cast<float>(sample + sign * tail * gain *
           std::exp(-4.0 * frame / info.frames) / std::sqrt(tap + 1.0));
     }
-    auto &last = samples[(channel + 1u) * info.frames - 1u];
-    last = static_cast<float>(last + tail * gain * 0.01);
+    if (info.frames > 1u) {
+      auto &last = samples[(channel + 1u) * info.frames - 1u];
+      last = static_cast<float>(last + tail * gain * 0.01);
+    }
   }
   auto bytes = std::vector<std::uint8_t>(32u + info.path_count * 12u + samples.size() * 4u, 0u);
   const auto write = [&bytes](std::size_t offset, std::uint32_t value) {
     for (auto i = 0u; i < 4u; ++i) bytes[offset + i] = static_cast<std::uint8_t>(value >> (8u * i));
   };
   write(0, 0x31415445u); write(4, info.channels); write(8, info.frames);
-  write(12, static_cast<std::uint32_t>(testCase.sampleRate));
+  write(12, static_cast<std::uint32_t>(std::round(testCase.sampleRate / info.rate_divider)));
   write(16, info.topology); write(20, info.path_count);
   auto offset = std::size_t{32u};
   for (auto index = 0u; index < info.path_count; ++index) {
@@ -1034,6 +1041,8 @@ int main(int argc, char **argv) {
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "resonator/adaptive_prediction_effect/golden", 17u);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "reverb/ir_reverb/golden", 13u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "analyzer/analog_meter/golden", 5u);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "eq/tonal_balance_eq/golden", 6u);
@@ -1087,6 +1096,7 @@ int main(int argc, char **argv) {
         checkMetadataGoldens(simd, expected, pluginRoot / "analyzer/rhythm_analyzer/golden", 6u);
         checkMetadataGoldens(simd, expected, std::filesystem::path(argv[3]).parent_path(), 18u);
         checkMetadataGoldens(simd, expected, pluginRoot / "resonator/adaptive_prediction_effect/golden", 17u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "reverb/ir_reverb/golden", 13u);
         checkMetadataGoldens(simd, expected, pluginRoot / "analyzer/analog_meter/golden", 5u);
         checkMetadataGoldens(simd, expected, pluginRoot / "eq/tonal_balance_eq/golden", 6u);
         checkGoldenCases(simd, expected, goldenCases);

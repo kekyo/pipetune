@@ -7,6 +7,7 @@
 #define PIPETUNE_PRESET_ENTRY_H
 
 #include <string>
+#include <vector>
 
 namespace pipetune {
 
@@ -26,8 +27,10 @@ struct PresetEntry {
   std::string name;
   /** Effective entry state determined while loading the preset. */
   PresetEntryState state;
+  /** Preparation diagnostics retained in status updates, including active DSPs. */
+  std::vector<std::string> diagnostics = {};
 
-  /** Compares the displayed name and configuration state. */
+  /** Compares the displayed name, configuration state, and diagnostics. */
   bool operator==(const PresetEntry &other) const = default;
 };
 

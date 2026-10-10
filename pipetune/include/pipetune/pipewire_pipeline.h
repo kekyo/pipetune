@@ -129,6 +129,15 @@ PipeWireRunResult runPipeWirePipeline(std::unique_ptr<DspPipeline> pipeline,
                                       const PipeWirePipelineOptions &options,
                                       PipeWireRunMode mode);
 
+/**
+ * Reserves SIGINT and SIGTERM for the PipeWire main loop.
+ * @return Empty on success, or a signal-mask diagnostic.
+ * @remarks Call on the process main thread before loading presets or starting
+ * GIO and PipeWire threads. Newly created threads inherit this mask, allowing
+ * the main loop's signal descriptor to perform orderly shutdown.
+ */
+std::string blockPipeWireTerminationSignals();
+
 } // namespace pipetune
 
 #endif

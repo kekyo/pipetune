@@ -94,6 +94,19 @@ prepareStartupPipeline(const std::filesystem::path &configPath,
                        const PipelineBuildOptions &options,
                        DspBackends backends);
 
+/**
+ * Prepares startup state on the caller's GIO dispatcher.
+ * @param configPath Startup configuration file path, retained by value.
+ * @param options Initial processing format.
+ * @param backends Backend discovery snapshot.
+ * @param cancellation Application termination notification.
+ * @return Prepared preset or recoverable bypass; cancellation never publishes bypass.
+ * @throws cardio::canceled_exception When application startup is canceled.
+ */
+cardio::promise<StartupPipelineResult> prepareStartupPipelineAsync(
+    std::filesystem::path configPath, PipelineBuildOptions options,
+    DspBackends backends, cardio::cancellation cancellation);
+
 } // namespace pipetune
 
 #endif

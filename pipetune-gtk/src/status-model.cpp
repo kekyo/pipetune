@@ -554,8 +554,8 @@ std::vector<StatusSection> buildStatusSections(
                   errorSeverity(state.diagnostic), state.diagnostic),
               textItem(
                   "errors.warnings", translate("Preset warnings"),
-                  std::to_string(state.warnings.size()),
-                  state.warnings.empty() ? StatusSeverity::normal
+                  std::to_string(presetWarningCount(state)),
+                  presetWarningCount(state) == 0 ? StatusSeverity::normal
                                          : StatusSeverity::warning),
           },
   });

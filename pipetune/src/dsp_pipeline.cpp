@@ -9,6 +9,9 @@
 #include "bass_management_config.h"
 #include "dsp_catalog.h"
 #include "generated_fir_asset.h"
+#include "ir_asset_loader.h"
+#include "asset_file.h"
+#include "preparation_dispatcher.h"
 #include "measurement_store.h"
 #include <cstdlib>
 
@@ -22,7 +25,6 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <iterator>
 #include <memory>
 #include <span>
@@ -58,7 +60,9 @@ struct DspPipeline::Impl {
   std::vector<PresetEntry> presetEntries;
   std::shared_ptr<const std::string> presetRecipe;
   PipelineLoadContext loadContext;
-  std::vector<std::filesystem::path> measurementFiles;
+  std::vector<std::filesystem::path> dependencyFiles;
+  std::vector<std::shared_ptr<const AssetCachePin>> assetCachePins;
+  std::vector<AssetMemoryReservation> nativeAssetMemory;
   std::vector<RetainedParameterBytes> retainedParameterBytes;
 
   ~Impl() {
@@ -72,11 +76,16 @@ PipelineLoadContext defaultPipelineLoadContext() {
   const auto *xdg = std::getenv("XDG_CONFIG_HOME");
   const auto *home = std::getenv("HOME");
   const auto directory = resolveEffeTuneDirectory(xdg == nullptr ? "" : xdg, home == nullptr ? "" : home);
-  return {directory.empty() ? std::filesystem::path{} : directory / "measurement-backups"};
+  const auto *xdgCache = std::getenv("XDG_CACHE_HOME");
+  auto cache = xdgCache != nullptr && *xdgCache != '\0' && std::filesystem::path(xdgCache).is_absolute() ?
+      std::filesystem::path(xdgCache) : home != nullptr && *home != '\0' ? std::filesystem::path(home) / ".cache" : std::filesystem::path{};
+  if (!cache.empty()) cache /= "pipetune";
+  return {.measurementDirectory = directory.empty() ? std::filesystem::path{} : directory / "measurement-backups",
+          .effetuneDirectory = directory, .assetCache = {.directory = std::move(cache)}};
 }
 
-std::span<const std::filesystem::path> DspPipeline::measurementFiles() const noexcept {
-  return implementation_->measurementFiles;
+std::span<const std::filesystem::path> DspPipeline::dependencyFiles() const noexcept {
+  return implementation_->dependencyFiles;
 }
 
 std::span<const PresetEntry> DspPipeline::presetEntries() const noexcept {
@@ -108,8 +117,10 @@ struct JsonDocumentDeleter {
 using JsonDocument = std::unique_ptr<yyjson_doc, JsonDocumentDeleter>;
 
 static PipelineLoadResult loadError(std::string message,
-                                    std::vector<PipelineWarning> warnings = {}) {
-  return {.pipeline = nullptr, .warnings = std::move(warnings), .error = std::move(message)};
+                                    std::vector<PipelineWarning> warnings = {},
+                                    std::vector<std::filesystem::path> files = {}) {
+  return {.pipeline = nullptr, .warnings = std::move(warnings),
+          .dependencyFiles = std::move(files), .error = std::move(message)};
 }
 
 static std::string validateBuildOptions(const PipelineBuildOptions &options) {
@@ -458,33 +469,37 @@ createBypassDspPipeline(const PipelineBuildOptions &options) {
   return {.pipeline = std::move(pipeline), .error = {}};
 }
 
-PipelineLoadResult DspPipeline::buildFromRecipe(
+cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
     std::shared_ptr<const std::string> presetRecipe,
-    const PipelineBuildOptions &options,
+    PipelineBuildOptions options,
     std::shared_ptr<const DspBackend> backend,
-    const PipelineLoadContext &context) {
+    PipelineLoadContext context, cardio::cancellation cancellation) {
+  co_await preparationCheckpoint(cancellation);
   const auto validation = validateBuildOptions(options);
   if (!validation.empty()) {
-    return loadError(validation);
+    co_return loadError(validation);
   }
   if (presetRecipe == nullptr || presetRecipe->empty() ||
       presetRecipe->size() > kMaximumPresetBytes) {
-    return loadError("retained preset recipe is unavailable");
+    co_return loadError("retained preset recipe is unavailable");
   }
   if (backend == nullptr) {
-    return loadError("DSP backend is unavailable");
+    co_return loadError("DSP backend is unavailable");
   }
   auto document = JsonDocument(
       yyjson_read(presetRecipe->data(), presetRecipe->size(), 0));
   if (document == nullptr) {
-    return loadError("cannot parse preset JSON");
+    co_return loadError("cannot parse preset JSON");
   }
   auto *pipelineValue = findPipelineRoot(yyjson_doc_get_root(document.get()));
   if (pipelineValue == nullptr) {
-    return loadError("preset root must contain a pipeline or plugins array");
+    co_return loadError("preset root must contain a pipeline or plugins array");
   }
 
   auto implementation = std::make_unique<DspPipeline::Impl>();
+  const auto fail = [&implementation](std::string message, std::vector<PipelineWarning> warnings = {}) {
+    return loadError(std::move(message), std::move(warnings), implementation->dependencyFiles);
+  };
   implementation->sampleRate = options.sampleRate;
   implementation->maxChannels = options.maxChannels;
   implementation->maxFrames = options.maxFrames;
@@ -495,13 +510,13 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
   const auto &api = dspBackendApi(*implementation->backend);
   implementation->engine = api.engineCreate();
   if (implementation->engine == 0) {
-    return loadError("cannot create EffeTune DSP engine");
+    co_return fail("cannot create EffeTune DSP engine");
   }
   const auto prepareStatus =
       api.enginePrepare(implementation->engine, options.sampleRate,
                         options.maxChannels, options.maxFrames, 0);
   if (prepareStatus != ET_OK) {
-    return loadError("cannot prepare EffeTune DSP engine (status " +
+    co_return fail("cannot prepare EffeTune DSP engine (status " +
                      std::to_string(prepareStatus) + ", handle " +
                      std::to_string(implementation->engine) + ", rate " +
                      std::to_string(options.sampleRate) + ", channels " +
@@ -514,14 +529,18 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
 
   auto warnings = std::vector<PipelineWarning>();
   auto activeNodes = std::vector<ActiveNode>();
+  auto cachedAssetCount = std::size_t{0};
+  auto preparedAssets = std::vector<std::shared_ptr<const SharedPreparedAsset>>{};
+  auto sourceSnapshots = std::vector<AssetFileSnapshot>{};
   auto insideSection = false;
   auto sectionEnabled = true;
   const auto nodeCount = yyjson_arr_size(pipelineValue);
   for (auto index = std::size_t{0}; index < nodeCount; ++index) {
+    co_await preparationCheckpoint(cancellation);
     auto node = PresetNode{};
     auto normalizationError = std::string{};
     if (!normalizeNode(yyjson_arr_get(pipelineValue, index), index, node, normalizationError)) {
-      return loadError(std::move(normalizationError), std::move(warnings));
+      co_return fail(std::move(normalizationError), std::move(warnings));
     }
 
     auto &entry = implementation->presetEntries.emplace_back(
@@ -558,7 +577,7 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
       }
       measured = loadCrosstalkMeasurements(measurementStore, ids);
       for (const auto &file : measured.files) {
-        if (std::ranges::find(implementation->measurementFiles, file) == implementation->measurementFiles.end()) implementation->measurementFiles.push_back(file);
+        if (std::ranges::find(implementation->dependencyFiles, file) == implementation->dependencyFiles.end()) implementation->dependencyFiles.push_back(file);
       }
       if (!measured.error.empty()) {
         warnings.push_back({.nodeIndex = index, .pluginName = std::string(node.name), .reason = measured.error});
@@ -566,7 +585,8 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
       }
     }
     const auto bassManagement = node.name == "Bass Management";
-    const auto generatedAssetDsp = bassManagement || crosstalk || supportsGeneratedFirAsset(node.name);
+    const auto irReverb = node.name == "IR Reverb";
+    const auto generatedAssetDsp = irReverb || bassManagement || crosstalk || supportsGeneratedFirAsset(node.name);
     if (definition->requiresExternalAssets && !generatedAssetDsp) {
       warnings.push_back({.nodeIndex = index,
                           .pluginName = std::string(node.name),
@@ -574,7 +594,7 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
       continue;
     }
     if (activeNodes.size() >= kMaximumInstances) {
-      return loadError("preset exceeds the native limit of 96 active DSP nodes",
+      co_return fail("preset exceeds the native limit of 96 active DSP nodes",
                        std::move(warnings));
     }
 
@@ -582,48 +602,74 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
     auto outputBus = std::uint8_t{0};
     auto channelSpec = std::int8_t{-1};
     if (!parseBus(node.inputBus, inputBus) || !parseBus(node.outputBus, outputBus)) {
-      return loadError(nodeError(index, "buses must be integers from zero through four"),
+      co_return fail(nodeError(index, "buses must be integers from zero through four"),
                        std::move(warnings));
     }
     if (!parseChannel(node.channel, channelSpec)) {
-      return loadError(nodeError(index, "has an unsupported channel selection"),
+      co_return fail(nodeError(index, "has an unsupported channel selection"),
                        std::move(warnings));
     }
 
     if ((node.name == "Bass Extender" || node.name == "Adaptive Prediction") &&
         selectedProcessingChannels(channelSpec, options.maxChannels) > 2u) {
-      return loadError(
+      co_return fail(
           nodeError(index, std::string(node.name) + " requires one or two selected processing channels"),
           std::move(warnings));
     }
 
     auto packed = packDspParameters(*definition, node.parameters);
     if (!packed.error.empty()) {
-      return loadError(nodeError(index, packed.error), std::move(warnings));
+      co_return fail(nodeError(index, packed.error), std::move(warnings));
     }
     auto bassConfig = BassManagementConfig{};
     if (bassManagement) {
       if (channelSpec != -2) {
-        return loadError(nodeError(index, "Bass Management requires an explicit All channel selection"),
+        co_return fail(nodeError(index, "Bass Management requires an explicit All channel selection"),
                          std::move(warnings));
       }
       bassConfig = decodeBassManagementConfig(packed, options.maxChannels);
-      if (!bassConfig.error.empty()) return loadError(nodeError(index, bassConfig.error), std::move(warnings));
+      if (!bassConfig.error.empty()) co_return fail(nodeError(index, bassConfig.error), std::move(warnings));
     }
-    auto generatedAsset = GeneratedFirAsset{};
+    auto generatedMemory = AssetMemoryReservation{};
+    auto ownedAsset = PreparedDspAsset{};
+    auto sharedAsset = std::shared_ptr<const SharedPreparedAsset>{};
     if (generatedAssetDsp) {
+      if (!irReverb) {
+        try { generatedMemory = AssetMemoryReservation(512ull * 1024 * 1024, context.assetMemoryBytes); }
+        catch (const std::exception &error) { co_return fail(nodeError(index, error.what()), std::move(warnings)); }
+      }
       const auto processingChannels =
           selectedProcessingChannels(channelSpec, options.maxChannels);
-      if (bassManagement) {
-        generatedAsset = designBassManagementAsset(
+      if (irReverb) {
+        const auto firstChannel = channelSpec >= 16 ? static_cast<std::uint32_t>(channelSpec - 16) * 2u :
+                                  channelSpec >= 0 ? static_cast<std::uint32_t>(channelSpec) : 0u;
+        const auto availableChannels = firstChannel < options.maxChannels &&
+            processingChannels <= options.maxChannels - firstChannel ? processingChannels : 0u;
+        auto loadedIr = std::move(co_await loadIrAssetAsync(context.effetuneDirectory, node.parameters,
+            options.sampleRate, availableChannels, context.assetCache, cancellation, context.assetMemoryBytes));
+        if (loadedIr.cacheHit) ++cachedAssetCount;
+        for (const auto &file : loadedIr.files)
+          if (std::ranges::find(implementation->dependencyFiles, file) == implementation->dependencyFiles.end())
+            implementation->dependencyFiles.push_back(file);
+        if (!loadedIr.error.empty()) co_return fail(nodeError(index, loadedIr.error), std::move(warnings));
+        for (auto &snapshot : loadedIr.snapshots) sourceSnapshots.push_back(std::move(snapshot));
+        sharedAsset = std::move(loadedIr.prepared);
+        preparedAssets.push_back(sharedAsset);
+        if (sharedAsset->cachePin) implementation->assetCachePins.push_back(sharedAsset->cachePin);
+        for (const auto &diagnostic : sharedAsset->diagnostics)
+          warnings.push_back({index, std::string(node.name), diagnostic, PresetEntryState::enabled});
+      } else if (bassManagement) {
+        ownedAsset = designBassManagementAsset(
             bassConfig, options.sampleRate, options.maxFrames, api);
       } else if (crosstalk) {
-        generatedAsset = designCrosstalkAsset(
+        ownedAsset = designCrosstalkAsset(
             measured, node.parameters, options.sampleRate, processingChannels);
       } else {
-        generatedAsset = designGeneratedFirAsset(
+        ownedAsset = designGeneratedFirAsset(
             node.name, node.parameters, options.sampleRate, processingChannels, api);
       }
+      generatedMemory.shrink(ownedAsset.payload.capacity());
+      const auto &generatedAsset = sharedAsset ? sharedAsset->asset : ownedAsset;
       if (!generatedAsset.omissionReason.empty()) {
         warnings.push_back({.nodeIndex = index,
                             .pluginName = std::string(node.name),
@@ -631,10 +677,10 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
         continue;
       }
       if (!generatedAsset.error.empty()) {
-        return loadError(nodeError(index, generatedAsset.error),
+        co_return fail(nodeError(index, generatedAsset.error),
                          std::move(warnings));
       }
-      if (!bassManagement && !generatedAsset.payload.empty() &&
+      if (!bassManagement && !irReverb && !generatedAsset.payload.empty() &&
           (!replacePackedParameter(
                packed, "lt", packedHeadBlock(generatedAsset.info.head_block)) ||
            !replacePackedParameter(
@@ -643,16 +689,18 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
            (node.name == "FIR Crossover" &&
             !replacePackedParameter(
                 packed, "bc", static_cast<float>(generatedAsset.bandCount))))) {
-        return loadError(
+        co_return fail(
             nodeError(index, "generated FIR parameters do not match the native catalog"),
             std::move(warnings));
       }
     }
 
+    const auto &generatedAsset = sharedAsset ? sharedAsset->asset : ownedAsset;
+
     const auto instance =
         api.instanceCreate(implementation->engine, definition->typeName.data());
     if (instance == 0) {
-      return loadError(nodeError(index, "cannot create native DSP instance"),
+      co_return fail(nodeError(index, "cannot create native DSP instance"),
                        std::move(warnings));
     }
     const auto floatStatus =
@@ -661,7 +709,7 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
             static_cast<std::uint32_t>(packed.floats.size()),
             definition->hash, 0);
     if (floatStatus != ET_OK) {
-      return loadError(nodeError(index, "native DSP rejected packed parameters"),
+      co_return fail(nodeError(index, "native DSP rejected packed parameters"),
                        std::move(warnings));
     }
     if (definition->structured.present) {
@@ -669,22 +717,49 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
           implementation->engine, instance, packed.bytes.data(),
           static_cast<std::uint32_t>(packed.bytes.size()), definition->hash, 0);
       if (byteStatus != ET_OK) {
-        return loadError(nodeError(index, "native DSP rejected structured parameters"),
+        co_return fail(nodeError(index, "native DSP rejected structured parameters"),
                          std::move(warnings));
       }
       implementation->retainedParameterBytes.push_back(
           {instance, definition->hash, std::move(packed.bytes)});
     }
     if (generatedAssetDsp && !generatedAsset.payload.empty()) {
+      try {
+        // The footprint includes the native staging payload and convolution
+        // buffers. Keep the admission probe's 1 MiB margin through warmup.
+        implementation->nativeAssetMemory.emplace_back(
+            static_cast<std::uint64_t>(generatedAsset.info.footprint_bytes) + 1024 * 1024,
+            context.assetMemoryBytes);
+      } catch (const std::exception &error) {
+        co_return fail(nodeError(index, error.what()), std::move(warnings));
+      }
       const auto assetStatus = api.instanceAssetCopy(
           implementation->engine, instance, 0u, &generatedAsset.info,
           generatedAsset.payload.data(), generatedAsset.payload.size(),
           generatedAsset.formatTag);
       if (assetStatus != ET_OK) {
-        return loadError(
+        co_return fail(
             nodeError(index, bassManagement ? "Bass Management rejected the generated FIR asset" :
                                              "native DSP rejected the generated FIR asset"),
             std::move(warnings));
+      }
+      if (irReverb) {
+        const auto width = generatedAsset.info.processing_channels;
+        auto silence = std::vector<float>(width * options.maxFrames);
+        const auto frameBudget = static_cast<std::uint64_t>(std::max(4096u, generatedAsset.info.frames)) *
+                                 generatedAsset.info.channels * 16u;
+        auto processed = std::uint64_t{0};
+        while (api.instanceAssetState(implementation->engine, instance, 0u) == ET_ASSET_STATE_PREPARING &&
+               processed < frameBudget) {
+          std::fill(silence.begin(), silence.end(), 0.0F);
+          if (api.instanceProcess(implementation->engine, instance, silence.data(), width, options.maxFrames,
+                                  processed / static_cast<double>(options.sampleRate)) != ET_OK) break;
+          processed += options.maxFrames;
+          if ((processed / options.maxFrames) % 32u == 0u) co_await preparationCheckpoint(cancellation);
+        }
+        if (api.instanceAssetState(implementation->engine, instance, 0u) != ET_ASSET_STATE_ACTIVE ||
+            api.instanceReset(implementation->engine, instance) != ET_OK)
+          co_return fail(nodeError(index, "IR preparation did not reach ACTIVE"), std::move(warnings));
       }
     }
     activeNodes.push_back({.instance = instance,
@@ -698,15 +773,27 @@ PipelineLoadResult DspPipeline::buildFromRecipe(
   const auto descriptorStatus = api.pipelineConfigure(
       implementation->engine, descriptor.data(), static_cast<std::uint32_t>(descriptor.size()));
   if (descriptorStatus != ET_OK) {
-    return loadError("EffeTune rejected the native pipeline descriptor", std::move(warnings));
+    co_return fail("EffeTune rejected the native pipeline descriptor", std::move(warnings));
   }
   implementation->latencyFrames =
       api.pipelineLatency(implementation->engine);
   implementation->activePluginCount = activeNodes.size();
+  for (const auto &warning : warnings)
+    implementation->presetEntries[warning.nodeIndex].diagnostics.push_back(warning.reason);
 
+  co_await preparationCheckpoint(cancellation);
+  try {
+    auto maximumSourceBytes = std::uint64_t{0};
+    for (const auto &snapshot : sourceSnapshots) maximumSourceBytes = std::max(maximumSourceBytes,
+        static_cast<std::uint64_t>(snapshot.bytes));
+    const auto verification = AssetMemoryReservation(maximumSourceBytes, context.assetMemoryBytes);
+    co_await verifyAssetSnapshots(sourceSnapshots, cancellation);
+  } catch (const cardio::canceled_exception &) { throw; }
+  catch (const std::exception &error) { co_return fail(error.what(), std::move(warnings)); }
   auto pipeline = std::unique_ptr<DspPipeline>(new DspPipeline(std::move(implementation)));
-  auto files = std::vector<std::filesystem::path>(pipeline->measurementFiles().begin(), pipeline->measurementFiles().end());
-  return {.pipeline = std::move(pipeline), .warnings = std::move(warnings), .measurementFiles = std::move(files), .error = {}};
+  auto files = std::vector<std::filesystem::path>(pipeline->dependencyFiles().begin(), pipeline->dependencyFiles().end());
+  co_return PipelineLoadResult{.pipeline = std::move(pipeline), .warnings = std::move(warnings), .dependencyFiles = std::move(files),
+          .cachedAssetCount = cachedAssetCount, .error = {}};
 }
 
 PipelineLoadResult loadDspPipeline(const std::filesystem::path &presetPath,
@@ -725,65 +812,74 @@ loadDspPipeline(const std::filesystem::path &presetPath,
                 const PipelineBuildOptions &options,
                 std::shared_ptr<const DspBackend> backend,
                 const PipelineLoadContext &context) {
-  if (presetPath.extension() != ".effetune_preset") {
-    return loadError("preset path must use the exact .effetune_preset extension");
-  }
+  return runPreparation<PipelineLoadResult>([&] {
+    return loadDspPipelineAsync(presetPath, options, std::move(backend), context, {});
+  });
+}
+
+cardio::promise<PipelineLoadResult> loadDspPipelineAsync(
+    std::filesystem::path presetPath, PipelineBuildOptions options,
+    std::shared_ptr<const DspBackend> backend, PipelineLoadContext context,
+    cardio::cancellation cancellation) {
+  co_await preparationCheckpoint(cancellation);
+  if (presetPath.extension() != ".effetune_preset")
+    co_return loadError("preset path must use the exact .effetune_preset extension");
   const auto validation = validateBuildOptions(options);
-  if (!validation.empty()) {
-    return loadError(validation);
+  if (!validation.empty()) co_return loadError(validation);
+  auto recipe = std::shared_ptr<const std::string>{};
+  try {
+    const auto bytes = std::move(co_await readAssetFile(presetPath, kMaximumPresetBytes, cancellation));
+    if (bytes.empty()) co_return loadError("preset file must contain between 1 byte and 8 MiB");
+    recipe = std::make_shared<const std::string>(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+  } catch (const cardio::canceled_exception &) { throw; }
+  catch (const std::exception &error) {
+    co_return loadError(std::string("cannot read preset file: ") + error.what());
   }
-
-  auto fileError = std::error_code{};
-  const auto fileBytes = std::filesystem::file_size(presetPath, fileError);
-  if (fileError) {
-    return loadError("cannot inspect preset file: " + fileError.message());
+  auto loaded = std::move(co_await DspPipeline::buildFromRecipe(
+      recipe, options, std::move(backend), std::move(context), cancellation));
+  if (loaded.pipeline) {
+    try {
+      const auto latest = std::move(co_await readAssetFile(presetPath, kMaximumPresetBytes, cancellation));
+      if (latest.size() != recipe->size() ||
+          !std::equal(latest.begin(), latest.end(), reinterpret_cast<const std::uint8_t *>(recipe->data()))) {
+        loaded.pipeline.reset();
+        loaded.error = "preset changed during preparation";
+      }
+    } catch (const cardio::canceled_exception &) { throw; }
+    catch (const std::exception &error) {
+      loaded.pipeline.reset();
+      loaded.error = std::string("preset changed during preparation: ") + error.what();
+    }
   }
-  if (fileBytes == 0 || fileBytes > kMaximumPresetBytes) {
-    return loadError("preset file must contain between 1 byte and 8 MiB");
-  }
-  auto stream = std::ifstream(presetPath, std::ios::binary);
-  if (!stream) {
-    return loadError("cannot read preset file");
-  }
-  auto contents =
-      std::string(static_cast<std::size_t>(fileBytes), '\0');
-  stream.read(contents.data(),
-              static_cast<std::streamsize>(contents.size()));
-  if (stream.gcount() !=
-          static_cast<std::streamsize>(contents.size()) ||
-      stream.bad()) {
-    return loadError("cannot read preset file");
-  }
-  return DspPipeline::buildFromRecipe(
-      std::make_shared<const std::string>(std::move(contents)), options,
-      std::move(backend), context);
+  co_return loaded;
 }
 
-PipelineLoadResult
-rebuildDspPipeline(const DspPipeline &source,
-                   const PipelineBuildOptions &options) {
-  if (source.implementation_ == nullptr) {
-    return loadError("source DSP pipeline is unavailable");
-  }
-  return rebuildDspPipeline(source, options,
-                            source.implementation_->backend);
+PipelineLoadResult rebuildDspPipeline(const DspPipeline &source,
+                                       const PipelineBuildOptions &options) {
+  return rebuildDspPipeline(source, options, {});
 }
 
-PipelineLoadResult
-rebuildDspPipeline(const DspPipeline &source,
-                   const PipelineBuildOptions &options,
-                   std::shared_ptr<const DspBackend> backend) {
-  if (source.implementation_ == nullptr) {
-    return loadError("source DSP pipeline is unavailable");
-  }
+PipelineLoadResult rebuildDspPipeline(const DspPipeline &source,
+    const PipelineBuildOptions &options, std::shared_ptr<const DspBackend> backend) {
+  return runPreparation<PipelineLoadResult>([&] {
+    return rebuildDspPipelineAsync(source, options, std::move(backend), {});
+  });
+}
+
+cardio::promise<PipelineLoadResult> rebuildDspPipelineAsync(const DspPipeline &source,
+    PipelineBuildOptions options, std::shared_ptr<const DspBackend> backend, cardio::cancellation cancellation) {
+  // This is deliberately an ordinary function: capture the recipe while the
+  // caller protects the active source, then suspend before any heavy work.
+  cancellation.throw_if_cancellation_requested();
+  if (source.implementation_ == nullptr) return cardio::resolved(loadError("source DSP pipeline is unavailable"));
   if (source.implementation_->bypass) {
     auto created = createBypassDspPipeline(options);
-    return {.pipeline = std::move(created.pipeline),
-            .warnings = {},
-            .error = std::move(created.error)};
+    return cardio::resolved(PipelineLoadResult{.pipeline = std::move(created.pipeline),
+                                              .warnings = {}, .error = std::move(created.error)});
   }
-  return DspPipeline::buildFromRecipe(
-      source.implementation_->presetRecipe, options, std::move(backend), source.implementation_->loadContext);
+  if (!backend) backend = source.implementation_->backend;
+  return DspPipeline::buildFromRecipe(source.implementation_->presetRecipe, options,
+      std::move(backend), source.implementation_->loadContext, cancellation);
 }
 
 } // namespace pipetune

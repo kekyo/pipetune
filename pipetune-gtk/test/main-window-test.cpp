@@ -333,6 +333,18 @@ static bool checkPresetConfiguration(
   if (!check(retained, "unchanged telemetry must preserve configuration rows")) {
     return false;
   }
+  const auto diagnosed = std::vector<pipetune::PresetEntry>{
+      {"IR Reverb", State::enabled, {"No impulse response is assigned"}}};
+  pipetune_gtk::renderPresetConfiguration(ui, diagnosed);
+  gtk_tree_model_get_iter_first(model, &iter);
+  auto *diagnosticState = static_cast<gchar *>(nullptr);
+  gtk_tree_model_get(model, &iter, 1, &diagnosticState, -1);
+  const auto visibleDiagnostic = diagnosticState != nullptr &&
+      std::string(diagnosticState).starts_with(expected[0]) &&
+      std::string(diagnosticState).find("No impulse response is assigned") != std::string::npos;
+  g_free(diagnosticState);
+  if (!check(visibleDiagnostic, "an active DSP must display its preparation diagnostic without becoming ignored"))
+    return false;
   pipetune_gtk::renderPresetConfiguration(ui, std::vector<pipetune::PresetEntry>{});
   if (!check(gtk_tree_model_iter_n_children(model, nullptr) == 0,
              "loading an empty preset must remove the previous rows")) {

@@ -95,7 +95,12 @@ find_package(Threads REQUIRED)
 pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET "libpipewire-0.3>=1.0.5")
 pkg_get_variable(PIPETUNE_PIPEWIRE_MODULE_DIR libpipewire-0.3 moduledir)
 pkg_check_modules(SAMPLERATE REQUIRED IMPORTED_TARGET samplerate)
+pkg_check_modules(ASSET_GIO REQUIRED IMPORTED_TARGET "gio-2.0>=2.44")
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/PipeTuneFFmpeg.cmake")
+if(NOT EXISTS "${PIPETUNE_DEPS_DIR}/cardio/include/cardio.h")
+  message(FATAL_ERROR "cardio is unavailable; initialize the workspace submodules")
+endif()
+add_subdirectory(asset-preparation)
 
 add_library(pipetune_presentation MODULE src/pipewire_presentation.c)
 target_link_libraries(pipetune_presentation PRIVATE PkgConfig::PIPEWIRE)
@@ -192,11 +197,16 @@ add_library(
   pipetune_core STATIC
   "${PIPETUNE_GENERATED_DIR}/version.cpp"
   src/audio_bridge.cpp
+  src/asset_audio_decoder.cpp
+  src/asset_cache.cpp
+  src/asset_preparation_resources.cpp
+  src/asset_file.cpp
   src/bass_management_config.cpp
   src/dsp_backend.cpp
   src/dsp_catalog.cpp
   src/dsp_pipeline.cpp
   src/generated_fir_asset.cpp
+  src/ir_asset_loader.cpp
   src/measurement_store.cpp
   src/output_configuration.cpp
   src/output_configuration_json.cpp
@@ -214,8 +224,10 @@ target_include_directories(
     "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
 target_link_libraries(
   pipetune_core
-  PUBLIC yyjson
-  PRIVATE "${CMAKE_DL_LIBS}")
+  PUBLIC yyjson PkgConfig::ASSET_GIO
+  PRIVATE "${CMAKE_DL_LIBS}" pipetune_asset_ir pipetune_ffmpeg PkgConfig::SAMPLERATE)
+target_include_directories(pipetune_core SYSTEM PUBLIC "${PIPETUNE_DEPS_DIR}/cardio/include")
+target_compile_definitions(pipetune_core PUBLIC CARDIO_WITH_GLIB=1 CARDIO_WITH_GIO=1)
 
 if(MSVC)
   target_compile_options(pipetune_core PRIVATE /W4 /WX)
@@ -586,6 +598,57 @@ if(BUILD_TESTING)
   target_link_libraries(pipetune_tonal_balance_tests PRIVATE pipetune_core)
   target_compile_options(pipetune_tonal_balance_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME pipetune_tonal_balance_tests COMMAND pipetune_tonal_balance_tests)
+
+  add_executable(pipetune_asset_pipeline_driver test/asset_pipeline_driver.cpp)
+  add_executable(pipetune_asset_lifecycle_tests test/asset_lifecycle_test.cpp)
+  add_executable(pipetune_asset_cache_tests test/asset_cache_test.cpp)
+  target_include_directories(pipetune_asset_cache_tests PRIVATE src asset-preparation "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_include_directories(pipetune_asset_cache_tests SYSTEM PRIVATE "${PIPETUNE_DEPS_DIR}/cardio/include")
+  target_compile_definitions(pipetune_asset_cache_tests PRIVATE CARDIO_WITH_GLIB=1 CARDIO_WITH_GIO=1)
+  target_link_libraries(pipetune_asset_cache_tests PRIVATE pipetune_core PkgConfig::ASSET_GIO pipetune_asset_ir)
+  target_compile_options(pipetune_asset_cache_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_asset_cache_tests COMMAND pipetune_asset_cache_tests)
+  set_tests_properties(pipetune_asset_cache_tests PROPERTIES ENVIRONMENT "G_DEBUG=fatal-criticals")
+  target_link_libraries(pipetune_asset_lifecycle_tests PRIVATE pipetune_core pipetune_control)
+  target_include_directories(pipetune_asset_lifecycle_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_compile_options(pipetune_asset_lifecycle_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_asset_lifecycle_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
+  add_test(NAME pipetune_asset_lifecycle_tests COMMAND pipetune_asset_lifecycle_tests)
+  set_tests_properties(pipetune_asset_lifecycle_tests PROPERTIES ENVIRONMENT "G_DEBUG=fatal-criticals")
+  add_executable(pipetune_asset_audio_driver test/asset_audio_driver.cpp)
+  add_executable(pipetune_ir_cache_driver test/ir_cache_driver.cpp)
+  target_include_directories(pipetune_ir_cache_driver PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_link_libraries(pipetune_ir_cache_driver PRIVATE pipetune_core)
+  target_compile_options(pipetune_ir_cache_driver PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  target_include_directories(pipetune_asset_audio_driver PRIVATE src asset-preparation)
+  target_link_libraries(pipetune_asset_audio_driver PRIVATE pipetune_core)
+  target_compile_options(pipetune_asset_audio_driver PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  target_link_libraries(pipetune_asset_pipeline_driver PRIVATE pipetune_core)
+  target_compile_options(pipetune_asset_pipeline_driver PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_asset_pipeline_driver ${PIPETUNE_DSP_BACKEND_TARGETS})
+  find_program(PIPETUNE_ASSET_NPM npm REQUIRED)
+  find_program(PIPETUNE_ASSET_FFMPEG_EXECUTABLE ffmpeg REQUIRED)
+  set(PIPETUNE_ASSET_TEST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/asset-preparation/test")
+  set(PIPETUNE_ASSET_INSTALL_STAMP "${PIPETUNE_ASSET_TEST_DIR}/node_modules/.pipetune-ci-stamp")
+  add_custom_command(OUTPUT "${PIPETUNE_ASSET_INSTALL_STAMP}"
+    COMMAND "${PIPETUNE_ASSET_NPM}" ci
+    COMMAND "${CMAKE_COMMAND}" -E touch "${PIPETUNE_ASSET_INSTALL_STAMP}"
+    WORKING_DIRECTORY "${PIPETUNE_ASSET_TEST_DIR}"
+    DEPENDS "${PIPETUNE_ASSET_TEST_DIR}/package.json" "${PIPETUNE_ASSET_TEST_DIR}/package-lock.json"
+    VERBATIM)
+  add_custom_target(pipetune_asset_test_dependencies ALL DEPENDS "${PIPETUNE_ASSET_INSTALL_STAMP}")
+  add_dependencies(pipetune_asset_pipeline_driver pipetune_asset_test_dependencies)
+  add_test(NAME pipetune_asset_preparation_contracts
+    COMMAND "${CMAKE_COMMAND}" -E env
+      "PIPETUNE_ASSET_DRIVER=$<TARGET_FILE:pipetune_asset_pipeline_driver>"
+      "PIPETUNE_IR_DRIVER=$<TARGET_FILE:pipetune_ir_preparation_driver>"
+      "PIPETUNE_IR_CACHE_DRIVER=$<TARGET_FILE:pipetune_ir_cache_driver>"
+      "PIPETUNE_AUDIO_DRIVER=$<TARGET_FILE:pipetune_asset_audio_driver>"
+      "PIPETUNE_FFMPEG_EXECUTABLE=${PIPETUNE_ASSET_FFMPEG_EXECUTABLE}"
+      "PIPETUNE_EFFETUNE_SOURCE=${PIPETUNE_EFFETUNE_DIR}"
+      "${PIPETUNE_ASSET_NPM}" test)
+  set_tests_properties(pipetune_asset_preparation_contracts PROPERTIES
+    WORKING_DIRECTORY "${PIPETUNE_ASSET_TEST_DIR}" TIMEOUT 300)
 
   add_executable(pipetune_effetune_213_tests test/effetune_213_test.cpp)
   target_include_directories(pipetune_effetune_213_tests PRIVATE src)

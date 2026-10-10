@@ -83,9 +83,11 @@ void renderPresetConfiguration(
   gtk_list_store_clear(model);
   if (entries.has_value()) {
     for (const auto &entry : *entries) {
+      auto state = std::string(presetEntryStateText(entry.state));
+      for (const auto &diagnostic : entry.diagnostics) state += "\n" + diagnostic;
       gtk_list_store_insert_with_values(
           model, nullptr, -1, 0, entry.name.c_str(),
-          1, presetEntryStateText(entry.state), -1);
+          1, state.c_str(), -1);
     }
   }
   gtk_widget_set_visible(ui.presetConfigurationSection, entries.has_value());

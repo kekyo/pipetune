@@ -48,6 +48,21 @@ Files: deps/effetune/*
 Copyright: 2025-2026 Yoshiyuki Kobayashi
 License: MIT
 
+Files: pipetune/asset-preparation/common/convolution.cpp
+ pipetune/asset-preparation/ir/preparation.cpp
+Copyright:
+ 2026 Kouji Matsui
+ 2025-2026 Yoshiyuki Kobayashi
+License: MIT
+Comment: Native adaptation of the EffeTune application v2.13.0 IR preparation.
+ Source: https://github.com/Frieve-A/effetune/tree/v2.13.0/js/ir-library
+
+Files: deps/cardio/*
+Copyright: Kouji Matsui
+License: MIT
+Comment: Asynchronous asset file operations use cardio's public GIO helpers.
+ Source: https://github.com/kekyo/cardio
+
 Files: deps/yyjson/*
 Copyright: 2020 YaoYuan <ibireme@gmail.com>
 License: MIT

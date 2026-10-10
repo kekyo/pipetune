@@ -14,6 +14,7 @@
 #include <yyjson.h>
 
 #include <array>
+#include <bit>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
@@ -252,6 +253,86 @@ static bool replacePresetContents(const std::filesystem::path &path,
   return !error;
 }
 
+static bool testIrReload(const std::filesystem::path &socketPath,
+                          const std::filesystem::path &presetPath) {
+  const auto library = presetPath.parent_path() / "effetune" / "ir-library";
+  std::filesystem::create_directories(library);
+  auto bytes = std::vector<std::uint8_t>(44 + 512 * 4);
+  const auto put = [&bytes](std::size_t offset, std::uint32_t value, unsigned width) {
+    for (auto index = 0u; index < width; ++index) bytes[offset + index] = value >> (8 * index);
+  };
+  const auto text = [&bytes](std::size_t offset, std::string_view value) {
+    std::copy(value.begin(), value.end(), bytes.begin() + offset);
+  };
+  text(0, "RIFF"); put(4, bytes.size() - 8, 4); text(8, "WAVEfmt "); put(16, 16, 4);
+  put(20, 3, 2); put(22, 1, 2); put(24, 48000, 4); put(28, 192000, 4);
+  put(32, 4, 2); put(34, 32, 2); text(36, "data"); put(40, 512 * 4, 4);
+  put(44, std::bit_cast<std::uint32_t>(1.0F), 4);
+  auto *digestText = g_compute_checksum_for_data(G_CHECKSUM_SHA256, bytes.data(), bytes.size());
+  const auto digest = std::string(digestText);
+  g_free(digestText);
+  const auto id = digest.substr(0, 24);
+  const auto source = library / (id + ".wav");
+  {
+    auto stream = std::ofstream(source, std::ios::binary);
+    stream.write(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+  }
+  std::ofstream(library / "index.json") << "{\"version\":1,\"entries\":{\"" << id << "\":{\"irId\":\"" << id <<
+      "\",\"composition\":\"single\",\"bytes\":" << bytes.size() << ",\"originals\":[{\"role\":\"single\",\"fileName\":\"impulse.wav\",\"storageName\":\"" <<
+      id << ".wav\",\"sha256\":\"" << digest << "\",\"byteLength\":" << bytes.size() << "}]}}}";
+  const auto path = presetPath.parent_path() / "ir.effetune_preset";
+  const auto preset = "{\"pipeline\":[{\"name\":\"IR Reverb\",\"parameters\":{\"ir\":\"" + id + "\",\"cr\":\"full\",\"lt\":128}}]}";
+  if (!writePresetContents(path, preset)) return false;
+  const auto load = pipetune::exchangeControlMessage(socketPath, pipetune::makeLoadPresetControlRequest(path));
+  const auto active = pipetune::parseControlResponse(load.response);
+  if (!check(load.error.empty() && active.success && active.status.activePluginCount == 1 &&
+             active.status.dspLatencyFrames == 128, "registered IR did not activate on the live control path")) return false;
+  const auto saved = library / (id + ".saved");
+  std::filesystem::rename(source, saved);
+  const auto missing = waitForStatus(socketPath, [](const auto &status) {
+    return !status.configurationError.empty();
+  });
+  if (!check(missing && missing->activePreset == path.string() && missing->activePluginCount == 1 &&
+      missing->dspLatencyFrames == 128 && missing->configurationRevision == active.status.configurationRevision,
+      "missing IR source changed the active pipeline, latency, or configuration")) return false;
+  const auto unavailableRate = pipetune::exchangeControlMessage(socketPath, pipetune::makeSetRateControlRequest(
+      {.mode = pipetune::SampleRateMode::fixed, .fixedRate = active.status.dspSampleRate == 96000 ? 48000u : 96000u,
+       .enforcement = pipetune::SampleRateEnforcement::force}));
+  const auto unavailableBackend = pipetune::exchangeControlMessage(socketPath, pipetune::makeSetDspBackendControlRequest(
+      active.status.effectiveDspBackend == pipetune::DspBackendKind::scalar ?
+          pipetune::DspBackendKind::simd : pipetune::DspBackendKind::scalar));
+  const auto retained = pipetune::parseControlResponse(pipetune::exchangeControlMessage(
+      socketPath, pipetune::makeStatusControlRequest()).response);
+  if (!check(unavailableRate.error.empty() && !pipetune::parseControlResponse(unavailableRate.response).success &&
+      unavailableBackend.error.empty() && !pipetune::parseControlResponse(unavailableBackend.response).success &&
+      retained.success && retained.status.activePreset == path.string() && retained.status.activePluginCount == 1 &&
+      retained.status.dspLatencyFrames == 128 && retained.status.dspSampleRate == active.status.dspSampleRate &&
+      retained.status.effectiveDspBackend == active.status.effectiveDspBackend &&
+      retained.status.configuredRatePolicy == active.status.configuredRatePolicy && !retained.status.rateTransitioning,
+      "failed rate or backend preparation must retain the old IR and effective configuration")) return false;
+  std::filesystem::rename(saved, source);
+  const auto restored = waitForStatus(socketPath, [&active](const auto &status) {
+    return status.configurationError.empty() && status.configurationRevision > active.status.configurationRevision;
+  });
+  if (!check(restored && restored->dspLatencyFrames == 128, "restored original did not recover a failed IR reload")) return false;
+
+  // A missing new dependency must be watched while the prior IR remains active.
+  const auto index = library / "index.json";
+  const auto savedIndex = library / "index.saved";
+  std::filesystem::rename(index, savedIndex);
+  const auto missingIndex = waitForStatus(socketPath, [](const auto &status) { return !status.configurationError.empty(); });
+  if (!check(missingIndex && missingIndex->configurationRevision == restored->configurationRevision &&
+      missingIndex->dspLatencyFrames == 128, "missing IR registry replaced the active pipeline")) return false;
+  std::filesystem::rename(savedIndex, index);
+  const auto recovered = check(waitForStatus(socketPath, [&restored](const auto &status) {
+    return status.configurationError.empty() && status.configurationRevision > restored->configurationRevision &&
+        status.dspLatencyFrames == 128;
+  }).has_value(), "IR registry restoration did not recover automatically");
+  const auto previous = pipetune::exchangeControlMessage(socketPath, pipetune::makeLoadPresetControlRequest(presetPath));
+  return recovered && check(previous.error.empty() && pipetune::parseControlResponse(previous.response).success,
+                            "cannot restore the preceding preset after IR recovery");
+}
+
 static bool testCrosstalkReload(const std::filesystem::path &socketPath,
                                 const std::filesystem::path &presetPath) {
   const auto root = presetPath.parent_path() / "effetune" / "measurement-backups";
@@ -448,6 +529,35 @@ static bool testOversamplingReload(const std::filesystem::path &socketPath,
   return true;
 }
 
+static int runSignalChild(std::string_view processId, const std::filesystem::path &initialPresetPath,
+    const std::filesystem::path &socketPath, std::uint32_t initialDspSampleRate,
+    pipetune::SampleRatePolicy initialRatePolicy, int readyDescriptor) {
+  const auto signals = pipetune::blockPipeWireTerminationSignals();
+  if (!check(signals.empty(), signals)) return 1;
+  auto loaded = pipetune::loadDspPipeline(initialPresetPath, {static_cast<float>(initialDspSampleRate), 2, 8192});
+  if (!loaded.pipeline) return 1;
+    const auto result = pipetune::runPipeWirePipeline(
+        std::move(loaded.pipeline),
+        {.filterName = "pipetune_signal_test_" + std::string(processId),
+         .filterDescription = "PipeTune signal integration test",
+         .initialPresetPath = initialPresetPath,
+         .initialConfigurationError = {},
+         .controlSocketPath = socketPath,
+         .dspSampleRate = initialDspSampleRate,
+         .ratePolicy = initialRatePolicy,
+         .channelCount = 2,
+         .maxFrames = 8192,
+         .ringCapacityFrames = 16384,
+         .readyCallback = reportReadyToParent,
+         .readyUserData = &readyDescriptor},
+        pipetune::PipeWireRunMode::untilInterrupted);
+    if (!result.success) {
+      std::cerr << result.error << '\n';
+    }
+    close(readyDescriptor);
+  return result.success ? 0 : 1;
+}
+
 static bool testOrderlySignalShutdown(
     std::unique_ptr<pipetune::DspPipeline> pipeline,
     std::string_view processId,
@@ -462,6 +572,13 @@ static bool testOrderlySignalShutdown(
     return false;
   }
 
+  const auto childId = std::string(processId);
+  const auto childPreset = initialPresetPath.string();
+  const auto childSocket = socketPath.string();
+  const auto childRate = std::to_string(initialDspSampleRate);
+  const auto childEnforcement = std::to_string(static_cast<int>(initialRatePolicy.enforcement));
+  const auto childDescriptor = std::to_string(descriptors[1]);
+  pipeline.reset();
   const auto child = fork();
   if (child < 0) {
     close(descriptors[0]);
@@ -469,27 +586,13 @@ static bool testOrderlySignalShutdown(
     return check(false, "cannot fork PipeWire signal test");
   }
   if (child == 0) {
+    // The parent has initialized GLib's I/O threads. Start a fresh image before
+    // using GIO or PipeWire, just as the real daemon launcher does.
     close(descriptors[0]);
-    const auto result = pipetune::runPipeWirePipeline(
-        std::move(pipeline),
-        {.filterName = "pipetune_signal_test_" + std::string(processId),
-         .filterDescription = "PipeTune signal integration test",
-         .initialPresetPath = initialPresetPath,
-         .initialConfigurationError = {},
-         .controlSocketPath = socketPath,
-         .dspSampleRate = initialDspSampleRate,
-         .ratePolicy = initialRatePolicy,
-         .channelCount = 2,
-         .maxFrames = 8192,
-         .ringCapacityFrames = 16384,
-         .readyCallback = reportReadyToParent,
-         .readyUserData = &descriptors[1]},
-        pipetune::PipeWireRunMode::untilInterrupted);
-    if (!result.success) {
-      std::cerr << result.error << '\n';
-    }
-    close(descriptors[1]);
-    _exit(result.success ? 0 : 1);
+    execl("/proc/self/exe", "pipetune_pipewire_pipeline_tests", "--signal-child",
+          childId.c_str(), childPreset.c_str(), childSocket.c_str(), childRate.c_str(),
+          childEnforcement.c_str(), childDescriptor.c_str(), static_cast<char *>(nullptr));
+    _exit(127);
   }
 
   close(descriptors[1]);
@@ -590,7 +693,9 @@ static bool testOrderlySignalShutdown(
       !check(parsedLoad.success, "live preset request failed") ||
       !check(parsedLoad.status.presetEntries ==
                  std::vector<pipetune::PresetEntry>{
-                     {"Future DSP", pipetune::PresetEntryState::ignored},
+                     {"Future DSP", pipetune::PresetEntryState::ignored,
+                      parsedLoad.warnings.empty() ? std::vector<std::string>{} :
+                          std::vector<std::string>{parsedLoad.warnings.front().reason}},
                      {"Volume", pipetune::PresetEntryState::enabled}},
              "live status must report the loaded and ignored entries") ||
       !check(responseHasLivePreset(load.response, replacementPresetPath, 1),
@@ -705,7 +810,8 @@ static bool testOrderlySignalShutdown(
     return false;
   }
 
-  if (!testCrosstalkReload(socketPath, replacementPresetPath) ||
+  if (!testIrReload(socketPath, replacementPresetPath) ||
+      !testCrosstalkReload(socketPath, replacementPresetPath) ||
       !testBassManagementLiveRejection(socketPath, replacementPresetPath) ||
       !testMeasurementLiveChanges(socketPath, replacementPresetPath) ||
       !testOversamplingReload(socketPath, replacementPresetPath)) {
@@ -760,7 +866,13 @@ static bool testOrderlySignalShutdown(
   return true;
 }
 
-int main() {
+int main(int argc, char **argv) {
+  if (argc == 8 && std::string_view(argv[1]) == "--signal-child") {
+    const auto rate = static_cast<std::uint32_t>(std::stoul(argv[5]));
+    return runSignalChild(argv[2], argv[3], argv[4], rate,
+        {.mode = pipetune::SampleRateMode::fixed, .fixedRate = rate,
+         .enforcement = static_cast<pipetune::SampleRateEnforcement>(std::stoi(argv[6]))}, std::stoi(argv[7]));
+  }
   if (!testMismatchedFixedDspRateIsRejected() ||
       !testSixteenChannelPipeWireBounds() || !testIndependentInputWidth(false)) {
     return 1;
@@ -776,6 +888,7 @@ int main() {
       std::filesystem::temp_directory_path() / ("pipetune-pipewire-test-" + processId);
   std::filesystem::create_directories(directory);
   setenv("XDG_CONFIG_HOME", directory.c_str(), 1);
+  setenv("XDG_CACHE_HOME", (directory / "cache").c_str(), 1);
   const auto presetPath = directory / "empty.effetune_preset";
   {
     auto preset = std::ofstream(presetPath, std::ios::binary);
