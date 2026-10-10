@@ -109,6 +109,15 @@ for (const field of tonalSpec.fields) {
     }
   }
 }
+const adaptiveSpec = loadParamSpecs(path.join(effetuneRoot, 'dsp/plugins'))
+  .find(spec => spec.type === 'AdaptivePredictionEffectPlugin');
+for (const field of adaptiveSpec.fields) {
+  const values = field.kind === 'bool' ? [false, true, 0, 1, 2, null, 'invalid'] :
+    [field.min - 1, field.min, field.max, field.max + 1, -0.5, 0.5, null, 'invalid'];
+  for (const value of values) {
+    cases.push({type: adaptiveSpec.type, parameters: {[field.keys[0]]: value}});
+  }
+}
 for (const mn of [0, 40, 100, 192, 300]) {
   for (const mx of [0, 50, 140, 240, 300]) {
     for (const ck of [false, true]) {
@@ -120,6 +129,19 @@ for (const mn of [0, 40, 100, 192, 300]) {
 }
 for (const md of ['VU', 'PPM', 'RMS', 'Sample Peak', 'True Peak', 'Loudness']) {
   cases.push({type: 'AnalogMeterPlugin', parameters: {md}});
+}
+for (const md of ['Encode Only', 'Encode + Artifacts', 'All', 'Artifacts + Decode',
+  'Decode Only', 'invalid', null]) {
+  cases.push({type: 'CassetteArtifactsPlugin', parameters: {md}});
+}
+for (const mn of [0, 21, 28, 108, 128]) {
+  for (const mx of [0, 21, 91, 108, 128]) {
+    cases.push({type: 'NoteSpectrogramPlugin', parameters: {mn, mx}});
+  }
+}
+const noteDefaults = [...DSP_PARAM_PACKERS.get('NoteSpectrogramPlugin').pack({})];
+if (JSON.stringify(noteDefaults) !== '[28,91]') {
+  throw new Error('Note Spectrogram must use the app 2.13 HarmNet default range');
 }
 cases.push({type: 'OscilloscopePlugin', parameters: {tm: 'Off'}});
 const integerSpec = loadParamSpecs(path.join(effetuneRoot, 'dsp/plugins')).find(spec =>

@@ -82,6 +82,9 @@ const nativeAssetCapacity = asset => {
   if (asset.capacity === '32 MiB convolution cap') {
     return 32 * 1024 * 1024;
   }
+  if (asset.capacity === '1 GiB bank and index cap') {
+    return 1024 * 1024 * 1024;
+  }
   fail(`unsupported native asset capacity metadata for ${asset.slot}: ${asset.capacity}`);
 };
 

@@ -1,0 +1,16 @@
+{
+  "name": "Adaptive Prediction learned signal",
+  "pipeline": [
+    {
+      "name": "Adaptive Prediction",
+      "channel": "All",
+      "parameters": {
+        "gap": 1,
+        "learn": 0.02,
+        "original": 0,
+        "residual": 0,
+        "prediction": 1
+      }
+    }
+  ]
+}

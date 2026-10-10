@@ -261,40 +261,46 @@ static std::uint32_t findKernelIndex(const BackendApi &api,
   return count;
 }
 
-static void checkEffeTune212Catalog(const BackendApi &api) {
-  static constexpr std::array<std::string_view, 18> addedTypes = {
+static void checkEffeTune213Catalog(const BackendApi &api) {
+  static constexpr std::array<std::string_view, 20> addedTypes = {
       "GroupDelayPEQPlugin", "MDSimulatorPlugin", "ClickRemoverPlugin",
       "ClipRestorerPlugin", "HumRemoverPlugin", "NoiseReductionPlugin",
       "CrosstalkCancellationPlugin", "NoteSpectrogramPlugin",
       "PitchMeterPlugin", "SpatialMapperPlugin", "TVAudioSimulatorPlugin",
       "AttackTonalBalancePlugin", "BassExtenderPlugin",
       "BassManagementPlugin", "ChromaSpiralPlugin", "TonalBalanceEQPlugin",
-      "RhythmAnalyzerPlugin", "AnalogMeterPlugin"};
-  check(api.kernelCount() == 110u,
-        "EffeTune 2.12 backend catalog must contain 110 kernels");
+      "RhythmAnalyzerPlugin", "AnalogMeterPlugin",
+      "AdaptivePredictionEffectPlugin", "SFZNotePlayerPlugin"};
+  check(api.kernelCount() == 112u,
+        "EffeTune 2.13 backend catalog must contain 112 kernels");
   for (const auto typeName : addedTypes) {
     check(findKernelIndex(api, typeName) < api.kernelCount(),
-          "EffeTune 2.12 backend catalog must contain every required kernel");
+          "EffeTune 2.13 backend catalog must contain every required kernel");
   }
   struct Contract {
     std::string_view type;
     std::uint32_t hash;
     std::uint32_t floats;
+    std::uint32_t assetBytes;
   };
   for (const auto &contract : std::array{
-           Contract{"TonalBalanceEQPlugin", 0x0a5d8c64u, 36u},
-           Contract{"RhythmAnalyzerPlugin", 0xbae05865u, 3u},
-           Contract{"AnalogMeterPlugin", 0xc0e236cdu, 4u}}) {
+           Contract{"TonalBalanceEQPlugin", 0x0a5d8c64u, 36u, 0u},
+           Contract{"RhythmAnalyzerPlugin", 0xbae05865u, 3u, 0u},
+           Contract{"AnalogMeterPlugin", 0xc0e236cdu, 4u, 0u},
+           Contract{"AdaptivePredictionEffectPlugin", 0xebd8a6f0u, 10u, 0u},
+           Contract{"SFZNotePlayerPlugin", 0x0f17627cu, 16u, 1073741824u},
+           Contract{"CassetteArtifactsPlugin", 0x328491aeu, 13u, 0u},
+           Contract{"NoteSpectrogramPlugin", 0x9d70750bu, 2u, 0u}}) {
     const auto index = findKernelIndex(api, contract.type);
     if (index >= api.kernelCount()) continue;
     const auto *definition = pipetune::findDspByTypeName(contract.type);
     check(api.kernelParamsHash(index) == contract.hash && definition != nullptr &&
               definition->floatCount == contract.floats &&
               api.kernelParamBytesCapacity(index) == 0u,
-          "EffeTune 2.12 kernels must expose their official parameter layouts");
+          "EffeTune 2.13 kernels must expose their official parameter layouts");
     for (auto slot = 0u; slot < 4u; ++slot)
-      check(api.kernelAssetCapacity(index, slot) == 0u,
-            "EffeTune 2.12 additions must not require external assets");
+      check(api.kernelAssetCapacity(index, slot) == (slot == 0u ? contract.assetBytes : 0u),
+            "EffeTune 2.13 kernels must expose their official asset capacities");
   }
   const auto phaseSelectIndex = findKernelIndex(api, "PhaseSelectEqPlugin");
   check(phaseSelectIndex < api.kernelCount(),
@@ -955,9 +961,6 @@ int main(int argc, char **argv) {
       -20.0F, 1000.0F, 12.0F, -36.0F, 1.0F, 10.0F, -96.0F};
   static constexpr std::array bluetoothSbcParameters = {
       35.0F, 0.0F, 3.0F, 0.0F, 100.0F, 0.0F};
-  static constexpr std::array cassetteParameters = {
-      2.0F, 0.0F, 1.0F, 0.0F, 9.0F, 0.25F,
-      -60.5F, 2.0F, 2.0F, 0.0F, 0.0F, 100.0F};
   static constexpr std::array tapeParameters = {
       1.0F, 0.0F, 0.0F, 6.0F, 0.15625F, -62.5F, 0.0F, 100.0F};
   static constexpr std::array vinylParameters = {
@@ -973,9 +976,6 @@ int main(int argc, char **argv) {
       GoldenCase{"Bluetooth SBC", "BluetoothSBCSimulatorPlugin", 48000.0F,
                  4097u, 2u, 128u, 0xeffe7a5eu, bluetoothSbcParameters,
                  2.0e-5F, readGoldenAudio(argv[2], "Bluetooth SBC")},
-      GoldenCase{"Cassette Artifacts", "CassetteArtifactsPlugin", 48000.0F,
-                 12000u, 2u, 127u, 0xeffe7a5eu, cassetteParameters, 1.0e-5F,
-                 readGoldenAudio(argv[3], "Cassette Artifacts")},
       GoldenCase{"Tape Artifacts", "TapeArtifactsPlugin", 48000.0F, 12000u,
                  2u, 127u, 0xeffe7a5eu, tapeParameters, 1.0e-5F,
                  readGoldenAudio(argv[4], "Tape Artifacts")},
@@ -1024,11 +1024,15 @@ int main(int argc, char **argv) {
                 PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
             "scalar backend must report its concrete variant");
       checkAllAbiSymbols(scalar.handle);
-      checkEffeTune212Catalog(scalar);
+      checkEffeTune213Catalog(scalar);
       checkTubeRuntimeContract(scalar);
       checkUnrelatedInstanceDestruction(scalar);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "analyzer/rhythm_analyzer/golden", 6u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           std::filesystem::path(argv[3]).parent_path(), 18u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "resonator/adaptive_prediction_effect/golden", 17u);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "analyzer/analog_meter/golden", 5u);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
@@ -1081,6 +1085,8 @@ int main(int argc, char **argv) {
         checkTubeRuntimeContract(simd);
         checkUnrelatedInstanceDestruction(simd);
         checkMetadataGoldens(simd, expected, pluginRoot / "analyzer/rhythm_analyzer/golden", 6u);
+        checkMetadataGoldens(simd, expected, std::filesystem::path(argv[3]).parent_path(), 18u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "resonator/adaptive_prediction_effect/golden", 17u);
         checkMetadataGoldens(simd, expected, pluginRoot / "analyzer/analog_meter/golden", 5u);
         checkMetadataGoldens(simd, expected, pluginRoot / "eq/tonal_balance_eq/golden", 6u);
         checkGoldenCases(simd, expected, goldenCases);

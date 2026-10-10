@@ -1,0 +1,14 @@
+{
+  "name": "Adaptive Prediction initially frozen",
+  "pipeline": [
+    {
+      "name": "Adaptive Prediction",
+      "channel": "All",
+      "parameters": {
+        "freeze": true,
+        "residual": 0,
+        "prediction": 1
+      }
+    }
+  ]
+}

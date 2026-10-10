@@ -1,0 +1,15 @@
+{
+  "name": "Adaptive Prediction in a disabled section",
+  "pipeline": [
+    {
+      "name": "Section",
+      "enabled": false
+    },
+    {
+      "name": "Adaptive Prediction",
+      "enabled": true,
+      "channel": "All",
+      "parameters": {}
+    }
+  ]
+}

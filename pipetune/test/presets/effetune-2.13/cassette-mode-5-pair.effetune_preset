@@ -1,0 +1,12 @@
+{
+  "name": "Cassette default",
+  "pipeline": [
+    {
+      "name": "Cassette Artifacts",
+      "channel": "34",
+      "parameters": {
+        "nr": "Dolby C"
+      }
+    }
+  ]
+}

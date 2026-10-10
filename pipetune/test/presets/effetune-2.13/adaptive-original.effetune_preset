@@ -1,0 +1,16 @@
+{
+  "name": "Adaptive Prediction original signal",
+  "pipeline": [
+    {
+      "name": "Adaptive Prediction",
+      "enabled": true,
+      "channel": "",
+      "parameters": {
+        "original": 0.5,
+        "residual": 0,
+        "prediction": 0,
+        "freeze": true
+      }
+    }
+  ]
+}

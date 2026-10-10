@@ -56,7 +56,8 @@ static bool testClicks(const std::filesystem::path &path) {
       Case{48000, 4, "All", 0, 2}, Case{32000, 1, "All", 0, 1},
       Case{44100, 2, "All", 0, 2}, Case{88200, 4, "34", 2, 2},
       Case{96000, 16, "15", 14, 1}, Case{176400, 16, "1516", 14, 2},
-      Case{192000, 1, "1", 0, 1}, Case{384000, 2, "All", 0, 2}};
+      Case{192000, 1, "1", 0, 1}, Case{384000, 2, "All", 0, 2},
+      Case{64000, 6, "All", 0, 2}};
   const auto backends = pipetune::discoverDspBackends();
   for (const auto &backend : {backends.scalar.backend, backends.simd.backend}) {
     for (const auto &c : cases) {
@@ -97,7 +98,7 @@ static bool testClicks(const std::filesystem::path &path) {
             for (auto i = 0u; i < count; ++i) {
               const auto added = audio[c.first * count + i] - input[c.first * count + i];
               for (auto ch = 0u; ch < c.channels; ++ch) {
-                const auto selected = click && ch >= c.first && ch < c.first + c.width;
+                const auto selected = click && c.rate != 64000 && ch >= c.first && ch < c.first + c.width;
                 if (!check(std::isfinite(audio[ch * count + i]) &&
                                (selected ? audio[ch * count + i] == audio[c.first * count + i] :
                                            audio[ch * count + i] == input[ch * count + i]),
@@ -116,7 +117,7 @@ static bool testClicks(const std::filesystem::path &path) {
             }
             start += count;
           }
-          if (click) {
+          if (click && c.rate != 64000) {
             std::cout << "Rhythm rate=" << c.rate << " channels=" << c.channels << " route=" << c.selection
                       << " reset=" << repeat << " clicks=" << onsets.size() << std::endl;
             if (!check(onsets.size() >= 20, "a steady groove must produce detected-beat clicks")) return false;
@@ -124,7 +125,69 @@ static bool testClicks(const std::filesystem::path &path) {
               if (onsets[i - 1] >= 8.0 &&
                   !check(std::abs(onsets[i] - onsets[i - 1] - 0.5) < 0.03,
                          "established clicks must follow the 120 BPM input")) return false;
-          } else if (!check(onsets.empty(), "click-off reload must remove all generated clicks")) return false;
+          } else if (!check(onsets.empty(), "click-off and unsupported sample rates must preserve PCM without clicks")) return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+static bool testSilenceRecovery(const std::filesystem::path &path) {
+  constexpr auto rate = 48000u;
+  constexpr auto blockFrames = 257u;
+  const auto table = groove(rate);
+  {
+    auto file = std::ofstream(path);
+    file << R"({"pipeline":[{"name":"Rhythm Analyzer","channel":"","parameters":{"mn":100,"mx":140,"ck":true}}]})";
+  }
+  struct Gap { const char *name; std::uint32_t frames; float sample; };
+  const auto gaps = std::array{
+      Gap{"short digital silence", 9600, 0.0F},
+      Gap{"long digital silence", 96000, 0.0F},
+      Gap{"quiet nonzero signal", 96000, 1e-10F}};
+  const auto backends = pipetune::discoverDspBackends();
+  for (const auto &backend : {backends.scalar.backend, backends.simd.backend}) {
+    for (const auto &gap : gaps) {
+      auto loaded = pipetune::loadDspPipeline(path, {rate, 2, blockFrames}, backend);
+      if (!check(loaded.pipeline != nullptr && loaded.warnings.empty(), loaded.error)) return false;
+      auto position = 0u;
+      for (auto phase = 0u; phase < 3u; ++phase) {
+        const auto frames = phase == 0u ? rate * 20u : phase == 1u ? gap.frames : rate * 12u;
+        auto onsets = std::vector<double>{};
+        auto lastChanged = -1.0;
+        // Process the quiet interval directly so the host's idle policy cannot
+        // conceal Rd6's own digital-silence handling and subsequent recovery.
+        for (auto start = 0u; start < frames;) {
+          const auto count = std::min(blockFrames, frames - start);
+          auto audio = std::vector<float>(count * 2u);
+          for (auto i = 0u; i < count; ++i)
+            audio[i] = audio[count + i] = phase == 1u ? gap.sample : table[(start + i) % rate];
+          const auto input = audio;
+          if (!check(loaded.pipeline->process(audio, 2, count, position / static_cast<double>(rate)) ==
+                         pipetune::ProcessStatus::ok, "Rhythm silence/recovery processing failed")) return false;
+          for (auto i = 0u; i < count; ++i) {
+            if (!check(std::isfinite(audio[i]) && audio[i] == audio[count + i],
+                       "Rhythm recovery must keep both channels finite and aligned")) return false;
+            if (std::abs(audio[i] - input[i]) > 1e-6F) {
+              const auto time = (start + i) / static_cast<double>(rate);
+              if (lastChanged < 0 || time - lastChanged > 0.07) onsets.push_back(time);
+              lastChanged = time;
+            }
+          }
+          start += count;
+          position += count;
+        }
+        if (phase != 1u) {
+          if (!check(onsets.size() >= (phase == 0u ? 20u : 12u),
+                     "a groove must establish and recover detected-beat clicks after every quiet interval"))
+            return false;
+          for (auto i = std::size_t{1}; i < onsets.size(); ++i)
+            if (onsets[i - 1u] >= 8.0 &&
+                !check(std::abs(onsets[i] - onsets[i - 1u] - 0.5) < 0.03,
+                       "recovered clicks must follow the input's 120 BPM")) return false;
+          std::cout << "Rhythm " << gap.name << " phase=" << phase
+                    << " firstClick=" << onsets.front() << " clicks=" << onsets.size() << '\n';
         }
       }
     }
@@ -136,7 +199,8 @@ int main() {
   const auto directory = std::filesystem::temp_directory_path() /
       ("pipetune-rhythm-test-" + std::to_string(static_cast<long long>(getpid())));
   std::filesystem::create_directories(directory);
-  const auto passed = testClicks(directory / "rhythm.effetune_preset");
+  const auto passed = testClicks(directory / "rhythm.effetune_preset") &&
+      testSilenceRecovery(directory / "rhythm-recovery.effetune_preset");
   std::filesystem::remove_all(directory);
   return passed ? 0 : 1;
 }
