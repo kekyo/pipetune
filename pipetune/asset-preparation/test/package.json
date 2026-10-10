@@ -1,0 +1,21 @@
+{
+  "name": "pipetune-asset-preparation-tests",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "vite build && vitest run --reporter=verbose",
+    "dependencies": "reskill"
+  },
+  "devDependencies": {
+    "@types/node": "25.9.1",
+    "prettier-max": "1.16.0",
+    "resolved-killer": "1.1.0",
+    "typescript": "6.0.3",
+    "vite": "6.4.3",
+    "vitest": "4.1.8"
+  }
+}

@@ -11,6 +11,7 @@
 #include <spa/utils/defs.h>
 
 #include <cstdint>
+#include <span>
 
 namespace pipetune {
 
@@ -47,6 +48,21 @@ bool pipeWireStateTransitionInvalidatesQueuedAudio(
 bool inspectPipeWireCaptureBuffer(const spa_buffer &buffer,
                                   std::uint32_t channelCount,
                                   std::uint32_t &frameCount) noexcept;
+
+/**
+ * Copies a capture block into a wider DSP buffer, clearing additional channels.
+ * @param buffer Planar float capture buffer, including wrapped chunk offsets.
+ * @param inputChannels Number of channels actually supplied by the stream.
+ * @param sourceFrame First frame within the valid capture chunk.
+ * @param frameCount Number of frames to copy per channel; must be nonzero.
+ * @param dspChannels DSP width, at least inputChannels and at most sixteen.
+ * @param destination Exactly dspChannels * frameCount channel-major samples.
+ * @return True on success; invalid shapes leave destination unchanged.
+ * @remarks No allocation or remixing. Empty capture chunks become silence.
+ */
+bool copyPipeWireCaptureBlock(const spa_buffer &buffer, std::uint32_t inputChannels,
+    std::uint32_t sourceFrame, std::uint32_t frameCount, std::uint32_t dspChannels,
+    std::span<float> destination) noexcept;
 
 /**
  * Marks all data chunks in a consumed capture buffer as having no valid data.

@@ -4,6 +4,7 @@
  * https://github.com/kekyo/pipetune/
  */
 #include "application-state.h"
+#include <algorithm>
 
 namespace pipetune_gtk {
 
@@ -233,12 +234,18 @@ bool isPresetApplied(const ApplicationState &state) {
          !state.runtime.activePreset.empty();
 }
 
+std::size_t presetWarningCount(const ApplicationState &state) {
+  auto count = std::size_t{0};
+  for (const auto &entry : state.runtime.presetEntries) count += entry.diagnostics.size();
+  return std::max(count, state.warnings.size());
+}
+
 TrayVisualState trayVisualState(const ApplicationState &state) {
   if (state.connection != ControlConnectionState::connected) {
     return TrayVisualState::disconnected;
   }
   if (!state.hasRuntimeStatus || !state.diagnostic.empty() ||
-      !state.warnings.empty() ||
+      presetWarningCount(state) != 0 ||
       !state.runtime.configurationError.empty() ||
       !state.runtime.rateError.empty() ||
       state.runtime.rateTransitioning ||

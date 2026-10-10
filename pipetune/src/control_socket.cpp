@@ -20,7 +20,6 @@
 #include <fcntl.h>
 #include <memory>
 #include <optional>
-#include <poll.h>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -49,6 +48,9 @@ struct ControlServer::Impl {
   void *userData;
   int eventDescriptor;
   ControlDescriptorEventHandler eventHandler;
+  AsyncControlMessageHandler asyncHandler;
+  AsyncControlDescriptorEventHandler asyncEventHandler;
+  AsyncControlStatusProvider asyncStatusProvider;
   int listener;
   int stopEvent;
   int publishEvent;
@@ -59,7 +61,8 @@ struct ControlServer::Impl {
       : socketPath(std::move(path)), handler(options.handler),
         statusProvider(options.statusProvider), userData(options.userData),
         eventDescriptor(options.eventDescriptor),
-        eventHandler(options.eventHandler), listener(-1), stopEvent(-1),
+        eventHandler(options.eventHandler), asyncHandler(options.asyncHandler),
+        asyncEventHandler(options.asyncEventHandler), asyncStatusProvider(options.asyncStatusProvider), listener(-1), stopEvent(-1),
         publishEvent(-1), ownsSocket(false), thread() {}
 
   ~Impl() {
@@ -185,333 +188,247 @@ static bool bindListener(ControlServer::Impl &implementation,
   return true;
 }
 
-static bool waitForDescriptor(int descriptor, short events, int stopEvent) {
-  auto descriptors = std::array<pollfd, 2>{
-      pollfd{.fd = descriptor, .events = events, .revents = 0},
-      pollfd{.fd = stopEvent, .events = POLLIN, .revents = 0}};
-  auto result = int{-1};
-  do {
-    result = poll(descriptors.data(), descriptors.size(), -1);
-  } while (result < 0 && errno == EINTR);
-  return result > 0 && (descriptors[1].revents & POLLIN) == 0 &&
-         (descriptors[0].revents &
-          static_cast<short>(events | POLLHUP | POLLERR)) != 0;
+struct ControlSession {
+  int descriptor;
+  bool subscriber = false;
+  std::optional<std::string> pendingOutput;
+  cardio::primitives::conditional publication;
+  cardio::cancellation_source cancellation;
+
+  explicit ControlSession(int value) : descriptor(value) {}
+  ~ControlSession() { close(descriptor); }
+};
+
+struct ControlService {
+  ControlServer::Impl &implementation;
+  cardio::cancellation_source cancellation;
+  struct Job {
+    std::shared_ptr<ControlSession> session;
+    cardio::promise<void> completion;
+  };
+  std::vector<Job> jobs;
+};
+
+static void drainEvent(int descriptor) {
+  auto value = eventfd_t{0};
+  while (eventfd_read(descriptor, &value) == 0) {}
 }
 
-static bool readServerRequest(int descriptor, int stopEvent,
-                              std::string &request) {
+static void collectCompletedClients(ControlService &service) {
+  std::erase_if(service.jobs, [](const auto &job) { return job.completion.try_result(); });
+}
+
+static cardio::promise<void> publishToSubscribers(ControlService &service) {
+  if (service.implementation.statusProvider == nullptr && service.implementation.asyncStatusProvider == nullptr) co_return;
+  auto message = std::string{};
+  try {
+    if (service.implementation.asyncStatusProvider)
+      message = std::move(co_await service.implementation.asyncStatusProvider(
+          service.implementation.userData, service.cancellation.get_cancellation()));
+    else message = service.implementation.statusProvider(service.implementation.userData);
+  } catch (const std::exception &) { co_return; }
+  if (message.empty() || message.size() > kMaximumControlResponseBytes ||
+      message.find('\n') != std::string::npos) co_return;
+  for (auto &job : service.jobs) {
+    if (!job.session->subscriber) continue;
+    // Retain only the latest unsent status while a slow subscriber drains its
+    // current message. A slow peer cannot block other clients or grow a queue.
+    job.session->pendingOutput = message;
+    job.session->publication.trigger();
+  }
+}
+
+static cardio::promise<std::string> readServerRequest(
+    int descriptor, cardio::cancellation cancellation) {
+  auto request = std::string{};
   auto buffer = std::array<char, 4096>{};
-  while (request.size() <= kMaximumControlRequestBytes) {
-    if (!waitForDescriptor(descriptor, POLLIN, stopEvent)) {
-      return false;
-    }
-    auto count = ssize_t{-1};
-    do {
-      count = recv(descriptor, buffer.data(), buffer.size(), 0);
-    } while (count < 0 && errno == EINTR);
-    if (count <= 0) {
-      return false;
-    }
+  for (;;) {
+    co_await cardio::from_fd(descriptor, cardio::fd_event::read, cancellation);
+    const auto count = recv(descriptor, buffer.data(), buffer.size(), MSG_DONTWAIT);
+    if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) continue;
+    if (count <= 0) throw std::runtime_error("control peer disconnected");
     request.append(buffer.data(), static_cast<std::size_t>(count));
     const auto newline = request.find('\n');
-    if (newline != std::string::npos) {
+    if (newline != std::string::npos && newline <= kMaximumControlRequestBytes) {
       request.resize(newline);
-      return true;
+      co_return request;
     }
+    if (request.size() > kMaximumControlRequestBytes)
+      throw std::runtime_error("control request exceeds its byte limit");
   }
-  return false;
 }
 
-static bool writeServerResponse(int descriptor, int stopEvent,
-                                std::string_view response) {
+static cardio::promise<void> writeServerResponse(
+    int descriptor, std::string_view response, cardio::cancellation cancellation) {
   auto framed = std::string(response);
   framed.push_back('\n');
   auto written = std::size_t{0};
   while (written < framed.size()) {
-    if (!waitForDescriptor(descriptor, POLLOUT, stopEvent)) {
-      return false;
-    }
-    auto count = ssize_t{-1};
-    do {
-      count = send(descriptor, framed.data() + written,
-                   framed.size() - written, MSG_NOSIGNAL);
-    } while (count < 0 && errno == EINTR);
-    if (count <= 0) {
-      return false;
-    }
+    co_await cardio::from_fd(descriptor, cardio::fd_event::write, cancellation);
+    const auto count = send(descriptor, framed.data() + written, framed.size() - written,
+                            MSG_NOSIGNAL | MSG_DONTWAIT);
+    if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) continue;
+    if (count <= 0) throw std::runtime_error("control peer stopped reading");
     written += static_cast<std::size_t>(count);
   }
-  return true;
 }
 
-struct ControlSubscriber {
-  int descriptor;
-  std::string output;
-  std::size_t outputOffset;
-  std::optional<std::string> pendingOutput;
-};
-
-static std::string framedMessage(std::string_view message) {
-  auto framed = std::string(message);
-  framed.push_back('\n');
-  return framed;
+static cardio::promise<void> observeDisconnect(ControlSession &session) {
+  try {
+    co_await cardio::from_fd(session.descriptor, cardio::fd_event::read,
+                            session.cancellation.get_cancellation());
+    // The protocol accepts exactly one request per connection.
+    session.cancellation.cancel();
+  } catch (const cardio::canceled_exception &) {}
 }
 
-static void closeSubscriber(ControlSubscriber &subscriber) {
-  if (subscriber.descriptor >= 0) {
-    close(subscriber.descriptor);
-    subscriber.descriptor = -1;
-  }
+static cardio::promise<void> handleClient(ControlService &service,
+                                          std::shared_ptr<ControlSession> session) {
+  auto registration = service.cancellation.get_cancellation().on_cancellation_requested(
+      [session] { session->cancellation.cancel(); });
+  const auto cancellation = session->cancellation.get_cancellation();
+  auto disconnected = std::optional<cardio::promise<void>>{};
+  try {
+    auto request = std::move(co_await readServerRequest(session->descriptor, cancellation));
+    disconnected.emplace(observeDisconnect(*session));
+    auto &implementation = service.implementation;
+    auto result = ControlMessageResult{{}, ControlConnectionMode::close, false};
+    try {
+      if (implementation.asyncHandler) {
+        result = std::move(co_await implementation.asyncHandler(request, implementation.userData, cancellation));
+      } else {
+        result = implementation.handler(request, implementation.userData);
+      }
+    } catch (const cardio::canceled_exception &) { throw; }
+    catch (const std::exception &) {
+      result.response = R"json({"ok":false,"error":"control request handler failed"})json";
+    }
+    cancellation.throw_if_cancellation_requested();
+    if (result.response.empty() || result.response.size() > kMaximumControlResponseBytes ||
+        result.response.find('\n') != std::string::npos) {
+      result = {R"json({"ok":false,"error":"control response is unavailable"})json",
+                ControlConnectionMode::close, false};
+    }
+    if (result.publishStatus) co_await publishToSubscribers(service);
+    co_await writeServerResponse(session->descriptor, result.response, cancellation);
+    const auto subscriberCount = std::ranges::count_if(service.jobs,
+        [](const auto &job) { return job.session->subscriber; });
+    if (result.connectionMode == ControlConnectionMode::subscribe &&
+        (implementation.statusProvider || implementation.asyncStatusProvider) &&
+        subscriberCount < static_cast<std::ptrdiff_t>(kMaximumControlSubscribers)) {
+      session->subscriber = true;
+      for (;;) {
+        if (!session->pendingOutput) co_await session->publication.wait(cancellation);
+        cancellation.throw_if_cancellation_requested();
+        if (!session->pendingOutput) continue;
+        auto output = std::move(*session->pendingOutput);
+        session->pendingOutput.reset();
+        co_await writeServerResponse(session->descriptor, output, cancellation);
+      }
+    }
+  } catch (const std::exception &) {}
+  session->subscriber = false;
+  session->cancellation.cancel();
+  if (disconnected) co_await *disconnected;
+  // Keep descriptor ownership in this coroutine until every readiness wait has
+  // completed. A later connection must never inherit a still-observed fd number.
+  shutdown(session->descriptor, SHUT_RDWR);
 }
 
-static bool configureSubscriber(int descriptor) {
-  const auto flags = fcntl(descriptor, F_GETFL, 0);
-  return flags >= 0 &&
-         fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0;
-}
-
-static void queueSubscriberMessage(ControlSubscriber &subscriber,
-                                   std::string_view message) {
-  auto framed = framedMessage(message);
-  if (subscriber.output.empty()) {
-    subscriber.output = std::move(framed);
-    subscriber.outputOffset = 0;
-    return;
-  }
-  subscriber.pendingOutput = std::move(framed);
-}
-
-static bool flushSubscriber(ControlSubscriber &subscriber) {
-  while (!subscriber.output.empty()) {
-    const auto count =
-        send(subscriber.descriptor,
-             subscriber.output.data() + subscriber.outputOffset,
-             subscriber.output.size() - subscriber.outputOffset,
-             MSG_NOSIGNAL | MSG_DONTWAIT);
-    if (count > 0) {
-      subscriber.outputOffset += static_cast<std::size_t>(count);
-      if (subscriber.outputOffset < subscriber.output.size()) {
+static cardio::promise<void> acceptClients(ControlService &service) {
+  const auto cancellation = service.cancellation.get_cancellation();
+  try {
+    for (;;) {
+      co_await cardio::from_fd(service.implementation.listener, cardio::fd_event::read, cancellation);
+      const auto descriptor = accept4(service.implementation.listener, nullptr, nullptr, SOCK_CLOEXEC | SOCK_NONBLOCK);
+      if (descriptor < 0) {
+        if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
+        throw std::runtime_error(socketError("cannot accept control connection"));
+      }
+      collectCompletedClients(service);
+      if (!sameUserPeer(descriptor) || service.jobs.size() >= 64) {
+        close(descriptor);
         continue;
       }
-      subscriber.output.clear();
-      subscriber.outputOffset = 0;
-      if (subscriber.pendingOutput.has_value()) {
-        subscriber.output = std::move(*subscriber.pendingOutput);
-        subscriber.pendingOutput.reset();
-      }
-      continue;
+      auto session = std::make_shared<ControlSession>(descriptor);
+      auto completion = handleClient(service, session);
+      service.jobs.push_back({std::move(session), std::move(completion)});
     }
-    if (count < 0 && errno == EINTR) {
-      continue;
+  } catch (const cardio::canceled_exception &) {}
+}
+
+static cardio::promise<void> observePublication(ControlService &service) {
+  const auto cancellation = service.cancellation.get_cancellation();
+  try {
+    for (;;) {
+      co_await cardio::from_fd(service.implementation.publishEvent, cardio::fd_event::read, cancellation);
+      drainEvent(service.implementation.publishEvent);
+      collectCompletedClients(service);
+      co_await publishToSubscribers(service);
     }
-    return count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK);
-  }
-  return true;
+  } catch (const cardio::canceled_exception &) {}
 }
 
-static void publishToSubscribers(
-    ControlServer::Impl &implementation,
-    std::vector<ControlSubscriber> &subscribers) {
-  if (subscribers.empty() || implementation.statusProvider == nullptr) {
-    return;
-  }
-  auto message = std::string{};
+static cardio::promise<void> publishPeriodically(ControlService &service) {
   try {
-    message = implementation.statusProvider(implementation.userData);
-  } catch (const std::exception &) {
-    return;
-  }
-  if (message.empty() || message.size() > kMaximumControlResponseBytes ||
-      message.find('\n') != std::string::npos) {
-    return;
-  }
-  for (auto &subscriber : subscribers) {
-    queueSubscriberMessage(subscriber, message);
-  }
+    for (;;) {
+      co_await cardio::promises::delay(
+          std::chrono::duration_cast<std::chrono::milliseconds>(kStatusPublicationInterval).count(),
+          service.cancellation.get_cancellation());
+      collectCompletedClients(service);
+      if (std::ranges::any_of(service.jobs, [](const auto &job) { return job.session->subscriber; }))
+        co_await publishToSubscribers(service);
+    }
+  } catch (const cardio::canceled_exception &) {}
 }
 
-static bool handleClient(ControlServer::Impl &implementation, int descriptor,
-                         std::vector<ControlSubscriber> &subscribers) {
-  if (!sameUserPeer(descriptor)) {
-    close(descriptor);
-    return false;
-  }
-  auto request = std::string{};
-  if (!readServerRequest(descriptor, implementation.stopEvent, request)) {
-    close(descriptor);
-    return false;
-  }
-  auto result = ControlMessageResult{
-      .response = {},
-      .connectionMode = ControlConnectionMode::close,
-      .publishStatus = false,
-  };
+static cardio::promise<void> observeApplicationEvents(ControlService &service) {
+  auto &implementation = service.implementation;
+  if (implementation.eventDescriptor < 0) co_return;
+  const auto cancellation = service.cancellation.get_cancellation();
   try {
-    result = implementation.handler(request, implementation.userData);
-  } catch (const std::exception &) {
-    result.response =
-        R"json({"ok":false,"error":"control request handler failed"})json";
-  }
-  if (result.response.empty() ||
-      result.response.size() > kMaximumControlResponseBytes ||
-      result.response.find('\n') != std::string::npos) {
-    result.response =
-        R"json({"ok":false,"error":"control response is unavailable"})json";
-    result.connectionMode = ControlConnectionMode::close;
-    result.publishStatus = false;
-  }
-  if (!writeServerResponse(descriptor, implementation.stopEvent,
-                           result.response)) {
-    close(descriptor);
-    return result.publishStatus;
-  }
-  if (result.connectionMode == ControlConnectionMode::subscribe &&
-      implementation.statusProvider != nullptr &&
-      subscribers.size() < kMaximumControlSubscribers &&
-      configureSubscriber(descriptor)) {
-    subscribers.push_back({.descriptor = descriptor,
-                           .output = {},
-                           .outputOffset = 0,
-                           .pendingOutput = std::nullopt});
-  } else {
-    close(descriptor);
-  }
-  return result.publishStatus;
+    for (;;) {
+      co_await cardio::from_fd(implementation.eventDescriptor, cardio::fd_event::read, cancellation);
+      auto publish = false;
+      try {
+        if (implementation.asyncEventHandler)
+          publish = co_await implementation.asyncEventHandler(implementation.userData, cancellation);
+        else publish = implementation.eventHandler(implementation.userData);
+      } catch (const cardio::canceled_exception &) { cancellation.throw_if_cancellation_requested(); }
+      catch (const std::exception &) {}
+      if (publish) co_await publishToSubscribers(service);
+    }
+  } catch (const cardio::canceled_exception &) {}
 }
 
-static void drainEvent(int descriptor) {
-  auto value = eventfd_t{0};
-  while (eventfd_read(descriptor, &value) == 0) {
-  }
-}
-
-static void closeSubscribers(
-    std::vector<ControlSubscriber> &subscribers) {
-  for (auto &subscriber : subscribers) {
-    closeSubscriber(subscriber);
-  }
-  subscribers.clear();
-}
-
-static void removeClosedSubscribers(
-    std::vector<ControlSubscriber> &subscribers) {
-  std::erase_if(subscribers, [](const ControlSubscriber &subscriber) {
-    return subscriber.descriptor < 0;
-  });
+static cardio::promise<void> serve(ControlServer::Impl &implementation,
+                                    cardio::dispatcher_group_glib &group) {
+  auto service = ControlService{implementation, {}, {}};
+  auto accepting = acceptClients(service);
+  auto publication = observePublication(service);
+  auto periodic = publishPeriodically(service);
+  auto application = observeApplicationEvents(service);
+  co_await cardio::from_fd(implementation.stopEvent, cardio::fd_event::read);
+  service.cancellation.cancel();
+  co_await accepting;
+  co_await publication;
+  co_await periodic;
+  co_await application;
+  for (auto &job : service.jobs) co_await job.completion;
+  group.shutdown();
 }
 
 static void runControlServer(ControlServer::Impl *implementation) {
-  auto subscribers = std::vector<ControlSubscriber>{};
-  auto nextPublication = std::chrono::steady_clock::time_point{};
-  auto publicationScheduled = false;
-  while (true) {
-    const auto beforePoll = std::chrono::steady_clock::now();
-    if (subscribers.empty()) {
-      publicationScheduled = false;
-    } else if (!publicationScheduled) {
-      nextPublication = beforePoll + kStatusPublicationInterval;
-      publicationScheduled = true;
-    }
-    const auto timeout =
-        publicationScheduled
-            ? static_cast<int>(
-                  std::chrono::ceil<std::chrono::milliseconds>(
-                      std::max(std::chrono::steady_clock::duration::zero(),
-                               nextPublication - beforePoll))
-                      .count())
-            : -1;
-    const auto observesApplicationEvent =
-        implementation->eventDescriptor >= 0 &&
-        implementation->eventHandler != nullptr;
-    const auto subscriberOffset =
-        observesApplicationEvent ? std::size_t{4} : std::size_t{3};
-    auto descriptors = std::vector<pollfd>{};
-    descriptors.reserve(subscriberOffset + subscribers.size());
-    descriptors.push_back(pollfd{.fd = implementation->listener,
-                                 .events = POLLIN,
-                                 .revents = 0});
-    descriptors.push_back(pollfd{.fd = implementation->stopEvent,
-                                 .events = POLLIN,
-                                 .revents = 0});
-    descriptors.push_back(pollfd{.fd = implementation->publishEvent,
-                                 .events = POLLIN,
-                                 .revents = 0});
-    if (observesApplicationEvent) {
-      descriptors.push_back(
-          pollfd{.fd = implementation->eventDescriptor,
-                 .events = POLLIN,
-                 .revents = 0});
-    }
-    for (const auto &subscriber : subscribers) {
-      auto events = static_cast<short>(POLLIN);
-      if (!subscriber.output.empty()) {
-        events = static_cast<short>(events | POLLOUT);
-      }
-      descriptors.push_back(pollfd{.fd = subscriber.descriptor,
-                                   .events = events,
-                                   .revents = 0});
-    }
-
-    auto result = int{-1};
-    do {
-      result = poll(descriptors.data(), descriptors.size(), timeout);
-    } while (result < 0 && errno == EINTR);
-    if (result < 0 || (descriptors[1].revents & POLLIN) != 0) {
-      closeSubscribers(subscribers);
-      return;
-    }
-    const auto afterPoll = std::chrono::steady_clock::now();
-    if (publicationScheduled && afterPoll >= nextPublication) {
-      publishToSubscribers(*implementation, subscribers);
-      do {
-        nextPublication += kStatusPublicationInterval;
-      } while (afterPoll >= nextPublication);
-    }
-    if ((descriptors[2].revents & POLLIN) != 0) {
-      drainEvent(implementation->publishEvent);
-      publishToSubscribers(*implementation, subscribers);
-    }
-
-    if (observesApplicationEvent &&
-        (descriptors[3].revents & POLLIN) != 0) {
-      auto publishStatus = false;
-      try {
-        publishStatus =
-            implementation->eventHandler(implementation->userData);
-      } catch (const std::exception &) {
-      }
-      if (publishStatus) {
-        publishToSubscribers(*implementation, subscribers);
-      }
-    }
-
-    for (auto index = std::size_t{0}; index < subscribers.size(); ++index) {
-      const auto revents = descriptors[index + subscriberOffset].revents;
-      auto &subscriber = subscribers[index];
-      if ((revents & static_cast<short>(POLLHUP | POLLERR | POLLNVAL |
-                                       POLLIN)) != 0) {
-        closeSubscriber(subscriber);
-      } else if ((revents & POLLOUT) != 0 &&
-                 !flushSubscriber(subscriber)) {
-        closeSubscriber(subscriber);
-      }
-    }
-    removeClosedSubscribers(subscribers);
-
-    if ((descriptors[0].revents & POLLIN) != 0) {
-      const auto client =
-          accept4(implementation->listener, nullptr, nullptr, SOCK_CLOEXEC);
-      if (client >= 0) {
-        if (handleClient(*implementation, client, subscribers)) {
-          publishToSubscribers(*implementation, subscribers);
-        }
-      } else if (errno != EINTR && errno != EAGAIN &&
-                 errno != EWOULDBLOCK) {
-        closeSubscribers(subscribers);
-        return;
-      }
-    }
+  const auto context = std::unique_ptr<GMainContext, decltype(&g_main_context_unref)>(
+      g_main_context_new(), g_main_context_unref);
+  g_main_context_push_thread_default(context.get());
+  {
+    cardio::dispatcher_group_glib group(context.get());
+    cardio::dispatcher_host_glib host(group);
+    const auto operation = serve(*implementation, group);
+    host.park();
   }
+  g_main_context_pop_thread_default(context.get());
 }
 
 ControlServer::ControlServer(std::unique_ptr<Impl> implementation)
@@ -538,12 +455,15 @@ resolveControlSocketPath(const std::filesystem::path &configuredPath) {
 ControlServerStartResult
 startControlServer(const std::filesystem::path &socketPath,
                    const ControlServerOptions &options) {
-  if (options.handler == nullptr) {
+  if (options.statusProvider && options.asyncStatusProvider)
+    return {.server = nullptr, .error = "configure only one control status provider"};
+  if ((options.handler == nullptr) == (options.asyncHandler == nullptr)) {
     return {.server = nullptr,
-            .error = "control message handler must not be null"};
+            .error = "exactly one control message handler is required"};
   }
   if ((options.eventDescriptor >= 0) !=
-      (options.eventHandler != nullptr)) {
+      (options.eventHandler != nullptr || options.asyncEventHandler != nullptr) ||
+      (options.eventHandler != nullptr && options.asyncEventHandler != nullptr)) {
     return {.server = nullptr,
             .error = "control event descriptor and handler must be paired"};
   }
@@ -572,7 +492,7 @@ startControlServer(const std::filesystem::path &socketPath,
   auto implementation =
       std::make_unique<ControlServer::Impl>(socketPath, options);
   implementation->listener =
-      socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+      socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
   if (implementation->listener < 0) {
     return {.server = nullptr,
             .error = socketError("cannot create control socket")};
@@ -650,11 +570,16 @@ exchangeControlMessage(const std::filesystem::path &socketPath,
   if (!configureClientTimeouts(descriptor, error) ||
       connect(descriptor, reinterpret_cast<const sockaddr *>(&address),
               addressLength) != 0) {
+    // Only a refused or missing endpoint proves that no request was sent.
+    // Timeouts and failures after connecting may hide an applied change.
+    const auto unavailable =
+        error.empty() && (errno == ENOENT || errno == ECONNREFUSED);
     if (error.empty()) {
       error = socketError("cannot connect to PipeTune control socket");
     }
     close(descriptor);
-    return {.response = {}, .error = std::move(error)};
+    return {.response = {}, .error = std::move(error),
+            .unavailable = unavailable};
   }
   if (!sameUserPeer(descriptor)) {
     close(descriptor);

@@ -92,8 +92,29 @@ endif()
 
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
-pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3)
+pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET "libpipewire-0.3>=1.0.5")
+pkg_get_variable(PIPETUNE_PIPEWIRE_MODULE_DIR libpipewire-0.3 moduledir)
 pkg_check_modules(SAMPLERATE REQUIRED IMPORTED_TARGET samplerate)
+pkg_check_modules(ASSET_GIO REQUIRED IMPORTED_TARGET "gio-2.0>=2.44")
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/PipeTuneFFmpeg.cmake")
+if(NOT EXISTS "${PIPETUNE_DEPS_DIR}/cardio/include/cardio.h")
+  message(FATAL_ERROR "cardio is unavailable; initialize the workspace submodules")
+endif()
+add_subdirectory(asset-preparation)
+
+add_library(pipetune_presentation MODULE src/pipewire_presentation.c)
+target_link_libraries(pipetune_presentation PRIVATE PkgConfig::PIPEWIRE)
+set_target_properties(pipetune_presentation PROPERTIES
+  OUTPUT_NAME "pipewire-module-pipetune-presentation")
+target_compile_options(pipetune_presentation PRIVATE -Wall -Wextra -Werror)
+if(BUILD_TESTING)
+  add_executable(pipetune_device_presentation_fixture test/device_presentation_fixture.c)
+  target_link_libraries(pipetune_device_presentation_fixture PRIVATE PkgConfig::PIPEWIRE)
+  target_compile_options(pipetune_device_presentation_fixture PRIVATE -Wall -Wextra -Werror)
+  add_executable(pipetune_device_route_probe test/device_route_probe.c)
+  target_link_libraries(pipetune_device_route_probe PRIVATE PkgConfig::PIPEWIRE)
+  target_compile_options(pipetune_device_route_probe PRIVATE -Wall -Wextra -Werror)
+endif()
 
 find_program(PIPETUNE_NODE_EXECUTABLE node REQUIRED)
 find_program(PIPETUNE_SYSTEMCTL_EXECUTABLE systemctl REQUIRED)
@@ -176,12 +197,21 @@ add_library(
   pipetune_core STATIC
   "${PIPETUNE_GENERATED_DIR}/version.cpp"
   src/audio_bridge.cpp
+  src/asset_audio_decoder.cpp
+  src/asset_cache.cpp
+  src/asset_preparation_resources.cpp
+  src/asset_file.cpp
   src/bass_management_config.cpp
   src/dsp_backend.cpp
   src/dsp_catalog.cpp
   src/dsp_pipeline.cpp
   src/generated_fir_asset.cpp
+  src/ir_asset_loader.cpp
+  src/sfz_asset_loader.cpp
+  src/room_asset_loader.cpp
   src/measurement_store.cpp
+  src/output_configuration.cpp
+  src/output_configuration_json.cpp
   src/crosstalk_fir.cpp
   src/sample_rate.cpp
   src/startup_config.cpp
@@ -196,8 +226,10 @@ target_include_directories(
     "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
 target_link_libraries(
   pipetune_core
-  PUBLIC yyjson
-  PRIVATE "${CMAKE_DL_LIBS}")
+  PUBLIC yyjson PkgConfig::ASSET_GIO
+  PRIVATE "${CMAKE_DL_LIBS}" pipetune_asset_ir pipetune_asset_sfz pipetune_asset_room pipetune_ffmpeg PkgConfig::SAMPLERATE)
+target_include_directories(pipetune_core SYSTEM PUBLIC "${PIPETUNE_DEPS_DIR}/cardio/include")
+target_compile_definitions(pipetune_core PUBLIC CARDIO_WITH_GLIB=1 CARDIO_WITH_GIO=1)
 
 if(MSVC)
   target_compile_options(pipetune_core PRIVATE /W4 /WX)
@@ -231,8 +263,14 @@ add_library(
   src/dsp_pipeline_slot.cpp
   src/filter_graph_properties.cpp
   src/input_telemetry.cpp
+  src/output_inventory.cpp
+  src/output_command.cpp
+  src/output_distribution.cpp
   src/pipewire_buffer_io.cpp
+  src/pipewire_graph_clock.cpp
   src/pipewire_latency.cpp
+  src/pipewire_output_inventory.cpp
+  src/pipewire_output_paths.cpp
   src/pipewire_pipeline.cpp
   src/process_runner.cpp
   src/rate_command.cpp
@@ -253,6 +291,7 @@ else()
 endif()
 
 add_executable(pipetune src/main.cpp)
+pipetune_configure_ffmpeg_runtime(pipetune)
 set_target_properties(
   pipetune PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 target_include_directories(pipetune PRIVATE src "${PIPETUNE_GENERATED_DIR}")
@@ -307,6 +346,9 @@ set(
   "${CMAKE_INSTALL_DATADIR}/doc/pipetune")
 
 install(TARGETS pipetune RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+# PipeWire 1.0 discovers server modules in its configured module directory,
+# independently of the executable prefix. No existing module is replaced.
+install(TARGETS pipetune_presentation LIBRARY DESTINATION "${PIPETUNE_PIPEWIRE_MODULE_DIR}")
 install(
   TARGETS ${PIPETUNE_DSP_BACKEND_TARGETS}
   LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/pipetune")
@@ -441,7 +483,7 @@ if(BUILD_TESTING)
       src
       "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
   target_link_libraries(
-    pipetune_effetune_backend_artifact_tests PRIVATE pipetune_core "${CMAKE_DL_LIBS}")
+    pipetune_effetune_backend_artifact_tests PRIVATE pipetune_core pipetune_asset_sfz "${CMAKE_DL_LIBS}")
   add_dependencies(
     pipetune_effetune_backend_artifact_tests
     ${PIPETUNE_DSP_BACKEND_TARGETS})
@@ -558,6 +600,101 @@ if(BUILD_TESTING)
   target_link_libraries(pipetune_tonal_balance_tests PRIVATE pipetune_core)
   target_compile_options(pipetune_tonal_balance_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME pipetune_tonal_balance_tests COMMAND pipetune_tonal_balance_tests)
+
+  add_executable(pipetune_asset_pipeline_driver test/asset_pipeline_driver.cpp)
+  add_executable(pipetune_asset_lifecycle_tests test/asset_lifecycle_test.cpp)
+  add_executable(pipetune_asset_cache_tests test/asset_cache_test.cpp)
+  target_include_directories(pipetune_asset_cache_tests PRIVATE src asset-preparation "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_include_directories(pipetune_asset_cache_tests SYSTEM PRIVATE "${PIPETUNE_DEPS_DIR}/cardio/include")
+  target_compile_definitions(pipetune_asset_cache_tests PRIVATE CARDIO_WITH_GLIB=1 CARDIO_WITH_GIO=1)
+  target_link_libraries(pipetune_asset_cache_tests PRIVATE pipetune_core PkgConfig::ASSET_GIO pipetune_asset_ir)
+  target_compile_options(pipetune_asset_cache_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_asset_cache_tests COMMAND pipetune_asset_cache_tests)
+  add_executable(pipetune_asset_source_tests test/asset_source_test.cpp)
+  target_link_libraries(pipetune_asset_source_tests PRIVATE pipetune_core)
+  target_include_directories(pipetune_asset_source_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_compile_options(pipetune_asset_source_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_asset_source_tests COMMAND pipetune_asset_source_tests)
+  set_tests_properties(pipetune_asset_source_tests PROPERTIES ENVIRONMENT "G_DEBUG=fatal-criticals")
+  set_tests_properties(pipetune_asset_cache_tests PROPERTIES ENVIRONMENT "G_DEBUG=fatal-criticals")
+  target_link_libraries(pipetune_asset_lifecycle_tests PRIVATE pipetune_core pipetune_control)
+  target_include_directories(pipetune_asset_lifecycle_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_compile_options(pipetune_asset_lifecycle_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_asset_lifecycle_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
+  add_test(NAME pipetune_asset_lifecycle_tests COMMAND pipetune_asset_lifecycle_tests)
+  set_tests_properties(pipetune_asset_lifecycle_tests PROPERTIES ENVIRONMENT "G_DEBUG=fatal-criticals")
+  add_executable(pipetune_asset_audio_driver test/asset_audio_driver.cpp)
+  add_executable(pipetune_ir_cache_driver test/ir_cache_driver.cpp)
+  add_executable(pipetune_sfz_playback_driver test/sfz_playback_driver.cpp)
+  target_include_directories(pipetune_sfz_playback_driver PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_link_libraries(pipetune_sfz_playback_driver PRIVATE pipetune_core pipetune_asset_sfz)
+  target_compile_options(pipetune_sfz_playback_driver PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_sfz_playback_driver ${PIPETUNE_DSP_BACKEND_TARGETS})
+
+  add_executable(pipetune_sfz_runtime_tests test/sfz_runtime_test.cpp)
+  target_include_directories(pipetune_sfz_runtime_tests PRIVATE src)
+  target_link_libraries(pipetune_sfz_runtime_tests PRIVATE pipetune_pipewire)
+  target_compile_options(pipetune_sfz_runtime_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_sfz_runtime_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
+  add_test(NAME pipetune_sfz_runtime_tests COMMAND pipetune_sfz_runtime_tests)
+  target_include_directories(pipetune_ir_cache_driver PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_link_libraries(pipetune_ir_cache_driver PRIVATE pipetune_core)
+  target_compile_options(pipetune_ir_cache_driver PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  target_include_directories(pipetune_asset_audio_driver PRIVATE src asset-preparation)
+  target_link_libraries(pipetune_asset_audio_driver PRIVATE pipetune_core)
+  target_compile_options(pipetune_asset_audio_driver PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  target_link_libraries(pipetune_asset_pipeline_driver PRIVATE pipetune_core)
+  target_compile_options(pipetune_asset_pipeline_driver PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_asset_pipeline_driver ${PIPETUNE_DSP_BACKEND_TARGETS})
+  find_program(PIPETUNE_ASSET_NPM npm REQUIRED)
+  find_program(PIPETUNE_ASSET_FFMPEG_EXECUTABLE ffmpeg REQUIRED)
+  set(PIPETUNE_ASSET_TEST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/asset-preparation/test")
+  set(PIPETUNE_ASSET_INSTALL_STAMP "${PIPETUNE_ASSET_TEST_DIR}/node_modules/.pipetune-ci-stamp")
+  add_custom_command(OUTPUT "${PIPETUNE_ASSET_INSTALL_STAMP}"
+    COMMAND "${PIPETUNE_ASSET_NPM}" ci
+    COMMAND "${CMAKE_COMMAND}" -E touch "${PIPETUNE_ASSET_INSTALL_STAMP}"
+    WORKING_DIRECTORY "${PIPETUNE_ASSET_TEST_DIR}"
+    DEPENDS "${PIPETUNE_ASSET_TEST_DIR}/package.json" "${PIPETUNE_ASSET_TEST_DIR}/package-lock.json"
+    VERBATIM)
+  add_custom_target(pipetune_asset_test_dependencies ALL DEPENDS "${PIPETUNE_ASSET_INSTALL_STAMP}")
+  add_dependencies(pipetune_asset_pipeline_driver pipetune_asset_test_dependencies)
+  add_test(NAME pipetune_asset_preparation_contracts
+    COMMAND "${CMAKE_COMMAND}" -E env
+      "PIPETUNE_ASSET_DRIVER=$<TARGET_FILE:pipetune_asset_pipeline_driver>"
+      "PIPETUNE_IR_DRIVER=$<TARGET_FILE:pipetune_ir_preparation_driver>"
+      "PIPETUNE_ROOM_DRIVER=$<TARGET_FILE:pipetune_room_preparation_driver>"
+      "PIPETUNE_SFZ_DRIVER=$<TARGET_FILE:pipetune_sfz_preparation_driver>"
+      "PIPETUNE_SFZ_PLAYBACK_DRIVER=$<TARGET_FILE:pipetune_sfz_playback_driver>"
+      "PIPETUNE_IR_CACHE_DRIVER=$<TARGET_FILE:pipetune_ir_cache_driver>"
+      "PIPETUNE_AUDIO_DRIVER=$<TARGET_FILE:pipetune_asset_audio_driver>"
+      "PIPETUNE_FFMPEG_EXECUTABLE=${PIPETUNE_ASSET_FFMPEG_EXECUTABLE}"
+      "PIPETUNE_EFFETUNE_SOURCE=${PIPETUNE_EFFETUNE_DIR}"
+      "${PIPETUNE_ASSET_NPM}" test)
+  set_tests_properties(pipetune_asset_preparation_contracts PROPERTIES
+    WORKING_DIRECTORY "${PIPETUNE_ASSET_TEST_DIR}" TIMEOUT 300)
+
+  add_executable(pipetune_effetune_213_tests test/effetune_213_test.cpp)
+  target_include_directories(pipetune_effetune_213_tests PRIVATE src)
+  target_link_libraries(pipetune_effetune_213_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_effetune_213_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_effetune_213_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
+  add_test(NAME pipetune_effetune_213_tests COMMAND pipetune_effetune_213_tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/test/presets/effetune-2.13/adaptive-original.effetune_preset)
+
+  add_executable(pipetune_adaptive_prediction_tests test/adaptive_prediction_test.cpp)
+  target_include_directories(pipetune_adaptive_prediction_tests PRIVATE src)
+  target_link_libraries(pipetune_adaptive_prediction_tests PRIVATE pipetune_pipewire)
+  target_compile_options(pipetune_adaptive_prediction_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_adaptive_prediction_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
+  add_test(NAME pipetune_adaptive_prediction_tests COMMAND pipetune_adaptive_prediction_tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/test/presets/effetune-2.13)
+
+  add_executable(pipetune_cassette_artifacts_tests test/cassette_artifacts_test.cpp)
+  target_link_libraries(pipetune_cassette_artifacts_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_cassette_artifacts_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_cassette_artifacts_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
+  add_test(NAME pipetune_cassette_artifacts_tests COMMAND pipetune_cassette_artifacts_tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/test/presets/effetune-2.13)
 
   add_executable(pipetune_rhythm_analyzer_tests test/rhythm_analyzer_test.cpp)
   target_link_libraries(pipetune_rhythm_analyzer_tests PRIVATE pipetune_core)
@@ -779,9 +916,154 @@ if(BUILD_TESTING)
     COMMAND pipetune_user_setup_tests)
 
   find_program(PIPETUNE_PIPEWIRE_EXECUTABLE pipewire REQUIRED)
+  add_executable(pipetune_output_inventory_observer_tests test/output_inventory_observer_test.cpp)
+  target_include_directories(pipetune_output_inventory_observer_tests PRIVATE src)
+  target_link_libraries(pipetune_output_inventory_observer_tests PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE)
+  target_compile_options(pipetune_output_inventory_observer_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_output_inventory
+    COMMAND ${PIPETUNE_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/output-inventory.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE} $<TARGET_FILE:pipetune>
+      $<TARGET_FILE:pipetune_output_inventory_observer_tests>)
+  set_tests_properties(pipetune_output_inventory PROPERTIES TIMEOUT 30)
+  add_executable(pipetune_output_configuration_tests test/output_configuration_test.cpp)
+  target_link_libraries(pipetune_output_configuration_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_output_configuration_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_output_configuration_tests COMMAND pipetune_output_configuration_tests)
+  add_executable(pipetune_output_timing_tests test/output_timing_test.cpp)
+  target_include_directories(pipetune_output_timing_tests PRIVATE src)
+  target_link_libraries(pipetune_output_timing_tests PRIVATE pipetune_pipewire)
+  target_compile_options(pipetune_output_timing_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_output_timing_tests COMMAND pipetune_output_timing_tests)
   find_program(PIPETUNE_WIREPLUMBER_EXECUTABLE wireplumber REQUIRED)
+  find_program(PIPETUNE_PW_CLI_EXECUTABLE pw-cli REQUIRED)
+  find_program(PIPETUNE_PW_DUMP_EXECUTABLE pw-dump REQUIRED)
+  find_program(PIPETUNE_PW_CAT_EXECUTABLE pw-cat REQUIRED)
+  find_program(PIPETUNE_PW_LINK_EXECUTABLE pw-link REQUIRED)
+  add_test(NAME pipetune_device_presentation
+    COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/device-presentation.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+      $<TARGET_FILE:pipetune_device_presentation_fixture>
+      $<TARGET_FILE_DIR:pipetune_presentation>
+      ${PIPETUNE_PIPEWIRE_MODULE_DIR} ${PIPETUNE_PW_DUMP_EXECUTABLE} ${PIPETUNE_PW_CLI_EXECUTABLE}
+      $<TARGET_FILE:pipetune_device_route_probe>)
+  set_tests_properties(pipetune_device_presentation PROPERTIES TIMEOUT 45)
+  add_test(NAME pipetune_device_presentation_pcm
+    COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/device-presentation.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+      $<TARGET_FILE:pipetune_device_presentation_fixture>
+      $<TARGET_FILE_DIR:pipetune_presentation>
+      ${PIPETUNE_PIPEWIRE_MODULE_DIR} ${PIPETUNE_PW_DUMP_EXECUTABLE} ${PIPETUNE_PW_CLI_EXECUTABLE}
+      $<TARGET_FILE:pipetune_device_route_probe> ${PIPETUNE_PW_CAT_EXECUTABLE} ${PIPETUNE_PW_LINK_EXECUTABLE} --pcm)
+  set_tests_properties(pipetune_device_presentation_pcm PROPERTIES TIMEOUT 60)
   find_program(PIPETUNE_PW_CAT_EXECUTABLE pw-cat REQUIRED)
   find_program(PIPETUNE_PW_DUMP_EXECUTABLE pw-dump REQUIRED)
+  find_program(PIPETUNE_PULSE_EXECUTABLE pipewire-pulse REQUIRED)
+  pkg_check_modules(PULSE REQUIRED IMPORTED_TARGET libpulse)
+  add_executable(pipetune_desktop_output_probe test/desktop_output_probe.c)
+  target_link_libraries(pipetune_desktop_output_probe PRIVATE PkgConfig::PULSE)
+  target_compile_options(pipetune_desktop_output_probe PRIVATE -Wall -Wextra -Werror)
+  add_test(NAME pipetune_desktop_output_visibility COMMAND
+    ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/device-presentation.mjs
+    ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+    $<TARGET_FILE:pipetune_device_presentation_fixture> $<TARGET_FILE_DIR:pipetune_presentation>
+    ${PIPETUNE_PIPEWIRE_MODULE_DIR} ${PIPETUNE_PW_DUMP_EXECUTABLE} ${PIPETUNE_PW_CLI_EXECUTABLE}
+    $<TARGET_FILE:pipetune_device_route_probe> ${PIPETUNE_PW_CAT_EXECUTABLE} ${PIPETUNE_PW_LINK_EXECUTABLE}
+    $<TARGET_FILE:pipetune_wireplumber_policy_fixture> ${PIPETUNE_PULSE_EXECUTABLE}
+    $<TARGET_FILE:pipetune_desktop_output_probe> --desktop)
+  set_tests_properties(pipetune_desktop_output_visibility PROPERTIES TIMEOUT 60)
+  add_executable(pipetune_pulse_output_probe tools/pulse-output-probe.cpp)
+  target_link_libraries(pipetune_pulse_output_probe PRIVATE PkgConfig::PULSE)
+  target_compile_options(pipetune_pulse_output_probe PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_executable(
+    pipetune_multi_device_output_probe
+    tools/multi-device-output-probe.cpp)
+  target_link_libraries(
+    pipetune_multi_device_output_probe PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE)
+  target_include_directories(pipetune_multi_device_output_probe PRIVATE src)
+  target_compile_options(
+    pipetune_multi_device_output_probe PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+  add_executable(pipetune_product_output_tests test/product_output_test.cpp)
+  target_link_libraries(pipetune_product_output_tests PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE)
+  target_include_directories(pipetune_product_output_tests PRIVATE src)
+  target_link_options(pipetune_product_output_tests PRIVATE -Wl,--wrap=pw_stream_connect)
+  target_compile_options(pipetune_product_output_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  foreach(scenario product-bypass product-matrix product-slots product-sixteen product-volume product-disconnected product-reconnect product-profile product-restart product-restart-mute product-latency product-latency-units product-latency-reconnect product-time-alignment product-controls product-output-clock product-output-clock-alt product-output-clock-unavailable product-output-change product-output-timeout product-output-status product-output-status-single product-output-recovery)
+    add_test(NAME pipetune_${scenario}
+      COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+        ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+        $<TARGET_FILE:pipetune_product_output_tests> ${scenario}
+        $<TARGET_FILE:pipetune_wireplumber_policy_fixture> "" "" ""
+        $<TARGET_FILE_DIR:pipetune_presentation> ${PIPETUNE_PIPEWIRE_MODULE_DIR})
+    set_tests_properties(pipetune_${scenario} PROPERTIES TIMEOUT 45)
+  endforeach()
+  foreach(scenario product-daemon product-daemon-volume product-daemon-volume-zero)
+    add_test(
+      NAME pipetune_${scenario}
+      COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+        ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+        $<TARGET_FILE:pipetune_product_output_tests> ${scenario}
+        $<TARGET_FILE:pipetune_wireplumber_policy_fixture> "" "" $<TARGET_FILE:pipetune>
+        $<TARGET_FILE_DIR:pipetune_presentation> ${PIPETUNE_PIPEWIRE_MODULE_DIR})
+    set_tests_properties(pipetune_${scenario} PROPERTIES TIMEOUT 45)
+  endforeach()
+  add_test(
+    NAME pipetune_multi_device_output
+    COMMAND
+      ${PIPETUNE_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE}
+      ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+      $<TARGET_FILE:pipetune_multi_device_output_probe>)
+  set_tests_properties(pipetune_multi_device_output PROPERTIES TIMEOUT 60)
+  add_test(
+    NAME pipetune_multi_device_reconnect
+    COMMAND
+      ${PIPETUNE_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE}
+      ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+      $<TARGET_FILE:pipetune_multi_device_output_probe>
+      reconnect)
+  set_tests_properties(pipetune_multi_device_reconnect PROPERTIES TIMEOUT 60)
+  add_test(
+    NAME pipetune_multi_device_volume
+    COMMAND
+      ${PIPETUNE_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE}
+      ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+      $<TARGET_FILE:pipetune_multi_device_output_probe>
+      volume)
+  set_tests_properties(pipetune_multi_device_volume PROPERTIES TIMEOUT 60)
+  foreach(scenario IN ITEMS latency latency-off latency-change latency-reconnect)
+    add_test(
+      NAME pipetune_multi_device_${scenario}
+      COMMAND
+        ${PIPETUNE_NODE_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+        ${PIPETUNE_PIPEWIRE_EXECUTABLE}
+        ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+        $<TARGET_FILE:pipetune_multi_device_output_probe>
+        ${scenario})
+    set_tests_properties(pipetune_multi_device_${scenario} PROPERTIES TIMEOUT 60)
+  endforeach()
+  foreach(scenario policy-pulse policy-pulse-volume)
+    add_test(
+      NAME pipetune_multi_device_${scenario}
+      COMMAND
+        ${PIPETUNE_NODE_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+        ${PIPETUNE_PIPEWIRE_EXECUTABLE}
+        ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+        $<TARGET_FILE:pipetune_multi_device_output_probe>
+        ${scenario}
+        $<TARGET_FILE:pipetune_wireplumber_policy_fixture>
+        ${PIPETUNE_PULSE_EXECUTABLE}
+        $<TARGET_FILE:pipetune_pulse_output_probe>)
+    set_tests_properties(pipetune_multi_device_${scenario} PROPERTIES TIMEOUT 60)
+  endforeach()
   add_executable(
     pipetune_wireplumber_policy_fixture
     test/wireplumber_policy_fixture.cpp)
@@ -789,6 +1071,21 @@ if(BUILD_TESTING)
     pipetune_wireplumber_policy_fixture PRIVATE src)
   target_link_libraries(
     pipetune_wireplumber_policy_fixture PRIVATE pipetune_pipewire)
+  foreach(scenario policy policy-volume policy-reconnect policy-visibility policy-recovery
+      policy-defaults policy-defaults-empty policy-defaults-external policy-defaults-equivalent policy-defaults-recovery
+      policy-restart policy-restart-volume policy-restart-mute)
+    add_test(
+      NAME pipetune_multi_device_${scenario}
+      COMMAND
+        ${PIPETUNE_NODE_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+        ${PIPETUNE_PIPEWIRE_EXECUTABLE}
+        ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+        $<TARGET_FILE:pipetune_multi_device_output_probe>
+        ${scenario}
+        $<TARGET_FILE:pipetune_wireplumber_policy_fixture>)
+    set_tests_properties(pipetune_multi_device_${scenario} PROPERTIES TIMEOUT 60)
+  endforeach()
   if(MSVC)
     target_compile_options(
       pipetune_wireplumber_policy_fixture PRIVATE /W4 /WX)
@@ -812,6 +1109,12 @@ if(BUILD_TESTING)
     PROPERTIES
       SKIP_RETURN_CODE 77
       TIMEOUT 30)
+
+  add_executable(pipetune_output_command_tests test/output_command_test.cpp)
+  target_include_directories(pipetune_output_command_tests PRIVATE src)
+  target_link_libraries(pipetune_output_command_tests PRIVATE pipetune_pipewire)
+  target_compile_options(pipetune_output_command_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_output_command_tests COMMAND pipetune_output_command_tests)
 
   add_executable(
     pipetune_rate_command_tests
@@ -870,7 +1173,8 @@ if(BUILD_TESTING)
   endif()
   add_test(
     NAME pipetune_pipewire_buffer_io_tests
-    COMMAND pipetune_pipewire_buffer_io_tests)
+    COMMAND pipetune_pipewire_buffer_io_tests
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/presets/stereo-to-four.effetune_preset)
 
   add_executable(
     pipetune_pipewire_latency_tests
@@ -908,24 +1212,6 @@ if(BUILD_TESTING)
   add_test(
     NAME pipetune_pipewire_stream_flags_tests
     COMMAND pipetune_pipewire_stream_flags_tests)
-
-  add_executable(
-    pipetune_pipewire_pre_0_3_73_stream_flags_tests
-    test/pipewire_stream_flags_test.cpp)
-  target_include_directories(
-    pipetune_pipewire_pre_0_3_73_stream_flags_tests PRIVATE
-    test/fixtures/pipewire-pre-0.3.73 src)
-  if(MSVC)
-    target_compile_options(
-      pipetune_pipewire_pre_0_3_73_stream_flags_tests PRIVATE /W4 /WX)
-  else()
-    target_compile_options(
-      pipetune_pipewire_pre_0_3_73_stream_flags_tests PRIVATE
-      -Wall -Wextra -Wpedantic -Werror)
-  endif()
-  add_test(
-    NAME pipetune_pipewire_pre_0_3_73_stream_flags_tests
-    COMMAND pipetune_pipewire_pre_0_3_73_stream_flags_tests)
 
   add_executable(
     pipetune_sample_rate_converter_tests
@@ -1069,7 +1355,8 @@ if(BUILD_TESTING)
       ${PIPETUNE_SYSTEMD_USER_UNIT_DIR}
       ${CMAKE_INSTALL_LIBDIR}
       ${PIPETUNE_DOCUMENTATION_DIR}
-      ${CMAKE_CURRENT_BINARY_DIR}/pipetune.test.service)
+      ${CMAKE_CURRENT_BINARY_DIR}/pipetune.test.service
+      ${PIPETUNE_PIPEWIRE_MODULE_DIR})
 
   add_test(
     NAME pipetune_component_build

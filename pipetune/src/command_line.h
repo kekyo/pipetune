@@ -7,13 +7,16 @@
 #define PIPETUNE_COMMAND_LINE_H
 
 #include "pipetune/dsp_backend.h"
+#include "pipetune/asset_memory.h"
 #include "pipetune/sample_rate.h"
+#include "pipetune/output_configuration.h"
 
 #include <cstdint>
 #include <filesystem>
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace pipetune {
 
@@ -27,6 +30,16 @@ enum class CommandLineAction {
   daemon,
   /** Bypass live and startup DSP processing. */
   bypass,
+  /** List currently available audio outputs and all profile channels. */
+  outputList,
+  /** Show live routing and the physical destination of every DSP channel. */
+  outputGet,
+  /** Apply and persist one complete JSON output configuration. */
+  outputSet,
+  /** Select outputs by current node name, retaining all existing slots. */
+  outputSelect,
+  /** Switch mode without discarding retained device assignments. */
+  outputMode,
   /** Show the configured and effective sample-rate state. */
   rateGet,
   /** List automatic and fixed sample-rate choices. */
@@ -87,6 +100,12 @@ struct CommandLineOptions {
   bool assumeYes;
   /** True to print a machine-readable control response. */
   bool json;
+  /** Complete outputSet configuration, or requested outputMode in mode. */
+  OutputConfiguration outputConfiguration = {};
+  /** Current PipeWire node names for outputSelect, in initial allocation order. */
+  std::vector<std::string> outputNodes = {};
+  /** Direct-run per-instrument SFZ budget in MiB. */
+  std::uint32_t sfzMaxSizeMiB = kDefaultSfzMaxSizeMiB;
 };
 
 /**

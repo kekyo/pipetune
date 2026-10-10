@@ -27,6 +27,8 @@ struct ServerState {
   pipetune::DspBackendKind dspBackend;
   pipetune::DspSimdVariant dspSimdVariant;
   pipetune::DspIdlePolicy dspIdlePolicy;
+  pipetune::OutputConfiguration outputConfiguration = {};
+  std::uint64_t outputRevision = 42;
 };
 
 static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
@@ -41,6 +43,7 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
           .activePreset = state.bypassed ? std::string{}
                                          : state.activePreset,
           .configurationError = {},
+          .configurationRevision = state.outputRevision,
           .activePluginCount = state.bypassed ? 0u : 3u,
           .overrunFrames = 0,
           .underrunFrames = 0,
@@ -94,7 +97,8 @@ static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
                 .available = true,
                 .cpuSupported = true,
                 .cpuRequirement = "test SIMD ISA",
-                .error = {}}}};
+                .error = {}}},
+          .outputConfiguration = state.outputConfiguration};
 }
 
 static std::string provideStatus(void *userData) {
@@ -170,6 +174,22 @@ static pipetune::ControlMessageResult handleRequest(
             .connectionMode = pipetune::ControlConnectionMode::close,
             .publishStatus = true};
   }
+  if (request.request.command == pipetune::ControlCommand::setOutput) {
+    {
+      auto lock = std::scoped_lock(state.mutex);
+      if (request.request.expectedRevision != state.outputRevision)
+        return {.response = pipetune::makeControlErrorResponse("output revision differs"),
+                .connectionMode = pipetune::ControlConnectionMode::close, .publishStatus = false};
+      state.outputConfiguration = request.request.outputConfiguration;
+      if (request.request.outputPreset.has_value()) {
+        state.activePreset = request.request.outputPreset->string();
+        state.bypassed = state.activePreset.empty();
+      }
+      ++state.outputRevision;
+    }
+    return {.response = pipetune::makeControlSuccessResponse(serverStatus(state), {}),
+            .connectionMode = pipetune::ControlConnectionMode::close, .publishStatus = true};
+  }
   return {.response =
               pipetune::makeControlSuccessResponse(serverStatus(state), {}),
           .connectionMode = pipetune::ControlConnectionMode::close,
@@ -198,6 +218,9 @@ struct ClientTestState {
   bool disconnected;
   bool timedOut;
   bool failed;
+  bool setOutputRequested = false;
+  bool setOutputReply = false;
+  bool publishedSetOutput = false;
 };
 
 static gboolean stopServer(gpointer userData) {
@@ -211,7 +234,7 @@ static void maybeStopServer(ClientTestState &state) {
       state.publishedBypass && state.setRateReply &&
       state.publishedSetRate && state.setDspBackendReply &&
       state.publishedSetDspBackend && state.setDspIdleReply &&
-      state.publishedSetDspIdle && *state.server != nullptr) {
+      state.publishedSetDspIdle && state.setOutputReply && state.publishedSetOutput && *state.server != nullptr) {
     g_idle_add(stopServer, &state);
   }
 }
@@ -219,6 +242,27 @@ static void maybeStopServer(ClientTestState &state) {
 static void maybeStartSetRate(ClientTestState &state);
 static void maybeStartSetDspBackend(ClientTestState &state);
 static void maybeStartSetDspIdle(ClientTestState &state);
+
+static void onSetOutputReply(const pipetune_gtk::ControlClientReply &reply, void *userData) {
+  auto &state = *static_cast<ClientTestState *>(userData);
+  state.setOutputReply = reply.transportError.empty() && reply.response.valid && reply.response.success &&
+      reply.response.status.outputConfiguration.channels.size() == 4 &&
+      reply.response.status.outputConfiguration.channels[0].label == "Reserved" &&
+      reply.response.status.activePreset == "/tmp/output.effetune_preset" &&
+      reply.response.status.configurationRevision == 43;
+  state.failed = state.failed || !state.setOutputReply;
+  maybeStopServer(state);
+}
+
+static void maybeStartSetOutput(ClientTestState &state) {
+  if (state.setDspIdleReply && state.publishedSetDspIdle && !state.setOutputRequested) {
+    state.setOutputRequested = true;
+    auto configuration = pipetune::OutputConfiguration{};
+    configuration.channels.resize(4, {"", 0, "Reserved"});
+    pipetune_gtk::setControlOutputAsync(state.client, configuration,
+        std::filesystem::path("/tmp/output.effetune_preset"), 42, onSetOutputReply, &state);
+  }
+}
 
 static void onSetRateReply(
     const pipetune_gtk::ControlClientReply &reply, void *userData) {
@@ -271,7 +315,7 @@ static void onSetDspIdleReply(
   } else {
     state.setDspIdleReply = true;
   }
-  maybeStopServer(state);
+  maybeStartSetOutput(state);
 }
 
 static void maybeStartSetDspIdle(ClientTestState &state) {
@@ -348,7 +392,9 @@ static void onMessage(
     state.failed = true;
     return;
   }
-  if (message.status.activePreset == "/tmp/initial.effetune_preset") {
+  if (message.status.activePreset == "/tmp/output.effetune_preset") {
+    state.publishedSetOutput = true;
+  } else if (message.status.activePreset == "/tmp/initial.effetune_preset") {
     if (!state.initialStatus) {
       state.initialStatus = true;
       pipetune_gtk::loadControlPresetAsync(
@@ -374,7 +420,7 @@ static void onMessage(
           pipetune::DspBackendKind::simd) {
         if (message.status.dspIdlePolicy.timeoutMilliseconds == 2500) {
           state.publishedSetDspIdle = true;
-          maybeStopServer(state);
+          maybeStartSetOutput(state);
         } else {
           state.publishedSetDspBackend = true;
           maybeStartSetDspIdle(state);
@@ -488,7 +534,7 @@ int main() {
       !state.publishedBypass || !state.setRateReply ||
       !state.publishedSetRate || !state.setDspBackendReply ||
       !state.publishedSetDspBackend || !state.setDspIdleReply ||
-      !state.publishedSetDspIdle || !state.disconnected) {
+      !state.publishedSetDspIdle || !state.setOutputReply || !state.publishedSetOutput || !state.disconnected) {
     std::cerr << "asynchronous control client lifecycle differs\n";
     return 1;
   }

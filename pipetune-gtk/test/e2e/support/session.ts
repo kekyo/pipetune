@@ -39,6 +39,8 @@ export interface FakeControlRequest {
  * Machine-readable startup configuration loaded by production code.
  */
 export interface StartupConfigSnapshot {
+  /** Complete persistent output choices and fixed channel assignments. */
+  readonly outputConfiguration: unknown;
   /** Absolute preset path, or null for bypass. */
   readonly preset: string | null;
   /** Automatic graph-following or fixed sample-rate mode. */
@@ -99,6 +101,26 @@ export interface PipeTuneGtkTestSession {
   readonly reconnectDaemon: () => Promise<void>;
   /** Publishes one deterministic status event without changing live settings. */
   readonly publishStatus: () => Promise<void>;
+  /** Changes DAC A's live presence without changing persistent assignments. */
+  readonly setOutputInventory: (
+    state:
+      | 'connected'
+      | 'missing'
+      | 'profileChanged'
+      | 'wide'
+      | 'ambiguous'
+      | 'unavailable'
+      | 'pending'
+      | 'reversed'
+  ) => Promise<void>;
+  /** Publishes physical volume changes without changing routing or revisions. */
+  readonly setOutputVolume: (
+    state: 'normal' | 'muted' | 'unknown'
+  ) => Promise<void>;
+  /** Publishes path activity and estimates without changing routing or revisions. */
+  readonly setOutputTiming: (
+    state: 'normal' | 'pending' | 'idle' | 'error' | 'unknown'
+  ) => Promise<void>;
   /** Atomically replaces EffeTune's saved-preset JSON file. */
   readonly replaceEffeTuneSavedPresets: (contents: string) => Promise<void>;
   /** Stops all processes and removes the isolated filesystem root. */
@@ -353,6 +375,16 @@ export const launchPipeTuneGtk = async (
     await writeFile(temporaryPath, contents, { mode: 0o600 });
     await rename(temporaryPath, effetunePresetPath);
   };
+  const setOutputInventory: PipeTuneGtkTestSession['setOutputInventory'] =
+    async (state) => {
+      if (daemon === undefined) throw new Error('fake daemon is unavailable');
+      await new Promise<void>((resolve, reject) => {
+        daemon?.process.stdin.write(`output-inventory ${state}\n`, (error) => {
+          if (error !== null && error !== undefined) reject(error);
+          else resolve();
+        });
+      });
+    };
   const release = async (): Promise<void> => {
     await launcher.release();
     const activeDaemon = daemon;
@@ -386,6 +418,25 @@ export const launchPipeTuneGtk = async (
     disconnectDaemon,
     reconnectDaemon,
     publishStatus,
+    setOutputInventory,
+    setOutputVolume: async (state) => {
+      if (daemon === undefined) throw new Error('fake daemon is unavailable');
+      await new Promise<void>((resolve, reject) => {
+        daemon?.process.stdin.write(`output-volume ${state}\n`, (error) => {
+          if (error !== null && error !== undefined) reject(error);
+          else resolve();
+        });
+      });
+    },
+    setOutputTiming: async (state) => {
+      if (daemon === undefined) throw new Error('fake daemon is unavailable');
+      await new Promise<void>((resolve, reject) => {
+        daemon?.process.stdin.write(`output-timing ${state}\n`, (error) => {
+          if (error !== null && error !== undefined) reject(error);
+          else resolve();
+        });
+      });
+    },
     replaceEffeTuneSavedPresets,
     release,
   };

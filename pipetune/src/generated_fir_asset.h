@@ -6,7 +6,7 @@
 #ifndef PIPETUNE_GENERATED_FIR_ASSET_H
 #define PIPETUNE_GENERATED_FIR_ASSET_H
 
-#include "effetune_backend_abi.h"
+#include "prepared_dsp_asset.h"
 
 #include <yyjson.h>
 
@@ -21,27 +21,18 @@ struct DspBackendApi;
 struct CrosstalkMeasurements;
 struct BassManagementConfig;
 
-struct GeneratedFirAsset {
-  std::vector<std::uint8_t> payload;
-  pipetune_effetune_asset_info_v1 info{};
-  std::uint32_t formatTag = ET_ASSET_F32_MULTICH;
-  std::uint32_t bandCount = 0u;
-  std::uint32_t filterDelaySamples = 0u;
-  std::string omissionReason;
-  std::string error;
-};
 
-GeneratedFirAsset designCrosstalkAsset(const CrosstalkMeasurements &measurements,
+PreparedDspAsset designCrosstalkAsset(const CrosstalkMeasurements &measurements,
                                       yyjson_val *parameters, float sampleRate,
                                       std::uint32_t processingChannels);
 
-GeneratedFirAsset designBassManagementAsset(
+PreparedDspAsset designBassManagementAsset(
     const BassManagementConfig &config, float sampleRate,
     std::uint32_t maxFrames, const DspBackendApi &api);
 
 bool supportsGeneratedFirAsset(std::string_view displayName) noexcept;
 
-GeneratedFirAsset designGeneratedFirAsset(
+PreparedDspAsset designGeneratedFirAsset(
     std::string_view displayName, yyjson_val *parameters, float sampleRate,
     std::uint32_t processingChannels, const DspBackendApi &api);
 

@@ -7,6 +7,7 @@
 
 #include "effetune_backend_abi.h"
 #include "dsp_catalog.h"
+#include "sfz/bank.h"
 
 #include <dlfcn.h>
 
@@ -21,6 +22,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -261,40 +263,46 @@ static std::uint32_t findKernelIndex(const BackendApi &api,
   return count;
 }
 
-static void checkEffeTune212Catalog(const BackendApi &api) {
-  static constexpr std::array<std::string_view, 18> addedTypes = {
+static void checkEffeTune213Catalog(const BackendApi &api) {
+  static constexpr std::array<std::string_view, 20> addedTypes = {
       "GroupDelayPEQPlugin", "MDSimulatorPlugin", "ClickRemoverPlugin",
       "ClipRestorerPlugin", "HumRemoverPlugin", "NoiseReductionPlugin",
       "CrosstalkCancellationPlugin", "NoteSpectrogramPlugin",
       "PitchMeterPlugin", "SpatialMapperPlugin", "TVAudioSimulatorPlugin",
       "AttackTonalBalancePlugin", "BassExtenderPlugin",
       "BassManagementPlugin", "ChromaSpiralPlugin", "TonalBalanceEQPlugin",
-      "RhythmAnalyzerPlugin", "AnalogMeterPlugin"};
-  check(api.kernelCount() == 110u,
-        "EffeTune 2.12 backend catalog must contain 110 kernels");
+      "RhythmAnalyzerPlugin", "AnalogMeterPlugin",
+      "AdaptivePredictionEffectPlugin", "SFZNotePlayerPlugin"};
+  check(api.kernelCount() == 112u,
+        "EffeTune 2.13 backend catalog must contain 112 kernels");
   for (const auto typeName : addedTypes) {
     check(findKernelIndex(api, typeName) < api.kernelCount(),
-          "EffeTune 2.12 backend catalog must contain every required kernel");
+          "EffeTune 2.13 backend catalog must contain every required kernel");
   }
   struct Contract {
     std::string_view type;
     std::uint32_t hash;
     std::uint32_t floats;
+    std::uint32_t assetBytes;
   };
   for (const auto &contract : std::array{
-           Contract{"TonalBalanceEQPlugin", 0x0a5d8c64u, 36u},
-           Contract{"RhythmAnalyzerPlugin", 0xbae05865u, 3u},
-           Contract{"AnalogMeterPlugin", 0xc0e236cdu, 4u}}) {
+           Contract{"TonalBalanceEQPlugin", 0x0a5d8c64u, 36u, 0u},
+           Contract{"RhythmAnalyzerPlugin", 0xbae05865u, 3u, 0u},
+           Contract{"AnalogMeterPlugin", 0xc0e236cdu, 4u, 0u},
+           Contract{"AdaptivePredictionEffectPlugin", 0xebd8a6f0u, 10u, 0u},
+           Contract{"SFZNotePlayerPlugin", 0x0f17627cu, 16u, 1073741824u},
+           Contract{"CassetteArtifactsPlugin", 0x328491aeu, 13u, 0u},
+           Contract{"NoteSpectrogramPlugin", 0x9d70750bu, 2u, 0u}}) {
     const auto index = findKernelIndex(api, contract.type);
     if (index >= api.kernelCount()) continue;
     const auto *definition = pipetune::findDspByTypeName(contract.type);
     check(api.kernelParamsHash(index) == contract.hash && definition != nullptr &&
               definition->floatCount == contract.floats &&
               api.kernelParamBytesCapacity(index) == 0u,
-          "EffeTune 2.12 kernels must expose their official parameter layouts");
+          "EffeTune 2.13 kernels must expose their official parameter layouts");
     for (auto slot = 0u; slot < 4u; ++slot)
-      check(api.kernelAssetCapacity(index, slot) == 0u,
-            "EffeTune 2.12 additions must not require external assets");
+      check(api.kernelAssetCapacity(index, slot) == (slot == 0u ? contract.assetBytes : 0u),
+            "EffeTune 2.13 kernels must expose their official asset capacities");
   }
   const auto phaseSelectIndex = findKernelIndex(api, "PhaseSelectEqPlugin");
   check(phaseSelectIndex < api.kernelCount(),
@@ -528,8 +536,23 @@ static std::vector<float> goldenInput(const GoldenCase &testCase) {
   return audio;
 }
 
+static bool activateGoldenAsset(const BackendApi &api, et_engine engine, et_instance instance,
+    const GoldenCase &testCase, const pipetune_effetune_asset_info_v1 &info,
+    std::span<const std::uint8_t> bytes, std::uint32_t slot, std::uint32_t format) {
+  if (api.instanceAssetCopy(engine, instance, slot, &info, bytes.data(), bytes.size(), format) != ET_OK) return false;
+  const auto frames = std::max(32u, testCase.blockSize);
+  auto silence = std::vector<float>(testCase.channelCount * frames, 0.0F);
+  auto assetState = api.instanceAssetState(engine, instance, slot) & 0xffu;
+  for (auto calls = 0u; assetState == ET_ASSET_STATE_PREPARING && calls < 100000u; ++calls) {
+    std::fill(silence.begin(), silence.end(), 0.0F);
+    if (api.instanceProcess(engine, instance, silence.data(), testCase.channelCount, frames, 0.0) != ET_OK) return false;
+    assetState = api.instanceAssetState(engine, instance, slot) & 0xffu;
+  }
+  return assetState == ET_ASSET_STATE_ACTIVE && api.instanceReset(engine, instance) == ET_OK;
+}
+
 // Match tools/dsp-parity/runners.mjs and the native parity runner's preparation:
-// synthetic sparse IR, process until ACTIVE, then reset before the test signal.
+// synthetic sparse IR or quantized SFZ sine, ACTIVE, then reset before the signal.
 static bool prepareGoldenAsset(const BackendApi &api, et_engine engine,
                                 et_instance instance, const GoldenCase &testCase) {
   auto *asset = testCase.asset;
@@ -537,6 +560,29 @@ static bool prepareGoldenAsset(const BackendApi &api, et_engine engine,
   const auto integer = [](yyjson_val *object, const char *key) {
     return static_cast<std::uint32_t>(yyjson_get_uint(yyjson_obj_get(object, key)));
   };
+  if (auto *sfz = yyjson_obj_get(asset, "sfz"); yyjson_is_obj(sfz)) {
+    const auto *kind = yyjson_get_str(yyjson_obj_get(sfz, "kind"));
+    if (kind == nullptr || std::string_view(kind) != "sfz-sine-v1") return false;
+    auto sample = pipetune::assets::SfzSample{"synthetic-sine", {48000, {std::vector<float>(4096)}}};
+    for (auto frame = 0u; frame < 4096; ++frame) {
+      const auto value = std::sin(2 * std::numbers::pi * 1000 * frame / 48000.0) * 0.2 * 32768;
+      sample.audio.channels.front()[frame] = static_cast<float>(std::floor(value + 0.5) / 32768);
+    }
+    auto region = pipetune::assets::SfzRegion{};
+    region.sample = sample.path;
+    region.pitch_keycenter = 83;
+    region.amp_veltrack = 0;
+    region.end = 4095;
+    region.loop_mode = 2;
+    region.loop_end = 4095;
+    const auto bank = pipetune::assets::packSfzBank(std::span(&region, 1), std::span(&sample, 1),
+        pipetune::assets::kMaximumSfzBytes);
+    const auto info = pipetune_effetune_asset_info_v1{.channels = 1, .frames = bank.samples,
+        .topology = 0, .head_block = 0, .rate_divider = 1, .path_count = 0, .input_count = 0,
+        .processing_channels = testCase.channelCount, .footprint_bytes = static_cast<std::uint32_t>(bank.footprintBytes),
+        .byte_size = static_cast<std::uint32_t>(bank.payload.size())};
+    return activateGoldenAsset(api, engine, instance, testCase, info, bank.payload, 0, ET_ASSET_F32_MULTICH);
+  }
   auto *ir = yyjson_obj_get(asset, "ir");
   const auto *kind = yyjson_get_str(yyjson_obj_get(ir, "kind"));
   if (kind == nullptr || std::string_view(kind) != "sparse-decay-v1") return false;
@@ -550,27 +596,34 @@ static bool prepareGoldenAsset(const BackendApi &api, et_engine engine,
   auto state = integer(ir, "seed");
   if (state == 0u) state = 0x49525631u;
   const auto next = [&state]() { state = state * 1664525u + 1013904223u; return state; };
-  const auto direct = yyjson_get_num(yyjson_obj_get(ir, "directGain"));
-  const auto tail = yyjson_get_num(yyjson_obj_get(ir, "tailGain"));
+  const auto number = [ir](const char *key, double fallback) {
+    auto *value = yyjson_obj_get(ir, key);
+    return yyjson_is_num(value) ? yyjson_get_num(value) : fallback;
+  };
+  const auto direct = number("directGain", 0.7);
+  const auto tail = number("tailGain", 0.45);
+  const auto tapCount = static_cast<std::uint32_t>(number("tapCount", 17));
   for (auto channel = 0u; channel < info.channels; ++channel) {
     const auto gain = 1.0 - channel * 0.12;
     samples[channel * info.frames] = static_cast<float>(direct * gain);
-    for (auto tap = 1u; tap < integer(ir, "tapCount"); ++tap) {
-      const auto frame = 1u + next() % (info.frames - 1u);
+    for (auto tap = 1u; tap < tapCount; ++tap) {
+      const auto frame = 1u + next() % std::max(1u, info.frames - 1u);
       const auto sign = (next() & 1u) == 0u ? 1.0 : -1.0;
       auto &sample = samples[channel * info.frames + frame];
       sample = static_cast<float>(sample + sign * tail * gain *
           std::exp(-4.0 * frame / info.frames) / std::sqrt(tap + 1.0));
     }
-    auto &last = samples[(channel + 1u) * info.frames - 1u];
-    last = static_cast<float>(last + tail * gain * 0.01);
+    if (info.frames > 1u) {
+      auto &last = samples[(channel + 1u) * info.frames - 1u];
+      last = static_cast<float>(last + tail * gain * 0.01);
+    }
   }
   auto bytes = std::vector<std::uint8_t>(32u + info.path_count * 12u + samples.size() * 4u, 0u);
   const auto write = [&bytes](std::size_t offset, std::uint32_t value) {
     for (auto i = 0u; i < 4u; ++i) bytes[offset + i] = static_cast<std::uint8_t>(value >> (8u * i));
   };
   write(0, 0x31415445u); write(4, info.channels); write(8, info.frames);
-  write(12, static_cast<std::uint32_t>(testCase.sampleRate));
+  write(12, static_cast<std::uint32_t>(std::round(testCase.sampleRate / info.rate_divider)));
   write(16, info.topology); write(20, info.path_count);
   auto offset = std::size_t{32u};
   for (auto index = 0u; index < info.path_count; ++index) {
@@ -580,18 +633,7 @@ static bool prepareGoldenAsset(const BackendApi &api, et_engine engine,
   }
   for (const auto sample : samples) { write(offset, std::bit_cast<std::uint32_t>(sample)); offset += 4u; }
   info.byte_size = static_cast<std::uint32_t>(bytes.size());
-  const auto slot = integer(asset, "slot");
-  if (api.instanceAssetCopy(engine, instance, slot, &info, bytes.data(), bytes.size(),
-                            integer(asset, "format")) != ET_OK) return false;
-  const auto frames = std::max(32u, testCase.blockSize);
-  auto silence = std::vector<float>(testCase.channelCount * frames, 0.0F);
-  auto assetState = api.instanceAssetState(engine, instance, slot) & 0xffu;
-  for (auto calls = 0u; assetState == ET_ASSET_STATE_PREPARING && calls < 100000u; ++calls) {
-    std::fill(silence.begin(), silence.end(), 0.0F);
-    if (api.instanceProcess(engine, instance, silence.data(), testCase.channelCount, frames, 0.0) != ET_OK) return false;
-    assetState = api.instanceAssetState(engine, instance, slot) & 0xffu;
-  }
-  return assetState == ET_ASSET_STATE_ACTIVE && api.instanceReset(engine, instance) == ET_OK;
+  return activateGoldenAsset(api, engine, instance, testCase, info, bytes, integer(asset, "slot"), integer(asset, "format"));
 }
 
 static std::vector<float> renderGoldenCase(const BackendApi &api,
@@ -725,6 +767,8 @@ static std::vector<float> renderGoldenCase(const BackendApi &api,
 
 static void checkGoldenCase(const BackendApi &api, std::uint32_t variant,
                             const GoldenCase &testCase) {
+  if (const auto *type = std::getenv("PIPETUNE_GOLDEN_TYPE"); type != nullptr &&
+      std::string_view(type) != testCase.typeName) return;
   const auto actual = renderGoldenCase(api, testCase);
   if (actual.size() != testCase.expected.size()) {
     std::fprintf(stderr, "EffeTune backend artifact check failed: %s output "
@@ -955,9 +999,6 @@ int main(int argc, char **argv) {
       -20.0F, 1000.0F, 12.0F, -36.0F, 1.0F, 10.0F, -96.0F};
   static constexpr std::array bluetoothSbcParameters = {
       35.0F, 0.0F, 3.0F, 0.0F, 100.0F, 0.0F};
-  static constexpr std::array cassetteParameters = {
-      2.0F, 0.0F, 1.0F, 0.0F, 9.0F, 0.25F,
-      -60.5F, 2.0F, 2.0F, 0.0F, 0.0F, 100.0F};
   static constexpr std::array tapeParameters = {
       1.0F, 0.0F, 0.0F, 6.0F, 0.15625F, -62.5F, 0.0F, 100.0F};
   static constexpr std::array vinylParameters = {
@@ -973,9 +1014,6 @@ int main(int argc, char **argv) {
       GoldenCase{"Bluetooth SBC", "BluetoothSBCSimulatorPlugin", 48000.0F,
                  4097u, 2u, 128u, 0xeffe7a5eu, bluetoothSbcParameters,
                  2.0e-5F, readGoldenAudio(argv[2], "Bluetooth SBC")},
-      GoldenCase{"Cassette Artifacts", "CassetteArtifactsPlugin", 48000.0F,
-                 12000u, 2u, 127u, 0xeffe7a5eu, cassetteParameters, 1.0e-5F,
-                 readGoldenAudio(argv[3], "Cassette Artifacts")},
       GoldenCase{"Tape Artifacts", "TapeArtifactsPlugin", 48000.0F, 12000u,
                  2u, 127u, 0xeffe7a5eu, tapeParameters, 1.0e-5F,
                  readGoldenAudio(argv[4], "Tape Artifacts")},
@@ -1024,11 +1062,19 @@ int main(int argc, char **argv) {
                 PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
             "scalar backend must report its concrete variant");
       checkAllAbiSymbols(scalar.handle);
-      checkEffeTune212Catalog(scalar);
+      checkEffeTune213Catalog(scalar);
       checkTubeRuntimeContract(scalar);
       checkUnrelatedInstanceDestruction(scalar);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "analyzer/rhythm_analyzer/golden", 6u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           std::filesystem::path(argv[3]).parent_path(), 18u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "resonator/adaptive_prediction_effect/golden", 17u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "reverb/ir_reverb/golden", 13u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "others/sfz_note_player/golden", 11u);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "analyzer/analog_meter/golden", 5u);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
@@ -1081,6 +1127,10 @@ int main(int argc, char **argv) {
         checkTubeRuntimeContract(simd);
         checkUnrelatedInstanceDestruction(simd);
         checkMetadataGoldens(simd, expected, pluginRoot / "analyzer/rhythm_analyzer/golden", 6u);
+        checkMetadataGoldens(simd, expected, std::filesystem::path(argv[3]).parent_path(), 18u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "resonator/adaptive_prediction_effect/golden", 17u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "reverb/ir_reverb/golden", 13u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "others/sfz_note_player/golden", 11u);
         checkMetadataGoldens(simd, expected, pluginRoot / "analyzer/analog_meter/golden", 5u);
         checkMetadataGoldens(simd, expected, pluginRoot / "eq/tonal_balance_eq/golden", 6u);
         checkGoldenCases(simd, expected, goldenCases);

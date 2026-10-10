@@ -9,15 +9,19 @@
 #include "config_reset_command.h"
 #include "dsp_backend_command.h"
 #include "installed_tools.h"
+#include "output_command.h"
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
 #include "pipetune/dsp_pipeline.h"
+#include "pipetune/output_inventory.h"
 #include "pipetune/pipewire_pipeline.h"
 #include "pipetune/startup_config.h"
 #include "pipetune/version.h"
 #include "process_runner.h"
 #include "rate_command.h"
 #include "startup_pipeline.h"
+#include "preparation_dispatcher.h"
+#include "preparation_termination.h"
 #include "user_setup.h"
 
 #include <cstdlib>
@@ -237,6 +241,8 @@ static int runControlClient(const pipetune::CommandLineOptions &options) {
 }
 
 static int runDaemon(const pipetune::CommandLineOptions &options) {
+  const auto signalError = pipetune::blockPipeWireTerminationSignals();
+  if (!signalError.empty()) { std::cerr << "pipetune: " << signalError << '\n'; return 1; }
   auto configPath = options.configPath;
   if (configPath.empty()) {
     const auto resolved = resolveUserStartupConfigPath();
@@ -247,11 +253,19 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
     configPath = resolved.path;
   }
 
-  auto prepared = pipetune::prepareStartupPipeline(
-      configPath,
-      {.sampleRate = static_cast<float>(kInitialSampleRate),
-       .maxChannels = 2,
-       .maxFrames = kMaximumProcessFrames});
+  auto prepared = pipetune::StartupPipelineResult{};
+  auto interrupted = false;
+  try {
+    prepared = pipetune::runPreparation<pipetune::StartupPipelineResult>([&] {
+      return pipetune::withPreparationTermination<pipetune::StartupPipelineResult>([&](cardio::cancellation cancellation) {
+        return pipetune::prepareStartupPipelineAsync(configPath,
+            {.sampleRate = static_cast<float>(kInitialSampleRate), .maxChannels = 2, .maxFrames = kMaximumProcessFrames},
+            pipetune::discoverDspBackends(), cancellation);
+      }, {}, interrupted);
+    });
+  } catch (const cardio::canceled_exception &) { return 0; }
+  catch (const std::exception &error) { std::cerr << "pipetune: " << error.what() << '\n'; return 1; }
+  if (interrupted) return 0;
   if (prepared.pipeline == nullptr) {
     std::cerr << "pipetune: " << prepared.error << '\n';
     return 1;
@@ -274,7 +288,8 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
   for (const auto &warning : prepared.warnings) {
     std::cerr << "pipetune: warning: preset node " << warning.nodeIndex
               << " (\"" << warning.pluginName
-              << "\") was skipped: " << warning.reason << '\n';
+              << (warning.state == pipetune::PresetEntryState::ignored ? "\") was skipped: " : "\"): ")
+              << warning.reason << '\n';
   }
   const auto initialDspSampleRate = static_cast<std::uint32_t>(
       prepared.pipeline->sampleRate());
@@ -293,7 +308,7 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
        .controlSocketPath = socket.path,
        .dspSampleRate = initialDspSampleRate,
        .ratePolicy = prepared.ratePolicy,
-       .channelCount = 2,
+       .channelCount = pipetune::outputDspChannelCount(prepared.outputConfiguration),
        .maxFrames = kMaximumProcessFrames,
        .ringCapacityFrames = kRingCapacityFrames,
        .readyCallback = nullptr,
@@ -302,7 +317,10 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
        .configuredDspBackend = prepared.configuredDspBackend,
        .configuredDspSimdVariant =
            prepared.configuredDspSimdVariant,
-       .dspIdlePolicy = prepared.dspIdlePolicy},
+       .dspIdlePolicy = prepared.dspIdlePolicy,
+       .inputChannelCount = 2,
+       .outputConfiguration = std::move(prepared.outputConfiguration),
+       .sfzMaxSizeMiB = prepared.sfzMaxSizeMiB},
       pipetune::PipeWireRunMode::untilInterrupted);
   if (!result.success) {
     std::cerr << "pipetune: " << result.error << '\n';
@@ -360,6 +378,68 @@ static bool isDspCommand(pipetune::CommandLineAction action) {
   return action == pipetune::CommandLineAction::dspList ||
          action == pipetune::CommandLineAction::dspGet ||
          action == pipetune::CommandLineAction::dspSet;
+}
+
+static bool isOutputCommand(pipetune::CommandLineAction action) {
+  return action == pipetune::CommandLineAction::outputList ||
+         action == pipetune::CommandLineAction::outputGet ||
+         action == pipetune::CommandLineAction::outputSelect ||
+         action == pipetune::CommandLineAction::outputMode ||
+         action == pipetune::CommandLineAction::outputSet;
+}
+
+static int runOutputCommand(const pipetune::CommandLineOptions &options) {
+  if (options.action == pipetune::CommandLineAction::outputList) {
+    const auto inventory = pipetune::queryAvailableOutputs();
+    if (!inventory.error.empty()) {
+      std::cerr << "pipetune: " << inventory.error << '\n';
+      return 1;
+    }
+    const auto formatted = pipetune::formatOutputInventory(inventory.outputs, options.json);
+    if (formatted.empty()) {
+      std::cerr << "pipetune: cannot format audio output inventory\n";
+      return 1;
+    }
+    std::cout << formatted << '\n';
+    return 0;
+  }
+  const auto socket = pipetune::resolveControlSocketPath(options.controlSocketPath);
+  if (!socket.error.empty()) {
+    std::cerr << "pipetune: " << socket.error << '\n';
+    return 1;
+  }
+  if (options.action == pipetune::CommandLineAction::outputGet) {
+    const auto queried = pipetune::queryOutputStatus(socket.path);
+    if (!queried.error.empty()) {
+      std::cerr << "pipetune: " << queried.error << '\n';
+      return 1;
+    }
+    std::cout << (options.json ? queried.json + '\n' : pipetune::formatOutputStatus(queried.status));
+    return 0;
+  }
+  const auto config = options.configPath.empty() ? resolveUserStartupConfigPath() :
+      pipetune::StartupConfigPathResult{.path = options.configPath, .error = {}};
+  if (!config.error.empty()) {
+    std::cerr << "pipetune: " << config.error << '\n';
+    return 1;
+  }
+  const auto kind = options.action == pipetune::CommandLineAction::outputMode ? pipetune::OutputChangeKind::mode :
+      options.action == pipetune::CommandLineAction::outputSelect ? pipetune::OutputChangeKind::select :
+      pipetune::OutputChangeKind::replace;
+  const auto result = pipetune::executeOutputChange({config.path, socket.path},
+      {kind, options.outputConfiguration, options.outputNodes});
+  if (!result.success) {
+    std::cerr << "pipetune: " << result.error << '\n';
+    return 1;
+  }
+  if (result.liveApplied) {
+    std::cout << "Output configuration is active and saved for future starts.\n"
+              << pipetune::formatOutputStatus(result.status);
+  } else {
+    std::cout << "Output configuration is saved for the next daemon start.\n";
+    if (!result.notice.empty()) std::cout << result.notice << '\n';
+  }
+  return 0;
 }
 
 static int runDspCommand(const pipetune::CommandLineOptions &options) {
@@ -492,6 +572,9 @@ int main(int argc, char **argv) {
   if (parsed.options.action == pipetune::CommandLineAction::bypass) {
     return runPersistentBypass(parsed.options);
   }
+  if (isOutputCommand(parsed.options.action)) {
+    return runOutputCommand(parsed.options);
+  }
   if (isRateCommand(parsed.options.action)) {
     return runRateCommand(parsed.options);
   }
@@ -522,6 +605,10 @@ int main(int argc, char **argv) {
   }
 
   auto backends = pipetune::discoverDspBackends();
+  if (!parsed.options.checkOnly) {
+    const auto signalError = pipetune::blockPipeWireTerminationSignals();
+    if (!signalError.empty()) { std::cerr << "pipetune: " << signalError << '\n'; return 1; }
+  }
   const auto selected = pipetune::selectDspBackend(
       parsed.options.dspBackend, parsed.options.dspSimdVariant,
       backends);
@@ -535,19 +622,30 @@ int main(int argc, char **argv) {
   }
   const auto initialDspSampleRate = pipetune::dspSampleRateForPolicy(
       parsed.options.ratePolicy, kInitialSampleRate);
-  auto loaded = pipetune::loadDspPipeline(
-      presetPath,
-      {.sampleRate = static_cast<float>(initialDspSampleRate),
-       .maxChannels = parsed.options.channelCount,
-       .maxFrames = kMaximumProcessFrames},
-      selected.effectiveBackend);
+  const auto buildOptions = pipetune::PipelineBuildOptions{.sampleRate = static_cast<float>(initialDspSampleRate),
+      .maxChannels = parsed.options.channelCount, .maxFrames = kMaximumProcessFrames};
+  auto loaded = pipetune::PipelineLoadResult{};
+  auto interrupted = false;
+  try {
+    if (parsed.options.checkOnly) loaded = pipetune::loadDspPipeline(presetPath, buildOptions, selected.effectiveBackend,
+        pipetune::defaultPipelineLoadContext(parsed.options.sfzMaxSizeMiB));
+    else loaded = pipetune::runPreparation<pipetune::PipelineLoadResult>([&] {
+      return pipetune::withPreparationTermination<pipetune::PipelineLoadResult>([&](cardio::cancellation cancellation) {
+        return pipetune::loadDspPipelineAsync(presetPath, buildOptions, selected.effectiveBackend,
+                                            pipetune::defaultPipelineLoadContext(parsed.options.sfzMaxSizeMiB), cancellation);
+      }, {}, interrupted);
+    });
+  } catch (const cardio::canceled_exception &) { return 0; }
+  catch (const std::exception &error) { std::cerr << "pipetune: " << error.what() << '\n'; return 1; }
+  if (interrupted) return 0;
   if (loaded.pipeline == nullptr) {
     std::cerr << "pipetune: " << loaded.error << '\n';
     return 1;
   }
   for (const auto &warning : loaded.warnings) {
     std::cerr << "pipetune: warning: preset node " << warning.nodeIndex << " (\""
-              << warning.pluginName << "\") was skipped: " << warning.reason
+              << warning.pluginName
+              << (warning.state == pipetune::PresetEntryState::ignored ? "\") was skipped: " : "\"): ") << warning.reason
               << '\n';
   }
 
@@ -581,7 +679,8 @@ int main(int argc, char **argv) {
        .dspBackends = std::move(backends),
        .configuredDspBackend = parsed.options.dspBackend,
        .configuredDspSimdVariant =
-           parsed.options.dspSimdVariant},
+           parsed.options.dspSimdVariant,
+       .sfzMaxSizeMiB = parsed.options.sfzMaxSizeMiB},
       mode);
   if (!result.success) {
     std::cerr << "pipetune: " << result.error << '\n';

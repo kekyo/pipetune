@@ -26,10 +26,14 @@ struct FilterGraphPropertyOptions {
   std::string nodeDescription;
   /** Fixed PipeTune PCM and DSP rate, or no value in automatic mode. */
   std::optional<std::uint32_t> fixedSampleRate;
-  /** Number of planar audio channels. */
+  /** Number of planar DSP output channels. */
   std::uint32_t channelCount;
   /** True when the output node must force a graph-rate change. */
   bool forceRate;
+  /** Input width; zero preserves the same width as the DSP output. */
+  std::uint32_t inputChannelCount = 0;
+  /** True to expose one public input and target the private output distributor. */
+  bool multipleOutputs = false;
 };
 
 /** Properties and connection behavior for one filter node pair. */

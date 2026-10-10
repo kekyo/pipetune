@@ -3,23 +3,22 @@
 ## Scope and integration choice
 
 PipeTune is a normal per-user PipeWire client process. It is not a PipeWire
-daemon plugin or a PulseAudio loadable module. The process publishes two
-linked stream nodes that WirePlumber inserts as a transparent playback filter.
-Native PipeWire applications and PulseAudio applications served by
-`pipewire-pulse` therefore use the same path.
+daemon plugin or a PulseAudio loadable module. Single mode publishes a linked
+stream pair that WirePlumber inserts as a transparent playback filter. Multiple
+mode exposes a stereo input sink, runs one DSP pipeline, and distributes its
+numbered outputs to explicitly selected devices. Native PipeWire applications
+and applications served by `pipewire-pulse` use the same DSP path.
 
-PipeTune owns only its filter nodes and EffeTune processing state. It does not:
+The daemon owns output configuration, observes device identities and controls,
+and creates its streams. PipeWire's standard combine-stream module handles
+per-device timing and resampling. PipeTune's WirePlumber policy manages the
+visibility, default-selection restoration, and master-volume persistence needed
+by multiple mode. Physical profiles and physical device controls are observed,
+not rewritten by the daemon. Single mode retains OS output selection; multiple
+mode keeps OS master volume and mute while selecting devices in PipeTune.
 
-- enumerate or select physical outputs;
-- write PipeWire default-device metadata;
-- read or write device, route, mute, or volume properties;
-- store an output-device preference; or
-- restore a default sink when it exits.
-
-WirePlumber remains the sole owner of default-output selection and hotplug
-policy. The desktop sound control remains the owner of the overall output
-volume. PipeTune supports both WirePlumber 0.4 and 0.5 without changing this
-division of responsibility.
+The minimum PipeWire version is 1.0.5. WirePlumber 0.4 and 0.5 use the same
+configuration model, with different session-policy integration where needed.
 
 Each package builds EffeTune, yyjson, and PFFFT from source for one target
 architecture. The PipeTune executable explicitly loads one validated private
@@ -30,7 +29,7 @@ backend variants, fallback rules, and benchmark procedure.
 
 ## Playback graph
 
-The intended steady-state graph is:
+The single-mode steady-state graph is:
 
 ```text
 application 1 --+
@@ -54,7 +53,7 @@ mixes them. The mixed PCM enters PipeTune once. In preset mode it passes
 through the selected native EffeTune pipeline; in bypass mode it is copied
 unchanged. The ordinary sink volume and mute are applied after the filter.
 
-PipeTune publishes this node contract:
+In single mode, PipeTune publishes this node contract:
 
 | Property | Filter input | Filter output |
 | --- | --- | --- |
@@ -98,17 +97,21 @@ used.
 ### WirePlumber 0.4
 
 WirePlumber 0.4 does not implement the 0.5 smart-filter policy. `pipetune
-setup` installs one configuration fragment and three runtime policy scripts:
+setup` installs two configuration fragments and three runtime policy scripts:
 
 ```text
 $XDG_CONFIG_HOME/wireplumber/policy.lua.d/60-pipetune-filter.lua
+$XDG_CONFIG_HOME/wireplumber/main.lua.d/60-pipetune-streams.lua
 $XDG_CONFIG_HOME/wireplumber/scripts/pipetune-endpoint-client.lua
 $XDG_CONFIG_HOME/wireplumber/scripts/pipetune-endpoint-device.lua
 $XDG_CONFIG_HOME/wireplumber/scripts/pipetune-node-visibility.lua
 ```
 
 The `60-` prefix makes the fragment run after WirePlumber's endpoint defaults
-and before its `90-enable-all.lua`. It declares playback and capture roles,
+and before its `90-enable-all.lua`. The stream fragment disables generic
+property restoration for the public multiple-output input using a Lua boolean;
+the dedicated master-control policy handles restoration instead. The policy
+fragment declares playback and capture roles,
 paired endpoints, and replaces the stock 0.4 endpoint-client and
 endpoint-device components with PipeTune's 0.4.17-derived compatibility
 scripts. This also supplies the role and filter exclusions missing from early
@@ -133,12 +136,138 @@ the hidden endpoint. It removes the permissions again after the client's last
 audio stream disappears. Desktop control panels and other clients without an
 audio stream therefore do not receive the internal nodes.
 
-Setup snapshots and atomically updates all six managed files, then restarts
+Setup snapshots and atomically updates all seven managed files, then restarts
 `pipewire.service`, `wireplumber.service`, and `pipewire-pulse.service` in one
 user-systemd transaction if any changed. WirePlumber 0.5 ignores the 0.4 Lua
 configuration path and uses the smart-filter properties instead. `pipetune
-unsetup` removes all six files and restarts the same audio stack when
+unsetup` removes all seven files and restarts the same audio stack when
 necessary.
+
+### Multiple-output routing and channel identity
+
+```text
+applications --> public stereo input (Ch 1, Ch 2)
+                           |
+                    one EffeTune pipeline (Ch 1 ... Ch N)
+                           |
+                    post-DSP master gain and mute
+                           |
+                    private combine-stream distribution
+                           |
+                 +---------+---------+
+                 |                   |
+          selected device A   selected device B
+```
+
+The public input is marked `node.pipetune.public-input` and
+`node.pipetune.aggregate`; it does not request smart-filter insertion into a
+second playback path. The output targets `<input-name>.distribution` and is
+marked `node.pipetune.managed-output`. Distribution uses numbered AUX channels
+with explicit `combine.audio.position` mappings into each physical device's
+ordered channel positions. `stream.dont-remix`, `node.dont-fallback`, and
+`node.dont-move` prevent implicit channel mixing and routing to another device.
+The module runs in the client context and is owned by the daemon. See the
+[combine-stream contract](https://docs.pipewire.org/page_module_combine_stream.html).
+
+`OutputConfiguration` stores mode, identified devices with an enabled flag,
+and up to sixteen final DSP channel slots. The slot index is the EffeTune
+channel number minus one. A slot associates a saved output ID and physical
+channel index with an optional purpose label. Disabled, disconnected, and
+reserved slots keep their numbers. Only explicit channel moves or reviewed
+device reassignment change an existing assignment. New devices append all
+channels from their current output profile. Profiles are read-only; a changed
+profile or channel layout requires reassignment.
+
+The normal desktop input remains stereo. Multiple-mode DSP width is the
+larger of two and the saved slot count. Additional channels start silent;
+Matrix or other preset processing must generate their output. Bypass preserves
+this routing and leaves additional channels silent. Temporary device loss does
+not shrink the DSP width or repurpose its channels.
+
+Device resolution uses persistent API, location, device-port, vendor, product,
+and available serial information, followed by the saved profile and ordered
+channel layout. Runtime node IDs and object serials are not saved. A matching
+identity with a changed layout is distinct from an absent or ambiguous device.
+Only a unique complete match can receive its assigned audio. Observed object
+serials associate live controls and timing with the current connection.
+
+While the public multiple-output node exists, the shared policy hides physical
+outputs from ordinary selectors and playback clients, preserving the access
+needed by node owners, the daemon, and WirePlumber. It saves the configured
+default sink's value, type, and absence before selecting the public node.
+External default changes become the eventual restoration preference. Returning
+to single mode or removing the daemon restores permissions and the configured
+default, including after an abnormal exit. Recovery records are scoped to the
+server and connection generations; they cannot restore permissions to reused
+object IDs. The policy uses the public
+[Metadata and Client APIs](https://pipewire.pages.freedesktop.org/wireplumber/scripting/lua_api/lua_proxies_api.html)
+and persists restoration state before changing the defaults.
+
+Output changes form one control transaction: validate assignments, prepare the
+DSP at the new width, replace the graph outside audio callbacks, and confirm
+negotiation before committing the configuration revision. An optional preset
+in the same request is prepared at the new width; null selects bypass. Invalid
+DSP settings, connection failures, and the five-second negotiation deadline
+restore the previous configuration and processing state. A stale expected
+revision rejects the request. Rate transitions and output changes are
+serialized. Device inventory notifications can rebuild resolved targets without
+changing saved assignments; volume and timing notifications do not rebuild the
+distribution graph.
+
+### Multiple-output master controls
+
+The multiple-output path exposes one stereo input sink and applies its master
+gain and mute after DSP, before distributing the numbered DSP channels. The
+input's software gain remains unity. The daemon keeps these controls outside
+the lifetime of its PipeWire nodes, so rate changes and policy recovery retain
+the current values.
+
+The shared WirePlumber policy persists normalized gain and mute per public
+node name in the `pipetune-master-output` State file. Changes are coalesced for
+one second in the policy process; no audio callback performs file I/O. A new
+daemon publishes `node.pipetune.master-state=restore` and keeps its output
+silent until it receives the initial controls. After accepting them it
+publishes `retained`, including on replacement nodes. Policy restarts observe
+and save those live controls instead of applying older disk state. This also
+avoids sharing the generic `DSP` role's standard volume restore key.
+
+`state.restore-props=false` remains in effect for the standard restore policy.
+Simply enabling it restores saved controls again when WirePlumber rediscovers
+a surviving daemon, which can overwrite newer values that have not yet been
+written. The dedicated policy uses the public
+[State API](https://pipewire.pages.freedesktop.org/wireplumber/scripting/lua_api/lua_state_api.html)
+and [node parameter notifications](https://pipewire.pages.freedesktop.org/wireplumber/library/c_api/pipewire_object_api.html).
+
+### Observed output controls and timing
+
+`outputVolumes` reports physical mute, scalar gain, and effective channel gains
+by current node serial. These values are separate from the public master
+controls. Missing values stay unknown, and soft gain is not multiplied into an
+already effective channel gain. The UI displays a range for unequal gains
+without assuming that report order matches the saved channel mapping.
+
+`outputTimings` reports each resolved enabled output's path activity, downstream
+latency, and estimated compensation. Activity requires the current distribution
+stream, target generation, channel slots, and all required links to match.
+Complete running paths are active; complete paused paths are idle; incomplete
+paths are pending; node/link errors or wrong targets are errors. Device presence
+alone does not establish activity.
+
+The observer combines public input-direction port latency ranges with actual
+per-node graph rate and quantum from Profiler reports. Only when every resolved
+enabled output has an active path and valid timing does it estimate the delay
+as the greatest reported latency minus that output's latency. Disconnected or
+disabled outputs are excluded. Missing clocks, invalid values, obsolete
+generations or slot mappings, and transitions leave estimates unknown.
+Single mode publishes no multiple-output timings.
+
+The estimate does not read combine-stream's private compensation buffer and
+does not measure acoustic arrival. Deliberate EffeTune Time Alignment remains
+in the DSP and is not a second physical compensation setting. Public APIs are
+documented by [SPA latency](https://docs.pipewire.org/group__spa__param.html)
+and the [Profiler interface](https://docs.pipewire.org/group__pw__profiler.html).
+Profiler protocol registration lives with its PipeWire context; observation
+subscriptions can stop and restart without unloading that registration.
 
 ## Real-time data flow
 
@@ -248,7 +377,7 @@ The generated catalog packs JSON parameters into the exact native ABI expected
 by EffeTune. Tests compare those packed parameters with EffeTune's JavaScript
 packer and compare native PCM output with EffeTune's parity corpus.
 
-The pinned EffeTune 2.12.0 registry contains 110 native kernels. PipeTune supports
+The pinned EffeTune 2.13.0 registry contains 112 native kernels. PipeTune supports
 its 16-channel Multi Channel Panel layout, individual channels through 16,
 paired routes through 15/16, and hexadecimal Matrix routes. It can load MD
 Simulator and all nine effects added in 2.5.0. It regenerates and stages the
@@ -261,16 +390,22 @@ Tonal Balance EQ and Rhythm Analyzer use the normal preset pipeline with no
 external assets and zero reported latency. Rhythm remains active with its
 click disabled. Rate/backend rebuilds and preset reloads create fresh
 measurement state. Silence suspension resets both effects like other DSPs;
-Ignore continues processing without a host reset. Their [upstream contracts](https://github.com/Frieve-A/effetune/tree/v2.12.0/docs/dsp/effects)
+Ignore continues processing without a host reset. Their [upstream contracts](https://github.com/Frieve-A/effetune/tree/v2.13.0/docs/dsp/effects)
 define measurement and selected-channel behavior.
+
+Adaptive Prediction executes on one channel or a selected pair, with independent
+learning state per channel and zero reported latency. Active processing wider
+than two channels is rejected. Its learning state is not serialized: reload,
+rate/backend rebuild, and silence suspension reset it. Cassette Artifacts packs
+all five upstream processing modes through the generated parameter catalog.
 
 Attack Tonal Balance and Bass Extender use the normal preset pipeline. Bass
 Extender rejects processing widths above two channels; its supported rates
-are defined by the [upstream kernel](https://github.com/Frieve-A/effetune/blob/v2.12.0/dsp/plugins/saturation/bass_extender/kernel.cpp).
+are defined by the [upstream kernel](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/plugins/saturation/bass_extender/kernel.cpp).
 Bass Management requires explicit All selection and validates the packed
 roles, routes, subwoofer masks, and crossover slopes against the prepared
 stream width. IIR needs no asset. Linear generates diagonal low-pass FIR
-paths using the [upstream design](https://github.com/Frieve-A/effetune/blob/v2.12.0/js/bass-management/design-core.js)
+paths using the [upstream design](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/bass-management/design-core.js)
 and the existing pointer-safe asset-copy ABI. Design and allocation occur
 outside the audio callback. The 32 MiB check includes the asset, convolver,
 and processing buffers; preparation and activation are distinct states.
@@ -292,30 +427,49 @@ files and their existing ancestors, so backup creation and replacement trigger
 preparation away from the audio thread. Invalid measurements omit that node and
 are reported through the existing warning/status paths.
 
+SFZ Note Player, IR Reverb, and Room EQ also resolve registered sources from the
+EffeTune desktop directory. The host owns asynchronous reads, the native FFmpeg
+decoder, dependency watching, cache validation, and process-wide memory
+reservations. `asset-preparation/` owns the source-independent SFZ semantics,
+IR preparation, measurement analysis, and Room EQ filter design. These C++20
+libraries have no PipeWire, GTK, filesystem, or decoder dependency; their
+in-memory drivers build independently. See [asset preparation](asset-preparation.md)
+for the upstream port map and replacement boundary.
+
+Preparation runs on the existing control dispatcher through cardio/GIO, outside
+the audio callback. A cancellable asynchronous mutex serializes preparation;
+completed immutable payloads can be shared while pipelines are constructed.
+The old pipeline remains active until the candidate is ready and its source
+snapshots still match. Cache entries never substitute for missing originals.
+The process reserves preparation and retained/native asset footprints together,
+including old and new pipelines, before allocating bounded working buffers.
+The disk cache is separately limited to 2 GiB by default and is reconstructible.
+
 At load time, `src/dsp_pipeline.cpp`:
 
 1. bounds the input to 8 MiB and parses it with vendored yyjson;
 2. accepts the canonical `pipeline` array and EffeTune's legacy forms;
 3. applies enabled section, bus, and channel routing;
 4. omits disabled nodes;
-5. regenerates supported FIR assets and warns for unknown or unresolved
-   stored-asset nodes;
+5. asynchronously prepares registered assets or regenerates parameter-derived
+   FIRs, retaining source dependencies and diagnostics;
 6. creates up to 96 native DSP instances;
-7. copies generated assets through PipeTune's pointer-safe backend extension;
+7. copies prepared assets through PipeTune's pointer-safe backend extension
+   and finishes SFZ/IR/Room activation before publication;
 8. configures one EffeTune engine for the complete routed pipeline; and
 9. reads the configured pipeline latency from EffeTune's native ABI.
 
-EffeTune 2.12 computes latency per channel while configuring the pipeline. It
+EffeTune computes latency per channel while configuring the pipeline. It
 aligns the selected input channels before a DSP can mix them, as well as
 shorter additive-merge and output paths. A send aligns its working copy and
 preserves the source bus. The aggregate is reported through
 `et_pipeline_latency`; PipeTune uses that value directly. See the
-[upstream pipeline contract](https://github.com/Frieve-A/effetune/blob/v2.12.0/dsp/README.md).
+[upstream pipeline contract](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/README.md).
 Intentional Time Alignment delays remain outside this compensation.
 
 Reset preserves the preset's parameters and prepared assets without
 allocation. PipeTune retains structured parameter bytes and reapplies them
-after engine reset because the [upstream Matrix reset](https://github.com/Frieve-A/effetune/blob/v2.12.0/dsp/plugins/basics/matrix/kernel.cpp)
+after engine reset because the [upstream Matrix reset](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/plugins/basics/matrix/kernel.cpp)
 restores its default routes. This also preserves custom Matrix routing after
 silent-input suspension.
 
@@ -342,14 +496,16 @@ Supported commands are:
 - bypass DSP and activate transparent pass-through;
 - set an Automatic or fixed sample-rate policy;
 - set the scalar or SIMD native DSP backend;
-- set or ignore the silent-input DSP timeout; and
+- set or ignore the silent-input DSP timeout;
+- replace output configuration, optionally with a preset or bypass; and
 - subscribe to an initial status event and later publications.
 
 Status contains processing mode, independent DSP activity, active preset,
 input telemetry, the idle policy, DSP and graph rates, transition state, DSP
 performance counters, configured and effective backend variants,
-availability, fallback, and diagnostics. It contains no physical output,
-default-sink, or volume state.
+availability, fallback, and diagnostics. It also contains configured output
+assignments, the live output inventory and its readiness, physical controls,
+path activity, and timing estimates. Observations are not persisted as settings.
 
 The subscriber server uses an `eventfd` wakeup and bounded, coalescing output
 per client. Preset activation and relevant PipeWire state transitions request a
@@ -376,14 +532,16 @@ path `$XDG_CONFIG_HOME/pipetune/environment`. Supported assignments are:
 - `PIPETUNE_RATE` with `automatic` or a supported fixed rate;
 - `PIPETUNE_RATE_ENFORCEMENT` with `suggest` or `force`;
 - `PIPETUNE_DSP_BACKEND` with `scalar` or `simd`;
-- `PIPETUNE_DSP_SIMD_VARIANT` with `auto` or an applicable fixed tier; and
+- `PIPETUNE_DSP_SIMD_VARIANT` with `auto` or an applicable fixed tier;
 - `PIPETUNE_DSP_IDLE_TIMEOUT` with `ignore` or 100 through 5000 ms in
-  100 ms steps.
+  100 ms steps; and
+- `PIPETUNE_OUTPUT` with the quoted JSON mode, identified outputs, and slots.
 
 An absent preset selects bypass. Missing rate assignments select
 Automatic-and-suggest. Missing backend assignments select scalar with
 automatic SIMD dispatch preference. A missing idle assignment selects
-`ignore`. Preset, rate, backend, and idle updates use one atomic writer and
+`ignore`; a missing output assignment selects single mode. Preset, rate,
+backend, idle, and output updates use one atomic writer and
 preserve the other selections. Obsolete or unknown
 assignments are rejected; `pipetune config reset` replaces such a file without
 first parsing it.
@@ -396,14 +554,14 @@ usable lower variants or to scalar according to the backend rules.
 The installed service is ordered after PipeWire and WirePlumber and uses
 `Restart=on-failure`. Start limiting allows at most three starts in 30 seconds,
 so a permanent startup error cannot repeatedly remove and recreate the audio
-graph. It has no default-sink restoration command. Removing or stopping
-PipeTune removes the filter nodes; WirePlumber continues to own the normal
-device and volume policy.
+graph. Default restoration belongs to the session policy rather than a service
+stop command, so abnormal daemon exits also release multiple-output routing.
+Removing or stopping PipeTune removes its nodes and restores normal selection.
 
 The setup and unsetup coordinators invoke `systemctl` and `pipetune-gtk` with
 direct argument vectors and no shell. Setup serializes per-user management
 with an advisory lock and checks a versioned record below `XDG_STATE_HOME`,
-the exact contents of all six managed WirePlumber files, service enablement
+the exact contents of all seven managed WirePlumber files, service enablement
 and activity, and the GTK autostart mask. Plain setup returns once these are
 current; `--force` repeats the workflow. Setup snapshots the managed
 configuration, WirePlumber 0.4/0.5 policy files, and service state before
@@ -415,8 +573,11 @@ autostart override through its reserved backup.
 
 `pipetune-gtk` is a single-instance `GtkApplication`. Its GIO client keeps one
 asynchronous subscription connection and uses separate asynchronous requests
-for preset, bypass, rate-policy, DSP-backend, and DSP-idle changes. There is no
-output device UI or output control request.
+for preset, bypass, rate-policy, DSP-backend, DSP-idle, and output changes.
+The Output page provides device selection, a final-channel mapping table,
+purpose editing, and before/after reviews for channel moves and reassignment.
+Volume and timing observations update individual labels without replacing an
+editor or sending configuration requests.
 
 During primary application startup, a separate GIO subprocess client invokes
 the installed CLI as `pipetune setup --no-launch-gtk`. Control subscription
@@ -444,10 +605,13 @@ timer reconnects a lost subscription; status itself is not polled. Sleeping
 DSP activity replaces the Load percentage with `Suspended`.
 
 The settings transaction applies live changes in rate, backend, idle policy,
-then processing order. Apply persists the complete confirmed snapshot. Cancel
-restores the captured live baseline before hiding the window. The Advanced
+then output configuration and processing order. A simultaneous output/preset
+change is one request and must confirm both results. A multiple-mode draft
+without a selected device waits locally for selection. Apply persists the
+complete confirmed snapshot. Cancel restores the captured live baseline before
+hiding the window. The Advanced
 default is bypass, Automatic-and-suggest, scalar, automatic SIMD preference,
-and ignored silent-input suspension.
+ignored silent-input suspension, and single output mode.
 
 The tray backend discovers a StatusNotifierItem host first. If none is
 available on X11, it uses the `GtkStatusIcon` and XEmbed compatibility path. A
@@ -456,16 +620,21 @@ later explicit activation presents the existing singleton window.
 
 ## Known limits
 
-- Stereo is the managed-service layout. Direct runs accept one through sixteen
-  channels, but no live channel-layout control is provided.
+- Desktop input is stereo; multiple mode supports up to sixteen final DSP
+  slots. Direct runs also accept one through sixteen channels. PipeTune does
+  not import EffeTune's separate custom audio-device configuration.
+- WirePlumber 0.4.17 can leave existing application streams suspended after a
+  policy restart, including `stream.dont-remix=true` streams. Reopening the
+  application's output restores playback. This also reproduces without
+  PipeTune; the tested 0.5.8 product path resumes automatically. See the upstream
+  [0.4 adapter](https://github.com/PipeWire/wireplumber/blob/0.4.17/modules/module-si-audio-adapter.c)
+  and [0.5 adapter](https://github.com/PipeWire/wireplumber/blob/0.5.8/modules/module-si-audio-adapter.c).
 - FIR Crossover requires an even output bus from 4 through 16 channels.
   PipeTune omits it with a warning when the active layout is incompatible.
-- Room EQ and IR Reverb remain unresolved stored-asset DSPs. Room EQ opens
-  EffeTune's browser-backed
-  [measurement store](https://github.com/Frieve-A/effetune/blob/bedc6c662a6edc88c9644b7e00cec9122a250cfb/plugins/eq/room_eq.js#L1593-L1629),
-  while IR Reverb looks up its serialized identifier in the
-  [IR library](https://github.com/Frieve-A/effetune/blob/bedc6c662a6edc88c9644b7e00cec9122a250cfb/plugins/reverb/ir_reverb.js#L766-L802).
-  Their source PCM is not carried by `.effetune_preset`, so PipeTune omits the
-  nodes with warnings.
+- Presets contain references rather than external source data. SFZ, IR Reverb,
+  and Room EQ require the desktop registration, originals, and measurement
+  backups described in the [user documentation](../../docs/en/details.md#external-assets).
+  Browser-only records are not accessible through these desktop storage
+  contracts.
 - PipeTune does not provide a machine-wide service shared by multiple logged-in
   users.

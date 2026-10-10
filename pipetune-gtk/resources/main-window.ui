@@ -332,7 +332,7 @@
                                       </object>
                                     </child>
                                     <child>
-                                      <object class="GtkScrolledWindow">
+                                      <object class="GtkScrolledWindow" id="presetEntryScroll">
                                         <property name="margin">14</property>
                                         <property name="hscrollbar-policy">never</property>
                                         <property name="vscrollbar-policy">automatic</property>
@@ -630,6 +630,83 @@
                       <packing>
                         <property name="name">dsp</property>
                         <property name="title" translatable="yes">DSP</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkScrolledWindow">
+                        <property name="hscrollbar-policy">never</property>
+                        <property name="vscrollbar-policy">automatic</property>
+                        <child>
+                          <object class="GtkBox" id="outputPage">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">10</property>
+                            <property name="margin">14</property>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">Output mode</property>
+                                <property name="xalign">0</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkComboBoxText" id="outputModeCombo">
+                                <items>
+                                  <item translatable="yes">Single — output selected by the OS</item>
+                                  <item translatable="yes">Multiple — outputs selected in PipeTune</item>
+                                </items>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="outputModeNotice">
+                                <property name="xalign">0</property>
+                                <property name="wrap">True</property>
+                                <property name="max-width-chars">45</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="outputErrorLabel">
+                                <property name="xalign">0</property>
+                                <property name="wrap">True</property>
+                                <property name="max-width-chars">45</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">Output devices</property>
+                                <property name="xalign">0</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkScrolledWindow" id="outputDeviceScroll">
+                                <property name="hscrollbar-policy">never</property>
+                                <property name="min-content-height">120</property>
+                                <property name="vexpand">True</property>
+                                <property name="shadow-type">in</property>
+                                <child>
+                                  <object class="GtkListBox" id="outputDeviceList">
+                                    <property name="selection-mode">none</property>
+                                    <child>
+                                      <object class="GtkExpander" id="outputReservedExpander">
+                                        <property name="label" translatable="yes">Reserved EffeTune channels</property>
+                                        <property name="margin">6</property>
+                                        <property name="expanded">True</property>
+                                        <child>
+                                          <object class="GtkGrid" id="outputReservedGrid">
+                                            <property name="margin-start">20</property>
+                                            <property name="margin-top">6</property>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="name">output</property>
+                        <property name="title" translatable="yes">Output</property>
                       </packing>
                     </child>
                     <child>
@@ -1027,5 +1104,72 @@
         </child>
       </object>
     </child>
+  </object>
+  <object class="GtkListStore" id="outputMappingStore">
+    <columns>
+      <column type="gchararray"/><column type="gchararray"/>
+      <column type="gchararray"/><column type="gchararray"/>
+    </columns>
+  </object>
+  <object class="GtkDialog" id="outputMappingDialog">
+    <property name="title" translatable="yes">Review channel mapping</property>
+    <property name="transient-for">mainWindow</property>
+    <property name="modal">True</property>
+    <property name="destroy-with-parent">True</property>
+    <property name="default-width">760</property>
+    <property name="default-height">440</property>
+    <child internal-child="vbox">
+      <object class="GtkBox">
+        <property name="spacing">10</property><property name="margin">14</property>
+        <child>
+          <object class="GtkLabel">
+            <property name="label" translatable="yes">Review where each final EffeTune channel will play. Your preset is unchanged. Preview this mapping, then use Apply in the main window to save it.</property>
+            <property name="xalign">0</property><property name="wrap">True</property><property name="max-width-chars">85</property>
+          </object>
+        </child>
+        <child><object class="GtkComboBoxText" id="outputReplacementCombo"/></child>
+        <child>
+          <object class="GtkLabel" id="outputMappingErrorLabel">
+            <property name="xalign">0</property><property name="wrap">True</property><property name="max-width-chars">85</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkScrolledWindow">
+            <property name="vexpand">True</property><property name="shadow-type">in</property>
+            <child>
+              <object class="GtkTreeView" id="outputMappingPreview">
+                <property name="model">outputMappingStore</property><property name="tooltip-column">3</property>
+                <child>
+                  <object class="GtkTreeViewColumn">
+                    <property name="title">Ch</property>
+                    <child><object class="GtkCellRendererText"/><attributes><attribute name="text">0</attribute></attributes></child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkTreeViewColumn">
+                    <property name="title" translatable="yes">Before</property>
+                    <property name="sizing">fixed</property><property name="fixed-width">320</property><property name="resizable">True</property>
+                    <child><object class="GtkCellRendererText"><property name="ellipsize">end</property></object><attributes><attribute name="text">1</attribute></attributes></child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkTreeViewColumn">
+                    <property name="title" translatable="yes">After</property>
+                    <property name="sizing">fixed</property><property name="fixed-width">320</property><property name="resizable">True</property>
+                    <child><object class="GtkCellRendererText"><property name="ellipsize">end</property></object><attributes><attribute name="text">2</attribute></attributes></child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child type="action"><object class="GtkButton" id="outputMappingCancelButton"><property name="label" translatable="yes">Cancel</property><property name="can-default">True</property></object></child>
+    <child type="action"><object class="GtkButton" id="outputMappingUseButton"><property name="label" translatable="yes">Preview mapping</property><property name="can-default">True</property></object></child>
+    <action-widgets>
+      <action-widget response="cancel" default="true">outputMappingCancelButton</action-widget>
+      <action-widget response="accept">outputMappingUseButton</action-widget>
+    </action-widgets>
   </object>
 </interface>

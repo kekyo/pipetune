@@ -83,9 +83,11 @@ void renderPresetConfiguration(
   gtk_list_store_clear(model);
   if (entries.has_value()) {
     for (const auto &entry : *entries) {
+      auto state = std::string(presetEntryStateText(entry.state));
+      for (const auto &diagnostic : entry.diagnostics) state += "\n" + diagnostic;
       gtk_list_store_insert_with_values(
           model, nullptr, -1, 0, entry.name.c_str(),
-          1, presetEntryStateText(entry.state), -1);
+          1, state.c_str(), -1);
     }
   }
   gtk_widget_set_visible(ui.presetConfigurationSection, entries.has_value());
@@ -151,6 +153,17 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
           builder, "presetConfigurationSection", GTK_TYPE_FRAME),
       .presetEntryView = requiredWidget(
           builder, "presetEntryView", GTK_TYPE_TREE_VIEW),
+      .outputModeCombo = requiredWidget(builder, "outputModeCombo", GTK_TYPE_COMBO_BOX_TEXT),
+      .outputModeNotice = requiredWidget(builder, "outputModeNotice", GTK_TYPE_LABEL),
+      .outputErrorLabel = requiredWidget(builder, "outputErrorLabel", GTK_TYPE_LABEL),
+      .outputDeviceList = requiredWidget(builder, "outputDeviceList", GTK_TYPE_LIST_BOX),
+      .outputReservedExpander = requiredWidget(builder, "outputReservedExpander", GTK_TYPE_EXPANDER),
+      .outputReservedGrid = requiredWidget(builder, "outputReservedGrid", GTK_TYPE_GRID),
+      .outputMappingDialog = requiredWidget(builder, "outputMappingDialog", GTK_TYPE_DIALOG),
+      .outputReplacementCombo = requiredWidget(builder, "outputReplacementCombo", GTK_TYPE_COMBO_BOX_TEXT),
+      .outputMappingErrorLabel = requiredWidget(builder, "outputMappingErrorLabel", GTK_TYPE_LABEL),
+      .outputMappingPreview = requiredWidget(builder, "outputMappingPreview", GTK_TYPE_TREE_VIEW),
+      .outputMappingUseButton = requiredWidget(builder, "outputMappingUseButton", GTK_TYPE_BUTTON),
       .rateCombo =
           requiredWidget(builder, "rateCombo", GTK_TYPE_COMBO_BOX_TEXT),
       .rateEnforcementCombo = requiredWidget(
@@ -193,6 +206,8 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
           requiredWidget(builder, "applyButton", GTK_TYPE_BUTTON),
   };
   configureCompactComboBox(ui.presetCombo);
+  configureCompactComboBox(ui.outputModeCombo);
+  configureCompactComboBox(ui.outputReplacementCombo);
   gtk_widget_show_all(
       gtk_bin_get_child(GTK_BIN(ui.presetConfigurationSection)));
   configureCompactComboBox(ui.rateCombo);

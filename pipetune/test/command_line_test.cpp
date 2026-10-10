@@ -9,6 +9,7 @@
 #include <iostream>
 #include <span>
 #include <string_view>
+#include <vector>
 
 static bool check(bool condition, std::string_view message) {
   if (!condition) {
@@ -126,6 +127,56 @@ static bool testBypassAction() {
          check(explicitResult.options.controlSocketPath ==
                    "/tmp/pipetune.sock",
                "explicit bypass socket differs");
+}
+
+static bool testOutputActions() {
+  auto action = std::size_t{0};
+  const auto actions = std::array{pipetune::CommandLineAction::outputGet, pipetune::CommandLineAction::outputMode,
+      pipetune::CommandLineAction::outputSelect, pipetune::CommandLineAction::outputSet};
+  for (const auto &arguments : std::array{
+           std::vector<std::string_view>{"output", "get", "--json", "--socket", "/tmp/socket"},
+           std::vector<std::string_view>{"output", "mode", "single", "--config", "/tmp/environment"},
+           std::vector<std::string_view>{"output", "select", "dac-a", "dac-b"},
+           std::vector<std::string_view>{"output", "set", R"({"mode":"single","outputs":[],"channels":[]})"}}) {
+    const auto parsed = pipetune::parseCommandLine(arguments);
+    if (!check(parsed.error.empty() && parsed.options.action == actions[action++],
+               "output get, mode, select, and set commands must select the requested action")) return false;
+  }
+  const auto selected = pipetune::parseCommandLine(std::array<std::string_view, 8>{
+      "output", "select", "dac-a", "--socket", "/tmp/socket", "dac-b", "--config", "/tmp/environment"});
+  const auto mode = pipetune::parseCommandLine(std::array<std::string_view, 3>{"output", "mode", "multiple"});
+  if (!check(selected.error.empty() && selected.options.outputNodes == std::vector<std::string>{"dac-a", "dac-b"} &&
+             selected.options.controlSocketPath == "/tmp/socket" && selected.options.configPath == "/tmp/environment",
+             "selection must retain device order and explicit endpoint paths") ||
+      !check(mode.error.empty() && mode.options.outputConfiguration.mode == pipetune::OutputMode::multiple,
+             "mode must retain the requested multiple-output choice")) return false;
+  constexpr auto list = std::array<std::string_view, 2>{"output", "list"};
+  constexpr auto json = std::array<std::string_view, 3>{"output", "list", "--json"};
+  const auto plain = pipetune::parseCommandLine(list);
+  const auto encoded = pipetune::parseCommandLine(json);
+  if (!check(plain.error.empty() && plain.options.action == pipetune::CommandLineAction::outputList &&
+             !plain.options.json, "output list must query available devices") ||
+      !check(encoded.error.empty() && encoded.options.action == pipetune::CommandLineAction::outputList &&
+             encoded.options.json, "output list --json must select machine-readable inventory")) return false;
+  for (const auto &arguments : std::array{
+           std::vector<std::string_view>{"output"},
+           std::vector<std::string_view>{"output", "unknown"},
+           std::vector<std::string_view>{"output", "select"},
+           std::vector<std::string_view>{"output", "select", "dac-a", "--json"},
+           std::vector<std::string_view>{"output", "get", "--config", "/tmp/environment"},
+           std::vector<std::string_view>{"output", "get", "--socket"},
+           std::vector<std::string_view>{"output", "get", "--socket", "/tmp/one", "--socket", "/tmp/two"},
+           std::vector<std::string_view>{"output", "mode"},
+           std::vector<std::string_view>{"output", "mode", "unknown"},
+           std::vector<std::string_view>{"output", "set"},
+           std::vector<std::string_view>{"output", "set", "{}"},
+           std::vector<std::string_view>{"output", "list", "--json", "--json"},
+           std::vector<std::string_view>{"output", "list", "--preset", "file"},
+           std::vector<std::string_view>{"output", "list", "--socket", "/tmp/socket"}}) {
+    if (!check(!pipetune::parseCommandLine(arguments).error.empty(),
+               "output list must reject incomplete, duplicate, and unrelated options")) return false;
+  }
+  return true;
 }
 
 static bool testRateActions() {
@@ -566,10 +617,31 @@ static bool testRejectedArguments() {
                "config reset must reject unknown options");
 }
 
+static bool testSfzBudget() {
+  for (const auto value : {"64", "128", "256", "512", "1024"}) {
+    const auto args = std::array<std::string_view, 4>{"--preset", "sfz.effetune_preset", "--sfz-max-size", value};
+    const auto result = pipetune::parseCommandLine(args);
+    if (!check(result.error.empty(), result.error) ||
+        !check(std::to_string(result.options.sfzMaxSizeMiB) == value, "SFZ budget differs")) return false;
+  }
+  for (const auto &args : std::vector<std::vector<std::string_view>>{
+      {"--preset", "x", "--sfz-max-size", "100"},
+      {"--preset", "x", "--sfz-max-size", "0"},
+      {"--preset", "x", "--sfz-max-size", "1025"},
+      {"--preset", "x", "--sfz-max-size", "64.0"},
+      {"--preset", "x", "--sfz-max-size"},
+      {"--preset", "x", "--sfz-max-size", "64", "--sfz-max-size", "128"},
+      {"--status", "--sfz-max-size", "64"},
+      {"--load-preset", "x", "--sfz-max-size", "64"}}) {
+    if (!check(!pipetune::parseCommandLine(args).error.empty(), "invalid SFZ options accepted")) return false;
+  }
+  return true;
+}
+
 int main() {
-  const auto passed = testRunDefaults() && testExplicitOptions() &&
+  const auto passed = testRunDefaults() && testExplicitOptions() && testSfzBudget() &&
                       testControlActions() && testDaemonAction() &&
-                      testBypassAction() && testRateActions() &&
+                      testBypassAction() && testOutputActions() && testRateActions() &&
                       testDspActions() &&
                       testUserSetupActions() &&
                       testConfigResetAction() &&

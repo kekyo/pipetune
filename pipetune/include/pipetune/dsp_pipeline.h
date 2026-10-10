@@ -7,7 +7,10 @@
 #define PIPETUNE_DSP_PIPELINE_H
 
 #include "pipetune/dsp_backend.h"
+#include "pipetune/asset_cache.h"
+#include "pipetune/asset_memory.h"
 #include "pipetune/preset_entry.h"
+#include <cardio.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -35,15 +38,17 @@ struct PipelineBuildOptions {
 };
 
 /**
- * Reports a preset node that was intentionally omitted from the native pipeline.
+ * Reports a non-fatal condition encountered while preparing a preset node.
  */
 struct PipelineWarning {
   /** Zero-based node index in the preset pipeline. */
   std::size_t nodeIndex;
   /** Display name stored in the preset. */
   std::string pluginName;
-  /** Human-readable reason for omitting the node. */
+  /** Human-readable preparation or omission diagnostic. */
   std::string reason;
+  /** Effective node state; enabled diagnostics do not mean omission. */
+  PresetEntryState state = PresetEntryState::ignored;
 };
 
 /**
@@ -77,13 +82,23 @@ struct PipelineLoadResult;
 struct PipelineLoadContext {
   /** Directory containing EffeTune's measurement backup JSON files. */
   std::filesystem::path measurementDirectory;
+  /** EffeTune data root containing registered IR and SFZ sources. */
+  std::filesystem::path effetuneDirectory = {};
+  /** Optional native preparation cache; a write failure does not prevent playback. */
+  AssetCacheOptions assetCache = {};
+  /** Combined asset working data and live native footprints; may lower the process default. */
+  std::uint64_t assetMemoryBytes = kDefaultAssetMemoryBytes;
+  /** Per-instrument original, PCM, and bank/index budget; defaults to the app's 256 MiB. */
+  std::uint64_t sfzMaximumBytes = std::uint64_t{kDefaultSfzMaxSizeMiB} * 1024 * 1024;
 };
 
 /**
  * Resolves measurement storage from XDG_CONFIG_HOME and HOME.
+ * @param sfzMaxSizeMiB Supported per-instrument SFZ budget in MiB.
  * @return Context with an empty directory when neither variable is available.
+ * @throws std::invalid_argument When the SFZ budget is unsupported.
  */
-PipelineLoadContext defaultPipelineLoadContext();
+PipelineLoadContext defaultPipelineLoadContext(std::uint32_t sfzMaxSizeMiB = kDefaultSfzMaxSizeMiB);
 
 /**
  * Owns one prepared EffeTune native DSP pipeline.
@@ -141,8 +156,8 @@ public:
   std::size_t activePluginCount() const noexcept;
   /** Returns all loaded preset entries in their original order. */
   std::span<const PresetEntry> presetEntries() const noexcept;
-  /** Returns referenced measurement files, including missing files. */
-  std::span<const std::filesystem::path> measurementFiles() const noexcept;
+  /** Returns referenced asset source files, including missing files. */
+  std::span<const std::filesystem::path> dependencyFiles() const noexcept;
   /** Returns the native backend in use, or no value for a bypass pipeline. */
   std::optional<DspBackendKind> backendKind() const noexcept;
   /** Returns the concrete native variant, or no value for a bypass pipeline. */
@@ -150,15 +165,20 @@ public:
 
 private:
   explicit DspPipeline(std::unique_ptr<Impl> implementation);
-  static PipelineLoadResult
+  static cardio::promise<PipelineLoadResult>
   buildFromRecipe(std::shared_ptr<const std::string> presetRecipe,
-                  const PipelineBuildOptions &options,
+                  PipelineBuildOptions options,
                   std::shared_ptr<const DspBackend> backend,
-                  const PipelineLoadContext &context);
+                  PipelineLoadContext context, cardio::cancellation cancellation);
   bool usesNativeDsp() const noexcept;
   std::unique_ptr<Impl> implementation_;
 
   friend class DspPipelineSlot;
+  friend cardio::promise<PipelineLoadResult> loadDspPipelineAsync(
+      std::filesystem::path, PipelineBuildOptions, std::shared_ptr<const DspBackend>,
+      PipelineLoadContext, cardio::cancellation);
+  friend cardio::promise<PipelineLoadResult> rebuildDspPipelineAsync(
+      const DspPipeline &, PipelineBuildOptions, std::shared_ptr<const DspBackend>, cardio::cancellation);
   friend struct PipelineCreateResult;
   friend struct PipelineLoadResult;
   friend PipelineCreateResult
@@ -208,10 +228,12 @@ createBypassDspPipeline(const PipelineBuildOptions &options);
 struct PipelineLoadResult {
   /** Prepared pipeline, or null when error is non-empty. */
   std::unique_ptr<DspPipeline> pipeline;
-  /** Non-fatal omitted-node diagnostics. */
+  /** Non-fatal preparation diagnostics with their effective node states. */
   std::vector<PipelineWarning> warnings;
-  /** Referenced backup paths, including unavailable measurements. */
-  std::vector<std::filesystem::path> measurementFiles = {};
+  /** Referenced source paths, including unavailable inputs. */
+  std::vector<std::filesystem::path> dependencyFiles = {};
+  /** Number of external assets whose preparation was reused during this load. */
+  std::size_t cachedAssetCount = 0;
   /** Fatal load or construction diagnostic. */
   std::string error;
 };
@@ -253,6 +275,34 @@ loadDspPipeline(const std::filesystem::path &presetPath,
                 const PipelineBuildOptions &options,
                 std::shared_ptr<const DspBackend> backend,
                 const PipelineLoadContext &context = defaultPipelineLoadContext());
+
+/**
+ * Loads and prepares a preset on the current cardio GIO dispatcher.
+ * @param presetPath Formal preset path; retained until preparation completes.
+ * @param options Processing format captured at request time.
+ * @param backend Native backend retained independently of the active pipeline.
+ * @param context Source and cache configuration captured at request time.
+ * @param cancellation Superseded request or shutdown notification.
+ * @return Prepared replacement or diagnostic; the active pipeline is unaffected.
+ * @throws cardio::canceled_exception When preparation is canceled.
+ */
+cardio::promise<PipelineLoadResult> loadDspPipelineAsync(
+    std::filesystem::path presetPath, PipelineBuildOptions options,
+    std::shared_ptr<const DspBackend> backend, PipelineLoadContext context,
+    cardio::cancellation cancellation);
+
+/**
+ * Rebuilds the retained recipe asynchronously without retaining the source engine.
+ * @param source Pipeline whose immutable recipe is captured before returning.
+ * @param options New processing format.
+ * @param backend Explicit backend, or null to retain the source backend.
+ * @param cancellation Superseded request or shutdown notification.
+ * @return Prepared replacement; the source may be retired after this call returns.
+ * @throws cardio::canceled_exception When preparation is canceled.
+ */
+cardio::promise<PipelineLoadResult> rebuildDspPipelineAsync(
+    const DspPipeline &source, PipelineBuildOptions options,
+    std::shared_ptr<const DspBackend> backend, cardio::cancellation cancellation);
 
 /**
  * Rebuilds a pipeline at another rate from its retained preset recipe.

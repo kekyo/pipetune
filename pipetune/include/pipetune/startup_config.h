@@ -7,7 +7,9 @@
 #define PIPETUNE_STARTUP_CONFIG_H
 
 #include "pipetune/dsp_backend.h"
+#include "pipetune/asset_memory.h"
 #include "pipetune/dsp_idle.h"
+#include "pipetune/output_configuration.h"
 #include "pipetune/sample_rate.h"
 
 #include <filesystem>
@@ -54,6 +56,10 @@ struct StartupConfig {
   DspSimdVariant dspSimdVariant = DspSimdVariant::automatic;
   /** Automatic DSP suspension policy after continuous silent input. */
   DspIdlePolicy dspIdlePolicy = {};
+  /** Output mode, saved devices, and fixed DSP channel assignments. */
+  OutputConfiguration outputConfiguration = {};
+  /** Per-instrument SFZ budget in MiB; changes take effect after daemon restart. */
+  std::uint32_t sfzMaxSizeMiB = kDefaultSfzMaxSizeMiB;
 };
 
 /**

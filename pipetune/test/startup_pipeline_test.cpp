@@ -4,10 +4,12 @@
  * https://github.com/kekyo/pipetune/
  */
 #include "startup_pipeline.h"
+#include "preparation_dispatcher.h"
 
 #include "pipetune/dsp_backend.h"
 #include "pipetune/startup_config.h"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -75,6 +77,9 @@ static bool testConfiguredPreset(const std::filesystem::path &configPath,
       configPath, pipetune::DspBackendKind::simd);
   const auto savedDspIdle = pipetune::saveDspIdlePolicy(
       configPath, {.timeoutMilliseconds = 300});
+  auto config = pipetune::loadStartupConfig(configPath).config;
+  config.sfzMaxSizeMiB = 512;
+  if (!check(pipetune::saveStartupConfig(configPath, config).empty(), "cannot save SFZ budget")) return false;
   if (!check(saved.empty(), saved) ||
       !check(savedBackend.empty(), savedBackend) ||
       !check(savedDspIdle.empty(), savedDspIdle)) {
@@ -102,6 +107,7 @@ static bool testConfiguredPreset(const std::filesystem::path &configPath,
              "configured preset must prepare its DSP node") ||
       !check(prepared.dspIdlePolicy.timeoutMilliseconds == 300,
              "configured DSP idle policy must reach the runtime") ||
+      !check(prepared.sfzMaxSizeMiB == 512, "SFZ budget must reach the runtime") ||
       !check(prepared.configuredDspBackend ==
                      pipetune::DspBackendKind::simd &&
                  prepared.effectiveDspBackend ==
@@ -227,6 +233,70 @@ static bool testUnsupportedStartupRate(const std::filesystem::path &directory, s
                "a supported fixed rate must recover DSP startup processing");
 }
 
+static bool testOutputConfiguration(const std::filesystem::path &directory) {
+  const auto configPath = directory / "outputs-environment";
+  const auto presetPath = directory / "outputs.effetune_preset";
+  {
+    auto preset = std::ofstream(presetPath);
+    preset << R"({"pipeline":[{"name":"Matrix","enabled":true,"channel":"All","parameters":{"mx":"001102p13"}}]})";
+  }
+  auto config = pipetune::StartupConfig{.presetFound = true, .presetPath = presetPath};
+  config.outputConfiguration = {
+      .mode = pipetune::OutputMode::multiple,
+      .outputs = {{.id = "dac", .enabled = true,
+          .device = {.identity = {.api = "node", .location = "saved-dac", .port = "saved-dac",
+                                 .vendor = "", .product = "", .serial = ""},
+                     .name = "Saved DAC", .profile = "", .channelPositions = {"FL", "FR"}}}},
+      .channels = {{"", 0, "Reserved left"}, {"", 0, "Reserved right"}, {"dac", 0, "Left"}, {"dac", 1, "Right"}}};
+  config.outputConfiguration.channels.resize(16);
+  if (!check(pipetune::saveStartupConfig(configPath, config).empty(), "multi-output startup settings must save")) return false;
+  const auto options = pipetune::PipelineBuildOptions{.sampleRate = 48000, .maxChannels = 2, .maxFrames = 64};
+  auto prepared = pipetune::prepareStartupPipeline(configPath, options);
+  if (!check(prepared.pipeline != nullptr && prepared.configurationError.empty(), "saved multi-output preset must prepare") ||
+      !check(prepared.outputConfiguration == config.outputConfiguration && prepared.pipeline->maxChannels() == 16,
+             "startup must recover saved slots and build the matching DSP width")) return false;
+  auto samples = std::vector<float>(16, 0.0F);
+  samples[0] = 0.25F;
+  samples[1] = 0.5F;
+  if (!check(prepared.pipeline->process(samples, 16, 1, 0) == pipetune::ProcessStatus::ok &&
+             samples[0] == 0.25F && samples[1] == 0.5F && samples[2] == 0.25F && samples[3] == -0.5F,
+             "restored startup preset must generate the configured extra output channels")) return false;
+  for (const auto missing : {false, true}) {
+    config.presetFound = missing;
+    config.presetPath = directory / "missing-output-preset";
+    if (!check(pipetune::saveStartupConfig(configPath, config).empty(), "bypass settings must save")) return false;
+    prepared = pipetune::prepareStartupPipeline(configPath, options);
+    if (!check(prepared.pipeline != nullptr && prepared.pipeline->maxChannels() == 16 &&
+               prepared.outputConfiguration == config.outputConfiguration && prepared.activePresetPath.empty() &&
+               prepared.configurationError.empty() != missing,
+               "intentional and degraded bypass must retain saved routes and width")) return false;
+    std::fill(samples.begin(), samples.end(), 0.0F);
+    samples[0] = 0.25F;
+    samples[1] = 0.5F;
+    const auto expected = samples;
+    if (!check(prepared.pipeline->process(samples, 16, 1, 0) == pipetune::ProcessStatus::ok && samples == expected,
+               "restored bypass must leave added channels silent")) return false;
+  }
+  config.presetFound = false;
+  config.outputConfiguration.mode = pipetune::OutputMode::single;
+  if (!check(pipetune::saveStartupConfig(configPath, config).empty(), "single mode with reserved choices must save")) return false;
+  prepared = pipetune::prepareStartupPipeline(configPath, options);
+  return check(prepared.pipeline != nullptr && prepared.pipeline->maxChannels() == 2 &&
+               prepared.outputConfiguration == config.outputConfiguration,
+               "single-mode startup must use stereo and retain inactive multiple-mode choices");
+}
+
+static bool testCanceledStartup(const std::filesystem::path &configPath) {
+  auto cancellation = cardio::cancellation_source{};
+  cancellation.cancel();
+  try {
+    static_cast<void>(pipetune::runPreparation<pipetune::StartupPipelineResult>([&] {
+      return pipetune::prepareStartupPipelineAsync(configPath, {48000, 2, 128}, {}, cancellation.get_cancellation());
+    }));
+  } catch (const cardio::canceled_exception &) { return true; }
+  return check(false, "a terminated startup must not enter fail-open bypass or publish a preset");
+}
+
 int main() {
   const auto directory =
       std::filesystem::temp_directory_path() /
@@ -237,6 +307,8 @@ int main() {
   const auto presetPath = directory / "configured.effetune_preset";
   const auto missingPreset = directory / "missing.effetune_preset";
   const auto passed =
+      testCanceledStartup(configPath) &&
+      testOutputConfiguration(directory) &&
       testUnsupportedStartupRate(directory, "TV Audio Simulator") &&
       testUnsupportedStartupRate(directory, "Bass Extender") &&
       testIntentionalBypass(configPath) &&

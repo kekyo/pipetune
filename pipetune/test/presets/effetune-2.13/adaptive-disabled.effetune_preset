@@ -1,0 +1,11 @@
+{
+  "name": "Disabled Adaptive Prediction",
+  "pipeline": [
+    {
+      "name": "Adaptive Prediction",
+      "enabled": false,
+      "channel": "All",
+      "parameters": {}
+    }
+  ]
+}

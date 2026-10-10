@@ -355,6 +355,600 @@ const hideWithKeyboard = async (method: 'escape' | 'close'): Promise<void> => {
 };
 
 describe('PipeTune GTK dialog', () => {
+  it('discards an unfinished output purpose when cancelling and reopening the window', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await selectSettingsPage(3);
+    await selectComboItem('outputModeCombo', 1);
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    const apply = await getElement('applyButton', 'button');
+    await toPass(async () =>
+      expect((await apply.info()).states).toContain('sensitive')
+    );
+    await apply.click();
+    await waitForLabel(
+      'transactionStateLabel',
+      'Live settings match the saved configuration'
+    );
+    const saved = await session.inspectConfig();
+    await session.clearRequests();
+    const purpose = await getElement('output-purpose-0-0', 'entry');
+    await purpose.setText('unfinished');
+    await (await getElement('mainWindow', 'window')).activate();
+    await session.app.input.pressKey('Escape');
+    await toPass(async () =>
+      expect(await session?.app.getWindowCount()).toBe(0)
+    );
+    await (await session.app.getTrayItem({ id: 'pipetune' })).click();
+    await toPass(async () =>
+      expect(
+        await (await getElement('output-purpose-0-0', 'entry')).text()
+      ).toBe('')
+    );
+    expect(await session.inspectConfig()).toEqual(saved);
+    expect(
+      (await session.readRequests()).filter(
+        (request) => request.command === 'set-output'
+      )
+    ).toHaveLength(0);
+  });
+
+  it('explains the channel limit and lets an available device take over disabled channels', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await selectSettingsPage(3);
+    await session.setOutputInventory('wide');
+    await selectComboItem('outputModeCombo', 1);
+    await waitForLabel('output-physical-0-15', '16 (AUX15)');
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await expectComboItemSelected('output-channel-0-15', 15);
+    expect(
+      (await (await getElement('output-device-1', 'checkbox')).info()).states
+    ).not.toContain('sensitive');
+    expect(
+      await (await getElement('output-notice-1', 'label')).text()
+    ).toContain('16-channel limit');
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await waitForLabel('output-presence-0', 'Disabled');
+    await (await getElement('output-reassign-1', 'button')).click();
+    await selectComboItem('outputReplacementCombo', 0);
+    await toPass(async () => {
+      expect(
+        (await (await getElement('outputMappingUseButton', 'button')).info())
+          .states
+      ).toContain('sensitive');
+    });
+    await (await getElement('outputMappingUseButton', 'button')).click();
+    await waitForLabel('output-presence-0', 'Connected');
+    expect(
+      (await (await getElement('output-device-0', 'checkbox')).info()).name
+    ).toBe('DAC B');
+    expect(
+      await (await getElement('output-device-0', 'checkbox')).isChecked()
+    ).toBe(true);
+    await expectComboItemSelected('output-channel-0-0', 0);
+    await expectComboItemSelected('output-channel-0-1', 1);
+    await expectComboItemSelected('output-channel-reserved-0', 2);
+    await expectComboItemSelected('output-channel-reserved-13', 15);
+    await toPass(async () => {
+      const request = (await session?.readRequests())
+        ?.filter((item) => item.command === 'set-output')
+        .at(-1);
+      expect(request?.configuration).toMatchObject({
+        outputs: [{ enabled: true, device: { name: 'DAC B' } }],
+        channels: [
+          { deviceChannel: 0 },
+          { deviceChannel: 1 },
+          ...Array.from({ length: 14 }, () => ({ outputId: '' })),
+        ],
+      });
+    });
+  });
+
+  it('edits channels inside each output device and reassigns from its collapsed parent', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await selectSettingsPage(3);
+    await selectComboItem('outputModeCombo', 1);
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await (await getElement('output-device-1', 'checkbox')).toggle();
+    const first = await getElement('output-expander-0', 'expander');
+    const second = await getElement('output-expander-1', 'expander');
+    expect(await first.isExpanded()).toBe(true);
+    expect(await second.isExpanded()).toBe(true);
+    await expectComboItemSelected('output-channel-0-0', 0);
+    await expectComboItemSelected('output-channel-0-1', 1);
+    await expectComboItemSelected('output-channel-1-0', 2);
+    await expectComboItemSelected('output-channel-1-1', 3);
+    await first.collapse();
+    await session.setOutputInventory('profileChanged');
+    await waitForLabel('output-presence-0', 'Profile changed');
+    expect(await first.isExpanded()).toBe(false);
+    expect(
+      await (await getElement('output-notice-0', 'label')).text()
+    ).toContain('Reassign');
+    await (await getElement('output-reassign-0', 'button')).click();
+    await selectComboItem('outputReplacementCombo', 0);
+    await (await getElement('outputMappingUseButton', 'button')).click();
+    await waitForLabel('output-presence-0', 'Connected');
+    await first.expand();
+    await waitForLabel('output-physical-0-0', '1 (AUX0)');
+    await expectComboItemSelected('output-channel-1-0', 2);
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await waitForLabel('output-presence-0', 'Disabled');
+    await expectComboItemSelected('output-channel-0-0', 0);
+    await expectComboItemSelected('output-channel-1-0', 2);
+  });
+
+  it('updates path activity and estimates while retaining channel editing', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await (await getElement('mainWindow', 'window')).resizeTo(1080, 800);
+    await selectSettingsPage(3);
+    await selectComboItem('outputModeCombo', 1);
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await (await getElement('output-device-1', 'checkbox')).toggle();
+    await waitForLabel(
+      'output-timing-0',
+      'Audio path active · Estimated compensation: 2.000 ms'
+    );
+    await waitForLabel(
+      'output-timing-1',
+      'Audio path active · Estimated compensation: 0.000 ms'
+    );
+    const saved = await session.inspectConfig();
+    await session.clearRequests();
+    const purpose = await getElement('output-purpose-0-0', 'entry');
+    const bounds = (await purpose.capture()).bounds;
+    await (await getElement('mainWindow', 'window')).activate();
+    await session.app.input.moveMouseTo(
+      bounds.x + Math.floor(bounds.width / 2),
+      bounds.y + Math.floor(bounds.height / 2)
+    );
+    await session.app.input.setMouseButton('left', true);
+    await session.app.input.setMouseButton('left', false);
+    await session.app.input.pressKey('Return');
+    await session.app.input.pressKey('s');
+    await session.setOutputTiming('unknown');
+    await waitForLabel(
+      'output-timing-0',
+      'Audio path active · Estimated compensation: Unknown'
+    );
+    expect(
+      (await session.readRequests()).filter(
+        (request) => request.command === 'set-output'
+      )
+    ).toHaveLength(0);
+    await session.app.input.pressKey('u');
+    await session.app.input.pressKey('b');
+    await session.app.input.pressKey('Return');
+    await toPass(async () => {
+      expect(await purpose.text()).toBe('sub');
+      expect(
+        (await (await getElement('applyButton', 'button')).info()).states
+      ).toContain('sensitive');
+      expect(
+        (await session?.readRequests())
+          ?.filter((request) => request.command === 'set-output')
+          .at(-1)?.configuration
+      ).toMatchObject({ channels: [{ label: 'sub' }, {}, {}, {}] });
+    });
+    await session.clearRequests();
+    for (const state of ['pending', 'idle', 'error'] as const) {
+      await session.setOutputTiming(state);
+      await waitForLabel(
+        'output-timing-0',
+        `Audio path ${state} · Estimated compensation: Unknown`
+      );
+    }
+    await session.setOutputTiming('normal');
+    await waitForLabel(
+      'output-timing-0',
+      'Audio path active · Estimated compensation: 2.000 ms'
+    );
+    for (const state of [
+      'missing',
+      'profileChanged',
+      'ambiguous',
+      'unavailable',
+      'pending',
+    ] as const) {
+      await session.setOutputInventory(state);
+      await waitForLabel(
+        'output-timing-0',
+        'Audio path unavailable · Estimated compensation: Unknown'
+      );
+    }
+    await session.setOutputInventory('connected');
+    await waitForLabel(
+      'output-timing-0',
+      'Audio path active · Estimated compensation: 2.000 ms'
+    );
+    expect(
+      (await session.readRequests()).filter(
+        (request) => request.command === 'set-output'
+      )
+    ).toHaveLength(0);
+    expect(await session.inspectConfig()).toEqual(saved);
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await toPass(async () => {
+      expect(
+        (await (await getElement('output-timing-0', 'label')).info()).states
+      ).not.toContain('visible');
+    });
+    await selectComboItem('outputModeCombo', 0);
+    await toPass(async () => {
+      expect(
+        (await (await getElement('output-timing-1', 'label')).info()).states
+      ).not.toContain('visible');
+    });
+    await selectComboItem('outputModeCombo', 1);
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await waitForLabel(
+      'output-timing-0',
+      'Audio path active · Estimated compensation: 2.000 ms'
+    );
+    await session.disconnectDaemon();
+    await waitForLabel(
+      'output-timing-0',
+      'Audio path unavailable · Estimated compensation: Unknown'
+    );
+  });
+
+  it('updates physical device controls while retaining channel editing', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await (await getElement('mainWindow', 'window')).resizeTo(1080, 800);
+    await selectSettingsPage(3);
+    await selectComboItem('outputModeCombo', 1);
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await toPass(async () => {
+      await expectComboItemSelected('output-channel-0-1', 1);
+      expect(
+        (await (await getElement('applyButton', 'button')).info()).states
+      ).toContain('sensitive');
+    });
+    await waitForLabel(
+      'output-volume-0',
+      'Device unmuted · Scalar gain: 0.0 dB · Channel gains: 0.0 dB'
+    );
+    const saved = await session.inspectConfig();
+    await session.clearRequests();
+    const purpose = await getElement('output-purpose-0-0', 'entry');
+    const bounds = (await purpose.capture()).bounds;
+    await (await getElement('mainWindow', 'window')).activate();
+    await session.app.input.moveMouseTo(
+      bounds.x + Math.floor(bounds.width / 2),
+      bounds.y + Math.floor(bounds.height / 2)
+    );
+    await session.app.input.setMouseButton('left', true);
+    await session.app.input.setMouseButton('left', false);
+    await session.app.input.pressKey('Return');
+    await session.app.input.pressKey('s');
+    await session.setOutputVolume('muted');
+    await waitForLabel(
+      'output-volume-0',
+      'Device muted · Scalar gain: 0.0 dB · Channel gains: -12.0 dB … -6.0 dB'
+    );
+    expect(
+      (await session.readRequests()).filter(
+        (request) => request.command === 'set-output'
+      )
+    ).toHaveLength(0);
+    await session.app.input.pressKey('u');
+    await session.app.input.pressKey('b');
+    await session.app.input.pressKey('Return');
+    await toPass(async () => {
+      expect(await purpose.text()).toBe('sub');
+      expect(
+        (await (await getElement('applyButton', 'button')).info()).states
+      ).toContain('sensitive');
+      expect(
+        (await session?.readRequests())
+          ?.filter((request) => request.command === 'set-output')
+          .at(-1)?.configuration
+      ).toMatchObject({ channels: [{ label: 'sub' }, {}] });
+    });
+    await session.clearRequests();
+    await session.setOutputVolume('unknown');
+    await waitForLabel(
+      'output-volume-0',
+      'Device mute unknown · Scalar gain: Unknown · Channel gains: Unknown'
+    );
+    await session.setOutputVolume('normal');
+    await waitForLabel(
+      'output-volume-0',
+      'Device unmuted · Scalar gain: 0.0 dB · Channel gains: 0.0 dB'
+    );
+    expect(
+      (await session.readRequests()).filter(
+        (request) => request.command === 'set-output'
+      )
+    ).toHaveLength(0);
+    expect(await session.inspectConfig()).toEqual(saved);
+    for (const [state, presence] of [
+      ['missing', 'Not connected'],
+      ['profileChanged', 'Profile changed'],
+      ['ambiguous', 'Ambiguous device'],
+    ] as const) {
+      await session.setOutputInventory(state);
+      await waitForLabel('output-presence-0', presence);
+      await waitForLabel(
+        'output-volume-0',
+        'Device mute unknown · Scalar gain: Unknown · Channel gains: Unknown'
+      );
+    }
+    await session.setOutputInventory('connected');
+    await waitForLabel(
+      'output-volume-0',
+      'Device unmuted · Scalar gain: 0.0 dB · Channel gains: 0.0 dB'
+    );
+    await session.disconnectDaemon();
+    await waitForLabel(
+      'output-volume-0',
+      'Device mute unknown · Scalar gain: Unknown · Channel gains: Unknown'
+    );
+  });
+
+  it('reviews channel moves and device reassignment before previewing them', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await (await getElement('mainWindow', 'window')).resizeTo(1080, 800);
+    await selectSettingsPage(3);
+    await selectComboItem('outputModeCombo', 1);
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await (await getElement('output-device-1', 'checkbox')).toggle();
+    const apply = await getElement('applyButton', 'button');
+    await toPass(async () => {
+      await expectComboItemSelected('output-channel-1-0', 2);
+      expect((await apply.info()).states).toContain('sensitive');
+    });
+    await apply.click();
+    await waitForLabel(
+      'transactionStateLabel',
+      'Live settings match the saved configuration'
+    );
+    await session.clearRequests();
+    await (await getElement('output-channel-1-0', 'comboBox')).selectChildAt(1);
+    const preview = await getElement('outputMappingPreview', 'table');
+    const reviewWindow = await getElement('outputMappingDialog', 'window');
+    await expectInsideWindow(preview, reviewWindow);
+    await expectInsideWindow(
+      await getElement('outputMappingUseButton', 'button'),
+      reviewWindow
+    );
+    expect((await (await preview.cellAt(1, 1))?.info())?.name).toBe(
+      'DAC A · 2 (FR)'
+    );
+    expect((await (await preview.cellAt(1, 2))?.info())?.name).toBe(
+      'DAC B · 1 (FL)'
+    );
+    await session.app.input.pressKey('Escape');
+    expect(
+      (await session.readRequests()).filter(
+        (request) => request.command === 'set-output'
+      )
+    ).toHaveLength(0);
+    await expectComboItemSelected('output-channel-1-0', 2);
+    await (await getElement('output-channel-1-0', 'comboBox')).selectChildAt(1);
+    await (await getElement('outputMappingCancelButton', 'button')).click();
+    await expectComboItemSelected('output-channel-1-0', 2);
+    await (await getElement('output-channel-1-0', 'comboBox')).selectChildAt(1);
+    await (await getElement('outputMappingUseButton', 'button')).click();
+    await expectComboItemSelected('output-channel-1-0', 1);
+    await expectComboItemSelected('output-channel-0-1', 2);
+    await toPass(async () =>
+      expect((await apply.info()).states).toContain('sensitive')
+    );
+    await apply.click();
+    await waitForLabel(
+      'transactionStateLabel',
+      'Live settings match the saved configuration'
+    );
+    const saved = await session.inspectConfig();
+    await session.setOutputInventory('profileChanged');
+    await waitForLabel('output-presence-0', 'Profile changed');
+    await (await getElement('output-reassign-0', 'button')).click();
+    await selectComboItem('outputReplacementCombo', 0);
+    expect((await (await preview.cellAt(0, 2))?.info())?.name).toBe(
+      'DAC A · 1 (AUX0)'
+    );
+    await session.setOutputInventory('connected');
+    await waitForLabel('output-presence-0', 'Connected');
+    await (await getElement('outputMappingUseButton', 'button')).click();
+    await waitForLabel(
+      'outputMappingErrorLabel',
+      'The selected output is no longer available with this profile. Reopen the mapping review.'
+    );
+    await (await getElement('outputMappingCancelButton', 'button')).click();
+    await session.setOutputInventory('profileChanged');
+    await waitForLabel('output-presence-0', 'Profile changed');
+    await (await getElement('output-reassign-0', 'button')).click();
+    await selectComboItem('outputReplacementCombo', 0);
+    await (await getElement('outputMappingUseButton', 'button')).click();
+    await waitForLabel('output-physical-0-0', '1 (AUX0)');
+    await waitForLabel('output-physical-0-1', '2 (AUX1)');
+    await expectComboItemSelected('output-channel-0-1', 2);
+    expect(await session.inspectConfig()).toEqual(saved);
+    await (await getElement('cancelButton', 'button')).click();
+    await toPass(async () => {
+      expect(
+        (await session?.readRequests())
+          ?.filter((request) => request.command === 'set-output')
+          .at(-1)?.configuration
+      ).toEqual(saved.outputConfiguration);
+    });
+  });
+
+  it('previews output devices with fixed channel mappings and restores them on Cancel', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    const initial = await session.inspectConfig();
+    await selectSettingsPage(3);
+    await selectComboItem('outputModeCombo', 1);
+    await waitForLabel(
+      'outputErrorLabel',
+      'Select at least one output device.'
+    );
+    const apply = await getElement('applyButton', 'button');
+    expect((await apply.info()).states).not.toContain('sensitive');
+    expect(
+      (await session.readRequests()).filter(
+        (request) => request.command === 'set-output'
+      )
+    ).toHaveLength(0);
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await waitForCommands(['set-output']);
+    await (await getElement('output-device-1', 'checkbox')).toggle();
+    await expectComboItemSelected('output-channel-0-0', 0);
+    await expectComboItemSelected('output-channel-1-0', 2);
+    await waitForLabel('output-physical-1-0', '1 (FL)');
+    const purpose = await getElement('output-purpose-1-0', 'entry');
+    const bounds = (await purpose.capture()).bounds;
+    await (await getElement('mainWindow', 'window')).activate();
+    await session.app.input.moveMouseTo(
+      bounds.x + Math.floor(bounds.width / 2),
+      bounds.y + Math.floor(bounds.height / 2)
+    );
+    await session.app.input.setMouseButton('left', true);
+    await session.app.input.setMouseButton('left', false);
+    for (const key of ['s', 'u', 'b']) await session.app.input.pressKey(key);
+    await session.app.input.pressKey('Return');
+    await toPass(async () => {
+      expect(await purpose.text()).toBe('sub');
+      expect((await apply.info()).states).toContain('sensitive');
+    });
+    expect(await session.inspectConfig()).toEqual(initial);
+    await apply.click();
+    await toPass(async () => {
+      expect(
+        (await session?.inspectConfig())?.outputConfiguration
+      ).toMatchObject({
+        mode: 'multiple',
+        outputs: [{ enabled: true }, { enabled: true }],
+        channels: [
+          { deviceChannel: 0 },
+          { deviceChannel: 1 },
+          { deviceChannel: 0, label: 'sub' },
+          { deviceChannel: 1 },
+        ],
+      });
+    });
+    const saved = await session.inspectConfig();
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await toPass(async () => {
+      expect(
+        (await session?.readRequests())
+          ?.filter((request) => request.command === 'set-output')
+          .at(-1)?.configuration
+      ).toMatchObject({
+        outputs: [{ enabled: false }, { enabled: true }],
+        channels: [{}, {}, {}, {}],
+      });
+    });
+    await expectComboItemSelected('output-channel-1-0', 2);
+    await selectComboItem('outputModeCombo', 0);
+    await toPass(async () => {
+      expect((await apply.info()).states).toContain('sensitive');
+      expect(
+        (await (await getElement('output-device-1', 'checkbox')).info()).states
+      ).not.toContain('sensitive');
+      expect(
+        (await (await getElement('output-channel-1-0', 'comboBox')).info())
+          .states
+      ).not.toContain('sensitive');
+    });
+    await (await getElement('cancelButton', 'button')).click();
+    await toPass(async () => {
+      expect(
+        (await session?.readRequests())
+          ?.filter((request) => request.command === 'set-output')
+          .at(-1)?.configuration
+      ).toEqual(saved.outputConfiguration);
+    });
+    expect(await session.inspectConfig()).toEqual(saved);
+    await session.restartApplication();
+    await waitForConnected();
+    await selectSettingsPage(3);
+    expect(
+      await (await getElement('outputModeCombo', 'comboBox')).isChildSelected(1)
+    ).toBe(true);
+    expect(
+      await (await getElement('output-device-0', 'checkbox')).isChecked()
+    ).toBe(true);
+    await expectComboItemSelected('output-channel-1-0', 2);
+    expect(await (await getElement('output-purpose-1-0', 'entry')).text()).toBe(
+      'sub'
+    );
+  });
+
+  it('keeps rejected output choices unsaved and disables Apply', async () => {
+    session = await launchPipeTuneGtk({ rejectedCommand: 'setOutput' });
+    await waitForConnected();
+    const initial = await session.inspectConfig();
+    await selectSettingsPage(3);
+    await selectComboItem('outputModeCombo', 1);
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await waitForLabel(
+      'transactionStateLabel',
+      'Live preview failed · adjust a setting to retry'
+    );
+    expect(
+      (await (await getElement('applyButton', 'button')).info()).states
+    ).not.toContain('sensitive');
+    expect(await session.inspectConfig()).toEqual(initial);
+    await (await getElement('cancelButton', 'button')).click();
+    await toPass(async () => {
+      expect(await session?.app.getWindowCount()).toBe(0);
+    });
+    expect(await session.inspectConfig()).toEqual(initial);
+  });
+
+  it('keeps output channel assignments when device presence changes', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await selectSettingsPage(3);
+    await selectComboItem('outputModeCombo', 1);
+    // DAC B is selected first and moves above the still-unselected DAC A.
+    await (await getElement('output-device-1', 'checkbox')).toggle();
+    await (await getElement('output-device-1', 'checkbox')).toggle();
+    const apply = await getElement('applyButton', 'button');
+    await toPass(async () => {
+      await expectComboItemSelected('output-channel-1-0', 2);
+      expect((await apply.info()).states).toContain('sensitive');
+    });
+    await apply.click();
+    await waitForLabel(
+      'transactionStateLabel',
+      'Live settings match the saved configuration'
+    );
+    const saved = await session.inspectConfig();
+    await session.clearRequests();
+    for (const [state, presence] of [
+      ['missing', 'Not connected'],
+      ['profileChanged', 'Profile changed'],
+      ['ambiguous', 'Ambiguous device'],
+      ['unavailable', 'Inventory unavailable'],
+      ['pending', 'Waiting for output devices…'],
+      ['reversed', 'Connected'],
+      ['connected', 'Connected'],
+    ] as const) {
+      await session.setOutputInventory(state);
+      await waitForLabel('output-presence-1', presence);
+      await expectComboItemSelected('output-channel-0-0', 0);
+      await expectComboItemSelected('output-channel-1-0', 2);
+      expect(
+        (await (await getElement('output-device-0', 'checkbox')).info()).name
+      ).toBe('DAC B');
+    }
+    expect(
+      (await session.readRequests()).filter(
+        (request) => request.command === 'set-output'
+      )
+    ).toHaveLength(0);
+    expect(await session.inspectConfig()).toEqual(saved);
+  });
+
   it('reports setup failure and still connects to an available daemon', async () => {
     session = await launchPipeTuneGtk({
       rejectedCommand: undefined,
@@ -400,6 +994,7 @@ describe('PipeTune GTK dialog', () => {
       ['processingEnabledSwitch', 'presetCombo', 'presetChooser'],
       ['rateCombo', 'rateEnforcementCombo'],
       ['dspBackendCombo', 'dspIdleEnabledSwitch', 'dspIdleTimeoutSpin'],
+      ['outputModeCombo', 'outputDeviceList'],
       [
         'languageCombo',
         'restoreDefaultsButton',
@@ -533,17 +1128,32 @@ describe('PipeTune GTK dialog', () => {
     );
   });
 
-  it('resizes the preset configuration with the available window height', async () => {
+  it('resizes preset and device lists while folding the channel assignments', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     const window = await getElement('mainWindow', 'window');
+    const content = await getWidget('windowContent');
+    const resize = async (width: number, height: number): Promise<void> => {
+      const bounds = await window.resizeTo(width, height);
+      // X11 acknowledges the resize before GTK allocates its child widgets.
+      await toPass(async () => {
+        const allocated = (await content.capture()).bounds;
+        const border = allocated.x - bounds.x;
+        expect(allocated.width).toBe(bounds.width - border * 2);
+        expect(allocated.y + allocated.height).toBe(
+          bounds.y + bounds.height - border
+        );
+      });
+    };
     const table = await getElement('presetEntryView', 'table');
-    await window.resizeTo(1080, 740);
-    const compact = await table.capture();
+    // Measure the viewport; tree content relayouts while scrollbars appear.
+    const presetViewport = await getWidget('presetEntryScroll');
+    await resize(1080, 740);
+    const compact = await presetViewport.capture();
 
-    await window.resizeTo(1080, 880);
+    await resize(1080, 880);
     await toPass(async () => {
-      const expanded = await table.capture();
+      const expanded = await presetViewport.capture();
       expect(expanded.bounds.height - compact.bounds.height).toBe(140);
       expect(expanded.clipped).toBe(false);
     });
@@ -554,11 +1164,50 @@ describe('PipeTune GTK dialog', () => {
       (await table.capture()).visibleBounds
     );
 
-    await window.resizeTo(1080, 740);
+    await resize(1080, 740);
     await toPass(async () => {
-      expect((await table.capture()).bounds.height).toBe(compact.bounds.height);
+      expect((await presetViewport.capture()).bounds.height).toBe(
+        compact.bounds.height
+      );
     });
-    await window.resizeTo(900, 560);
+    await resize(900, 560);
+    await expectInsideWindow(await getWidget('applyButton'), window);
+
+    await selectSettingsPage(3);
+    const devices = await getWidget('outputDeviceScroll');
+    await selectComboItem('outputModeCombo', 1);
+    const channels = await getElement('output-expander-0', 'expander');
+    expect(await channels.isExpanded()).toBe(false);
+    await resize(1080, 740);
+    const compactDevices = await devices.capture();
+    await resize(1080, 880);
+    await toPass(async () => {
+      const expanded = await devices.capture();
+      expect(expanded.bounds.height - compactDevices.bounds.height).toBe(140);
+      expect(expanded.clipped).toBe(false);
+    });
+    const collapsedHeight = (await devices.capture()).bounds.height;
+    const saved = await session.inspectConfig();
+    await session.clearRequests();
+    await channels.expand();
+    await toPass(async () => {
+      expect(await channels.isExpanded()).toBe(true);
+      expect((await devices.capture()).bounds.height).toBe(collapsedHeight);
+      await expectInsideWindow(await getWidget('output-channel-0-0'), window);
+      await expectInsideWindow(await getWidget('output-reassign-0'), window);
+    });
+    await selectSettingsPage(4);
+    await selectSettingsPage(3);
+    expect(await channels.isExpanded()).toBe(true);
+    await channels.collapse();
+    await toPass(async () => {
+      expect(await channels.isExpanded()).toBe(false);
+      expect((await devices.capture()).bounds.height).toBe(collapsedHeight);
+    });
+    expect(await session.inspectConfig()).toEqual(saved);
+    expect(await session.readRequests()).toHaveLength(0);
+    await resize(900, 560);
+    await expectInsideWindow(channels, window);
     await expectInsideWindow(await getWidget('applyButton'), window);
   });
 
@@ -651,6 +1300,7 @@ describe('PipeTune GTK dialog', () => {
       dspBackend: 'scalar',
       dspSimdVariant: 'auto',
       dspIdleTimeoutMilliseconds: 2500,
+      outputConfiguration: { mode: 'single', outputs: [], channels: [] },
     });
     expect(await session.app.getWindowCount()).toBeGreaterThan(0);
     const requests = await session.readRequests();
@@ -949,7 +1599,7 @@ describe('PipeTune GTK dialog', () => {
     await waitForConnected();
     await session.clearRequests();
     const initial = await session.inspectConfig();
-    await selectSettingsPage(3);
+    await selectSettingsPage(4);
     const restore = await getElement('restoreDefaultsButton', 'button');
     await restore.click();
     await selectSettingsPage(0);
@@ -993,6 +1643,7 @@ describe('PipeTune GTK dialog', () => {
       dspBackend: 'scalar',
       dspSimdVariant: 'auto',
       dspIdleTimeoutMilliseconds: null,
+      outputConfiguration: { mode: 'single', outputs: [], channels: [] },
     });
   });
 
@@ -1000,7 +1651,7 @@ describe('PipeTune GTK dialog', () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     const initial = await session.inspectConfig();
-    await selectSettingsPage(3);
+    await selectSettingsPage(4);
     await selectComboItem('languageCombo', 6);
     const apply = await getElement('applyButton', 'button');
     await toPass(
@@ -1072,7 +1723,7 @@ describe('PipeTune GTK dialog', () => {
     await session.restartApplication();
     await waitForLabel('statusHeadingLabel', 'PipeTune の状態');
     await waitForLabel('status-system-connection', '接続済み');
-    await selectSettingsPage(3);
+    await selectSettingsPage(4);
     const combo = await getElement('languageCombo', 'comboBox');
     expect(await combo.isChildSelected(6)).toBe(true);
     expect(await session.inspectConfig()).toEqual(initial);
@@ -1081,7 +1732,7 @@ describe('PipeTune GTK dialog', () => {
   it('restarts immediately with the saved UI language', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
-    await selectSettingsPage(3);
+    await selectSettingsPage(4);
     await selectComboItem('languageCombo', 6);
     await (await getElement('applyButton', 'button')).click();
     await (
@@ -1090,7 +1741,7 @@ describe('PipeTune GTK dialog', () => {
 
     await waitForLabel('statusHeadingLabel', 'PipeTune の状態');
     await waitForLabel('status-system-connection', '接続済み');
-    await selectSettingsPage(3);
+    await selectSettingsPage(4);
     expect(
       await (await getElement('languageCombo', 'comboBox')).isChildSelected(6)
     ).toBe(true);
@@ -1099,7 +1750,7 @@ describe('PipeTune GTK dialog', () => {
   it('discards a staged UI language when Cancel closes the dialog', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
-    await selectSettingsPage(3);
+    await selectSettingsPage(4);
     await selectComboItem('languageCombo', 6);
     await (await getElement('cancelButton', 'button')).click();
     await waitForResult(
@@ -1118,7 +1769,7 @@ describe('PipeTune GTK dialog', () => {
 
     await session.restartApplication();
     await waitForConnected();
-    await selectSettingsPage(3);
+    await selectSettingsPage(4);
     const combo = await getElement('languageCombo', 'comboBox');
     expect(await combo.isChildSelected(0)).toBe(true);
   });
@@ -1127,7 +1778,7 @@ describe('PipeTune GTK dialog', () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     await session.blockLanguagePreferenceSave();
-    await selectSettingsPage(3);
+    await selectSettingsPage(4);
     await selectComboItem('languageCombo', 6);
     const combo = await getElement('languageCombo', 'comboBox');
     const apply = await getElement('applyButton', 'button');
@@ -1233,7 +1884,7 @@ describe('PipeTune GTK dialog', () => {
   it('keeps Restore defaults usable while disconnected', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
-    await selectSettingsPage(3);
+    await selectSettingsPage(4);
     await session.clearRequests();
 
     await session.disconnectDaemon();

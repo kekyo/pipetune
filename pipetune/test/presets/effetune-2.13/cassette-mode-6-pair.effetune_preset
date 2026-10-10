@@ -1,0 +1,13 @@
+{
+  "name": "Cassette invalid",
+  "pipeline": [
+    {
+      "name": "Cassette Artifacts",
+      "channel": "34",
+      "parameters": {
+        "nr": "Dolby C",
+        "md": "invalid"
+      }
+    }
+  ]
+}

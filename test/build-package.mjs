@@ -112,10 +112,12 @@ const createPackageStage = (
     "DEBIAN",
     "usr/bin",
     "usr/lib/pipetune",
+    "usr/lib/pipewire-0.3",
     "usr/lib/systemd/user",
     "usr/share/applications",
     "usr/share/icons/hicolor/scalable/apps",
     "usr/share/doc/pipetune",
+    "usr/share/doc/pipetune/ffmpeg",
   ];
   if (includeAutostart) {
     paths.push("etc/xdg/autostart");
@@ -132,12 +134,20 @@ Section: sound
 Priority: optional
 Architecture: ${debianArchitecture}
 Maintainer: PipeTune packager <packager@localhost>
-Depends: libc6, systemd, dbus-user-session, pipewire, wireplumber, hicolor-icon-theme
+Depends: libc6, systemd, dbus-user-session, pipewire (>= 1.0.5), wireplumber, hicolor-icon-theme
 Description: PipeWire system-wide DSP and GTK control application
 `,
   );
   copyFileSync("/bin/true", join(stageRoot, "usr/bin/pipetune"));
   copyFileSync("/bin/true", join(stageRoot, "usr/bin/pipetune-gtk"));
+  for (const component of ["avformat", "avcodec", "avutil", "swresample"]) {
+    copyFileSync("/bin/true", join(stageRoot, `usr/lib/pipetune/lib${component}-pipetune.so`));
+  }
+  for (const document of ["COPYING.LGPLv2.1", "LICENSE.md", "REBUILD.md", "build-info.txt",
+    "ConfigureFFmpeg.cmake", "ffmpeg-source.tar.xz"]) {
+    writeFileSync(join(stageRoot, "usr/share/doc/pipetune/ffmpeg", document), `${document}\n`);
+  }
+  copyFileSync("/bin/true", join(stageRoot, "usr/lib/pipewire-0.3/libpipewire-module-pipetune-presentation.so"));
   if (includeDspBackends) {
     for (const backend of dspBackendsForArchitecture(debianArchitecture)) {
       if (backend !== omittedDspBackend) {
@@ -276,7 +286,7 @@ canonical_release noble
 canonical_release resolute
 count_deb_builds
 deb_artifact_path pipetune ubuntu 24.04 x86_64
-prereq_image_for_target debian bookworm x86_64
+prereq_image_for_target debian trixie x86_64
 container_image_for_target debian trixie riscv64
 `,
     [],
@@ -290,12 +300,12 @@ container_image_for_target debian trixie riscv64
       "armv7l",
       "24.04",
       "26.04",
-      "13",
+      "9",
       join(
         projectRoot,
         "artifacts/deb/pipetune-1.2.3-ubuntu-24.04-amd64.deb",
       ),
-      "localhost/pipetune-pack-deb-debian-bookworm-x86_64:latest",
+      "localhost/pipetune-pack-deb-debian-trixie-x86_64:latest",
       "docker.io/library/debian:trixie",
       "",
     ].join("\n"),
@@ -410,7 +420,7 @@ case " $* " in
     ;;
 esac
 [ -n "$workspace" ] || exit 3
-stage="$workspace/artifacts/.tmp/test-run/deb/debian/bookworm/x86_64/work/stage/pipetune"
+stage="$workspace/artifacts/.tmp/test-run/deb/debian/trixie/x86_64/work/stage/pipetune"
 mkdir -p "$stage/DEBIAN"
 printf 'Package: pipetune\\n' >"$stage/DEBIAN/control"
 `,
@@ -440,7 +450,7 @@ VERSION=1.2.3-test
 CONTAINER_ENGINE_BIN=$3
 MAKE_JOBS=1
 BUILD_TYPE=Release
-build_deb_package debian bookworm x86_64 linux/amd64
+build_deb_package debian trixie x86_64 linux/amd64
 `,
     [fakeProject, containerEngine],
     {
@@ -454,7 +464,7 @@ build_deb_package debian bookworm x86_64 linux/amd64
   const recordedContainers = readFileSync(containerRecords, "utf8");
   assertIncludes(
     recordedContainers,
-    "exists localhost/pipetune-pack-deb-debian-bookworm-x86_64:latest",
+    "exists localhost/pipetune-pack-deb-debian-trixie-x86_64:latest",
     "prerequisite image was not checked",
   );
   const containerRuns = recordedContainers
@@ -472,14 +482,14 @@ build_deb_package debian bookworm x86_64 linux/amd64
   );
   assertIncludes(
     recordedContainers,
-    "--validate-package /workspace/artifacts/deb/pipetune-1.2.3-test-debian-bookworm-amd64.deb",
+    "--validate-package /workspace/artifacts/deb/pipetune-1.2.3-test-debian-trixie-amd64.deb",
     "built package was not installation-tested",
   );
   assertIncludes(
     readFileSync(dpkgRecords, "utf8"),
     join(
       fakeProject,
-      "artifacts/deb/pipetune-1.2.3-test-debian-bookworm-amd64.deb",
+      "artifacts/deb/pipetune-1.2.3-test-debian-trixie-amd64.deb",
     ),
     "dpkg-deb did not write the expected artifact",
   );
@@ -518,7 +528,7 @@ cp "$containerfile" "$PIPETUNE_TEST_PREREQ_RECORDS.containerfile"
       "--distro",
       "debian",
       "--release",
-      "bookworm",
+      "trixie",
       "--arch",
       "amd64",
       "--jobs",
@@ -541,12 +551,12 @@ cp "$containerfile" "$PIPETUNE_TEST_PREREQ_RECORDS.containerfile"
   );
   assertIncludes(
     prereqInvocation,
-    "BASE_IMAGE=docker.io/amd64/debian:bookworm",
+    "BASE_IMAGE=docker.io/amd64/debian:trixie",
     "prerequisite build used the wrong base image",
   );
   assertIncludes(
     prereqInvocation,
-    "localhost/pipetune-pack-deb-debian-bookworm-x86_64:latest",
+    "localhost/pipetune-pack-deb-debian-trixie-x86_64:latest",
     "prerequisite build used the wrong image tag",
   );
   const containerfile = readFileSync(
@@ -557,6 +567,9 @@ cp "$containerfile" "$PIPETUNE_TEST_PREREQ_RECORDS.containerfile"
     "libgtk-3-dev",
     "libpipewire-0.3-dev",
     "libsamplerate0-dev",
+    "git",
+    "nasm",
+    "xz-utils",
     "nodejs",
     "wireplumber",
   ]) {
@@ -754,6 +767,23 @@ exit 74
     "installed package validation did not restore package documentation excluded by minimal images",
   );
 
+  for (const dependency of ["pipewire", "pipewire (>= 0.3.65)"]) {
+    const stage = join(temporaryRoot, "insufficient-pipewire-stage");
+    const output = join(temporaryRoot, "pipetune-insufficient-pipewire.deb");
+    cpSync(goodStage, stage, { recursive: true });
+    const controlPath = join(stage, "DEBIAN/control");
+    writeFileSync(controlPath, readFileSync(controlPath, "utf8")
+      .replace("pipewire (>= 1.0.5)", dependency));
+    assertSuccess(run(dpkgDeb, ["--root-owner-group", "--build", stage, output], process.env),
+      "could not create package with an insufficient PipeWire dependency");
+    const validation = runSourced(`
+VERSION=1.2.3
+validate_deb_package "$2" "$3"
+`, [output, canonicalHostArchitecture], process.env);
+    if (validation.status === 0) fail(`package accepted insufficient dependency: ${dependency}`);
+    assertIncludes(validation.stderr, "pipewire", "validation did not identify the PipeWire dependency");
+  }
+
   const validateGoodPackage = runSourced(
     `
 VERSION=1.2.3
@@ -766,6 +796,52 @@ validate_deb_package "$2" "$3"
     validateGoodPackage,
     "complete deb package did not pass validation",
   );
+  for (const missing of ["usr/lib/pipetune/libavcodec-pipetune.so",
+    "usr/share/doc/pipetune/ffmpeg/COPYING.LGPLv2.1",
+    "usr/share/doc/pipetune/ffmpeg/ffmpeg-source.tar.xz",
+    "usr/share/doc/pipetune/ffmpeg/ConfigureFFmpeg.cmake"]) {
+    const stage = join(temporaryRoot, "missing-ffmpeg-stage");
+    const output = join(temporaryRoot, "missing-ffmpeg.deb");
+    rmSync(stage, { recursive: true, force: true });
+    cpSync(goodStage, stage, { recursive: true });
+    rmSync(join(stage, missing));
+    assertSuccess(run(dpkgDeb, ["--root-owner-group", "--build", stage, output], process.env),
+      "could not create package with an incomplete LGPL dependency");
+    const validation = runSourced(`
+VERSION=1.2.3
+validate_deb_package "$2" "$3"
+`, [output, canonicalHostArchitecture], process.env);
+    if (validation.status === 0) fail(`package accepted missing LGPL dependency file: ${missing}`);
+    assertIncludes(validation.stderr, missing, "validation did not identify the missing LGPL file");
+  }
+  for (const dependency of ["libavformat60", "libavcodec60", "libavutil58", "libswresample4"]) {
+    const stage = join(temporaryRoot, "system-ffmpeg-stage");
+    const output = join(temporaryRoot, "system-ffmpeg.deb");
+    rmSync(stage, { recursive: true, force: true });
+    cpSync(goodStage, stage, { recursive: true });
+    const control = join(stage, "DEBIAN/control");
+    writeFileSync(control, readFileSync(control, "utf8").replace("Depends: ", `Depends: ${dependency}, `));
+    assertSuccess(run(dpkgDeb, ["--root-owner-group", "--build", stage, output], process.env),
+      "could not create package with a system FFmpeg dependency");
+    const validation = runSourced(`
+VERSION=1.2.3
+validate_deb_package "$2" "$3"
+`, [output, canonicalHostArchitecture], process.env);
+    if (validation.status === 0) fail(`package accepted system FFmpeg dependency: ${dependency}`);
+    assertIncludes(validation.stderr, "system FFmpeg", "validation did not identify the system dependency");
+  }
+  const missingPresentationStage = join(temporaryRoot, "missing-presentation-stage");
+  const missingPresentationPackage = join(temporaryRoot, "missing-presentation.deb");
+  cpSync(goodStage, missingPresentationStage, { recursive: true });
+  rmSync(join(missingPresentationStage, "usr/lib/pipewire-0.3/libpipewire-module-pipetune-presentation.so"));
+  assertSuccess(run(dpkgDeb, ["--root-owner-group", "--build", missingPresentationStage, missingPresentationPackage], process.env),
+    "could not create a package without the presentation module");
+  const missingPresentation = runSourced(`
+VERSION=1.2.3
+validate_deb_package "$2" "$3"
+`, [missingPresentationPackage, canonicalHostArchitecture], process.env);
+  if (missingPresentation.status === 0) fail("package without desktop presentation passed validation");
+  assertIncludes(missingPresentation.stderr, "presentation", "validation must identify the missing server module");
   const validateBadPackage = runSourced(
     `
 VERSION=1.2.3

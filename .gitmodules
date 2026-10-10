@@ -5,3 +5,9 @@
 [submodule "deps/yyjson"]
 	path = deps/yyjson
 	url = https://github.com/ibireme/yyjson.git
+[submodule "deps/ffmpeg"]
+	path = deps/ffmpeg
+	url = https://github.com/FFmpeg/FFmpeg.git
+[submodule "deps/cardio"]
+	path = deps/cardio
+	url = https://github.com/kekyo/cardio.git

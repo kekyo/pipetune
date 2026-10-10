@@ -49,6 +49,26 @@ struct DspBackendSwitchResult {
   std::string error;
 };
 
+/** Validated backend selection, prepared independently of the live engine. */
+struct DspBackendSwitchPlan {
+  DspBackendRuntimeState state; /**< State to publish after a successful rebuild. */
+  std::shared_ptr<const DspBackend> backend; /**< Backend to retain while preparing. */
+  bool changed = false; /**< Whether the requested selection differs. */
+  bool rebuild = false; /**< Whether the effective native variant changes. */
+  std::string error; /**< Availability or request validation failure. */
+};
+
+/**
+ * Validates a backend change without changing a pipeline or runtime state.
+ * @param state Snapshot of current discovery and selection.
+ * @param requestedBackend Requested logical kind.
+ * @param requestedSimdVariant Requested dispatch preference.
+ * @param rateTransitioning Whether a rate transaction prevents the change.
+ * @return Selection to prepare and publish, or a diagnostic.
+ */
+DspBackendSwitchPlan planDspBackendSwitch(DspBackendRuntimeState state,
+    DspBackendKind requestedBackend, DspSimdVariant requestedSimdVariant, bool rateTransitioning);
+
 /**
  * Creates runtime state using the startup fallback rules.
  *

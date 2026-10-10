@@ -96,8 +96,12 @@ static bool testCanonicalPreset(const std::filesystem::path &directory) {
   if (!check(result.pipeline != nullptr, result.error)) {
     return false;
   }
-  if (!check(result.warnings.size() == 3, "canonical preset must report three skipped DSPs") ||
-      !check(result.pipeline->activePluginCount() == 1,
+  if (!check(result.warnings.size() == 3 &&
+                 std::ranges::count_if(result.warnings, [](const auto &warning) {
+                   return warning.state == pipetune::PresetEntryState::ignored;
+                 }) == 1,
+             "canonical preset must report the unknown DSP and the unassigned active IR and Room EQ") ||
+      !check(result.pipeline->activePluginCount() == 3,
              "disabled sections must omit their DSP nodes")) {
     return false;
   }
@@ -148,7 +152,7 @@ static bool testPresetEntries(const std::filesystem::path &directory) {
   const auto expected = std::vector<pipetune::PresetEntry>{
       {"Volume", State::enabled}, {"Volume", State::off},
       {"Spectrum Analyzer", State::ignored}, {"Pitch Meter", State::ignored},
-      {"Future DSP", State::ignored}, {"IR Reverb", State::ignored},
+      {"Future DSP", State::ignored}, {"IR Reverb", State::enabled},
       {"Crosstalk Cancellation", State::ignored}, {"Section", State::off},
       {"Volume", State::off}, {"Section", State::enabled},
       {"Volume", State::enabled}, {"Tonal Balance EQ", State::enabled},
@@ -156,9 +160,12 @@ static bool testPresetEntries(const std::filesystem::path &directory) {
       {"Rhythm Analyzer", State::off}, {"Section", State::off},
       {"Tonal Balance EQ", State::off}, {"Analog Meter", State::ignored}};
   if (!check(loaded.pipeline != nullptr, loaded.error) ||
-      !check(std::ranges::equal(loaded.pipeline->presetEntries(), expected),
+      !check(std::ranges::equal(loaded.pipeline->presetEntries(), expected,
+                 [](const auto &actual, const auto &expected) {
+                   return actual.name == expected.name && actual.state == expected.state;
+                 }),
              "loaded entries must preserve order and distinguish enabled, off and ignored") ||
-      !check(loaded.pipeline->activePluginCount() == 4,
+      !check(loaded.pipeline->activePluginCount() == 5,
              "entry reporting must match the prepared DSPs")) {
     return false;
   }
@@ -168,8 +175,8 @@ static bool testPresetEntries(const std::filesystem::path &directory) {
   const auto bypass = pipetune::createBypassDspPipeline(
       {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
   return check(rebuilt.pipeline != nullptr, rebuilt.error) &&
-         check(std::ranges::equal(rebuilt.pipeline->presetEntries(), expected),
-               "recipe rebuilds must retain all entry states") &&
+         check(std::ranges::equal(rebuilt.pipeline->presetEntries(), loaded.pipeline->presetEntries()),
+               "recipe rebuilds must retain all entry states and preparation diagnostics") &&
          check(bypass.pipeline->presetEntries().empty(),
                "an unloaded bypass pipeline must have no entries");
 }
@@ -236,13 +243,15 @@ static bool testEffeTune26Pipeline(const std::filesystem::path &directory) {
       path,
       {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64});
   if (!check(result.pipeline != nullptr, result.error) ||
-      !check(result.pipeline->activePluginCount() == 24,
+      !check(result.pipeline->activePluginCount() == 26,
              "EffeTune generated-asset DSP nodes must become active") ||
-      !check(result.warnings.size() == 2,
-             "only unresolved asset DSP nodes must be omitted") ||
-      !check(containsWarning(result.warnings, "Room EQ") &&
-                 containsWarning(result.warnings, "IR Reverb"),
-             "every omitted asset-dependent DSP must be identified")) {
+      !check(result.warnings.size() == 2 &&
+                 std::ranges::count_if(result.warnings, [](const auto &warning) {
+                   return warning.state == pipetune::PresetEntryState::ignored;
+                 }) == 0,
+             "unassigned Room EQ and IR must remain active with diagnostics") ||
+      !check(containsWarning(result.warnings, "Room EQ"),
+             "unassigned Room EQ must be identified as active with a warning")) {
     return false;
   }
 

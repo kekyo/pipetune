@@ -21,6 +21,8 @@
 
 namespace pipetune {
 
+static constexpr auto kSfzBudgetAssignment = std::string_view{"PIPETUNE_SFZ_MAX_SIZE_MIB="};
+
 constexpr auto kPresetAssignment = std::string_view{"PIPETUNE_PRESET="};
 constexpr auto kDspBackendAssignment =
     std::string_view{"PIPETUNE_DSP_BACKEND="};
@@ -31,6 +33,7 @@ constexpr auto kDspIdleTimeoutAssignment =
 constexpr auto kRateAssignment = std::string_view{"PIPETUNE_RATE="};
 constexpr auto kRateEnforcementAssignment =
     std::string_view{"PIPETUNE_RATE_ENFORCEMENT="};
+constexpr auto kOutputAssignment = std::string_view{"PIPETUNE_OUTPUT="};
 constexpr auto kMaximumConfigBytes = std::size_t{64 * 1024};
 
 static std::string systemError(std::string_view operation) {
@@ -198,6 +201,8 @@ static std::string writeAll(int descriptor, std::string_view contents) {
 std::string saveStartupConfig(const std::filesystem::path &configPath,
                               const StartupConfig &config) {
   auto contents = std::string("# Managed by PipeTune.\n");
+  if (!sfzMaxSizeMiBIsValid(config.sfzMaxSizeMiB)) return "SFZ budget must be 64, 128, 256, 512, or 1024 MiB";
+  contents += std::string(kSfzBudgetAssignment) + std::to_string(config.sfzMaxSizeMiB) + "\n";
   if (config.presetFound) {
     const auto validation = validatePresetPath(config.presetPath);
     if (!validation.empty()) {
@@ -241,6 +246,15 @@ std::string saveStartupConfig(const std::filesystem::path &configPath,
               std::string(sampleRateEnforcementName(
                   config.ratePolicy.enforcement)) +
               "\n";
+
+  const auto outputError = validateOutputConfiguration(config.outputConfiguration);
+  if (!outputError.empty()) return outputError;
+  const auto outputJson = formatOutputConfiguration(config.outputConfiguration);
+  if (outputJson.empty()) return "cannot encode output configuration";
+  contents += std::string(kOutputAssignment) + encodeConfigValue(outputJson) + "\n";
+  // Account for environment quoting as well as JSON escaping before replacing
+  // the previous snapshot; the loader must be able to read everything we save.
+  if (contents.size() > kMaximumConfigBytes) return "startup configuration exceeds 64 KiB";
 
   auto filesystemError = std::error_code{};
   const auto directory = configPath.parent_path();
@@ -331,8 +345,10 @@ loadStartupConfig(const std::filesystem::path &configPath) {
   auto dspBackendFound = false;
   auto dspSimdVariantFound = false;
   auto dspIdleTimeoutFound = false;
+  auto sfzBudgetFound = false;
   auto rateFound = false;
   auto enforcementFound = false;
+  auto outputFound = false;
   auto offset = std::size_t{0};
   while (offset <= contents.size()) {
     const auto end = contents.find('\n', offset);
@@ -394,6 +410,15 @@ loadStartupConfig(const std::filesystem::path &configPath) {
           return fail("DSP idle timeout assignment is invalid");
         }
         dspIdleTimeoutFound = true;
+      } else if (line.starts_with(kSfzBudgetAssignment)) {
+        if (sfzBudgetFound) return fail("startup configuration contains duplicate PIPETUNE_SFZ_MAX_SIZE_MIB assignments");
+        const auto value = line.substr(kSfzBudgetAssignment.size());
+        const auto parsed = std::from_chars(value.data(), value.data() + value.size(), config.sfzMaxSizeMiB);
+        if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() ||
+            !sfzMaxSizeMiBIsValid(config.sfzMaxSizeMiB)) {
+          return fail("SFZ budget must be 64, 128, 256, 512, or 1024 MiB");
+        }
+        sfzBudgetFound = true;
       } else if (line.starts_with(kRateAssignment)) {
         if (rateFound) {
           return fail("startup configuration contains duplicate "
@@ -415,6 +440,15 @@ loadStartupConfig(const std::filesystem::path &configPath) {
           return fail("sample-rate enforcement assignment is invalid");
         }
         enforcementFound = true;
+      } else if (line.starts_with(kOutputAssignment)) {
+        if (outputFound) return fail("startup configuration contains duplicate PIPETUNE_OUTPUT assignments");
+        auto decoded = std::string{};
+        if (!decodeConfigValue(line.substr(kOutputAssignment.size()), decoded))
+          return fail("output configuration assignment is invalid");
+        auto parsed = parseOutputConfiguration(decoded);
+        if (!parsed.error.empty()) return fail(parsed.error);
+        config.outputConfiguration = std::move(parsed.configuration);
+        outputFound = true;
       } else {
         return fail("startup configuration contains an unsupported line");
       }

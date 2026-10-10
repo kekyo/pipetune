@@ -9,6 +9,7 @@
 #include "pipetune/dsp_backend.h"
 #include "pipetune/dsp_idle.h"
 #include "pipetune/dsp_pipeline.h"
+#include "pipetune/output_configuration.h"
 #include "pipetune/sample_rate.h"
 
 #include <filesystem>
@@ -54,6 +55,10 @@ struct StartupPipelineResult {
   bool dspBackendFallback = false;
   /** Backend availability or compatibility diagnostic. */
   std::string dspBackendError = {};
+  /** Persisted output mode, devices, and fixed channel assignments. */
+  OutputConfiguration outputConfiguration = {};
+  /** Persisted per-instrument SFZ budget in MiB. */
+  std::uint32_t sfzMaxSizeMiB = kDefaultSfzMaxSizeMiB;
 };
 
 /**
@@ -66,6 +71,7 @@ struct StartupPipelineResult {
  * @param configPath Startup configuration file path.
  * @param options Automatic-mode initial rate and maximum processing format.
  * A fixed configured policy replaces options.sampleRate before construction.
+ * The output configuration determines maxChannels, including reserved slots.
  * @return Prepared startup pipeline and diagnostics.
  */
 StartupPipelineResult
@@ -81,6 +87,7 @@ prepareStartupPipeline(const std::filesystem::path &configPath,
  * @param configPath Startup configuration file path.
  * @param options Automatic-mode initial rate and maximum processing format.
  * A fixed configured policy replaces options.sampleRate before construction.
+ * The output configuration determines maxChannels, including reserved slots.
  * @param backends Independently discovered scalar and SIMD backends.
  * @return Prepared startup pipeline and diagnostics.
  */
@@ -88,6 +95,19 @@ StartupPipelineResult
 prepareStartupPipeline(const std::filesystem::path &configPath,
                        const PipelineBuildOptions &options,
                        DspBackends backends);
+
+/**
+ * Prepares startup state on the caller's GIO dispatcher.
+ * @param configPath Startup configuration file path, retained by value.
+ * @param options Initial processing format.
+ * @param backends Backend discovery snapshot.
+ * @param cancellation Application termination notification.
+ * @return Prepared preset or recoverable bypass; cancellation never publishes bypass.
+ * @throws cardio::canceled_exception When application startup is canceled.
+ */
+cardio::promise<StartupPipelineResult> prepareStartupPipelineAsync(
+    std::filesystem::path configPath, PipelineBuildOptions options,
+    DspBackends backends, cardio::cancellation cancellation);
 
 } // namespace pipetune
 

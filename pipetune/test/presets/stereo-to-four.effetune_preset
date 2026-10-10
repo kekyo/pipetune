@@ -1,0 +1,5 @@
+{
+  "pipeline": [
+    { "name": "Matrix", "enabled": true, "channel": "All", "parameters": { "mx": "001102p13" } }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "Adaptive Prediction initially held",
+  "pipeline": [
+    {
+      "name": "Adaptive Prediction",
+      "channel": "All",
+      "parameters": {
+        "hold": true,
+        "residual": 0,
+        "prediction": 1
+      }
+    }
+  ]
+}

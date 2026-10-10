@@ -7,6 +7,7 @@
 #define PIPETUNE_GTK_MAIN_WINDOW_H
 
 #include "pipetune/preset_entry.h"
+#include "pipetune/output_configuration.h"
 
 #include <gtk/gtk.h>
 
@@ -59,6 +60,36 @@ struct MainWindowUi {
   GtkWidget *presetEntryView = nullptr;
   /** Last rendered entries, avoiding model replacement on telemetry updates. */
   std::optional<std::vector<pipetune::PresetEntry>> displayedPresetEntries = {};
+  /** OS-managed or explicitly selected physical output mode. */
+  GtkWidget *outputModeCombo = nullptr;
+  /** Explains which output choices are active in the selected mode. */
+  GtkWidget *outputModeNotice = nullptr;
+  /** Pending selection, enumeration, or selection-validation diagnostic. */
+  GtkWidget *outputErrorLabel = nullptr;
+  /** Device parents with expandable channel controls in one scrolling tree. */
+  GtkWidget *outputDeviceList = nullptr;
+  /** Tree branch retaining slots left without a physical output. */
+  GtkWidget *outputReservedExpander = nullptr;
+  /** Channel editors within the reserved branch. */
+  GtkWidget *outputReservedGrid = nullptr;
+  /** Modal before/after review, retained and hidden between uses. */
+  GtkWidget *outputMappingDialog = nullptr;
+  /** Current replacement-device choices; hidden for channel moves. */
+  GtkWidget *outputReplacementCombo = nullptr;
+  /** Invalid or stale candidate diagnostic. */
+  GtkWidget *outputMappingErrorLabel = nullptr;
+  /** Read-only before/after channel mapping table. */
+  GtkWidget *outputMappingPreview = nullptr;
+  /** Starts a live preview after the mapping review is accepted. */
+  GtkWidget *outputMappingUseButton = nullptr;
+  /** Last rendered settings; avoids replacing rows on telemetry updates. */
+  std::optional<pipetune::OutputConfiguration> displayedOutputConfiguration = {};
+  /** Last rendered inventory, also used to resolve a user's row selection. */
+  std::vector<pipetune::AvailableOutput> displayedOutputs = {};
+  /** Last rendered inventory-completion flag. */
+  bool displayedOutputInventoryReady = false;
+  /** Last rendered enumeration diagnostic. */
+  std::string displayedOutputInventoryError = {};
   /** Automatic or fixed DSP sample-rate drop-down. */
   GtkWidget *rateCombo = nullptr;
   /** PipeWire graph-rate suggestion or force drop-down. */

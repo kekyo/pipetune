@@ -12,19 +12,27 @@
 #include "dsp_pipeline_slot.h"
 #include "filter_graph_properties.h"
 #include "input_telemetry.h"
+#include "output_distribution.h"
 #include "pipewire_buffer_io.h"
 #include "pipewire_latency.h"
+#include "pipewire_output_inventory.h"
+#include "pipewire_output_paths.h"
 #include "pipewire_stream_flags.h"
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
 #include "sample_rate_converter.h"
+#include "preparation_generation.h"
+#include "preparation_dispatcher.h"
+#include "preparation_termination.h"
 
 #include <pipewire/pipewire.h>
+#include <pipewire/impl-module.h>
 #include <spa/buffer/buffer.h>
 #include <spa/param/audio/raw-utils.h>
 #include <spa/param/buffers.h>
 #include <spa/param/format.h>
 #include <spa/param/latency-utils.h>
+#include <spa/param/props.h>
 #include <spa/pod/builder.h>
 
 #include <algorithm>
@@ -32,9 +40,9 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cmath>
 #include <climits>
 #include <csignal>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -100,20 +108,32 @@ static DspBackends resolveRuntimeBackends(
   return options.dspBackends;
 }
 
-struct PipeWireRuntime {
-  DspPipelineSlot pipeline;
-  PipeWirePipelineOptions options;
-  PipeWireRunMode mode;
+// A complete channel-width-dependent bridge is prepared off the data loop.
+// Ownership changes only after both streams have stopped their callbacks.
+struct PipeWireAudioBuffers {
   PlanarAudioRing ring;
-  AudioBridgeLatencyController bridgeLatency;
-  PipeWireLatencyState latencyState;
-  AudioTransitionSilencer outputTransitionSilencer;
   PlanarSampleRateConverter inputRateConverter;
   PlanarSampleRateConverter outputRateConverter;
   std::vector<float> inputScratch;
   std::vector<float> dspScratch;
   std::vector<float> convertedScratch;
   std::vector<float> outputScratch;
+
+  PipeWireAudioBuffers(std::uint32_t channels, std::uint32_t capacity, std::uint32_t frames)
+      : ring(channels, capacity), inputRateConverter(channels, frames),
+        outputRateConverter(channels, frames), inputScratch(static_cast<std::size_t>(channels) * frames),
+        dspScratch(inputScratch.size()), convertedScratch(inputScratch.size()), outputScratch(inputScratch.size()) {}
+};
+
+struct PipeWireRuntime {
+  DspPipelineSlot pipeline;
+  PipeWirePipelineOptions options;
+  std::string singleOutputDescription;
+  PipeWireRunMode mode;
+  std::unique_ptr<PipeWireAudioBuffers> audioBuffers;
+  AudioBridgeLatencyController bridgeLatency;
+  PipeWireLatencyState latencyState;
+  AudioTransitionSilencer outputTransitionSilencer;
   std::atomic<std::uint64_t> processingErrors;
   InputTelemetry inputTelemetry;
   std::atomic<bool> rateBridgeReady;
@@ -135,10 +155,12 @@ struct PipeWireRuntime {
   bool presetReloadPending;
   DspBackendRuntimeState dspBackendState;
   std::mutex pipelineMutationMutex;
+  PreparationGeneration preparationGeneration;
   std::mutex dspBackendStateMutex;
   std::mutex rateStateMutex;
   std::mutex rateRequestMutex;
-  std::condition_variable rateRequestCondition;
+  std::optional<cardio::promise_source<void>> rateRequestCompletion;
+  cardio::cancellation rateRequestCancellation;
   SampleRatePolicy configuredRatePolicy;
   SampleRatePolicy pendingRatePolicy;
   bool rateTransitioning;
@@ -174,33 +196,62 @@ struct PipeWireRuntime {
   bool readyNotified;
   bool completed;
   std::string error;
+  PipeWireOutputInventoryPtr outputInventory;
+  OutputInventoryResult availableOutputs;
+  PipeWireOutputPathsPtr outputPaths;
+  std::vector<PipeWireOutputPath> outputPathSnapshots;
+  // The PipeWire loop owns inventory updates; the control thread copies a
+  // complete snapshot under this mutex. Audio callbacks never acquire it.
+  std::mutex outputStateMutex;
+  bool outputInventoryReady = false;
+  pw_impl_module *outputDistribution = nullptr;
+  spa_hook outputDistributionListener = {};
+  spa_source *outputGraphSource = nullptr;
+  std::string outputDistributionArguments;
+  std::uint64_t outputPolicyGeneration = 0;
+  bool outputPolicyReset = false;
+  float masterVolume = 1.0F;
+  bool masterMute = false;
+  bool masterControlsInitialized = false;
+  bool publishingMasterVolume = false;
+  std::atomic<float> masterOutputGain{0.0F};
+  std::mutex outputRequestMutex;
+  std::optional<cardio::promise_source<void>> outputRequestCompletion;
+  std::atomic<bool> outputTransitionActive{false};
+  std::optional<OutputConfiguration> requestedOutput;
+  std::optional<std::uint64_t> requestedOutputRevision;
+  std::optional<std::filesystem::path> requestedOutputPreset;
+  std::unique_ptr<DspPipeline> requestedOutputPipeline;
+  bool outputRequestCompleted = false;
+  bool outputRequestsStopped = false;
+  std::string outputRequestError;
+  spa_source *outputChangeSource = nullptr;
+  spa_source *outputChangeTimer = nullptr;
+  // Main-loop-owned rollback state. A control request remains outstanding until
+  // the new streams, or the restored old streams, have negotiated their format.
+  std::optional<OutputConfiguration> previousOutput;
+  std::unique_ptr<PipeWireAudioBuffers> previousAudioBuffers;
+  std::uint32_t previousOutputWidth = 0;
+  std::uint32_t previousOutputRate = 0;
+  ProcessingMode previousProcessingMode = ProcessingMode::bypass;
+  std::string previousPreset;
+  std::string previousConfigurationError;
+  bool previousPresetReloadPending = false;
+  std::uint64_t retiredOverrunFrames = 0;
+  std::uint64_t retiredUnderrunFrames = 0;
+  std::string outputFailure;
+  bool outputRollingBack = false;
 
   PipeWireRuntime(std::unique_ptr<DspPipeline> preparedPipeline,
                   const PipeWirePipelineOptions &runtimeOptions,
                   PipeWireRunMode runtimeMode)
       : pipeline(std::move(preparedPipeline)), options(runtimeOptions),
+        singleOutputDescription(runtimeOptions.outputConfiguration.mode == OutputMode::single
+            ? runtimeOptions.filterDescription : "PipeTune Processed Audio"),
         mode(runtimeMode),
-        ring(runtimeOptions.channelCount, runtimeOptions.ringCapacityFrames),
-        bridgeLatency(),
-        latencyState(),
-        outputTransitionSilencer(0),
-        inputRateConverter(runtimeOptions.channelCount,
-                           runtimeOptions.maxFrames),
-        outputRateConverter(runtimeOptions.channelCount,
-                            runtimeOptions.maxFrames),
-        inputScratch(static_cast<std::size_t>(runtimeOptions.channelCount) *
-                         runtimeOptions.maxFrames,
-                     0.0F),
-        dspScratch(static_cast<std::size_t>(runtimeOptions.channelCount) *
-                       runtimeOptions.maxFrames,
-                   0.0F),
-        convertedScratch(
-            static_cast<std::size_t>(runtimeOptions.channelCount) *
-                runtimeOptions.maxFrames,
-            0.0F),
-        outputScratch(static_cast<std::size_t>(runtimeOptions.channelCount) *
-                          runtimeOptions.maxFrames,
-                      0.0F),
+        audioBuffers(std::make_unique<PipeWireAudioBuffers>(runtimeOptions.channelCount,
+            runtimeOptions.ringCapacityFrames, runtimeOptions.maxFrames)),
+        bridgeLatency(), latencyState(), outputTransitionSilencer(0),
         processingErrors(0), inputTelemetry(),
         rateBridgeReady(false), inputFormatNegotiated(false),
         dspSampleRate(runtimeOptions.dspSampleRate),
@@ -224,7 +275,7 @@ struct PipeWireRuntime {
             runtimeOptions.configuredDspBackend,
             runtimeOptions.configuredDspSimdVariant)),
         pipelineMutationMutex(), dspBackendStateMutex(), rateStateMutex(),
-        rateRequestMutex(), rateRequestCondition(),
+        rateRequestMutex(), rateRequestCompletion(),
         configuredRatePolicy(runtimeOptions.ratePolicy),
         pendingRatePolicy(defaultSampleRatePolicy()),
         rateTransitioning(
@@ -253,8 +304,14 @@ struct PipeWireRuntime {
   }
 
   ~PipeWireRuntime() {
+    preparationGeneration.shutdown();
     controlServer.reset();
     presetFileMonitor.reset();
+    outputInventory.reset();
+    outputPaths.reset();
+    // Capture triggers the output from the data loop. Stop those callbacks
+    // before releasing the stream that they may still be using.
+    if (inputStream != nullptr) static_cast<void>(pw_stream_set_active(inputStream, false));
     if (outputStream != nullptr) {
       if (outputListenerInstalled) {
         spa_hook_remove(&outputListener);
@@ -267,6 +324,10 @@ struct PipeWireRuntime {
       }
       pw_stream_destroy(inputStream);
     }
+    if (outputDistribution != nullptr) {
+      spa_hook_remove(&outputDistributionListener);
+      pw_impl_module_destroy(outputDistribution);
+    }
     if (core != nullptr) {
       pw_core_disconnect(core);
     }
@@ -275,6 +336,9 @@ struct PipeWireRuntime {
     }
     if (mainLoop != nullptr) {
       auto *loop = pw_main_loop_get_loop(mainLoop);
+      if (outputChangeSource != nullptr) pw_loop_destroy_source(loop, outputChangeSource);
+      if (outputChangeTimer != nullptr) pw_loop_destroy_source(loop, outputChangeTimer);
+      if (outputGraphSource != nullptr) pw_loop_destroy_source(loop, outputGraphSource);
       if (rateChangeSource != nullptr) {
         pw_loop_destroy_source(loop, rateChangeSource);
       }
@@ -311,7 +375,7 @@ static void startOutputTransition(PipeWireRuntime &runtime,
                                   std::uint32_t sampleRate) noexcept {
   // Both stream callbacks run on this runtime's pw_main_loop, so the ring
   // consumer cannot run concurrently with this intentional discard.
-  static_cast<void>(runtime.ring.discardQueuedFrames());
+  static_cast<void>(runtime.audioBuffers->ring.discardQueuedFrames());
   runtime.bridgeLatency.reset();
   runtime.outputTransitionSilencer.start(
       pipelineTransitionSilenceFrames(sampleRate),
@@ -322,7 +386,7 @@ static void resetOutputTransition(PipeWireRuntime &runtime,
                                   std::uint32_t sampleRate) noexcept {
   // Output callbacks share the pw_main_loop with format callbacks, so the
   // consumer cannot run while its disconnected queue is discarded.
-  static_cast<void>(runtime.ring.discardQueuedFrames());
+  static_cast<void>(runtime.audioBuffers->ring.discardQueuedFrames());
   runtime.bridgeLatency.reset();
   runtime.outputTransitionSilencer.reset(
       pipelineTransitionSilenceFrames(sampleRate),
@@ -373,16 +437,29 @@ static void completePendingRateRequest(PipeWireRuntime &runtime,
     }
     runtime.rateRequestError = std::move(error);
     runtime.rateRequestCompleted = true;
+    if (runtime.rateRequestCompletion) runtime.rateRequestCompletion->try_resolve();
   }
-  runtime.rateRequestCondition.notify_all();
 }
 
 static void failRuntime(PipeWireRuntime &runtime, std::string message) {
+  if (runtime.previousOutput.has_value() && !runtime.outputRollingBack) {
+    runtime.outputFailure = std::move(message);
+    pw_loop_signal_event(pw_main_loop_get_loop(runtime.mainLoop), runtime.outputChangeSource);
+    return;
+  }
   if (!runtime.error.empty()) {
     return;
   }
   runtime.error = std::move(message);
+  runtime.preparationGeneration.shutdown();
   completePendingRateRequest(runtime, runtime.error);
+  {
+    auto lock = std::scoped_lock(runtime.outputRequestMutex);
+    runtime.outputRequestError = runtime.error;
+    runtime.outputRequestCompleted = true;
+    runtime.outputRequestsStopped = true;
+    if (runtime.outputRequestCompletion) runtime.outputRequestCompletion->try_resolve();
+  }
   if (runtime.mainLoop != nullptr) {
     pw_main_loop_quit(runtime.mainLoop);
   }
@@ -489,7 +566,15 @@ static void completeRuntime(PipeWireRuntime &runtime) {
     return;
   }
   runtime.completed = true;
+  runtime.preparationGeneration.shutdown();
   completePendingRateRequest(runtime, "PipeTune daemon stopped");
+  {
+    auto lock = std::scoped_lock(runtime.outputRequestMutex);
+    runtime.outputRequestError = "PipeTune daemon stopped";
+    runtime.outputRequestCompleted = true;
+    runtime.outputRequestsStopped = true;
+    if (runtime.outputRequestCompletion) runtime.outputRequestCompletion->try_resolve();
+  }
   pw_main_loop_quit(runtime.mainLoop);
 }
 
@@ -519,6 +604,8 @@ static bool setInputAlwaysProcess(PipeWireRuntime &runtime, bool enabled) {
   return true;
 }
 
+static void finishOutputChange(PipeWireRuntime &runtime);
+
 static void finishReadinessCheck(PipeWireRuntime &runtime) {
   if (!runtime.inputReady || !runtime.outputReady ||
       !runtime.inputFormatReady || !runtime.outputFormatReady ||
@@ -536,6 +623,7 @@ static void finishReadinessCheck(PipeWireRuntime &runtime) {
   if (!setInputAlwaysProcess(runtime, false)) {
     return;
   }
+  finishOutputChange(runtime);
 
   auto completedRateChange = false;
   {
@@ -577,6 +665,7 @@ static void streamStateChanged(void *data, pw_stream_state previousState,
     } else {
       runtime.outputReady = false;
       runtime.outputFormatReady = false;
+      if (runtime.previousOutput.has_value()) failRuntime(runtime, "filter output: " + detail);
       requestControlStatusUpdate(runtime);
     }
     return;
@@ -602,13 +691,21 @@ static void streamStateChanged(void *data, pw_stream_state previousState,
   finishReadinessCheck(runtime);
 }
 
-static spa_audio_info_raw makeRawFormat(const PipeWirePipelineOptions &options,
-                                        std::uint32_t sampleRate) {
+static std::uint32_t streamChannelCount(const PipeWirePipelineOptions &options, bool input) noexcept {
+  return input && options.inputChannelCount != 0 ? options.inputChannelCount : options.channelCount;
+}
+
+static spa_audio_info_raw makeRawFormat(std::uint32_t channelCount,
+                                        std::uint32_t sampleRate, bool numbered) {
   auto info = spa_audio_info_raw{};
   info.format = SPA_AUDIO_FORMAT_F32P;
   info.rate = sampleRate;
-  info.channels = options.channelCount;
-  switch (options.channelCount) {
+  info.channels = channelCount;
+  if (numbered) {
+    for (auto channel = 0U; channel < channelCount; ++channel) info.position[channel] = SPA_AUDIO_CHANNEL_AUX0 + channel;
+    return info;
+  }
+  switch (channelCount) {
   case 1:
     info.position[0] = SPA_AUDIO_CHANNEL_MONO;
     break;
@@ -664,7 +761,7 @@ static spa_audio_info_raw makeRawFormat(const PipeWirePipelineOptions &options,
   default:
     // Numbered multichannel buses use PipeWire AUX positions to preserve
     // their explicit planar order beyond the standard surround layouts.
-    for (auto channel = std::uint32_t{0}; channel < options.channelCount;
+    for (auto channel = std::uint32_t{0}; channel < channelCount;
          ++channel) {
       info.position[channel] = SPA_AUDIO_CHANNEL_AUX0 + channel;
     }
@@ -674,14 +771,15 @@ static spa_audio_info_raw makeRawFormat(const PipeWirePipelineOptions &options,
 }
 
 static spa_pod *buildBufferParameter(spa_pod_builder &builder,
-                                     const PipeWirePipelineOptions &options) {
+                                     const PipeWirePipelineOptions &options,
+                                     std::uint32_t channelCount) {
   auto frame = spa_pod_frame{};
   spa_pod_builder_push_object(&builder, &frame, SPA_TYPE_OBJECT_ParamBuffers,
                               SPA_PARAM_Buffers);
   spa_pod_builder_add(
       &builder, SPA_PARAM_BUFFERS_buffers, SPA_POD_CHOICE_RANGE_Int(8, 2, 32),
       SPA_PARAM_BUFFERS_blocks,
-      SPA_POD_Int(static_cast<int>(options.channelCount)),
+      SPA_POD_Int(static_cast<int>(channelCount)),
       SPA_PARAM_BUFFERS_size,
       SPA_POD_CHOICE_RANGE_Int(static_cast<int>(options.maxFrames * kSampleBytes),
                                static_cast<int>(32 * kSampleBytes),
@@ -695,9 +793,9 @@ static spa_pod *buildBufferParameter(spa_pod_builder &builder,
 }
 
 static spa_pod *buildAutomaticFormatParameter(
-    spa_pod_builder &builder, const PipeWirePipelineOptions &options,
-    std::uint32_t preferredRate) {
-  auto info = makeRawFormat(options, preferredRate);
+    spa_pod_builder &builder, std::uint32_t channelCount,
+    std::uint32_t preferredRate, bool numbered) {
+  auto info = makeRawFormat(channelCount, preferredRate, numbered);
   auto frame = spa_pod_frame{};
   spa_pod_builder_push_object(&builder, &frame, SPA_TYPE_OBJECT_Format,
                               SPA_PARAM_EnumFormat);
@@ -710,12 +808,61 @@ static spa_pod *buildAutomaticFormatParameter(
                                static_cast<int>(kMinimumGraphSampleRate),
                                static_cast<int>(kMaximumGraphSampleRate)),
       SPA_FORMAT_AUDIO_channels,
-      SPA_POD_Int(static_cast<int>(options.channelCount)),
+      SPA_POD_Int(static_cast<int>(channelCount)),
       SPA_FORMAT_AUDIO_position,
       SPA_POD_Array(sizeof(std::uint32_t), SPA_TYPE_Id, info.channels,
                     info.position),
       0);
   return static_cast<spa_pod *>(spa_pod_builder_pop(&builder, &frame));
+}
+
+static cardio::promise<PipelineLoadResult> prepareMainLoopReplacementAsync(
+    PipeWireRuntime &runtime, PipelineBuildOptions options, const PreparationTicket &ticket,
+    cardio::cancellation parent) {
+  const auto registration = parent.on_cancellation_requested([source = ticket.source]() mutable { source.cancel(); });
+  parent.throw_if_cancellation_requested();
+  const auto prepare = [&](cardio::cancellation cancellation) {
+    auto guard = std::scoped_lock(runtime.pipelineMutationMutex);
+    return runtime.pipeline.rebuildActiveAsync(options, {}, cancellation);
+  };
+  if (runtime.mode != PipeWireRunMode::untilInterrupted)
+    co_return std::move(co_await prepare(ticket.source.get_cancellation()));
+  auto interrupted = false;
+  try {
+    auto result = std::move(co_await withPreparationTermination<PipelineLoadResult>(prepare, ticket.source, interrupted));
+    if (interrupted) completeRuntime(runtime);
+    co_return result;
+  } catch (...) {
+    if (interrupted) completeRuntime(runtime);
+    throw;
+  }
+}
+
+// PipeWire's main loop has no cardio dispatcher. Capture the recipe on a
+// temporary GIO dispatcher, release the mutation mutex for preparation, and
+// restore the caller's lock before validating or publishing the candidate.
+static PipelineLoadResult prepareMainLoopReplacement(PipeWireRuntime &runtime,
+    PipelineBuildOptions options, std::unique_lock<std::mutex> &pipelineLock) {
+  const auto ticket = runtime.preparationGeneration.begin();
+  auto cancellation = cardio::cancellation{};
+  {
+    auto guard = std::scoped_lock(runtime.rateRequestMutex);
+    if (runtime.rateRequestPending) cancellation = runtime.rateRequestCancellation;
+  }
+  pipelineLock.unlock();
+  auto loaded = PipelineLoadResult{};
+  try {
+    loaded = runPreparation<PipelineLoadResult>([&] {
+      return prepareMainLoopReplacementAsync(runtime, options, ticket, cancellation);
+    });
+  } catch (const std::exception &error) { loaded.error = error.what(); }
+  pipelineLock.lock();
+  runtime.preparationGeneration.finish(ticket);
+  if (!runtime.preparationGeneration.current(ticket)) {
+    loaded.pipeline.reset();
+    loaded.error = "pipeline preparation was superseded or canceled";
+  }
+  return loaded;
 }
 
 static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
@@ -726,11 +873,13 @@ static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
     return false;
   }
   auto policy = SampleRatePolicy{};
+  auto retainInputRate = false;
   {
     auto lock = std::scoped_lock(runtime.rateStateMutex);
     policy = runtime.configuredRatePolicy;
+    retainInputRate = !input && !runtime.rateError.empty();
   }
-  const auto bridgeRates =
+  auto bridgeRates =
       resolveSampleRateBridgeRates(policy, negotiatedRate);
   if (bridgeRates.streamSampleRate == 0 || bridgeRates.dspSampleRate == 0) {
     failRuntime(runtime, "cannot resolve PipeWire and DSP sample rates");
@@ -746,33 +895,42 @@ static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
   }
   const auto currentRate =
       runtime.dspSampleRate.load(std::memory_order_acquire);
+  if (retainInputRate && runtime.rateBridgeDspRate == currentRate &&
+      runtime.rateBridgeStreamRate == bridgeRates.streamSampleRate)
+    bridgeRates.dspSampleRate = currentRate;
   if (currentRate != bridgeRates.dspSampleRate) {
     auto pipelineLock =
         std::unique_lock<std::mutex>(runtime.pipelineMutationMutex);
-    auto rebuilt = runtime.pipeline.rebuildActive(
+    {
+      auto lock = std::scoped_lock(runtime.rateStateMutex);
+      runtime.rateTransitioning = true;
+    }
+    auto rebuilt = prepareMainLoopReplacement(runtime,
         {.sampleRate = static_cast<float>(bridgeRates.dspSampleRate),
          .maxChannels = runtime.options.channelCount,
-         .maxFrames = runtime.options.maxFrames});
+         .maxFrames = runtime.options.maxFrames}, pipelineLock);
     if (rebuilt.pipeline == nullptr) {
+      if (runtime.completed) return false;
       {
         auto lock = std::scoped_lock(runtime.rateStateMutex);
-        runtime.rateTransitioning = false;
         runtime.rateError = rebuilt.error;
       }
       completePendingRateRequest(runtime, rebuilt.error);
-      failRuntime(runtime, rebuilt.error);
-      return false;
+      // A negotiated graph rate can still be bridged to the retained DSP rate.
+      // An unavailable source must not destroy the working pipeline.
+      bridgeRates.dspSampleRate = currentRate;
+    } else {
+      runtime.pipeline.replace(std::move(rebuilt.pipeline));
+      runtime.pipeWireDspLatencyFrames.store(
+          runtime.pipeline.activeLatencyFrames(), std::memory_order_release);
+      runtime.dspIdleState.replaceActivity(
+          runtime.processingMode == ProcessingMode::preset
+              ? DspActivity::active
+              : DspActivity::bypassed);
+      runtime.dspSampleRate.store(bridgeRates.dspSampleRate,
+                                  std::memory_order_release);
+      runtime.processedInputFrames = 0;
     }
-    runtime.pipeline.replace(std::move(rebuilt.pipeline));
-    runtime.pipeWireDspLatencyFrames.store(
-        runtime.pipeline.activeLatencyFrames(), std::memory_order_release);
-    runtime.dspIdleState.replaceActivity(
-        runtime.processingMode == ProcessingMode::preset
-            ? DspActivity::active
-            : DspActivity::bypassed);
-    runtime.dspSampleRate.store(bridgeRates.dspSampleRate,
-                                std::memory_order_release);
-    runtime.processedInputFrames = 0;
   }
   if (input) {
     runtime.inputStreamSampleRate.store(negotiatedRate,
@@ -783,9 +941,9 @@ static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
   }
   if (input) {
     runtime.rateBridgeReady.store(false, std::memory_order_release);
-    const auto inputError = runtime.inputRateConverter.configure(
+    const auto inputError = runtime.audioBuffers->inputRateConverter.configure(
         bridgeRates.streamSampleRate, bridgeRates.dspSampleRate);
-    const auto outputError = runtime.outputRateConverter.configure(
+    const auto outputError = runtime.audioBuffers->outputRateConverter.configure(
         bridgeRates.dspSampleRate, bridgeRates.streamSampleRate);
     const auto measuredDelay = measureSampleRateBridgeDelay(
         bridgeRates.streamSampleRate, bridgeRates.dspSampleRate);
@@ -813,10 +971,67 @@ static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
   return true;
 }
 
+static bool publishMasterVolume(PipeWireRuntime &runtime) {
+  // Parameter callbacks own the visible controls; the audio callback receives
+  // their effective gain in one lock-free update, including mute transitions.
+  // A new daemon starts silently until the policy has restored its controls.
+  // Recreated nodes keep the already initialized in-process master state.
+  runtime.masterOutputGain.store(!runtime.masterControlsInitialized || runtime.masterMute ? 0.0F : runtime.masterVolume,
+      std::memory_order_release);
+  auto storage = std::array<std::uint8_t, 256>{};
+  auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
+  const auto volumes = std::array<float, 2>{runtime.masterVolume, runtime.masterVolume};
+  const auto unity = std::array<float, 2>{1, 1};
+  const auto *properties = static_cast<const spa_pod *>(spa_pod_builder_add_object(
+      &builder, SPA_TYPE_OBJECT_Props, SPA_PARAM_Props,
+      SPA_PROP_volume, SPA_POD_Float(1.0F),
+      SPA_PROP_mute, SPA_POD_Bool(runtime.masterMute),
+      SPA_PROP_channelVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, volumes.size(), volumes.data()),
+      SPA_PROP_softMute, SPA_POD_Bool(false),
+      SPA_PROP_softVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, unity.size(), unity.data())));
+  runtime.publishingMasterVolume = true;
+  const auto result = pw_stream_set_param(runtime.inputStream, SPA_PARAM_Props, properties);
+  runtime.publishingMasterVolume = false;
+  return result >= 0;
+}
+
+static void updateMasterVolume(PipeWireRuntime &runtime, const spa_pod *parameter) {
+  if (parameter == nullptr || runtime.publishingMasterVolume || pw_stream_get_node_id(runtime.inputStream) == PW_ID_ANY) return;
+  auto volume = 1.0F;
+  if (const auto *property = spa_pod_find_prop(parameter, nullptr, SPA_PROP_volume)) spa_pod_get_float(&property->value, &volume);
+  if (!std::isfinite(volume) || volume < 0) return;
+  if (const auto *property = spa_pod_find_prop(parameter, nullptr, SPA_PROP_mute)) spa_pod_get_bool(&property->value, &runtime.masterMute);
+  if (const auto *property = spa_pod_find_prop(parameter, nullptr, SPA_PROP_channelVolumes)) {
+    auto channels = std::array<float, 2>{runtime.masterVolume, runtime.masterVolume};
+    const auto count = spa_pod_copy_array(&property->value, SPA_TYPE_Float, channels.data(), channels.size());
+    if (count != 0 && std::all_of(channels.begin(), channels.end(), [](float gain) { return std::isfinite(gain) && gain >= 0; })) {
+      // The aggregate exposes one master gain. Normalize any stereo balance
+      // request to the louder channel instead of inventing per-device balance.
+      runtime.masterVolume = *std::max_element(channels.begin(), channels.end());
+    }
+  }
+  runtime.masterVolume *= volume;
+  const auto initializing = !runtime.masterControlsInitialized;
+  runtime.masterControlsInitialized = true;
+  if (!publishMasterVolume(runtime)) return failRuntime(runtime, "cannot publish multiple-output master volume");
+  if (initializing) {
+    // Mark initialization after publishing normalized controls, so a policy
+    // restart preserves this daemon's current values.
+    const auto property = spa_dict_item{"node.pipetune.master-state", "retained"};
+    const auto properties = spa_dict{0, 1, &property};
+    if (pw_stream_update_properties(runtime.inputStream, &properties) < 0)
+      return failRuntime(runtime, "cannot acknowledge master control initialization");
+  }
+}
+
 static void streamParameterChanged(void *data, std::uint32_t id,
                                    const spa_pod *parameter) {
   auto &context = *static_cast<StreamCallbackContext *>(data);
   auto &runtime = *context.runtime;
+  if (id == SPA_PARAM_Props && context.input && runtime.options.outputConfiguration.mode == OutputMode::multiple) {
+    updateMasterVolume(runtime, parameter);
+    return;
+  }
   if (id == SPA_PARAM_Latency) {
     const auto update = runtime.latencyState.updatePortLatency(parameter);
     if (update.valid) {
@@ -863,7 +1078,7 @@ static void streamParameterChanged(void *data, std::uint32_t id,
   const auto previousRate =
       runtime.dspSampleRate.load(std::memory_order_acquire);
   if (parseResult < 0 || negotiated.format != SPA_AUDIO_FORMAT_F32P ||
-      negotiated.channels != runtime.options.channelCount ||
+      negotiated.channels != streamChannelCount(runtime.options, context.input) ||
       !applyNegotiatedStreamRate(runtime, context.input, negotiated.rate)) {
     if (!runtime.error.empty()) {
       return;
@@ -889,7 +1104,7 @@ static void streamParameterChanged(void *data, std::uint32_t id,
   auto builder = spa_pod_builder{};
   spa_pod_builder_init(&builder, storage.data(), storage.size());
   const spa_pod *parameters[] = {
-      buildBufferParameter(builder, runtime.options)};
+      buildBufferParameter(builder, runtime.options, streamChannelCount(runtime.options, context.input))};
   auto *stream = context.input ? runtime.inputStream : runtime.outputStream;
   const auto updateResult = pw_stream_update_params(stream, parameters, 1);
   if (updateResult < 0) {
@@ -911,23 +1126,6 @@ static void streamParameterChanged(void *data, std::uint32_t id,
   finishReadinessCheck(runtime);
 }
 
-static void copyInputPlane(const spa_data &plane, std::uint32_t sourceFrame,
-                           std::span<float> destination) noexcept {
-  if ((plane.chunk->flags & SPA_CHUNK_FLAG_EMPTY) != 0) {
-    std::fill(destination.begin(), destination.end(), 0.0F);
-    return;
-  }
-  const auto byteCount =
-      static_cast<std::uint32_t>(destination.size_bytes());
-  const auto sourceByte =
-      (plane.chunk->offset + sourceFrame * kSampleBytes) % plane.maxsize;
-  const auto firstBytes = std::min(byteCount, plane.maxsize - sourceByte);
-  auto *source = static_cast<const std::uint8_t *>(plane.data);
-  std::memcpy(destination.data(), source + sourceByte, firstBytes);
-  std::memcpy(reinterpret_cast<std::uint8_t *>(destination.data()) + firstBytes,
-              source, byteCount - firstBytes);
-}
-
 static void updateGraphSampleRate(PipeWireRuntime &runtime,
                                   pw_stream *stream) noexcept {
   auto time = pw_time{};
@@ -946,8 +1144,8 @@ static bool convertProcessedDspFrames(
     std::uint32_t dspFrameCount, std::uint64_t generation) noexcept {
   auto dspFrameOffset = std::uint32_t{0};
   while (dspFrameOffset < dspFrameCount) {
-    auto convertedScratch = std::span<float>(runtime.convertedScratch);
-    const auto converted = runtime.outputRateConverter.process(
+    auto convertedScratch = std::span<float>(runtime.audioBuffers->convertedScratch);
+    const auto converted = runtime.audioBuffers->outputRateConverter.process(
         dspSamples, dspFrameCount, dspFrameOffset,
         dspFrameCount - dspFrameOffset, convertedScratch,
         runtime.options.maxFrames);
@@ -963,7 +1161,7 @@ static bool convertProcessedDspFrames(
     convertedScratch = convertedScratch.first(
         static_cast<std::size_t>(runtime.options.channelCount) *
         converted.outputFramesGenerated);
-    runtime.ring.write(convertedScratch,
+    runtime.audioBuffers->ring.write(convertedScratch,
                        converted.outputFramesGenerated, generation);
   }
   return true;
@@ -974,8 +1172,8 @@ static bool processStreamInputBlock(PipeWireRuntime &runtime,
                                     std::uint32_t streamFrameCount) noexcept {
   auto inputFrameOffset = std::uint32_t{0};
   while (inputFrameOffset < streamFrameCount) {
-    auto dspScratch = std::span<float>(runtime.dspScratch);
-    const auto converted = runtime.inputRateConverter.process(
+    auto dspScratch = std::span<float>(runtime.audioBuffers->dspScratch);
+    const auto converted = runtime.audioBuffers->inputRateConverter.process(
         streamSamples, streamFrameCount, inputFrameOffset,
         streamFrameCount - inputFrameOffset, dspScratch,
         runtime.options.maxFrames);
@@ -1030,7 +1228,8 @@ static void processAvailableInput(PipeWireRuntime &runtime) {
     }
     auto &buffer = *pipeWireBuffer->buffer;
     auto frameCount = std::uint32_t{0};
-    if (!inspectPipeWireCaptureBuffer(buffer, runtime.options.channelCount,
+    const auto inputChannels = streamChannelCount(runtime.options, true);
+    if (!inspectPipeWireCaptureBuffer(buffer, inputChannels,
                                       frameCount)) {
       runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
       pipeWireBuffer->size = 0;
@@ -1048,18 +1247,13 @@ static void processAvailableInput(PipeWireRuntime &runtime) {
       while (sourceFrame < frameCount) {
         const auto blockFrames =
             std::min(runtime.options.maxFrames, frameCount - sourceFrame);
-        auto scratch = std::span<float>(runtime.inputScratch)
+        auto scratch = std::span<float>(runtime.audioBuffers->inputScratch)
                            .first(static_cast<std::size_t>(
                                       runtime.options.channelCount) *
                                   blockFrames);
-        for (auto channel = std::uint32_t{0};
-             channel < runtime.options.channelCount; ++channel) {
-          auto channelScratch = scratch.subspan(
-              static_cast<std::size_t>(channel) * blockFrames,
-              blockFrames);
-          copyInputPlane(buffer.datas[channel], sourceFrame, channelScratch);
-        }
-        if (!processStreamInputBlock(runtime, scratch, blockFrames)) {
+        if (!copyPipeWireCaptureBlock(buffer, inputChannels, sourceFrame, blockFrames,
+                                     runtime.options.channelCount, scratch) ||
+            !processStreamInputBlock(runtime, scratch, blockFrames)) {
           runtime.processingErrors.fetch_add(1,
                                              std::memory_order_relaxed);
         }
@@ -1161,7 +1355,7 @@ static void outputProcess(void *data) {
   while (outputFrame < suggestedFrames) {
     const auto blockFrames =
         std::min(runtime.options.maxFrames, suggestedFrames - outputFrame);
-    auto scratch = std::span<float>(runtime.outputScratch)
+    auto scratch = std::span<float>(runtime.audioBuffers->outputScratch)
                        .first(static_cast<std::size_t>(
                                   runtime.options.channelCount) *
                               blockFrames);
@@ -1170,7 +1364,7 @@ static void outputProcess(void *data) {
         runtime.rateBridgeReady.load(std::memory_order_acquire)
             ? runtime.bridgeLatency.consumePrefixFrames(blockFrames)
             : blockFrames;
-    const auto audioRead = runtime.ring.readWithSilencePrefix(
+    const auto audioRead = runtime.audioBuffers->ring.readWithSilencePrefix(
         scratch, blockFrames, pipelineGeneration, silencePrefixFrames);
     const auto outputSampleRate = runtime.outputStreamSampleRate.load(
         std::memory_order_relaxed);
@@ -1184,7 +1378,11 @@ static void outputProcess(void *data) {
       const auto source = scratch.subspan(
           static_cast<std::size_t>(channel) * blockFrames, blockFrames);
       auto *destination = static_cast<float *>(buffer.datas[channel].data);
-      std::copy(source.begin(), source.end(), destination + outputFrame);
+      if (runtime.options.outputConfiguration.mode == OutputMode::multiple) {
+        const auto gain = runtime.masterOutputGain.load(std::memory_order_acquire);
+        if (gain == 0) std::fill_n(destination + outputFrame, blockFrames, 0.0F);
+        else std::transform(source.begin(), source.end(), destination + outputFrame, [gain](float sample) { return sample * gain; });
+      } else std::copy(source.begin(), source.end(), destination + outputFrame);
     }
     outputFrame += blockFrames;
   }
@@ -1229,12 +1427,18 @@ static FilterGraphProperties currentFilterGraphProperties(
                   SampleRateEnforcement::force;
     }
   }
-  return makeFilterGraphProperties(
+  auto graph = makeFilterGraphProperties(
       {.nodeName = runtime.options.filterName,
-       .nodeDescription = runtime.options.filterDescription,
+       .nodeDescription = runtime.options.outputConfiguration.mode == OutputMode::multiple
+           ? "PipeTune Processed Audio" : runtime.singleOutputDescription,
        .fixedSampleRate = fixedSampleRate,
        .channelCount = runtime.options.channelCount,
-       .forceRate = forceRate});
+       .forceRate = forceRate,
+       .inputChannelCount = streamChannelCount(runtime.options, true),
+       .multipleOutputs = runtime.options.outputConfiguration.mode == OutputMode::multiple});
+  if (runtime.options.outputConfiguration.mode == OutputMode::multiple)
+    graph.input.emplace_back("node.pipetune.master-state", runtime.masterControlsInitialized ? "retained" : "restore");
+  return graph;
 }
 
 static std::string connectStream(PipeWireRuntime &runtime, pw_stream *stream,
@@ -1250,12 +1454,14 @@ static std::string connectStream(PipeWireRuntime &runtime, pw_stream *stream,
     auto lock = std::scoped_lock(runtime.rateStateMutex);
     policy = runtime.configuredRatePolicy;
   }
-  auto info = makeRawFormat(runtime.options, preferredRate);
+  const auto channelCount = streamChannelCount(runtime.options, direction == PW_DIRECTION_INPUT);
+  const auto numbered = direction == PW_DIRECTION_OUTPUT && runtime.options.outputConfiguration.mode == OutputMode::multiple;
+  auto info = makeRawFormat(channelCount, preferredRate, numbered);
   const spa_pod *format =
       policy.mode == SampleRateMode::fixed
           ? spa_format_audio_raw_build(&builder, SPA_PARAM_EnumFormat, &info)
-          : buildAutomaticFormatParameter(builder, runtime.options,
-                                          preferredRate);
+          : buildAutomaticFormatParameter(builder, channelCount,
+                                          preferredRate, numbered);
   const spa_pod *parameters[] = {format};
   const auto flags =
       makePipeWireStreamFlags(direction, autoconnect, reconnect);
@@ -1266,9 +1472,11 @@ static std::string connectStream(PipeWireRuntime &runtime, pw_stream *stream,
                     : std::string{};
 }
 
-static void destroyAudioStreams(PipeWireRuntime &runtime) {
-  resetOutputTransition(runtime, transitionSampleRate(runtime));
-  runtime.rateBridgeReady.store(false, std::memory_order_release);
+static void destroyOutputStream(PipeWireRuntime &runtime) {
+  // Deactivation synchronizes with the stream's data loop. Keeping the node
+  // registered preserves application links while its callback is quiescent.
+  if (runtime.inputStream != nullptr)
+    static_cast<void>(pw_stream_set_active(runtime.inputStream, false));
   if (runtime.outputStream != nullptr) {
     if (runtime.outputListenerInstalled) {
       spa_hook_remove(&runtime.outputListener);
@@ -1277,6 +1485,15 @@ static void destroyAudioStreams(PipeWireRuntime &runtime) {
     pw_stream_destroy(runtime.outputStream);
     runtime.outputStream = nullptr;
   }
+  resetOutputTransition(runtime, transitionSampleRate(runtime));
+  runtime.rateBridgeReady.store(false, std::memory_order_release);
+  runtime.outputReady = false;
+  runtime.outputFormatReady = false;
+  runtime.outputStreamSampleRate.store(0, std::memory_order_release);
+}
+
+static void destroyAudioStreams(PipeWireRuntime &runtime) {
+  destroyOutputStream(runtime);
   if (runtime.inputStream != nullptr) {
     if (runtime.inputListenerInstalled) {
       spa_hook_remove(&runtime.inputListener);
@@ -1297,6 +1514,33 @@ static void destroyAudioStreams(PipeWireRuntime &runtime) {
   runtime.inputFormatNegotiated.store(false, std::memory_order_release);
 }
 
+static std::string createOutputStream(PipeWireRuntime &runtime,
+                                       const FilterGraphProperties &graph) {
+  auto *outputProperties = makePipeWireProperties(graph.output);
+  if (outputProperties == nullptr) {
+    destroyOutputStream(runtime);
+    return "cannot allocate PipeWire filter-output properties";
+  }
+  runtime.outputStream =
+      pw_stream_new(runtime.core, "PipeTune filter output", outputProperties);
+  if (runtime.outputStream == nullptr) {
+    destroyOutputStream(runtime);
+    return systemError("cannot create PipeWire filter output", -errno);
+  }
+  runtime.outputListener = {};
+  pw_stream_add_listener(runtime.outputStream, &runtime.outputListener,
+                         &runtime.outputEvents, &runtime.outputContext);
+  runtime.outputListenerInstalled = true;
+  const auto outputError =
+      connectStream(runtime, runtime.outputStream, PW_DIRECTION_OUTPUT,
+                    graph.outputAutoconnect, graph.outputReconnect);
+  if (!outputError.empty()) {
+    destroyOutputStream(runtime);
+    return outputError;
+  }
+  return {};
+}
+
 static std::string createAudioStreams(PipeWireRuntime &runtime) {
   const auto graph = currentFilterGraphProperties(runtime);
   auto *inputProperties = makePipeWireProperties(graph.input);
@@ -1313,24 +1557,7 @@ static std::string createAudioStreams(PipeWireRuntime &runtime) {
                          &runtime.inputEvents, &runtime.inputContext);
   runtime.inputListenerInstalled = true;
 
-  auto *outputProperties = makePipeWireProperties(graph.output);
-  if (outputProperties == nullptr) {
-    destroyAudioStreams(runtime);
-    return "cannot allocate PipeWire filter-output properties";
-  }
-  runtime.outputStream =
-      pw_stream_new(runtime.core, "PipeTune filter output", outputProperties);
-  if (runtime.outputStream == nullptr) {
-    destroyAudioStreams(runtime);
-    return systemError("cannot create PipeWire filter output", -errno);
-  }
-  runtime.outputListener = {};
-  pw_stream_add_listener(runtime.outputStream, &runtime.outputListener,
-                         &runtime.outputEvents, &runtime.outputContext);
-  runtime.outputListenerInstalled = true;
-  const auto outputError =
-      connectStream(runtime, runtime.outputStream, PW_DIRECTION_OUTPUT,
-                    graph.outputAutoconnect, graph.outputReconnect);
+  const auto outputError = createOutputStream(runtime, graph);
   if (!outputError.empty()) {
     destroyAudioStreams(runtime);
     return outputError;
@@ -1342,7 +1569,255 @@ static std::string createAudioStreams(PipeWireRuntime &runtime) {
     destroyAudioStreams(runtime);
     return inputError;
   }
+  if (runtime.options.outputConfiguration.mode == OutputMode::multiple && !publishMasterVolume(runtime)) {
+    destroyAudioStreams(runtime);
+    return "cannot initialize multiple-output master volume";
+  }
   return {};
+}
+
+static void distributionDestroyed(void *data) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  spa_hook_remove(&runtime.outputDistributionListener);
+  runtime.outputDistribution = nullptr;
+  failRuntime(runtime, "PipeWire output distribution stopped unexpectedly");
+}
+
+static void outputPathsChanged(const std::vector<PipeWireOutputPath> &paths, void *data) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  {
+    auto lock = std::scoped_lock(runtime.outputStateMutex);
+    runtime.outputPathSnapshots = paths;
+  }
+  requestControlStatusUpdate(runtime);
+}
+
+static std::string replaceOutputDistribution(PipeWireRuntime &runtime, const std::string &arguments) {
+  // Retain the previous default-output lease until a replacement module has
+  // been constructed. Explicitly removed modules must not report a failure.
+  auto *replacement = arguments.empty() ? nullptr : pw_context_load_module(runtime.context,
+      "libpipewire-module-combine-stream", arguments.c_str(), nullptr);
+  if (!arguments.empty() && replacement == nullptr)
+    return systemError("cannot create output distribution", -errno);
+  if (runtime.outputDistribution != nullptr) {
+    spa_hook_remove(&runtime.outputDistributionListener);
+    pw_impl_module_destroy(runtime.outputDistribution);
+  }
+  runtime.outputDistribution = replacement;
+  runtime.outputDistributionArguments = arguments;
+  if (replacement != nullptr) {
+    static const auto events = [] {
+      auto value = pw_impl_module_events{}; value.version = PW_VERSION_IMPL_MODULE_EVENTS;
+      value.destroy = distributionDestroyed; return value;
+    }();
+    runtime.outputDistributionListener = {};
+    pw_impl_module_add_listener(replacement, &runtime.outputDistributionListener, &events, &runtime);
+    if (runtime.outputPaths == nullptr)
+      runtime.outputPaths = observePipeWireOutputPaths(runtime.core, runtime.options.filterName, outputPathsChanged, &runtime);
+  } else {
+    runtime.outputPaths.reset();
+    auto lock = std::scoped_lock(runtime.outputStateMutex);
+    runtime.outputPathSnapshots.clear();
+  }
+  return {};
+}
+
+static void completeOutputRequest(PipeWireRuntime &runtime, std::string error) {
+  {
+    auto lock = std::scoped_lock(runtime.outputRequestMutex);
+    runtime.outputRequestError = std::move(error);
+    runtime.outputRequestCompleted = true;
+    if (runtime.outputRequestCompletion) runtime.outputRequestCompletion->try_resolve();
+  }
+}
+
+static void finishOutputChange(PipeWireRuntime &runtime) {
+  if (!runtime.previousOutput.has_value() || (!runtime.outputRollingBack && !runtime.outputFailure.empty())) return;
+  auto lock = std::scoped_lock(runtime.pipelineMutationMutex);
+  if (!runtime.outputRollingBack) {
+    runtime.pipeline.commitStaged();
+    runtime.configurationRevision.fetch_add(1, std::memory_order_release);
+    runtime.retiredOverrunFrames += runtime.previousAudioBuffers->ring.overrunFrames();
+    runtime.retiredUnderrunFrames += runtime.previousAudioBuffers->ring.underrunFrames();
+  }
+  runtime.previousAudioBuffers.reset();
+  runtime.previousOutput.reset();
+  runtime.previousPreset.clear();
+  runtime.previousConfigurationError.clear();
+  runtime.outputRollingBack = false;
+  auto disabled = timespec{};
+  pw_loop_update_timer(pw_main_loop_get_loop(runtime.mainLoop), runtime.outputChangeTimer, &disabled, &disabled, false);
+  completeOutputRequest(runtime, std::exchange(runtime.outputFailure, {}));
+  requestControlStatusUpdate(runtime);
+}
+
+static std::string rebuildOutputStreams(PipeWireRuntime &runtime) {
+  if (runtime.options.outputConfiguration.mode == OutputMode::multiple) {
+    const auto arguments = makeOutputDistributionArguments(runtime.options.filterName + ".distribution",
+        runtime.options.filterName, runtime.options.outputConfiguration, runtime.availableOutputs.outputs);
+    if (!arguments.error.empty()) return arguments.error;
+    const auto error = replaceOutputDistribution(runtime, arguments.arguments);
+    if (!error.empty()) return error;
+  }
+  const auto streamError = createAudioStreams(runtime);
+  if (!streamError.empty()) return streamError;
+  // In single mode, restore OS selection only after its new filter exists.
+  if (runtime.options.outputConfiguration.mode == OutputMode::single)
+    return replaceOutputDistribution(runtime, {});
+  return {};
+}
+
+static void outputChangeRequested(void *data, std::uint64_t) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  if (runtime.completed || !runtime.error.empty()) return;
+  auto lock = std::unique_lock(runtime.pipelineMutationMutex);
+  if (runtime.previousOutput.has_value()) {
+    if (runtime.outputRollingBack || runtime.outputFailure.empty()) return;
+    runtime.outputRollingBack = true;
+    destroyAudioStreams(runtime);
+    runtime.retiredOverrunFrames += runtime.audioBuffers->ring.overrunFrames();
+    runtime.retiredUnderrunFrames += runtime.audioBuffers->ring.underrunFrames();
+    runtime.audioBuffers = std::move(runtime.previousAudioBuffers);
+    runtime.pipeline.rollbackStaged();
+    runtime.options.outputConfiguration = *runtime.previousOutput;
+    runtime.options.channelCount = runtime.previousOutputWidth;
+    runtime.dspSampleRate.store(runtime.previousOutputRate, std::memory_order_release);
+    runtime.processingMode = runtime.previousProcessingMode;
+    runtime.activePreset = std::move(runtime.previousPreset);
+    runtime.configurationError = std::move(runtime.previousConfigurationError);
+    runtime.presetReloadPending = runtime.previousPresetReloadPending;
+  } else {
+    auto configuration = OutputConfiguration{};
+    auto expectedRevision = std::optional<std::uint64_t>{};
+    auto preset = std::optional<std::filesystem::path>{};
+    auto prepared = std::unique_ptr<DspPipeline>{};
+    {
+      auto requestLock = std::scoped_lock(runtime.outputRequestMutex);
+      if (!runtime.requestedOutput.has_value() || runtime.outputRequestCompleted) return;
+      configuration = *runtime.requestedOutput;
+      expectedRevision = runtime.requestedOutputRevision;
+      preset = runtime.requestedOutputPreset;
+      prepared = std::move(runtime.requestedOutputPipeline);
+    }
+    if (expectedRevision.has_value() && *expectedRevision != runtime.configurationRevision.load(std::memory_order_acquire))
+      return completeOutputRequest(runtime, "configuration changed; refresh output settings before applying them");
+    const auto error = validateOutputConfiguration(configuration);
+    if (!error.empty()) return completeOutputRequest(runtime, error);
+    if (configuration == runtime.options.outputConfiguration && !preset.has_value()) return completeOutputRequest(runtime, {});
+    if (streamChannelCount(runtime.options, true) != 2)
+      return completeOutputRequest(runtime, "live output configuration requires stereo desktop input");
+    if (configuration.mode == OutputMode::multiple &&
+        (!runtime.outputInventoryReady || !runtime.availableOutputs.error.empty()))
+      return completeOutputRequest(runtime, "output device inventory is unavailable");
+    const auto width = outputDspChannelCount(configuration);
+    if (!preset.has_value() && configuration.mode == runtime.options.outputConfiguration.mode && width == runtime.options.channelCount) {
+      const auto arguments = configuration.mode == OutputMode::multiple ?
+          makeOutputDistributionArguments(runtime.options.filterName + ".distribution",
+              runtime.options.filterName, configuration, runtime.availableOutputs.outputs) : OutputDistributionArguments{};
+      if (!arguments.error.empty()) return completeOutputRequest(runtime, arguments.error);
+      if (arguments.arguments == runtime.outputDistributionArguments) {
+        // Labels and retained choices in single mode do not alter the graph.
+        runtime.options.outputConfiguration = std::move(configuration);
+        runtime.configurationRevision.fetch_add(1, std::memory_order_release);
+        completeOutputRequest(runtime, {});
+        requestControlStatusUpdate(runtime);
+        return;
+      }
+    }
+    const auto sampleRate = runtime.dspSampleRate.load(std::memory_order_acquire);
+    if (!prepared) return completeOutputRequest(runtime, "output replacement was not prepared");
+    if (prepared->sampleRate() != static_cast<float>(sampleRate))
+      return completeOutputRequest(runtime, "sample rate changed while preparing outputs; retry the change");
+    auto buffers = std::unique_ptr<PipeWireAudioBuffers>{};
+    try {
+      buffers = std::make_unique<PipeWireAudioBuffers>(width, runtime.options.ringCapacityFrames, runtime.options.maxFrames);
+    } catch (const std::exception &exception) {
+      return completeOutputRequest(runtime, std::string("cannot prepare output audio buffers: ") + exception.what());
+    }
+    destroyAudioStreams(runtime);
+    runtime.previousOutput = runtime.options.outputConfiguration;
+    runtime.previousOutputWidth = runtime.options.channelCount;
+    runtime.previousOutputRate = sampleRate;
+    runtime.previousProcessingMode = runtime.processingMode;
+    runtime.previousPreset = runtime.activePreset;
+    runtime.previousConfigurationError = runtime.configurationError;
+    runtime.previousPresetReloadPending = runtime.presetReloadPending;
+    runtime.previousAudioBuffers = std::move(runtime.audioBuffers);
+    runtime.audioBuffers = std::move(buffers);
+    runtime.pipeline.stageReplacement(std::move(prepared));
+    if (preset.has_value()) {
+      runtime.processingMode = preset->empty() ? ProcessingMode::bypass : ProcessingMode::preset;
+      runtime.activePreset = preset->string();
+      runtime.configurationError.clear();
+      runtime.presetReloadPending = false;
+    }
+    runtime.options.outputConfiguration = std::move(configuration);
+    runtime.options.channelCount = width;
+    runtime.options.inputChannelCount = 2;
+  }
+  runtime.processedInputFrames = 0;
+  runtime.rateBridgeStreamRate = 0;
+  runtime.rateBridgeDspRate = 0;
+  runtime.silenceNextRateBridge = true;
+  runtime.outputPolicyReset = false;
+  runtime.dspIdleState.replaceActivity(runtime.processingMode == ProcessingMode::preset ? DspActivity::active : DspActivity::bypassed);
+  refreshPipeWireDspLatency(runtime);
+  auto delay = timespec{.tv_sec = kReadinessTimeoutSeconds, .tv_nsec = 0};
+  auto interval = timespec{};
+  const auto timerResult = pw_loop_update_timer(pw_main_loop_get_loop(runtime.mainLoop),
+      runtime.outputChangeTimer, &delay, &interval, false);
+  if (timerResult < 0) return failRuntime(runtime, systemError("cannot arm output-change deadline", timerResult));
+  const auto error = rebuildOutputStreams(runtime);
+  if (!error.empty()) failRuntime(runtime, error);
+}
+
+static void applyOutputInventory(void *data, std::uint64_t) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  if (runtime.completed || runtime.options.outputConfiguration.mode != OutputMode::multiple) return;
+  if (!runtime.availableOutputs.error.empty()) return failRuntime(runtime, runtime.availableOutputs.error);
+  const auto arguments = makeOutputDistributionArguments(runtime.options.filterName + ".distribution",
+      runtime.options.filterName, runtime.options.outputConfiguration, runtime.availableOutputs.outputs);
+  if (!arguments.error.empty()) return failRuntime(runtime, arguments.error);
+  if (!runtime.outputPolicyReset && runtime.outputDistribution != nullptr && arguments.arguments == runtime.outputDistributionArguments) return;
+  if (runtime.outputPolicyReset) {
+    // A restarted session manager cannot reuse the old port configuration.
+    // Recreate owned streams, retaining the DSP layout and master controls.
+    destroyAudioStreams(runtime);
+    runtime.outputPolicyReset = false;
+  } else {
+    destroyOutputStream(runtime);
+  }
+  // Device changes replace the private distribution and its feeding stream.
+  // Keep the public input alive so application links, the default-output lease
+  // and the master controls survive across both WirePlumber versions.
+  const auto distributionError = replaceOutputDistribution(runtime, arguments.arguments);
+  if (!distributionError.empty()) return failRuntime(runtime, distributionError);
+  const auto error = runtime.inputStream == nullptr ? createAudioStreams(runtime) :
+      createOutputStream(runtime, currentFilterGraphProperties(runtime));
+  if (!error.empty()) return failRuntime(runtime, error);
+  const auto active = pw_stream_set_active(runtime.inputStream, true);
+  if (active < 0) failRuntime(runtime, systemError("cannot resume capture after output reconfiguration", active));
+}
+
+static void outputInventoryChanged(const OutputInventoryResult &snapshot, void *data) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  auto inventoryChanged = false;
+  {
+    auto lock = std::scoped_lock(runtime.outputStateMutex);
+    inventoryChanged = !runtime.outputInventoryReady || runtime.availableOutputs.outputs != snapshot.outputs ||
+        runtime.availableOutputs.error != snapshot.error;
+    runtime.availableOutputs = snapshot;
+    runtime.outputInventoryReady = true;
+  }
+  requestControlStatusUpdate(runtime);
+  if (runtime.options.outputConfiguration.mode != OutputMode::multiple) return;
+  const auto generation = pipeWireOutputPolicyGeneration(*runtime.outputInventory);
+  if (generation != runtime.outputPolicyGeneration) {
+    runtime.outputPolicyGeneration = generation;
+    runtime.outputPolicyReset = true;
+  }
+  if (!inventoryChanged && !runtime.outputPolicyReset) return;
+  pw_loop_signal_event(pw_main_loop_get_loop(runtime.mainLoop), runtime.outputGraphSource);
 }
 
 static ControlDspBackendAvailability controlDspBackendAvailability(
@@ -1451,9 +1926,22 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
   }
   const auto idleState = runtime.dspIdleState.load();
   const auto presetEntries = runtime.pipeline.presetEntries();
+  auto outputConfiguration = OutputConfiguration{};
+  auto outputInventory = OutputInventoryResult{};
+  auto outputInventoryReady = false;
+  auto outputTimings = std::vector<OutputTimingState>{};
+  {
+    auto lock = std::scoped_lock(runtime.outputStateMutex);
+    outputConfiguration = runtime.options.outputConfiguration;
+    outputInventory = runtime.availableOutputs;
+    outputInventoryReady = runtime.outputInventoryReady;
+    if (outputInventoryReady && outputInventory.error.empty() && !rateTransitioning && !runtime.previousOutput)
+      outputTimings = summarizeOutputTiming(outputConfiguration, outputInventory.outputs, runtime.outputPathSnapshots);
+  }
   return {.processingMode = runtime.processingMode,
           .dspActivity = idleState.activity,
           .dspIdlePolicy = idleState.policy,
+          .sfzMaxSizeMiB = runtime.options.sfzMaxSizeMiB,
           .activePreset = runtime.activePreset,
           .configurationError = runtime.configurationError,
           .configurationRevision = runtime.configurationRevision.load(
@@ -1461,8 +1949,8 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .activePluginCount = runtime.pipeline.activePluginCount(),
           .presetEntries = {presetEntries.begin(), presetEntries.end()},
           .dspLatencyFrames = runtime.pipeline.activeLatencyFrames(),
-          .overrunFrames = runtime.ring.overrunFrames(),
-          .underrunFrames = runtime.ring.underrunFrames(),
+          .overrunFrames = runtime.retiredOverrunFrames + runtime.audioBuffers->ring.overrunFrames(),
+          .underrunFrames = runtime.retiredUnderrunFrames + runtime.audioBuffers->ring.underrunFrames(),
           .processingErrors =
               runtime.processingErrors.load(std::memory_order_relaxed),
           .dspProcessedFrames = dspPerformance.processedFrames,
@@ -1470,7 +1958,7 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .inputSampleFormat = inputNegotiated ? "F32P" : "",
           .inputSampleRate = inputNegotiated ? inputSampleRate : 0,
           .inputChannelCount =
-              inputNegotiated ? runtime.options.channelCount : 0,
+              inputNegotiated ? streamChannelCount(runtime.options, true) : 0,
           .inputFramesReceived = input.framesReceived,
           .inputLastReceivedUnixMilliseconds =
               input.lastReceivedUnixMilliseconds,
@@ -1486,7 +1974,13 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .dspBackendFallback = backendFallback,
           .dspBackendError = std::move(backendError),
           .availableDspBackends = std::move(availableBackends),
-          .availableDspVariants = std::move(availableVariants)};
+          .availableDspVariants = std::move(availableVariants),
+          .outputConfiguration = std::move(outputConfiguration),
+          .availableOutputs = outputInventory.error.empty() ? std::move(outputInventory.outputs) : std::vector<AvailableOutput>{},
+          .outputInventoryReady = outputInventoryReady,
+          .outputInventoryError = outputInventory.error,
+          .outputVolumes = outputInventory.error.empty() ? std::move(outputInventory.volumes) : std::vector<OutputVolumeState>{},
+          .outputTimings = std::move(outputTimings)};
 }
 
 static ControlMessageResult closeControlResponse(std::string response,
@@ -1502,15 +1996,24 @@ struct PresetActivationResult {
   bool deferred;
 };
 
-static PresetActivationResult activatePreset(
-    PipeWireRuntime &runtime, const std::filesystem::path &presetPath,
-    bool automaticReload) {
+static std::shared_ptr<const DspBackend> activeDspBackend(PipeWireRuntime &runtime) {
+  auto lock = std::scoped_lock(runtime.dspBackendStateMutex);
+  if (runtime.dspBackendState.effectiveVariant.has_value()) {
+    const auto *loaded = runtime.dspBackendState.backends.find(*runtime.dspBackendState.effectiveVariant);
+    if (loaded != nullptr) return loaded->backend;
+  }
+  return {};
+}
+
+static cardio::promise<PresetActivationResult> activatePreset(
+    PipeWireRuntime &runtime, std::filesystem::path presetPath,
+    bool automaticReload, cardio::cancellation cancellation) {
   auto pipelineLock =
       std::unique_lock<std::mutex>(runtime.pipelineMutationMutex);
   {
     auto rateLock = std::scoped_lock(runtime.rateStateMutex);
     if (runtime.rateTransitioning) {
-      return {
+      co_return PresetActivationResult{
           .warnings = {},
           .error = automaticReload
                        ? std::string{}
@@ -1520,17 +2023,11 @@ static PresetActivationResult activatePreset(
     }
   }
 
-  auto backend = std::shared_ptr<const DspBackend>{};
-  {
-    auto backendLock = std::scoped_lock(runtime.dspBackendStateMutex);
-    if (runtime.dspBackendState.effectiveVariant.has_value()) {
-      const auto *loaded = runtime.dspBackendState.backends.find(
-          *runtime.dspBackendState.effectiveVariant);
-      if (loaded != nullptr) {
-        backend = loaded->backend;
-      }
-    }
-  }
+  if (runtime.outputTransitionActive.load(std::memory_order_acquire))
+    co_return PresetActivationResult{{}, automaticReload ? "" : "output transition is pending", automaticReload};
+  if (automaticReload && runtime.preparationGeneration.pending())
+    co_return PresetActivationResult{{}, {}, true};
+  auto backend = activeDspBackend(runtime);
   if (backend == nullptr) {
     const auto error =
         "cannot load a preset without a usable scalar DSP backend";
@@ -1538,22 +2035,33 @@ static PresetActivationResult activatePreset(
       runtime.configurationError =
           "Automatic preset reload failed: " + std::string(error);
     }
-    return {.warnings = {}, .error = error, .deferred = false};
+    co_return PresetActivationResult{.warnings = {}, .error = error, .deferred = false};
   }
 
-  auto loaded = loadDspPipeline(
-      presetPath,
-      {.sampleRate = static_cast<float>(
+  const auto preparation = PreparationScope(runtime.preparationGeneration, cancellation);
+  const auto build = PipelineBuildOptions{.sampleRate = static_cast<float>(
            runtime.dspSampleRate.load(std::memory_order_acquire)),
        .maxChannels = runtime.options.channelCount,
-       .maxFrames = runtime.options.maxFrames},
-      std::move(backend));
+       .maxFrames = runtime.options.maxFrames};
+  pipelineLock.unlock();
+  auto loaded = std::move(co_await loadDspPipelineAsync(presetPath, build, std::move(backend),
+      defaultPipelineLoadContext(runtime.options.sfzMaxSizeMiB), preparation.ticket.source.get_cancellation()));
+  pipelineLock.lock();
+  if (!runtime.preparationGeneration.current(preparation.ticket)) throw cardio::canceled_exception();
   if (loaded.pipeline == nullptr) {
     if (automaticReload) {
       runtime.configurationError =
           "Automatic preset reload failed: " + loaded.error;
     }
-    return {.warnings = {},
+    if (runtime.presetFileMonitor != nullptr && runtime.activePreset == presetPath.string()) {
+      auto files = std::vector<std::filesystem::path>(runtime.pipeline.dependencyFiles().begin(),
+                                                     runtime.pipeline.dependencyFiles().end());
+      for (const auto &file : loaded.dependencyFiles)
+        if (std::ranges::find(files, file) == files.end()) files.push_back(file);
+      const auto monitorError = runtime.presetFileMonitor->setPaths(presetPath, files);
+      if (!monitorError.empty()) runtime.configurationError += "\n" + monitorError;
+    }
+    co_return PresetActivationResult{.warnings = {},
             .error = std::move(loaded.error),
             .deferred = false};
   }
@@ -1563,7 +2071,7 @@ static PresetActivationResult activatePreset(
   for (auto &warning : loaded.warnings) {
     warnings.push_back({.nodeIndex = warning.nodeIndex,
                         .pluginName = std::move(warning.pluginName),
-                        .reason = std::move(warning.reason)});
+                        .reason = std::move(warning.reason), .state = warning.state});
   }
   runtime.pipeline.replace(std::move(loaded.pipeline));
   refreshPipeWireDspLatency(runtime);
@@ -1575,138 +2083,257 @@ static PresetActivationResult activatePreset(
   runtime.presetReloadPending = false;
   if (automaticReload) {
     for (const auto &warning : warnings) {
+      if (warning.state != PresetEntryState::ignored) continue;
       if (!runtime.configurationError.empty()) runtime.configurationError += "\n";
       runtime.configurationError += "Skipped " + warning.pluginName + ": " + warning.reason;
     }
   }
   if (runtime.presetFileMonitor != nullptr) {
-    const auto monitorError = runtime.presetFileMonitor->setPaths(presetPath, runtime.pipeline.measurementFiles());
+    const auto monitorError = runtime.presetFileMonitor->setPaths(presetPath, runtime.pipeline.dependencyFiles());
     if (!monitorError.empty()) {
       runtime.configurationError = monitorError;
     }
   }
-  return {.warnings = std::move(warnings), .error = {}, .deferred = false};
+  co_return PresetActivationResult{.warnings = std::move(warnings), .error = {}, .deferred = false};
 }
 
-static bool retryPendingPresetReload(PipeWireRuntime &runtime) {
+static cardio::promise<bool> retryPendingPresetReload(PipeWireRuntime &runtime, cardio::cancellation cancellation) {
   if (!runtime.presetReloadPending) {
-    return false;
+    co_return false;
   }
   if (runtime.processingMode != ProcessingMode::preset ||
       runtime.activePreset.empty()) {
     runtime.presetReloadPending = false;
-    return false;
+    co_return false;
   }
-  const auto activated = activatePreset(
-      runtime, std::filesystem::path(runtime.activePreset), true);
+  const auto activated = std::move(co_await activatePreset(
+      runtime, std::filesystem::path(runtime.activePreset), true, cancellation));
   if (activated.deferred) {
-    return false;
+    co_return false;
   }
   runtime.presetReloadPending = false;
-  return true;
+  co_return true;
 }
 
-static bool handlePresetFileMonitorEvent(void *userData) {
+static cardio::promise<bool> handlePresetFileMonitorEvent(void *userData, cardio::cancellation cancellation) {
   auto &runtime = *static_cast<PipeWireRuntime *>(userData);
   if (runtime.presetFileMonitor == nullptr) {
-    return false;
+    co_return false;
   }
   const auto event = runtime.presetFileMonitor->consume();
   if (!event.error.empty()) {
     runtime.configurationError = event.error;
-    return true;
+    co_return true;
   }
   if (!event.changed || runtime.processingMode != ProcessingMode::preset ||
       runtime.activePreset.empty()) {
-    return false;
+    co_return false;
   }
-  const auto activated = activatePreset(
-      runtime, std::filesystem::path(runtime.activePreset), true);
+  const auto activated = std::move(co_await activatePreset(
+      runtime, std::filesystem::path(runtime.activePreset), true, cancellation));
   runtime.presetReloadPending = activated.deferred;
-  return !activated.deferred;
+  co_return !activated.deferred;
 }
 
 static std::string provideControlStatus(void *userData) {
   auto &runtime = *static_cast<PipeWireRuntime *>(userData);
-  static_cast<void>(retryPendingPresetReload(runtime));
   return makeControlStatusEvent(controlStatus(runtime));
 }
 
-static std::string requestLiveRateChange(
-    PipeWireRuntime &runtime, const SampleRatePolicy &policy) {
-  auto lock = std::unique_lock<std::mutex>(runtime.rateRequestMutex);
-  if (runtime.rateRequestPending) {
-    return "another sample-rate request is already pending";
+static cardio::promise<std::string> maintainControlStatus(void *userData, cardio::cancellation cancellation) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(userData);
+  try { static_cast<void>(co_await retryPendingPresetReload(runtime, cancellation)); }
+  catch (const cardio::canceled_exception &) { cancellation.throw_if_cancellation_requested(); }
+  co_return provideControlStatus(userData);
+}
+
+static cardio::promise<PresetActivationResult> requestLiveOutputChange(PipeWireRuntime &runtime,
+    OutputConfiguration configuration, std::optional<std::uint64_t> expectedRevision,
+    std::optional<std::filesystem::path> preset, cardio::cancellation cancellation) {
+  const auto validation = validateOutputConfiguration(configuration);
+  if (!validation.empty()) co_return PresetActivationResult{{}, validation, false};
+  auto pipelineLock = std::unique_lock(runtime.pipelineMutationMutex);
+  if (runtime.outputTransitionActive.load(std::memory_order_acquire))
+    co_return PresetActivationResult{{}, "another output change is already pending", false};
+  const auto revision = runtime.configurationRevision.load(std::memory_order_acquire);
+  if (expectedRevision && *expectedRevision != revision)
+    co_return PresetActivationResult{{}, "configuration changed; refresh output settings before applying them", false};
+  expectedRevision = revision;
+  {
+    auto rateLock = std::scoped_lock(runtime.rateStateMutex);
+    if (runtime.rateTransitioning)
+      co_return PresetActivationResult{{}, "cannot change output processing during sample-rate transition", false};
   }
+  const auto preparation = PreparationScope(runtime.preparationGeneration, cancellation);
+  const auto build = PipelineBuildOptions{
+      static_cast<float>(runtime.dspSampleRate.load(std::memory_order_acquire)),
+      outputDspChannelCount(configuration), runtime.options.maxFrames};
+  auto prepared = std::unique_ptr<DspPipeline>{};
+  auto warnings = std::vector<ControlWarning>{};
+  if (preset && preset->empty()) {
+    auto created = createBypassDspPipeline(build);
+    if (!created.pipeline) co_return PresetActivationResult{{}, std::move(created.error), false};
+    prepared = std::move(created.pipeline);
+  } else {
+    auto backend = activeDspBackend(runtime);
+    if (preset && !backend)
+      co_return PresetActivationResult{{}, "cannot load a preset without a usable scalar DSP backend", false};
+    auto operation = preset ?
+        loadDspPipelineAsync(*preset, build, std::move(backend), defaultPipelineLoadContext(runtime.options.sfzMaxSizeMiB),
+                             preparation.ticket.source.get_cancellation()) :
+        runtime.pipeline.rebuildActiveAsync(build, {}, preparation.ticket.source.get_cancellation());
+    pipelineLock.unlock();
+    auto loaded = std::move(co_await operation);
+    pipelineLock.lock();
+    if (!runtime.preparationGeneration.current(preparation.ticket)) throw cardio::canceled_exception();
+    if (!loaded.pipeline) co_return PresetActivationResult{{}, std::move(loaded.error), false};
+    prepared = std::move(loaded.pipeline);
+    for (auto &warning : loaded.warnings)
+      warnings.push_back({warning.nodeIndex, std::move(warning.pluginName), std::move(warning.reason), warning.state});
+  }
+  if (*expectedRevision != runtime.configurationRevision.load(std::memory_order_acquire))
+    co_return PresetActivationResult{{}, "configuration changed while preparing outputs; retry the change", false};
+  runtime.outputTransitionActive.store(true, std::memory_order_release);
+  pipelineLock.unlock();
+  auto lock = std::unique_lock(runtime.outputRequestMutex);
+  if (runtime.outputRequestsStopped) {
+    runtime.outputTransitionActive.store(false, std::memory_order_release);
+    co_return PresetActivationResult{{}, "PipeTune daemon stopped", false};
+  }
+  runtime.requestedOutput = std::move(configuration);
+  runtime.requestedOutputRevision = expectedRevision;
+  runtime.requestedOutputPreset = preset;
+  runtime.requestedOutputPipeline = std::move(prepared);
+  runtime.outputRequestCompleted = false;
+  runtime.outputRequestError.clear();
+  runtime.outputRequestCompletion.emplace();
+  auto completion = runtime.outputRequestCompletion->get_promise();
+  const auto scheduled = pw_loop_signal_event(pw_main_loop_get_loop(runtime.mainLoop), runtime.outputChangeSource);
+  if (scheduled < 0) {
+    runtime.outputRequestError = systemError("cannot schedule output change", scheduled);
+    runtime.outputRequestCompletion->try_resolve();
+  }
+  lock.unlock();
+  // Once submitted, drain the graph transaction, including rollback, even if
+  // this client disconnects. A partially applied graph cannot be abandoned.
+  co_await completion;
+  lock.lock();
+  runtime.requestedOutput.reset();
+  runtime.requestedOutputPipeline.reset();
+  runtime.requestedOutputPreset.reset();
+  runtime.outputRequestCompletion.reset();
+  runtime.outputRequestCompleted = false;
+  auto error = std::exchange(runtime.outputRequestError, {});
+  lock.unlock();
+  runtime.outputTransitionActive.store(false, std::memory_order_release);
+  if (error.empty() && preset && runtime.presetFileMonitor) {
+    auto guard = std::scoped_lock(runtime.pipelineMutationMutex);
+    if (preset->empty()) runtime.presetFileMonitor->clear();
+    else {
+      const auto monitorError = runtime.presetFileMonitor->setPaths(*preset, runtime.pipeline.dependencyFiles());
+      if (!monitorError.empty()) runtime.configurationError = monitorError;
+    }
+  }
+  co_return PresetActivationResult{std::move(warnings), std::move(error), false};
+}
+
+static cardio::promise<std::string> requestLiveRateChange(
+    PipeWireRuntime &runtime, SampleRatePolicy policy, cardio::cancellation cancellation) {
+  auto lock = std::unique_lock(runtime.rateRequestMutex);
+  if (runtime.rateRequestPending) co_return "another sample-rate request is already pending";
   runtime.rateRequestPending = true;
   runtime.rateRequestCompleted = false;
   runtime.pendingRatePolicy = policy;
+  runtime.rateRequestCancellation = cancellation;
   runtime.rateRequestError.clear();
-  const auto result = pw_loop_signal_event(
-      pw_main_loop_get_loop(runtime.mainLoop), runtime.rateChangeSource);
-  if (result < 0) {
-    runtime.rateRequestPending = false;
-    return systemError("cannot schedule PipeWire rate change", result);
+  runtime.rateRequestCompletion.emplace();
+  auto completion = runtime.rateRequestCompletion->get_promise();
+  const auto scheduled = pw_loop_signal_event(pw_main_loop_get_loop(runtime.mainLoop), runtime.rateChangeSource);
+  if (scheduled < 0) {
+    runtime.rateRequestError = systemError("cannot schedule PipeWire rate change", scheduled);
+    runtime.rateRequestCompletion->try_resolve();
   }
-  runtime.rateRequestCondition.wait(
-      lock, [&runtime] { return runtime.rateRequestCompleted; });
+  lock.unlock();
+  co_await completion;
+  lock.lock();
   auto error = std::move(runtime.rateRequestError);
   runtime.rateRequestPending = false;
   runtime.rateRequestCompleted = false;
-  return error;
+  runtime.rateRequestCompletion.reset();
+  co_return error;
 }
 
-static ControlMessageResult handleControlRequest(std::string_view message,
-                                                 void *userData) {
+static cardio::promise<ControlMessageResult> handleControlRequest(std::string_view message,
+                                                 void *userData, cardio::cancellation cancellation) {
+  try {
   auto &runtime = *static_cast<PipeWireRuntime *>(userData);
   const auto request = parseControlRequest(message);
   if (!request.error.empty()) {
-    return closeControlResponse(makeControlErrorResponse(request.error), false);
+    co_return closeControlResponse(makeControlErrorResponse(request.error), false);
   }
   if (request.request.command == ControlCommand::subscribe) {
-    return {.response = provideControlStatus(&runtime),
+    co_return ControlMessageResult{.response = provideControlStatus(&runtime),
             .connectionMode = ControlConnectionMode::subscribe,
             .publishStatus = false};
   }
   if (request.request.command == ControlCommand::status) {
-    const auto reloaded = retryPendingPresetReload(runtime);
-    return closeControlResponse(
-        makeControlSuccessResponse(controlStatus(runtime), {}), reloaded);
+    co_return closeControlResponse(
+        makeControlSuccessResponse(controlStatus(runtime), {}), false);
   }
+  if (runtime.outputTransitionActive.load(std::memory_order_acquire))
+    co_return closeControlResponse(makeControlErrorResponse("cannot change DSP configuration during output transition"), false);
   auto warnings = std::vector<ControlWarning>{};
+  if (request.request.command == ControlCommand::setOutput) {
+    const auto changed = std::move(co_await requestLiveOutputChange(runtime, request.request.outputConfiguration,
+        request.request.expectedRevision, request.request.outputPreset, cancellation));
+    if (!changed.error.empty()) co_return closeControlResponse(makeControlErrorResponse(changed.error), true);
+    co_return closeControlResponse(makeControlSuccessResponse(controlStatus(runtime), changed.warnings), true);
+  }
   if (request.request.command == ControlCommand::setRate) {
     const auto error =
-        requestLiveRateChange(runtime, request.request.ratePolicy);
+        std::move(co_await requestLiveRateChange(runtime, request.request.ratePolicy, cancellation));
     if (!error.empty()) {
-      return closeControlResponse(makeControlErrorResponse(error), false);
+      co_return closeControlResponse(makeControlErrorResponse(error), false);
     }
-    static_cast<void>(retryPendingPresetReload(runtime));
-    return closeControlResponse(
+    static_cast<void>(co_await retryPendingPresetReload(runtime, cancellation));
+    co_return closeControlResponse(
         makeControlSuccessResponse(controlStatus(runtime), warnings), true);
   }
   if (request.request.command == ControlCommand::setDspBackend) {
     auto switched = DspBackendSwitchResult{};
     {
-      auto pipelineLock =
-          std::unique_lock<std::mutex>(runtime.pipelineMutationMutex);
+      auto pipelineLock = std::unique_lock(runtime.pipelineMutationMutex);
       auto rateTransitioning = false;
       {
         auto rateLock = std::scoped_lock(runtime.rateStateMutex);
         rateTransitioning = runtime.rateTransitioning;
       }
-      auto backendLock =
-          std::scoped_lock(runtime.dspBackendStateMutex);
-      switched = switchDspBackend(
-          runtime.pipeline, runtime.dspBackendState,
-          request.request.dspBackend, request.request.dspSimdVariant,
-          {.sampleRate = static_cast<float>(
-               runtime.dspSampleRate.load(std::memory_order_acquire)),
-           .maxChannels = runtime.options.channelCount,
-           .maxFrames = runtime.options.maxFrames},
-          rateTransitioning);
+      auto backendLock = std::unique_lock(runtime.dspBackendStateMutex);
+      auto plan = planDspBackendSwitch(runtime.dspBackendState, request.request.dspBackend,
+                                       request.request.dspSimdVariant, rateTransitioning);
+      if (!plan.error.empty()) co_return closeControlResponse(makeControlErrorResponse(plan.error), false);
+      const auto preparation = PreparationScope(runtime.preparationGeneration, cancellation);
+      auto warnings = std::vector<PipelineWarning>{};
+      if (plan.rebuild && runtime.pipeline.backendKind().has_value()) {
+        auto operation = runtime.pipeline.rebuildActiveAsync(
+            {static_cast<float>(runtime.dspSampleRate.load(std::memory_order_acquire)),
+             runtime.options.channelCount, runtime.options.maxFrames},
+            plan.backend, preparation.ticket.source.get_cancellation());
+        backendLock.unlock();
+        pipelineLock.unlock();
+        auto rebuilt = std::move(co_await operation);
+        pipelineLock.lock();
+        backendLock.lock();
+        if (!runtime.preparationGeneration.current(preparation.ticket)) throw cardio::canceled_exception();
+        if (!rebuilt.pipeline) co_return closeControlResponse(makeControlErrorResponse(rebuilt.error), false);
+        warnings = std::move(rebuilt.warnings);
+        runtime.pipeline.replace(std::move(rebuilt.pipeline));
+      }
+      runtime.dspBackendState = std::move(plan.state);
+      switched = {plan.changed, std::move(warnings), {}};
     }
     if (!switched.error.empty()) {
-      return closeControlResponse(makeControlErrorResponse(switched.error),
+      co_return closeControlResponse(makeControlErrorResponse(switched.error),
                                   false);
     }
     if (switched.changed) {
@@ -1721,9 +2348,9 @@ static ControlMessageResult handleControlRequest(std::string_view message,
     for (auto &warning : switched.warnings) {
       warnings.push_back({.nodeIndex = warning.nodeIndex,
                           .pluginName = std::move(warning.pluginName),
-                          .reason = std::move(warning.reason)});
+                          .reason = std::move(warning.reason), .state = warning.state});
     }
-    return closeControlResponse(
+    co_return closeControlResponse(
         makeControlSuccessResponse(controlStatus(runtime), warnings),
         switched.changed);
   }
@@ -1737,7 +2364,7 @@ static ControlMessageResult handleControlRequest(std::string_view message,
       runtime.configurationRevision.fetch_add(1,
                                               std::memory_order_release);
     }
-    return closeControlResponse(
+    co_return closeControlResponse(
         makeControlSuccessResponse(controlStatus(runtime), warnings),
         changed);
   }
@@ -1747,19 +2374,20 @@ static ControlMessageResult handleControlRequest(std::string_view message,
     {
       auto rateLock = std::scoped_lock(runtime.rateStateMutex);
       if (runtime.rateTransitioning) {
-        return closeControlResponse(
+        co_return closeControlResponse(
             makeControlErrorResponse(
                 "cannot change DSP mode during sample-rate transition"),
             false);
       }
     }
+    runtime.preparationGeneration.invalidate();
     auto created = createBypassDspPipeline(
         {.sampleRate = static_cast<float>(
              runtime.dspSampleRate.load(std::memory_order_acquire)),
          .maxChannels = runtime.options.channelCount,
          .maxFrames = runtime.options.maxFrames});
     if (created.pipeline == nullptr) {
-      return closeControlResponse(makeControlErrorResponse(created.error),
+      co_return closeControlResponse(makeControlErrorResponse(created.error),
                                   false);
     }
     runtime.pipeline.replace(std::move(created.pipeline));
@@ -1775,22 +2403,25 @@ static ControlMessageResult handleControlRequest(std::string_view message,
     runtime.configurationRevision.fetch_add(1,
                                             std::memory_order_release);
     pipelineLock.unlock();
-    return closeControlResponse(
+    co_return closeControlResponse(
         makeControlSuccessResponse(controlStatus(runtime), warnings), true);
   }
   if (request.request.command == ControlCommand::loadPreset) {
     auto activated =
-        activatePreset(runtime, request.request.presetPath, false);
+        std::move(co_await activatePreset(runtime, request.request.presetPath, false, cancellation));
     if (!activated.error.empty()) {
-      return closeControlResponse(
+      co_return closeControlResponse(
           makeControlErrorResponse(activated.error), false);
     }
     warnings = std::move(activated.warnings);
-    return closeControlResponse(
+    co_return closeControlResponse(
         makeControlSuccessResponse(controlStatus(runtime), warnings), true);
   }
-  return closeControlResponse(
+  co_return closeControlResponse(
       makeControlSuccessResponse(controlStatus(runtime), warnings), false);
+  } catch (const cardio::canceled_exception &) {
+    co_return closeControlResponse(makeControlErrorResponse("pipeline preparation was superseded or canceled"), false);
+  }
 }
 
 static void rateChangeRequested(void *data, std::uint64_t) {
@@ -1815,7 +2446,10 @@ static void rateChangeRequested(void *data, std::uint64_t) {
   {
     auto lock = std::scoped_lock(runtime.rateStateMutex);
     previous = runtime.configuredRatePolicy;
-    if (requested == previous) {
+    if (requested == previous &&
+        (requested.mode != SampleRateMode::automatic ||
+         runtime.inputStreamSampleRate.load(std::memory_order_acquire) == 0 ||
+         runtime.inputStreamSampleRate.load(std::memory_order_acquire) == currentRate)) {
       runtime.rateError.clear();
       unchanged = true;
     } else {
@@ -1839,10 +2473,10 @@ static void rateChangeRequested(void *data, std::uint64_t) {
       std::unique_lock<std::mutex>(runtime.pipelineMutationMutex);
   if (requested.mode == SampleRateMode::fixed &&
       requested.fixedRate != currentRate) {
-    auto rebuilt = runtime.pipeline.rebuildActive(
+    auto rebuilt = prepareMainLoopReplacement(runtime,
         {.sampleRate = static_cast<float>(requested.fixedRate),
          .maxChannels = runtime.options.channelCount,
-         .maxFrames = runtime.options.maxFrames});
+         .maxFrames = runtime.options.maxFrames}, pipelineLock);
     if (rebuilt.pipeline == nullptr) {
       {
         auto lock = std::scoped_lock(runtime.rateStateMutex);
@@ -1895,16 +2529,19 @@ static bool createControlServer(PipeWireRuntime &runtime) {
   }
   runtime.presetFileMonitor = std::move(monitored.monitor);
   if (!runtime.activePreset.empty()) {
-    const auto error = runtime.presetFileMonitor->setPaths(runtime.activePreset, runtime.pipeline.measurementFiles());
+    const auto error = runtime.presetFileMonitor->setPaths(runtime.activePreset, runtime.pipeline.dependencyFiles());
     if (!error.empty()) { failRuntime(runtime, error); return false; }
   }
   auto started = startControlServer(
       runtime.options.controlSocketPath,
-      {.handler = handleControlRequest,
-       .statusProvider = provideControlStatus,
+      {.handler = nullptr,
+       .statusProvider = nullptr,
        .userData = &runtime,
        .eventDescriptor = runtime.presetFileMonitor->descriptor(),
-       .eventHandler = handlePresetFileMonitorEvent});
+       .eventHandler = nullptr,
+       .asyncHandler = handleControlRequest,
+       .asyncEventHandler = handlePresetFileMonitorEvent,
+       .asyncStatusProvider = maintainControlStatus});
   if (started.server == nullptr) {
     runtime.presetFileMonitor.reset();
     failRuntime(runtime,
@@ -1937,6 +2574,15 @@ static bool createMainLoop(PipeWireRuntime &runtime) {
                 systemError("cannot create PipeWire latency event", -errno));
     return false;
   }
+  runtime.outputGraphSource = pw_loop_add_event(pw_main_loop_get_loop(runtime.mainLoop), applyOutputInventory, &runtime);
+  runtime.outputChangeSource = pw_loop_add_event(pw_main_loop_get_loop(runtime.mainLoop), outputChangeRequested, &runtime);
+  runtime.outputChangeTimer = pw_loop_add_timer(pw_main_loop_get_loop(runtime.mainLoop), [](void *data, std::uint64_t) {
+    failRuntime(*static_cast<PipeWireRuntime *>(data), "timed out while negotiating output configuration");
+  }, &runtime);
+  if (runtime.outputGraphSource == nullptr || runtime.outputChangeSource == nullptr || runtime.outputChangeTimer == nullptr) {
+    failRuntime(runtime, systemError("cannot create output configuration events", -errno));
+    return false;
+  }
   return true;
 }
 
@@ -1951,7 +2597,8 @@ static bool createAudioClient(PipeWireRuntime &runtime) {
   runtime.outputEvents.process = outputProcess;
 
   runtime.context = pw_context_new(
-      pw_main_loop_get_loop(runtime.mainLoop), nullptr, 0);
+      pw_main_loop_get_loop(runtime.mainLoop),
+      pw_properties_new(PW_KEY_APP_NAME, "PipeTune", PW_KEY_APP_PROCESS_BINARY, "pipetune", nullptr), 0);
   if (runtime.context == nullptr) {
     failRuntime(runtime, systemError("cannot create PipeWire context", -errno));
     return false;
@@ -1961,6 +2608,12 @@ static bool createAudioClient(PipeWireRuntime &runtime) {
     failRuntime(runtime, systemError("cannot connect to PipeWire core", -errno));
     return false;
   }
+  runtime.outputInventory = observePipeWireOutputs(runtime.core, outputInventoryChanged, &runtime);
+  if (runtime.outputInventory == nullptr) {
+    failRuntime(runtime, "cannot observe audio outputs");
+    return false;
+  }
+  if (runtime.options.outputConfiguration.mode == OutputMode::multiple) return true;
   const auto error = createAudioStreams(runtime);
   if (!error.empty()) {
     failRuntime(runtime, error);
@@ -1977,6 +2630,15 @@ static void readinessTimedOut(void *data, std::uint64_t) {
 
 static void interrupted(void *data, int) {
   completeRuntime(*static_cast<PipeWireRuntime *>(data));
+}
+
+std::string blockPipeWireTerminationSignals() {
+  auto signals = sigset_t{};
+  sigemptyset(&signals);
+  sigaddset(&signals, SIGINT);
+  sigaddset(&signals, SIGTERM);
+  const auto status = pthread_sigmask(SIG_BLOCK, &signals, nullptr);
+  return status == 0 ? std::string{} : systemError("cannot reserve PipeWire termination signals", -status);
 }
 
 static bool configureCompletionSources(PipeWireRuntime &runtime) {
@@ -2029,6 +2691,9 @@ static std::string validateOptions(const DspPipeline &pipeline,
   if (!sampleRatePolicyIsValid(options.ratePolicy)) {
     return "sample-rate policy is invalid";
   }
+  if (!sfzMaxSizeMiBIsValid(options.sfzMaxSizeMiB)) {
+    return "SFZ budget is invalid";
+  }
   if (!dspIdlePolicyIsValid(options.dspIdlePolicy)) {
     return "DSP idle policy is invalid";
   }
@@ -2038,6 +2703,15 @@ static std::string validateOptions(const DspPipeline &pipeline,
   }
   if (options.channelCount == 0 || options.channelCount > 16) {
     return "PipeWire channel count must be between one and sixteen";
+  }
+  if (options.inputChannelCount > options.channelCount) {
+    return "PipeWire input channel count must not exceed the DSP width";
+  }
+  const auto outputError = validateOutputConfiguration(options.outputConfiguration);
+  if (!outputError.empty()) return outputError;
+  if (options.outputConfiguration.mode == OutputMode::multiple &&
+      (streamChannelCount(options, true) != 2 || options.channelCount != outputDspChannelCount(options.outputConfiguration))) {
+    return "multiple mode requires stereo input and the configured DSP width";
   }
   if (options.maxFrames < 32 ||
       options.maxFrames > static_cast<std::uint32_t>(INT_MAX) / kSampleBytes) {
@@ -2078,8 +2752,8 @@ PipeWireRunResult runPipeWirePipeline(std::unique_ptr<DspPipeline> pipeline,
     }
     return {.success = runtime.completed && runtime.error.empty(),
             .error = runtime.error,
-            .overrunFrames = runtime.ring.overrunFrames(),
-            .underrunFrames = runtime.ring.underrunFrames(),
+            .overrunFrames = runtime.retiredOverrunFrames + runtime.audioBuffers->ring.overrunFrames(),
+            .underrunFrames = runtime.retiredUnderrunFrames + runtime.audioBuffers->ring.underrunFrames(),
             .processingErrors =
                 runtime.processingErrors.load(std::memory_order_relaxed)};
   } catch (const std::exception &error) {

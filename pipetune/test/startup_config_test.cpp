@@ -434,6 +434,91 @@ static bool testRejectedInputForms(const std::filesystem::path &configPath) {
                "startup configurations larger than 64 KiB must be rejected");
 }
 
+static bool testOutputSnapshot(const std::filesystem::path &configPath) {
+  auto configuration = pipetune::StartupConfig{
+      .presetFound = true, .presetPath = "/tmp/Output \"配置\".effetune_preset",
+      .ratePolicy = {.mode = pipetune::SampleRateMode::fixed, .fixedRate = 96000,
+                     .enforcement = pipetune::SampleRateEnforcement::suggest}};
+  configuration.outputConfiguration = {
+      .mode = pipetune::OutputMode::multiple,
+      .outputs = {{.id = "dac", .enabled = true,
+          .device = {.identity = {.api = "alsa", .location = "usb:1", .port = "pcm:0:0",
+                                 .vendor = "", .product = "", .serial = ""},
+                     .name = "USB \"出力\"", .profile = "analog-stereo", .channelPositions = {"FL", "FR"}}}},
+      .channels = {{"", 0, "Reserved"}, {"dac", 0, "左\nnear \\ wall"}, {"dac", 1, "右"}}};
+  const auto saved = pipetune::saveStartupConfig(configPath, configuration);
+  const auto loaded = pipetune::loadStartupConfig(configPath);
+  if (!check(saved.empty() && loaded.error.empty(), "complete output snapshot must save and load") ||
+      !check(loaded.config.outputConfiguration == configuration.outputConfiguration &&
+             loaded.config.presetPath == configuration.presetPath &&
+             loaded.config.ratePolicy == configuration.ratePolicy,
+             "output mapping and processing choices must round-trip together")) return false;
+
+  if (!check(pipetune::clearStartupPreset(configPath).empty() &&
+             pipetune::saveSampleRatePolicy(configPath, {}).empty() &&
+             pipetune::saveDspBackendSelection(configPath, pipetune::DspBackendKind::scalar,
+                                             pipetune::DspSimdVariant::automatic).empty() &&
+             pipetune::saveDspIdlePolicy(configPath, {.timeoutMilliseconds = 100}).empty(),
+             "other setting operations must succeed with an output configuration")) return false;
+  const auto preserved = pipetune::loadStartupConfig(configPath);
+  if (!check(preserved.error.empty() && !preserved.config.presetFound &&
+             preserved.config.outputConfiguration == configuration.outputConfiguration,
+             "other setting operations must retain every output slot")) return false;
+  const auto readBytes = [&]() {
+    auto stream = std::ifstream(configPath, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(stream), {});
+  };
+  const auto previousBytes = readBytes();
+  auto invalid = configuration;
+  invalid.outputConfiguration.channels.pop_back();
+  if (!check(!pipetune::saveStartupConfig(configPath, invalid).empty() && readBytes() == previousBytes,
+             "invalid output mappings must leave the saved snapshot unchanged")) return false;
+  invalid = configuration;
+  invalid.outputConfiguration.channels[0].label.assign(64000, '"');
+  if (!check(!pipetune::saveStartupConfig(configPath, invalid).empty() && readBytes() == previousBytes,
+             "a snapshot exceeding the read limit after escaping must not replace saved settings")) return false;
+
+  writeConfig(configPath, previousBytes + "PIPETUNE_OUTPUT=[]\n");
+  const auto duplicate = pipetune::loadStartupConfig(configPath);
+  writeConfig(configPath, "PIPETUNE_PRESET=/tmp/valid.effetune_preset\nPIPETUNE_OUTPUT=[]\n");
+  const auto malformed = pipetune::loadStartupConfig(configPath);
+  if (!check(!duplicate.error.empty() && !malformed.error.empty() && !malformed.config.presetFound &&
+             malformed.config.outputConfiguration == pipetune::OutputConfiguration{},
+             "duplicate or malformed output assignments must reject the whole snapshot")) return false;
+  if (!check(pipetune::resetStartupConfig(configPath).empty(), "reset must replace an invalid output configuration")) return false;
+  const auto reset = pipetune::loadStartupConfig(configPath);
+  return check(reset.error.empty() && reset.config.outputConfiguration == pipetune::OutputConfiguration{},
+               "reset must restore OS-managed single mode without reserved assignments");
+}
+
+static bool testSfzBudget(const std::filesystem::path &path) {
+  for (const auto mib : {64u, 128u, 256u, 512u, 1024u}) {
+    writeConfig(path, "PIPETUNE_SFZ_MAX_SIZE_MIB=" + std::to_string(mib) + "\n");
+    const auto loaded = pipetune::loadStartupConfig(path);
+    if (!check(loaded.error.empty(), loaded.error) ||
+        !check(loaded.config.sfzMaxSizeMiB == mib, "SFZ budget did not load") ||
+        !check(pipetune::saveStartupPreset(path, "/tmp/sfz.effetune_preset").empty(),
+               "preset update rejected SFZ configuration") ||
+        !check(pipetune::saveDspIdlePolicy(path, {}).empty(), "idle update failed") ||
+        !check(pipetune::loadStartupConfig(path).config.sfzMaxSizeMiB == mib,
+               "updating other settings discarded the SFZ budget")) return false;
+    auto invalid = loaded.config;
+    invalid.sfzMaxSizeMiB = 100;
+    if (!check(!pipetune::saveStartupConfig(path, invalid).empty() &&
+                   pipetune::loadStartupConfig(path).config.sfzMaxSizeMiB == mib,
+               "invalid SFZ budgets must preserve the previous snapshot")) return false;
+  }
+  for (const auto value : {"0", "63", "100", "2048", "-64", "64.0", "64MiB", "4294967296"}) {
+    writeConfig(path, "PIPETUNE_SFZ_MAX_SIZE_MIB=" + std::string(value) + "\n");
+    if (!check(!pipetune::loadStartupConfig(path).error.empty(), "invalid SFZ budget accepted")) return false;
+  }
+  writeConfig(path, "PIPETUNE_SFZ_MAX_SIZE_MIB=64\nPIPETUNE_SFZ_MAX_SIZE_MIB=128\n");
+  if (!check(!pipetune::loadStartupConfig(path).error.empty(), "duplicate SFZ budget accepted")) return false;
+  return check(pipetune::resetStartupConfig(path).empty() &&
+                   pipetune::loadStartupConfig(path).config.sfzMaxSizeMiB == 256,
+               "reset must restore the 256 MiB SFZ default");
+}
+
 int main() {
   const auto directory =
       std::filesystem::temp_directory_path() /
@@ -443,6 +528,7 @@ int main() {
   const auto passed =
       testPathResolution() && testPrivateRoundTrip(configPath) &&
       testFullSnapshotRoundTrip(configPath) &&
+      testOutputSnapshot(configPath) && testSfzBudget(configPath) &&
       testRatePolicyRoundTripPreservesOtherChoices(configPath) &&
       testDspBackendRoundTripPreservesOtherChoices(configPath) &&
       testDspIdlePolicyRoundTripPreservesOtherChoices(configPath) &&

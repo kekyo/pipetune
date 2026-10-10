@@ -385,6 +385,15 @@ static bool testPresetConfiguration() {
 }
 
 int main() {
+  auto diagnosed = pipetune_gtk::initialApplicationState();
+  auto publication = statusResponse({}, {});
+  publication.kind = pipetune::ControlResponseKind::statusEvent;
+  publication.status.presetEntries = {
+      {"IR Reverb", pipetune::PresetEntryState::enabled, {"No impulse response is assigned"}}};
+  pipetune_gtk::applyControlResponse(diagnosed, publication, 1000);
+  if (!check(pipetune_gtk::trayVisualState(diagnosed) == pipetune_gtk::TrayVisualState::attention &&
+                 pipetune_gtk::presetWarningCount(diagnosed) == 1,
+             "preparation diagnostics must remain visible after reconnecting to status publications")) return 1;
   if (!testPresetConfiguration()) return 1;
   return testApplicationState() && testInputRateState() &&
                  testPeriodicRuntimeMeasurements()

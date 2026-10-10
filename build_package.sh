@@ -10,11 +10,7 @@ PACKAGE_DESCRIPTION="PipeWire system-wide DSP and GTK control application."
 DEFAULT_MAINTAINER="PipeTune packager <packager@localhost>"
 DEFAULT_PARALLEL_JOB_CAP=14
 
-LINUX_MATRIX='debian bookworm x86_64 linux/amd64
-debian bookworm i686 linux/386
-debian bookworm arm64 linux/arm64
-debian bookworm armv7l linux/arm/v7
-debian trixie x86_64 linux/amd64
+LINUX_MATRIX='debian trixie x86_64 linux/amd64
 debian trixie i686 linux/386
 debian trixie arm64 linux/arm64
 debian trixie armv7l linux/arm/v7
@@ -152,7 +148,7 @@ canonical_release() {
 	value=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
 
 	case $value in
-		bookworm | trixie | 24.04 | 26.04)
+		trixie | 24.04 | 26.04)
 			printf '%s\n' "$value"
 			;;
 		noble)
@@ -532,10 +528,15 @@ validate_deb_package() {
 		fail "Unexpected Version field in $package_path"
 	depends_value=$(dpkg-deb -f "$package_path" Depends)
 	[ -n "$depends_value" ] || fail "Missing Depends field in $package_path"
+	case "$depends_value" in
+		*libavformat[0-9]* | *libavcodec[0-9]* | *libavutil[0-9]* | *libswresample[0-9]*)
+			fail "Package must use its private libraries, not system FFmpeg dependencies"
+			;;
+	esac
 	for required_dependency in \
 		systemd \
 		dbus-user-session \
-		pipewire \
+		'pipewire(>=1.0.5)' \
 		wireplumber \
 		hicolor-icon-theme; do
 		assert_deb_dependency "$depends_value" "$required_dependency"
@@ -560,6 +561,18 @@ validate_deb_package() {
 		assert_file "$tmp_dir/$required_file"
 	done
 	assert_dsp_backend_set "$tmp_dir/usr/lib/pipetune" "$expected_arch"
+	for component in avformat avcodec avutil swresample; do
+		assert_file "$tmp_dir/usr/lib/pipetune/lib${component}-pipetune.so"
+	done
+	for document in COPYING.LGPLv2.1 LICENSE.md REBUILD.md build-info.txt ConfigureFFmpeg.cmake ffmpeg-source.tar.xz; do
+		assert_file "$tmp_dir/usr/share/doc/pipetune/ffmpeg/$document"
+	done
+	[ "$(count_matching_files "$tmp_dir/usr/lib" 'libpipewire-module-pipetune-presentation.so')" -eq 1 ] ||
+		fail "Missing or duplicate PipeWire presentation module"
+	presentation_module=$(find "$tmp_dir/usr/lib" -type f -name 'libpipewire-module-pipetune-presentation.so')
+	readelf -h "$presentation_module" >"$tmp_dir/readelf-presentation.txt"
+	assert_contains "$tmp_dir/readelf-presentation.txt" "$(expected_elf_class "$expected_arch")"
+	assert_contains "$tmp_dir/readelf-presentation.txt" "$(expected_elf_machine "$expected_arch")"
 
 	readelf -h "$tmp_dir/usr/bin/pipetune" >"$tmp_dir/readelf-pipetune.txt"
 	assert_contains "$tmp_dir/readelf-pipetune.txt" "$(expected_elf_class "$expected_arch")"
