@@ -36,11 +36,13 @@ dbus-user-session
 desktop-file-utils
 dpkg-dev
 gettext
+git
 hicolor-icon-theme
 libgtk-3-dev
 libpipewire-0.3-dev
 libpulse-dev
 libsamplerate0-dev
+nasm
 nodejs
 npm
 pipewire
@@ -49,6 +51,7 @@ pkg-config
 python3
 systemd
 wireplumber
+xz-utils
 EOF
 }
 

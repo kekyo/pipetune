@@ -1,10 +1,27 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: PipeTune
 Source: https://github.com/kekyo/pipetune
+Comment: PipeTune dynamically links its bundled LGPL-2.1-or-later FFmpeg audio
+ libraries. Their exact upstream source, configuration, notices and rebuilding
+ instructions are installed in /usr/share/doc/pipetune/ffmpeg.
+ FFmpeg licensing information: https://ffmpeg.org/legal.html
 
 Files: *
 Copyright: 2026 Kouji Matsui
 License: MIT
+
+Files: */libavformat-pipetune.so* */libavcodec-pipetune.so*
+ */libavutil-pipetune.so* */libswresample-pipetune.so*
+Copyright: FFmpeg contributors; individual notices are in the corresponding source
+License: LGPL-2.1+
+Comment: GPL, version3 and nonfree components and external library autodetection
+ are disabled. PipeTune's own source remains MIT licensed.
+
+Files: deps/ffmpeg/* */ffmpeg-source.tar.xz
+Copyright: FFmpeg contributors; see the individual source file headers
+License: FFmpeg-source
+Comment: The full upstream source includes optional components that are not
+ compiled or linked into PipeTune's LGPL audio libraries.
 
 Files: pipetune/src/wireplumber_04_compat.cpp
 Copyright:
@@ -68,6 +85,24 @@ License: MIT
  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  SOFTWARE.
+
+License: LGPL-2.1+
+ This library is free software; you can redistribute it and/or modify it under
+ the terms of the GNU Lesser General Public License as published by the Free
+ Software Foundation; either version 2.1 of the License, or (at your option)
+ any later version.
+ .
+ This library is distributed in the hope that it will be useful, but WITHOUT
+ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+ FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public License for more
+ details. The complete license is included at
+ /usr/share/doc/pipetune/ffmpeg/COPYING.LGPLv2.1.
+
+License: FFmpeg-source
+ Most FFmpeg source files are LGPL-2.1-or-later, with additional permissive
+ licenses and optional GPL components. Each file retains its original license.
+ The exact source archive includes all upstream notices and COPYING files.
+ See /usr/share/doc/pipetune/ffmpeg/LICENSE.md for upstream's license inventory.
 
 License: PFFFT
  Redistribution and use of the Software in source and binary forms, with or
