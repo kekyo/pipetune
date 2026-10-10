@@ -95,6 +95,7 @@ find_package(Threads REQUIRED)
 pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET "libpipewire-0.3>=1.0.5")
 pkg_get_variable(PIPETUNE_PIPEWIRE_MODULE_DIR libpipewire-0.3 moduledir)
 pkg_check_modules(SAMPLERATE REQUIRED IMPORTED_TARGET samplerate)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/PipeTuneFFmpeg.cmake")
 
 add_library(pipetune_presentation MODULE src/pipewire_presentation.c)
 target_link_libraries(pipetune_presentation PRIVATE PkgConfig::PIPEWIRE)
@@ -276,6 +277,7 @@ else()
 endif()
 
 add_executable(pipetune src/main.cpp)
+pipetune_configure_ffmpeg_runtime(pipetune)
 set_target_properties(
   pipetune PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 target_include_directories(pipetune PRIVATE src "${PIPETUNE_GENERATED_DIR}")

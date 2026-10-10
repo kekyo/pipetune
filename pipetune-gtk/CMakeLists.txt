@@ -226,6 +226,7 @@ else()
 endif()
 
 add_executable(pipetune-gtk src/main.cpp)
+pipetune_configure_ffmpeg_runtime(pipetune-gtk)
 set_target_properties(
   pipetune-gtk PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 target_link_libraries(

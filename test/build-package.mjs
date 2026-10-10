@@ -559,6 +559,9 @@ cp "$containerfile" "$PIPETUNE_TEST_PREREQ_RECORDS.containerfile"
     "libgtk-3-dev",
     "libpipewire-0.3-dev",
     "libsamplerate0-dev",
+    "git",
+    "nasm",
+    "xz-utils",
     "nodejs",
     "wireplumber",
   ]) {
