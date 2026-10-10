@@ -10,7 +10,9 @@ Adaptive Predictionの追加、Cassette ArtifactsとRhythm Analyzerの変更、�
 
 追加指示に従い、現在外部アセットを理由に除外しているIR ReverbとRoom EQも今回対応する。既存のCrosstalk Cancellationとパラメータから生成するFIRも同時に回帰検証する。SFZのJS由来処理はPipeTuneのホスト機能から構造的に分離し、将来上流に対応するC++実装が追加された際に置き換えられる構成とする。上流の将来の移植は利用者の予想であり、発表済みの予定とは扱わない。
 
-この作業段階の成果物は計画書である。製品コード、サブモジュールの参照、配布物は変更せず、実装後の検証結果と計画を区別する。
+計画の承認後、2026-10-09から段階的な実装を開始した。以下の設計・完了条件と、末尾に追記する実施結果を区別する。
+
+2026-10-10の追加指示により、システムのGPL構成FFmpegを参照していた実装はタグ`ffmpeg`（`38c09d7`）に保存し、実装開始前の`b2a4911`からLGPL構成の自前ビルドへ再構成する。旧タグの機能とテストを基準とするが、旧コミットを一対一に再現する必要はない。旧検証記録はタグ側に保持し、新構成の成功として流用しない。
 
 ## 上流の変更と対応範囲
 
@@ -111,6 +113,10 @@ Adaptive Predictionの追加、Cassette ArtifactsとRhythm Analyzerの変更、�
 - 一時ファイルからの原子的な置換、形式・長さ・ハッシュ検証を行う。破損・旧版キャッシュは原本から作り直す。容量不足や書込不可の場合も、準備が成功したアセットはメモリ上で使用できるようにする。
 - 単一アセットの上限と、準備中のPCM・旧新パイプライン共存・キャッシュの合計を区別して管理する。同一入力の準備を重複させず、不要なコピーを減らす。キャッシュ総量は既定2 GiBを上限に古い未使用項目から回収し、削除は稼働中アセットの所有権に影響させない。
 
+工程4.3の具体化として、プロセス内で外部アセットの準備を非同期mutexにより順番に実行し、完了した不変の準備結果を内容キーで共有する。各パイプラインの構築中だけ共有結果を保持し、構築後はネイティブDSP内のコピーとキャッシュ識別子を保持する。同一入力でも参照元の検証は省略しない。待機中の取消は個別要求へ適用し、別のdispatcherのpromiseを共有しない。
+
+アセット用メモリのプロセス合計上限は64bitで4 GiB、32bitで1 GiBとする。これはアセットの準備領域・保持payload・ネイティブ側footprintの予約合計で、プロセス全体のRSS上限ではない。IRの準備は、原音・JSON・デコード・リサンプル・倍精度の解析配列を含む保守的な768 MiBの作業領域を確保前に予約し、完了後は保持payloadの実容量へ縮小する。実際に768 MiBを常時確保するわけではない。SFZとRoom EQは各工程でそれぞれの上限見積りを接続する。旧DSPの予約は破棄まで保持し、新候補との合計が上限に入らなければ現在の音声を保持して読込エラーとする。小さい上限の注入と合成メタデータで、巨大な実アセットを用意せず境界を検証する。
+
 ### ファイル監視、準備状態、エラー
 
 `DspPipeline::measurementFiles()`と`PipelineLoadResult.measurementFiles`を汎用の依存ファイル一覧へ変更し、`ActivePresetFileMonitor`と全呼出し元を揃える。監視対象はSFZ登録情報・定義・include・参照サンプル、IR indexと対象原音、Room EQ / Crosstalkの測定JSON。容量選別の判断に使ったSFZサンプルも依存に含める。未作成ファイルと親ディレクトリーの差替えを扱う既存inotify実装を使い、生成キャッシュは監視しない。
@@ -186,7 +192,7 @@ SFZ全仕様の実装ではなく、指定アプリタグのSFZ読込の動作�
 
 ## Room EQ
 
-`measurement-backups/<id>.json`から共有測定`ms`とch別測定`ms0`〜`ms15`を解決する。選択chの開始位置と実効処理幅に対応するスロットだけを使い、ch別の空欄は共有測定へフォールバックする。既存Crosstalkの「4測定・1点・所定の耳ch」という制約を適用しない。複数測定点、平均周波数応答、各点のIR・レート・基準スケールを読み取る。割当済みIDを1つでも解決できなければ全体を失敗とする。[測定選択と設定](https://github.com/Frieve-A/effetune/blob/v2.13.0/plugins/eq/room_eq.js)
+`measurement-backups/<id>.json`から共有測定`ms`とch別測定`ms0`〜`ms15`を解決する。`<id>::ch=<channel>`という仮想ch IDは元の測定ファイルへ解決し、`channelResponses`の平均応答と各点の`irId`に対応するIRを投影する。スロット番号は選択された処理範囲内の相対位置であり、3/4ch選択では`ms0/ms1`を出力3/4chへ適用する。実効幅より後のスロットは参照せず、単一chでは共有`ms`のみを使う。ch別の空欄は共有測定へフォールバックする。既存Crosstalkの「4測定・1点・所定の耳ch」という制約を適用しない。複数測定点、平均周波数応答、各点のIR・レート・基準スケールを読み取る。割当済みIDを1つでも解決できなければ全体を失敗とする。[測定選択と設定](https://github.com/Frieve-A/effetune/blob/v2.13.0/plugins/eq/room_eq.js)、[仮想chの解決](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/measurement-store/client.js)
 
 測定IRは部屋の応答であり、そのまま畳み込む補正フィルターではない。`room-eq/`モジュールで`design-core.js`と必要な群遅延・平滑化等の処理を移植し、次を実装する。
 
@@ -219,6 +225,22 @@ FFTは既存の設計処理で使う数値基盤を調査して、小さな演�
 公式6 goldenのclick-onは192,000フレームへ延長されている。メタデータのフレーム数とPCMをそのまま使い、旧ケースの長さや古いクリック検出時刻を固定しない。許容絶対誤差`1e-6`を維持する。上流仕様と既存テストの期待が矛盾した場合は、仕様を確定してからテストを変更する。
 
 ## 段階的な実施計画
+
+### 作業ブランチと統合
+
+実装開始の指示に従い、以下の単位で`develop`から作業ブランチを作る。各小段階のRED / GREENとコミットを残し、そのブランチの完了条件を満たした後、`develop`へ`git merge --no-ff`で統合する。次のブランチは統合済みの`develop`から作る。作業ブランチはレビュー用に残し、リモートへのpushやリリースはこの作業に含めない。
+
+| 再構成工程 | ブランチ | 観測可能な成果物と完了条件 |
+| --- | --- | --- |
+| 計画更新 | `doc/effetune-2.13-lgpl-plan` | 再開始点、依存構成、工程、合格条件を記録 |
+| アプリ更新・既存DSP（従来0〜3） | `feat/effetune-2.13-lgpl-backends` | アプリ2.13.0、Adaptive・Cassette・Rhythmの対象試験が成功 |
+| LGPL FFmpeg基盤 | `feat/lgpl-ffmpeg` | 固定submoduleの共有ライブラリと検証driverが動作し、GPL版でRED・自前LGPL版でGREEN |
+| IR・非同期アセット基盤（従来4） | `feat/effetune-2.13-lgpl-assets` | 自前FFmpegでIR音声、容量、cache、取消、旧音声保持の試験が成功 |
+| SFZ（従来5） | `feat/effetune-2.13-lgpl-sfz` | 独立C++準備、登録済み音源再生、i686精度対策を維持し適合試験が成功 |
+| Room EQ（従来6） | `feat/effetune-2.13-lgpl-room` | 全位相モード、ch割当、cache、監視、混在PCMの試験が成功 |
+| 配布・回帰・文書（従来7〜9） | `chore/effetune-2.13-lgpl-distribution` | 全体試験、インストール、9配布構成、ソース同梱とライセンス・リンク検証が成功 |
+
+各工程では旧タグの関連する実装・試験を再利用し、システムFFmpegへの依存設定を新履歴へ取り込まない。旧ブランチ・タグは変更しない。新規変更は振る舞いを検証する試験でRED/GREENを確認する。成果物が動作する単位にまとめてコミットし、対象試験が成功してからdevelopへno-ffで統合する。
 
 ### 0 基準状態と入力データの契約を記録する
 
@@ -259,6 +281,8 @@ Cassetteの5モード・全18 goldenと、Rhythmの全6 golden・長時間クリ
 | 4.3 共通の依存・キャッシュ | 汎用依存一覧とキャッシュ、稼働中ノードの診断、世代を持つ準備・交換を接続。既存Crosstalkの読込も同じ監視へ移す | 原音差替えで音が更新され、再起動時のキャッシュ使用・破損時再生成・失敗時旧音声保持を確認する。Crosstalkは従来の音声と診断を維持。`feat: cache and monitor external DSP assets` |
 
 この段階では、既存の未対応DSPのうちIR Reverbが実プリセットから使用できる状態を成果物とする。後続SFZ / Room EQ用の空の抽象だけを実装して終わらせない。
+
+4.3は、稼働中診断と失敗時の依存保持、IRで観測可能な永続キャッシュ、世代を持つ非同期準備と交換の順に小さくコミットする。最初の単位でもCLI / GTKから未設定状態と稼働状態を同時に確認できるようにする。ブランチ全体は、欠損復旧・破損再生成・準備中の切替・旧音声保持まで検証してからマージする。
 
 ### 5 SFZの独立C++準備と製品再生を完成させる
 
@@ -309,6 +333,21 @@ NOTICEと実際の配布ソースを照合する。今回の上流NOTICEの追�
 
 完了条件は、SFZ・IR Reverb・Room EQを含む最終条件を満たし、文書と検証記録が揃うこと。コミットは`doc: describe EffeTune 2.13.0 support`。パッケージ実装の修正が必要なら`fix:`または`chore:`として分離する。
 
+## LGPL FFmpegを自前ビルドする設計
+
+PipeTune自身はMITを維持する。GStreamer/avdec_aacはシステムFFmpegのGPL構成を自動的に解消せず、調査では圧縮音声の時間軸と破損時の扱いにも差があったため採用しない。既存のメモリ入力アダプターを保ち、その依存を自前FFmpegへ置き換える。
+
+- 公式ミラー`https://github.com/FFmpeg/FFmpeg.git`を`deps/ffmpeg`サブモジュールに追加する。既存API系列の公式修正版`n6.1.6`（`f1e3a2bf7a2f2cde936d1ed97f09a26853d20125`）を固定し、上流ソースは変更しない。更新時は同じライセンス・音声・配布試験を実行する。
+- FFmpeg標準のconfigure/Makefileをビルドディレクトリーから実行する。GPL、version3、nonfree、外部ライブラリの自動検出、ネットワーク、実行プログラム、デバイス、フィルター、映像変換を無効にする。必要なlibavformat、libavcodec、libavutil、libswresampleを共有ライブラリとして生成する。静的リンクやシステムFFmpegへ戻る選択肢を作らない。
+- デマルチプレクサーは現行と同じWAV / AIFF / FLAC / MP3 / Ogg / MOV系列に限定する。PCM各形式、FLAC、MP3、Vorbis、AAC、ALAC、Opusなど現行コンテナで必要な音声デコーダーとパーサーを明示する。試験用エンコードには既存のffmpegコマンドを使えるが、製品へリンク・同梱しない。
+- FFmpeg標準のbuild-suffixでライブラリ名・SONAMEをPipeTune専用にし、システムに同じABIのGPL版が存在しても混在しないようにする。製品用の私有ライブラリディレクトリーと相対RUNPATHを設定する。専用ライブラリがなければ起動に失敗し、通常名のGPLライブラリへフォールバックしない。利用者は互換な改変LGPLライブラリへ差し替えられる。
+- ビルドした各ライブラリのlicense/configuration公開APIとELFの実参照先を検証する。`LGPL version 2.1 or later`であること、GPL/nonfree/version3が無効であること、通常名のシステムlibav*を参照しないことを合格条件にする。CMakeがpkg-configでシステムFFmpegを探す構成は採用しない。
+- 配布物には共有ライブラリだけでなく、対応するFFmpegソース、ライセンス全文、著作権情報、固定コミット、configure条件、再ビルド・差替えの手順を含める。ソースアーカイブは固定submoduleから生成し、ビルドスクリプトも添付する。FFmpeg全ソース中に含まれる未使用GPLファイルのライセンスと、実際にビルドするLGPLライブラリのライセンスを区別する。
+- 既存Makefile、単独ビルド、インストール・アンインストール、Debian/Ubuntuの9構成へ同じ依存経路を適用する。配布用前提からlibav*-dev / libswresample-devを除き、x86アセンブリに必要なnasmを加える。共有ライブラリの依存は同梱分を重複したシステム依存にせず、その先のlibc等を正しく算出する。
+- SFZのJS由来C++準備処理とIR/Room EQの純粋計算は変更せず、従来の分離境界を維持する。cardioによるファイルI/O・cache・取消も維持する。デコーダー版は既存cacheキーに反映される。
+
+根拠: [公式ソースと保守リリース](https://ffmpeg.org/download.html)、[LGPL構成と配布条件](https://ffmpeg.org/legal.html)、[configureオプション](https://github.com/FFmpeg/FFmpeg/blob/n6.1.6/configure)、[ビルド手順](https://ffmpeg.org/platform.html)。
+
 ## 検証方法と実施条件
 
 基本の入口は既存Makefileを使う。実装の最終段階で全体テストを省略しない。
@@ -318,7 +357,7 @@ make test
 cmake -S . -B build/effetune-2.13-release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
 cmake --build build/effetune-2.13-release --parallel
 ctest --test-dir build/effetune-2.13-release --output-on-failure
-DESTDIR="$PWD/artifacts/verification/effetune-2.13.0/install" cmake --install build/effetune-2.13-release --prefix /usr
+DESTDIR="$PWD/artifacts/verification/effetune-2.13-lgpl/install" cmake --install build/effetune-2.13-release --prefix /usr
 ./build_package_all.sh
 ```
 
@@ -333,7 +372,7 @@ DESTDIR="$PWD/artifacts/verification/effetune-2.13.0/install" cmake --install bu
 - 版管理は既存の`screw-up format`経路を維持する。コミット後の検証では再構成し、全体テスト中にソースを変更しない。計画外の問題は設計前提を見直して本書へ反映し、テストと計画の契約が矛盾する場合は確認する。
 - 機能削除が必要になった場合は、削除を確認する一時テストでRED、削除後GREENとコミット、その後に一時テストを削除する手順を守る。単なる参照版の更新と製品機能の削除を混同しない。
 
-実行コマンド、対象コミット、環境、ログ、誤差、負荷、配布物ハッシュは`artifacts/verification/effetune-2.13.0/`へ保存し、本書へ工程ごとの結果を追記する。
+実行コマンド、対象コミット、環境、ログ、誤差、負荷、配布物ハッシュは`artifacts/verification/effetune-2.13-lgpl/`へ保存し、本書へ工程ごとの結果を追記する。
 
 ## 実装の最終完了条件
 
@@ -353,14 +392,22 @@ DESTDIR="$PWD/artifacts/verification/effetune-2.13.0/install" cmake --install bu
 - [ ] Debug / Release全体、単独ビルド、GTK E2E、インストール、現行9配布構成の結果を記録した。
 - [ ] 利用者文書、著作権表示、性能・メモリの測定条件と未検証範囲が揃っている。
 
+- [ ] 自前FFmpegが固定submoduleから再現でき、4共有ライブラリすべてがLGPL-2.1-or-later構成である。
+- [ ] ビルド・インストール・全9配布物の実参照先が私有FFmpegであり、システムGPL版へリンクしない。
+- [ ] LGPLライセンス・正確な対応ソース・構成・差替え手順を配布物へ同梱し、既存の音声・アセット・製品試験を維持した。
+
 ## 計画段階の確認
 
-- [x] 追従先を利用者指定のアプリタグに固定した。
-- [x] 現行コード、公式タグ間差分、対象版の文書・APIコメントを基に対応箇所を整理した。
-- [x] 各工程・小段階に実行可能な成果物、TDD・回帰検証、コミット、完了条件を定義した。
-- [x] SFZの3案とNode.js依存の議論を保存し、A＋C＋キャッシュに確定した。
-- [x] SFZのJS由来処理の構造的分離、移植元との適合テスト、将来の上流C++への差替え方針を定義した。
-- [x] アセットを持つ9種類を洗い出し、IR Reverb・Room EQの未対応を今回解消する工程を追加した。
-- [x] 共通のネイティブ読込・キャッシュ・監視と、初回準備を含めた実行時Node.js不要の条件を定義した。
+- [ ] 追従先を利用者指定のアプリタグに固定した。
+- [ ] 現行コード、公式タグ間差分、対象版の文書・APIコメントを基に対応箇所を整理した。
+- [ ] 各工程・小段階に実行可能な成果物、TDD・回帰検証、コミット、完了条件を定義した。
+- [ ] SFZの3案とNode.js依存の議論を保存し、A＋C＋キャッシュに確定した。
+- [ ] SFZのJS由来処理の構造的分離、移植元との適合テスト、将来の上流C++への差替え方針を定義した。
+- [ ] アセットを持つ9種類を洗い出し、IR Reverb・Room EQの未対応を今回解消する工程を追加した。
+- [ ] 共通のネイティブ読込・キャッシュ・監視と、初回準備を含めた実行時Node.js不要の条件を定義した。
 
-計画段階では本書のみを更新する。ビルドに影響しない文書変更のため、この段階のビルド・テストは行わない。上記の計画段階の条件を満たしたことを差分レビューで確認し、実装の最終完了条件は未実施として残す。
+計画作成時は本書のみを更新した。ビルドに影響しない文書変更のため、計画段階のビルド・テストは行っていない。上記の計画段階の条件は差分レビューで確認した。
+
+## LGPL再構成の実施結果
+
+開始時にタグ`ffmpeg`が`38c09d7`を保持し、作業ツリー・既存サブモジュールがクリーンであることを確認した。利用者の指示に従いdevelopを`b2a4911`へ戻した。ホストのnasmが未導入のため導入を依頼し、依存しない工程を先行する。
