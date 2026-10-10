@@ -1,0 +1,13 @@
+{
+  "name": "Cassette Encode + Artifacts",
+  "pipeline": [
+    {
+      "name": "Cassette Artifacts",
+      "channel": "All",
+      "parameters": {
+        "nr": "Dolby C",
+        "md": "Encode + Artifacts"
+      }
+    }
+  ]
+}

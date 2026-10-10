@@ -1,0 +1,10 @@
+{
+  "name": "Adaptive Prediction on channels 15 and 16",
+  "pipeline": [
+    {
+      "name": "Adaptive Prediction",
+      "channel": "1516",
+      "parameters": {}
+    }
+  ]
+}

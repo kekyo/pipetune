@@ -585,6 +585,29 @@ if(BUILD_TESTING)
   target_compile_options(pipetune_tonal_balance_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME pipetune_tonal_balance_tests COMMAND pipetune_tonal_balance_tests)
 
+  add_executable(pipetune_effetune_213_tests test/effetune_213_test.cpp)
+  target_include_directories(pipetune_effetune_213_tests PRIVATE src)
+  target_link_libraries(pipetune_effetune_213_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_effetune_213_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_effetune_213_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
+  add_test(NAME pipetune_effetune_213_tests COMMAND pipetune_effetune_213_tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/test/presets/effetune-2.13/adaptive-original.effetune_preset)
+
+  add_executable(pipetune_adaptive_prediction_tests test/adaptive_prediction_test.cpp)
+  target_include_directories(pipetune_adaptive_prediction_tests PRIVATE src)
+  target_link_libraries(pipetune_adaptive_prediction_tests PRIVATE pipetune_pipewire)
+  target_compile_options(pipetune_adaptive_prediction_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_adaptive_prediction_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
+  add_test(NAME pipetune_adaptive_prediction_tests COMMAND pipetune_adaptive_prediction_tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/test/presets/effetune-2.13)
+
+  add_executable(pipetune_cassette_artifacts_tests test/cassette_artifacts_test.cpp)
+  target_link_libraries(pipetune_cassette_artifacts_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_cassette_artifacts_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_cassette_artifacts_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
+  add_test(NAME pipetune_cassette_artifacts_tests COMMAND pipetune_cassette_artifacts_tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/test/presets/effetune-2.13)
+
   add_executable(pipetune_rhythm_analyzer_tests test/rhythm_analyzer_test.cpp)
   target_link_libraries(pipetune_rhythm_analyzer_tests PRIVATE pipetune_core)
   target_compile_options(pipetune_rhythm_analyzer_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)

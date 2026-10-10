@@ -1,0 +1,13 @@
+{
+  "name": "Cassette Decode Only",
+  "pipeline": [
+    {
+      "name": "Cassette Artifacts",
+      "channel": "All",
+      "parameters": {
+        "nr": "Dolby C",
+        "md": "Decode Only"
+      }
+    }
+  ]
+}

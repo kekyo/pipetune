@@ -1,0 +1,15 @@
+{
+  "name": "Adaptive Prediction autonomous tail",
+  "pipeline": [
+    {
+      "name": "Adaptive Prediction",
+      "channel": "All",
+      "parameters": {
+        "gap": 10,
+        "autonomy": 0.98,
+        "residual": 0,
+        "prediction": 1
+      }
+    }
+  ]
+}

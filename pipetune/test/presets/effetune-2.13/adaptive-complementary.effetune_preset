@@ -1,0 +1,14 @@
+{
+  "name": "Adaptive Prediction complementary mix",
+  "pipeline": [
+    {
+      "name": "Adaptive Prediction",
+      "channel": "All",
+      "parameters": {
+        "autonomy": 0.98,
+        "residual": 1,
+        "prediction": 1
+      }
+    }
+  ]
+}

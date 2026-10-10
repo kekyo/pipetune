@@ -203,6 +203,7 @@ function(
     "${EFFETUNE_DSP_DIR}/core/graph.cpp"
     "${EFFETUNE_DSP_DIR}/core/partitioned_convolver.cpp"
     "${EFFETUNE_DSP_DIR}/core/registry.cpp"
+    "${EFFETUNE_DSP_DIR}/core/spectrum_tap.cpp"
     "${EFFETUNE_DSP_DIR}/core/telemetry.cpp")
   file(
     GLOB_RECURSE effetune_plugin_sources
@@ -370,6 +371,9 @@ function(
     SOURCE
       "${EFFETUNE_DSP_DIR}/plugins/analyzer/analog_meter/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/analyzer/rhythm_analyzer/kernel.cpp"
+      "${EFFETUNE_DSP_DIR}/plugins/analyzer/note_spectrogram/kernel.cpp"
+      "${EFFETUNE_DSP_DIR}/plugins/others/sfz_note_player/kernel.cpp"
+      "${EFFETUNE_DSP_DIR}/plugins/resonator/adaptive_prediction_effect/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/eq/tonal_balance_eq/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/dynamics/attack_tonal_balance/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/dynamics/auto_leveler/kernel.cpp"

@@ -411,3 +411,7 @@ DESTDIR="$PWD/artifacts/verification/effetune-2.13-lgpl/install" cmake --install
 ## LGPL再構成の実施結果
 
 開始時にタグ`ffmpeg`が`38c09d7`を保持し、作業ツリー・既存サブモジュールがクリーンであることを確認した。利用者の指示に従いdevelopを`b2a4911`へ戻した。ホストのnasmが未導入のため導入を依頼し、依存しない工程を先行する。
+
+### アプリ更新・既存DSPの再構成
+
+旧履歴の工程0〜3を機能単位で再利用した。EffeTuneの参照はアプリv2.13.0へ更新し、システムFFmpegを参照する設定は含めていない。クリーンなDebugビルドと、バックエンド・Adaptive・Cassette・Rhythm・パッカー等の対象10試験が成功した（263.29秒、`backends-build.log`、`backends-tests.log`）。
