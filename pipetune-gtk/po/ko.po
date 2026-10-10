@@ -689,6 +689,9 @@ msgstr "이 사용자를 위해 PipeTune을 설정하는 중…"
 msgid "Settings updated"
 msgstr "설정을 업데이트했습니다"
 
+msgid "SFZ bank budget"
+msgstr "SFZ 뱅크 메모리 한도"
+
 msgid "Silence duration"
 msgstr "무음 지속 시간"
 
@@ -804,7 +807,3 @@ msgstr "출력 장치를 기다리는 중…"
 
 msgid "Warnings"
 msgstr "경고"
-
-#: src/status-model.cpp
-msgid "SFZ bank budget"
-msgstr "SFZ 뱅크 메모리 한도"

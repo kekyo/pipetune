@@ -11,6 +11,7 @@
 #include <spa/param/format.h>
 #include <spa/param/port-config.h>
 #include <spa/param/props.h>
+#include <spa/pod/iter.h>
 #include <spa/pod/parser.h>
 
 #include <algorithm>

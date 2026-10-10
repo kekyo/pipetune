@@ -685,6 +685,9 @@ msgstr ""
 msgid "Settings updated"
 msgstr ""
 
+msgid "SFZ bank budget"
+msgstr ""
+
 msgid "Silence duration"
 msgstr ""
 
@@ -799,8 +802,4 @@ msgid "Waiting for output devices…"
 msgstr ""
 
 msgid "Warnings"
-msgstr ""
-
-#: src/status-model.cpp
-msgid "SFZ bank budget"
 msgstr ""

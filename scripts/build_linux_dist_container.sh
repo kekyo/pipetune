@@ -100,6 +100,7 @@ copy_docs() {
 	cp pipetune/README.md "$doc_dir/README.daemon.md"
 	cp pipetune-gtk/README.md "$doc_dir/README.gtk.md"
 	cp pipetune/docs/architecture.md "$doc_dir/architecture.md"
+	cp pipetune/docs/asset-preparation.md "$doc_dir/asset-preparation.md"
 	cp pipetune/docs/dsp-backends.md "$doc_dir/dsp-backends.md"
 	cp packaging/copyright "$doc_dir/copyright"
 }
@@ -124,7 +125,7 @@ write_control_file() {
 calculate_shlibdeps() {
 	tmp_dir=$(mktemp -d)
 
-	mkdir -p "$tmp_dir/debian"
+	mkdir -p "$tmp_dir/debian" "$stage_dir/DEBIAN"
 	{
 		printf 'Source: pipetune\n'
 		printf 'Section: sound\n'
@@ -137,14 +138,32 @@ calculate_shlibdeps() {
 		printf 'Description: temporary package metadata for dependency calculation\n'
 	} >"$tmp_dir/debian/control"
 
-	depends_value=$(
+	private_library_dir="$stage_dir/usr/lib/pipetune"
+	set -- "$stage_dir/usr/bin/pipetune" "$stage_dir/usr/bin/pipetune-gtk"
+	for component in avformat avcodec avutil swresample; do
+		library="lib${component}-pipetune"
+		versioned_name=$(readlink "$private_library_dir/$library.so")
+		case "$versioned_name" in
+			"$library.so."*) ;;
+			*) fail "Missing versioned private FFmpeg library: $library" ;;
+		esac
+		library_version=${versioned_name#"$library.so."}
+		library_major=${library_version%%.*}
+		printf '%s %s %s\n' "$library" "$library_major" "$PIPETUNE_PACKAGE_NAME" >>"$tmp_dir/debian/shlibs.local"
+		set -- "$@" "$private_library_dir/$library.so"
+	done
+
+	# Map our own libraries explicitly, excluding only the self-dependency.
+	# Scanning them also retains dependencies on libc and other system libraries.
+	shlib_output=$(
 		cd "$tmp_dir"
 		dpkg-shlibdeps \
 			-O \
-			"$build_dir/pipetune" \
-			"$build_dir/pipetune-gtk" |
-			sed -n 's/^shlibs:Depends=//p'
-	)
+			-l"$private_library_dir" \
+			-x"$PIPETUNE_PACKAGE_NAME" \
+			"$@"
+	) || { rm -rf "$tmp_dir"; fail 'Unable to calculate runtime dependencies'; }
+	depends_value=$(printf '%s\n' "$shlib_output" | sed -n 's/^shlibs:Depends=//p')
 	rm -rf "$tmp_dir"
 
 	[ -n "$depends_value" ] ||
@@ -183,6 +202,12 @@ validate_installed_package() {
 		dpkg-query -W -f='${Architecture}' "$PIPETUNE_PACKAGE_NAME"
 	)
 	assert_dsp_backend_set "/usr/lib/pipetune" "$installed_arch"
+	for component in avformat avcodec avutil swresample; do
+		assert_file "/usr/lib/pipetune/lib${component}-pipetune.so"
+	done
+	for document in COPYING.LGPLv2.1 LICENSE.md REBUILD.md build-info.txt ConfigureFFmpeg.cmake ffmpeg-source.tar.xz; do
+		assert_file "/usr/share/doc/pipetune/ffmpeg/$document"
+	done
 
 	effetune_version=$(
 		node --input-type=module -e \

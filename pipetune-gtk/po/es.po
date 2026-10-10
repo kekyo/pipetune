@@ -690,6 +690,9 @@ msgstr "Configurando PipeTune para este usuario…"
 msgid "Settings updated"
 msgstr "Ajustes actualizados"
 
+msgid "SFZ bank budget"
+msgstr "Límite de memoria del banco SFZ"
+
 msgid "Silence duration"
 msgstr "Duración del silencio"
 
@@ -805,7 +808,3 @@ msgstr "Esperando dispositivos de salida…"
 
 msgid "Warnings"
 msgstr "Advertencias"
-
-#: src/status-model.cpp
-msgid "SFZ bank budget"
-msgstr "Límite de memoria del banco SFZ"

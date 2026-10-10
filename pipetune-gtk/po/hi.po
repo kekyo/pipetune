@@ -690,6 +690,9 @@ msgstr "इस उपयोगकर्ता के लिए PipeTune से�
 msgid "Settings updated"
 msgstr "सेटिंग अपडेट की गईं"
 
+msgid "SFZ bank budget"
+msgstr "SFZ बैंक की मेमोरी सीमा"
+
 msgid "Silence duration"
 msgstr "मौन अवधि"
 
@@ -805,7 +808,3 @@ msgstr "आउटपुट डिवाइस की प्रतीक्षा
 
 msgid "Warnings"
 msgstr "चेतावनियाँ"
-
-#: src/status-model.cpp
-msgid "SFZ bank budget"
-msgstr "SFZ बैंक की मेमोरी सीमा"

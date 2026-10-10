@@ -112,6 +112,14 @@ if (
         }
         accessSync(dspBackendDocumentation, constants.R_OK);
         accessSync(copyright, constants.R_OK);
+        for (const component of ["avformat", "avcodec", "avutil", "swresample"]) {
+          accessSync(installPath(join(libraryDirectory, "pipetune"),
+            `lib${component}-pipetune.so`), constants.R_OK);
+        }
+        for (const document of ["COPYING.LGPLv2.1", "LICENSE.md", "REBUILD.md", "build-info.txt",
+          "ConfigureFFmpeg.cmake", "ffmpeg-source.tar.xz"]) {
+          accessSync(installPath(join(documentationDirectory, "ffmpeg"), document), constants.R_OK);
+        }
         accessSync(installPath(pipewireModuleDirectory,
           "libpipewire-module-pipetune-presentation.so"), constants.R_OK);
       } catch (error) {
@@ -169,6 +177,26 @@ if (
         });
         if (version.status !== 0 || !version.stdout.startsWith("PipeTune ")) {
           fail("installed PipeTune executable is not runnable", version);
+        }
+
+        const loaderEnvironment = { ...process.env };
+        delete loaderEnvironment.LD_LIBRARY_PATH;
+        const linked = spawnSync("ldd", [executable], { encoding: "utf8", env: loaderEnvironment });
+        if (linked.status !== 0) {
+          fail("installed PipeTune dependencies cannot be resolved", linked);
+        } else {
+          for (const component of ["avformat", "avcodec", "avutil", "swresample"]) {
+            const line = linked.stdout.split("\n").find(value =>
+              value.trim().startsWith(`lib${component}-pipetune.so.`));
+            const resolved = line?.split(" => ")[1]?.split(" ")[0];
+            const expected = installPath(join(libraryDirectory, "pipetune"), `lib${component}-pipetune.so.`);
+            if (resolved === undefined || !join(resolved).startsWith(expected)) {
+              fail(`installed ${component} must load from the relocated installation`, linked);
+            }
+          }
+          if (/lib(?:avformat|avcodec|avutil|swresample)\.so\./u.test(linked.stdout)) {
+            fail("installed PipeTune loads a system FFmpeg library", linked);
+          }
         }
 
         const verified = spawnSync(

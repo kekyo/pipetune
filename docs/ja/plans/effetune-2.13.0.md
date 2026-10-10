@@ -435,3 +435,13 @@ Ubuntu 24.04 x86_64の新しい前提コンテナーで依存試験2件が成功
 ### Room EQと混在パイプライン
 
 測定データの解析、3種類の位相設計、チャンネル割当、キャッシュと再読込を復元した。9種類の外部アセットDSPを同時に有効化する既存試験も引き継いだ。準備モジュールの単独3試験と、混在パイプラインを含む247ケースの適合試験・PipeWire・キャッシュ等の10試験が成功した（91.43秒、`room-build.log`、`room-standalone.log`、`room-tests.log`）。
+
+### 配布対応と最終検証の準備
+
+旧タグにある最終の翻訳・SPA互換・Release警告修正と利用者文書を復元した。製品の`src`・`include`・アセット準備・GTK実装は旧タグと一致しており、依存のビルド・配布・検証を変更している。元のCTest 235件をすべて保持し、FFmpeg依存と移動後ロードの2件を加えた237件になった（`test-preservation.json`）。
+
+私有ライブラリまたは対応ソース・ライセンスの欠損、システムFFmpegへのパッケージ依存を拒否する試験を追加し、REDとGREENを確認した。インストール検証も旧GPLビルドで失敗し、自前版の5対象試験で成功した。Ubuntu 24.04 x86_64の実パッケージは生成・インストール・CLI/GTK起動に成功し、Dependsにシステムlibav*を含まない。
+
+私有ライブラリの依存は`debian/shlibs.local`へ自パッケージとして対応付け、`dpkg-shlibdeps -x`で自依存だけを除く。同梱ライブラリ自身も走査してlibcなどの依存を残す。依存情報の欠損を一律に無視しない。[dpkg-shlibdeps公式マニュアル](https://manpages.debian.org/trixie/dpkg-dev/dpkg-shlibdeps.1.en.html)
+
+以後はソースを固定してDebug / Release全体と9構成を検証し、結果を追記する。

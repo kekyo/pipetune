@@ -810,15 +810,15 @@ static bool testOrderlySignalShutdown(
       socketPath,
       pipetune::makeLoadPresetControlRequest(replacementPresetPath));
   const auto parsedLoad = pipetune::parseControlResponse(load.response);
+  auto expectedEntries = std::vector<pipetune::PresetEntry>{
+      {"Future DSP", pipetune::PresetEntryState::ignored},
+      {"Volume", pipetune::PresetEntryState::enabled}};
+  if (!parsedLoad.warnings.empty())
+    expectedEntries.front().diagnostics.push_back(parsedLoad.warnings.front().reason);
   if (!check(load.error.empty(), load.error) ||
       !check(parsedLoad.valid, parsedLoad.error) ||
       !check(parsedLoad.success, "live preset request failed") ||
-      !check(parsedLoad.status.presetEntries ==
-                 std::vector<pipetune::PresetEntry>{
-                     {"Future DSP", pipetune::PresetEntryState::ignored,
-                      parsedLoad.warnings.empty() ? std::vector<std::string>{} :
-                          std::vector<std::string>{parsedLoad.warnings.front().reason}},
-                     {"Volume", pipetune::PresetEntryState::enabled}},
+      !check(parsedLoad.status.presetEntries == expectedEntries,
              "live status must report the loaded and ignored entries") ||
       !check(responseHasLivePreset(load.response, replacementPresetPath, 1),
              "live preset response does not report the active replacement")) {

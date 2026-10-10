@@ -27,7 +27,10 @@ EffeTune上で、環境音を構成してプリセットとして保存すれば
   DSPパイプラインを適用できます。
 - `.effetune_preset`拡張子の標準形式および旧形式のEffeTuneプリセットファイルを
   読み込み、DSPパイプラインをデスクトップ音声へ適用します。
-- EffeTune 2.12.0 DSPエンジンを実装しています。
+- EffeTune 2.13.0 DSPエンジンを実装しています。
+- デスクトップ版EffeTuneに登録したSFZ音源・IR Reverb原音・Room EQ測定に対応します。
+  初回読込とキャッシュ再生成もネイティブ処理で、Node.jsは不要です。
+  [外部アセットの利用条件](docs/ja/details.md#外部アセット)を参照してください。
 - PipeWireグラフとのサンプリング周波数の自動交渉、または44.1、48、96、192、384 kHzの指定周波数でDSPを計算します。
 - DSPは完全ネイティブコードで計算を処理します。互換性重視のScalar、SIMD自動選択、CPU検証済みの命令セット別実装を選択出来ます。
 - 入力の無音が設定時間続いた場合、エフェクトの残響を処理してからDSP演算を自動的に休止出来ます。
@@ -431,3 +434,7 @@ journalctl --user -u pipetune.service
 ## ライセンス
 
 Under MIT.
+
+配布パッケージにはLGPL-2.1-or-later構成でビルドしたFFmpeg共有ライブラリも含まれます。
+ライセンス、対応ソース、ビルド設定、差し替え手順は`share/doc/pipetune/ffmpeg`にインストールされます。
+[FFmpegのライセンス情報](https://ffmpeg.org/legal.html)を参照してください。

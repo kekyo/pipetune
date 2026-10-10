@@ -117,6 +117,7 @@ const createPackageStage = (
     "usr/share/applications",
     "usr/share/icons/hicolor/scalable/apps",
     "usr/share/doc/pipetune",
+    "usr/share/doc/pipetune/ffmpeg",
   ];
   if (includeAutostart) {
     paths.push("etc/xdg/autostart");
@@ -139,6 +140,13 @@ Description: PipeWire system-wide DSP and GTK control application
   );
   copyFileSync("/bin/true", join(stageRoot, "usr/bin/pipetune"));
   copyFileSync("/bin/true", join(stageRoot, "usr/bin/pipetune-gtk"));
+  for (const component of ["avformat", "avcodec", "avutil", "swresample"]) {
+    copyFileSync("/bin/true", join(stageRoot, `usr/lib/pipetune/lib${component}-pipetune.so`));
+  }
+  for (const document of ["COPYING.LGPLv2.1", "LICENSE.md", "REBUILD.md", "build-info.txt",
+    "ConfigureFFmpeg.cmake", "ffmpeg-source.tar.xz"]) {
+    writeFileSync(join(stageRoot, "usr/share/doc/pipetune/ffmpeg", document), `${document}\n`);
+  }
   copyFileSync("/bin/true", join(stageRoot, "usr/lib/pipewire-0.3/libpipewire-module-pipetune-presentation.so"));
   if (includeDspBackends) {
     for (const backend of dspBackendsForArchitecture(debianArchitecture)) {
@@ -788,6 +796,40 @@ validate_deb_package "$2" "$3"
     validateGoodPackage,
     "complete deb package did not pass validation",
   );
+  for (const missing of ["usr/lib/pipetune/libavcodec-pipetune.so",
+    "usr/share/doc/pipetune/ffmpeg/COPYING.LGPLv2.1",
+    "usr/share/doc/pipetune/ffmpeg/ffmpeg-source.tar.xz",
+    "usr/share/doc/pipetune/ffmpeg/ConfigureFFmpeg.cmake"]) {
+    const stage = join(temporaryRoot, "missing-ffmpeg-stage");
+    const output = join(temporaryRoot, "missing-ffmpeg.deb");
+    rmSync(stage, { recursive: true, force: true });
+    cpSync(goodStage, stage, { recursive: true });
+    rmSync(join(stage, missing));
+    assertSuccess(run(dpkgDeb, ["--root-owner-group", "--build", stage, output], process.env),
+      "could not create package with an incomplete LGPL dependency");
+    const validation = runSourced(`
+VERSION=1.2.3
+validate_deb_package "$2" "$3"
+`, [output, canonicalHostArchitecture], process.env);
+    if (validation.status === 0) fail(`package accepted missing LGPL dependency file: ${missing}`);
+    assertIncludes(validation.stderr, missing, "validation did not identify the missing LGPL file");
+  }
+  for (const dependency of ["libavformat60", "libavcodec60", "libavutil58", "libswresample4"]) {
+    const stage = join(temporaryRoot, "system-ffmpeg-stage");
+    const output = join(temporaryRoot, "system-ffmpeg.deb");
+    rmSync(stage, { recursive: true, force: true });
+    cpSync(goodStage, stage, { recursive: true });
+    const control = join(stage, "DEBIAN/control");
+    writeFileSync(control, readFileSync(control, "utf8").replace("Depends: ", `Depends: ${dependency}, `));
+    assertSuccess(run(dpkgDeb, ["--root-owner-group", "--build", stage, output], process.env),
+      "could not create package with a system FFmpeg dependency");
+    const validation = runSourced(`
+VERSION=1.2.3
+validate_deb_package "$2" "$3"
+`, [output, canonicalHostArchitecture], process.env);
+    if (validation.status === 0) fail(`package accepted system FFmpeg dependency: ${dependency}`);
+    assertIncludes(validation.stderr, "system FFmpeg", "validation did not identify the system dependency");
+  }
   const missingPresentationStage = join(temporaryRoot, "missing-presentation-stage");
   const missingPresentationPackage = join(temporaryRoot, "missing-presentation.deb");
   cpSync(goodStage, missingPresentationStage, { recursive: true });

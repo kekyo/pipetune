@@ -51,19 +51,23 @@ not supported by this MVP.
 
 - Loads canonical and legacy EffeTune preset JSON from files whose extension is
   exactly `.effetune_preset`.
-- Builds every enabled DSP in the pinned EffeTune 2.12.0 native registry,
-  containing 110 kernels, including bus and channel routing through 16 planar channels.
+- Builds every enabled DSP in the pinned EffeTune 2.13.0 native registry,
+  containing 112 kernels, including bus and channel routing through 16 planar channels.
 - Runs Spatial Mapper and TV Audio Simulator presets; see the
   [supported settings and channel conditions](../docs/en/details.md#spatial-mapper-and-tv-audio-simulator).
 - Runs Attack Tonal Balance, Bass Extender, and Bass Management IIR/Linear;
   see the [rate, channel, and latency conditions](../docs/en/details.md#attack-tonal-balance-and-bass-extender).
 - Runs Tonal Balance EQ and Rhythm Analyzer, including its optional metronome click;
   see [measurement and silence-suspension behavior](../docs/en/details.md#tonal-balance-eq).
+- Runs Adaptive Prediction on one channel or a stereo pair and the five Cassette
+  Artifacts modes saved by EffeTune 2.13.0.
+- Loads registered SFZ instruments and IR originals, and designs Room EQ filters
+  from saved measurements; see [external assets](../docs/en/details.md#external-assets).
 - Silently omits nine visualization-only analyzers, including Analog Meter, Pitch Meter, and Chroma Spiral.
 - Generates and stages convolution coefficients for FIR Crossover, 5Band FIR
   PEQ, Group Delay EQ, Group Delay PEQ, and Bass Management Linear from their preset parameters.
-- Skips unknown DSPs and unresolved stored-asset DSPs, with a warning for each
-  omitted node.
+- Skips unknown DSPs and invalid Crosstalk measurements with warnings. Invalid
+  assigned SFZ, IR Reverb, or Room EQ sources fail loading and retain the active pipeline.
 - Publishes a WirePlumber 0.5 smart-filter pair and a WirePlumber 0.4 endpoint
   contract with the same transparent playback behavior.
 - Keeps PipeTune's internal processing nodes out of desktop input and output
@@ -108,17 +112,22 @@ On Ubuntu 24.04:
 sudo apt install \
   build-essential cmake dbus-x11 desktop-file-utils git \
   libgdk-pixbuf2.0-bin libgtk-3-dev libpipewire-0.3-dev libpulse-dev \
-  libsamplerate0-dev nodejs pipewire-pulse pkg-config x11-utils xvfb
+  libsamplerate0-dev nasm nodejs pipewire-pulse pkg-config x11-utils xvfb xz-utils
 ```
 
-PipeTune requires CMake 3.24 or newer, a C++20 GCC toolchain, Node.js, PipeWire
-1.0.5 or later and libsamplerate development files, GTK 3 development files, and a
-WirePlumber 0.4 or 0.5 desktop session. The complete test suite
+Building from source requires CMake 3.24 or newer, a C++20 GCC toolchain, Node.js,
+Git, XZ, and the development files for PipeWire 1.0.5 or later, libsamplerate,
+and GTK 3. The pinned FFmpeg submodule is built as private LGPL shared libraries;
+x86 builds also require NASM. Installed packages include these audio libraries
+and use a WirePlumber 0.4 or 0.5 desktop session. Node.js and the ffmpeg command
+are not runtime requirements.
+The complete test suite
 also uses `systemd-analyze`, an isolated D-Bus session, Xvfb, X11 utilities,
 `desktop-file-validate`, the GdkPixbuf thumbnailer, and the libpulse development
 files and `pipewire-pulse` executable for isolated desktop-audio integration tests.
+Audio-format tests use the ffmpeg command to generate temporary test recordings.
 
-Clone with both pinned dependencies:
+Clone with the pinned dependencies:
 
 ```sh
 git clone --recurse-submodules <PipeTune repository URL>
@@ -126,8 +135,9 @@ cd PipeTune
 git submodule update --init --recursive
 ```
 
-`deps/effetune` is pinned to the official EffeTune v2.12.0 tag.
+`deps/effetune` follows the official application tag v2.13.0.
 `deps/yyjson` is pinned to yyjson 0.12.0.
+`deps/cardio` supplies asynchronous native file operations.
 
 ## Workspace layout
 
@@ -572,3 +582,7 @@ details.
 ## License
 
 Under MIT.
+
+Bundled FFmpeg audio libraries are LGPL-2.1-or-later. Their exact source,
+license, build configuration, and replacement instructions are installed under
+`share/doc/pipetune/ffmpeg`. See [FFmpeg's licensing guidance](https://ffmpeg.org/legal.html).
