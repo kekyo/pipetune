@@ -11,6 +11,7 @@
 #include "generated_fir_asset.h"
 #include "ir_asset_loader.h"
 #include "sfz_asset_loader.h"
+#include "room_asset_loader.h"
 #include "asset_file.h"
 #include "preparation_dispatcher.h"
 #include "measurement_store.h"
@@ -578,7 +579,7 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
         auto *value = yyjson_obj_get(node.parameters, keys[slot]);
         if (yyjson_is_str(value)) ids[slot].assign(yyjson_get_str(value), yyjson_get_len(value));
       }
-      measured = loadCrosstalkMeasurements(measurementStore, ids);
+      measured = std::move(co_await loadCrosstalkMeasurementsAsync(measurementStore, ids, cancellation));
       for (const auto &file : measured.files) {
         if (std::ranges::find(implementation->dependencyFiles, file) == implementation->dependencyFiles.end()) implementation->dependencyFiles.push_back(file);
       }
@@ -586,11 +587,13 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
         warnings.push_back({.nodeIndex = index, .pluginName = std::string(node.name), .reason = measured.error});
         continue;
       }
+      for (const auto &[id, snapshot] : measurementStore.snapshots) sourceSnapshots.push_back(snapshot);
     }
     const auto bassManagement = node.name == "Bass Management";
     const auto irReverb = node.name == "IR Reverb";
     const auto sfzPlayer = node.name == "SFZ Note Player";
-    const auto generatedAssetDsp = irReverb || sfzPlayer || bassManagement || crosstalk || supportsGeneratedFirAsset(node.name);
+    const auto roomEq = node.name == "Room EQ";
+    const auto generatedAssetDsp = irReverb || sfzPlayer || roomEq || bassManagement || crosstalk || supportsGeneratedFirAsset(node.name);
     if (definition->requiresExternalAssets && !generatedAssetDsp) {
       warnings.push_back({.nodeIndex = index,
                           .pluginName = std::string(node.name),
@@ -638,13 +641,13 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
     auto ownedAsset = PreparedDspAsset{};
     auto sharedAsset = std::shared_ptr<const SharedPreparedAsset>{};
     if (generatedAssetDsp) {
-      if (!irReverb && !sfzPlayer) {
+      if (!irReverb && !sfzPlayer && !roomEq) {
         try { generatedMemory = AssetMemoryReservation(512ull * 1024 * 1024, context.assetMemoryBytes); }
         catch (const std::exception &error) { co_return fail(nodeError(index, error.what()), std::move(warnings)); }
       }
       const auto processingChannels =
           selectedProcessingChannels(channelSpec, options.maxChannels);
-      if (irReverb || sfzPlayer) {
+      if (irReverb || sfzPlayer || roomEq) {
         const auto firstChannel = channelSpec >= 16 ? static_cast<std::uint32_t>(channelSpec - 16) * 2u :
                                   channelSpec >= 0 ? static_cast<std::uint32_t>(channelSpec) : 0u;
         const auto availableChannels = firstChannel < options.maxChannels &&
@@ -663,10 +666,16 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
           auto loaded = std::move(co_await loadIrAssetAsync(context.effetuneDirectory, node.parameters,
               options.sampleRate, availableChannels, context.assetCache, cancellation, context.assetMemoryBytes));
           error = collect(loaded);
-        } else {
+        } else if (sfzPlayer) {
           if (!availableChannels) co_return fail(nodeError(index, "selected SFZ processing channels are unavailable"), std::move(warnings));
           auto loaded = std::move(co_await loadSfzAssetAsync(context.effetuneDirectory, node.parameters,
               context.sfzMaximumBytes, context.assetCache, cancellation, context.assetMemoryBytes));
+          error = collect(loaded);
+        } else {
+          auto loaded = std::move(co_await loadRoomAssetAsync(context.measurementDirectory, node.parameters,
+              options.sampleRate, availableChannels, context.assetCache, cancellation, context.assetMemoryBytes));
+          if (loaded.error.empty() && !replacePackedParameter(packed, "dy", static_cast<float>(loaded.channelDelaySamples)))
+            co_return fail(nodeError(index, "Room EQ delay does not match the native catalog"), std::move(warnings));
           error = collect(loaded);
         }
         if (!error.empty()) co_return fail(nodeError(index, error), std::move(warnings));
@@ -759,7 +768,7 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
                                              "native DSP rejected the generated FIR asset"),
             std::move(warnings));
       }
-      if (irReverb || sfzPlayer) {
+      if (irReverb || sfzPlayer || roomEq) {
         const auto width = sfzPlayer ? selectedProcessingChannels(channelSpec, options.maxChannels) :
                                       generatedAsset.info.processing_channels;
         auto silence = std::vector<float>(width * options.maxFrames);

@@ -395,6 +395,65 @@ static bool testSfzReload(const std::filesystem::path &socketPath,
   return check(previous.success, "cannot restore the preceding preset after SFZ recovery");
 }
 
+static bool testRoomReload(const std::filesystem::path &socketPath,
+                           const std::filesystem::path &precedingPreset) {
+  const auto directory = precedingPreset.parent_path();
+  const auto root = directory / "effetune" / "measurement-backups";
+  std::filesystem::create_directories(root);
+  const auto path = directory / "room.effetune_preset";
+  const auto left = root / "room-left.json", right = root / "room-right.json";
+  const auto original = std::string(R"({"id":"room-left","averageFrequencyResponse":[[20,0],[1000,6],[20000,0]]})");
+  if (!writePresetContents(left, original) || !writePresetContents(right,
+      R"({"id":"room-right","averageFrequencyResponse":[[20,0],[1000,-3],[20000,0]]})") ||
+      !writePresetContents(path, R"({"pipeline":[{"name":"Room EQ","parameters":{"ms0":"room-left","ms1":"room-right","pm":"lin","tp":8192,"lt":128}}]})")) return false;
+  const auto loaded = pipetune::parseControlResponse(pipetune::exchangeControlMessage(
+      socketPath, pipetune::makeLoadPresetControlRequest(path)).response);
+  if (!check(loaded.success && loaded.status.activePluginCount == 1 && loaded.status.dspLatencyFrames == 4224 &&
+      loaded.status.presetEntries.front().state == pipetune::PresetEntryState::enabled,
+      "per-channel Room EQ must load on the live control path")) return false;
+  auto revision = loaded.status.configurationRevision;
+  for (const auto &source : {left, right}) {
+    const auto saved = std::filesystem::path(source.string() + ".saved");
+    std::filesystem::rename(source, saved);
+    const auto failed = waitForStatus(socketPath, [](const auto &status) { return !status.configurationError.empty(); });
+    if (!check(failed && failed->configurationRevision == revision && failed->activePreset == path.string() &&
+        failed->activePluginCount == 1 && failed->dspLatencyFrames == 4224,
+        "missing channel measurement must retain the complete old Room EQ pipeline")) return false;
+    std::filesystem::rename(saved, source);
+    const auto restored = waitForStatus(socketPath, [revision](const auto &status) {
+      return status.configurationError.empty() && status.configurationRevision > revision;
+    });
+    if (!check(restored && restored->dspLatencyFrames == 4224 && restored->activePluginCount == 1,
+        "restoring each channel measurement must reload Room EQ automatically")) return false;
+    revision = restored->configurationRevision;
+  }
+  if (!replacePresetContents(left, R"({"id":"room-left","averageFrequencyResponse":[[20,0],[1000,-6],[20000,0]]})")) return false;
+  const auto replaced = waitForStatus(socketPath, [revision](const auto &status) {
+    return status.configurationError.empty() && status.configurationRevision > revision;
+  });
+  if (!check(replaced && replaced->dspLatencyFrames == 4224, "atomic measurement replacement did not redesign Room EQ")) return false;
+  const auto newRate = loaded.status.dspSampleRate == 96000 ? 48000u : 96000u;
+  const auto changedRate = pipetune::parseControlResponse(pipetune::exchangeControlMessage(socketPath,
+      pipetune::makeSetRateControlRequest({.mode = pipetune::SampleRateMode::fixed, .fixedRate = newRate,
+          .enforcement = pipetune::SampleRateEnforcement::force})).response);
+  if (!check(changedRate.success && changedRate.status.dspSampleRate == newRate &&
+      changedRate.status.dspLatencyFrames == 4224 && changedRate.status.activePluginCount == 1,
+      "Room EQ must redesign for a live rate change")) return false;
+  const auto changedBackend = pipetune::parseControlResponse(pipetune::exchangeControlMessage(socketPath,
+      pipetune::makeSetDspBackendControlRequest(pipetune::DspBackendKind::scalar)).response);
+  if (!check(changedBackend.success && changedBackend.status.effectiveDspBackend == pipetune::DspBackendKind::scalar &&
+      changedBackend.status.dspLatencyFrames == 4224, "Room EQ must retain its filter when switching backend")) return false;
+  const auto restoredRate = pipetune::parseControlResponse(pipetune::exchangeControlMessage(socketPath,
+      pipetune::makeSetRateControlRequest(loaded.status.configuredRatePolicy)).response);
+  const auto restoredBackend = pipetune::parseControlResponse(pipetune::exchangeControlMessage(socketPath,
+      pipetune::makeSetDspBackendControlRequest(loaded.status.configuredDspBackend,
+          loaded.status.configuredDspSimdVariant)).response);
+  const auto previous = pipetune::parseControlResponse(pipetune::exchangeControlMessage(
+      socketPath, pipetune::makeLoadPresetControlRequest(precedingPreset)).response);
+  return check(restoredRate.success && restoredBackend.success && previous.success,
+      "cannot restore the preceding configuration after Room EQ recovery");
+}
+
 static bool testCrosstalkReload(const std::filesystem::path &socketPath,
                                 const std::filesystem::path &presetPath) {
   const auto root = presetPath.parent_path() / "effetune" / "measurement-backups";
@@ -875,6 +934,7 @@ static bool testOrderlySignalShutdown(
 
   if (!testIrReload(socketPath, replacementPresetPath) ||
       !testSfzReload(socketPath, replacementPresetPath) ||
+      !testRoomReload(socketPath, replacementPresetPath) ||
       !testCrosstalkReload(socketPath, replacementPresetPath) ||
       !testBassManagementLiveRejection(socketPath, replacementPresetPath) ||
       !testMeasurementLiveChanges(socketPath, replacementPresetPath) ||

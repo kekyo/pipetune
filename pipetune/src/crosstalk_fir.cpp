@@ -4,12 +4,12 @@
  * https://github.com/kekyo/pipetune/
  */
 #include "crosstalk_fir.h"
+#include "common/resample.h"
 
 #include <algorithm>
 #include <cmath>
 #include <complex>
 #include <numbers>
-#include <numeric>
 
 namespace pipetune {
 
@@ -53,58 +53,6 @@ static void transform(std::vector<Complex> &values, bool inverse) {
     }
   }
   if (inverse) for (auto &value : values) value /= static_cast<double>(n);
-}
-
-static double bessel(double value) {
-  double sum = 1, term = 1;
-  for (int index = 1; index < 20; ++index) {
-    term *= value * value / (4 * index * index);
-    sum += term;
-    if (term < sum * epsilon) break;
-  }
-  return sum;
-}
-
-static std::vector<float> resample(const std::vector<float> &input,
-                                   unsigned sourceRate, unsigned targetRate,
-                                   unsigned radius) {
-  if (sourceRate == targetRate) return input;
-  const auto divisor = std::gcd(sourceRate, targetRate);
-  const auto sourceStep = sourceRate / divisor, phaseCount = targetRate / divisor;
-  const auto cutoff = std::min(1.0, double(targetRate) / sourceRate) * 0.95;
-  const auto beta = 0.1102 * (100 - 8.7), normalizer = bessel(beta);
-  auto phases = std::vector<std::vector<double>>(phaseCount);
-  auto output = std::vector<float>(std::max<std::size_t>(1, std::llround(double(input.size()) * targetRate / sourceRate)));
-  for (std::size_t i = 0; i < output.size(); ++i) {
-    const auto center = static_cast<std::int64_t>(i * sourceStep / phaseCount);
-    const auto phase = i * sourceStep % phaseCount;
-    auto &weights = phases[phase];
-    if (weights.empty()) {
-      weights.resize(2u * radius);
-      double total = 0;
-      for (std::size_t tap = 0; tap < weights.size(); ++tap) {
-        const auto distance = double(phase) / phaseCount - (double(tap) - radius + 1);
-        const auto normalized = distance / radius;
-        if (normalized <= -1 || normalized >= 1) continue;
-        const auto x = pi * distance * cutoff;
-        weights[tap] = cutoff * (x == 0 ? 1 : std::sin(x) / x) *
-            bessel(beta * std::sqrt(1 - normalized * normalized)) / normalizer;
-        total += weights[tap];
-      }
-      if (total != 0) for (auto &weight : weights) weight /= total;
-    }
-    const auto first = center - radius + 1;
-    double weighted = 0, total = 0;
-    for (std::size_t tap = 0; tap < weights.size(); ++tap) {
-      const auto index = first + static_cast<std::int64_t>(tap);
-      if (index < 0 || index >= static_cast<std::int64_t>(input.size())) continue;
-      weighted += input[index] * weights[tap];
-      total += weights[tap];
-    }
-    const auto interior = first >= 0 && first + weights.size() <= input.size();
-    output[i] = static_cast<float>(interior ? weighted : total == 0 ? 0 : weighted / total);
-  }
-  return output;
 }
 
 static std::vector<Complex> smooth(const std::vector<Complex> &spectrum,
@@ -182,7 +130,7 @@ CrosstalkFir designCrosstalkFir(const CrosstalkMeasurements &measurements,
         const auto gain = index >= fadeStart ? 0.5 + 0.5 * std::cos(pi * (index - fadeStart) / fade) : 1;
         aligned[index + guard] = static_cast<float>(record.samples[i] * gain / record.referenceScale);
       }
-      signals[slot] = resample(aligned, static_cast<unsigned>(sourceRate), static_cast<unsigned>(sampleRate), radius);
+      signals[slot] = assets::resampleMeasurement(aligned, static_cast<unsigned>(sourceRate), static_cast<unsigned>(sampleRate), radius);
       delays[slot] = (onset + double(guard)) / sourceRate;
       while (fftSize < signals[slot].size()) fftSize *= 2;
     }
