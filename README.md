@@ -215,6 +215,8 @@ pipetune bypass
 In addition to standard stereo sound (2 channels), EffeTune supports multichannel output.
 PipeTune also allows you to map multichannel output to any channel on any audio device.
 
+> Note: Multichannel output is an experimental feature. It is still prone to stability issues.
+
 To simplify configuration for standard 2-channel stereo, the default setting is “Single Mode.”
 In this case, the output device is determined based on the OS’s sound device assignment feature.
 
