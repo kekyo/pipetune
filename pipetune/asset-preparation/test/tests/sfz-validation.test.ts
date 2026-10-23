@@ -91,11 +91,7 @@ test('SFZ registration, confinement and partial banks retain explicit diagnostic
     const usable = run();
     expect(usable.status, usable.stderr).toBe(0);
     expect(usable.stdout.startsWith('1 ')).toBe(true);
-    for (const code of [
-      'missing-samples: 1',
-      'unsupported-regions: 1',
-      'invalid-regions: 1',
-    ]) {
+    for (const code of ['missing-samples: 1', 'invalid-regions: 1']) {
       expect(usable.stderr).toContain(code);
       expect(run().stderr).toContain(code);
     }

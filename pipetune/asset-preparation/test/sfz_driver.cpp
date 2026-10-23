@@ -8,6 +8,7 @@
 #include "sfz/selection.h"
 #include "sfz/preparation.h"
 #include "sfz/audio_header.h"
+#include "sfz/generators.h"
 #include <bit>
 #include <array>
 #include <iomanip>
@@ -96,6 +97,8 @@ static void printParsed(const pipetune::assets::ParsedSfz &parsed) {
   printStrings(parsed.diagnostics.missingSamples);
   std::cout << ",\"invalidRegions\":";
   printStrings(parsed.diagnostics.invalidRegions);
+  std::cout << ",\"adjustedEnvelopes\":";
+  printStrings(parsed.diagnostics.adjustedEnvelopes);
   std::cout << "}}\n";
 }
 
@@ -169,6 +172,16 @@ static int selectInput(std::uint64_t maximumBytes, std::uint64_t definitionBytes
 int main(int argc, char **argv) {
   using namespace pipetune::assets;
   try {
+    if (argc == 3 && std::string_view(argv[1]) == "--generator") {
+      const auto audio = createSfzGeneratorSample(argv[2]);
+      std::cout << "{\"sampleRate\":" << audio.sampleRate << ",\"channels\":1,\"frames\":"
+          << audio.channels[0].size() << "}\n";
+      for (const auto sample : audio.channels[0]) {
+        const auto bits = std::bit_cast<std::uint32_t>(sample);
+        for (auto byte = 0u; byte < 4; ++byte) std::cout.put(static_cast<char>(bits >> (byte * 8)));
+      }
+      return 0;
+    }
     if (argc == 2 && std::string_view(argv[1]) == "--audio-header") {
       const auto bytes = std::vector<std::uint8_t>(std::istreambuf_iterator<char>(std::cin), {});
       const auto header = inspectSfzAudioHeader(bytes, bytes.size());

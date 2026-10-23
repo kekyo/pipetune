@@ -23,6 +23,7 @@ struct SfzDiagnostics {
   std::vector<std::string> excludedOpcodes; /**< Conditions excluding regions. */
   std::vector<std::string> missingSamples; /**< Referenced but unavailable sample paths. */
   std::vector<std::string> invalidRegions; /**< Region validation diagnostics. */
+  std::vector<std::string> adjustedEnvelopes; /**< Envelope times replaced by bounded or default values. */
 };
 
 /** Host-independent normalized definition and required source identities. */

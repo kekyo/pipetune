@@ -8,6 +8,7 @@
 #include "asset_cache.h"
 #include "preparation_dispatcher.h"
 #include "sfz/audio_header.h"
+#include "sfz/generators.h"
 #include "sfz/preparation.h"
 #include "sfz/selection.h"
 #include "sfz/text.h"
@@ -63,7 +64,8 @@ static std::uint64_t parsedMemory(const assets::ParsedSfz &parsed) {
   auto bytes = static_cast<std::uint64_t>(parsed.regions.capacity()) * sizeof(assets::SfzRegion);
   for (const auto &region : parsed.regions) bytes += region.sample.capacity() + 1;
   for (const auto *strings : {&parsed.dependencies, &parsed.diagnostics.ignoredOpcodes,
-      &parsed.diagnostics.excludedOpcodes, &parsed.diagnostics.invalidRegions, &parsed.diagnostics.missingSamples}) {
+      &parsed.diagnostics.excludedOpcodes, &parsed.diagnostics.invalidRegions, &parsed.diagnostics.missingSamples,
+      &parsed.diagnostics.adjustedEnvelopes}) {
     bytes += strings->capacity() * sizeof(std::string);
     for (const auto &text : *strings) bytes += text.capacity() + 1;
   }
@@ -83,9 +85,10 @@ static void describeWarnings(const assets::ParsedSfz &parsed, const assets::SfzB
   for (const auto &warning : bank.warnings) {
     const auto explanation = warning.code == "invalid-regions" ? "invalid regions were omitted" :
         warning.code == "missing-samples" ? "missing sample files were omitted" :
-        warning.code == "unsupported-regions" ? "regions requiring unsupported conditions were omitted" :
+        warning.code == "envelope-times-adjusted" ? "envelope times were adjusted to supported values" :
         warning.code == "reduced-bank" ? "layers were reduced while preserving the complete key range" :
-        "unused invalid loop points were repaired";
+        warning.code == "loop-points-ignored" ? "unused invalid loop points were repaired" :
+        "instrument preparation reported a warning";
     diagnostics.push_back("SFZ " + warning.code + ": " + std::to_string(warning.count) + "; " + explanation);
   }
   if (!parsed.diagnostics.ignoredOpcodes.empty()) {
@@ -102,7 +105,7 @@ static void describeWarnings(const assets::ParsedSfz &parsed, const assets::SfzB
 static std::string cacheIdentity(const SfzReference &reference, std::string_view id, std::uint64_t maximumBytes,
     std::span<const AssetFileSnapshot> snapshots) {
   auto identity = std::ostringstream{};
-  identity << "effetune:6791afdfc6f4e6c913b9f48c8189a44e29a09bde/sfz-v1/ETA1-table-v2" << '\0'
+  identity << "effetune:01c96f00f8e93595aefab96de4bc4d210e61c53b/sfz-v2/ETA1-table-v2" << '\0'
       << assetDecoderVersion() << '\0' << reference.root.generic_string() << '\0' << reference.selected << '\0'
       << id << '\0' << maximumBytes << '\0';
   for (const auto &source : snapshots) identity << source.path.generic_string() << '\0'
@@ -182,6 +185,11 @@ static cardio::promise<std::shared_ptr<const SharedPreparedAsset>> prepareRegist
   auto available = std::vector<std::string>{};
   for (const auto &[order, sample] : paths) {
     static_cast<void>(order);
+    if (assets::isSfzGenerator(sample)) {
+      metadata.push_back(assets::sfzGeneratorMetadata(sample));
+      available.push_back(sample);
+      continue;
+    }
     const auto path = std::move(co_await resolveConfinedAssetPath(reference.root, sample, loadResult.files, cancellation));
     memory.resize(definitionBytes + 8 * parsedMemory(parsed) + sourceOverhead(loadResult), maximumMemoryBytes);
     if (!path) {
@@ -267,6 +275,13 @@ static cardio::promise<std::shared_ptr<const SharedPreparedAsset>> prepareRegist
       throw assets::SfzError("too-large", "The SFZ samples are too large to load.");
     if (found->frames && found->channels && found->frames > (pcmLimit - decodedBytes) / 4 / found->channels)
       throw std::length_error("combined asset memory budget cannot admit the decoded SFZ samples");
+    if (assets::isSfzGenerator(sample)) {
+      auto audio = assets::createSfzGeneratorSample(sample);
+      decodedBytes += audio.channels.front().size() * sizeof(float);
+      samples.push_back({sample, std::move(audio)});
+      co_await preparationCheckpoint(cancellation);
+      continue;
+    }
     const auto path = std::move(co_await resolveConfinedAssetPath(reference.root, sample, loadResult.files, cancellation));
     if (!path) throw assets::SfzError("prepare", "An SFZ sample could not be found.");
     const auto bytes = std::move(co_await readAssetFile(*path, maximumBytes - rawBytes, cancellation));

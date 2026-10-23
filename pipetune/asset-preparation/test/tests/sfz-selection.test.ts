@@ -17,6 +17,27 @@ interface Scenario {
 
 const scenarios: Scenario[] = [
   {
+    name: 'generated PCM and file PCM share the capacity budget',
+    text: '<region> sample=*sine key=60\n<region> sample=a.wav key=60',
+    metadata: {
+      '*sine': { size: 0, frames: 2048, channels: 1 },
+      'a.wav': { size: 19244, frames: 4800, channels: 1 },
+    },
+    budget: 8904,
+    definitionBytes: 100,
+  },
+  {
+    name: 'generated samples retain every key when file layers are reduced',
+    text: '<region> sample=*sine key=60\n<region> sample=*noise key=61\n<region> sample=a.wav lokey=60 hikey=61',
+    metadata: {
+      '*sine': { size: 0, frames: 2048, channels: 1 },
+      '*noise': { size: 0, frames: 8192, channels: 1 },
+      'a.wav': { size: 80044, frames: 20000, channels: 1 },
+    },
+    budget: 43000,
+    definitionBytes: 100,
+  },
+  {
     name: 'all layers fit, sharing source PCM',
     text: '<group> sample=a.wav\n<region> key=60 lovel=1 hivel=63\n<region> key=60 lovel=64',
     metadata: { 'a.wav': { size: 100, frames: 100, channels: 1 } },

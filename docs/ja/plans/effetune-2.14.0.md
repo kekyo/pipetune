@@ -230,6 +230,8 @@ Release測定には、44.1 kHz・4410フレームのステレオWAVをキー83�
 
 測定時にはDebugのCTestが動いていたため、無負荷時の絶対性能を示すものではない。条件・各回の値・集計を`sfz-performance-baseline-213.conditions.json`、同名の`.json`と`.summary.json`へ保存した。再測定には同じ検証ディレクトリーの`run-sfz-performance.mjs`を使う。
 
+strip前のRelease共有バックエンドは、Scalarが3,669,384 byte、baseline SIMDが3,669,928 byte、v3が3,628,296 byte、v4が3,755,176 byteだった。値は`baseline-backend-sizes.json`に保存した。
+
 ### 1 参照更新と最小実行
 
 2.14.0の版・パラメータ契約と、19 floatのSFZパラメータを実共有バックエンドへ渡すテストを追加した。2.13.0では旧版・旧契約・新パラメータの拒否で失敗し、REDを確認した。結果は`step1-red/result.log`に保存した。
@@ -243,3 +245,15 @@ i686・armv7lの配布パッケージをビルドし、別コンテナへ導入�
 i686では変更のない上流Tube Simulatorのベクトル戻り値に`-Wpsabi`が2件出た。armv7lでは`dpkg-shlibdeps`が`__aeabi_atexit@CXXABI_ARM_1.3.3`の解決警告を1件出した。後者はリンク先libstdc++の同じ版のシンボルを確認し、導入後の実行も成功している。診断の根拠は`step1-matrix/results.md`に残した。浮動小数点条件を変えずに警告へ対処し、最終配布工程で再検証する。[dpkg-shlibdepsの警告仕様](https://manpages.debian.org/trixie/dpkg-dev/dpkg-shlibdeps.1.en.html)
 
 工程0は更新前との比較基準を記録し、工程1は版・カーネル契約・最小PCM・32bitロードの完了条件を満たした。最終配布物、全体回帰、残るSFZ準備処理は後続工程で検証する。
+
+### 2 生成波形とregion解釈
+
+7種類の生成波形、初期キースイッチ範囲、エンベロープ時刻の補正を独立C++準備モジュールへ追加した。生成波形のrate・フレーム数・PCMは上流JSと比較し、繰返し生成の再現性も確認した。通常ファイルと生成波形の混在、容量選別、ETA1/table-v2バンクの一致を含む純粋SFZ試験66件が成功した。独立モジュールのビルドとCTest 3件も成功している。
+
+登録音源ローダーは生成波形のメタデータとPCMを直接作り、ファイル解決・外部デコードへ渡さない。新しい警告の説明とメモリ計上を追加し、SFZキャッシュを2.14.0コミット・準備処理v2へ進めた。PATHから外部コマンドを除いた状態で、sine・noise・silenceの冷／温キャッシュ、容量ちょうどの成功と1 byte不足の拒否、通常ファイルとの混在、レイヤー削減、補正警告の保存が成功した。
+
+変更前のパーサー比較と登録再生でREDを確認した。`unsupported-regions`生成機能は削除確認の一時テストでREDを確かめ、削除後にGREENとした。全アセット試験では旧警告を期待していた既存テスト1件も失敗したため、計画と上流仕様を照合して期待値を更新した。変更後は32ファイル265テストが成功し、所要時間は120.34秒だった。ログは`step2-parser-red.log`、`step2-registered-red.log`、`step2-targeted.log`、`step2-contracts-green.log`に保存した。
+
+通常のDebugビルドは警告なしで成功した。共有バックエンドのgolden、登録SFZの実再生、アセットのライフサイクル、2.14.0スモーク、独立SFZ準備、GTKの状態保持と診断表示も成功した。工程2の上流比較・製品再生の完了条件を満たした。
+
+周期波形の登録再生はDebugのScalarでnoiseより長くかかった。個別計測では初期化が約30ms、0.5秒の周期波形処理が約2.8秒、noise処理が約0.23秒だった。生成周期の原レートは約536 kHzで、キー83・48 kHz出力では上流の大きな変換倍率用フィルターを使う。準備処理の停滞ではなく、DSP処理時間の差だった。計測は`step2-generator-timing.log`に残し、Releaseの性能確認にも含める。[上流リサンプリング処理](https://github.com/Frieve-A/effetune/blob/v2.14.0/dsp/plugins/others/sfz_note_player/kernel.cpp)

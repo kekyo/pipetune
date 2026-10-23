@@ -14,7 +14,7 @@ add_library(pipetune_asset_ir STATIC ir/preparation.cpp)
 target_link_libraries(pipetune_asset_ir PUBLIC pipetune_asset_convolution)
 target_compile_options(pipetune_asset_ir PRIVATE -Wall -Wextra -Wpedantic -Werror -ffp-contract=off)
 
-add_library(pipetune_asset_sfz STATIC sfz/parser.cpp sfz/bank.cpp sfz/text.cpp sfz/selection.cpp sfz/preparation.cpp sfz/audio_header.cpp)
+add_library(pipetune_asset_sfz STATIC sfz/parser.cpp sfz/bank.cpp sfz/text.cpp sfz/selection.cpp sfz/preparation.cpp sfz/audio_header.cpp sfz/generators.cpp)
 target_include_directories(pipetune_asset_sfz PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_features(pipetune_asset_sfz PUBLIC cxx_std_20)
 target_compile_options(pipetune_asset_sfz PRIVATE -Wall -Wextra -Wpedantic -Werror -ffp-contract=off)

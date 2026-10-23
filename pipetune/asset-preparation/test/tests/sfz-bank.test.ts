@@ -156,6 +156,55 @@ test('SFZ sample ordering uses UTF-16 and integer sample-index lanes', async () 
   );
 });
 
+test('SFZ bank combines generated cycles, noise and files using the app table layout', async () => {
+  const module = (name: string) =>
+    pathToFileURL(`${process.env.PIPETUNE_EFFETUNE_SOURCE}/js/sfz/${name}.js`)
+      .href;
+  const parser = await import(/* @vite-ignore */ module('parser'));
+  const asset = await import(/* @vite-ignore */ module('asset'));
+  const generators = await import(/* @vite-ignore */ module('generators'));
+  const names = [
+    '*sine',
+    '*saw',
+    '*square',
+    '*triangle',
+    '*tri',
+    '*noise',
+    '*silence',
+  ];
+  const definition =
+    names
+      .map(
+        (name, index) =>
+          `<region> sample=${name} key=${60 + index} pitch_keycenter=83 loop_mode=no_loop`
+      )
+      .join('\n') + '\n<region> sample=file.wav key=70';
+  const samples: Sample[] = names.map((path) => ({
+    path,
+    ...generators.createSfzGeneratorSample(path),
+  }));
+  samples.push({
+    path: 'banks/file.wav',
+    sampleRate: 44100,
+    channels: [new Float32Array([0.5, -0.5])],
+  });
+  const parsed = await parser.parseSfz({
+    selectedPath: 'banks/main.sfz',
+    readText: async () => definition,
+    hasSample: (path: string) => path === 'banks/file.wav',
+    onDiagnostic: null,
+  });
+  const reference = asset.packSfzAsset(
+    parsed.regions,
+    new Map(samples.map((sample) => [sample.path, sample]))
+  );
+  const native = run('banks/main.sfz', definition, samples, 256 * 1024 * 1024);
+  expect(native.status, native.stderr.toString()).toBe(0);
+  expect(native.stdout.subarray(native.stdout.indexOf(10) + 1)).toEqual(
+    Buffer.from(reference.payload)
+  );
+});
+
 test.each(['empty', 'channels', 'nonfinite', 'offset', 'loop', 'escape'])(
   'invalid SFZ %s input cannot produce a playable bank',
   (scenario) => {

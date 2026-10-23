@@ -46,6 +46,57 @@ const scenarios: {
   paths: string[];
 }[] = [
   {
+    name: 'generated samples ignore directories and real-file inventory',
+    selected: 'banks/main.sfz',
+    documents: {
+      'banks/main.sfz':
+        '<control> default_path=../samples/\n' +
+        ['*sine', '*saw', '*square', '*triangle', '*tri', '*noise', '*silence']
+          .map(
+            (sample, index) =>
+              `<region> sample=${sample} key=${60 + index} pitch_keycenter=50 loop_mode=no_loop`
+          )
+          .join('\n') +
+        '\n<region> sample=*unknown key=80',
+    },
+    paths: [],
+  },
+  {
+    name: 'envelope times are adjusted without discarding playable regions',
+    selected: 'main.sfz',
+    documents: {
+      'main.sfz':
+        '<region> sample=a.wav key=60 ampeg_attack=-1 ampeg_hold=101 ampeg_decay=NaN ampeg_release=Infinity\n' +
+        '<region> sample=a.wav key=61 ampeg_attack=-1 ampeg_hold=101 ampeg_decay=bad ampeg_release=-Infinity\n' +
+        '<region> sample=a.wav key=62 ampeg_attack=0 ampeg_hold=100 ampeg_decay=0.25 ampeg_release=1\n' +
+        '<region> sample=a.wav key=63 ampeg_sustain=101',
+    },
+    paths: ['a.wav'],
+  },
+  {
+    name: 'initial key-switch ranges select regions and ignore pedal switches',
+    selected: 'main.sfz',
+    documents: {
+      'main.sfz':
+        '<control> sw_default=c2\n<group> sample=a.wav\n' +
+        '<region> key=60 sw_lolast=b1 sw_hilast=c#2 sustain_sw=off sostenuto_sw=on\n' +
+        '<region> key=61 sw_lolast=c#2\n<region> key=62 sw_hilast=b1\n' +
+        '<region> key=63 sw_lolast=-1\n<region> key=64 sw_hilast=128\n' +
+        '<region> key=65 sw_lolast=bad\n<region> key=66 sw_hilast=36.5',
+    },
+    paths: ['a.wav'],
+  },
+  {
+    name: 'key-switch ranges without an initial switch omit conditional regions',
+    selected: 'main.sfz',
+    documents: {
+      'main.sfz':
+        '<group> sample=a.wav\n<region> key=60 sw_lolast=0\n' +
+        '<region> key=61 sw_hilast=127\n<region> key=62',
+    },
+    paths: ['a.wav'],
+  },
+  {
     name: 'include, macro, inherited scopes and selected-root samples',
     selected: 'banks/main.sfz',
     documents: {
@@ -131,6 +182,20 @@ const scenarios: {
     paths: ['a.wav'],
   },
 ];
+
+test('temporary: unsupported condition warnings are removed', () => {
+  const native = run(
+    'main.sfz',
+    {
+      'main.sfz':
+        '<region> sample=a.wav key=60\n<region> sample=a.wav trigger=release',
+    },
+    ['a.wav'],
+    256 * 1024 * 1024
+  );
+  expect(native.status, native.stderr.toString()).toBe(0);
+  expect(JSON.parse(native.stdout.toString()).warnings).toEqual([]);
+});
 
 test.each(scenarios)(
   'SFZ parser matches app: $name',
