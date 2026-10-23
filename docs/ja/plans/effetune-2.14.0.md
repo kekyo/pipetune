@@ -259,3 +259,15 @@ i686では変更のない上流Tube Simulatorのベクトル戻り値に`-Wpsabi
 周期波形の登録再生はDebugのScalarでnoiseより長くかかった。個別計測では初期化が約30ms、0.5秒の周期波形処理が約2.8秒、noise処理が約0.23秒だった。生成周期の原レートは約536 kHzで、キー83・48 kHz出力では上流の大きな変換倍率用フィルターを使う。所要時間の差はDSP処理で生じていた。計測は`step2-generator-timing.log`に残し、Releaseの性能確認にも含める。[上流リサンプリング処理](https://github.com/Frieve-A/effetune/blob/v2.14.0/dsp/plugins/others/sfz_note_player/kernel.cpp)
 
 工程2を`7045f1c`でコミットした後、機能削除の確認に使った一時テストを削除した。通常の上流比較テストは残している。
+
+### 3 bank定義と文字コード
+
+独立C++準備モジュールへ、厳格なUTF-8とWindows-1252の復号、ARIA bankの選択、初期definesを追加した。UTF-8のBOM、全256 byte、Unicodeの大文字小文字・空白、XML属性の文字参照、候補の階層と並び順を上流JSと比較した。初期defineの未対応と、最初のXML解析案で長い属性が失敗することをREDで確認した。XML属性は上流の対象構文を走査する方式に改め、100 KiBの属性も成功している。Windows-1252復号中の余分なコピーも除き、ホストのメモリ予約内で変換する。
+
+候補の並び順とUnicodeの大小文字変換にはICUを使用する。公式文書と公開APIコメントを確認し、独立モジュールのリンク依存と`prereq.sh`へ追加した。ホストのICUは74.2、比較用Node.jsは78.3で、C・C.UTF-8・英語・日本語のロケールで今回の比較ケースが一致した。全9配布イメージにも開発パッケージがあることを確認した。配布版でのリンクと実再生は工程6で検証する。[ICU照合API](https://unicode-org.github.io/icu/userguide/collation/api.html)、[公開C API](https://unicode-org.github.io/icu-docs/apidoc/released/icu4c/ucol_8h.html)
+
+登録情報の`bankPaths`を検証し、選択したbankとSFZ・includeを既存の非同期読込へ接続した。Windows-1252のファイル名、初期defineを使うinclude、`$sample_dir`、冷／温キャッシュ、候補・一覧・include・サンプルの変更を実音声で確認した。候補全体ではなく選択したbankだけを原本容量へ算入し、容量超過を拒否する。欠損からの復旧と、音源ルート外を指すシンボリックリンクの拒否も成功した。
+
+未選択候補と欠損候補をsnapshotと変更監視へ含め、候補の変更・出現で準備結果を無効にする。新しいライフサイクル試験は工程2のローダーでRED、工程3でGREENとなった。準備取消と読込失敗後も既存パイプラインが処理を継続し、失敗した依存ファイルも復旧監視へ残ることを確認した。
+
+Debug全ビルドと独立準備モジュールのビルドは警告なしで成功し、独立CTest 3件、ホストのキャッシュ・原本・ライフサイクル・版契約4件、全アセット準備CTestが成功した。全アセット試験は123.46秒だった。主なログは`step3-registered-red.log`、`step3-source-green.log`、`step3-contracts-green.log`、`step3-host-targeted.log`、`step3-standalone.log`に保存した。旧ローダーとの比較は`step2-host/lifecycle-phase2-red.log`に残した。工程3の完了条件を満たした。

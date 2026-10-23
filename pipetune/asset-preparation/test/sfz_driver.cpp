@@ -9,6 +9,7 @@
 #include "sfz/preparation.h"
 #include "sfz/audio_header.h"
 #include "sfz/generators.h"
+#include "sfz/source.h"
 #include <bit>
 #include <array>
 #include <iomanip>
@@ -169,9 +170,74 @@ static int selectInput(std::uint64_t maximumBytes, std::uint64_t definitionBytes
   return 0;
 }
 
+static int sourceBankInput() {
+  using namespace pipetune::assets;
+  const auto selected = readText();
+  const auto bankCount = readWord();
+  if (bankCount > 10000) return 2;
+  auto banks = std::vector<std::string>{};
+  for (auto index = 0u; index < bankCount; ++index) banks.push_back(readText());
+  const auto documentCount = readWord();
+  if (documentCount > 10000) return 2;
+  auto documents = std::vector<SfzDocument>{};
+  for (auto index = 0u; index < documentCount; ++index) {
+    auto path = readText();
+    documents.push_back({std::move(path), readText()});
+  }
+  auto result = SfzBankDefines{};
+  try { result = readSfzBankDefines(selected, banks, documents); }
+  catch (const SfzError &error) {
+    if (!error.requiredPath.empty()) std::cerr << "required:" << error.requiredPath << '\n';
+    throw;
+  }
+  std::cout << "{\"defines\":{";
+  for (auto index = std::size_t{0}; index < result.defines.size(); ++index) {
+    if (index) std::cout << ',';
+    printText(result.defines[index].first);
+    std::cout << ':';
+    printText(result.defines[index].second);
+  }
+  std::cout << "},\"bankPath\":";
+  if (result.bankPath) printText(*result.bankPath);
+  else std::cout << "null";
+  std::cout << ",\"dependencies\":";
+  printStrings(result.dependencies);
+  std::cout << "}\n";
+  return 0;
+}
+
+static int sourceParseInput() {
+  using namespace pipetune::assets;
+  const auto selected = readText();
+  const auto defineCount = readWord();
+  if (defineCount > 10000) return 2;
+  auto defines = std::vector<std::pair<std::string, std::string>>{};
+  for (auto index = 0u; index < defineCount; ++index) {
+    auto key = readText();
+    defines.emplace_back(std::move(key), readText());
+  }
+  const auto documentCount = readWord();
+  if (documentCount > 10000) return 2;
+  auto documents = std::vector<SfzDocument>{};
+  for (auto index = 0u; index < documentCount; ++index) {
+    auto path = readText();
+    documents.push_back({std::move(path), readText()});
+  }
+  printParsed(parseSfz(selected, documents, std::nullopt, 256 * 1024 * 1024,
+      UINT64_MAX, defines));
+  return 0;
+}
+
 int main(int argc, char **argv) {
   using namespace pipetune::assets;
   try {
+    if (argc == 2 && std::string_view(argv[1]) == "--source-decode") {
+      const auto bytes = std::vector<std::uint8_t>(std::istreambuf_iterator<char>(std::cin), {});
+      std::cout << decodeSfzText(bytes);
+      return 0;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--source-bank") return sourceBankInput();
+    if (argc == 2 && std::string_view(argv[1]) == "--source-parse") return sourceParseInput();
     if (argc == 3 && std::string_view(argv[1]) == "--generator") {
       const auto audio = createSfzGeneratorSample(argv[2]);
       std::cout << "{\"sampleRate\":" << audio.sampleRate << ",\"channels\":1,\"frames\":"

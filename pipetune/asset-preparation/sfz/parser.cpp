@@ -410,10 +410,15 @@ static void sortUnique(std::vector<std::string> &values) {
 
 ParsedSfz parseSfz(std::string_view selectedPath, std::span<const SfzDocument> documents,
     std::optional<std::span<const std::string>> availableSamples, std::uint64_t maximumBytes,
-    std::uint64_t maximumWorkingBytes) {
+    std::uint64_t maximumWorkingBytes,
+    std::span<const std::pair<std::string, std::string>> initialDefines) {
   if (maximumBytes == 0 || maximumBytes > kMaximumSfzBytes) throw SfzError("too-large", "Invalid SFZ size limit.");
   const auto selected = normalizeSfzPath(selectedPath, {});
   auto expansion = Expansion{{}, {}, {}, {}, maximumBytes, maximumWorkingBytes, maximumWorkingBytes};
+  for (const auto &[key, value] : initialDefines) {
+    chargeWorking(expansion, sizeof(std::pair<std::string, std::string>) + key.size() + value.size(), 8);
+    expansion.defines.insert_or_assign(key, value);
+  }
   for (const auto &document : documents) {
     chargeWorking(expansion, document.path.size() + 256, 4);
     expansion.documents.try_emplace(document.path, &document);

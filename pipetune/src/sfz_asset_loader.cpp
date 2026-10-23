@@ -11,6 +11,7 @@
 #include "sfz/generators.h"
 #include "sfz/preparation.h"
 #include "sfz/selection.h"
+#include "sfz/source.h"
 #include "sfz/text.h"
 #include <algorithm>
 #include <array>
@@ -31,6 +32,7 @@ static bool validId(std::string_view value) {
 struct SfzReference {
   std::filesystem::path root;
   std::string selected;
+  std::vector<std::string> bankPaths;
 };
 
 static SfzReference referenceFromRegistry(std::span<const std::uint8_t> bytes, std::string_view id) {
@@ -54,7 +56,24 @@ static SfzReference referenceFromRegistry(std::span<const std::uint8_t> bytes, s
         !path.is_absolute() || !root.is_absolute() || relative.empty() || relative == "." ||
         relative.is_absolute() || *relative.begin() == ".." || extension != ".sfz")
       throw std::runtime_error("SFZ registry contains an invalid reference");
-    if (entryId == id) selected = {root, assets::normalizeSfzPath(relative.generic_string(), {})};
+    auto banks = std::vector<std::string>{};
+    if (auto *paths = yyjson_obj_get(entry, "bankPaths")) {
+      if (!yyjson_is_arr(paths) || yyjson_arr_size(paths) > 10000)
+        throw std::runtime_error("SFZ registry contains an invalid bank path list");
+      for (auto bank = std::size_t{0}; bank < yyjson_arr_size(paths); ++bank) {
+        auto *value = yyjson_arr_get(paths, bank);
+        const auto original = jsonString(value);
+        auto suffix = original;
+        for (auto &ch : suffix) if (ch >= 'A' && ch <= 'Z') ch += 'a' - 'A';
+        if (!yyjson_is_str(value) || !suffix.ends_with(".bank.xml"))
+          throw std::runtime_error("SFZ registry contains an invalid bank reference");
+        try { banks.push_back(assets::normalizeSfzPath(original, {})); }
+        catch (const assets::SfzError &) {
+          throw std::runtime_error("SFZ registry contains an invalid bank reference");
+        }
+      }
+    }
+    if (entryId == id) selected = {root, assets::normalizeSfzPath(relative.generic_string(), {}), std::move(banks)};
   }
   if (selected.root.empty()) throw std::runtime_error("the assigned SFZ ID is not registered in EffeTune");
   return selected;
@@ -108,6 +127,8 @@ static std::string cacheIdentity(const SfzReference &reference, std::string_view
   identity << "effetune:01c96f00f8e93595aefab96de4bc4d210e61c53b/sfz-v2/ETA1-table-v2" << '\0'
       << assetDecoderVersion() << '\0' << reference.root.generic_string() << '\0' << reference.selected << '\0'
       << id << '\0' << maximumBytes << '\0';
+  identity << "banks:" << reference.bankPaths.size() << '\0';
+  for (const auto &path : reference.bankPaths) identity << path << '\0';
   for (const auto &source : snapshots) identity << source.path.generic_string() << '\0'
       << source.resolvedPath.generic_string() << '\0' << source.bytes << '/' << source.missing << '\0' << source.digest << '\0';
   const auto text = identity.str();
@@ -133,16 +154,59 @@ static cardio::promise<std::shared_ptr<const SharedPreparedAsset>> prepareRegist
   auto parserWorkingBytes = std::uint64_t{16 * 1024 * 1024};
   auto documents = std::vector<assets::SfzDocument>{};
   auto definitionBytes = std::uint64_t{0};
+  auto bankDefines = assets::SfzBankDefines{};
+  if (!reference.bankPaths.empty()) {
+    auto bankDocuments = std::vector<assets::SfzDocument>{};
+    auto textBytes = std::uint64_t{0};
+    for (;;) {
+      co_await preparationCheckpoint(cancellation);
+      // Reserve decoded text and temporary XML/Unicode representations before
+      // the pure selector runs; candidate files remain live until it chooses.
+      memory.resize(32 * textBytes + sourceOverhead(loadResult), maximumMemoryBytes);
+      auto required = std::string{};
+      try { bankDefines = assets::readSfzBankDefines(reference.selected, reference.bankPaths, bankDocuments); }
+      catch (const assets::SfzError &error) {
+        if (error.requiredPath.empty()) throw;
+        required = error.requiredPath;
+      }
+      if (required.empty()) break;
+      const auto path = std::move(co_await resolveConfinedAssetPath(reference.root, required, loadResult.files, cancellation));
+      if (!path) {
+        loadResult.snapshots.push_back({reference.root / required, {}, 0, reference.root, {}, true});
+        bankDocuments.push_back({std::move(required), {}});
+        continue;
+      }
+      auto source = std::move(co_await inspectAssetFile(*path, maximumBytes, 0, cancellation));
+      memory.resize(32 * (textBytes + 3 * source.snapshot.bytes) + sourceOverhead(loadResult), maximumMemoryBytes);
+      const auto bytes = std::move(co_await readAssetFile(*path, source.snapshot.bytes, cancellation));
+      if (assetSha256(bytes) != source.snapshot.digest) throw std::runtime_error("SFZ bank definition changed while loading");
+      auto text = assets::decodeSfzText(bytes);
+      textBytes += text.capacity() + required.capacity() + sizeof(assets::SfzDocument) + 2;
+      source.snapshot.path = reference.root / required;
+      source.snapshot.root = reference.root;
+      source.snapshot.resolvedPath = *path;
+      loadResult.snapshots.push_back(std::move(source.snapshot));
+      bankDocuments.push_back({std::move(required), std::move(text)});
+    }
+    if (bankDefines.bankPath) {
+      const auto chosen = std::ranges::find(loadResult.snapshots, reference.root / *bankDefines.bankPath, &AssetFileSnapshot::path);
+      if (chosen == loadResult.snapshots.end()) throw std::runtime_error("SFZ bank definition snapshot is unavailable");
+      definitionBytes = chosen->bytes;
+    }
+    // Only the selected bank contributes to the original-byte capacity. All
+    // examined candidates retain snapshots so a later selection cannot go stale.
+  }
   auto parsed = assets::ParsedSfz{};
   const auto parseCurrent = [&](std::optional<std::span<const std::string>> available) {
     for (;;) {
       cancellation.throw_if_cancellation_requested();
       const auto overhead = sourceOverhead(loadResult);
-      if (parserWorkingBytes > maximumMemoryBytes || definitionBytes > maximumMemoryBytes - parserWorkingBytes ||
-          overhead > maximumMemoryBytes - parserWorkingBytes - definitionBytes)
+      const auto textMemory = 4 * definitionBytes;
+      if (parserWorkingBytes > maximumMemoryBytes || textMemory > maximumMemoryBytes - parserWorkingBytes ||
+          overhead > maximumMemoryBytes - parserWorkingBytes - textMemory)
         throw std::length_error("combined asset memory budget cannot admit SFZ definition preparation");
-      memory.resize(definitionBytes + parserWorkingBytes + overhead, maximumMemoryBytes);
-      try { return assets::parseSfz(reference.selected, documents, available, maximumBytes, parserWorkingBytes); }
+      memory.resize(textMemory + parserWorkingBytes + overhead, maximumMemoryBytes);
+      try { return assets::parseSfz(reference.selected, documents, available, maximumBytes, parserWorkingBytes, bankDefines.defines); }
       catch (const assets::SfzError &error) {
         if (!error.minimumWorkingBytes) throw;
         // Retry only the pure parser, after reserving its next bounded allowance.
@@ -165,20 +229,22 @@ static cardio::promise<std::shared_ptr<const SharedPreparedAsset>> prepareRegist
     if (!path) throw assets::SfzError("prepare", "An SFZ include could not be found.");
     auto source = std::move(co_await inspectAssetFile(*path, maximumBytes - definitionBytes, 0, cancellation));
     definitionBytes += source.snapshot.bytes;
-    memory.resize(definitionBytes + source.snapshot.bytes + parserWorkingBytes + sourceOverhead(loadResult), maximumMemoryBytes);
+    // Windows-1252 may expand one source byte to three UTF-8 bytes. The fourth
+    // byte accounts for the original read buffer while decoding the new text.
+    memory.resize(4 * definitionBytes + parserWorkingBytes + sourceOverhead(loadResult), maximumMemoryBytes);
     const auto bytes = std::move(co_await readAssetFile(*path, source.snapshot.bytes, cancellation));
     if (assetSha256(bytes) != source.snapshot.digest) throw std::runtime_error("SFZ definition changed while loading");
     source.snapshot.path = reference.root / required;
     source.snapshot.root = reference.root;
     source.snapshot.resolvedPath = *path;
     loadResult.snapshots.push_back(std::move(source.snapshot));
-    auto text = std::string(bytes.begin(), bytes.end());
-    // TextDecoder's default UTF-8 handling removes a leading BOM.
-    if (text.starts_with("\xef\xbb\xbf")) text.erase(0, 3);
+    // The app's strict UTF-8 decoder removes a leading BOM and falls back to
+    // Windows-1252 when any source byte sequence is invalid.
+    auto text = assets::decodeSfzText(bytes);
     documents.push_back({std::move(required), std::move(text)});
     co_await preparationCheckpoint(cancellation);
   }
-  memory.resize(definitionBytes + 8 * parsedMemory(parsed) + sourceOverhead(loadResult), maximumMemoryBytes);
+  memory.resize(4 * definitionBytes + 8 * parsedMemory(parsed) + sourceOverhead(loadResult), maximumMemoryBytes);
   auto paths = std::map<std::u16string, std::string>{};
   for (const auto &region : parsed.regions) paths.try_emplace(assets::sfzUtf16(region.sample), region.sample);
   auto metadata = std::vector<assets::SfzSampleMetadata>{};
@@ -191,7 +257,7 @@ static cardio::promise<std::shared_ptr<const SharedPreparedAsset>> prepareRegist
       continue;
     }
     const auto path = std::move(co_await resolveConfinedAssetPath(reference.root, sample, loadResult.files, cancellation));
-    memory.resize(definitionBytes + 8 * parsedMemory(parsed) + sourceOverhead(loadResult), maximumMemoryBytes);
+    memory.resize(4 * definitionBytes + 8 * parsedMemory(parsed) + sourceOverhead(loadResult), maximumMemoryBytes);
     if (!path) {
       loadResult.snapshots.push_back({reference.root / sample, {}, 0, reference.root, {}, true});
       continue;
@@ -209,8 +275,9 @@ static cardio::promise<std::shared_ptr<const SharedPreparedAsset>> prepareRegist
   parsed = {};
   co_await preparationCheckpoint(cancellation);
   parsed = parseCurrent(std::span<const std::string>(available));
+  bankDefines = {};
   if (parsed.regions.empty()) throw assets::SfzError("no-regions", "The SFZ has no playable regions.");
-  memory.resize(definitionBytes + 8 * parsedMemory(parsed) + sourceOverhead(loadResult), maximumMemoryBytes);
+  memory.resize(4 * definitionBytes + 8 * parsedMemory(parsed) + sourceOverhead(loadResult), maximumMemoryBytes);
   auto selection = assets::selectSfzRegionsForBudget(parsed.regions, metadata, maximumBytes, definitionBytes);
   parsed.regions = std::move(selection.regions);
   if (selection.reduced) {
