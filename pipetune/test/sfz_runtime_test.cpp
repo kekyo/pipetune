@@ -4,6 +4,7 @@
  * https://github.com/kekyo/pipetune/
  */
 #include "dsp_pipeline_slot.h"
+#include "dsp_backend_loader.h"
 #include <pipetune/dsp_backend.h>
 #include <pipetune/dsp_pipeline.h>
 #include <algorithm>
@@ -56,6 +57,166 @@ static double amplitude(std::span<const float> samples, std::uint32_t rate, doub
   return 2 * std::hypot(sine, cosine) / samples.size();
 }
 
+static std::uint32_t nativeSfzLatency(const pipetune::DspBackend &backend,
+    std::uint32_t rate, std::uint32_t channels, int timing) {
+  const auto *definition = pipetune::findDspByDisplayName("SFZ Note Player");
+  require(definition != nullptr, "SFZ native definition is unavailable");
+  const auto json = "{\"tm\":" + std::to_string(timing) + "}";
+  const auto document = std::unique_ptr<yyjson_doc, decltype(&yyjson_doc_free)>(
+      yyjson_read(json.data(), json.size(), 0), yyjson_doc_free);
+  require(document != nullptr, "SFZ native latency parameters are invalid");
+  const auto packed = pipetune::packDspParameters(*definition, yyjson_doc_get_root(document.get()));
+  require(packed.error.empty(), packed.error);
+  const auto &api = pipetune::dspBackendApi(backend);
+  const auto engine = api.engineCreate();
+  require(engine != 0, "SFZ native latency engine could not be created");
+  auto instance = et_instance{0};
+  try {
+    require(api.enginePrepare(engine, rate, channels, 257, 0) == ET_OK,
+        "SFZ native latency engine could not be prepared");
+    instance = api.instanceCreate(engine, definition->typeName.data());
+    require(instance != 0, "SFZ native latency instance could not be created");
+    require(api.instanceSetParams(engine, instance, packed.floats.data(), packed.floats.size(),
+        definition->hash, 0) == ET_OK, "SFZ native latency parameters were rejected");
+    auto silence = std::vector<float>(channels);
+    // The native instance applies staged parameters at the next process boundary.
+    require(api.instanceProcess(engine, instance, silence.data(), channels, 1, 0) == ET_OK,
+        "SFZ native latency parameters could not be applied");
+    const auto latency = api.instanceLatency(engine, instance);
+    api.instanceDestroy(engine, instance);
+    api.engineDestroy(engine);
+    return latency;
+  } catch (...) {
+    if (instance) api.instanceDestroy(engine, instance);
+    api.engineDestroy(engine);
+    throw;
+  }
+}
+
+static void writeMonoWave(const std::filesystem::path &path, double frequency, double overtone) {
+  constexpr auto frames = 48000u;
+  auto wave = std::vector<std::uint8_t>(44 + frames * sizeof(float));
+  const auto put = [&wave](std::size_t offset, std::uint32_t value, unsigned width) {
+    for (auto index = 0u; index < width; ++index) wave[offset + index] = value >> (8 * index);
+  };
+  for (const auto &[offset, text] : std::array{std::pair{0u, "RIFF"}, std::pair{8u, "WAVE"},
+      std::pair{12u, "fmt "}, std::pair{36u, "data"}}) std::copy_n(text, 4, wave.begin() + offset);
+  put(4, wave.size() - 8, 4); put(16, 16, 4); put(20, 3, 2); put(22, 1, 2);
+  put(24, 48000, 4); put(28, 48000 * 4, 4); put(32, 4, 2); put(34, 32, 2);
+  put(40, frames * 4, 4);
+  for (auto frame = 0u; frame < frames; ++frame) {
+    const auto phase = 2 * std::numbers::pi * frequency * frame / 48000.0;
+    const auto value = static_cast<float>(0.15 * std::sin(phase) + overtone * std::sin(2 * phase));
+    put(44 + frame * 4, std::bit_cast<std::uint32_t>(value), 4);
+  }
+  std::ofstream(path, std::ios::binary).write(reinterpret_cast<const char *>(wave.data()), wave.size());
+}
+
+static pipetune::PipelineLoadContext writeShiftInstrument(const std::filesystem::path &directory) {
+  const auto root = directory / "shift-instrument";
+  std::filesystem::create_directories(root);
+  auto definition = std::ofstream(root / "main.sfz");
+  for (const auto &[key, overtone] : std::array{std::pair{77, 0.02}, std::pair{83, 0.07},
+      std::pair{89, 0.12}}) {
+    const auto name = "key" + std::to_string(key) + ".wav";
+    writeMonoWave(root / name, 700 * std::exp2((key - 83) / 12.0), overtone);
+    definition << "<region> sample=" << name << " key=" << key <<
+        " amp_veltrack=100 loop_mode=loop_continuous ampeg_release=0.2\n";
+  }
+  std::ofstream(root / "sfz-references.json") <<
+      "[{\"id\":\"0123456789abcdef01234567\",\"name\":\"Shift test\",\"root\":\"" <<
+      root.string() << "\",\"path\":\"" << (root / "main.sfz").string() << "\"}]";
+  return {.measurementDirectory = {}, .effetuneDirectory = root,
+      .assetCache = {.directory = root / "cache"}};
+}
+
+static void testSampleShiftAndPreview(const pipetune::PipelineLoadContext &context,
+    const std::shared_ptr<const pipetune::DspBackend> &backend,
+    const std::shared_ptr<const pipetune::DspBackend> &alternateBackend) {
+  constexpr auto frames = 24013u;
+  auto input = std::vector<float>(2 * frames);
+  for (auto channel = 0u; channel < 2; ++channel)
+    for (auto frame = 0u; frame < frames; ++frame)
+      input[channel * frames + frame] = static_cast<float>(
+          0.3 * std::sin(2 * std::numbers::pi * 1000 * frame / 48000.0));
+  auto harmonics = std::array<double, 3>{};
+  for (auto index = 0u; index < 3; ++index) {
+    const auto shift = static_cast<int>(index) * 6 - 6;
+    const auto path = writePreset(context.effetuneDirectory, "All",
+        "\"dm\":0,\"wm\":100,\"ss\":" + std::to_string(shift));
+    auto loaded = pipetune::loadDspPipeline(path, {48000, 2, 257}, backend, context);
+    require(loaded.pipeline != nullptr, loaded.error);
+    const auto output = render(*loaded.pipeline, input, 2, 257);
+    const auto tail = std::span(output).subspan(16000, frames - 16000);
+    require(amplitude(tail, 48000, 700) > 0.025,
+        "sample shift must retain the detected note's output pitch");
+    require(amplitude(tail, 48000, 700 * std::exp2(shift / 12.0)) < 0.01 || shift == 0,
+        "sample shift must not transpose the selected source's original pitch");
+    harmonics[index] = amplitude(tail, 48000, 1400) / amplitude(tail, 48000, 700);
+  }
+  require(harmonics[0] + 0.12 < harmonics[1] && harmonics[1] + 0.12 < harmonics[2],
+      "sample shift must select the neighboring WAV timbre");
+
+  const auto silence = std::vector<float>(2 * frames);
+  const auto defaultPath = writePreset(context.effetuneDirectory, "All", "\"dm\":0,\"wm\":100");
+  auto noPreview = pipetune::loadDspPipeline(defaultPath, {48000, 2, 257}, backend, context);
+  require(noPreview.pipeline != nullptr, noPreview.error);
+  const auto quiet = render(*noPreview.pipeline, silence, 2, 257);
+  require(std::ranges::all_of(quiet, [](float sample) { return sample == 0; }),
+      "default preview MIDI must leave a silent input silent");
+  auto activePath = writePreset(context.effetuneDirectory, "All", "\"dm\":0,\"wm\":100,\"pm\":83,\"pv\":127");
+  auto active = pipetune::loadDspPipeline(activePath, {48000, 2, 257}, backend, context);
+  require(active.pipeline != nullptr, active.error);
+  const auto loud = render(*active.pipeline, silence, 2, 257);
+  const auto loudTail = std::span(loud).subspan(16000, frames - 16000);
+  const auto loudFundamental = amplitude(loudTail, 48000, 700);
+  require(loudFundamental > 0.05, "preview MIDI must sound without note detection input");
+  auto softPath = writePreset(context.effetuneDirectory, "All", "\"dm\":0,\"wm\":100,\"pm\":83,\"pv\":32");
+  auto soft = pipetune::loadDspPipeline(softPath, {48000, 2, 257}, backend, context);
+  require(soft.pipeline != nullptr, soft.error);
+  const auto softer = render(*soft.pipeline, silence, 2, 257);
+  const auto softFundamental = amplitude(std::span(softer).subspan(16000, frames - 16000), 48000, 700);
+  require(softFundamental > 0 && softFundamental < loudFundamental * 0.3,
+      "preview velocity must change the actual sound level");
+  require(active.pipeline->reset() == pipetune::ProcessStatus::ok, "SFZ preview reset failed");
+  require(render(*active.pipeline, silence, 2, 257) == loud,
+      "reset must stop the old preview voice and restart the retained preview note");
+  auto rebuilt = pipetune::rebuildDspPipeline(*active.pipeline, {96000, 2, 257});
+  require(rebuilt.pipeline != nullptr, rebuilt.error);
+  require(rebuilt.cachedAssetCount == 1, "preview rebuild must reuse the prepared SFZ bank");
+  const auto rebuiltSilence = std::vector<float>(2 * 48013);
+  const auto rebuiltAudio = render(*rebuilt.pipeline, rebuiltSilence, 2, 257);
+  require(amplitude(std::span(rebuiltAudio).subspan(32000, 16000), 96000, 700) > 0.05,
+      "preview must restart at the same pitch after a sample-rate rebuild");
+  auto stoppedPath = writePreset(context.effetuneDirectory, "All", "\"dm\":0,\"wm\":100,\"pm\":-1");
+  auto stopped = pipetune::loadDspPipeline(stoppedPath, {48000, 2, 257}, backend, context);
+  require(stopped.pipeline != nullptr, stopped.error);
+  const auto stoppedAudio = render(*stopped.pipeline, silence, 2, 257);
+  require(std::ranges::all_of(stoppedAudio, [](float sample) { return sample == 0; }),
+      "a replacement preset with preview MIDI off must stop preview output");
+
+  const auto routedPath = context.effetuneDirectory / "routed.effetune_preset";
+  std::ofstream(routedPath) << R"({"pipeline":[{"name":"SFZ Note Player","channel":"All","inputBus":0,"outputBus":1,"parameters":{"sf":"0123456789abcdef01234567","th":0.01,"mn":83,"mx":83,"dm":0,"wm":100,"pm":83,"pv":127}},{"name":"Volume","channel":"All","inputBus":1,"outputBus":0,"parameters":{}}]})";
+  auto routed = pipetune::loadDspPipeline(routedPath, {48000, 2, 257}, backend, context);
+  require(routed.pipeline != nullptr, routed.error);
+  require(routed.pipeline->latencyFrames() == active.pipeline->latencyFrames(),
+      "SFZ on another bus must report the same final output latency");
+  const auto routedAudio = render(*routed.pipeline, silence, 2, 257);
+  for (auto frame = 0u; frame < routedAudio.size(); ++frame)
+    require(std::abs(routedAudio[frame] - loud[frame]) < 2e-6,
+        "SFZ preview on another bus must retain aligned stereo output");
+
+  if (alternateBackend && alternateBackend != backend) {
+    auto switched = pipetune::rebuildDspPipeline(*active.pipeline, {48000, 2, 257}, alternateBackend);
+    require(switched.pipeline != nullptr, switched.error);
+    require(switched.cachedAssetCount == 1 && switched.pipeline->backendVariant() == alternateBackend->variant(),
+        "SFZ backend rebuild must retain the prepared bank and select the requested variant");
+    const auto switchedAudio = render(*switched.pipeline, silence, 2, 257);
+    require(amplitude(std::span(switchedAudio).subspan(16000, frames - 16000), 48000, 700) > 0.05,
+        "SFZ preview must keep its pitch after a backend rebuild");
+  }
+}
+
 static void testPlayback(const std::filesystem::path &directory, const pipetune::PipelineLoadContext &context,
     const std::shared_ptr<const pipetune::DspBackend> &backend) {
   struct Scenario { std::uint32_t rate, channels, first, width; const char *selection; };
@@ -78,6 +239,8 @@ static void testPlayback(const std::filesystem::path &directory, const pipetune:
     const auto output = render(*loaded.pipeline, input, scenario.channels, 257);
     const auto latency = loaded.pipeline->latencyFrames();
     require(latency > 0, "SFZ analysis latency must reach the pipeline");
+    require(latency == nativeSfzLatency(*backend, scenario.rate, scenario.channels, 0),
+        "SFZ pipeline latency must match the native instance at each supported rate");
     for (auto channel = 0u; channel < scenario.channels; ++channel) {
       const auto samples = std::span(output).subspan(channel * frames, frames);
       if (channel < scenario.first || channel >= scenario.first + scenario.width) {
@@ -113,7 +276,10 @@ static void testDryAndMix(const std::filesystem::path &directory, const pipetune
     require(loaded.pipeline != nullptr, loaded.error);
     const auto latency = loaded.pipeline->latencyFrames();
     if (timing == 0) baseline = latency;
-    require(latency == baseline + (timing < 0 ? 4800u : 0u), "negative SFZ timing must increase the reported dry latency");
+    require(latency == nativeSfzLatency(*backend, 48000, 16, timing),
+        "SFZ timing latency must match the native instance report");
+    require(latency == baseline + (timing < 0 ? 4800u : 0u),
+        "negative SFZ timing must increase the reported dry latency");
     const auto frames = latency + 1000;
     auto input = std::vector<float>(16 * frames);
     for (auto channel = 0u; channel < 16; ++channel) input[channel * frames + 17] = (channel + 1) / 32.0F;
@@ -188,6 +354,42 @@ static void testIdle(const std::filesystem::path &directory, const pipetune::Pip
   }
 }
 
+static void testRepeatedOnsetAndRelease(const std::filesystem::path &directory,
+    const pipetune::PipelineLoadContext &context,
+    const std::shared_ptr<const pipetune::DspBackend> &backend) {
+  const auto path = writePreset(directory, "All", "\"dm\":0,\"wm\":100");
+  auto single = pipetune::loadDspPipeline(path, {48000, 2, 257}, backend, context);
+  auto repeated = pipetune::loadDspPipeline(path, {48000, 2, 257}, backend, context);
+  require(single.pipeline != nullptr, single.error);
+  require(repeated.pipeline != nullptr, repeated.error);
+  constexpr auto frames = 96013u;
+  auto firstInput = std::vector<float>(2 * frames), repeatedInput = std::vector<float>(2 * frames);
+  for (auto channel = 0u; channel < 2; ++channel)
+    for (auto frame = 0u; frame < frames; ++frame) {
+      const auto tone = static_cast<float>(0.3 * std::sin(2 * std::numbers::pi * 1000 * frame / 48000.0));
+      if (frame < 24000) firstInput[channel * frames + frame] = tone;
+      if (frame < 24000 || (frame >= 48000 && frame < 72000))
+        repeatedInput[channel * frames + frame] = tone;
+    }
+  const auto firstOutput = render(*single.pipeline, firstInput, 2, 257);
+  const auto repeatedOutput = render(*repeated.pipeline, repeatedInput, 2, 257);
+  const auto first = std::span(firstOutput).first(frames);
+  const auto twice = std::span(repeatedOutput).first(frames);
+  const auto held = amplitude(first.subspan(16000, 6000), 48000, 700);
+  const auto earlyRelease = amplitude(first.subspan(32000, 4000), 48000, 700);
+  const auto lateRelease = amplitude(first.subspan(42000, 4000), 48000, 700);
+  require(held > 0.035 && earlyRelease > lateRelease * 2 && lateRelease > 0,
+      "a held SFZ note must sound continuously, then decay after note-off");
+  auto renewed = std::vector<float>(6000);
+  for (auto frame = 0u; frame < renewed.size(); ++frame)
+    renewed[frame] = twice[64000 + frame] - first[64000 + frame];
+  require(amplitude(renewed, 48000, 700) > 0.025,
+      "a second onset must create a new audible SFZ voice after the first release");
+  require(amplitude(twice.subspan(80000, 4000), 48000, 700) <
+      amplitude(twice.subspan(68000, 4000), 48000, 700),
+      "the repeated SFZ note must enter release after its second note-off");
+}
+
 int main() {
   const auto directory = std::filesystem::temp_directory_path() / ("pipetune-sfz-runtime-" + std::to_string(getpid()));
   std::filesystem::create_directories(directory);
@@ -212,6 +414,7 @@ int main() {
         directory.string() << "\",\"path\":\"" << (directory / "main.sfz").string() << "\"}]";
     const auto context = pipetune::PipelineLoadContext{.measurementDirectory = {}, .effetuneDirectory = directory,
         .assetCache = {.directory = directory / "cache"}};
+    const auto shiftContext = writeShiftInstrument(directory);
     const auto discovered = pipetune::discoverDspBackends();
     auto backends = std::vector{discovered.scalar.backend};
     for (const auto &variant : discovered.simdVariants) if (variant.backend) backends.push_back(variant.backend);
@@ -220,6 +423,9 @@ int main() {
       testPlayback(directory, context, backend);
       testDryAndMix(directory, context, backend);
       testIdle(directory, context, backend);
+      testRepeatedOnsetAndRelease(directory, context, backend);
+      testSampleShiftAndPreview(shiftContext, backend,
+          backend == discovered.scalar.backend ? discovered.simd.backend : nullptr);
     }
   } catch (const std::exception &error) { std::cerr << error.what() << '\n'; result = 1; }
   std::filesystem::remove_all(directory);

@@ -765,6 +765,52 @@ static std::vector<float> renderGoldenCase(const BackendApi &api,
   return audio;
 }
 
+static void checkSfzPreviewTransitions(const BackendApi &api) {
+  const auto *definition = pipetune::findDspByTypeName("SFZNotePlayerPlugin");
+  check(definition != nullptr, "SFZ preview catalog must be available");
+  if (definition == nullptr) return;
+  const auto pack = [definition](int midi, int velocity) {
+    const auto text = "{\"dm\":0,\"wm\":100,\"pm\":" + std::to_string(midi) +
+        ",\"pv\":" + std::to_string(velocity) + "}";
+    auto *document = yyjson_read(text.data(), text.size(), 0);
+    auto result = pipetune::packDspParameters(*definition, yyjson_doc_get_root(document));
+    yyjson_doc_free(document);
+    check(result.error.empty(), "SFZ preview events must pack");
+    return result.floats;
+  };
+  const auto initial = pack(-1, 100);
+  auto testCase = GoldenCase{"SFZ preview transitions", "SFZNotePlayerPlugin", 48000,
+      10240, 2, 128, 0xeffe7a5eu, initial, 0, std::vector<float>(20480)};
+  testCase.stimulus = "silence";
+  testCase.events = {{2048, pack(83, 1)}, {4096, pack(-1, 1)},
+      {6144, pack(83, 127)}, {8192, pack(-1, 127)}};
+  constexpr auto asset = std::string_view(R"json({"sfz":{"kind":"sfz-sine-v1"}})json");
+  auto *document = yyjson_read(asset.data(), asset.size(), 0);
+  testCase.asset = yyjson_doc_get_root(document);
+  const auto audio = renderGoldenCase(api, testCase);
+  yyjson_doc_free(document);
+  check(audio.size() == 20480, "SFZ preview must process every event block");
+  if (audio.size() != 20480) return;
+  for (auto channel = 0u; channel < 2; ++channel) {
+    const auto samples = std::span(audio).subspan(channel * 10240, 10240);
+    const auto silent = [&](std::size_t start, std::size_t count) {
+      return std::ranges::all_of(samples.subspan(start, count), [](float value) { return value == 0; });
+    };
+    check(silent(0, 2048), "default SFZ parameters must not preview without a note");
+    check(silent(4608, 1536) && silent(8704, 1536),
+        "releasing preview must stop the voice on silent input");
+    auto energy = 0.0;
+    for (auto frame = 2560u; frame < 4096; ++frame) {
+      energy += samples[frame] * samples[frame];
+      // The fixture disables velocity tracking; both endpoint velocities must
+      // restart the same prepared sample after the previous voice has stopped.
+      check(std::abs(samples[frame] - samples[frame + 4096]) < 1e-7F,
+          "SFZ preview must restart deterministically at both velocity endpoints");
+    }
+    check(energy / 1536 > 0.01, "explicit SFZ preview must sound without detected input");
+  }
+}
+
 static void checkGoldenCase(const BackendApi &api, std::uint32_t variant,
                             const GoldenCase &testCase) {
   if (const auto *type = std::getenv("PIPETUNE_GOLDEN_TYPE"); type != nullptr &&
@@ -1065,6 +1111,7 @@ int main(int argc, char **argv) {
       checkEffeTune214Catalog(scalar);
       checkTubeRuntimeContract(scalar);
       checkUnrelatedInstanceDestruction(scalar);
+      checkSfzPreviewTransitions(scalar);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "analyzer/rhythm_analyzer/golden", 6u);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
@@ -1126,6 +1173,7 @@ int main(int argc, char **argv) {
         checkCatalogsMatch(scalar, simd);
         checkTubeRuntimeContract(simd);
         checkUnrelatedInstanceDestruction(simd);
+        checkSfzPreviewTransitions(simd);
         checkMetadataGoldens(simd, expected, pluginRoot / "analyzer/rhythm_analyzer/golden", 6u);
         checkMetadataGoldens(simd, expected, std::filesystem::path(argv[3]).parent_path(), 18u);
         checkMetadataGoldens(simd, expected, pluginRoot / "resonator/adaptive_prediction_effect/golden", 17u);

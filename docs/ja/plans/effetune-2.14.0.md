@@ -271,3 +271,27 @@ i686では変更のない上流Tube Simulatorのベクトル戻り値に`-Wpsabi
 未選択候補と欠損候補をsnapshotと変更監視へ含め、候補の変更・出現で準備結果を無効にする。新しいライフサイクル試験は工程2のローダーでRED、工程3でGREENとなった。準備取消と読込失敗後も既存パイプラインが処理を継続し、失敗した依存ファイルも復旧監視へ残ることを確認した。
 
 Debug全ビルドと独立準備モジュールのビルドは警告なしで成功し、独立CTest 3件、ホストのキャッシュ・原本・ライフサイクル・版契約4件、全アセット準備CTestが成功した。全アセット試験は123.46秒だった。主なログは`step3-registered-red.log`、`step3-source-green.log`、`step3-contracts-green.log`、`step3-host-targeted.log`、`step3-standalone.log`に保存した。旧ローダーとの比較は`step2-host/lifecycle-phase2-red.log`に残した。工程3の完了条件を満たした。
+
+### 4 SFZの発音・遅延・性能
+
+実WAVのキーごとに倍音を変え、`ss=-6/0/+6`で音源が変わっても出力の基音700 Hzを保つことを確認した。`pm`の既定値では無音入力を無音のまま通し、明示した試聴は入力音の検出なしで発音する。`pv`による音量差、reset後の再発音、レート・バックエンド変更時のバンク再利用も成功した。共有バックエンドでは`pm=-1→83→-1→83→-1`を渡し、停止・再開とvelocity両端をPCMで検証した。製品のパラメータ更新APIや試聴UIは追加していない。
+
+連続音、2回の発音、離鍵後のrelease減衰、無音時休止の既存試験を確認した。44.1/48/96/192/384 kHz、1/2/16ch、選択ペア・単一ch・All、端数ブロックを各共有バックエンドで検証している。`tm=0/-100/+100`の上流`instanceLatency`とパイプラインの報告値が一致し、dryインパルスもその位置に現れた。別バス経由のPCMと直結のPCM、選択外を含む16chの整列も一致した。物理的な複数出力への割付・補償は、既存の`product-time-alignment`、`product-slots`、`product-sixteen`などを工程5の全体試験で再確認する。
+
+SFZ公式11 goldenと試聴遷移はDebug・Releaseの共有バックエンドで成功し、上流SFZ native試験も成功した。Debug実再生試験は約29秒で、ログは`step4-runtime/runtime-native-latency.log`へ保存した。共有バックエンドの結果は`step4-preview-artifact.log`と`step4-release-preview.log`、上流試験は`step4-upstream-sfz.log`に残した。
+
+工程0と同じRelease測定をCPU 8で行い、保存した2.13.0の実行ファイルと共有ライブラリも直後に再測定した。測定中はビルドとプロジェクトの試験を止め、デスクトップアプリは稼働していた。下表は冷キャッシュの各3回の中央値で、RSSだけ最大値である。
+
+| レート | 2.13初期化ms | 2.14初期化ms | 2.13処理ns/frame | 2.14処理ns/frame | 2.14最大RSS KiB | 2.14遅延frame |
+| --- | --- | --- | --- | --- | --- | --- |
+| 48 kHz | 13.920 | 15.978 | 825.84 | 978.00 | 27928 | 4320 |
+| 96 kHz | 21.172 | 23.207 | 522.59 | 597.42 | 28532 | 8640 |
+| 384 kHz | 65.019 | 67.056 | 296.20 | 318.86 | 33424 | 34560 |
+
+通常音源の初期化は約2ms、定常処理は約18%・14%・8%増えた。RSSは約8〜9 MiB増えている。上流では解析ネットワークが拡張され、音色解析の固定領域も初期化時に確保する。型サイズを同じコンパイラで調べると、`HarmNetInference`は257600から967036 byteへ増え、新しい`TimbreAnalysis`は5666608 byteだった。両者で約6.4 MB増えており、RSS増加の主な根拠となる。定常処理の増加には新しい解析モデルと発音処理が含まれ、ホストのファイル準備処理は含まれない。[解析の初期化](https://github.com/Frieve-A/effetune/blob/v2.14.0/dsp/plugins/analyzer/note_spectrogram/spectral_analysis.h)、[解析ネットワーク](https://github.com/Frieve-A/effetune/blob/v2.14.0/dsp/plugins/analyzer/note_spectrogram/harmnet_inference.h)
+
+生成sineは48/96/384 kHzで7778.06/3891.57/307.15 ns/frame、noiseは943.43/547.29/259.90 ns/frameだった。sineのキー83では前二つのレートで変換倍率が8を超え、上流の係数キャッシュを使わないフィルターへ入る。384 kHzではキャッシュ対象となり負荷が下がる。生成処理自体の初期化は通常WAVと同程度であり、差は再生時のレート変換にある。外部DSPの演算条件や音声品質は変更していない。[上流フィルター](https://github.com/Frieve-A/effetune/blob/v2.14.0/dsp/plugins/others/sfz_note_player/kernel.cpp)
+
+strip前のReleaseバックエンドはScalar 4184960、baseline SIMD 4185504、v3 4139776、v4 4270752 byteとなり、約14%増えた。各回の測定値・温キャッシュ結果・条件は`sfz-performance-updated-214.*`と`sfz-performance-extra.*`、型サイズは`model-size-213.log`と`model-size-214.log`、ライブラリサイズは`updated-backend-sizes.json`に保存した。
+
+Releaseの実再生試験も5.41秒で成功し、`step4-release-runtime.log`へ保存した。最終の対象ビルドは警告なしで、工程4の公式PCM・発音・遅延・性能差の確認を完了した。

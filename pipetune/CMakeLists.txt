@@ -632,7 +632,7 @@ if(BUILD_TESTING)
   add_dependencies(pipetune_sfz_playback_driver ${PIPETUNE_DSP_BACKEND_TARGETS})
 
   add_executable(pipetune_sfz_runtime_tests test/sfz_runtime_test.cpp)
-  target_include_directories(pipetune_sfz_runtime_tests PRIVATE src)
+  target_include_directories(pipetune_sfz_runtime_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
   target_link_libraries(pipetune_sfz_runtime_tests PRIVATE pipetune_pipewire)
   target_compile_options(pipetune_sfz_runtime_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_dependencies(pipetune_sfz_runtime_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
