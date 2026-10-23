@@ -193,15 +193,15 @@ UIをブラウザ経由で試す場合はPlaywright MCPを使う。アニメー�
 
 ## 実装の最終完了条件
 
-- [ ] 指定のアプリコミットを参照し、外部ソース・vendorへの直接変更がない。
-- [ ] CLI・GTKが2.14.0を表示し、112カーネルのパラメータ・容量が実共有バックエンドと一致する。
-- [ ] SFZの生成波形、bank定義、文字コード、region条件、エンベロープ補正が上流比較と製品再生で一致する。
-- [ ] 新しい依存ファイルを監視し、キャッシュ再生成・取消・欠損復旧・失敗時の旧状態保持が成立する。
-- [ ] SFZの公式11 golden、サンプル選択、発音・release・reset、レート・ch選択、遅延補償が成功する。
-- [ ] 解析9種類の除外、更新モデル、Analogの6 golden、既存DSPの更新PCMと外部アセットに退行がない。
-- [ ] Debug/Release全体テスト、単独ビルド、GTK E2E、インストール、9配布構成を最終ソースで検証した。
-- [ ] Node.jsとffmpegコマンドなしで、冷キャッシュからSFZ・IR・Room EQを利用できる。
-- [ ] 日本語原本と翻訳、出典・著作権表示、性能差、未検証事項を記録し、工程ごとのコミットが揃っている。
+- [x] 指定のアプリコミットを参照し、外部ソース・vendorへの直接変更がない。
+- [x] CLI・GTKが2.14.0を表示し、112カーネルのパラメータ・容量が実共有バックエンドと一致する。
+- [x] SFZの生成波形、bank定義、文字コード、region条件、エンベロープ補正が上流比較と製品再生で一致する。
+- [x] 新しい依存ファイルを監視し、キャッシュ再生成・取消・欠損復旧・失敗時の旧状態保持が成立する。
+- [x] SFZの公式11 golden、サンプル選択、発音・release・reset、レート・ch選択、遅延補償が成功する。
+- [x] 解析9種類の除外、更新モデル、Analogの6 golden、既存DSPの更新PCMと外部アセットに退行がない。
+- [x] Debug/Release全体テスト、単独ビルド、GTK E2E、インストール、9配布構成を最終ソースで検証した。
+- [x] Node.jsとffmpegコマンドなしで、冷キャッシュからSFZ・IR・Room EQを利用できる。
+- [x] 日本語原本と翻訳、出典・著作権表示、性能差、未検証事項を記録し、工程ごとのコミットが揃っている。
 
 ## 計画作成時の確認結果
 
@@ -266,7 +266,7 @@ i686では変更のない上流Tube Simulatorのベクトル戻り値に`-Wpsabi
 
 候補の並び順とUnicodeの大小文字変換にはICUを使用する。公式文書と公開APIコメントを確認し、独立モジュールのリンク依存と`prereq.sh`へ追加した。ホストのICUは74.2、比較用Node.jsは78.3で、C・C.UTF-8・英語・日本語のロケールで今回の比較ケースが一致した。全9配布イメージにも開発パッケージがあることを確認した。配布版でのリンクと実再生は工程6で検証する。[ICU照合API](https://unicode-org.github.io/icu/userguide/collation/api.html)、[公開C API](https://unicode-org.github.io/icu-docs/apidoc/released/icu4c/ucol_8h.html)
 
-登録情報の`bankPaths`を検証し、選択したbankとSFZ・includeを既存の非同期読込へ接続した。Windows-1252のファイル名、初期defineを使うinclude、`$sample_dir`、冷／温キャッシュ、候補・一覧・include・サンプルの変更を実音声で確認した。候補全体ではなく選択したbankだけを原本容量へ算入し、容量超過を拒否する。欠損からの復旧と、音源ルート外を指すシンボリックリンクの拒否も成功した。
+登録情報の`bankPaths`を検証し、選択したbankとSFZ・includeを既存の非同期読込へ接続した。Windows-1252のファイル名、初期defineを使うinclude、`$sample_dir`、冷／温キャッシュ、候補・一覧・include・サンプルの変更を実音声で確認した。選択したbankだけを原本容量へ算入し、容量超過を拒否する。欠損からの復旧と、音源ルート外を指すシンボリックリンクの拒否も成功した。
 
 未選択候補と欠損候補をsnapshotと変更監視へ含め、候補の変更・出現で準備結果を無効にする。新しいライフサイクル試験は工程2のローダーでRED、工程3でGREENとなった。準備取消と読込失敗後も既存パイプラインが処理を継続し、失敗した依存ファイルも復旧監視へ残ることを確認した。
 
@@ -315,3 +315,37 @@ i686のTube Simulatorでは、ファイル内で完結するGNUベクトルの�
 Debian trixie armhfの依存算出警告は、実際のlibstdc++が公開する`__aeabi_atexit@CXXABI_ARM_1.3.3`が、インストール済みsymbols情報から欠けているためだった。公開シンボルと既存の版ノードを確認した場合だけ、一時的なdpkgのoverrideへ不足した1行を補う。生成には既存と同じ固定版funcityを使う。配布元のファイルは編集せず、既存overrideがあれば保護し、依存算出の成功・失敗時とも一時ファイルを削除する。実コンテナで警告の解消、他の依存条件の一致、失敗時の後始末を確認した。[dpkgの検索順](https://manpages.debian.org/trixie/dpkg-dev/dpkg-shlibdeps.1.en.html)、[Debianのsymbols原本](https://sources.debian.org/src/gcc-14/14.2.0-19/debian/libstdc%2B%2B.symbols/)
 
 これらの調査ログは`step6-warning-investigation/`へ保存した。製品のDSP演算条件と外部ソースは変更していない。
+
+最終ソースで最初に行った並列全体試験は、Debug 238件が1188.37秒ですべて成功した。Releaseは237件を632.21秒で実行し、音量復元のdaemon再起動試験が1件失敗した。同じ試験を反復すると5回目でも再現したため、接続グラフと送信開始条件を調べた。失敗時は公開入力の初期化中で、試験用ストリームから既定の物理出力へのリンクが有効になっていた。
+
+WirePlumber 0.4.17の標準`policy-node.lua`は、endpointの登録前にも動作し、`node.dont-fallback`を参照しない。試験が制御ソケットの開通だけで送信を始めていたため、この初期化区間へ入っていた。音量復元試験では公開入力へ接続した最初のPCMを検証する必要がある。そこで0.4の場合だけ、実ポリシーが公開入力を認識し、`Core.sync`で同期した通知を待つようにした。通知は入力の世代ごとに確認し、固定時間の待機は追加していない。PCMの期待値と未選択出力の検証は維持した。[標準ポリシー](https://github.com/PipeWire/wireplumber/blob/0.4.17/src/scripts/policy-node.lua)、[同期API](https://pipewire.pages.freedesktop.org/wireplumber/scripting/lua_api/lua_core_api.html#Core.sync)、[0.4.17のAPIコメント](https://github.com/PipeWire/wireplumber/blob/0.4.17/lib/wp/core.c#L897-L915)
+
+修正は`pipetune/test/multi-device-output.mjs`だけで、製品のポリシー変更案は撤回した。未変更の製品バイナリで20回連続成功し、音量ゼロの復元と通常daemonの試験も成功した。初回失敗・再現は`final-release-all.log`と`final-release-daemon-volume-repeat.log`、接続グラフと修正後の反復結果は`release-output-race/`に保存した。配布ソース`4f3968c`と試験修正`339330c`の差分がこのテストファイルだけであることを確認し、`final-matrix/source-manifest.json`へ記録した。
+
+armhfの最終ビルドには、GCC 7.1で引数渡しが変わったことを知らせる`note`が出た。対象は`std::span<AvailableOutput>`、vectorのiterator、GTKのinitializer_listなど、同じGCC 14でコンパイルして静的にリンクする既存の内部C++型である。外部公開C ABIや共有DSP境界には出ず、異なる呼出規約の混在もない。警告の抑制や演算条件の変更は追加していない。
+
+試験修正後はHEADを`339330c`に固定して両構成を再構成・再ビルドし、全体試験をやり直した。Debugは238件を1045.89秒、Releaseは237件を597.13秒ですべて成功した。単独ビルド、GTK E2E、音量復元、アセット準備292件の上流比較も含む。ビルドに警告はなく、実行ログは`final-debug-after-sync-all.log`と`final-release-after-sync-all.log`、ビルドログは対応する`after-sync-build.log`へ保存した。
+
+Ubuntu 24.04/26.04 arm64では、`dpkg-shlibdeps`がローダーのdiversionを各2件、計4件警告した。diversionは、パッケージのファイル配置を別の場所へ置き換えるdpkgの仕組みである。この環境のglibcは、`/lib/ld-linux-aarch64.so.1`を`/usr`配下へ移行するために使っており、既知の診断と一致する。算出したlibc6の依存条件は24.04で`>= 2.38`、26.04で`>= 2.43`となり、導入済みの2.39・2.43と整合した。実ローダーへのリンクとCLIのELF interpreterも一致し、配布側のインストール・起動検証が成功した。依存の欠落やローダーの不備はなく、製品変更や警告の抑制は追加していない。根拠は`step6-warning-investigation/ubuntu2404-arm64-diversion.log`と`ubuntu2604-arm64-diversion.log`に保存した。[glibc移行に伴う公式報告](https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1064840)、[dpkgのdiversion](https://wiki.debian.org/DpkgDiversions)
+
+最終配布は全9構成でビルド、同梱内容の検査、インストール、CLI・GTKの起動が成功した。必要なライブラリ、私有LGPL FFmpeg、ライセンスと対応ソースも既存の配布検証で確認した。配布物はPipeTune 2.13.12、EffeTune DSP 2.14.0である。ビルドの終了コードは0で、コンパイル・リンクの警告はなく、依存算出の診断は上記4件だった。
+
+各配布物をNode.js・ffmpegコマンドのない別のベースイメージへ導入した。登録したWindows-1252のSFZ・include・ARIA bank、生成noise、IR、Room EQを冷／温キャッシュから準備し、利用可能な各バックエンドで実音声を処理した。計200項目が成功し、冷／温でPCMが一致した。ホストのScalar基準との最大絶対誤差は7.481e-9未満で、各試験の許容誤差内だった。48 kHzでSFZは4320 frame、IR・Room EQは128 frameの遅延報告も一致した。
+
+| 配布先 | CPU | 実行したバックエンド | 検証数 | 最大PCM絶対誤差（概数） |
+| --- | --- | --- | --- | --- |
+| Debian trixie | x86_64 | Scalar、baseline、v3 | 24 | 1.862e-9 |
+| Debian trixie | i686 | Scalar、baseline、v3 | 24 | 7.480e-9 |
+| Debian trixie | arm64 | Scalar、baseline、SVE | 24 | 1.862e-9 |
+| Debian trixie | armv7l | Scalar、baseline | 16 | 1.862e-9 |
+| Debian trixie | riscv64 | Scalar、baseline | 16 | 1.614e-9 |
+| Ubuntu 24.04 | x86_64 | Scalar、baseline、v3 | 24 | 1.862e-9 |
+| Ubuntu 24.04 | arm64 | Scalar、baseline、SVE | 24 | 1.862e-9 |
+| Ubuntu 26.04 | x86_64 | Scalar、baseline、v3 | 24 | 1.862e-9 |
+| Ubuntu 26.04 | arm64 | Scalar、baseline、SVE | 24 | 1.862e-9 |
+
+x86-64-v4はビルドと同梱を確認したが、ホストCPUの要件を満たさないため実行していない。非x86の実行確認はQEMU上で行った。実機での非x86性能測定は行っていない。
+
+コマンド・ソース状態・試験結果は`final-matrix/source-manifest.json`、全構成のPCM誤差と配布物ハッシュは`final-matrix/matrix-results.json`と`final-matrix/packages.sha256`へ保存した。配布ログは`final-matrix/build.log`、導入検証は`final-matrix/results/`、後半5構成の進行ログは`final-matrix/validate-remaining.log`にある。製品ソースは`4f3968c`、最終全体試験はテストだけを修正した`339330c`であり、最後の追記は本計画の実績だけである。
+
+最終完了条件9項目を実績と照合し、すべて満たした。外部ソースに直接変更はなく、工程ごとの実装・修正・文書コミットを`feat/effetune-2.14.0`へまとめた。
