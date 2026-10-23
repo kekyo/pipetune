@@ -139,21 +139,19 @@ prepare_armhf_libstdcxx_symbols() {
 	grep -Eq '^ __aeabi_atexit@CXXABI_ARM_1[.]3[.]3[[:space:]]' "$installed_symbols" &&
 		return 0
 
-	symbol_version=$(
-		sed -n 's/^ CXXABI_ARM_1[.]3[.]3@CXXABI_ARM_1[.]3[.]3 \([^[:space:]]*\)$/\1/p' "$installed_symbols"
-	)
-	[ -n "$symbol_version" ] ||
-		fail 'Installed armhf libstdc++ symbols lack the CXXABI_ARM_1.3.3 version node'
-
 	candidate_override_path='/etc/dpkg/symbols/libstdc++6:armhf.symbols.armhf'
 	[ ! -e "$candidate_override_path" ] && [ ! -L "$candidate_override_path" ] ||
 		fail "Existing dpkg symbols override must be preserved: $candidate_override_path"
 	mkdir -p /etc/dpkg/symbols || fail 'Unable to create dpkg symbols directory'
 	symbols_override_temp=$(mktemp '/etc/dpkg/symbols/.libstdc++6-armhf.XXXXXX') ||
 		fail 'Unable to create temporary dpkg symbols file'
-	cp "$installed_symbols" "$symbols_override_temp" || fail 'Unable to copy installed libstdc++ symbols'
-	printf ' __aeabi_atexit@CXXABI_ARM_1.3.3 %s\n' "$symbol_version" >>"$symbols_override_temp" ||
-		fail 'Unable to append armhf libstdc++ symbol'
+	require_command npx
+	npx --yes --package=funcity-cli@1.5.0 --package=funcity@1.5.0 \
+		--package=commander@12.1.0 \
+		funcity --no-rc -D "input=$installed_symbols" \
+		-D "output=$symbols_override_temp" \
+		run -i scripts/armhf-libstdcxx-symbols.fc >/dev/null ||
+		fail 'Unable to prepare armhf libstdc++ symbols override'
 	ln "$symbols_override_temp" "$candidate_override_path" ||
 		fail "Unable to create dpkg symbols override: $candidate_override_path"
 	symbols_override_path=$candidate_override_path

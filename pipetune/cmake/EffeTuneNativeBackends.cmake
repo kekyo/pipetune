@@ -72,6 +72,23 @@ function(
   endif()
 endfunction()
 
+# The native Tube test exercises f64x2 arithmetic directly. Its i686 test
+# translation unit needs SSE2 for that path and matching scalar arithmetic.
+function(
+  pipetune_configure_effetune_tube_test_source
+  SOURCE_PATH
+  NATIVE_PROCESSOR)
+  if(NATIVE_PROCESSOR MATCHES "^(i[3-6]86|x86)$")
+    set_property(
+      SOURCE "${SOURCE_PATH}"
+      ${ARGN}
+      APPEND
+      PROPERTY COMPILE_OPTIONS
+               "$<$<COMPILE_LANG_AND_ID:CXX,GNU>:-msse2>"
+               "$<$<COMPILE_LANG_AND_ID:CXX,GNU>:-mfpmath=sse>")
+  endif()
+endfunction()
+
 # EffeTune accesses MXCSR directly on native x86. GCC's i686 baseline does not
 # enable those SSE instructions, so scope the required option to engine.cpp and
 # leave the scalar backend's floating-point and vectorization policy unchanged.

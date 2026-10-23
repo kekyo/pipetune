@@ -14,7 +14,7 @@ function(assert_native_processor SYSTEM_PROCESSOR POINTER_SIZE EXPECTED)
   endif()
 endfunction()
 
-function(assert_target_scopes_tube_psabi_option BUILD_DIRECTORY TARGET_PATH)
+function(assert_target_scopes_tube_psabi_option BUILD_DIRECTORY TARGET_PATH SOURCE_NAME)
   set(flags_path "${BUILD_DIRECTORY}/${TARGET_PATH}/flags.make")
   if(NOT EXISTS "${flags_path}")
     message(FATAL_ERROR "Missing generated target flags: ${flags_path}")
@@ -22,7 +22,7 @@ function(assert_target_scopes_tube_psabi_option BUILD_DIRECTORY TARGET_PATH)
   file(READ "${flags_path}" flags)
   string(
     REGEX MATCH
-    "tube_simulator/kernel\\.cpp\\.o_OPTIONS = [^\n]*-Wno-psabi"
+    "tube_simulator/${SOURCE_NAME}\\.cpp\\.o_OPTIONS = [^\n]*-Wno-psabi"
     tube_match
     "${flags}")
   if(NOT tube_match)
@@ -39,6 +39,23 @@ function(assert_target_scopes_tube_psabi_option BUILD_DIRECTORY TARGET_PATH)
     message(
       FATAL_ERROR
       "Expected ${TARGET_PATH} to retain the C++ warning policy")
+  endif()
+endfunction()
+
+function(assert_tube_test_uses_source_sse2 BUILD_DIRECTORY TARGET_PATH)
+  set(flags_path "${BUILD_DIRECTORY}/${TARGET_PATH}/flags.make")
+  file(READ "${flags_path}" flags)
+  string(
+    REGEX MATCH
+    "tube_simulator/native_test\\.cpp\\.o_OPTIONS = [^\n]*-msse2[^\n]*-mfpmath=sse"
+    source_match
+    "${flags}")
+  if(NOT source_match)
+    message(FATAL_ERROR "Expected ${TARGET_PATH} to use SSE2 for the Tube native test")
+  endif()
+  string(REGEX MATCH "(^|\n)CXX_FLAGS = [^\n]*-msse2" target_match "${flags}")
+  if(target_match)
+    message(FATAL_ERROR "Expected ${TARGET_PATH} to scope SSE2 to the test source")
   endif()
 endfunction()
 
@@ -112,10 +129,14 @@ endif()
 
 assert_target_scopes_tube_psabi_option(
   "${fixture_build}"
-  "effetune-dsp/CMakeFiles/effetune_dsp_core.dir")
+  "effetune-dsp/CMakeFiles/effetune_dsp_core.dir"
+  kernel)
 assert_target_uses_engine_mxcsr_option(
   "${fixture_build}"
   "effetune-dsp/CMakeFiles/effetune_dsp_core.dir")
+assert_tube_test_uses_source_sse2(
+  "${fixture_build}"
+  "effetune-dsp/CMakeFiles/effetune_dsp_tube_simulator_tests.dir")
 foreach(
   target_name
   IN ITEMS
@@ -124,7 +145,8 @@ foreach(
     pipetune_effetune_dsp_x86_64_v3_shared)
   assert_target_scopes_tube_psabi_option(
     "${fixture_build}"
-    "CMakeFiles/${target_name}.dir")
+    "CMakeFiles/${target_name}.dir"
+    kernel)
   assert_target_uses_engine_mxcsr_option(
     "${fixture_build}"
     "CMakeFiles/${target_name}.dir")

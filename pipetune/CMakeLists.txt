@@ -183,6 +183,12 @@ pipetune_configure_effetune_tube_source(
 pipetune_configure_effetune_tube_source(
   "${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/saturation/tube_simulator/kernel.cpp"
   "${PIPETUNE_NATIVE_PROCESSOR}")
+if(TARGET effetune_dsp_tube_simulator_tests)
+  pipetune_configure_effetune_tube_test_source(
+    "${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/saturation/tube_simulator/native_test.cpp"
+    "${PIPETUNE_NATIVE_PROCESSOR}"
+    TARGET_DIRECTORY effetune_dsp_tube_simulator_tests)
+endif()
 pipetune_add_effetune_native_backends(
   "${PIPETUNE_EFFETUNE_DIR}/dsp"
   "${CMAKE_BINARY_DIR}"
