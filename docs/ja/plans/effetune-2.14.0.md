@@ -15,7 +15,7 @@ PipeTuneが参照するEffeTuneを、公式アプリタグ`v2.13.0`から`v2.14.
 
 公式リモートの`v2.14.0`とローカルタグが同じコミットへ解決されることを確認した。追従基準はアプリタグとし、独立したDSPタグや最新版のmainへ置き換えない。[公式リリース](https://github.com/Frieve-A/effetune/releases/tag/v2.14.0)、[タグ間差分](https://github.com/Frieve-A/effetune/compare/v2.13.0...v2.14.0)
 
-本書は計画であり、実装結果ではない。今回行ったのはソース・公式文書・APIコメントの調査と、一時コピーに対するABIパッチの適用確認までである。製品コードとサブモジュール参照は変更しておらず、更新後のビルド・テストも未実施。
+計画作成時にはソース・公式文書・APIコメントを調べ、一時コピーに対するABIパッチの適用を確認した。実装開始後の結果は、末尾の工程別実績へ記録する。
 
 ## 対応範囲
 
@@ -177,10 +177,10 @@ DebugとReleaseの全体テストを実行する。初期段階で保留したSF
 既存MakefileとCTestを使う。全体テストには上流nativeテスト、パッカー比較、アセット準備のVitest、共有バックエンドのPCM比較、製品経路、単独ビルド・インストール、GTK E2Eを含める。
 
 ```sh
-make test TEST_BUILD_DIR=build/effetune-214-debug
+GDK_BACKEND=x11 make test TEST_BUILD_DIR=build/effetune-214-debug
 cmake -S . -B build/effetune-214-release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
 cmake --build build/effetune-214-release --parallel
-ctest --test-dir build/effetune-214-release --output-on-failure
+GDK_BACKEND=x11 ctest --test-dir build/effetune-214-release --output-on-failure
 DESTDIR="$PWD/artifacts/verification/effetune-2.14/final-install" cmake --install build/effetune-214-release --prefix /usr
 ./build_package_all.sh
 ```
@@ -207,4 +207,39 @@ UIをブラウザ経由で試す場合はPlaywright MCPを使う。アニメー�
 
 現行コードと過去の2.13.0対応実績、公式2.14.0リリース、タグ間差分を照合した。更新先コミットの一致とABIパッチのfuzzなし適用を確認した。SFZの独立C++準備処理までを対象とし、各工程の観測可能な成果物・検証・完了条件を定義した。
 
-実装の最終完了条件は全て未実施である。今回の文書追加はビルドへ影響しないため、製品ビルド・全体テストは計画作成時には実行しない。
+計画作成時には、実装の最終完了条件は全て未実施だった。文書追加はビルドへ影響しないため、製品ビルド・全体テストは計画作成時には実行していない。
+
+## 工程別実績
+
+### 0 基準状態
+
+`b089b70166dfc48aef057fb77adb117a159bc9ba`から`feat/effetune-2.14.0`を作成した。ホストはIntel Core i9-12900KS、GCC 13.3、CMake 3.28、Node.js 24.21。Scalar、x86-64 baseline、v3、v4を実行できる。メモリは約62 GiB、開始時の空きディスクは約700 GBで、全9構成のPodmanイメージを確認した。
+
+2.13.0のDebug全237テストを`build/effetune-214-debug`で実行した。初回は233件成功、GTKの4件が失敗し、1643.08秒を要した。Waylandセッションの環境を継承したため、Xvfbを使う試験でもGTKがWaylandへ接続していた。`GDK_BACKEND=x11`を指定して失敗した4件を再実行し、全て成功した。以後の全体試験にもこの指定を使う。基準ログは`baseline-debug.log`、環境を揃えた再確認は`baseline-gtk-x11-recheck.log`に保存した。GTK E2Eは初回でも成功している。
+
+Release測定には、44.1 kHz・4410フレームのステレオWAVをキー83でループ再生する合成音源を使った。入力は1 kHz、2ch、256フレーム単位。約1秒の準備運転後、256ブロックの処理呼出しだけを測った。CPU 8へ固定し、レートごとに独立プロセスで冷・温キャッシュを各3回測定した。初期化と処理時間は中央値、RSSはプロセス全体の最大値である。
+
+| レート | キャッシュ | 初期化ms | 処理ns/frame | 最大RSS KiB | 遅延frame |
+| --- | --- | --- | --- | --- | --- |
+| 48 kHz | 冷 | 13.910 | 835.03 | 19056 | 3840 |
+| 48 kHz | 温 | 12.495 | 830.21 | 18096 | 3840 |
+| 96 kHz | 冷 | 21.141 | 525.46 | 20000 | 7680 |
+| 96 kHz | 温 | 19.744 | 523.16 | 18828 | 7680 |
+| 384 kHz | 冷 | 65.086 | 296.78 | 24804 | 30720 |
+| 384 kHz | 温 | 63.809 | 300.36 | 23628 | 30720 |
+
+測定時にはDebugのCTestが動いていたため、無負荷時の絶対性能を示すものではない。条件・各回の値・集計を`sfz-performance-baseline-213.conditions.json`、同名の`.json`と`.summary.json`へ保存した。再測定には同じ検証ディレクトリーの`run-sfz-performance.mjs`を使う。
+
+### 1 参照更新と最小実行
+
+2.14.0の版・パラメータ契約と、19 floatのSFZパラメータを実共有バックエンドへ渡すテストを追加した。2.13.0では旧版・旧契約・新パラメータの拒否で失敗し、REDを確認した。結果は`step1-red/result.log`に保存した。
+
+独立作業ツリーでサブモジュール参照を公式コミット`01c96f00f8e93595aefab96de4bc4d210e61c53b`へ進めた。外部ソースを編集せず、既存ABIパッチとモデル生成を含むDebugビルドが警告なしで成功した。CLI・GTKともEffeTune DSP 2.14.0を表示した。検証用のリンク作業ツリーではPipeTune自身の版が0.0.1となるため、配布用の版は通常の作業ツリーで確認する。
+
+スモーク、共有バックエンドのgolden、SFZ製品再生、パッカー比較、上流ABI、Analog・Note・SFZ native、追加されたNoteモデルfixtureの9テストが成功した。所要時間は137.19秒で、ログは`step1-targeted.log`に残した。Scalarとホストで利用可能なSIMDを使って112カーネルの読込と有限PCMを確認している。
+
+i686・armv7lの配布パッケージをビルドし、別コンテナへ導入してScalarバックエンドをロードした。ABI 1、112カーネル、SFZの新ハッシュ・19 float・1 GiB容量、既存アセット転送シンボル、ゲイン適用後のPCM、Tube Simulatorの有限かつ有音のPCMを確認した。暫定パッケージ・SHA-256・ソース状態・導入試験は`step1-matrix/`へ保存している。モデル生成と64bit atomicの追加によるビルド・ロード失敗はなかった。
+
+i686では変更のない上流Tube Simulatorのベクトル戻り値に`-Wpsabi`が2件出た。armv7lでは`dpkg-shlibdeps`が`__aeabi_atexit@CXXABI_ARM_1.3.3`の解決警告を1件出した。後者はリンク先libstdc++の同じ版のシンボルを確認し、導入後の実行も成功している。診断の根拠は`step1-matrix/results.md`に残した。浮動小数点条件を変えずに警告へ対処し、最終配布工程で再検証する。[dpkg-shlibdepsの警告仕様](https://manpages.debian.org/trixie/dpkg-dev/dpkg-shlibdeps.1.en.html)
+
+工程0は更新前との比較基準を記録し、工程1は版・カーネル契約・最小PCM・32bitロードの完了条件を満たした。最終配布物、全体回帰、残るSFZ準備処理は後続工程で検証する。
