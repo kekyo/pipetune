@@ -196,28 +196,38 @@ variable is unset. A preset contains references, so copying the preset alone
 does not copy its instrument, IR, or measurement. Register the original data
 in EffeTune desktop on the same account before loading the preset in PipeTune.
 Browser-only libraries are not available to PipeTune.
+An ARIA bank definition is an XML file that specifies variables and sample
+locations for an SFZ instrument.
 
 | Effect | Required saved data |
 | --- | --- |
-| SFZ Note Player | `sfz-references.json`, its registered SFZ root, included definitions, and referenced sample files |
+| SFZ Note Player | `sfz-references.json`, its registered SFZ root, any ARIA bank definitions in use, included definitions, and referenced sample files |
 | IR Reverb | `ir-library/index.json` and the single original or L/R original pair named in that index |
 | Room EQ | `measurement-backups/<id>.json`, including the selected channel response and, for Correction, every measurement point's IR |
 
-The layouts follow the upstream [SFZ registration](https://github.com/Frieve-A/effetune/blob/v2.13.0/electron/sfz-library-ipc.js),
+The layouts follow the upstream [SFZ registration](https://github.com/Frieve-A/effetune/blob/v2.14.0/electron/sfz-library-ipc.js),
 [IR library](https://github.com/Frieve-A/effetune/blob/v2.13.0/electron/ir-library-ipc.js),
 and [measurement backups](https://github.com/Frieve-A/effetune/blob/v2.13.0/electron/measurement-backup-ipc.cjs).
 PipeTune reads these originals without modifying EffeTune's library. Initial
 preparation, playback, and cache regeneration use native code; neither Node.js,
 the ffmpeg command, nor a running EffeTune/Electron process is required.
 
-SFZ follows the [subset supported by EffeTune 2.13.0](https://github.com/Frieve-A/effetune/blob/v2.13.0/docs/dsp/effects/sfz-note-player/index.md),
+SFZ follows [EffeTune 2.14.0 preparation](https://github.com/Frieve-A/effetune/blob/v2.14.0/js/sfz/service.js),
 including includes, inherited regions, loops, and envelopes. WAV, AIFF, and FLAC
-mono/stereo samples are supported. The bank budget defaults to 256 MiB; select
+mono/stereo samples are supported. When the registered instrument library has
+an ARIA bank definition, PipeTune applies definitions such as `$sample_dir` to
+the SFZ. The SFZ file, its includes, and ARIA XML use valid UTF-8 first and
+fall back to Windows-1252 for invalid bytes. `*sine`, `*saw`, `*square`,
+`*triangle`, `*tri`, `*noise`, and `*silence`
+generate samples without an external audio file. Sample Shift (`ss`) selects a
+sample up to six semitones away while preserving the output pitch.
+The bank budget defaults to 256 MiB; select
 64, 128, 256, 512, or 1024 MiB in settings, with `--sfz-max-size MIB` for direct
 runs or `PIPETUNE_SFZ_MAX_SIZE_MIB` in the daemon configuration. When necessary,
 the upstream selection rule reduces layers while preserving the playable keys.
-Skipped regions, missing samples in a usable partial instrument, and reduced
-banks are reported on the active DSP. An instrument that cannot retain all
+Skipped regions, missing samples in a usable partial instrument, reduced
+banks, and adjustments to out-of-range envelope times are reported on the
+active DSP. An instrument that cannot retain all
 playable keys within the budget fails loading. Sample paths must stay within
 the registered root.
 
@@ -244,7 +254,8 @@ See the [upstream Room EQ settings](https://github.com/Frieve-A/effetune/blob/v2
 
 PipeTune caches prepared assets under `$XDG_CACHE_HOME/pipetune/assets-v1`, or
 `~/.cache/pipetune/assets-v1`. The cache is rebuildable, capped at 2 GiB, and never
-replaces the originals. Original changes and missing-file restoration trigger
+replaces the originals. Changes to originals or ARIA bank definitions and
+missing-file restoration trigger
 automatic reload. Damaged cache entries are regenerated; a cache write failure
 does not prevent playback of a successfully prepared asset. A failed SFZ/IR/Room
 reload keeps the previous audio pipeline and reports the error. An unassigned

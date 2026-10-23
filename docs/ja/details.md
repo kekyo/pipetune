@@ -175,26 +175,34 @@ SFZ Note Player、IR Reverb、Room EQは、デスクトップ版EffeTuneが登�
 プリセットに保存されるのは参照なので、プリセットだけをコピーしても音源・IR・測定は移動しません。
 同じユーザーのデスクトップ版EffeTuneに原本を登録してからPipeTuneで読み込んでください。
 ブラウザー内にしかないライブラリは利用できません。
+ARIAのバンク定義は、SFZ音源で使う変数やサンプルの配置を指定するXMLファイルです。
 
 | DSP | 必要な保存データ |
 | --- | --- |
-| SFZ Note Player | `sfz-references.json`、登録されたSFZルート、include先の定義と参照サンプル |
+| SFZ Note Player | `sfz-references.json`、登録されたSFZルート、利用するARIAバンク定義、include先の定義と参照サンプル |
 | IR Reverb | `ir-library/index.json`と、そのindexが参照する単一原音またはL/R原音ペア |
 | Room EQ | `measurement-backups/<id>.json`内の対象chの応答。Correctionには全測定点のIRも必要 |
 
-保存形式は上流の[SFZ登録](https://github.com/Frieve-A/effetune/blob/v2.13.0/electron/sfz-library-ipc.js)、
+保存形式は上流の[SFZ登録](https://github.com/Frieve-A/effetune/blob/v2.14.0/electron/sfz-library-ipc.js)、
 [IRライブラリ](https://github.com/Frieve-A/effetune/blob/v2.13.0/electron/ir-library-ipc.js)、
 [測定バックアップ](https://github.com/Frieve-A/effetune/blob/v2.13.0/electron/measurement-backup-ipc.cjs)に従います。
 PipeTuneは原本を読み取るだけで、EffeTuneのライブラリを書き換えません。
 初回準備・再生・キャッシュ再生成は全てネイティブ処理です。Node.jsやffmpegコマンド、
 EffeTune / Electronの起動は必要ありません。
 
-SFZは[EffeTune 2.13.0が対応する範囲](https://github.com/Frieve-A/effetune/blob/v2.13.0/docs/dsp/effects/sfz-note-player/index.md)の
-include、領域継承、ループ、エンベロープ等を扱います。WAV・AIFF・FLACのmono / stereoサンプルに対応します。
+SFZは[EffeTune 2.14.0の準備処理](https://github.com/Frieve-A/effetune/blob/v2.14.0/js/sfz/service.js)に従い、
+include、領域継承、ループ、エンベロープ等を扱います。対応する外部サンプルは、
+WAV・AIFF・FLACのmono / stereoです。
+音源ライブラリにARIAのバンク定義がある場合は、`$sample_dir`などの定義をSFZへ適用します。
+SFZ本体、include先、ARIAのXMLはUTF-8を優先して読み、不正なバイト列にはWindows-1252を適用します。
+サンプルに`*sine`、`*saw`、`*square`、`*triangle`、`*tri`、`*noise`、`*silence`を指定した
+生成波形は、外部の音声ファイルなしで再生できます。
+Sample Shift（`ss`）は選ぶサンプルを最大6半音ずらします。出力する音高は同じです。
 バンク予算は既定256 MiBで、設定画面から64 / 128 / 256 / 512 / 1024 MiBを選べます。
 直接実行では`--sfz-max-size MIB`、daemon設定では`PIPETUNE_SFZ_MAX_SIZE_MIB`を使います。
 必要に応じて上流と同じ規則で再生可能な全キーを残しながらレイヤーを減らします。
-除外領域、使用可能な部分音源での欠損サンプル、縮小バンクは稼働中DSPの診断へ表示します。
+除外領域、使用可能な部分音源での欠損サンプル、縮小バンク、範囲外のエンベロープ時間の補正は
+稼働中DSPの診断へ表示します。
 全キーを保持する最小構成でも予算に入らない音源は読込エラーになります。
 参照サンプルは登録されたルート内に置いてください。
 
@@ -216,7 +224,7 @@ Gain・手動Delayも反映し、手動Delayは自動レイテンシー補償へ
 
 準備結果は`$XDG_CACHE_HOME/pipetune/assets-v1`、XDG未指定時は`~/.cache/pipetune/assets-v1`へ保存します。
 キャッシュは再生成できるデータで、合計2 GiBを上限に管理します。原本の代わりにはなりません。
-原本の変更や欠損ファイルの復元は自動再読込され、破損キャッシュは再生成します。
+原本やARIAバンク定義の変更、欠損ファイルの復元は自動再読込され、破損キャッシュは再生成します。
 キャッシュに書けなくても準備に成功した音声処理は利用できます。
 SFZ / IR / Room EQの再読込に失敗した場合は、それまでの音声処理を保持してエラーを表示します。
 未設定DSPは診断付きで有効のままです。無効ノード・無効Sectionでは外部ファイルを読みません。

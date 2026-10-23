@@ -27,7 +27,7 @@ This separation preserves one known compatibility path while allowing
 PipeTune to select the highest usable optimized implementation or a
 user-pinned tier. One pipeline always uses exactly one implementation.
 
-The private backend source set follows the EffeTune application tag v2.13.0,
+The private backend source set follows the EffeTune application tag v2.14.0,
 including the graph core, `spectrum_tap.cpp`, and generated graph-capacity
 contract required by its engine.
 PipeTune's loader surface remains the routed pipeline API and now includes
@@ -51,8 +51,13 @@ applying the patch.
 Every private backend links the upstream `effetune_tree_models` target. It embeds
 three Rhythm Analyzer models, `rhythm_d_low`, `rhythm_d_mid`, and `rhythm_d_high`.
 Their input data totals 124,120 bytes; this is not the size of the complete shared
-library. Note Spectrogram's HarmNet weights are compiled from an upstream
-[header](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/plugins/analyzer/note_spectrogram/harmnet_weights.h).
+library. Note Spectrogram's expanded HarmNet weights and new Timbre weights
+are compiled from upstream
+[HarmNet](https://github.com/Frieve-A/effetune/blob/v2.14.0/dsp/plugins/analyzer/note_spectrogram/harmnet_weights.h)
+and [Timbre](https://github.com/Frieve-A/effetune/blob/v2.14.0/dsp/plugins/analyzer/note_spectrogram/timbre_weights.h)
+headers. The analyzer still has no preset processing node in PipeTune. When a
+pipeline uses SFZ Note Player, the upstream engine allocates its analysis state
+during initialization.
 The
 [upstream model build](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/plugins/analyzer/tree_models/models.cmake)
 requires Python 3.10 or later to validate the data and generate the embedding.
@@ -102,6 +107,23 @@ i386 package target, already requires SSE2. See the
 [Debian i386 requirements](https://www.debian.org/releases/trixie/release-notes/issues.html#i386-reduced-support)
 and [GCC floating-point precision options](https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html).
 
+The Tube Simulator's file-local f64x2 helper triggers GCC's
+[psABI diagnostic](https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html)
+when compiled for the i386 scalar baseline. PipeTune suppresses that diagnostic
+only for the Tube kernel source; the backend's other sources keep `-Werror`.
+The upstream native Tube test includes the kernel in its own source file and
+executes f64x2 arithmetic, so that test source uses `-msse2 -mfpmath=sse` on
+i386. Its scalar/vector audio parity is checked by running the native test.
+
+In the tested Debian trixie armhf image, the installed libstdc++ exports
+`__aeabi_atexit@CXXABI_ARM_1.3.3`, but its installed symbols file omits that
+entry. During dependency calculation, PipeTune copies the installed metadata
+to a temporary [dpkg symbols override](https://manpages.debian.org/trixie/dpkg-dev/dpkg-shlibdeps.1.en.html)
+and adds that one entry using the version from the existing
+[Debian CXXABI_ARM node](https://sources.debian.org/src/gcc-14/14.2.0-19/debian/libstdc%2B%2B.symbols/).
+It preserves an existing override and removes its own file after calculation.
+The installed package metadata and other dependency calculations stay intact.
+
 The vendored PFFFT has x86, Arm NEON, and PowerPC AltiVec float
 implementations, but no RISC-V V implementation. The riscv64 SIMD library
 therefore relies on GCC vectorization of PFFFT's portable code and the other
@@ -142,7 +164,7 @@ and validates:
 - each kernel's parameter-byte capacity; and
 - every external-asset capacity.
 
-The pinned EffeTune 2.13.0 contract contains 112 kernels. A backend from an
+The pinned EffeTune 2.14.0 contract contains 112 kernels. A backend from an
 earlier release is rejected even though the numeric ABI version remains one,
 because its required symbols and complete catalog do not match.
 
@@ -167,10 +189,12 @@ The same shared-library tests cover all nine Attack Tonal Balance, ten Bass
 Extender, three Bass Management, and 104 changed saturation, Limiter, and MP3
 goldens. Bass Management's Linear golden uses a synthetic IR; separate tests
 compare generated coefficients and PCM with the official JavaScript design.
-The Tonal Balance EQ, Rhythm Analyzer, and Analog Meter goldens add 6, 6,
-and 5 cases. Tonal and Rhythm also have preset tests that run beyond initial
-measurement, check actual correction/clicks, routing and reset, and compare
-silence suspension with uninterrupted processing. Official tolerances are
+The Tonal Balance EQ, Rhythm Analyzer, and Analog Meter goldens include 6, 6,
+and 6 cases. The sixth Analog Meter case follows EffeTune 2.14.0. Another 13
+updated audio-reference cases cover AM Radio Simulator, Vinyl Artifacts,
+Phaser, and Tube Simulator. Tonal and Rhythm also have preset tests that run
+beyond initial measurement. They check actual correction/clicks, routing and
+reset, and compare silence suspension with uninterrupted processing. Official tolerances are
 retained for every case.
 
 EffeTune 2.13.0 adds coverage of all 17 Adaptive Prediction and 11 SFZ Note

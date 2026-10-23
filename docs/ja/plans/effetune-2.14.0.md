@@ -305,3 +305,13 @@ Releaseの実再生試験も5.41秒で成功し、`step4-release-runtime.log`へ
 初回の全体試験はDebug 238件を1637.22秒、Release 237件を902.11秒で実行した。それぞれ単独ビルド試験のworkspace版比較だけが失敗した。工程4のコミット後にCMakeを再構成していなかったため、workspace実行ファイルはPipeTune 2.13.7、git由来の期待値は2.13.8だった。独立ビルド・EffeTune 2.14.0表示・共有バックエンドの音声比較は同じ試験内で成功しており、DSPや製品コードの修正は必要ない。原因と初回ログは`step5-debug-all.log`、`step5-release-all.log`へ残した。
 
 CMakeを明示的に再構成し、警告なしで再ビルドした。失敗した単独ビルド試験はDebug 241.59秒、Release 250.53秒で成功し、`step5-*-component-recheck.log`へ保存した。これで工程5の未解決の失敗はなくなった。工程6の配布修正を統合した後も、コミットを固定して再構成し、最終ソースの全体試験を行う。
+
+### 工程6の実績
+
+日本語の利用者文書を原本として、対応版、ARIAのバンク定義、文字コード、生成波形、Sample Shift、補正診断、変更監視を日英へ反映した。内部文書にはICU依存と新しいモデルを記載し、著作権表示へ更新したSFZモジュールの出典を追加した。変更していない移植元の2.13.0表記は維持した。日本語文書はyomiyasuで確認している。
+
+i686のTube Simulatorでは、ファイル内で完結するGNUベクトルの呼出規約にpsABI警告が出ていた。外部ABIへベクトル型が出ないことをソースとシンボルで確かめ、従来のターゲット全体の警告緩和を削除し、このソースだけへ限定した。削除確認テストでREDとGREENを確認し、修正コミット後に一時テストを削除した。上流のnative試験は同じソースをincludeしてベクトル経路を実行するため、試験ソースに限り`-msse2 -mfpmath=sse`を指定した。実i686コンテナでScalarバックエンドのロードと112カーネル、Tube native試験が警告なしで成功している。[GCCのpsABI警告](https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html)
+
+Debian trixie armhfの依存算出警告は、実際のlibstdc++が公開する`__aeabi_atexit@CXXABI_ARM_1.3.3`が、インストール済みsymbols情報から欠けているためだった。公開シンボルと既存の版ノードを確認した場合だけ、一時的なdpkgのoverrideへ不足した1行を補う。生成には既存と同じ固定版funcityを使う。配布元のファイルは編集せず、既存overrideがあれば保護し、依存算出の成功・失敗時とも一時ファイルを削除する。実コンテナで警告の解消、他の依存条件の一致、失敗時の後始末を確認した。[dpkgの検索順](https://manpages.debian.org/trixie/dpkg-dev/dpkg-shlibdeps.1.en.html)、[Debianのsymbols原本](https://sources.debian.org/src/gcc-14/14.2.0-19/debian/libstdc%2B%2B.symbols/)
+
+これらの調査ログは`step6-warning-investigation/`へ保存した。製品のDSP演算条件と外部ソースは変更していない。
