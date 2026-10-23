@@ -1,0 +1,210 @@
+# EffeTune 2.14.0対応計画
+
+## 目的と調査時点
+
+PipeTuneが参照するEffeTuneを、公式アプリタグ`v2.13.0`から`v2.14.0`へ更新する。2.14.0で保存したプリセットと登録済みSFZ音源を読み込み、既存の音声処理・外部アセット・複数出力を利用できる状態を目指す。
+
+2026-10-23時点の`develop`、PipeTune HEAD `7a0a4534dfb7edc6db4b65fe03cc7a740f9b9005`を調査基準とした。調査開始時の作業ツリーはクリーンだった。参照元と更新先は次のとおり。
+
+| 項目 | 現行 | 更新先 |
+| --- | --- | --- |
+| 公式アプリタグ | `v2.13.0` | `v2.14.0` |
+| コミット | `6791afdfc6f4e6c913b9f48c8189a44e29a09bde` | `01c96f00f8e93595aefab96de4bc4d210e61c53b` |
+| 同梱DSPバインディングの版 | 0.13.0 | 0.14.0 |
+| 登録カーネル数 | 112 | 112 |
+
+公式リモートの`v2.14.0`とローカルタグが同じコミットへ解決されることを確認した。追従基準はアプリタグとし、独立したDSPタグや最新版のmainへ置き換えない。[公式リリース](https://github.com/Frieve-A/effetune/releases/tag/v2.14.0)、[タグ間差分](https://github.com/Frieve-A/effetune/compare/v2.13.0...v2.14.0)
+
+本書は計画であり、実装結果ではない。今回行ったのはソース・公式文書・APIコメントの調査と、一時コピーに対するABIパッチの適用確認までである。製品コードとサブモジュール参照は変更しておらず、更新後のビルド・テストも未実施。
+
+## 対応範囲
+
+今回の中心はSFZ Note Playerの追従である。PipeTuneにはSFZの読込・変換をC++で実装した部分があるため、上流DSPの参照更新に加えて準備処理も更新する。音源ファイルから再生用データを作る処理を、本書では「アセット準備」と呼ぶ。
+
+| 対象 | 上流2.14.0の変更 | PipeTuneで行うこと |
+| --- | --- | --- |
+| SFZの準備 | 生成波形、ARIA bank定義、文字コード、条件付きregion、エンベロープ補正を拡張 | 独立C++準備処理と登録音源ローダーへ反映 |
+| SFZの音声処理 | 音符検出・発音開始・サンプル選択・試聴パラメータ・遅延を変更 | 生成カタログ、実音声、遅延補償、再構築を検証 |
+| Analog Meter | Customモードと検出器・針応答の設定を追加 | パッカーと共有バックエンドを検証し、製品では解析除外を維持 |
+| Note Spectrogram | 音色解析と音符イベントモデルを追加・更新 | モデルをビルドし、SFZからの利用を検証。製品では解析除外を維持 |
+| Oscilloscope | 表示時間の上限を0.1秒から10秒へ拡張 | パッカーと上流テストで検証し、製品では解析除外を維持 |
+| Engine | SFZバンクを事前準備して差し替えるC++ APIを追加 | 現在の構築済みパイプライン交換方式を継続し、既存アセットAPIを検証 |
+| 既存DSP | 一部の公式参照PCMを更新 | 更新された音声データも回帰検証対象に含める |
+
+解析専用DSPの除外は9種類を維持する。Rhythm Analyzerはクリック音を出せるため、引き続き通常のDSPとして実行する。IR Reverb、Room EQ、Crosstalk Cancellation、パラメータから生成するFIRの機能も回帰対象に含める。
+
+EffeTuneアプリのLyrics、VisualizerのEdge Fade、MCP操作、画面ツアー、音源選択・試聴UIは移植対象に含めない。DSPパラメータ編集UI、旧DSP互換モード、PipeTune自身の版変更も追加しない。SFZバンクだけを稼働中Engine内で差し替える新方式は、今回の更新に必要ないため採用しない。
+
+## 現行コードへの影響
+
+### カタログ・パラメータ・共有バックエンド
+
+`pipetune/CMakeLists.txt`は上流`package.json`からEffeTuneの版を取得する。カタログは`pipetune/tools/generate-dsp-catalog.mjs`が登録一覧とパラメータ仕様から生成する。新しいパラメータもこの経路を使い、手書きのパッカーを追加しない。
+
+| 型 | float数の変更 | 2.14.0のハッシュ | 主な追加・変更 |
+| --- | --- | --- | --- |
+| `SFZNotePlayerPlugin` | 16 → 19 | `0x378e7f2b` | `ss`、`pm`、`pv` |
+| `AnalogMeterPlugin` | 4 → 7 | `0xad3d461c` | Custom、`de`、`nr`、`os` |
+| `NoteSpectrogramPlugin` | 2 → 3 | `0xafc5ff07` | `te`。既定パック値は`[28,91,0]` |
+| `OscilloscopePlugin` | 配置変更なし | 既存値を維持 | `dt`の上限が10秒 |
+
+SFZのslot 0容量は1 GiB、畳み込みアセットは32 MiBのままである。`registry.inc`、公開C ABIヘッダー、`core/abi.cpp`、tree modelsの生成処理、DSP vendorにはタグ間の変更がない。上流CMakeの変更はNote Spectrogramのモデルfixtureテスト追加で、製品コアのソース一覧と既存の浮動小数点コンパイル条件には変更がない。[パラメータ仕様](https://github.com/Frieve-A/effetune/tree/v2.14.0/dsp/plugins)、[上流CMake](https://github.com/Frieve-A/effetune/blob/v2.14.0/dsp/CMakeLists.txt)
+
+`pipetune/cmake/EffeTuneNativeBackends.cmake`の独自共有バックエンドでは、既存の`-ffp-contract=off`、i686向け演算条件、ARMモデル変換を継続する。新しいモデルヘッダーの依存が反映されることと、上流追加テストのCTest登録を確認する。Engineには64bit atomicを使う識別子が追加されているため、32bit配布先でのコンパイル・リンク・ロードも早い段階で実施する。追加リンク依存の要否は実ビルドで判断する。
+
+ABIパッチ`pipetune/patches/effetune/abi-engine-access.patch`は、2.14.0の`core/abi.cpp`を一時ディレクトリーへコピーして`patch --dry-run --fuzz=0`で適用できた。実装時には通常のビルド経路でも確認する。`deps/effetune`の作業ファイルやvendorは編集せず、公式コミットへの参照だけを更新する。
+
+固定値を持つ`pipetune/test/effetune_213_test.cpp`と`effetune_backend_artifact_test.cpp`を2.14.0の契約へ更新する。前者は現行版のスモークテストとして改名し、Adaptiveなど過去に追加した機能の回帰検証は残す。`parameter-packer-parity.mjs`のNote Spectrogram既定値、Analogのモード一覧、SFZの新パラメータ、Oscilloscopeの境界値も更新する。
+
+### SFZの文字コード・bank定義・依存ファイル
+
+現行の`pipetune/src/sfz_asset_loader.cpp`は、登録情報から`id`・`path`・`root`を読み、SFZとincludeをそのまま文字列へ変換する。2.14.0の登録情報は`bankPaths`と`importedAt`を追加する。`bankPaths`は音源ルートを基準とする`.bank.xml`の相対パス一覧である。省略時は空一覧として扱い、件数・拡張子・ルート内参照を検証する。`importedAt`は表示用情報として扱い、音声生成に利用しない。[登録形式](https://github.com/Frieve-A/effetune/blob/v2.14.0/electron/sfz-library-ipc.js)
+
+上流の`js/sfz/source.js`に従い、SFZ・include・bank XMLを厳格なUTF-8として読んだ後、不正な場合はWindows-1252で復号する。現在の`sfz/text.cpp`にあるJavaScriptの文字列長・並び順を合わせる処理と、ファイルバイト列の復号は役割を分ける。
+
+ARIA bankは、SFZと音源の配置や変数を記したXMLファイルである。`AriaBank`、`AriaElement`、`Define`を読み、対象SFZに最も近い候補を上流と同じ順序で選ぶ。同じ階層に候補が一つだけある場合の扱い、パス比較、XML属性の文字参照、`$sample_dir`の`$Banks/`から`Samples`への変換も含める。初期definesをSFZパーサーへ渡し、SFZ内のdefine・include展開へ接続する。一般的なXML処理系へ仕様を拡張しない。[文字コードとbank選択](https://github.com/Frieve-A/effetune/blob/v2.14.0/js/sfz/source.js)、[準備サービス](https://github.com/Frieve-A/effetune/blob/v2.14.0/js/sfz/service.js)
+
+ファイル読込・閉域解決・変更監視はホスト側に残す。メモリ上の文字列からbankを選び、definesを取り出す処理は`pipetune/asset-preparation/sfz/`へ置き、独立ドライバーで検証できるようにする。新たな読込も既存のcardioによる制御側の非同期処理へ接続する。
+
+選択したbankの内容と選択に影響する登録一覧・読込済み候補を、依存ファイルとキャッシュの検証へ含める。選択されていない候補の変更で選択結果が変わる場合も見落とさない。読込中の変更は既存のsnapshot再検証で検出する。パスやシンボリックリンクによる音源ルート外の参照は、既存の`asset_file.cpp`の制約を維持する。
+
+### SFZの生成波形・region・診断
+
+regionは、鍵盤範囲や強さに応じて再生するサンプルと設定の組である。2.14.0では`sample=*sine`など、実ファイルを使わないregionを利用できる。
+
+`*sine`、`*saw`、`*square`、`*triangle`、`*tri`、`*noise`、`*silence`を上流と同じ決定的PCMとして生成する。通常波形は2048フレーム、noiseは8192フレームで48 kHzとなる。生成波形は実ファイルの存在確認やFFmpegデコードへ渡さず、メタデータ取得・容量選別・PCMプール生成へ接続する。上流どおり基準キー60と連続ループを設定し、noiseの乱数列とfloat32への丸めも比較する。[生成波形](https://github.com/Frieve-A/effetune/blob/v2.14.0/js/sfz/generators.js)
+
+パーサーでは`sw_lolast`・`sw_hilast`を初期キースイッチと照合する。`sustain_sw`・`sostenuto_sw`の分類、条件不成立regionの除外診断も上流へ揃える。従来の`unsupported-regions`警告を生成する分岐は不要になるため整理する。
+
+`ampeg_attack`・`ampeg_hold`・`ampeg_decay`・`ampeg_release`は、範囲外なら0〜100秒へ補正し、非有限値なら既定値へ戻す。補正のためにregionを捨てず、`envelope-times-adjusted`の警告と件数を返す。現在の警告説明は未知コードをループ点修復として扱うため、新しいコードを明示的に説明する。準備処理の診断、メモリ計上、CLI・GTKの表示まで確認する。[パーサー](https://github.com/Frieve-A/effetune/blob/v2.14.0/js/sfz/parser.js)、[保存バンクの警告](https://github.com/Frieve-A/effetune/blob/v2.14.0/js/sfz/bank.js)
+
+再生用バンクを作る上流`js/sfz/asset.js`には変更がない。ETA1/table-v2の形式と容量・索引の契約を維持する。SFZキャッシュは新しいアプリコミットと準備処理版へ進め、2.13の準備結果を流用しない。IR・Room EQの準備アルゴリズムと形式には今回の差分がないため、個別の出典版とキャッシュ識別子を機械的に書き換えない。
+
+### SFZの発音・遅延・ライフサイクル
+
+`ss`は-6〜6のサンプル選択オフセットで、既定値は0となる。選ぶサンプルのキーをずらすが、出力の音高は保つ。`pm`は試聴MIDI番号で既定-1、`pv`は試聴の強さで既定100。上流アプリは`ss`を保存し、`pm`・`pv`を音声処理へ一時的に渡す。通常の保存プリセットでは試聴を開始しない。PipeTuneもパラメータ契約は受け入れ、試聴UIや保存時の独自注入は追加しない。[アプリ側パラメータ](https://github.com/Frieve-A/effetune/blob/v2.14.0/plugins/others/sfz_note_player.js)、[DSP仕様](https://github.com/Frieve-A/effetune/blob/v2.14.0/dsp/plugins/others/sfz_note_player/params.json)
+
+新しい発音処理は音の立ち上がり検出と再発音規則を使う。公式11件の参照PCMに加え、連続音・反復音・離鍵・release・resetを実プリセットから検証する。`ss`の検証には、隣接キーで波形の異なる音源を用意する。サンプルが変わることと、出力音高が保たれることを分けて確認する。[発音規則](https://github.com/Frieve-A/effetune/blob/v2.14.0/dsp/plugins/others/sfz_note_player/onset_rule.h)、[カーネル](https://github.com/Frieve-A/effetune/blob/v2.14.0/dsp/plugins/others/sfz_note_player/kernel.cpp)
+
+報告遅延には、解析遅延と負の`tm`による追加遅延に加えて、解析hopの半分が入る。hopは解析を更新するフレーム間隔で、48 kHzでは960フレームとなり、半分は480フレームである。旧版の値に固定せず、上流APIが返す遅延と実際のdryインパルス位置を照合する。`tm=-100/0/100`、選択ペア、未選択ch、別バス、最終出力間の整列を確認する。
+
+`pipetune/src/dsp_pipeline.cpp`は制御側でアセットを転送し、無音処理でACTIVEになるまで準備してresetした後、パイプラインを公開する。2.14でもこの手順を継続する。新C++ APIは任意の拡張であり、公式文書も既存C ABIとアセットAPIの継続を明記している。`effetune_backend_asset_bridge.cpp`のbegin/copy/commit経路を保ち、準備途中のバンクを音声処理へ公開しない。[公式のネイティブSFZ更新契約](https://github.com/Frieve-A/effetune/blob/v2.14.0/dsp/README.md#native-sfz-bank-updates)、[所有権とスレッドのコメント](https://github.com/Frieve-A/effetune/blob/v2.14.0/dsp/core/engine.h)
+
+レート・バックエンド・プリセット変更時はパイプラインを再構築する。原本変更、準備取消、読込失敗では既存の旧パイプライン保持を検証する。無音時休止オンではresetして休止し、オフではreleaseを含む音声処理を継続する。音声コールバックへファイル読込や準備・解放処理を追加しない。
+
+### 解析DSP・既存DSP・モデル
+
+Analog MeterのCustom、Note Spectrogramの`te`、Oscilloscopeの長時間表示を含むプリセットは、既存どおり警告なしの`ignored`となる。加工DSPとの混在、無効Section、別バス、96個を超える解析ノードでも、PCM・遅延・有効DSP数に影響しないことを確認する。
+
+配布する共有バックエンド自体はこれらのDSPを含むため、製品で除外する場合もパラメータと上流nativeテストを検証する。Analog Meterの公式goldenは5件から6件へ更新する。Note Spectrogramのモデルfixtureテストも全体テストへ含める。Note解析はSFZ内でも使われるため、解析除外を理由にモデルの検証を省略しない。
+
+上流参照PCMにはSFZのほか、AM Radio Simulator、Vinyl Artifacts、Phaser、Tube Simulatorの更新がある。共有バックエンドの既存goldenランナーを拡張し、これらの更新ケースを取りこぼさない。JSONの参照ハッシュだけの更新と音声データ自体の更新を区別する。対象タグのPCMと許容誤差をそのまま使い、合格のためのgolden再生成や許容誤差緩和は行わない。
+
+## 段階的な実施計画
+
+実装は基準の`develop`から作業ブランチを作って進める。各工程は、ビルドと対象テストを実行し、CLIまたは既存テストドライバーで成果を観測できる単位でコミットする。mainへのマージは行わない。
+
+コード修正は、対象の挙動を示すテストでREDを確認してから実装し、GREENを確認する。上流参照更新だけで成立する回帰検証には、失敗を作るための変更を加えない。既存テストの期待値変更は、上流仕様の変更と根拠を確認してから行う。工程途中の対象テスト成功を、全体成功として記録しない。
+
+### 0 現行の基準を記録する
+
+現行2.13.0で全体テストを実行する。利用可能なISA、ビルド依存、コンテナ、ディスク・メモリを確認し、SFZの初期化時間・報告遅延・処理負荷・RSSと配布バックエンドのサイズを記録する。測定はReleaseで48/96/384 kHzを代表条件とし、ビルドと同時に測らない。
+
+完了条件は、既存不具合と更新後の失敗を比較できる基準が残ること。環境不足は必要なパッケージと導入方法を案内し、未実施項目を成功扱いしない。記録は次の実装コミットへまとめる。
+
+### 1 2.14.0の最小実行を成立させる
+
+2.14.0のパラメータを実共有ライブラリへ渡すスモークテストを追加し、現行版でREDを確認する。サブモジュールを指定コミットへ進め、版・ハッシュ・float数の固定値とパッカー比較を更新する。共有バックエンド、モデル、ABIパッチを通常のビルド経路で検証する。
+
+既存のAdaptiveプリセットと単純な登録済みSFZ音源を使い、CLIと実共有バックエンドから音声を処理する。Scalarとホストで実行可能なSIMDに加え、armv7l・i686でビルドとロードを確認する。新しいSFZ構文の追従は次工程で行い、この段階では全SFZ適合テストの成功を完了条件にしない。
+
+完了条件は、CLI・GTKの取得する版が2.14.0となり、112カーネルの契約が一致し、最小プリセットから有限PCMを得られること。追加のビルド警告は原因を調べて解消する。
+
+コミットは`feat: update EffeTune integration to 2.14.0`。
+
+### 2 SFZの生成波形とregion解釈を完成させる
+
+既存の`sfz-parser`・`sfz-selection`・`sfz-bank`適合テストに、生成波形、初期キースイッチの範囲、エンベロープ補正を追加する。2.14.0のJS出力と現在のC++出力の違いでREDを確認し、独立C++準備処理とホストの生成波形経路を更新する。
+
+実ファイルを持たない音源から冷キャッシュ・温キャッシュの両方でPCMを出す。通常ファイルと生成波形の混在、容量選別、noiseの再現性、silenceの有限ゼロ出力、新しい警告件数も検証する。
+
+完了条件は、同一入力のパース結果・選択結果・バンク・音声が上流契約に一致し、Node.jsなしの製品経路で生成波形を再生できること。旧`unsupported-regions`生成機能を削除する際は、削除確認の一時テストでRED、削除後GREENとコミット、その後に一時テストを削除する。通常の結果比較テストは維持する。
+
+コミットは`feat: support EffeTune 2.14 SFZ generators and region rules`。一時テストの整理は独立した`chore:`コミットにする。
+
+### 3 SFZのbank定義と文字コードを完成させる
+
+Windows-1252のSFZ・include・XML、複数階層のbank候補、definesの上書き、`$sample_dir`を使う登録音源でREDを確認する。登録情報、メモリ入力の解析、依存ファイル監視を接続する。追加の外部APIを使う場合は、公式文書とAPIコメントを確認する。
+
+空キャッシュから実音源を再生し、bank内容・一覧・include・サンプルを変えた後の再生成を検証する。破損キャッシュ、欠損復旧、準備中の原本変更、取消、音源ルート外の参照も既存のテスト基盤で確認する。
+
+完了条件は、上流と同じbankとdefinesを選び、文字コードを正しく扱い、入力変更を見落とさず再生結果へ反映すること。失敗時には旧パイプラインを保持し、EffeTuneの原本へ書き込まない。
+
+コミットは`feat: support EffeTune SFZ bank definitions and text decoding`。
+
+### 4 SFZの発音と遅延補償を検証する
+
+公式11 goldenを実共有バックエンドで比較し、`ss`、`pm`、`pv`の既定値・境界値と音声への効果を確認する。通常プリセット、音高を保つサンプル選択、反復音、release、dry/wetの混合を検証する。試聴パラメータはバックエンドの試験へ含め、通常プリセットには注入しない。
+
+`sfz_runtime_test.cpp`を拡張し、44.1/48/96/192/384 kHz、1/2/16ch、All・最後のペア・単一ch、端数ブロックを分担して検証する。報告遅延、dryインパルス、別バスと複数出力の整列、reset、レート・バックエンド変更、無音時休止を含める。学習や検出の時間は処理フレーム数で進める。
+
+完了条件は、公式許容誤差内で一致し、登録済み音源の発音・再発音・releaseと全出力の遅延整列が成立すること。Releaseの同条件測定で2.13との差を記録し、増加が大きい場合はモデル・準備・定常処理のどこで増えたか説明する。新たな製品不具合は再現テストと根本修正を`fix:`コミットにまとめる。
+
+コミットは`feat: validate EffeTune 2.14 SFZ playback and latency`。
+
+### 5 解析除外と既存機能を回帰検証する
+
+Analog Customの6件目のgolden、Noteモデルfixture、Oscilloscopeの10秒設定と解析9種類の除外を検証する。更新された既存DSPの参照PCMを共有バックエンドの対象へ追加する。Adaptive、Cassette、Rhythm、IR、Room EQ、Crosstalk、生成FIR、複数出力、再読込時の状態表示も確認する。
+
+DebugとReleaseの全体テストを実行する。初期段階で保留したSFZ準備処理の適合テストを含め、全ての変更を統合した状態で検証する。
+
+完了条件は、既存機能に退行がなく、更新された参照PCMと全体テストが成功すること。初期のREDから残る未解決の失敗がないことも確認する。
+
+コミットは`feat: verify EffeTune 2.14 regression coverage`。
+
+### 6 利用者文書と配布物を仕上げる
+
+`README_ja.md`と`docs/ja/details.md`を原本として対応版とSFZの利用条件を更新し、対応する英語文書へ反映する。`pipetune/README.md`、既存内部文書の移植対応表、著作権表示は、変更した部分の出典を2.14.0へ進める。過去の計画・実績や変更していない移植コードの出典は残す。一般ドキュメントから本計画へのリンクは追加しない。
+
+単独ビルド、ステージング先へのインストール、GTK E2E、現行9配布構成を検証する。配布環境ではNode.jsとffmpegコマンドに依存せず、空キャッシュからSFZ・IR・Room EQを準備して音声処理する。私有LGPL FFmpeg、必要なライブラリ・ライセンス・対応ソースの同梱も既存検証で確認する。
+
+完了条件は、配布物のCLI・GTK・共有バックエンドが2.14.0として動き、対応ISAとアセット準備を確認できること。最終ソースに対する全体テストを完了し、以下の最終完了条件と結果を照合する。ビルドへ影響しない文書だけを最後に直した場合は再ビルド不要。
+
+文書は`doc: document EffeTune 2.14 support`、配布側の修正が必要なら独立した`fix:`または`chore:`コミットにする。
+
+## 検証の入口と記録
+
+既存MakefileとCTestを使う。全体テストには上流nativeテスト、パッカー比較、アセット準備のVitest、共有バックエンドのPCM比較、製品経路、単独ビルド・インストール、GTK E2Eを含める。
+
+```sh
+make test TEST_BUILD_DIR=build/effetune-214-debug
+cmake -S . -B build/effetune-214-release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build/effetune-214-release --parallel
+ctest --test-dir build/effetune-214-release --output-on-failure
+DESTDIR="$PWD/artifacts/verification/effetune-2.14/final-install" cmake --install build/effetune-214-release --prefix /usr
+./build_package_all.sh
+```
+
+配布対象は`build_package.sh`にあるDebian trixieのx86_64・i686・arm64・armv7l・riscv64、Ubuntu 24.04/26.04のx86_64・arm64の9構成とする。各CPUで実行可能なScalar/SIMDを検証し、実行できないISAを成功扱いしない。エミュレーションの所要時間を実機性能と混同せず、必要なタイムアウトを確保する。
+
+UIをブラウザ経由で試す場合はPlaywright MCPを使う。アニメーションなど時間軸の問題が出た場合は動画で検証し、画像マスターを変える場合は目視で確認する。新たなスクリプトはNode.jsを使い、ビルド時テキスト処理は既存のfuncityへ揃える。
+
+実行コマンド、対象コミット、環境、ログ、PCM誤差、性能・メモリ、配布物ハッシュは`artifacts/verification/effetune-2.14/`へ保存し、工程ごとの結果を本書へ追記する。計画外の問題が見つかったら前提を見直し、場当たり的な修正を重ねない。計画とテストの要求が矛盾する場合は、どちらを採用するか確認してから進める。
+
+## 実装の最終完了条件
+
+- [ ] 指定のアプリコミットを参照し、外部ソース・vendorへの直接変更がない。
+- [ ] CLI・GTKが2.14.0を表示し、112カーネルのパラメータ・容量が実共有バックエンドと一致する。
+- [ ] SFZの生成波形、bank定義、文字コード、region条件、エンベロープ補正が上流比較と製品再生で一致する。
+- [ ] 新しい依存ファイルを監視し、キャッシュ再生成・取消・欠損復旧・失敗時の旧状態保持が成立する。
+- [ ] SFZの公式11 golden、サンプル選択、発音・release・reset、レート・ch選択、遅延補償が成功する。
+- [ ] 解析9種類の除外、更新モデル、Analogの6 golden、既存DSPの更新PCMと外部アセットに退行がない。
+- [ ] Debug/Release全体テスト、単独ビルド、GTK E2E、インストール、9配布構成を最終ソースで検証した。
+- [ ] Node.jsとffmpegコマンドなしで、冷キャッシュからSFZ・IR・Room EQを利用できる。
+- [ ] 日本語原本と翻訳、出典・著作権表示、性能差、未検証事項を記録し、工程ごとのコミットが揃っている。
+
+## 計画作成時の確認結果
+
+現行コードと過去の2.13.0対応実績、公式2.14.0リリース、タグ間差分を照合した。更新先コミットの一致とABIパッチのfuzzなし適用を確認した。SFZの独立C++準備処理までを対象とし、各工程の観測可能な成果物・検証・完了条件を定義した。
+
+実装の最終完了条件は全て未実施である。今回の文書追加はビルドへ影響しないため、製品ビルド・全体テストは計画作成時には実行しない。
