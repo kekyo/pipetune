@@ -2,8 +2,8 @@
 
 ## Boundary and replacement policy
 
-PipeTune follows the EffeTune application tag v2.13.0, commit
-`6791afdfc6f4e6c913b9f48c8189a44e29a09bde`. The C++20 libraries in
+PipeTune follows the EffeTune application tag v2.14.0, commit
+`01c96f00f8e93595aefab96de4bc4d210e61c53b`. The C++20 libraries in
 `asset-preparation/` adapt the JavaScript preparation needed before the upstream
 native kernels can run. They accept values, source text, and decoded PCM in
 memory, and return prepared data, source requests, and diagnostics. They do not
@@ -23,12 +23,18 @@ at the boundary must remain useful when the implementation is replaced.
 
 ## Upstream port map
 
-All source links below are pinned to the application tag. The adapted modules
-retain the upstream MIT attribution and `LICENSE.effetune` files.
+Source links below identify the application tag from which each module's
+behavior was adapted. SFZ parsing, source handling, and generation follow
+v2.14.0; the unchanged SFZ helpers, IR, and Room EQ adaptations retain their
+v2.13.0 origin. The adapted modules retain the upstream MIT attribution and
+`LICENSE.effetune` files.
 
 | PipeTune module | Upstream contract | Responsibility |
 | --- | --- | --- |
-| `sfz/parser.cpp`, `sfz/region.h` | [parser.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/parser.js) | Path normalization, include/define expansion, inheritance, opcode normalization, supported regions, and partial-region diagnostics |
+| `sfz/parser.cpp`, `sfz/parser.h` | [parser.js](https://github.com/Frieve-A/effetune/blob/v2.14.0/js/sfz/parser.js) | Path normalization, include/define expansion, inheritance, opcode normalization, conditional regions, envelopes, and diagnostics |
+| `sfz/region.h` | [parser.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/parser.js) | Prepared region values and source PCM layout |
+| `sfz/source.cpp` | [source.js](https://github.com/Frieve-A/effetune/blob/v2.14.0/js/sfz/source.js) | UTF-8-first/Windows-1252 decoding, ARIA bank selection, initial definitions, and consulted bank dependencies |
+| `sfz/generators.cpp` | [generators.js](https://github.com/Frieve-A/effetune/blob/v2.14.0/js/sfz/generators.js) | Deterministic generated oscillator, noise, and silence samples |
 | `sfz/text.cpp` | [parser.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/parser.js), [asset.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/asset.js) | UTF-8/UTF-16 conversion and JavaScript string ordering/length semantics |
 | `sfz/audio_header.cpp` | [bank.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/bank.js), [audio-header-metadata.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/ir-library/audio-header-metadata.js) | Bounded WAV/AIFF/FLAC header estimates for selection; unknown lengths stay unknown |
 | `sfz/selection.cpp` | [service.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/service.js) | Capacity selection preserving key coverage, velocity preference, and warning aggregation |
@@ -43,6 +49,14 @@ retain the upstream MIT attribution and `LICENSE.effetune` files.
 | `room-eq/group_delay.cpp` | [group-delay-analysis.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/room-eq/group-delay-analysis.js) | Excess/group-delay observations and reliability |
 | `room-eq/phase.cpp`, `phase_spectrum.cpp`, `phase_timing.cpp` | [design-core.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/room-eq/design-core.js) | Direct-sound phase, reference-point/consensus alignment, timing, and energy guards |
 | `room-eq/low_phase.cpp`, `room-eq/reverb.cpp` | [design-core.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/room-eq/design-core.js) | Low-frequency extension, reverberant phase correction, and effective/reduced/omitted diagnostics |
+
+SFZ bank-path ordering and Unicode case conversion use ICU's
+[collation API](https://unicode-org.github.io/icu/userguide/collation/api.html)
+to match the application's
+[`localeCompare` selection](https://github.com/Frieve-A/effetune/blob/v2.14.0/js/sfz/source.js).
+The build needs `icu-i18n`, and packaged binaries link the matching system ICU
+library. Node.js is not needed at runtime. Generated SFZ samples need no source
+audio file; file-backed samples still use the decoder described below.
 
 Browser audio decoding is deliberately outside this map. The host's
 `asset_audio_decoder.cpp` wraps public FFmpeg APIs for bounded memory input and
@@ -63,6 +77,10 @@ root. Before publishing a candidate, the host verifies the snapshots and the
 registration mapping again. Missing dependencies remain watchable so their
 creation can retry the load. Source paths include the full registered root;
 equal content in different roots must not reuse stale dependency identities.
+All examined ARIA bank candidates remain snapshot dependencies; only the selected
+bank's bytes count toward the source-byte admission limit. A change to an
+unselected candidate can therefore trigger another selection without charging
+that candidate as a retained bank.
 
 Preparation uses the existing control dispatcher, with no additional worker or
 audio-thread I/O. Requests wait on a cancellable asynchronous mutex. Completed

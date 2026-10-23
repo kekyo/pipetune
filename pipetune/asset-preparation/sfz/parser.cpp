@@ -5,10 +5,11 @@
  */
 
 /*
- * Derived from EffeTune v2.13.0 js/sfz/parser.js.
+ * Derived from EffeTune v2.14.0 js/sfz/parser.js.
  * Copyright (c) 2025-2026 Yoshiyuki Kobayashi. See LICENSE.effetune.
  */
 #include "parser.h"
+#include "generators.h"
 #include "text.h"
 #include <algorithm>
 #include <array>
@@ -319,7 +320,8 @@ static bool supported(std::string_view key) {
       std::ranges::find(numericOpcodes, key, &NumericOpcode::name) != numericOpcodes.end();
 }
 
-static SfzRegion normalizeRegion(const RawRegion &raw, std::string sample, std::uint32_t seqGroup) {
+static SfzRegion normalizeRegion(const RawRegion &raw, std::string sample, std::uint32_t seqGroup,
+    std::vector<std::string> &adjustedEnvelopes) {
   auto region = SfzRegion{};
   region.sample = std::move(sample);
   region.seqGroup = seqGroup;
@@ -331,6 +333,12 @@ static SfzRegion normalizeRegion(const RawRegion &raw, std::string sample, std::
       constexpr auto modes = std::array{"no_loop", "one_shot", "loop_continuous", "loop_sustain"};
       const auto mode = std::ranges::find(modes, text);
       value = mode == modes.end() ? NAN : static_cast<double>(mode - modes.begin());
+    }
+    const auto envelopeTime = key == "ampeg_attack" || key == "ampeg_hold" ||
+        key == "ampeg_decay" || key == "ampeg_release";
+    if (envelopeTime && (!std::isfinite(value) || value < 0 || value > 100)) {
+      adjustedEnvelopes.push_back(region.sample + ": " + key + '=' + text);
+      value = std::isfinite(value) ? std::clamp(value, 0.0, 100.0) : SfzRegion{}.*(found->member);
     }
     if (!std::isfinite(value)) throw SfzError("prepare", "Invalid SFZ opcode " + key + '.');
     if ((key == "end" || key == "loop_end" || (found != numericOpcodes.end() && found->integer)) &&
@@ -355,8 +363,7 @@ static SfzRegion normalizeRegion(const RawRegion &raw, std::string sample, std::
 static bool conditionalOpcode(std::string_view key, std::string_view value) {
   if (key == "trigger") return value != "attack";
   static const auto condition = std::regex("^(on_)?(lo|hi)(cc|hdcc|realcc|oncc|bend|chanaft|polyaft|prog|chan|timer|bpm)");
-  return std::regex_search(key.begin(), key.end(), condition) || key.starts_with("sw_") ||
-      key == "sustain_sw" || key == "sostenuto_sw";
+  return std::regex_search(key.begin(), key.end(), condition) || key.starts_with("sw_");
 }
 
 static std::optional<std::uint32_t> ccIndex(std::string_view key, std::string_view prefix) {
@@ -403,10 +410,15 @@ static void sortUnique(std::vector<std::string> &values) {
 
 ParsedSfz parseSfz(std::string_view selectedPath, std::span<const SfzDocument> documents,
     std::optional<std::span<const std::string>> availableSamples, std::uint64_t maximumBytes,
-    std::uint64_t maximumWorkingBytes) {
+    std::uint64_t maximumWorkingBytes,
+    std::span<const std::pair<std::string, std::string>> initialDefines) {
   if (maximumBytes == 0 || maximumBytes > kMaximumSfzBytes) throw SfzError("too-large", "Invalid SFZ size limit.");
   const auto selected = normalizeSfzPath(selectedPath, {});
   auto expansion = Expansion{{}, {}, {}, {}, maximumBytes, maximumWorkingBytes, maximumWorkingBytes};
+  for (const auto &[key, value] : initialDefines) {
+    chargeWorking(expansion, sizeof(std::pair<std::string, std::string>) + key.size() + value.size(), 8);
+    expansion.defines.insert_or_assign(key, value);
+  }
   for (const auto &document : documents) {
     chargeWorking(expansion, document.path.size() + 256, 4);
     expansion.documents.try_emplace(document.path, &document);
@@ -475,39 +487,46 @@ ParsedSfz parseSfz(std::string_view selectedPath, std::span<const SfzDocument> d
     marker = next;
   }
   finish();
-  auto invalid = std::uint32_t{0}, unsupported = std::uint32_t{0};
+  auto invalid = std::uint32_t{0};
   auto inventory = std::unordered_set<std::string_view>{};
   if (availableSamples) for (const auto &path : *availableSamples) inventory.insert(path);
   for (const auto &item : pending) {
     try {
       auto excluded = std::vector<std::string>{};
-      auto unsupportedCondition = false;
       for (const auto &[key, value] : item.raw) {
         if (key == "sw_default" || key == "sw_lokey" || key == "sw_hikey" || key == "sw_label") continue;
         const auto cc = ccIndex(key, key.starts_with("lo") ? "locc" : "hicc");
         auto filtered = false;
         if (key == "sw_last") filtered = !initialSwitch || midi(value) != *initialSwitch;
+        else if (key == "sw_lolast" || key == "sw_hilast") {
+          const auto bound = midi(value);
+          if (!std::isfinite(bound) || std::trunc(bound) != bound || bound < 0 || bound > 127)
+            throw SfzError("prepare", "Invalid SFZ opcode " + key + '.');
+          filtered = !initialSwitch || (key == "sw_lolast" ? *initialSwitch < bound : *initialSwitch > bound);
+        }
         else if (cc) {
           const auto bound = number(value);
           if (!std::isfinite(bound) || std::trunc(bound) != bound || bound < 0 || bound > 127)
             throw SfzError("prepare", "Invalid SFZ opcode " + key + '.');
           filtered = key.starts_with("lo") ? initialCC[*cc] < bound : initialCC[*cc] > bound;
         } else filtered = conditionalOpcode(key, value);
-        if (filtered) {
-          excluded.push_back(key);
-          unsupportedCondition |= key == "sw_last" ? !initialSwitch.has_value() : !cc.has_value();
-        }
+        if (filtered) excluded.push_back(key);
       }
       if (!excluded.empty()) {
         result.diagnostics.excludedOpcodes.insert(result.diagnostics.excludedOpcodes.end(), excluded.begin(), excluded.end());
-        if (unsupportedCondition) ++unsupported;
         continue;
       }
       const auto source = rawSample(item.raw);
       if (source.empty()) continue;
-      const auto sample = normalizeSfzPath(item.defaultPath + unquoted(source), directoryOf(selected));
-      auto region = normalizeRegion(item.raw, sample, item.seqGroup);
-      if (availableSamples && !inventory.contains(sample)) result.diagnostics.missingSamples.push_back(sample);
+      const auto generator = isSfzGenerator(source);
+      const auto sample = generator ? source : normalizeSfzPath(item.defaultPath + unquoted(source), directoryOf(selected));
+      auto region = normalizeRegion(item.raw, sample, item.seqGroup, result.diagnostics.adjustedEnvelopes);
+      if (generator) {
+        // Generated cycles use the fixed middle-C reference and sustain until release.
+        region.pitch_keycenter = 60;
+        region.loop_mode = 2;
+      }
+      if (!generator && availableSamples && !inventory.contains(sample)) result.diagnostics.missingSamples.push_back(sample);
       else result.regions.push_back(std::move(region));
     } catch (const SfzError &error) {
       if (error.code != "prepare") throw;
@@ -520,10 +539,12 @@ ParsedSfz parseSfz(std::string_view selectedPath, std::span<const SfzDocument> d
   sortUnique(result.diagnostics.excludedOpcodes);
   sortUnique(result.diagnostics.missingSamples);
   sortUnique(result.diagnostics.invalidRegions);
+  sortUnique(result.diagnostics.adjustedEnvelopes);
   if (invalid) result.warnings.push_back({"invalid-regions", invalid});
   if (!result.diagnostics.missingSamples.empty()) result.warnings.push_back({"missing-samples",
       static_cast<std::uint32_t>(result.diagnostics.missingSamples.size())});
-  if (unsupported) result.warnings.push_back({"unsupported-regions", unsupported});
+  if (!result.diagnostics.adjustedEnvelopes.empty()) result.warnings.push_back({"envelope-times-adjusted",
+      static_cast<std::uint32_t>(result.diagnostics.adjustedEnvelopes.size())});
   return result;
 }
 

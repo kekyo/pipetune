@@ -199,6 +199,102 @@ static cardio::promise<bool> testAsyncSfzPreparation(const std::filesystem::path
   co_return check(changed, "an omitted source changed after SFZ selection must prevent publication");
 }
 
+static cardio::promise<bool> testAsyncSfzBankCandidates(const std::filesystem::path &directory) {
+  const auto root = directory / "bank-candidate-instrument";
+  const auto data = directory / "bank-candidate-data";
+  std::filesystem::create_directories(root);
+  std::filesystem::create_directories(data);
+  const auto definition = root / "main.sfz";
+  const auto unrelated = root / "a.bank.xml";
+  const auto missing = root / "b.bank.xml";
+  const auto selected = root / "z.bank.xml";
+  const auto registry = data / "sfz-references.json";
+  const auto preset = directory / "bank-candidate.effetune_preset";
+  const auto id = std::string("fedcba9876543210fedcba98");
+  std::ofstream(definition) << "<region> sample=$wave key=83 amp_veltrack=0";
+  std::ofstream(unrelated) << "<Unrelated/>";
+  std::ofstream(selected) << "<AriaBank><AriaElement path=\"main.sfz\"/>"
+      "<Define name=\"$wave\" value=\"*sine\"/></AriaBank>";
+  std::ofstream(registry) << "[{\"id\":\"" << id << "\",\"name\":\"Bank candidate\",\"root\":\"" <<
+      root.string() << "\",\"path\":\"" << definition.string() <<
+      "\",\"bankPaths\":[\"a.bank.xml\",\"b.bank.xml\",\"z.bank.xml\"]}]";
+  std::ofstream(preset) << "{\"pipeline\":[{\"name\":\"SFZ Note Player\",\"parameters\":{\"sf\":\"" <<
+      id << "\"}}]}";
+  const auto json = "{\"sf\":\"" + id + "\"}";
+  const auto document = std::unique_ptr<yyjson_doc, decltype(&yyjson_doc_free)>(
+      yyjson_read(json.data(), json.size(), 0), yyjson_doc_free);
+  auto *parameters = yyjson_doc_get_root(document.get());
+  const auto cache = pipetune::AssetCacheOptions{};
+  const auto prepare = [&]() {
+    return pipetune::loadSfzAssetAsync(data, parameters, 1024 * 1024, cache, {},
+        pipetune::kDefaultAssetMemoryBytes);
+  };
+  const auto first = std::move(co_await prepare());
+  if (!check(first.prepared && first.error.empty(),
+      "an ARIA bank define must prepare the registered SFZ")) co_return false;
+  const auto snapshotFor = [](const pipetune::SfzAssetLoadResult &result, const std::filesystem::path &path) {
+    return std::ranges::find(result.snapshots, path, &pipetune::AssetFileSnapshot::path);
+  };
+  const auto unrelatedSnapshot = snapshotFor(first, unrelated);
+  const auto missingSnapshot = snapshotFor(first, missing);
+  const auto selectedSnapshot = snapshotFor(first, selected);
+  if (!check(unrelatedSnapshot != first.snapshots.end() && !unrelatedSnapshot->missing &&
+      missingSnapshot != first.snapshots.end() && missingSnapshot->missing &&
+      selectedSnapshot != first.snapshots.end() && !selectedSnapshot->missing &&
+      std::ranges::find(first.files, unrelated) != first.files.end() &&
+      std::ranges::find(first.files, missing) != first.files.end() &&
+      std::ranges::find(first.files, selected) != first.files.end(),
+      "all consulted bank candidates must be snapshotted and watched")) co_return false;
+  co_await pipetune::verifyAssetSnapshots(first.snapshots, {});
+  std::ofstream(unrelated) << "<StillUnrelated/>";
+  auto changed = false;
+  try { co_await pipetune::verifyAssetSnapshots(first.snapshots, {}); }
+  catch (const std::runtime_error &) { changed = true; }
+  if (!check(changed, "changing an unselected bank must invalidate a prepared candidate")) co_return false;
+  const auto second = std::move(co_await prepare());
+  if (!check(second.prepared && !second.cacheHit && second.prepared != first.prepared,
+      "changing an unselected bank must prepare a new bank identity")) co_return false;
+  std::ofstream(missing) << "<Unrelated/>";
+  changed = false;
+  try { co_await pipetune::verifyAssetSnapshots(second.snapshots, {}); }
+  catch (const std::runtime_error &) { changed = true; }
+  if (!check(changed, "appearance of a missing bank candidate must invalidate preparation")) co_return false;
+  const auto third = std::move(co_await prepare());
+  if (!check(third.prepared && !third.cacheHit && third.prepared != second.prepared,
+      "appearance of a consulted bank must prepare a new bank identity")) co_return false;
+
+  const auto backend = pipetune::loadDspBackend(pipetune::DspBackendKind::scalar);
+  const auto context = pipetune::PipelineLoadContext{directory / "measurements", data};
+  auto loaded = std::move(co_await pipetune::loadDspPipelineAsync(
+      preset, {48000, 2, 128}, backend.backend, context, {}));
+  if (!check(loaded.pipeline && std::ranges::find(loaded.pipeline->dependencyFiles(), unrelated) !=
+      loaded.pipeline->dependencyFiles().end() &&
+      std::ranges::find(loaded.pipeline->dependencyFiles(), missing) !=
+      loaded.pipeline->dependencyFiles().end() &&
+      std::ranges::find(loaded.pipeline->dependencyFiles(), selected) !=
+      loaded.pipeline->dependencyFiles().end(),
+      "a published pipeline must watch every consulted bank candidate")) co_return false;
+  auto canceledSource = cardio::cancellation_source{};
+  auto pending = pipetune::loadDspPipelineAsync(preset, {48000, 2, 128}, backend.backend,
+      context, canceledSource.get_cancellation());
+  canceledSource.cancel();
+  auto canceled = false;
+  try { static_cast<void>(co_await pending); }
+  catch (const cardio::canceled_exception &) { canceled = true; }
+  if (!check(canceled, "canceling an SFZ bank preparation must prevent publication")) co_return false;
+  std::filesystem::remove(selected);
+  std::filesystem::create_directory(selected);
+  const auto failed = std::move(co_await pipetune::loadDspPipelineAsync(
+      preset, {48000, 2, 128}, backend.backend, context, {}));
+  auto audio = std::vector<float>(256);
+  co_return check(!failed.pipeline && !failed.error.empty() &&
+      std::ranges::find(failed.dependencyFiles, selected) != failed.dependencyFiles.end(),
+      "a failed bank read must retain the failed candidate for recovery monitoring") &&
+      check(loaded.pipeline->process(audio, 2, 128, 0) == pipetune::ProcessStatus::ok &&
+            loaded.pipeline->activePluginCount() == 1,
+            "a canceled or failed bank replacement must leave the published pipeline usable");
+}
+
 static cardio::promise<bool> testAsyncRoomPreparation(const std::filesystem::path &directory) {
   const auto measurements = directory / "measurements";
   std::filesystem::create_directories(measurements);
@@ -363,6 +459,7 @@ static cardio::promise<void> testAsyncPreparation(cardio::dispatcher_group_glib 
   correct = check(changed, "a completed asset must not publish after an earlier source snapshot changes") && correct;
   std::ofstream(source, std::ios::binary).write(reinterpret_cast<const char *>(original.data()), original.size());
   correct = co_await testAsyncSfzPreparation(directory) && correct;
+  correct = co_await testAsyncSfzBankCandidates(directory) && correct;
   correct = co_await testAsyncRoomPreparation(directory) && correct;
   group.shutdown();
 }

@@ -122,6 +122,43 @@ write_control_file() {
 	} >"$control_path"
 }
 
+prepare_armhf_libstdcxx_symbols() {
+	[ "$deb_arch" = armhf ] || return 0
+	[ -f /etc/os-release ] || return 0
+	. /etc/os-release
+	[ "${VERSION_CODENAME:-}" = trixie ] || return 0
+
+	installed_symbols='/var/lib/dpkg/info/libstdc++6:armhf.symbols'
+	assert_file "$installed_symbols"
+	require_command readelf
+	readelf --dyn-syms --wide "$stage_dir/usr/bin/pipetune" |
+		grep -Fq '__aeabi_atexit@CXXABI_ARM_1.3.3' || return 0
+	readelf --dyn-syms --wide /usr/lib/arm-linux-gnueabihf/libstdc++.so.6 |
+		grep -Fq '__aeabi_atexit@@CXXABI_ARM_1.3.3' ||
+		fail 'Installed armhf libstdc++ does not export __aeabi_atexit'
+	grep -Eq '^ __aeabi_atexit@CXXABI_ARM_1[.]3[.]3[[:space:]]' "$installed_symbols" &&
+		return 0
+
+	candidate_override_path='/etc/dpkg/symbols/libstdc++6:armhf.symbols.armhf'
+	[ ! -e "$candidate_override_path" ] && [ ! -L "$candidate_override_path" ] ||
+		fail "Existing dpkg symbols override must be preserved: $candidate_override_path"
+	mkdir -p /etc/dpkg/symbols || fail 'Unable to create dpkg symbols directory'
+	symbols_override_temp=$(mktemp '/etc/dpkg/symbols/.libstdc++6-armhf.XXXXXX') ||
+		fail 'Unable to create temporary dpkg symbols file'
+	require_command npx
+	npx --yes --package=funcity-cli@1.5.0 --package=funcity@1.5.0 \
+		--package=commander@12.1.0 \
+		funcity --no-rc -D "input=$installed_symbols" \
+		-D "output=$symbols_override_temp" \
+		run -i scripts/armhf-libstdcxx-symbols.fc >/dev/null ||
+		fail 'Unable to prepare armhf libstdc++ symbols override'
+	ln "$symbols_override_temp" "$candidate_override_path" ||
+		fail "Unable to create dpkg symbols override: $candidate_override_path"
+	symbols_override_path=$candidate_override_path
+	rm -f "$symbols_override_temp"
+	symbols_override_temp=
+}
+
 calculate_shlibdeps() {
 	tmp_dir=$(mktemp -d)
 
@@ -156,6 +193,10 @@ calculate_shlibdeps() {
 	# Map our own libraries explicitly, excluding only the self-dependency.
 	# Scanning them also retains dependencies on libc and other system libraries.
 	shlib_output=$(
+		symbols_override_path=
+		symbols_override_temp=
+		trap 'rm -f "$symbols_override_path" "$symbols_override_temp"' EXIT
+		prepare_armhf_libstdcxx_symbols
 		cd "$tmp_dir"
 		dpkg-shlibdeps \
 			-O \

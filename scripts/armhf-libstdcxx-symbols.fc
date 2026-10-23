@@ -1,0 +1,9 @@
+{{
+set fs (require 'node:fs/promises')
+set assert (require 'node:assert/strict')
+set source (fs.readFile input 'utf8')
+set versionMatch (match (regex '^ CXXABI_ARM_1[.]3[.]3@CXXABI_ARM_1[.]3[.]3 ([^ ]+)$' 'm') source)
+set version (at 1 versionMatch)
+assert.ok version 'Installed armhf libstdc++ symbols lack the CXXABI_ARM_1.3.3 version node'
+fs.writeFile output (concat source ' __aeabi_atexit@CXXABI_ARM_1.3.3 ' version '\n') 'utf8'
+}}

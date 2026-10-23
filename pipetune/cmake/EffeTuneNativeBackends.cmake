@@ -56,30 +56,36 @@ function(
 endfunction()
 
 # EffeTune's Tube Simulator keeps its GNU f64x2 helpers within one translation
-# unit. On 32-bit targets GCC reports their file-local calling convention as a
+# unit. On 32-bit x86 GCC reports their file-local calling convention as a
 # psABI warning even though no vector type crosses a library ABI boundary.
 function(
-  pipetune_resolve_effetune_portability_options
-  OUTPUT_VARIABLE
+  pipetune_configure_effetune_tube_source
+  SOURCE_PATH
   NATIVE_PROCESSOR)
-  set(portability_options)
-  if(NATIVE_PROCESSOR MATCHES "^(i[3-6]86|x86|arm|armv[5-8].*)$")
-    list(
-      APPEND portability_options
-      "$<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Wno-error=psabi>")
+  if(NATIVE_PROCESSOR MATCHES "^(i[3-6]86|x86)$")
+    set_property(
+      SOURCE "${SOURCE_PATH}"
+      ${ARGN}
+      APPEND
+      PROPERTY COMPILE_OPTIONS
+               "$<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Wno-psabi>")
   endif()
-  set(${OUTPUT_VARIABLE} "${portability_options}" PARENT_SCOPE)
 endfunction()
 
+# The native Tube test exercises f64x2 arithmetic directly. Its i686 test
+# translation unit needs SSE2 for that path and matching scalar arithmetic.
 function(
-  pipetune_configure_effetune_portability_target
-  TARGET_NAME
+  pipetune_configure_effetune_tube_test_source
+  SOURCE_PATH
   NATIVE_PROCESSOR)
-  pipetune_resolve_effetune_portability_options(
-    portability_options
-    "${NATIVE_PROCESSOR}")
-  if(portability_options)
-    target_compile_options(${TARGET_NAME} PRIVATE ${portability_options})
+  if(NATIVE_PROCESSOR MATCHES "^(i[3-6]86|x86)$")
+    set_property(
+      SOURCE "${SOURCE_PATH}"
+      ${ARGN}
+      APPEND
+      PROPERTY COMPILE_OPTIONS
+               "$<$<COMPILE_LANG_AND_ID:CXX,GNU>:-msse2>"
+               "$<$<COMPILE_LANG_AND_ID:CXX,GNU>:-mfpmath=sse>")
   endif()
 endfunction()
 
@@ -255,9 +261,6 @@ function(
       -Werror
       $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
       $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
-  pipetune_configure_effetune_portability_target(
-    ${TARGET_NAME}
-    "${NATIVE_PROCESSOR}")
   if(NOT VARIANT_NAME STREQUAL "SCALAR")
     pipetune_configure_native_variant_target(
       ${TARGET_NAME} ${VARIANT_NAME} ${NATIVE_PROCESSOR})

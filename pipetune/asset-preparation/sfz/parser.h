@@ -11,7 +11,7 @@
 
 namespace pipetune::assets {
 
-/** One UTF-8 SFZ document supplied from memory. */
+/** One decoded SFZ or ARIA bank document supplied from memory. */
 struct SfzDocument {
   std::string path; /**< Root-relative normalized document path. */
   std::string text; /**< Complete decoded source text. */
@@ -23,6 +23,7 @@ struct SfzDiagnostics {
   std::vector<std::string> excludedOpcodes; /**< Conditions excluding regions. */
   std::vector<std::string> missingSamples; /**< Referenced but unavailable sample paths. */
   std::vector<std::string> invalidRegions; /**< Region validation diagnostics. */
+  std::vector<std::string> adjustedEnvelopes; /**< Envelope times replaced by bounded or default values. */
 };
 
 /** Host-independent normalized definition and required source identities. */
@@ -49,12 +50,14 @@ std::string normalizeSfzPath(std::string_view value, std::string_view directory)
  * @param availableSamples Optional known sample inventory; absent assumes paths exist.
  * @param maximumBytes Definition expansion and bank budget, from 1 byte through 1 GiB.
  * @param maximumWorkingBytes Conservative allocation-work allowance; the host reserves this separately.
+ * @param initialDefines ARIA bank macros copied before local #define directives.
  * @return Normalized definition and import diagnostics.
  * @throws SfzError A document, syntax, or preparation limit is invalid.
  */
 ParsedSfz parseSfz(std::string_view selectedPath, std::span<const SfzDocument> documents,
     std::optional<std::span<const std::string>> availableSamples, std::uint64_t maximumBytes,
-    std::uint64_t maximumWorkingBytes = UINT64_MAX);
+    std::uint64_t maximumWorkingBytes = UINT64_MAX,
+    std::span<const std::pair<std::string, std::string>> initialDefines = {});
 
 } // namespace pipetune::assets
 #endif

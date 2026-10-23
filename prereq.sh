@@ -39,6 +39,7 @@ gettext
 git
 hicolor-icon-theme
 libgtk-3-dev
+libicu-dev
 libpipewire-0.3-dev
 libpulse-dev
 libsamplerate0-dev
