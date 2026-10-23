@@ -183,20 +183,6 @@ const scenarios: {
   },
 ];
 
-test('temporary: unsupported condition warnings are removed', () => {
-  const native = run(
-    'main.sfz',
-    {
-      'main.sfz':
-        '<region> sample=a.wav key=60\n<region> sample=a.wav trigger=release',
-    },
-    ['a.wav'],
-    256 * 1024 * 1024
-  );
-  expect(native.status, native.stderr.toString()).toBe(0);
-  expect(JSON.parse(native.stdout.toString()).warnings).toEqual([]);
-});
-
 test.each(scenarios)(
   'SFZ parser matches app: $name',
   async ({ selected, documents, paths }) => {

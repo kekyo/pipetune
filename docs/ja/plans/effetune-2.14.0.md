@@ -256,4 +256,6 @@ i686では変更のない上流Tube Simulatorのベクトル戻り値に`-Wpsabi
 
 通常のDebugビルドは警告なしで成功した。共有バックエンドのgolden、登録SFZの実再生、アセットのライフサイクル、2.14.0スモーク、独立SFZ準備、GTKの状態保持と診断表示も成功した。工程2の上流比較・製品再生の完了条件を満たした。
 
-周期波形の登録再生はDebugのScalarでnoiseより長くかかった。個別計測では初期化が約30ms、0.5秒の周期波形処理が約2.8秒、noise処理が約0.23秒だった。生成周期の原レートは約536 kHzで、キー83・48 kHz出力では上流の大きな変換倍率用フィルターを使う。準備処理の停滞ではなく、DSP処理時間の差だった。計測は`step2-generator-timing.log`に残し、Releaseの性能確認にも含める。[上流リサンプリング処理](https://github.com/Frieve-A/effetune/blob/v2.14.0/dsp/plugins/others/sfz_note_player/kernel.cpp)
+周期波形の登録再生はDebugのScalarでnoiseより長くかかった。個別計測では初期化が約30ms、0.5秒の周期波形処理が約2.8秒、noise処理が約0.23秒だった。生成周期の原レートは約536 kHzで、キー83・48 kHz出力では上流の大きな変換倍率用フィルターを使う。所要時間の差はDSP処理で生じていた。計測は`step2-generator-timing.log`に残し、Releaseの性能確認にも含める。[上流リサンプリング処理](https://github.com/Frieve-A/effetune/blob/v2.14.0/dsp/plugins/others/sfz_note_player/kernel.cpp)
+
+工程2を`7045f1c`でコミットした後、機能削除の確認に使った一時テストを削除した。通常の上流比較テストは残している。
