@@ -853,8 +853,14 @@ static bool testVisualizationPresets(const std::filesystem::path &directory) {
   auto nodes = std::string{};
   for (auto index = 0u; index < 100u; ++index) {
     if (!nodes.empty()) nodes += ',';
-    nodes += "{\"name\":\"" + std::string(visualizers[index % visualizers.size()]) +
-        "\",\"parameters\":{\"mn\":{},\"cl\":\"Normal\",\"hq\":true},\"inputBus\":0,\"outputBus\":1}";
+    const auto name = std::string_view(visualizers[index % visualizers.size()]);
+    const auto parameters = name == "Analog Meter" ?
+        R"({"md":"Custom","de":"True Peak","nr":3000,"os":25})" :
+        name == "Note Spectrogram" ? R"({"te":true})" :
+        name == "Oscilloscope" ? R"({"dt":10})" :
+        R"({"mn":{},"cl":"Normal","hq":true})";
+    nodes += "{\"name\":\"" + std::string(name) + "\",\"parameters\":" + parameters +
+        ",\"inputBus\":0,\"outputBus\":1}";
   }
   const auto only = writePreset(directory, "visualizers.effetune_preset",
                                 "{\"pipeline\":[" + nodes + "]}");
@@ -863,7 +869,11 @@ static bool testVisualizationPresets(const std::filesystem::path &directory) {
   if (!check(loaded.pipeline != nullptr, loaded.error) ||
       !check(loaded.warnings.empty(), "visualizers must not produce warnings") ||
       !check(loaded.pipeline->activePluginCount() == 0 &&
-                 loaded.pipeline->latencyFrames() == 0,
+                 loaded.pipeline->latencyFrames() == 0 &&
+                 loaded.pipeline->presetEntries().size() == 100 &&
+                 std::ranges::all_of(loaded.pipeline->presetEntries(), [](const auto &entry) {
+                   return entry.state == pipetune::PresetEntryState::ignored;
+                 }),
              "visualizers must not consume processing nodes or add latency")) {
     return false;
   }
@@ -1217,10 +1227,12 @@ static bool testEffeTune212Processors(const std::filesystem::path &directory) {
 }
 
 static bool testAnalogMeter(const std::filesystem::path &directory) {
-  for (const auto mode : {"VU", "PPM", "RMS", "Sample Peak", "True Peak", "Loudness"}) {
+  for (const auto mode : {"VU", "PPM", "RMS", "Sample Peak", "True Peak", "Loudness", "Custom"}) {
+    const auto parameters = std::string("\"md\":\"") + mode + "\"" +
+        (std::string_view(mode) == "Custom" ? ",\"de\":\"True Peak\",\"nr\":3000,\"os\":25" : "");
     const auto path = writePreset(directory, "analog-meter.effetune_preset",
         "{\"pipeline\":[{\"name\":\"Analog Meter\",\"inputBus\":1,\"outputBus\":0,"
-        "\"parameters\":{\"md\":\"" + std::string(mode) + "\"}}]}");
+        "\"parameters\":{" + parameters + "}}]}");
     auto loaded = pipetune::loadDspPipeline(path, {48000, 2, 64});
     if (!check(loaded.pipeline != nullptr, loaded.error) ||
         !check(loaded.warnings.empty() && loaded.pipeline->activePluginCount() == 0 &&

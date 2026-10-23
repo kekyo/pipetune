@@ -213,7 +213,7 @@ UIをブラウザ経由で試す場合はPlaywright MCPを使う。アニメー�
 
 ### 0 基準状態
 
-`b089b70166dfc48aef057fb77adb117a159bc9ba`から`feat/effetune-2.14.0`を作成した。ホストはIntel Core i9-12900KS、GCC 13.3、CMake 3.28、Node.js 24.21。Scalar、x86-64 baseline、v3、v4を実行できる。メモリは約62 GiB、開始時の空きディスクは約700 GBで、全9構成のPodmanイメージを確認した。
+`b089b70166dfc48aef057fb77adb117a159bc9ba`から`feat/effetune-2.14.0`を作成した。ホストはIntel Core i9-12900KS、GCC 13.3、CMake 3.28、Node.js 24.21。Scalar、x86-64 baseline、v3を実行できる。v4はビルド対象で、ホストではCPU要件を満たさないため実行を除外する。工程5で実ロード結果を再確認し、当初のv4も実行可能という記述を訂正した。メモリは約62 GiB、開始時の空きディスクは約700 GBで、全9構成のPodmanイメージを確認した。
 
 2.13.0のDebug全237テストを`build/effetune-214-debug`で実行した。初回は233件成功、GTKの4件が失敗し、1643.08秒を要した。Waylandセッションの環境を継承したため、Xvfbを使う試験でもGTKがWaylandへ接続していた。`GDK_BACKEND=x11`を指定して失敗した4件を再実行し、全て成功した。以後の全体試験にもこの指定を使う。基準ログは`baseline-debug.log`、環境を揃えた再確認は`baseline-gtk-x11-recheck.log`に保存した。GTK E2Eは初回でも成功している。
 
@@ -295,3 +295,13 @@ SFZ公式11 goldenと試聴遷移はDebug・Releaseの共有バックエンド�
 strip前のReleaseバックエンドはScalar 4184960、baseline SIMD 4185504、v3 4139776、v4 4270752 byteとなり、約14%増えた。各回の測定値・温キャッシュ結果・条件は`sfz-performance-updated-214.*`と`sfz-performance-extra.*`、型サイズは`model-size-213.log`と`model-size-214.log`、ライブラリサイズは`updated-backend-sizes.json`に保存した。
 
 Releaseの実再生試験も5.41秒で成功し、`step4-release-runtime.log`へ保存した。最終の対象ビルドは警告なしで、工程4の公式PCM・発音・遅延・性能差の確認を完了した。
+
+### 工程5の実績
+
+共有バックエンドの回帰比較へ、2.14.0で参照PCMが変わったAM Radio Simulatorの5件、Vinyl Artifactsの1件、Phaserの1件、Tube Simulatorの6件を追加した。Analog MeterのCustomを含む6件、SFZの11件、Adaptive、Cassette、IRなどの既存goldenとともに、Scalar・baseline SIMD・x86-64-v3で成功した。参照PCMや許容誤差は変更していない。
+
+解析9種類を100ノード並べたプリセットに、Analog Custom、Note Spectrogramの`te=true`、Oscilloscopeの`dt=10`を含めた。全ノードが警告なしの`ignored`となり、有効DSP数・遅延・PCM・バス転送に影響しないことを確認した。Noteモデルfixture、物理的な複数出力の割付・整列、再読込、IR・Room EQ・Crosstalk・生成FIR、GTK E2Eも成功した。アセット準備の上流比較は292件で成功している。
+
+初回の全体試験はDebug 238件を1637.22秒、Release 237件を902.11秒で実行した。それぞれ単独ビルド試験のworkspace版比較だけが失敗した。工程4のコミット後にCMakeを再構成していなかったため、workspace実行ファイルはPipeTune 2.13.7、git由来の期待値は2.13.8だった。独立ビルド・EffeTune 2.14.0表示・共有バックエンドの音声比較は同じ試験内で成功しており、DSPや製品コードの修正は必要ない。原因と初回ログは`step5-debug-all.log`、`step5-release-all.log`へ残した。
+
+CMakeを明示的に再構成し、警告なしで再ビルドした。失敗した単独ビルド試験はDebug 241.59秒、Release 250.53秒で成功し、`step5-*-component-recheck.log`へ保存した。これで工程5の未解決の失敗はなくなった。工程6の配布修正を統合した後も、コミットを固定して再構成し、最終ソースの全体試験を行う。

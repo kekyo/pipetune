@@ -848,8 +848,8 @@ static void checkGoldenCase(const BackendApi &api, std::uint32_t variant,
 
 static void checkMetadataGoldens(const BackendApi &api, std::uint32_t variant,
                                   const std::filesystem::path &directory,
-                                  std::uint32_t caseCount) {
-  for (auto number = 1u; number <= caseCount; ++number) {
+                                  std::uint32_t caseCount, std::uint32_t firstCase = 1u) {
+  for (auto number = firstCase; number < firstCase + caseCount; ++number) {
     auto filename = std::array<char, 32>{};
     std::snprintf(filename.data(), filename.size(), "case-%03u.json", number);
     const auto path = directory / filename.data();
@@ -1124,6 +1124,16 @@ int main(int argc, char **argv) {
                            pluginRoot / "others/sfz_note_player/golden", 11u);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "analyzer/analog_meter/golden", 6u);
+      for (const auto number : {11u, 15u, 16u, 18u, 19u})
+        checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                             pluginRoot / "lofi/am_radio_simulator/golden", 1u, number);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "lofi/vinyl_artifacts/golden", 1u, 4u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "modulation/phaser/golden", 1u, 3u);
+      for (const auto number : {2u, 6u, 10u, 11u, 13u, 15u})
+        checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                             pluginRoot / "saturation/tube_simulator/golden", 1u, number);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "eq/tonal_balance_eq/golden", 6u);
       const auto scalarSpectrum = renderImpulseSpectrum(scalar);
@@ -1180,6 +1190,12 @@ int main(int argc, char **argv) {
         checkMetadataGoldens(simd, expected, pluginRoot / "reverb/ir_reverb/golden", 13u);
         checkMetadataGoldens(simd, expected, pluginRoot / "others/sfz_note_player/golden", 11u);
         checkMetadataGoldens(simd, expected, pluginRoot / "analyzer/analog_meter/golden", 6u);
+        for (const auto number : {11u, 15u, 16u, 18u, 19u})
+          checkMetadataGoldens(simd, expected, pluginRoot / "lofi/am_radio_simulator/golden", 1u, number);
+        checkMetadataGoldens(simd, expected, pluginRoot / "lofi/vinyl_artifacts/golden", 1u, 4u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "modulation/phaser/golden", 1u, 3u);
+        for (const auto number : {2u, 6u, 10u, 11u, 13u, 15u})
+          checkMetadataGoldens(simd, expected, pluginRoot / "saturation/tube_simulator/golden", 1u, number);
         checkMetadataGoldens(simd, expected, pluginRoot / "eq/tonal_balance_eq/golden", 6u);
         checkGoldenCases(simd, expected, goldenCases);
         checkMetadataGoldens(simd, expected, pluginRoot / "spatial/spatial_mapper/golden", 7u);
