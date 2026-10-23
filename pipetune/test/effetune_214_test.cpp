@@ -4,6 +4,7 @@
  * https://github.com/kekyo/pipetune/
  */
 #include "dsp_catalog.h"
+#include "dsp_backend_loader.h"
 #include <pipetune/dsp_backend.h>
 #include <pipetune/dsp_pipeline.h>
 #include <pipetune/version.h>
@@ -25,7 +26,7 @@ static bool check(bool condition, std::string_view message) {
 
 int main(int argc, char **argv) {
   if (argc != 2) return 2;
-  check(pipetune::effetuneVersion() == "2.13.0", "the embedded app version must be 2.13.0");
+  check(pipetune::effetuneVersion() == "2.14.0", "the embedded app version must be 2.14.0");
   check(pipetune::generatedDspCatalog().size() == 112, "the app catalog must contain 112 DSPs");
   struct Contract {
     const char *type;
@@ -34,10 +35,11 @@ int main(int argc, char **argv) {
     std::uint32_t assetBytes;
   };
   for (const auto &contract : std::array{
+           Contract{"AnalogMeterPlugin", 0xad3d461cu, 7u, 0u},
            Contract{"AdaptivePredictionEffectPlugin", 0xebd8a6f0u, 10u, 0u},
-           Contract{"SFZNotePlayerPlugin", 0x0f17627cu, 16u, 1073741824u},
+           Contract{"SFZNotePlayerPlugin", 0x378e7f2bu, 19u, 1073741824u},
            Contract{"CassetteArtifactsPlugin", 0x328491aeu, 13u, 0u},
-           Contract{"NoteSpectrogramPlugin", 0x9d70750bu, 2u, 0u}}) {
+           Contract{"NoteSpectrogramPlugin", 0xafc5ff07u, 3u, 0u}}) {
     const auto *definition = pipetune::findDspByTypeName(contract.type);
     if (!check(definition != nullptr, contract.type)) continue;
     check(definition->hash == contract.hash && definition->floatCount == contract.floats &&
@@ -52,6 +54,22 @@ int main(int argc, char **argv) {
     if (variant.backend != nullptr) backends.push_back(variant.backend);
   for (const auto &backend : backends) {
     if (!check(backend != nullptr, "the scalar backend must be available")) continue;
+    const auto &api = pipetune::dspBackendApi(*backend);
+    const auto engine = api.engineCreate();
+    if (check(engine != 0, "the backend must create an engine")) {
+      if (check(api.enginePrepare(engine, 48000.0F, 2u, 64u, 0u) == ET_OK,
+                "the backend must prepare its engine")) {
+        const auto instance = api.instanceCreate(engine, "SFZNotePlayerPlugin");
+        if (check(instance != 0, "the backend must create SFZ Note Player")) {
+          const auto parameters = std::array<float, 19>{
+              0.1F, -60, 0, 21, 108, 64, 100, 0, 0, 0, 1, 1, 1, 0, 40, 50, 0, -1, 100};
+          check(api.instanceSetParams(engine, instance, parameters.data(), parameters.size(),
+                                      0x378e7f2bu, 0u) == ET_OK,
+                "the backend must accept the 2.14 SFZ sample selection and preview parameters");
+        }
+      }
+      api.engineDestroy(engine);
+    }
     const auto loaded = pipetune::loadDspPipeline(argv[1],
         {.sampleRate = 48000.0F, .maxChannels = 2u, .maxFrames = 64u}, backend);
     if (!check(loaded.pipeline != nullptr, loaded.error)) continue;
@@ -66,7 +84,7 @@ int main(int argc, char **argv) {
       }
       check(loaded.pipeline->process(audio, 2u, 64u, block * 64.0 / 48000.0) ==
                 pipetune::ProcessStatus::ok,
-            "the minimal 2.13 preset must process PCM");
+            "the minimal 2.14 preset must process PCM");
     }
     for (auto frame = 0u; frame < 64u; ++frame)
       check(std::abs(audio[frame] - 0.0625F) < 1e-6F &&

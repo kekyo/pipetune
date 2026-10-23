@@ -62,6 +62,21 @@ Comment: Native adaptations of EffeTune application v2.13.0 asset preparation.
  SFZ: https://github.com/Frieve-A/effetune/tree/v2.13.0/js/sfz
  Room EQ: https://github.com/Frieve-A/effetune/tree/v2.13.0/js/room-eq
 
+Files: pipetune/asset-preparation/sfz/parser.cpp
+ pipetune/asset-preparation/sfz/parser.h
+ pipetune/asset-preparation/sfz/source.cpp
+ pipetune/asset-preparation/sfz/source.h
+ pipetune/asset-preparation/sfz/generators.cpp
+ pipetune/asset-preparation/sfz/generators.h
+Copyright:
+ 2026 Kouji Matsui
+ 2025-2026 Yoshiyuki Kobayashi
+License: MIT
+Comment: Native adaptations of EffeTune application v2.14.0 SFZ preparation.
+ Source and bank definitions: https://github.com/Frieve-A/effetune/blob/v2.14.0/js/sfz/source.js
+ Generated samples: https://github.com/Frieve-A/effetune/blob/v2.14.0/js/sfz/generators.js
+ Parser and selection: https://github.com/Frieve-A/effetune/tree/v2.14.0/js/sfz
+
 Files: deps/cardio/*
 Copyright: Kouji Matsui
 License: MIT

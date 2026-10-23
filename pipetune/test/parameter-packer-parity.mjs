@@ -127,8 +127,24 @@ for (const mn of [0, 40, 100, 192, 300]) {
     }
   }
 }
-for (const md of ['VU', 'PPM', 'RMS', 'Sample Peak', 'True Peak', 'Loudness']) {
+for (const md of ['VU', 'PPM', 'RMS', 'Sample Peak', 'True Peak', 'Loudness', 'Custom']) {
   cases.push({type: 'AnalogMeterPlugin', parameters: {md}});
+}
+for (const de of ['Average Rectified', 'RMS', 'Sample Peak', 'True Peak', 'invalid', null]) {
+  for (const nr of [0, 1, 300, 3000, 3001, null, 'invalid']) {
+    for (const os of [-1, 0, 1.25, 25, 26, null, 'invalid']) {
+      cases.push({type: 'AnalogMeterPlugin', parameters: {md: 'Custom', de, nr, os}});
+    }
+  }
+}
+for (const [key, values] of [
+  ['ss', [-7, -6, -0.5, 0, 0.5, 6, 7, null, 'invalid']],
+  ['pm', [-2, -1, 0, 60.5, 127, 128, null, 'invalid']],
+  ['pv', [0, 1, 63.5, 100, 127, 128, null, 'invalid']]
+]) {
+  for (const value of values) {
+    cases.push({type: 'SFZNotePlayerPlugin', parameters: {[key]: value}});
+  }
 }
 for (const md of ['Encode Only', 'Encode + Artifacts', 'All', 'Artifacts + Decode',
   'Decode Only', 'invalid', null]) {
@@ -136,14 +152,19 @@ for (const md of ['Encode Only', 'Encode + Artifacts', 'All', 'Artifacts + Decod
 }
 for (const mn of [0, 21, 28, 108, 128]) {
   for (const mx of [0, 21, 91, 108, 128]) {
-    cases.push({type: 'NoteSpectrogramPlugin', parameters: {mn, mx}});
+    for (const te of [false, true, 0, 1, 2, null, 'invalid']) {
+      cases.push({type: 'NoteSpectrogramPlugin', parameters: {mn, mx, te}});
+    }
   }
 }
 const noteDefaults = [...DSP_PARAM_PACKERS.get('NoteSpectrogramPlugin').pack({})];
-if (JSON.stringify(noteDefaults) !== '[28,91]') {
-  throw new Error('Note Spectrogram must use the app 2.13 HarmNet default range');
+if (JSON.stringify(noteDefaults) !== '[28,91,0]') {
+  throw new Error('Note Spectrogram must use the app 2.14 HarmNet default range and disabled timbre analysis');
 }
 cases.push({type: 'OscilloscopePlugin', parameters: {tm: 'Off'}});
+for (const dt of [0, 0.001, 0.1, 1, 10, 11, null, 'invalid']) {
+  cases.push({type: 'OscilloscopePlugin', parameters: {dt}});
+}
 const integerSpec = loadParamSpecs(path.join(effetuneRoot, 'dsp/plugins')).find(spec =>
   spec.fields.some(field =>
     field.kind === 'int' && field.min <= 1 && field.max >= 1 && !field.defaults.includes(1)

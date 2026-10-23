@@ -12,6 +12,7 @@ const [pipewire, wireplumber, driver, scenario = "channels", policyFixture,
 assert.ok(pipewire && wireplumber && driver, "PipeWire, WirePlumber and probe paths are required");
 const version = spawnSync(wireplumber, ["--version"], { encoding: "utf8" });
 assert.equal(version.status, 0, version.stderr);
+const wirePlumber04 = /libwireplumber 0\.4\./u.test(version.stdout);
 const graphClockTest = ["product-output-clock", "product-output-clock-alt"].includes(scenario);
 const graphRate = scenario === "product-output-clock-alt" ? 44100 : 48000;
 const graphQuantum = scenario === "product-output-clock-alt" ? 512 : 256;
@@ -36,6 +37,7 @@ const environment = {
   GIO_USE_VFS: "local",
   PULSE_SERVER: `unix:${join(runtime, "pulse-native")}`,
   PIPETUNE_PRODUCT_SOCKET: join(runtime, "product-control.sock"),
+  ...(wirePlumber04 && scenario.startsWith("product-daemon-volume") ? { WIREPLUMBER_DEBUG: "3" } : {}),
 };
 const writeConfiguration = (relative, contents) => {
   const components = relative.split("/");
@@ -72,7 +74,7 @@ if (scenario.startsWith("policy-pulse")) {
   }
 `);
 }
-if (/libwireplumber 0\.4\./u.test(version.stdout)) {
+if (wirePlumber04) {
   // Disable hardware monitors before WirePlumber's 90-enable-all.lua runs.
   writeConfiguration("wireplumber/main.lua.d/60-pipetune-test.lua", `alsa_monitor.enabled = false
 v4l2_monitor.enabled = false
@@ -101,11 +103,44 @@ if (scenario.startsWith("policy") || scenario.startsWith("product")) {
     assert.equal(result.status, 0, result.stderr);
     return result.stdout;
   };
-  if (/libwireplumber 0\.4\./u.test(version.stdout)) {
+  if (wirePlumber04) {
     writeConfiguration("wireplumber/main.lua.d/60-pipetune-streams.lua", policy("stream-configuration"));
     writeConfiguration("wireplumber/scripts/pipetune-node-visibility.lua", policy("visibility"));
     writeConfiguration("wireplumber/policy.lua.d/60-pipetune-policy.lua", policy("configuration"));
-    writeConfiguration("wireplumber/scripts/pipetune-endpoint-client.lua", policy("endpoint-client"));
+    const endpointClient = policy("endpoint-client");
+    const publicInputReady = scenario.startsWith("product-daemon-volume") ? `
+-- Signal when the real policy can accept playback at the public input.
+local pipetune_test_reported_serial = nil
+local pipetune_test_pending_serial = nil
+local function pipetune_test_public_input_serial()
+  if endpoints_om:get_n_objects() == 0 then return nil end
+  for input in public_inputs_om:iterate() do
+    return input.properties["object.serial"]
+  end
+  return nil
+end
+local function pipetune_test_report_input_ready()
+  local serial = pipetune_test_public_input_serial()
+  if not serial or serial == pipetune_test_reported_serial or
+      serial == pipetune_test_pending_serial then return end
+  pipetune_test_pending_serial = serial
+  Core.sync(function(error)
+    pipetune_test_pending_serial = nil
+    if error then
+      Log.warning("public input policy synchronization failed: " .. tostring(error))
+      return
+    end
+    if serial == pipetune_test_public_input_serial() and
+        serial ~= pipetune_test_reported_serial then
+      pipetune_test_reported_serial = serial
+      Log.info("PIPETUNE_POLICY_PUBLIC_INPUT_READY " .. serial)
+    end
+  end)
+end
+public_inputs_om:connect("objects-changed", pipetune_test_report_input_ready)
+endpoints_om:connect("objects-changed", pipetune_test_report_input_ready)
+` : "";
+    writeConfiguration("wireplumber/scripts/pipetune-endpoint-client.lua", endpointClient + publicInputReady);
     writeConfiguration("wireplumber/scripts/pipetune-endpoint-device.lua", policy("endpoint-device"));
   } else {
     mkdirSync(join(data, "wireplumber", "scripts"), { recursive: true });
@@ -183,6 +218,25 @@ const waitForMessage = async (record, message) => {
     else changed();
   });
 };
+const countMessages = (record, message) => record.stderr.split(message).length - 1;
+const waitForNextMessage = async (record, message, previousCount) => {
+  await new Promise((resolve, reject) => {
+    const finish = (error) => {
+      clearTimeout(timeout);
+      record.child.stderr.off("data", changed);
+      record.child.off("close", closed);
+      if (error) reject(error);
+      else resolve();
+    };
+    const changed = () => { if (countMessages(record, message) > previousCount) finish(); };
+    const closed = () => finish(new Error(`${record.name} exited before ${message}`));
+    const timeout = setTimeout(() => finish(new Error(`did not receive a new ${message}`)), 20000);
+    record.child.stderr.on("data", changed);
+    record.child.on("close", closed);
+    if (record.result !== undefined) closed();
+    else changed();
+  });
+};
 
 try {
   start("PipeWire", pipewire, []);
@@ -191,7 +245,7 @@ try {
     start("PulseAudio protocol server", "dbus-run-session", ["--", pulseServer]);
     await socketReady(join(runtime, "pulse-native"), undefined);
   }
-  const manager = start("WirePlumber", "dbus-run-session", ["--", wireplumber]);
+  let manager = start("WirePlumber", "dbus-run-session", ["--", wireplumber]);
   if (scenario.startsWith("product-output-status")) {
     const audio = start("inventory fixtures", driver, ["audio", scenario]);
     await waitForMessage(audio, "product:devices-ready");
@@ -284,6 +338,9 @@ try {
     // Restart both the daemon and fixtures. The next run must recover saved
     // routing after the devices have been recreated as new runtime objects.
     for (let attempt = 0; attempt < (volumeRestore ? 3 : 2); ++attempt) {
+      const inputReadyMessage = "PIPETUNE_POLICY_PUBLIC_INPUT_READY";
+      const previousInputReadyCount = wirePlumber04 && volumeRestore ?
+        countMessages(manager, inputReadyMessage) : 0;
       const audioScenario = volumeRestore ? `${scenario}-${["save", "restored", "unmuted"][attempt]}` : scenario;
       const audio = start("daemon audio fixture", driver, ["audio", audioScenario]);
       await waitForMessage(audio, "product:devices-ready");
@@ -313,6 +370,12 @@ try {
         await cli(["select", "missing-output", ...endpoints], false);
         assert.deepEqual(JSON.parse(await cli(["get", "--json", "--socket", socket])).outputConfiguration, routing);
         assert.match(await cli(["get", "--socket", socket]), /Ch 3 \|.*1 \(FL\).*サブ左/u);
+      }
+      if (wirePlumber04 && volumeRestore) {
+        // Before its endpoint is ready, WirePlumber 0.4 can route a pinned
+        // stream to the default device despite node.dont-fallback. Start the
+        // volume check when the public input is available to its policy.
+        await waitForNextMessage(manager, inputReadyMessage, previousInputReadyCount);
       }
       audio.child.kill("SIGUSR1");
       assert.equal((await audio.completion).code, 0, `${audio.stdout}\n${audio.stderr}`);
@@ -352,7 +415,7 @@ try {
         });
         terminate(manager, "SIGTERM");
         await manager.completion;
-        start("restarted WirePlumber", "dbus-run-session", ["--", wireplumber]);
+        manager = start("restarted WirePlumber", "dbus-run-session", ["--", wireplumber]);
       }
       process.stdout.write(`${JSON.stringify({ attempt, ...report })}\n`);
     }

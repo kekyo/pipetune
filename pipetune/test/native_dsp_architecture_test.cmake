@@ -14,19 +14,7 @@ function(assert_native_processor SYSTEM_PROCESSOR POINTER_SIZE EXPECTED)
   endif()
 endfunction()
 
-function(assert_effetune_portability_options NATIVE_PROCESSOR EXPECTED)
-  pipetune_resolve_effetune_portability_options(
-    actual_options
-    "${NATIVE_PROCESSOR}")
-  if(NOT actual_options STREQUAL EXPECTED)
-    message(
-      FATAL_ERROR
-      "Expected ${NATIVE_PROCESSOR} EffeTune portability options to be "
-      "${EXPECTED}, but got ${actual_options}")
-  endif()
-endfunction()
-
-function(assert_target_uses_32bit_portability_option BUILD_DIRECTORY TARGET_PATH)
+function(assert_target_scopes_tube_psabi_option BUILD_DIRECTORY TARGET_PATH SOURCE_NAME)
   set(flags_path "${BUILD_DIRECTORY}/${TARGET_PATH}/flags.make")
   if(NOT EXISTS "${flags_path}")
     message(FATAL_ERROR "Missing generated target flags: ${flags_path}")
@@ -34,23 +22,40 @@ function(assert_target_uses_32bit_portability_option BUILD_DIRECTORY TARGET_PATH
   file(READ "${flags_path}" flags)
   string(
     REGEX MATCH
-    "CXX_FLAGS = [^\n]*-Wno-error=psabi"
-    cxx_match
+    "tube_simulator/${SOURCE_NAME}\\.cpp\\.o_OPTIONS = [^\n]*-Wno-psabi"
+    tube_match
     "${flags}")
-  if(NOT cxx_match)
+  if(NOT tube_match)
     message(
       FATAL_ERROR
-      "Expected ${TARGET_PATH} to relax the GNU C++ psABI warning")
+      "Expected ${TARGET_PATH} to suppress only the Tube source's psABI warning")
   endif()
   string(
     REGEX MATCH
-    "(^|\n)C_FLAGS = [^\n]*-Wno-error=psabi"
-    c_match
+    "(^|\n)CXX_FLAGS = [^\n]*-Wno-(error=)?psabi"
+    target_match
     "${flags}")
-  if(c_match)
+  if(target_match)
     message(
       FATAL_ERROR
-      "Expected ${TARGET_PATH} to retain the C warning policy")
+      "Expected ${TARGET_PATH} to retain the C++ warning policy")
+  endif()
+endfunction()
+
+function(assert_tube_test_uses_source_sse2 BUILD_DIRECTORY TARGET_PATH)
+  set(flags_path "${BUILD_DIRECTORY}/${TARGET_PATH}/flags.make")
+  file(READ "${flags_path}" flags)
+  string(
+    REGEX MATCH
+    "tube_simulator/native_test\\.cpp\\.o_OPTIONS = [^\n]*-msse2[^\n]*-mfpmath=sse"
+    source_match
+    "${flags}")
+  if(NOT source_match)
+    message(FATAL_ERROR "Expected ${TARGET_PATH} to use SSE2 for the Tube native test")
+  endif()
+  string(REGEX MATCH "(^|\n)CXX_FLAGS = [^\n]*-msse2" target_match "${flags}")
+  if(target_match)
+    message(FATAL_ERROR "Expected ${TARGET_PATH} to scope SSE2 to the test source")
   endif()
 endfunction()
 
@@ -94,19 +99,6 @@ assert_native_processor("ARM64" "4" "armv7l")
 assert_native_processor("armv7l" "4" "armv7l")
 assert_native_processor("riscv64" "8" "riscv64")
 
-set(
-  expected_32bit_portability_option
-  "$<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Wno-error=psabi>")
-assert_effetune_portability_options(
-  "i686"
-  "${expected_32bit_portability_option}")
-assert_effetune_portability_options(
-  "armv7l"
-  "${expected_32bit_portability_option}")
-assert_effetune_portability_options("x86_64" "")
-assert_effetune_portability_options("aarch64" "")
-assert_effetune_portability_options("riscv64" "")
-
 set(fixture_root "${CMAKE_CURRENT_BINARY_DIR}/native-dsp-i686-fixture")
 set(fixture_build "${fixture_root}/build")
 set(fixture_toolchain "${fixture_root}/i686-toolchain.cmake")
@@ -135,13 +127,14 @@ if(NOT fixture_result EQUAL 0)
     "Could not configure the i686 DSP fixture:\n${fixture_output}\n${fixture_error}")
 endif()
 
-assert_target_uses_32bit_portability_option(
+assert_target_scopes_tube_psabi_option(
   "${fixture_build}"
-  "effetune-dsp/CMakeFiles/effetune_dsp_core.dir")
+  "effetune-dsp/CMakeFiles/effetune_dsp_core.dir"
+  kernel)
 assert_target_uses_engine_mxcsr_option(
   "${fixture_build}"
   "effetune-dsp/CMakeFiles/effetune_dsp_core.dir")
-assert_target_uses_32bit_portability_option(
+assert_tube_test_uses_source_sse2(
   "${fixture_build}"
   "effetune-dsp/CMakeFiles/effetune_dsp_tube_simulator_tests.dir")
 foreach(
@@ -150,11 +143,13 @@ foreach(
     pipetune_effetune_dsp_scalar_shared
     pipetune_effetune_dsp_simd_shared
     pipetune_effetune_dsp_x86_64_v3_shared)
-  assert_target_uses_32bit_portability_option(
+  assert_target_scopes_tube_psabi_option(
     "${fixture_build}"
-    "CMakeFiles/${target_name}.dir")
+    "CMakeFiles/${target_name}.dir"
+    kernel)
   assert_target_uses_engine_mxcsr_option(
     "${fixture_build}"
     "CMakeFiles/${target_name}.dir")
 endforeach()
+
 file(REMOVE_RECURSE "${fixture_root}")

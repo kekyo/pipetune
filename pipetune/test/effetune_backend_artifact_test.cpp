@@ -263,7 +263,7 @@ static std::uint32_t findKernelIndex(const BackendApi &api,
   return count;
 }
 
-static void checkEffeTune213Catalog(const BackendApi &api) {
+static void checkEffeTune214Catalog(const BackendApi &api) {
   static constexpr std::array<std::string_view, 20> addedTypes = {
       "GroupDelayPEQPlugin", "MDSimulatorPlugin", "ClickRemoverPlugin",
       "ClipRestorerPlugin", "HumRemoverPlugin", "NoiseReductionPlugin",
@@ -274,10 +274,10 @@ static void checkEffeTune213Catalog(const BackendApi &api) {
       "RhythmAnalyzerPlugin", "AnalogMeterPlugin",
       "AdaptivePredictionEffectPlugin", "SFZNotePlayerPlugin"};
   check(api.kernelCount() == 112u,
-        "EffeTune 2.13 backend catalog must contain 112 kernels");
+        "EffeTune 2.14 backend catalog must contain 112 kernels");
   for (const auto typeName : addedTypes) {
     check(findKernelIndex(api, typeName) < api.kernelCount(),
-          "EffeTune 2.13 backend catalog must contain every required kernel");
+          "EffeTune 2.14 backend catalog must contain every required kernel");
   }
   struct Contract {
     std::string_view type;
@@ -288,21 +288,21 @@ static void checkEffeTune213Catalog(const BackendApi &api) {
   for (const auto &contract : std::array{
            Contract{"TonalBalanceEQPlugin", 0x0a5d8c64u, 36u, 0u},
            Contract{"RhythmAnalyzerPlugin", 0xbae05865u, 3u, 0u},
-           Contract{"AnalogMeterPlugin", 0xc0e236cdu, 4u, 0u},
+           Contract{"AnalogMeterPlugin", 0xad3d461cu, 7u, 0u},
            Contract{"AdaptivePredictionEffectPlugin", 0xebd8a6f0u, 10u, 0u},
-           Contract{"SFZNotePlayerPlugin", 0x0f17627cu, 16u, 1073741824u},
+           Contract{"SFZNotePlayerPlugin", 0x378e7f2bu, 19u, 1073741824u},
            Contract{"CassetteArtifactsPlugin", 0x328491aeu, 13u, 0u},
-           Contract{"NoteSpectrogramPlugin", 0x9d70750bu, 2u, 0u}}) {
+           Contract{"NoteSpectrogramPlugin", 0xafc5ff07u, 3u, 0u}}) {
     const auto index = findKernelIndex(api, contract.type);
     if (index >= api.kernelCount()) continue;
     const auto *definition = pipetune::findDspByTypeName(contract.type);
     check(api.kernelParamsHash(index) == contract.hash && definition != nullptr &&
               definition->floatCount == contract.floats &&
               api.kernelParamBytesCapacity(index) == 0u,
-          "EffeTune 2.13 kernels must expose their official parameter layouts");
+          "EffeTune 2.14 kernels must expose their official parameter layouts");
     for (auto slot = 0u; slot < 4u; ++slot)
       check(api.kernelAssetCapacity(index, slot) == (slot == 0u ? contract.assetBytes : 0u),
-            "EffeTune 2.13 kernels must expose their official asset capacities");
+            "EffeTune 2.14 kernels must expose their official asset capacities");
   }
   const auto phaseSelectIndex = findKernelIndex(api, "PhaseSelectEqPlugin");
   check(phaseSelectIndex < api.kernelCount(),
@@ -765,6 +765,52 @@ static std::vector<float> renderGoldenCase(const BackendApi &api,
   return audio;
 }
 
+static void checkSfzPreviewTransitions(const BackendApi &api) {
+  const auto *definition = pipetune::findDspByTypeName("SFZNotePlayerPlugin");
+  check(definition != nullptr, "SFZ preview catalog must be available");
+  if (definition == nullptr) return;
+  const auto pack = [definition](int midi, int velocity) {
+    const auto text = "{\"dm\":0,\"wm\":100,\"pm\":" + std::to_string(midi) +
+        ",\"pv\":" + std::to_string(velocity) + "}";
+    auto *document = yyjson_read(text.data(), text.size(), 0);
+    auto result = pipetune::packDspParameters(*definition, yyjson_doc_get_root(document));
+    yyjson_doc_free(document);
+    check(result.error.empty(), "SFZ preview events must pack");
+    return result.floats;
+  };
+  const auto initial = pack(-1, 100);
+  auto testCase = GoldenCase{"SFZ preview transitions", "SFZNotePlayerPlugin", 48000,
+      10240, 2, 128, 0xeffe7a5eu, initial, 0, std::vector<float>(20480)};
+  testCase.stimulus = "silence";
+  testCase.events = {{2048, pack(83, 1)}, {4096, pack(-1, 1)},
+      {6144, pack(83, 127)}, {8192, pack(-1, 127)}};
+  constexpr auto asset = std::string_view(R"json({"sfz":{"kind":"sfz-sine-v1"}})json");
+  auto *document = yyjson_read(asset.data(), asset.size(), 0);
+  testCase.asset = yyjson_doc_get_root(document);
+  const auto audio = renderGoldenCase(api, testCase);
+  yyjson_doc_free(document);
+  check(audio.size() == 20480, "SFZ preview must process every event block");
+  if (audio.size() != 20480) return;
+  for (auto channel = 0u; channel < 2; ++channel) {
+    const auto samples = std::span(audio).subspan(channel * 10240, 10240);
+    const auto silent = [&](std::size_t start, std::size_t count) {
+      return std::ranges::all_of(samples.subspan(start, count), [](float value) { return value == 0; });
+    };
+    check(silent(0, 2048), "default SFZ parameters must not preview without a note");
+    check(silent(4608, 1536) && silent(8704, 1536),
+        "releasing preview must stop the voice on silent input");
+    auto energy = 0.0;
+    for (auto frame = 2560u; frame < 4096; ++frame) {
+      energy += samples[frame] * samples[frame];
+      // The fixture disables velocity tracking; both endpoint velocities must
+      // restart the same prepared sample after the previous voice has stopped.
+      check(std::abs(samples[frame] - samples[frame + 4096]) < 1e-7F,
+          "SFZ preview must restart deterministically at both velocity endpoints");
+    }
+    check(energy / 1536 > 0.01, "explicit SFZ preview must sound without detected input");
+  }
+}
+
 static void checkGoldenCase(const BackendApi &api, std::uint32_t variant,
                             const GoldenCase &testCase) {
   if (const auto *type = std::getenv("PIPETUNE_GOLDEN_TYPE"); type != nullptr &&
@@ -802,8 +848,8 @@ static void checkGoldenCase(const BackendApi &api, std::uint32_t variant,
 
 static void checkMetadataGoldens(const BackendApi &api, std::uint32_t variant,
                                   const std::filesystem::path &directory,
-                                  std::uint32_t caseCount) {
-  for (auto number = 1u; number <= caseCount; ++number) {
+                                  std::uint32_t caseCount, std::uint32_t firstCase = 1u) {
+  for (auto number = firstCase; number < firstCase + caseCount; ++number) {
     auto filename = std::array<char, 32>{};
     std::snprintf(filename.data(), filename.size(), "case-%03u.json", number);
     const auto path = directory / filename.data();
@@ -1062,9 +1108,10 @@ int main(int argc, char **argv) {
                 PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
             "scalar backend must report its concrete variant");
       checkAllAbiSymbols(scalar.handle);
-      checkEffeTune213Catalog(scalar);
+      checkEffeTune214Catalog(scalar);
       checkTubeRuntimeContract(scalar);
       checkUnrelatedInstanceDestruction(scalar);
+      checkSfzPreviewTransitions(scalar);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "analyzer/rhythm_analyzer/golden", 6u);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
@@ -1076,7 +1123,17 @@ int main(int argc, char **argv) {
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "others/sfz_note_player/golden", 11u);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
-                           pluginRoot / "analyzer/analog_meter/golden", 5u);
+                           pluginRoot / "analyzer/analog_meter/golden", 6u);
+      for (const auto number : {11u, 15u, 16u, 18u, 19u})
+        checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                             pluginRoot / "lofi/am_radio_simulator/golden", 1u, number);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "lofi/vinyl_artifacts/golden", 1u, 4u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "modulation/phaser/golden", 1u, 3u);
+      for (const auto number : {2u, 6u, 10u, 11u, 13u, 15u})
+        checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                             pluginRoot / "saturation/tube_simulator/golden", 1u, number);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "eq/tonal_balance_eq/golden", 6u);
       const auto scalarSpectrum = renderImpulseSpectrum(scalar);
@@ -1126,12 +1183,19 @@ int main(int argc, char **argv) {
         checkCatalogsMatch(scalar, simd);
         checkTubeRuntimeContract(simd);
         checkUnrelatedInstanceDestruction(simd);
+        checkSfzPreviewTransitions(simd);
         checkMetadataGoldens(simd, expected, pluginRoot / "analyzer/rhythm_analyzer/golden", 6u);
         checkMetadataGoldens(simd, expected, std::filesystem::path(argv[3]).parent_path(), 18u);
         checkMetadataGoldens(simd, expected, pluginRoot / "resonator/adaptive_prediction_effect/golden", 17u);
         checkMetadataGoldens(simd, expected, pluginRoot / "reverb/ir_reverb/golden", 13u);
         checkMetadataGoldens(simd, expected, pluginRoot / "others/sfz_note_player/golden", 11u);
-        checkMetadataGoldens(simd, expected, pluginRoot / "analyzer/analog_meter/golden", 5u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "analyzer/analog_meter/golden", 6u);
+        for (const auto number : {11u, 15u, 16u, 18u, 19u})
+          checkMetadataGoldens(simd, expected, pluginRoot / "lofi/am_radio_simulator/golden", 1u, number);
+        checkMetadataGoldens(simd, expected, pluginRoot / "lofi/vinyl_artifacts/golden", 1u, 4u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "modulation/phaser/golden", 1u, 3u);
+        for (const auto number : {2u, 6u, 10u, 11u, 13u, 15u})
+          checkMetadataGoldens(simd, expected, pluginRoot / "saturation/tube_simulator/golden", 1u, number);
         checkMetadataGoldens(simd, expected, pluginRoot / "eq/tonal_balance_eq/golden", 6u);
         checkGoldenCases(simd, expected, goldenCases);
         checkMetadataGoldens(simd, expected, pluginRoot / "spatial/spatial_mapper/golden", 7u);

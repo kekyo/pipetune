@@ -176,13 +176,18 @@ pipetune_configure_effetune_mxcsr_source(
   "${PIPETUNE_EFFETUNE_DIR}/dsp/core/engine.cpp"
   "${PIPETUNE_NATIVE_PROCESSOR}"
   TARGET_DIRECTORY effetune_dsp_core)
-pipetune_configure_effetune_portability_target(
-  effetune_dsp_core
+pipetune_configure_effetune_tube_source(
+  "${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/saturation/tube_simulator/kernel.cpp"
+  "${PIPETUNE_NATIVE_PROCESSOR}"
+  TARGET_DIRECTORY effetune_dsp_core)
+pipetune_configure_effetune_tube_source(
+  "${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/saturation/tube_simulator/kernel.cpp"
   "${PIPETUNE_NATIVE_PROCESSOR}")
 if(TARGET effetune_dsp_tube_simulator_tests)
-  pipetune_configure_effetune_portability_target(
-    effetune_dsp_tube_simulator_tests
-    "${PIPETUNE_NATIVE_PROCESSOR}")
+  pipetune_configure_effetune_tube_test_source(
+    "${PIPETUNE_EFFETUNE_DIR}/dsp/plugins/saturation/tube_simulator/native_test.cpp"
+    "${PIPETUNE_NATIVE_PROCESSOR}"
+    TARGET_DIRECTORY effetune_dsp_tube_simulator_tests)
 endif()
 pipetune_add_effetune_native_backends(
   "${PIPETUNE_EFFETUNE_DIR}/dsp"
@@ -632,7 +637,7 @@ if(BUILD_TESTING)
   add_dependencies(pipetune_sfz_playback_driver ${PIPETUNE_DSP_BACKEND_TARGETS})
 
   add_executable(pipetune_sfz_runtime_tests test/sfz_runtime_test.cpp)
-  target_include_directories(pipetune_sfz_runtime_tests PRIVATE src)
+  target_include_directories(pipetune_sfz_runtime_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
   target_link_libraries(pipetune_sfz_runtime_tests PRIVATE pipetune_pipewire)
   target_compile_options(pipetune_sfz_runtime_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_dependencies(pipetune_sfz_runtime_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
@@ -673,12 +678,12 @@ if(BUILD_TESTING)
   set_tests_properties(pipetune_asset_preparation_contracts PROPERTIES
     WORKING_DIRECTORY "${PIPETUNE_ASSET_TEST_DIR}" TIMEOUT 300)
 
-  add_executable(pipetune_effetune_213_tests test/effetune_213_test.cpp)
-  target_include_directories(pipetune_effetune_213_tests PRIVATE src)
-  target_link_libraries(pipetune_effetune_213_tests PRIVATE pipetune_core)
-  target_compile_options(pipetune_effetune_213_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  add_dependencies(pipetune_effetune_213_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
-  add_test(NAME pipetune_effetune_213_tests COMMAND pipetune_effetune_213_tests
+  add_executable(pipetune_effetune_214_tests test/effetune_214_test.cpp)
+  target_include_directories(pipetune_effetune_214_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_link_libraries(pipetune_effetune_214_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_effetune_214_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_effetune_214_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
+  add_test(NAME pipetune_effetune_214_tests COMMAND pipetune_effetune_214_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test/presets/effetune-2.13/adaptive-original.effetune_preset)
 
   add_executable(pipetune_adaptive_prediction_tests test/adaptive_prediction_test.cpp)
