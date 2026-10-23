@@ -14,19 +14,7 @@ function(assert_native_processor SYSTEM_PROCESSOR POINTER_SIZE EXPECTED)
   endif()
 endfunction()
 
-function(assert_effetune_portability_options NATIVE_PROCESSOR EXPECTED)
-  pipetune_resolve_effetune_portability_options(
-    actual_options
-    "${NATIVE_PROCESSOR}")
-  if(NOT actual_options STREQUAL EXPECTED)
-    message(
-      FATAL_ERROR
-      "Expected ${NATIVE_PROCESSOR} EffeTune portability options to be "
-      "${EXPECTED}, but got ${actual_options}")
-  endif()
-endfunction()
-
-function(assert_target_uses_32bit_portability_option BUILD_DIRECTORY TARGET_PATH)
+function(assert_target_scopes_tube_psabi_option BUILD_DIRECTORY TARGET_PATH)
   set(flags_path "${BUILD_DIRECTORY}/${TARGET_PATH}/flags.make")
   if(NOT EXISTS "${flags_path}")
     message(FATAL_ERROR "Missing generated target flags: ${flags_path}")
@@ -34,23 +22,23 @@ function(assert_target_uses_32bit_portability_option BUILD_DIRECTORY TARGET_PATH
   file(READ "${flags_path}" flags)
   string(
     REGEX MATCH
-    "CXX_FLAGS = [^\n]*-Wno-error=psabi"
-    cxx_match
+    "tube_simulator/kernel\\.cpp\\.o_OPTIONS = [^\n]*-Wno-psabi"
+    tube_match
     "${flags}")
-  if(NOT cxx_match)
+  if(NOT tube_match)
     message(
       FATAL_ERROR
-      "Expected ${TARGET_PATH} to relax the GNU C++ psABI warning")
+      "Expected ${TARGET_PATH} to suppress only the Tube source's psABI warning")
   endif()
   string(
     REGEX MATCH
-    "(^|\n)C_FLAGS = [^\n]*-Wno-error=psabi"
-    c_match
+    "(^|\n)CXX_FLAGS = [^\n]*-Wno-(error=)?psabi"
+    target_match
     "${flags}")
-  if(c_match)
+  if(target_match)
     message(
       FATAL_ERROR
-      "Expected ${TARGET_PATH} to retain the C warning policy")
+      "Expected ${TARGET_PATH} to retain the C++ warning policy")
   endif()
 endfunction()
 
@@ -94,19 +82,6 @@ assert_native_processor("ARM64" "4" "armv7l")
 assert_native_processor("armv7l" "4" "armv7l")
 assert_native_processor("riscv64" "8" "riscv64")
 
-set(
-  expected_32bit_portability_option
-  "$<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Wno-error=psabi>")
-assert_effetune_portability_options(
-  "i686"
-  "${expected_32bit_portability_option}")
-assert_effetune_portability_options(
-  "armv7l"
-  "${expected_32bit_portability_option}")
-assert_effetune_portability_options("x86_64" "")
-assert_effetune_portability_options("aarch64" "")
-assert_effetune_portability_options("riscv64" "")
-
 set(fixture_root "${CMAKE_CURRENT_BINARY_DIR}/native-dsp-i686-fixture")
 set(fixture_build "${fixture_root}/build")
 set(fixture_toolchain "${fixture_root}/i686-toolchain.cmake")
@@ -135,26 +110,53 @@ if(NOT fixture_result EQUAL 0)
     "Could not configure the i686 DSP fixture:\n${fixture_output}\n${fixture_error}")
 endif()
 
-assert_target_uses_32bit_portability_option(
+assert_target_scopes_tube_psabi_option(
   "${fixture_build}"
   "effetune-dsp/CMakeFiles/effetune_dsp_core.dir")
 assert_target_uses_engine_mxcsr_option(
   "${fixture_build}"
   "effetune-dsp/CMakeFiles/effetune_dsp_core.dir")
-assert_target_uses_32bit_portability_option(
-  "${fixture_build}"
-  "effetune-dsp/CMakeFiles/effetune_dsp_tube_simulator_tests.dir")
 foreach(
   target_name
   IN ITEMS
     pipetune_effetune_dsp_scalar_shared
     pipetune_effetune_dsp_simd_shared
     pipetune_effetune_dsp_x86_64_v3_shared)
-  assert_target_uses_32bit_portability_option(
+  assert_target_scopes_tube_psabi_option(
     "${fixture_build}"
     "CMakeFiles/${target_name}.dir")
   assert_target_uses_engine_mxcsr_option(
     "${fixture_build}"
     "CMakeFiles/${target_name}.dir")
 endforeach()
+
+# Temporary removal check: an unrelated vector-return source must still fail
+# under the target's -Werror policy after the broad psABI exception is removed.
+set(absence_source "${fixture_root}/unrelated_vector_return.cpp")
+file(WRITE "${absence_source}" [=[
+typedef double Pair __attribute__((vector_size(16)));
+Pair make_pair() { Pair result = {1, 2}; return result; }
+]=])
+file(
+  READ
+  "${fixture_build}/CMakeFiles/pipetune_effetune_dsp_scalar_shared.dir/flags.make"
+  scalar_flags)
+string(REGEX MATCH "CXX_FLAGS = ([^\n]*)" flags_match "${scalar_flags}")
+if(NOT flags_match)
+  message(FATAL_ERROR "Could not read scalar C++ flags")
+endif()
+separate_arguments(target_flags UNIX_COMMAND "${CMAKE_MATCH_1}")
+find_program(absence_cxx_compiler g++ REQUIRED)
+execute_process(
+  COMMAND
+    "${absence_cxx_compiler}" -m32 ${target_flags} -c "${absence_source}"
+    -o "${fixture_root}/unrelated_vector_return.o"
+  RESULT_VARIABLE absence_result
+  OUTPUT_VARIABLE absence_output
+  ERROR_VARIABLE absence_error)
+if(absence_result EQUAL 0)
+  message(
+    FATAL_ERROR
+    "Unrelated vector-return source escaped the target's -Werror policy:\n${absence_output}\n${absence_error}")
+endif()
 file(REMOVE_RECURSE "${fixture_root}")
