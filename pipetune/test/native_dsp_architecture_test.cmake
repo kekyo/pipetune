@@ -130,33 +130,4 @@ foreach(
     "CMakeFiles/${target_name}.dir")
 endforeach()
 
-# Temporary removal check: an unrelated vector-return source must still fail
-# under the target's -Werror policy after the broad psABI exception is removed.
-set(absence_source "${fixture_root}/unrelated_vector_return.cpp")
-file(WRITE "${absence_source}" [=[
-typedef double Pair __attribute__((vector_size(16)));
-Pair make_pair() { Pair result = {1, 2}; return result; }
-]=])
-file(
-  READ
-  "${fixture_build}/CMakeFiles/pipetune_effetune_dsp_scalar_shared.dir/flags.make"
-  scalar_flags)
-string(REGEX MATCH "CXX_FLAGS = ([^\n]*)" flags_match "${scalar_flags}")
-if(NOT flags_match)
-  message(FATAL_ERROR "Could not read scalar C++ flags")
-endif()
-separate_arguments(target_flags UNIX_COMMAND "${CMAKE_MATCH_1}")
-find_program(absence_cxx_compiler g++ REQUIRED)
-execute_process(
-  COMMAND
-    "${absence_cxx_compiler}" -m32 ${target_flags} -c "${absence_source}"
-    -o "${fixture_root}/unrelated_vector_return.o"
-  RESULT_VARIABLE absence_result
-  OUTPUT_VARIABLE absence_output
-  ERROR_VARIABLE absence_error)
-if(absence_result EQUAL 0)
-  message(
-    FATAL_ERROR
-    "Unrelated vector-return source escaped the target's -Werror policy:\n${absence_output}\n${absence_error}")
-endif()
 file(REMOVE_RECURSE "${fixture_root}")
