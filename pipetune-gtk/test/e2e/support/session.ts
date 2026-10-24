@@ -69,6 +69,8 @@ export interface PipeTuneGtkTestOptions {
   readonly setupFails?: boolean;
   /** Exposes a physical card with two input-preserving output profiles. */
   readonly outputProfilesEnabled?: boolean;
+  /** Requires explicit discovery before the digital profile exposes its layout. */
+  readonly unknownOutputProfile?: boolean;
 }
 
 /**
@@ -292,6 +294,8 @@ export const launchPipeTuneGtk = async (
       PIPETUNE_GTK_E2E_PERSISTENCE_GUARD: persistenceGuardPath,
       PIPETUNE_E2E_OUTPUT_PROFILES:
         options.outputProfilesEnabled === true ? '1' : undefined,
+      PIPETUNE_E2E_UNKNOWN_OUTPUT_PROFILE:
+        options.unknownOutputProfile === true ? '1' : undefined,
     },
   });
   let daemon: FakeDaemon | undefined;

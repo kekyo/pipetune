@@ -81,6 +81,11 @@ struct OutputChannelWidgets {
   std::string label = {};
 };
 
+struct OutputReplacementChoice {
+  pipetune::OutputDeviceDescription device;
+  std::optional<pipetune::OutputProfileSelection> profile;
+};
+
 // Rows keep their widget identity while a device is selected or disabled, so
 // keyboard focus and an in-progress accessible action survive live previews.
 struct OutputDeviceWidgets {
@@ -102,6 +107,7 @@ struct OutputDeviceWidgets {
   GtkWidget *timing = nullptr;
   std::string timingText = {};
   std::vector<OutputChannelWidgets> channels = {};
+  std::vector<OutputReplacementChoice> replacements = {};
   bool enabled = false;
 };
 
@@ -802,6 +808,15 @@ static std::vector<pipetune::OutputProfileSelection> activeOutputProfiles(const 
   return profiles;
 }
 
+static std::optional<pipetune::OutputProfileSelection> activeProfileForDevice(
+    const pipetune::ControlRuntimeStatus &status, const pipetune::OutputDeviceDescription &device) {
+  const auto card = outputCard(device);
+  for (const auto &profile : status.availableOutputProfiles)
+    if (profile.active && profile.card == card && !profile.outputKey.empty())
+      return pipetune::OutputProfileSelection{card, profile.cardProfileName, profile.outputKey, false};
+  return std::nullopt;
+}
+
 static const char *outputPresence(pipetune::OutputConnectionState state) {
   switch (state) {
   case pipetune::OutputConnectionState::connected: return translate("Connected");
@@ -1042,13 +1057,30 @@ static void renderOutputControls(GtkRuntime *runtime) {
     gtk_combo_box_text_remove_all(replacement);
     gtk_combo_box_text_append(replacement, "", outputId.empty() ?
         translate("Use existing channels…") : translate("Reassign device…"));
+    widgets.replacements.clear();
     if (outputId.empty()) {
       for (const auto &saved : configuration.outputs)
         gtk_combo_box_text_append(replacement, saved.id.c_str(), saved.device.name.c_str());
     } else {
       for (const auto &available : status.availableOutputs) {
-        const auto label = available.device.name + " · " + available.device.profile;
-        gtk_combo_box_text_append(replacement, available.nodeName.c_str(), label.c_str());
+        widgets.replacements.push_back({available.device, activeProfileForDevice(status, available.device)});
+      }
+      // A failed confirmation can reveal an inactive profile's real ports.
+      // Keep those observed choices available for explicit mapping review.
+      for (const auto &profile : status.availableOutputProfiles) {
+        if (profile.card != card || !profile.available || !profile.preservesInput || profile.outputKey.empty()) continue;
+        for (const auto &observed : profile.observedOutputs) {
+          const auto selection = pipetune::OutputProfileSelection{profile.card, profile.cardProfileName, profile.outputKey, false};
+          if (std::any_of(widgets.replacements.begin(), widgets.replacements.end(), [&](const auto &choice) {
+                return choice.device == observed && choice.profile == selection;
+              })) continue;
+          widgets.replacements.push_back({observed, selection});
+        }
+      }
+      for (auto index = std::size_t{0}; index < widgets.replacements.size(); ++index) {
+        const auto &choice = widgets.replacements[index];
+        const auto label = choice.device.name + " · " + choice.device.profile;
+        gtk_combo_box_text_append(replacement, std::to_string(index).c_str(), label.c_str());
       }
     }
     gtk_combo_box_set_active(GTK_COMBO_BOX(replacement), 0);
@@ -1675,15 +1707,37 @@ static void onOutputReassignChanged(GtkComboBox *combo, gpointer userData) {
   const auto key = std::string(stored);
   auto candidate = runtime->outputDraft->configuration;
   const auto &inventory = runtime->state.runtime.availableOutputs;
-  const auto name = key.starts_with("saved:") ? std::string(selected) : key.substr(5);
-  const auto available = std::find_if(inventory.begin(), inventory.end(),
-      [&name](const auto &output) { return output.nodeName == name; });
-  if (available == inventory.end()) return;
   const auto id = key.starts_with("saved:") ? key.substr(6) : std::string(selected);
-  if (key.starts_with("node:"))
+  auto choice = OutputReplacementChoice{};
+  if (key.starts_with("saved:")) {
+    const auto row = std::find_if(runtime->outputDeviceRows.begin(), runtime->outputDeviceRows.end(),
+        [&id](const auto &entry) { return entry.outputId == id; });
+    const auto index = gtk_combo_box_get_active(combo) - 1;
+    if (row == runtime->outputDeviceRows.end() || index < 0 || static_cast<std::size_t>(index) >= row->replacements.size()) return;
+    choice = row->replacements[static_cast<std::size_t>(index)];
+  } else {
+    const auto name = key.substr(5);
+    const auto available = std::find_if(inventory.begin(), inventory.end(),
+        [&name](const auto &output) { return output.nodeName == name; });
+    if (available == inventory.end()) return;
+    choice = {available->device, activeProfileForDevice(runtime->state.runtime, available->device)};
+    // An available device can take over a saved assignment directly from its row.
     for (auto &output : candidate.outputs) if (output.id == id) output.enabled = true;
-  auto proposal = replaceOutputDevice(candidate, id, available->device);
-  if (proposal.error.empty()) editOutputDraft(runtime, std::move(proposal.configuration));
+  }
+  for (auto &output : candidate.outputs) if (output.id == id) output.profileIntent.reset();
+  auto proposal = replaceOutputDevice(candidate, id, choice.device);
+  if (proposal.error.empty()) {
+    if (choice.profile) {
+      for (auto &output : proposal.configuration.outputs)
+        if (output.id == id) output.profileIntent = pipetune::OutputProfileIntent{choice.profile->card, choice.profile->outputKey};
+      auto &profiles = runtime->outputDraft->profiles;
+      const auto previous = std::find_if(profiles.begin(), profiles.end(),
+          [&choice](const auto &profile) { return profile.card == choice.profile->card; });
+      if (previous == profiles.end()) profiles.push_back(*choice.profile);
+      else *previous = *choice.profile;
+    }
+    editOutputDraft(runtime, std::move(proposal.configuration));
+  }
   else { runtime->outputEditError = std::move(proposal.error); render(runtime); }
 }
 

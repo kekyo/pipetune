@@ -35,6 +35,8 @@ struct FakeDaemonState {
   std::string outputVolumeState = "normal";
   std::string outputTimingState = "normal";
   bool outputProfilesEnabled = false;
+  bool unknownOutputProfile = false;
+  bool outputProfileDiscovered = false;
   std::string outputProfileKey = "analog-stereo";
   std::uint64_t outputInventoryRevision = 1;
 };
@@ -177,14 +179,19 @@ static pipetune::ControlRuntimeStatus snapshotStatus(
     auto &device = status.availableOutputs.front().device;
     device.identity = {card.api, card.location, "pcm:0:0", card.vendor, card.product, card.serial};
     device.profile = state.outputProfileKey;
+    if (state.unknownOutputProfile && state.outputProfileKey == "iec958-stereo")
+      device.channelPositions = {"FL", "FR", "RL", "RR"};
     for (const auto &key : {std::string("analog-stereo"), std::string("iec958-stereo")}) {
       auto observed = device;
       observed.profile = key;
+      observed.channelPositions = state.unknownOutputProfile && key == "iec958-stereo" ?
+          std::vector<std::string>{"FL", "FR", "RL", "RR"} : std::vector<std::string>{"FL", "FR"};
       status.availableOutputProfiles.push_back({
           .card = card, .cardProfileName = "output:" + key + "+input:analog-stereo",
           .outputKey = key, .description = key == "analog-stereo" ? "Analog stereo" : "Digital stereo",
           .available = true, .active = key == state.outputProfileKey, .preservesInput = true,
-          .observedOutputs = {observed}});
+          .observedOutputs = state.unknownOutputProfile && key == "iec958-stereo" && !state.outputProfileDiscovered ?
+              std::vector<pipetune::OutputDeviceDescription>{} : std::vector{observed}});
     }
     status.outputInventoryRevision = state.outputInventoryRevision;
   }
@@ -363,6 +370,18 @@ static pipetune::ControlMessageResult handleRequest(
         if (!state.outputProfilesEnabled || profile.card.location != "usb:test" ||
             profile.cardProfileName != "output:" + profile.outputKey + "+input:analog-stereo")
           return closeResponse(pipetune::makeControlErrorResponse("output profile unavailable"), false);
+        if (state.unknownOutputProfile && profile.outputKey == "iec958-stereo" && !profile.allowMissingForRestore) {
+          const auto &outputs = parsed.request.outputConfiguration.outputs;
+          const auto matching = std::find_if(outputs.begin(), outputs.end(), [](const auto &output) {
+            return output.device.identity.location == "usb:test" && output.device.profile == "iec958-stereo" &&
+                output.device.channelPositions == std::vector<std::string>{"FL", "FR", "RL", "RR"};
+          });
+          if (matching == outputs.end()) {
+            state.outputProfileDiscovered = true;
+            ++state.outputInventoryRevision;
+            return closeResponse(pipetune::makeControlErrorResponse("E2E profile layout differs; review discovered channels"), true);
+          }
+        }
         if (state.outputProfileKey != profile.outputKey) {
           state.outputProfileKey = profile.outputKey;
           ++state.outputInventoryRevision;
@@ -495,6 +514,7 @@ int main(int argc, char **argv) {
       .dspTelemetrySequence = 0,
       .manualStatusSequence = 0,
       .outputProfilesEnabled = environmentValue("PIPETUNE_E2E_OUTPUT_PROFILES") == "1",
+      .unknownOutputProfile = environmentValue("PIPETUNE_E2E_UNKNOWN_OUTPUT_PROFILE") == "1",
   };
   if (state.outputProfilesEnabled)
     for (const auto &output : state.liveConfig.outputConfiguration.outputs)

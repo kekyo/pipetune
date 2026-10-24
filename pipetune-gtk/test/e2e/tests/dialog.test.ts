@@ -379,6 +379,55 @@ const hideWithKeyboard = async (method: 'escape' | 'close'): Promise<void> => {
 };
 
 describe('PipeTune GTK dialog', () => {
+  it('retains the draft after profile discovery and requires review of the observed channels', async () => {
+    session = await launchPipeTuneGtk({
+      rejectedCommand: undefined,
+      outputProfilesEnabled: true,
+      unknownOutputProfile: true,
+    });
+    await waitForConnected();
+    const saved = await session.inspectConfig();
+    await selectSettingsPage(3);
+    await openMultipleOutputConfiguration();
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await (await getElement('output-purpose-0-0', 'entry')).setText('Front');
+    await selectComboItem('output-profile-0', 1);
+    await (
+      await getElement('outputConfigurationApplyButton', 'button')
+    ).click();
+    await toPass(async () =>
+      expect(
+        await (await getElement('outputErrorLabel', 'label')).text()
+      ).toContain('review discovered channels')
+    );
+    expect(await session.app.getWindowCount()).toBe(2);
+    expect(await (await getElement('output-purpose-0-0', 'entry')).text()).toBe(
+      'Front'
+    );
+    expect(await session.inspectConfig()).toEqual(saved);
+    const replacement = await findComboItem(
+      'output-reassign-0',
+      'DAC A · iec958-stereo'
+    );
+    const choices = await getElement('output-reassign-0', 'comboBox');
+    await choices.click();
+    await (await choices.childAt(replacement))?.click();
+    await waitForLabel('output-physical-0-3', '4 (RR)');
+    await expectComboItemSelected('output-channel-0-3', 3);
+    expect(
+      (await session.readRequests()).filter((r) => r.command === 'set-output')
+    ).toHaveLength(1);
+    await applyOutputConfiguration();
+    const requests = (await session.readRequests()).filter(
+      (r) => r.command === 'set-output'
+    );
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toMatchObject({
+      configuration: { channels: [{ label: 'Front' }, {}, {}, {}] },
+    });
+    expect(await session.inspectConfig()).toEqual(saved);
+  });
+
   it('applies a profile with its channels and restores the original OS profile on parent Cancel', async () => {
     session = await launchPipeTuneGtk({
       rejectedCommand: undefined,
