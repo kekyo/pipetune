@@ -82,7 +82,10 @@ pipetune::OutputConfigurationResult moveOutputChannel(
   auto slot = std::move(candidate.channels[from]);
   candidate.channels.erase(candidate.channels.begin() + static_cast<std::ptrdiff_t>(from));
   candidate.channels.insert(candidate.channels.begin() + static_cast<std::ptrdiff_t>(to), std::move(slot));
-  const auto error = pipetune::validateOutputConfiguration(candidate);
+  // Enablement is checked when confirming the complete draft.
+  auto validation = candidate;
+  validation.mode = pipetune::OutputMode::single;
+  const auto error = pipetune::validateOutputConfiguration(validation);
   if (!error.empty()) return {configuration, error};
   return {std::move(candidate), {}};
 }
@@ -109,7 +112,10 @@ pipetune::OutputConfigurationResult replaceOutputDevice(
   for (auto channel = previousWidth; channel < width; ++channel) {
     candidate.channels.push_back({found->id, static_cast<std::uint32_t>(channel), {}});
   }
-  const auto error = pipetune::validateOutputConfiguration(candidate);
+  // Replacement preserves enablement, including a temporarily disabled draft.
+  auto validation = candidate;
+  validation.mode = pipetune::OutputMode::single;
+  const auto error = pipetune::validateOutputConfiguration(validation);
   if (!error.empty()) return {configuration, error};
   return {std::move(candidate), {}};
 }

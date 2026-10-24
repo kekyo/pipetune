@@ -203,6 +203,25 @@ static bool testExplicitChannelCompaction() {
                "explicit compaction must release reserved slots for a new device");
 }
 
+static bool testDisabledDraftRemainsEditable() {
+  auto original = configuredOutputs();
+  for (auto &output : original.outputs) output.enabled = false;
+  auto replacement = original.outputs[0].device;
+  replacement.identity.location = "replacement";
+  replacement.name = "Replacement DAC";
+  auto expected = original;
+  expected.outputs[0].device = replacement;
+  const auto replaced = pipetune_gtk::replaceOutputDevice(original, "a", replacement);
+  if (!check(replaced.error.empty() && replaced.configuration == expected,
+             "replacing a device in a disabled draft must preserve its disabled state"))
+    return false;
+  std::swap(expected.channels[0], expected.channels[1]);
+  const auto moved = pipetune_gtk::moveOutputChannel(replaced.configuration, 0, 1);
+  return check(moved.error.empty() && moved.configuration == expected &&
+                   !pipetune::validateOutputConfiguration(moved.configuration).empty(),
+               "a disabled draft must allow channel edits but remain invalid for confirmation");
+}
+
 int main() {
   auto success = testExplicitChannelMoves();
   success = testDeviceReplacement() && success;
@@ -210,5 +229,6 @@ int main() {
   success = testDeviceOrderUsesChannelNumbers() && success;
   success = testDeviceRemovalKeepsChannelNumbers() && success;
   success = testExplicitChannelCompaction() && success;
+  success = testDisabledDraftRemainsEditable() && success;
   return success ? 0 : 1;
 }
