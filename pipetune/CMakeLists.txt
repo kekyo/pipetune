@@ -678,12 +678,12 @@ if(BUILD_TESTING)
   set_tests_properties(pipetune_asset_preparation_contracts PROPERTIES
     WORKING_DIRECTORY "${PIPETUNE_ASSET_TEST_DIR}" TIMEOUT 300)
 
-  add_executable(pipetune_effetune_214_tests test/effetune_214_test.cpp)
-  target_include_directories(pipetune_effetune_214_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
-  target_link_libraries(pipetune_effetune_214_tests PRIVATE pipetune_core)
-  target_compile_options(pipetune_effetune_214_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  add_dependencies(pipetune_effetune_214_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
-  add_test(NAME pipetune_effetune_214_tests COMMAND pipetune_effetune_214_tests
+  add_executable(pipetune_effetune_215_tests test/effetune_215_test.cpp)
+  target_include_directories(pipetune_effetune_215_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_link_libraries(pipetune_effetune_215_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_effetune_215_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_effetune_215_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
+  add_test(NAME pipetune_effetune_215_tests COMMAND pipetune_effetune_215_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test/presets/effetune-2.13/adaptive-original.effetune_preset)
 
   add_executable(pipetune_adaptive_prediction_tests test/adaptive_prediction_test.cpp)

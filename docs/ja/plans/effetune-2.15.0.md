@@ -117,6 +117,8 @@ CLI・GTKの版表示、単純な登録SFZのClassic/Event再生、Scalarとホ�
 
 製品テストで欠落が見つかった場合は、その挙動をREDで再現したうえでPipeTune側の根本原因を修正する。音声コールバックへファイル読込、アセット準備、不要な割当・解放を加えない。単なる時間待ちではなく、処理フレーム数や状態遷移を条件に判定する。
 
+先行検証で、Eventはリセット直後から音があると最初の発音を抑止することが分かった。無音休止からの復帰でも同じ条件になる。上流の解析器は最初の解析フレームで音符の開始通知を抑止するため、EventのSFZ instanceに限り、構築時とreset時に1 hop分の無音を処理して初期化する。公開`instanceProcess`と既存のarenaを使い、他のDSPの状態は進めない。プレビューを指定している場合は初期化中だけ無効にし、音源の先頭を保つ。初回発音、休止再開、reset後のPCM再現性、プレビューの先頭、dry遅延が変わらないことを検証し、Releaseでresetの追加費用も測る。[開始通知の抑止](https://github.com/Frieve-A/effetune/blob/v2.15.0/dsp/plugins/analyzer/note_spectrogram/spectral_analysis.h)、[公開処理API](https://github.com/Frieve-A/effetune/blob/v2.15.0/dsp/include/effetune/abi.h)
+
 完了条件は、Eventの音声・遅延・再構築・休止再開が製品経路で成立し、Classicと既存アセット処理に退行がないこと。
 
 コミット: `feat: validate SFZ Event detection in PipeTune`。独立した不具合修正が必要なら、この工程内で再現テストとともに`fix:`へ分ける。
@@ -170,4 +172,37 @@ DESTDIR="$PWD/artifacts/verification/effetune-2.15/final-install" cmake --instal
 
 現行コード、2.14.0の対応計画と実績、公式2.15.0タグと差分、公式文書とAPIコメントを照合した。更新先コミット、SFZのパラメータ変更と13件の参照PCM、Matrixの保持契約とPipeTuneの回避処理、アセット準備処理に差分がないことを確認した。ABIパッチのfuzzなし適用も一時コピーで確認した。
 
-本書は計画のみであり、上記の実装完了条件は全て未実施である。文書追加はビルドへ影響しないため、計画作成時の製品ビルド・全体テストは実行していない。
+計画作成時点では、上記の実装完了条件は全て未実施だった。文書追加はビルドへ影響しないため、計画作成時の製品ビルド・全体テストは実行していない。
+
+## 実施記録
+
+### 工程0の基準
+
+作業ブランチは`feature/effetune-2.15.0`。計画コミット`5343f41`とEffeTune 2.14.0でDebug/Releaseをビルドし、Debug全238テストが成功した（506.42秒）。この全体テストにはコア単独ビルドとGTK E2Eも含む。ビルドのコンパイラ警告はなかった。
+
+ホストはIntel Core i9-12900KS、論理24 CPU、メモリ62 GiB、GCC 13.3、CMake 3.28.3。Scalar、baseline SIMD、x86-64-v3を実行でき、x86-64-v4はCPU非対応となる。9配布構成のPodmanイメージも利用できた。環境の詳細は`environment.json`、ビルドと全体テストは`baseline-*.log`に保存した。以下、記録ファイルは`artifacts/verification/effetune-2.15/`を基準とする。
+
+Releaseの性能測定はCPU 8へ固定し、他のビルド・試験と重ねずに行った。入力は1 kHzの8倍音を含むステレオPCM、ブロックは256フレーム、測定前に1秒分を処理し、その後256ブロックを測定した。音源は48 kHzのモノラルfloat32 WAV、4410フレーム、key 83である。各条件を3回測定した中央値を示す。RSSはプロセス全体の最大値であり、SFZだけの使用量ではない。
+
+| レート | キャッシュ | 準備 ms | 処理 ns/frame | 最大RSS KiB | 遅延 frames |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 48 kHz | 冷 | 15.374 | 888.803 | 27640 | 4320 |
+| 48 kHz | 温 | 13.942 | 887.968 | 26640 | 4320 |
+| 96 kHz | 冷 | 22.471 | 525.603 | 28524 | 8640 |
+| 96 kHz | 温 | 21.195 | 523.519 | 27500 | 8640 |
+| 384 kHz | 冷 | 65.862 | 244.751 | 33384 | 34560 |
+| 384 kHz | 温 | 64.478 | 247.373 | 32336 | 34560 |
+
+全測定でPCMは有限かつ非無音だった。冷キャッシュのヒット数は0、温キャッシュは1。更新後の読込確認用に、基準測定で作成したキャッシュを保持した。生データと条件は`sfz-performance-baseline-214.json`、共有バックエンドのサイズは`baseline-backend-sizes.json`に保存した。
+
+### 工程1の最小更新
+
+2.15.0の契約を要求するスモークを2.14.0の共有バックエンドで実行し、バージョン、SFZの20 floatとEvent指定、Matrixの適用済み・処理待ち・空ルートのreset保持でREDを確認した。ログは`step1-red/result.log`。その後、公式コミット`45d2f69b63483c4a2e98758bd8a5715cb13e3266`へ参照を更新した。
+
+現行バージョンのスモークを`effetune_215_test.cpp`へ改名し、カタログの契約とパッカー比較を更新した。ホストでは8件の対象テストが成功した（144.76秒）。SFZの公式13参照PCM、Matrixのinstance/engine reset、上流SFZ・Note Spectrogram・モデルfixture・topologyを含む。CLI・GTKはともに`EffeTune DSP 2.15.0`を表示し、コンパイラ警告はなかった。ログは`step1-targeted.log`、表示は`step1-versions.json`、参照PCMの誤差は`step1-golden-metrics.log`に保存した。
+
+Debian trixieのi686・armv7lを先行ビルドし、導入済み共有ライブラリでPCMを確認した。i686はScalar・baseline SSE2・v3、armv7lはScalar・baseline NEONの計5種類を実行でき、非対応CPUによる除外はなかった。全てで112カーネル、SFZの20 float・新ハッシュ・容量、Matrix reset、登録SFZのClassic/Event発音とdry遅延を確認した。`tm=-100`、48 kHzでの遅延はClassicが9120、Eventが15840フレームだった。ビルド・導入・音声試験は全て成功し、警告・エラーはなかった。ARMのGCC 7.1以降の引数ABI変更に関する出力は情報通知であり、各構成を同一コンパイラでビルドしている。
+
+先行配布物のPipeTuneバージョンは既存の生成規則による2.14.2で、EffeTune DSPのバージョンは2.15.0。対象ソースの未コミット差分、配布物のハッシュ、ログは`early32-*`、音声結果は`package-pcm-early.json`に保存した。これらは工程2・3の修正前の成果物であり、最終工程では9構成を再生成する。
+
+工程1の完了条件を満たした。製品経路のEvent初回発音・休止再開について見つかった問題は、工程3に追記した方針で修正する。
