@@ -686,6 +686,14 @@ if(BUILD_TESTING)
   add_test(NAME pipetune_effetune_215_tests COMMAND pipetune_effetune_215_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test/presets/effetune-2.13/adaptive-original.effetune_preset)
 
+  add_executable(pipetune_matrix_no_restaging_tests test/matrix_no_restaging_test.cpp)
+  target_include_directories(pipetune_matrix_no_restaging_tests PRIVATE "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_link_libraries(pipetune_matrix_no_restaging_tests PRIVATE pipetune_core)
+  target_link_options(pipetune_matrix_no_restaging_tests PRIVATE -Wl,--wrap=dlsym)
+  target_compile_options(pipetune_matrix_no_restaging_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_matrix_no_restaging_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
+  add_test(NAME pipetune_matrix_no_restaging_tests COMMAND pipetune_matrix_no_restaging_tests)
+
   add_executable(pipetune_adaptive_prediction_tests test/adaptive_prediction_test.cpp)
   target_include_directories(pipetune_adaptive_prediction_tests PRIVATE src)
   target_link_libraries(pipetune_adaptive_prediction_tests PRIVATE pipetune_pipewire)

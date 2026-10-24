@@ -44,12 +44,6 @@ constexpr auto kPipelineDescriptorVersion = std::uint32_t{1};
 constexpr auto kPipelineDescriptorHeaderBytes = std::size_t{8};
 constexpr auto kPipelineDescriptorNodeBytes = std::size_t{12};
 
-struct RetainedParameterBytes {
-  et_instance instance;
-  std::uint32_t hash;
-  std::vector<std::uint8_t> bytes;
-};
-
 struct DspPipeline::Impl {
   std::shared_ptr<const DspBackend> backend;
   et_engine engine = 0;
@@ -65,7 +59,6 @@ struct DspPipeline::Impl {
   std::vector<std::filesystem::path> dependencyFiles;
   std::vector<std::shared_ptr<const AssetCachePin>> assetCachePins;
   std::vector<AssetMemoryReservation> nativeAssetMemory;
-  std::vector<RetainedParameterBytes> retainedParameterBytes;
 
   ~Impl() {
     if (engine != 0 && backend != nullptr) {
@@ -408,13 +401,6 @@ ProcessStatus DspPipeline::reset() noexcept {
   }
   const auto &api = dspBackendApi(*implementation_->backend);
   if (api.engineReset(implementation_->engine) != ET_OK) return ProcessStatus::dspError;
-  // Matrix resets its routes to the defaults. Re-stage the already packed
-  // bytes to preserve the preset without allocating on the audio thread.
-  for (const auto &parameters : implementation_->retainedParameterBytes) {
-    if (api.instanceSetParamBytes(implementation_->engine, parameters.instance,
-          parameters.bytes.data(), static_cast<std::uint32_t>(parameters.bytes.size()),
-          parameters.hash, 0u) != ET_OK) return ProcessStatus::dspError;
-  }
   return ProcessStatus::ok;
 }
 
@@ -745,8 +731,6 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
         co_return fail(nodeError(index, "native DSP rejected structured parameters"),
                          std::move(warnings));
       }
-      implementation->retainedParameterBytes.push_back(
-          {instance, definition->hash, std::move(packed.bytes)});
     }
     if (generatedAssetDsp && !generatedAsset.payload.empty()) {
       try {
