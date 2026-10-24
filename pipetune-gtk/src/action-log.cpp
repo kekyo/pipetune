@@ -31,7 +31,19 @@ static bool filterMatches(const ActionLogEntry &entry,
 }
 
 ActionLog createActionLog(std::size_t capacity) {
-  return {.entries = {}, .capacity = capacity, .nextId = 1};
+  return {.entries = {}, .capacity = capacity, .nextId = 1, .revision = 0};
+}
+
+bool updateActionLogRenderState(ActionLogRenderState &state,
+                                const ActionLog &log,
+                                ActionLogFilter filter) noexcept {
+  if (state.initialized && state.revision == log.revision &&
+      state.filter == filter)
+    return false;
+  state.revision = log.revision;
+  state.filter = filter;
+  state.initialized = true;
+  return true;
 }
 
 std::uint64_t appendPendingAction(
@@ -58,6 +70,7 @@ bool completePendingAction(
         success ? ActionLogState::success : ActionLogState::failure;
     entry.summary = std::move(summary);
     entry.detail = std::move(detail);
+    ++log.revision;
     return true;
   }
   return false;
@@ -78,6 +91,7 @@ std::uint64_t appendAction(
       .detail = std::move(detail),
   });
   trimActionLog(log);
+  ++log.revision;
   return id;
 }
 
@@ -94,6 +108,7 @@ std::vector<const ActionLogEntry *> filteredActionLogEntries(
 }
 
 void clearActionLog(ActionLog &log) {
+  if (!log.entries.empty()) ++log.revision;
   log.entries.clear();
 }
 

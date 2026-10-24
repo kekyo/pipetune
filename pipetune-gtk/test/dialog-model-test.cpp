@@ -602,6 +602,38 @@ static bool testActionLogHistory() {
   return check(log.entries.empty(), "Clear must remove visible log history");
 }
 
+static bool testActionLogViewRefresh() {
+  auto log = pipetune_gtk::createActionLog(4);
+  auto view = pipetune_gtk::ActionLogRenderState{};
+  using pipetune_gtk::ActionLogFilter;
+  if (!check(pipetune_gtk::updateActionLogRenderState(view, log, ActionLogFilter::all),
+             "a new log view must render its initial contents") ||
+      !check(!pipetune_gtk::updateActionLogRenderState(view, log, ActionLogFilter::all),
+             "repeated telemetry must preserve the existing log rows")) return false;
+  const auto pending = pipetune_gtk::appendPendingAction(log, 1000,
+      pipetune_gtk::ActionLogCategory::settings,
+      pipetune_gtk::localizedMessage("Changing audio outputs", {}),
+      pipetune_gtk::technicalMessage({}));
+  if (!check(pipetune_gtk::updateActionLogRenderState(view, log, ActionLogFilter::all),
+             "a pending action must appear in the view")) return false;
+  pipetune_gtk::completePendingAction(log, pending, 1010, true,
+      pipetune_gtk::ActionLogSeverity::info,
+      pipetune_gtk::localizedMessage("Audio outputs changed", {}),
+      pipetune_gtk::technicalMessage({}));
+  if (!check(pipetune_gtk::updateActionLogRenderState(view, log, ActionLogFilter::all),
+             "completion must replace the pending row") ||
+      !check(pipetune_gtk::updateActionLogRenderState(view, log, ActionLogFilter::errors),
+             "changing the filter must update the visible rows") ||
+      !check(!pipetune_gtk::updateActionLogRenderState(view, log, ActionLogFilter::errors),
+             "unchanged filtered rows must be retained")) return false;
+  pipetune_gtk::clearActionLog(log);
+  if (!check(pipetune_gtk::updateActionLogRenderState(view, log, ActionLogFilter::errors),
+             "clearing history must empty a filtered view")) return false;
+  auto rebuilt = pipetune_gtk::ActionLogRenderState{};
+  return check(pipetune_gtk::updateActionLogRenderState(rebuilt, log, ActionLogFilter::errors),
+               "a rebuilt localized window must render its own empty log view");
+}
+
 static bool testOutputSnapshotPreservation() {
   auto status = pipetune::ControlRuntimeStatus{};
   status.outputConfiguration = {
@@ -812,7 +844,8 @@ int main() {
                  testFailuresDisconnectAndConflict() &&
                  testStaleStatusAndRestoreRecovery() &&
                  testStructuredStatusModel() &&
-                 testStatusLevelPresentation() && testActionLogHistory()
+                 testStatusLevelPresentation() && testActionLogHistory() &&
+                 testActionLogViewRefresh()
              ? 0
              : 1;
 }

@@ -97,7 +97,30 @@ struct ActionLog {
   std::size_t capacity;
   /** Identifier assigned to the next entry. */
   std::uint64_t nextId;
+  /** Increments whenever visible history content can change. */
+  std::uint64_t revision = 0;
 };
+
+/** Last action-log contents rendered into one window. */
+struct ActionLogRenderState {
+  /** Revision represented by the current rows. */
+  std::uint64_t revision = 0;
+  /** Filter represented by the current rows. */
+  ActionLogFilter filter = ActionLogFilter::all;
+  /** False until this window has rendered its first rows. */
+  bool initialized = false;
+};
+
+/**
+ * Records whether a window's action-log rows need to be replaced.
+ * @param state Render history owned by one window.
+ * @param log Current action history.
+ * @param filter Current visible severity filter.
+ * @return True when content or filter changed, including the first render.
+ */
+bool updateActionLogRenderState(ActionLogRenderState &state,
+                                const ActionLog &log,
+                                ActionLogFilter filter) noexcept;
 
 /**
  * Creates an empty bounded action history.

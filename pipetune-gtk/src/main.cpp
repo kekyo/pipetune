@@ -164,6 +164,7 @@ struct GtkRuntime {
   StatusLevelMeterWidgets statusLoadMeter;
   ActionLog actionLog;
   ActionLogFilter logFilter;
+  ActionLogRenderState actionLogRenderState;
   std::uint64_t pendingActionId;
   guint reconnectSource;
   bool applicationHeld;
@@ -586,6 +587,8 @@ static GtkWidget *createActionLogRow(const ActionLogEntry &entry) {
 }
 
 static void renderActionLog(GtkRuntime *runtime) {
+  if (!updateActionLogRenderState(runtime->actionLogRenderState,
+                                  runtime->actionLog, runtime->logFilter)) return;
   clearContainer(runtime->ui.logList);
   const auto entries =
       filteredActionLogEntries(runtime->actionLog, runtime->logFilter);
@@ -3276,6 +3279,7 @@ static ApplicationRunResult runApplication(int argc, char **argv) {
       .statusLoadMeter = {},
       .actionLog = createActionLog(kActionLogCapacity),
       .logFilter = ActionLogFilter::all,
+      .actionLogRenderState = {},
       .pendingActionId = 0,
       .reconnectSource = 0,
       .applicationHeld = false,
