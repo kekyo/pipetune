@@ -65,11 +65,12 @@ SFZの文字列解析・波形生成・サンプル選択・バンク生成を�
 | `pipetune/test/effetune_214_test.cpp` | 現行版スモークとして`effetune_215_test.cpp`へ改名し、契約を更新。既存DSPの検証は残す |
 | `pipetune/test/effetune_backend_artifact_test.cpp` | SFZ契約とパラメータ配列を更新。Scalar/SIMD双方で13件のSFZ参照PCMとMatrix resetを検証 |
 | `pipetune/test/parameter-packer-parity.mjs` | `dt`の既定値、Classic/Event、無効値を上流JSと比較 |
-| `pipetune/src/dsp_pipeline.cpp` | Matrix用の保持・再送処理を削除 |
-| `pipetune/test/sfz_runtime_test.cpp` | Eventの登録再生・遅延・再構築・休止再開を追加 |
-| `pipetune/test/preset_pipeline_test.cpp`、`dsp_pipeline_slot_test.cpp`、出力系テスト | Matrixのreset・休止再開・複数出力を検証 |
+| `pipetune/src/dsp_pipeline.cpp` | Matrix用の保持・再送処理を削除。Event SFZ instanceの構築時・reset時に1 hopの無音で解析を初期化 |
+| `pipetune/test/sfz_runtime_test.cpp` | Eventの登録再生・遅延・再構築・休止再開・複数instanceを追加 |
+| `pipetune/test/preset_pipeline_test.cpp`、`dsp_pipeline_slot_test.cpp`、`product_output_test.cpp`、`multi-device-output.mjs` | Matrixのreset・休止再開と、SFZ両方式の複数出力PCM整列を検証 |
 | `pipetune/asset-preparation/test/`、アセット関連テスト | 準備処理の上流比較、キャッシュ、監視、異常時の状態保持を回帰確認 |
-| `README_ja.md`、`README.md` | 対応版と利用者に関係するEventの遅延を日本語原本から反映 |
+| `README_ja.md`、`README.md`、`docs/ja/details.md`、`docs/en/details.md` | 対応版、Eventの選択元と遅延を日本語原本から反映 |
+| `pipetune/README.md`、`pipetune/docs/dsp-backends.md`、`pipetune/docs/asset-preparation.md` | 対応版、SFZの13参照PCM、アセット準備の出典との関係を更新 |
 
 ## 段階的な実施計画
 
@@ -214,3 +215,15 @@ Debian trixieのi686・armv7lを先行ビルドし、導入済み共有ライブ
 保持構造体、保持メンバー、構築時の保存、reset時の再送を削除し、初回送信は残した。一時テストと恒久テスト7件が成功した（41.60秒）。この状態を`8b37904`でコミットした。恒久テストでは非既定・空・重複加算・位相反転・16チャンネルのルート、処理前後のreset、無音休止からの再開をPCMで検証する。既存のプリセットと複数出力のMatrix試験も成功した。
 
 その後、一時テストとCMake登録を削除し、恒久テスト6件が成功した（41.27秒）。ログは`step2-green.log`と`step2-clean.log`、詳細は対応するXMLに保存した。ビルドのコンパイラ警告はなく、工程2の完了条件を満たした。
+
+### 工程3のSFZ Event製品動作
+
+登録SFZ音源を使う製品試験をClassicとEventの両方式に拡張した。44.1/48/96/192/384 kHzで上流の`instanceLatency`と製品の報告遅延を照合し、Eventの追加7 hop、負の`tm`、dryインパルス位置、wet/dry混合、部分ブロック、選択ペア・未選択チャンネル、16チャンネルを確認した。通常のプリセット再読込による方式変更、別バス、レート・バックエンド再構築、無音休止からの再開、終音とNote Hold、同じ音高の再発音、プレビュー先頭とreset後のPCM再現性も試験した。4チャンネルに2つのEvent SFZ instanceを配置し、プレビューあり・なしの両ペアが発音してreset後にPCMが一致することを確認した。
+
+最初の対象試験ではClassicの再生ケースが完了した後、次のEvent 44.1 kHzの登録音源再生でREDとなった。失敗した方式は`step3-red.log`の出力順と`sfz_runtime_test.cpp`の呼出順から特定した。無音休止後の発音も失われ、先頭から有音の入力では最初の音符開始が抑止されることを診断した（`step3-draft/idle-first.log`など）。上流の解析器は最初の解析フレームで開始通知を抑止する。Event SFZ instanceだけに公開`instanceProcess`で1 hopの無音を構築時とreset時に通し、既存arenaを再利用した。プレビューは初期化中だけ無効化して音源先頭を保つ。他のDSP instanceの状態は進めない。この修正と製品試験を`1ea37d5`でコミットした。修正後、SFZ runtime、共有バックエンド参照PCM、プリセット、アセットキャッシュ・ライフサイクル、現行版の6対象テストが成功した（`step3-green.log`）。Node.jsとffmpegコマンドのない環境でもClassic/Eventの各レートと16チャンネルの試験が成功した（`step3-runtime-no-tools.log`）。ビルドに新しいコンパイラ警告はなかった。
+
+2.14時に作成した温キャッシュをコピーし、元のWAV、SFZ、登録情報、Classicプリセットを変更せず、48/96/384 kHzのClassic/Eventで再生した。6条件すべてで`cachedAssetCount==1`、有限で有音のPCM、Eventの追加7 hopを確認した。元のアセットとキャッシュのSHA-256・サイズ・更新時刻は試験前後で一致した。これは機能互換の確認であり、Debugの処理時間をRelease性能比較には使わない。結果とコマンドは`sfz-214-cache-reuse.json`、実行ログは`sfz-214-cache-reuse-run.log`に保存した。
+
+複数出力には、端末間に63フレームの遅延差を設けたSFZ Classic/Eventの2ケースを追加した。試験fixtureで異なる処理周期の端末バッファを時刻差からPCM位置へ換算すると、連続したPCMでも補償量を誤判定することが分かった（`step3-output-diagnostic.log`）。実時間driverでの新ケースには低頻度のPCM連続性失敗もあった。Debug単体で観測した256フレーム処理時間の最大はClassicが1.956 ms、Eventが1.954 msで、48 kHzの実時間周期5.333 msを下回った。失敗の原因をSFZ処理の期限超過とは断定できない。処理速度に依存せず機能を確認するため、新しいSFZ 2ケースにはPipeWireのfreewheel driverを使用し、同一周期のPCM補償62〜63フレーム、連続した32768検証済みフレーム、両出力経路のactive状態とserialを確認した。この環境のfreewheel試験では`reportedLatency`が未設定だったため、従来の遅延・遅延単位・再接続・Time Alignmentの4ケースは実時間driverを維持し、報告遅延も照合した。6ケースを各10回反復し、全60実行が成功した（51.59秒、`step3-output-final.log`とXML）。製品の複数出力処理には変更を加えていない。試験ビルドに新しいコンパイラ警告はなかった。[PipeWireのdriverとgroup](https://docs.pipewire.org/devel/page_running.html)、[freewheelの定義](https://docs.pipewire.org/group__spa__node.html)、[キャプチャバッファの時刻](https://pipewire.pages.freedesktop.org/pipewire/structpw__buffer.html)
+
+以上により、Eventの音声・遅延・再構築・休止再開が製品経路で成立し、Classicと既存アセット処理に退行がないという工程3の完了条件を満たした。全体テスト、Release性能、9配布構成は後続工程で判定する。
