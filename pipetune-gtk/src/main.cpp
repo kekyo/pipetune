@@ -84,10 +84,11 @@ struct OutputChannelWidgets {
 struct OutputReplacementChoice {
   pipetune::OutputDeviceDescription device;
   std::optional<pipetune::OutputProfileSelection> profile;
+  bool operator==(const OutputReplacementChoice &) const = default;
 };
 
-// Rows keep their widget identity while a device is selected or disabled, so
-// keyboard focus and an in-progress accessible action survive live previews.
+// Detail editors keep their widget identity while selection and device status
+// change, so unfinished typing survives updates and switching between devices.
 struct OutputDeviceWidgets {
   pipetune::OutputDeviceDescription device;
   std::string outputId = {};
@@ -96,9 +97,6 @@ struct OutputDeviceWidgets {
   GtkWidget *details = nullptr;
   GtkWidget *presence = nullptr;
   GtkWidget *notice = nullptr;
-  GtkWidget *expander = nullptr;
-  GtkWidget *contents = nullptr;
-  GtkWidget *reassign = nullptr;
   GtkWidget *profileBox = nullptr;
   GtkWidget *profile = nullptr;
   GtkWidget *grid = nullptr;
@@ -107,7 +105,6 @@ struct OutputDeviceWidgets {
   GtkWidget *timing = nullptr;
   std::string timingText = {};
   std::vector<OutputChannelWidgets> channels = {};
-  std::vector<OutputReplacementChoice> replacements = {};
   bool enabled = false;
 };
 
@@ -182,6 +179,10 @@ struct GtkRuntime {
   std::vector<OutputDeviceWidgets> outputDeviceRows = {};
   std::vector<OutputChannelWidgets> outputReservedChannels = {};
   std::optional<OutputConfigurationDraft> outputDraft = {};
+  std::string selectedOutputId = {};
+  // No value closes the picker; an empty ID adds, a saved ID replaces.
+  std::optional<std::string> outputPickerTarget = {};
+  std::vector<OutputReplacementChoice> outputChoices = {};
   bool outputReconciliationPending = false;
 };
 
@@ -794,7 +795,6 @@ static void onOutputDeviceToggled(GtkToggleButton *button, gpointer userData);
 static void onOutputChannelChanged(GtkComboBox *combo, gpointer userData);
 static void onOutputPurposeActivated(GtkEntry *entry, gpointer userData);
 static gboolean onOutputPurposeFocusOut(GtkWidget *entry, GdkEventFocus *, gpointer userData);
-static void onOutputReassignChanged(GtkComboBox *combo, gpointer userData);
 static void onOutputProfileChanged(GtkComboBox *combo, gpointer userData);
 
 static pipetune::OutputCardIdentity outputCard(const pipetune::OutputDeviceDescription &device) {
@@ -908,6 +908,144 @@ static void renderOutputChannels(GtkRuntime *runtime, GtkWidget *grid,
   }
 }
 
+static void renderOutputPicker(GtkRuntime *runtime) {
+  auto &ui = runtime->ui;
+  gtk_widget_set_visible(ui.outputPickerBox, runtime->outputPickerTarget.has_value());
+  if (!runtime->outputPickerTarget || !runtime->outputDraft) return;
+  const auto &configuration = runtime->outputDraft->configuration;
+  const auto &status = runtime->state.runtime;
+  const auto &target = *runtime->outputPickerTarget;
+  const auto oldIndex = gtk_combo_box_get_active(GTK_COMBO_BOX(ui.outputAvailableCombo));
+  const auto previous = oldIndex >= 0 && static_cast<std::size_t>(oldIndex) < runtime->outputChoices.size() ?
+      std::optional{runtime->outputChoices[oldIndex]} : std::nullopt;
+  auto choices = std::vector<OutputReplacementChoice>{};
+  const auto addChoice = [&](OutputReplacementChoice choice) {
+    if (choice.device.channelPositions.empty() || choice.device.channelPositions.size() > 16) return;
+    if (std::any_of(configuration.outputs.begin(), configuration.outputs.end(), [&](const auto &saved) {
+          return saved.id != target && saved.device.identity == choice.device.identity;
+        })) return;
+    if (std::count_if(status.availableOutputs.begin(), status.availableOutputs.end(), [&](const auto &output) {
+          return output.device.identity == choice.device.identity && output.device.profile == choice.device.profile &&
+              output.device.channelPositions == choice.device.channelPositions;
+        }) > 1) return;
+    if (std::find(choices.begin(), choices.end(), choice) == choices.end()) choices.push_back(std::move(choice));
+  };
+  for (const auto &available : status.availableOutputs)
+    addChoice({available.device, activeProfileForDevice(status, available.device)});
+  const auto source = std::find_if(configuration.outputs.begin(), configuration.outputs.end(),
+      [&target](const auto &output) { return output.id == target; });
+  if (source != configuration.outputs.end()) {
+    // Failed profile confirmation can reveal a port layout that is inactive
+    // again. Keep it available for an explicit replacement review.
+    for (const auto &profile : status.availableOutputProfiles) {
+      if (profile.card != outputCard(source->device) || !profile.available ||
+          !profile.preservesInput || profile.outputKey.empty()) continue;
+      for (const auto &device : profile.observedOutputs)
+        addChoice({device, pipetune::OutputProfileSelection{profile.card, profile.cardProfileName, profile.outputKey, false}});
+    }
+  }
+  if (choices != runtime->outputChoices) {
+    runtime->outputChoices = std::move(choices);
+    gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(ui.outputAvailableCombo));
+    auto selected = -1;
+    for (auto index = std::size_t{0}; index < runtime->outputChoices.size(); ++index) {
+      const auto &choice = runtime->outputChoices[index];
+      const auto text = choice.device.name + " · " + choice.device.profile;
+      gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ui.outputAvailableCombo), text.c_str());
+      if (previous && *previous == choice) selected = static_cast<int>(index);
+    }
+    // A vanished selection must not silently become a different device.
+    gtk_combo_box_set_active(GTK_COMBO_BOX(ui.outputAvailableCombo), previous ? selected :
+        runtime->outputChoices.empty() ? -1 : 0);
+  }
+  const auto *notice = runtime->outputChoices.empty() ? translate("No unconfigured output devices are available.") :
+      target.empty() ? translate("Choose a device to add to this configuration.") :
+      translate("The replacement keeps the existing channel numbers and purpose labels.");
+  gtk_label_set_text(GTK_LABEL(ui.outputPickerNotice), notice);
+  gtk_button_set_label(GTK_BUTTON(ui.outputChooseButton), target.empty() ? translate("Add") : translate("Replace"));
+  const auto ready = controlsAreEditable(*runtime) && !runtime->outputDraft->applying &&
+      status.outputInventoryReady && status.outputInventoryError.empty();
+  gtk_widget_set_sensitive(ui.outputAvailableCombo, ready);
+  gtk_widget_set_sensitive(ui.outputChooseButton, ready &&
+      gtk_combo_box_get_active(GTK_COMBO_BOX(ui.outputAvailableCombo)) >= 0);
+  gtk_widget_set_sensitive(ui.outputChooseCancelButton, !runtime->outputDraft->applying);
+  auto *children = gtk_container_get_children(GTK_CONTAINER(ui.outputPickerBox));
+  for (auto *item = children; item != nullptr; item = item->next) gtk_widget_show_all(GTK_WIDGET(item->data));
+  g_list_free(children);
+}
+
+static void renderOutputSelection(GtkRuntime *runtime) {
+  auto &ui = runtime->ui;
+  const auto &configuration = runtime->outputDraft->configuration;
+  auto selected = std::find_if(configuration.outputs.begin(), configuration.outputs.end(),
+      [&](const auto &output) { return output.id == runtime->selectedOutputId; });
+  if (selected == configuration.outputs.end()) {
+    const auto order = configuredOutputOrder(configuration);
+    runtime->selectedOutputId = order.empty() ? std::string{} : configuration.outputs[order.front()].id;
+    selected = std::find_if(configuration.outputs.begin(), configuration.outputs.end(),
+        [&](const auto &output) { return output.id == runtime->selectedOutputId; });
+  }
+  const auto present = selected != configuration.outputs.end();
+  gtk_widget_set_visible(ui.outputEmptyLabel, !present);
+  gtk_widget_set_visible(ui.outputSelectedDeviceLabel, present);
+  gtk_widget_set_visible(ui.outputDeviceDetails, present);
+  gtk_widget_set_visible(ui.outputReplaceButton, present);
+  const auto editing = controlsAreEditable(*runtime) && !runtime->outputDraft->applying;
+  gtk_widget_set_sensitive(ui.outputDeleteButton, present && editing);
+  gtk_widget_set_sensitive(ui.outputReplaceButton, present && editing &&
+      runtime->state.runtime.outputInventoryReady && runtime->state.runtime.outputInventoryError.empty());
+  if (!present) return;
+  gtk_label_set_text(GTK_LABEL(ui.outputSelectedDeviceLabel), selected->device.name.c_str());
+  gtk_stack_set_visible_child_name(GTK_STACK(ui.outputDeviceDetails), selected->id.c_str());
+  auto *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(ui.outputDeviceView));
+  auto *model = gtk_tree_view_get_model(GTK_TREE_VIEW(ui.outputDeviceView));
+  auto iter = GtkTreeIter{};
+  if (!gtk_tree_model_get_iter_first(model, &iter)) return;
+  do {
+    auto *id = static_cast<gchar *>(nullptr);
+    gtk_tree_model_get(model, &iter, 3, &id, -1);
+    const auto matches = id != nullptr && selected->id == id;
+    g_free(id);
+    if (matches) { gtk_tree_selection_select_iter(selection, &iter); break; }
+  } while (gtk_tree_model_iter_next(model, &iter));
+}
+
+static void renderOutputChangeSummary(GtkRuntime *runtime) {
+  const auto &before = runtime->outputDraft->before;
+  const auto &after = runtime->outputDraft->configuration;
+  auto removed = std::size_t{0};
+  for (const auto &output : before.outputs)
+    if (std::none_of(after.outputs.begin(), after.outputs.end(), [&](const auto &other) { return other.id == output.id; })) ++removed;
+  auto summary = removed == 0 ? std::string{} : std::string(translate("Removed devices")) + ": " + std::to_string(removed);
+  const auto beforeWidth = pipetune::outputDspChannelCount(before);
+  const auto afterWidth = pipetune::outputDspChannelCount(after);
+  if (beforeWidth != afterWidth) {
+    if (!summary.empty()) summary += "\n";
+    summary += std::string(translate("Output channels")) + ": " + std::to_string(beforeWidth) +
+        " → " + std::to_string(afterWidth);
+  }
+  auto moves = std::string{};
+  for (auto index = std::size_t{0}; index < after.channels.size(); ++index) {
+    const auto &slot = after.channels[index];
+    if (slot.outputId.empty()) continue;
+    const auto previous = std::find_if(before.channels.begin(), before.channels.end(), [&](const auto &old) {
+      return old.outputId == slot.outputId && old.deviceChannel == slot.deviceChannel;
+    });
+    if (previous == before.channels.end()) continue;
+    const auto old = static_cast<std::size_t>(previous - before.channels.begin());
+    if (old == index) continue;
+    if (!moves.empty()) moves += ", ";
+    moves += "Ch " + std::to_string(old + 1) + " → Ch " + std::to_string(index + 1);
+  }
+  if (!moves.empty()) {
+    if (!summary.empty()) summary += "\n";
+    summary += std::string(translate("Channel changes")) + ": " + moves;
+    summary += "\n" + std::string(translate("Review the preset's channel assignments before applying these changes."));
+  }
+  gtk_label_set_text(GTK_LABEL(runtime->ui.outputChangeSummaryLabel), summary.c_str());
+  gtk_widget_set_visible(runtime->ui.outputChangeSummaryLabel, !summary.empty());
+}
+
 static void renderOutputControls(GtkRuntime *runtime) {
   auto &ui = runtime->ui;
   const auto &parent = (runtime->transactionReady ? runtime->transaction.desiredLive : runtime->savedConfig).outputConfiguration;
@@ -928,8 +1066,7 @@ static void renderOutputControls(GtkRuntime *runtime) {
   else if (!status.outputProfileRestorationError.empty()) modeNotice += "\n" + status.outputProfileRestorationError;
   gtk_label_set_text(GTK_LABEL(ui.outputModeNotice), modeNotice.c_str());
   auto diagnostic = runtime->outputEditError;
-  if (runtime->transactionReady && runtime->transaction.conflict)
-    diagnostic = runtime->transaction.diagnostic;
+  if (runtime->transactionReady && runtime->transaction.conflict) diagnostic = runtime->transaction.diagnostic;
   if (diagnostic.empty() && !single && std::none_of(configuration.outputs.begin(), configuration.outputs.end(),
       [](const auto &output) { return output.enabled; })) diagnostic = translate("Select at least one output device.");
   if (diagnostic.empty()) diagnostic = pipetune::validateOutputConfiguration(configuration);
@@ -943,13 +1080,26 @@ static void renderOutputControls(GtkRuntime *runtime) {
   gtk_widget_set_visible(ui.outputErrorLabel, !diagnostic.empty());
   gtk_widget_set_sensitive(ui.outputModeCombo, controlsAreEditable(*runtime));
   const auto editing = runtime->outputDraft && !runtime->outputDraft->applying;
-  gtk_widget_set_sensitive(ui.outputDeviceList, controlsAreEditable(*runtime) && editing);
-  gtk_widget_set_sensitive(ui.outputConfigurationApplyButton, controlsAreEditable(*runtime) && editing && canConfirm);
+  for (auto *control : {ui.outputDeviceView, ui.outputDeviceDetails, ui.outputReservedExpander})
+    gtk_widget_set_sensitive(control, controlsAreEditable(*runtime) && editing);
+  gtk_widget_set_sensitive(ui.outputAddButton, controlsAreEditable(*runtime) && editing &&
+      status.outputInventoryReady && status.outputInventoryError.empty());
+  gtk_widget_set_sensitive(ui.outputCompactButton, controlsAreEditable(*runtime) && editing &&
+      std::any_of(configuration.channels.begin(), configuration.channels.end(), [](const auto &slot) { return slot.outputId.empty(); }));
+  gtk_widget_set_sensitive(ui.outputConfigurationApplyButton, controlsAreEditable(*runtime) && editing && canConfirm &&
+      !runtime->outputPickerTarget.has_value());
   gtk_widget_set_sensitive(ui.outputConfigurationCancelButton, editing);
   if (!runtime->outputDraft) return;
+  renderOutputOverview(ui.outputDeviceView, configuration, status.availableOutputs,
+      status.outputInventoryReady, status.outputInventoryError);
+  renderOutputPicker(runtime);
+  renderOutputChangeSummary(runtime);
   if (ui.displayedOutputConfiguration == configuration && ui.displayedOutputs == status.availableOutputs &&
       ui.displayedOutputProfiles == status.availableOutputProfiles &&
-      ui.displayedOutputInventoryReady == status.outputInventoryReady && ui.displayedOutputInventoryError == status.outputInventoryError) return;
+      ui.displayedOutputInventoryReady == status.outputInventoryReady && ui.displayedOutputInventoryError == status.outputInventoryError) {
+    renderOutputSelection(runtime);
+    return;
+  }
   ui.displayedOutputConfiguration = configuration;
   ui.displayedOutputs = status.availableOutputs;
   ui.displayedOutputProfiles = status.availableOutputProfiles;
@@ -957,87 +1107,58 @@ static void renderOutputControls(GtkRuntime *runtime) {
   ui.displayedOutputInventoryError = status.outputInventoryError;
   auto oldRows = std::move(runtime->outputDeviceRows);
   runtime->outputDeviceRows.clear();
-  auto rowIndex = std::size_t{0};
-  const auto addDevice = [&](const pipetune::OutputDeviceDescription &device, const std::string &key,
-                             const std::string &outputId, bool enabled, const char *presence,
-                             const char *notice, bool selectable) {
-    const auto previous = std::find_if(oldRows.begin(), oldRows.end(), [&](const auto &row) {
-      return (!outputId.empty() && row.outputId == outputId) ||
-          (row.device.identity == device.identity && row.device.profile == device.profile &&
-           row.device.channelPositions == device.channelPositions);
-    });
+  // Check saved profiles even when disabled, so configuration problems remain
+  // visible before the user enables a device again.
+  auto enabledConfiguration = configuration;
+  for (auto &output : enabledConfiguration.outputs) output.enabled = true;
+  const auto resolved = pipetune::resolveConfiguredOutputs(enabledConfiguration, status.availableOutputs);
+  for (auto index = std::size_t{0}; index < configuration.outputs.size(); ++index) {
+    const auto &output = configuration.outputs[index];
+    const auto &device = output.device;
+    const auto previous = std::find_if(oldRows.begin(), oldRows.end(),
+        [&](const auto &row) { return row.outputId == output.id; });
     auto widgets = OutputDeviceWidgets{device};
-    auto wasEnabled = false;
     if (previous != oldRows.end()) {
       widgets = std::move(*previous);
       oldRows.erase(previous);
-      wasEnabled = widgets.enabled;
       widgets.device = device;
     } else {
-      auto *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-      gtk_container_set_border_width(GTK_CONTAINER(box), 6);
-      widgets.expander = gtk_expander_new(nullptr);
-      auto *header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-      gtk_box_pack_start(GTK_BOX(header), widgets.expander, FALSE, FALSE, 0);
-      widgets.button = gtk_check_button_new_with_label(device.name.c_str());
-      widgets.reassign = gtk_combo_box_text_new();
-      gtk_box_pack_start(GTK_BOX(header), widgets.button, TRUE, TRUE, 0);
-      gtk_box_pack_end(GTK_BOX(header), widgets.reassign, FALSE, FALSE, 0);
-      auto *title = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-      gtk_box_pack_start(GTK_BOX(title), header, FALSE, FALSE, 0);
+      widgets.row = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+      widgets.button = gtk_check_button_new_with_label(translate("Use this device"));
+      gtk_box_pack_start(GTK_BOX(widgets.row), widgets.button, FALSE, FALSE, 0);
       widgets.details = outputText("");
       widgets.presence = outputText("");
-      auto *summary = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+      auto *summary = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
       gtk_box_pack_start(GTK_BOX(summary), widgets.details, TRUE, TRUE, 0);
       gtk_box_pack_end(GTK_BOX(summary), widgets.presence, FALSE, FALSE, 0);
-      gtk_box_pack_start(GTK_BOX(title), summary, FALSE, FALSE, 0);
+      gtk_box_pack_start(GTK_BOX(widgets.row), summary, FALSE, FALSE, 0);
       widgets.profileBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
       gtk_box_pack_start(GTK_BOX(widgets.profileBox), outputText(translate("Output profile")), FALSE, FALSE, 0);
       widgets.profile = gtk_combo_box_text_new();
       gtk_box_pack_start(GTK_BOX(widgets.profileBox), widgets.profile, TRUE, TRUE, 0);
-      gtk_box_pack_start(GTK_BOX(title), widgets.profileBox, FALSE, FALSE, 0);
+      gtk_box_pack_start(GTK_BOX(widgets.row), widgets.profileBox, FALSE, FALSE, 0);
       widgets.notice = outputText("");
-      gtk_box_pack_start(GTK_BOX(title), widgets.notice, FALSE, FALSE, 0);
       gtk_widget_set_no_show_all(widgets.notice, TRUE);
-      gtk_box_pack_start(GTK_BOX(box), title, FALSE, FALSE, 0);
-      auto *contents = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-      widgets.contents = contents;
-      gtk_widget_set_margin_start(contents, 20);
-      gtk_widget_set_margin_top(contents, 6);
+      gtk_box_pack_start(GTK_BOX(widgets.row), widgets.notice, FALSE, FALSE, 0);
       widgets.grid = gtk_grid_new();
       widgets.volume = outputText("");
       widgets.timing = outputText("");
-      gtk_box_pack_start(GTK_BOX(contents), widgets.grid, FALSE, FALSE, 0);
-      gtk_box_pack_start(GTK_BOX(contents), widgets.volume, FALSE, FALSE, 0);
-      gtk_box_pack_start(GTK_BOX(contents), widgets.timing, FALSE, FALSE, 0);
-      // GtkExpander's custom label is not an accessible child container. Keep
-      // interactive header controls beside its arrow and reveal the body using
-      // the documented notify::expanded pattern instead.
-      gtk_box_pack_start(GTK_BOX(box), contents, FALSE, FALSE, 0);
-      g_signal_connect(widgets.expander, "notify::expanded",
-          G_CALLBACK(+[](GObject *object, GParamSpec *, gpointer body) {
-            gtk_widget_set_visible(GTK_WIDGET(body), gtk_expander_get_expanded(GTK_EXPANDER(object)));
-          }), contents);
-      gtk_container_add(GTK_CONTAINER(ui.outputDeviceList), box);
-      widgets.row = gtk_widget_get_parent(box);
+      gtk_box_pack_start(GTK_BOX(widgets.row), widgets.grid, FALSE, FALSE, 0);
+      gtk_box_pack_start(GTK_BOX(widgets.row), widgets.volume, FALSE, FALSE, 0);
+      gtk_box_pack_start(GTK_BOX(widgets.row), widgets.timing, FALSE, FALSE, 0);
+      // GtkStack retains all editors but exposes only the selected device.
+      // A status update must not recreate entries or change keyboard focus.
+      gtk_stack_add_named(GTK_STACK(ui.outputDeviceDetails), widgets.row, output.id.c_str());
       g_signal_connect(widgets.button, "toggled", G_CALLBACK(onOutputDeviceToggled), runtime);
-      g_signal_connect(widgets.reassign, "changed", G_CALLBACK(onOutputReassignChanged), runtime);
       g_signal_connect(widgets.profile, "changed", G_CALLBACK(onOutputProfileChanged), runtime);
     }
-    const auto newlyAssigned = widgets.outputId.empty() && !outputId.empty();
-    widgets.outputId = outputId;
-    widgets.enabled = enabled;
-    auto *name = GTK_LABEL(gtk_bin_get_child(GTK_BIN(widgets.button)));
-    gtk_label_set_text(name, device.name.c_str());
-    gtk_label_set_ellipsize(name, PANGO_ELLIPSIZE_END);
-    gtk_label_set_max_width_chars(name, 24);
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(widgets.button), enabled);
-    gtk_widget_set_sensitive(widgets.button, selectable);
-    gtk_widget_set_tooltip_text(widgets.button, device.name.c_str());
-    atk_object_set_name(gtk_widget_get_accessible(widgets.expander), device.name.c_str());
-    const auto card = outputCard(device);
+    widgets.outputId = output.id;
+    widgets.enabled = output.enabled;
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(widgets.button), output.enabled);
+    g_object_set_data_full(G_OBJECT(widgets.button), "output-id", g_strdup(output.id.c_str()), g_free);
     auto *profileCombo = GTK_COMBO_BOX_TEXT(widgets.profile);
     gtk_combo_box_text_remove_all(profileCombo);
+    const auto card = outputCard(device);
     auto profileCount = 0;
     for (const auto &profile : status.availableOutputProfiles) {
       if (profile.card != card || profile.outputKey.empty() || !profile.available || !profile.preservesInput) continue;
@@ -1048,126 +1169,49 @@ static void renderOutputControls(GtkRuntime *runtime) {
         [&card](const auto &profile) { return profile.card == card; });
     if (selectedProfile != runtime->outputDraft->profiles.end())
       gtk_combo_box_set_active_id(GTK_COMBO_BOX(profileCombo), selectedProfile->cardProfileName.c_str());
-    gtk_widget_set_no_show_all(widgets.profileBox, outputId.empty() || profileCount == 0);
-    gtk_widget_set_visible(widgets.profileBox, !outputId.empty() && profileCount != 0);
-    g_object_set_data_full(G_OBJECT(widgets.profile), "output-id", g_strdup(outputId.c_str()), g_free);
-    auto *replacement = GTK_COMBO_BOX_TEXT(widgets.reassign);
-    gtk_combo_box_text_remove_all(replacement);
-    gtk_combo_box_text_append(replacement, "", outputId.empty() ?
-        translate("Use existing channels…") : translate("Reassign device…"));
-    widgets.replacements.clear();
-    if (outputId.empty()) {
-      for (const auto &saved : configuration.outputs)
-        gtk_combo_box_text_append(replacement, saved.id.c_str(), saved.device.name.c_str());
-    } else {
-      for (const auto &available : status.availableOutputs) {
-        widgets.replacements.push_back({available.device, activeProfileForDevice(status, available.device)});
-      }
-      // A failed confirmation can reveal an inactive profile's real ports.
-      // Keep those observed choices available for explicit mapping review.
-      for (const auto &profile : status.availableOutputProfiles) {
-        if (profile.card != card || !profile.available || !profile.preservesInput || profile.outputKey.empty()) continue;
-        for (const auto &observed : profile.observedOutputs) {
-          const auto selection = pipetune::OutputProfileSelection{profile.card, profile.cardProfileName, profile.outputKey, false};
-          if (std::any_of(widgets.replacements.begin(), widgets.replacements.end(), [&](const auto &choice) {
-                return choice.device == observed && choice.profile == selection;
-              })) continue;
-          widgets.replacements.push_back({observed, selection});
-        }
-      }
-      for (auto index = std::size_t{0}; index < widgets.replacements.size(); ++index) {
-        const auto &choice = widgets.replacements[index];
-        const auto label = choice.device.name + " · " + choice.device.profile;
-        gtk_combo_box_text_append(replacement, std::to_string(index).c_str(), label.c_str());
-      }
-    }
-    gtk_combo_box_set_active(GTK_COMBO_BOX(replacement), 0);
-    gtk_widget_set_sensitive(widgets.reassign, !configuration.outputs.empty() &&
-        !device.channelPositions.empty() && device.channelPositions.size() <= 16 &&
-        status.outputInventoryReady && status.outputInventoryError.empty());
-    for (auto *control : {widgets.button, widgets.reassign})
-      g_object_set_data_full(G_OBJECT(control), "output-key", g_strdup(key.c_str()), g_free);
-    g_object_set_data(G_OBJECT(widgets.row), "output-order", GUINT_TO_POINTER(static_cast<guint>(rowIndex)));
+    gtk_widget_set_no_show_all(widgets.profileBox, profileCount == 0);
+    gtk_widget_set_visible(widgets.profileBox, profileCount != 0);
+    g_object_set_data_full(G_OBJECT(widgets.profile), "output-id", g_strdup(output.id.c_str()), g_free);
     auto numbers = std::string{};
     auto slots = std::vector<std::size_t>{};
     auto names = std::vector<std::string>{};
     for (auto physical = std::size_t{0}; physical < std::min(device.channelPositions.size(), std::size_t{16}); ++physical) {
       auto slot = configuration.channels.size();
-      if (!outputId.empty()) {
-        for (auto index = std::size_t{0}; index < configuration.channels.size(); ++index) {
-          if (configuration.channels[index].outputId == outputId && configuration.channels[index].deviceChannel == physical) {
-            slot = index;
-            break;
-          }
+      for (auto candidate = std::size_t{0}; candidate < configuration.channels.size(); ++candidate)
+        if (configuration.channels[candidate].outputId == output.id && configuration.channels[candidate].deviceChannel == physical) {
+          slot = candidate; break;
         }
-      }
       slots.push_back(slot);
       names.push_back(std::to_string(physical + 1) + " (" + device.channelPositions[physical] + ')');
-      if (slot < configuration.channels.size()) {
-        numbers += numbers.empty() ? " · Ch " : ", ";
-        numbers += std::to_string(slot + 1);
-      }
+      if (slot < configuration.channels.size()) numbers += (numbers.empty() ? "Ch " : ", ") + std::to_string(slot + 1);
     }
-    renderOutputChannels(runtime, widgets.grid, widgets.channels, slots, names, std::to_string(rowIndex));
-    const auto details = device.profile + " · " + std::to_string(device.channelPositions.size()) + " ch" + numbers;
-    gtk_label_set_text(GTK_LABEL(widgets.details), details.c_str());
-    gtk_label_set_ellipsize(GTK_LABEL(widgets.details), PANGO_ELLIPSIZE_END);
-    gtk_widget_set_tooltip_text(widgets.details, details.c_str());
+    renderOutputChannels(runtime, widgets.grid, widgets.channels, slots, names, std::to_string(index));
+    gtk_label_set_text(GTK_LABEL(widgets.details), numbers.c_str());
+    const auto *presence = !status.outputInventoryError.empty() ? translate("Inventory unavailable") :
+        !status.outputInventoryReady ? translate("Waiting for output devices…") : outputPresence(resolved[index].state);
     gtk_label_set_text(GTK_LABEL(widgets.presence), presence);
+    const auto *notice = "";
+    if (status.outputInventoryReady && status.outputInventoryError.empty()) {
+      if (resolved[index].state == pipetune::OutputConnectionState::profileMismatch)
+        notice = translate("Choose an output profile or replace the device to review its channels.");
+      else if (resolved[index].state == pipetune::OutputConnectionState::ambiguous)
+        notice = translate("This device cannot be identified uniquely. Choose a replacement.");
+      else if (resolved[index].state == pipetune::OutputConnectionState::missing)
+        notice = translate("Reconnect this device, replace it, or remove it from the configuration.");
+      else if (!output.enabled) notice = translate("Disabled; channel numbers are retained.");
+    }
     gtk_label_set_text(GTK_LABEL(widgets.notice), notice);
     gtk_widget_set_visible(widgets.notice, notice[0] != '\0');
-    if (newlyAssigned || (enabled && !wasEnabled))
-      gtk_expander_set_expanded(GTK_EXPANDER(widgets.expander), TRUE);
 #ifdef PIPETUNE_GTK_E2E_ACCESSIBILITY
-    const auto suffix = std::to_string(rowIndex);
+    const auto suffix = std::to_string(index);
     gestament_gtk_assign_accessible_id(widgets.button, ("output-device-" + suffix).c_str());
-    gestament_gtk_assign_accessible_id(widgets.expander, ("output-expander-" + suffix).c_str());
-    gestament_gtk_assign_accessible_id(widgets.reassign, ("output-reassign-" + suffix).c_str());
     gestament_gtk_assign_accessible_id(widgets.profile, ("output-profile-" + suffix).c_str());
     gestament_gtk_assign_accessible_id(widgets.presence, ("output-presence-" + suffix).c_str());
     gestament_gtk_assign_accessible_id(widgets.notice, ("output-notice-" + suffix).c_str());
     gestament_gtk_assign_accessible_id(widgets.volume, ("output-volume-" + suffix).c_str());
     gestament_gtk_assign_accessible_id(widgets.timing, ("output-timing-" + suffix).c_str());
 #endif
-    ++rowIndex;
     runtime->outputDeviceRows.push_back(std::move(widgets));
-  };
-  // Check the saved profile even for disabled devices so the repair action is
-  // visible before the user tries to enable a stale assignment.
-  auto enabledConfiguration = configuration;
-  for (auto &output : enabledConfiguration.outputs) output.enabled = true;
-  const auto resolved = pipetune::resolveConfiguredOutputs(enabledConfiguration, status.availableOutputs);
-  for (auto index = std::size_t{0}; index < configuration.outputs.size(); ++index) {
-    const auto &output = configuration.outputs[index];
-    const auto *presence = !status.outputInventoryError.empty() ? translate("Inventory unavailable") :
-        !status.outputInventoryReady ? translate("Waiting for output devices…") :
-        !output.enabled ? translate("Disabled") : outputPresence(resolved[index].state);
-    const auto *notice = "";
-    if (status.outputInventoryReady && status.outputInventoryError.empty()) {
-      if (resolved[index].state == pipetune::OutputConnectionState::profileMismatch)
-        notice = translate("Profile changed. Reassign device to update these channels.");
-      else if (resolved[index].state == pipetune::OutputConnectionState::ambiguous)
-        notice = translate("Ambiguous device. Reassign device to choose the output.");
-      else if (resolved[index].state == pipetune::OutputConnectionState::missing)
-        notice = translate("Not connected. Reconnect it or reassign this device.");
-      else if (!output.enabled)
-        notice = translate("Disabled; channel numbers are retained.");
-    }
-    addDevice(output.device, "saved:" + output.id, output.id, output.enabled, presence, notice, true);
-  }
-  for (const auto &output : status.availableOutputs) {
-    if (std::any_of(configuration.outputs.begin(), configuration.outputs.end(),
-        [&output](const auto &saved) { return saved.device.identity == output.device.identity; })) continue;
-    const auto count = output.device.channelPositions.size();
-    const auto supported = count > 0 && count <= 16;
-    const auto room = configuration.channels.size() + count <= 16;
-    const auto unique = std::count_if(status.availableOutputs.begin(), status.availableOutputs.end(),
-        [&output](const auto &other) { return other.device.identity == output.device.identity &&
-            other.device.profile == output.device.profile && other.device.channelPositions == output.device.channelPositions; }) == 1;
-    const auto *notice = !supported ? translate("Unsupported channel count") :
-        !unique ? translate("The selected device cannot be identified uniquely.") :
-        !room ? translate("The 16-channel limit includes disabled and reserved channels. Use existing channels to replace a saved device.") : "";
-    addDevice(output.device, "node:" + output.nodeName, {}, false, translate("Available"), notice, supported && room && unique);
   }
   for (const auto &row : oldRows) gtk_widget_destroy(row.row);
   auto reservedSlots = std::vector<std::size_t>{};
@@ -1177,20 +1221,11 @@ static void renderOutputControls(GtkRuntime *runtime) {
     reservedSlots.push_back(index);
     reservedNames.emplace_back(translate("Unassigned"));
   }
-  renderOutputChannels(runtime, ui.outputReservedGrid, runtime->outputReservedChannels,
-      reservedSlots, reservedNames, "reserved");
-  auto *reservedRow = gtk_widget_get_parent(ui.outputReservedExpander);
-  g_object_set_data(G_OBJECT(reservedRow), "output-order", GUINT_TO_POINTER(G_MAXUINT));
-  gtk_list_box_set_sort_func(GTK_LIST_BOX(ui.outputDeviceList),
-      [](GtkListBoxRow *left, GtkListBoxRow *right, gpointer) {
-        const auto a = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(left), "output-order"));
-        const auto b = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(right), "output-order"));
-        return a < b ? -1 : a > b ? 1 : 0;
-      }, nullptr, nullptr);
-  gtk_widget_show_all(ui.outputDeviceList);
-  for (const auto &row : runtime->outputDeviceRows)
-    gtk_widget_set_visible(row.contents, gtk_expander_get_expanded(GTK_EXPANDER(row.expander)));
-  gtk_widget_set_visible(reservedRow, !reservedSlots.empty());
+  renderOutputChannels(runtime, ui.outputReservedGrid, runtime->outputReservedChannels, reservedSlots, reservedNames, "reserved");
+  gtk_widget_show_all(ui.outputDeviceDetails);
+  gtk_widget_show_all(ui.outputReservedGrid);
+  gtk_widget_set_visible(ui.outputReservedExpander, !reservedSlots.empty());
+  renderOutputSelection(runtime);
 }
 
 static void renderOutputVolumes(GtkRuntime *runtime) {
@@ -1574,6 +1609,7 @@ static void editDesiredSettings(
 
 static void closeOutputConfiguration(GtkRuntime *runtime) {
   runtime->outputDraft.reset();
+  runtime->outputPickerTarget.reset();
   discardOutputTyping(runtime);
   gtk_widget_hide(runtime->ui.outputConfigurationDialog);
   runtime->outputEditError.clear();
@@ -1588,6 +1624,8 @@ static void openOutputConfiguration(GtkRuntime *runtime, pipetune::OutputMode mo
   runtime->outputDraft->beforeProfiles = runtime->transaction.desiredOutputProfiles;
   runtime->outputDraft->profiles = runtime->transaction.desiredOutputProfiles;
   runtime->outputDraft->configuration.mode = mode;
+  runtime->selectedOutputId.clear();
+  runtime->outputPickerTarget.reset();
   runtime->outputEditError.clear();
   runtime->ui.displayedOutputConfiguration.reset();
   gtk_widget_show_all(runtime->ui.outputConfigurationDialog);
@@ -1620,51 +1658,160 @@ static void onOutputModeChanged(GtkComboBox *combo, gpointer userData) {
   editDesiredSettings(runtime, desired);
 }
 
+static void captureOutputLabels(GtkRuntime *runtime) {
+  if (!runtime->outputDraft) return;
+  const auto collect = [&](const auto &channels) {
+    for (const auto &channel : channels) {
+      const auto slot = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(channel.purpose), "output-slot"));
+      if (slot != 0 && slot <= runtime->outputDraft->configuration.channels.size())
+        runtime->outputDraft->configuration.channels[slot - 1].label = gtk_entry_get_text(GTK_ENTRY(channel.purpose));
+    }
+  };
+  for (const auto &row : runtime->outputDeviceRows) collect(row.channels);
+  collect(runtime->outputReservedChannels);
+}
+
+static void retainConfiguredDraftProfiles(GtkRuntime *runtime,
+    const pipetune::OutputConfiguration &configuration) {
+  // Removing or replacing the last output of a card abandons its edited
+  // profile, but preserves the profile captured when the dialog opened.
+  auto retained = runtime->outputDraft->beforeProfiles;
+  for (const auto &profile : runtime->outputDraft->profiles) {
+    if (std::none_of(configuration.outputs.begin(), configuration.outputs.end(),
+        [&](const auto &output) { return outputCard(output.device) == profile.card; })) continue;
+    const auto found = std::find_if(retained.begin(), retained.end(),
+        [&](const auto &entry) { return entry.card == profile.card; });
+    if (found == retained.end()) retained.push_back(profile);
+    else *found = profile;
+  }
+  runtime->outputDraft->profiles = std::move(retained);
+}
+
+static bool outputDraftIsEditable(const GtkRuntime *runtime) {
+  return !runtime->updatingControls && controlsAreEditable(*runtime) &&
+      runtime->outputDraft && !runtime->outputDraft->applying;
+}
+
+static void onOutputDeviceSelected(GtkTreeSelection *selection, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (!outputDraftIsEditable(runtime)) return;
+  auto *model = static_cast<GtkTreeModel *>(nullptr);
+  auto iter = GtkTreeIter{};
+  if (!gtk_tree_selection_get_selected(selection, &model, &iter)) return;
+  auto *id = static_cast<gchar *>(nullptr);
+  gtk_tree_model_get(model, &iter, 3, &id, -1);
+  if (id != nullptr) {
+    captureOutputLabels(runtime);
+    runtime->selectedOutputId = id;
+    runtime->outputPickerTarget.reset();
+    render(runtime);
+  }
+  g_free(id);
+}
+
+static void onOutputAddClicked(GtkButton *, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (!outputDraftIsEditable(runtime)) return;
+  captureOutputLabels(runtime);
+  runtime->outputPickerTarget = std::string{};
+  runtime->outputEditError.clear();
+  render(runtime);
+}
+
+static void onOutputReplaceClicked(GtkButton *, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (!outputDraftIsEditable(runtime) || runtime->selectedOutputId.empty()) return;
+  captureOutputLabels(runtime);
+  runtime->outputPickerTarget = runtime->selectedOutputId;
+  runtime->outputEditError.clear();
+  render(runtime);
+}
+
+static void onOutputChooseCancelClicked(GtkButton *, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (!outputDraftIsEditable(runtime)) return;
+  runtime->outputPickerTarget.reset();
+  runtime->outputEditError.clear();
+  render(runtime);
+}
+
+static void onOutputAvailableChanged(GtkComboBox *, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (outputDraftIsEditable(runtime)) render(runtime);
+}
+
+static void onOutputChooseClicked(GtkButton *, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (!outputDraftIsEditable(runtime) || !runtime->outputPickerTarget) return;
+  const auto index = gtk_combo_box_get_active(GTK_COMBO_BOX(runtime->ui.outputAvailableCombo));
+  if (index < 0 || static_cast<std::size_t>(index) >= runtime->outputChoices.size()) return;
+  const auto choice = runtime->outputChoices[index];
+  captureOutputLabels(runtime);
+  auto candidate = runtime->outputDraft->configuration;
+  auto id = *runtime->outputPickerTarget;
+  auto proposal = pipetune::OutputConfigurationResult{};
+  if (id.empty()) {
+    for (auto number = std::size_t{1}; id.empty(); ++number) {
+      const auto proposed = "output-" + std::to_string(number);
+      const auto hasId = [&proposed](const auto &output) { return output.id == proposed; };
+      if (std::none_of(candidate.outputs.begin(), candidate.outputs.end(), hasId) &&
+          std::none_of(runtime->outputDraft->before.outputs.begin(), runtime->outputDraft->before.outputs.end(), hasId)) id = proposed;
+    }
+    proposal = pipetune::appendConfiguredOutput(candidate, {id, true, choice.device});
+  } else {
+    for (auto &output : candidate.outputs) if (output.id == id) output.profileIntent.reset();
+    proposal = replaceOutputDevice(candidate, id, choice.device);
+  }
+  if (!proposal.error.empty()) {
+    runtime->outputEditError = proposal.error;
+    render(runtime);
+    return;
+  }
+  retainConfiguredDraftProfiles(runtime, proposal.configuration);
+  if (choice.profile) {
+    for (auto &output : proposal.configuration.outputs)
+      if (output.id == id) output.profileIntent = pipetune::OutputProfileIntent{choice.profile->card, choice.profile->outputKey};
+    auto &profiles = runtime->outputDraft->profiles;
+    const auto previous = std::find_if(profiles.begin(), profiles.end(),
+        [&](const auto &profile) { return profile.card == choice.profile->card; });
+    if (previous == profiles.end()) profiles.push_back(*choice.profile);
+    else *previous = *choice.profile;
+  }
+  runtime->outputPickerTarget.reset();
+  runtime->selectedOutputId = id;
+  editOutputDraft(runtime, std::move(proposal.configuration));
+}
+
+static void onOutputDeleteClicked(GtkButton *, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (!outputDraftIsEditable(runtime) || runtime->selectedOutputId.empty()) return;
+  captureOutputLabels(runtime);
+  auto proposal = removeOutputDevice(runtime->outputDraft->configuration, runtime->selectedOutputId);
+  if (!proposal.error.empty()) { runtime->outputEditError = proposal.error; render(runtime); return; }
+  retainConfiguredDraftProfiles(runtime, proposal.configuration);
+  runtime->outputPickerTarget.reset();
+  editOutputDraft(runtime, std::move(proposal.configuration));
+}
+
+static void onOutputCompactClicked(GtkButton *, gpointer userData) {
+  auto *runtime = static_cast<GtkRuntime *>(userData);
+  if (!outputDraftIsEditable(runtime)) return;
+  captureOutputLabels(runtime);
+  auto proposal = compactOutputChannels(runtime->outputDraft->configuration);
+  if (!proposal.error.empty()) { runtime->outputEditError = proposal.error; render(runtime); return; }
+  runtime->outputPickerTarget.reset();
+  editOutputDraft(runtime, std::move(proposal.configuration));
+}
+
 static void onOutputDeviceToggled(GtkToggleButton *button, gpointer userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
-  if (runtime->updatingControls || !controlsAreEditable(*runtime) || !runtime->outputDraft || runtime->outputDraft->applying) return;
-  const auto *stored = static_cast<const char *>(g_object_get_data(G_OBJECT(button), "output-key"));
-  if (stored == nullptr) return;
-  const auto key = std::string(stored);
-  auto desired = runtime->outputDraft->configuration;
-  auto &configuration = desired;
-  if (key.starts_with("saved:")) {
-    const auto output = std::find_if(configuration.outputs.begin(), configuration.outputs.end(),
-        [&key](const auto &item) { return item.id == key.substr(6); });
-    if (output == configuration.outputs.end()) return;
-    output->enabled = gtk_toggle_button_get_active(button) != FALSE;
-  } else {
-    const auto &inventory = runtime->ui.displayedOutputs;
-    const auto output = std::find_if(inventory.begin(), inventory.end(),
-        [&key](const auto &item) { return item.nodeName == key.substr(5); });
-    if (output == inventory.end()) return;
-    auto id = std::string{};
-    for (auto index = std::size_t{1}; id.empty(); ++index) {
-      const auto proposed = "output-" + std::to_string(index);
-      if (std::none_of(configuration.outputs.begin(), configuration.outputs.end(),
-          [&proposed](const auto &item) { return item.id == proposed; })) id = proposed;
-    }
-    auto added = pipetune::appendConfiguredOutput(configuration, {id, true, output->device});
-    if (added.error.empty()) {
-      const auto card = outputCard(output->device);
-      for (const auto &profile : runtime->state.runtime.availableOutputProfiles)
-        if (profile.card == card && profile.active && !profile.outputKey.empty())
-          added.configuration.outputs.back().profileIntent = pipetune::OutputProfileIntent{card, profile.outputKey};
-    }
-    if (added.error.empty()) {
-      const auto resolved = pipetune::resolveConfiguredOutputs(added.configuration, inventory);
-      if (resolved.back().state != pipetune::OutputConnectionState::connected)
-        added.error = translate("The selected device cannot be identified uniquely.");
-    }
-    if (!added.error.empty()) {
-      runtime->outputEditError = std::move(added.error);
-      runtime->ui.displayedOutputConfiguration.reset();
-      render(runtime);
-      return;
-    }
-    configuration = std::move(added.configuration);
-  }
-  editOutputDraft(runtime, std::move(desired));
+  if (!outputDraftIsEditable(runtime)) return;
+  const auto *id = static_cast<const char *>(g_object_get_data(G_OBJECT(button), "output-id"));
+  if (id == nullptr) return;
+  auto candidate = runtime->outputDraft->configuration;
+  for (auto &output : candidate.outputs)
+    if (output.id == id) output.enabled = gtk_toggle_button_get_active(button) != FALSE;
+  editOutputDraft(runtime, std::move(candidate));
 }
 
 static void onOutputPurposeActivated(GtkEntry *entry, gpointer userData) {
@@ -1694,64 +1841,6 @@ static void onOutputChannelChanged(GtkComboBox *combo, gpointer userData) {
   if (slot == 0 || selected < 0 || static_cast<guint>(selected) == slot - 1) return;
   auto proposal = moveOutputChannel(runtime->outputDraft->configuration, slot - 1, static_cast<std::size_t>(selected));
   if (proposal.error.empty()) editOutputDraft(runtime, std::move(proposal.configuration));
-  else { runtime->outputEditError = std::move(proposal.error); render(runtime); }
-}
-
-static void onOutputReassignChanged(GtkComboBox *combo, gpointer userData) {
-  auto *runtime = static_cast<GtkRuntime *>(userData);
-  if (runtime->updatingControls || !controlsAreEditable(*runtime) || !runtime->outputDraft || runtime->outputDraft->applying) return;
-  const auto *stored = static_cast<const char *>(g_object_get_data(G_OBJECT(combo), "output-key"));
-  const auto *selected = gtk_combo_box_get_active_id(combo);
-  if (stored == nullptr || selected == nullptr || selected[0] == '\0') return;
-  const auto key = std::string(stored);
-  auto candidate = runtime->outputDraft->configuration;
-  const auto &inventory = runtime->state.runtime.availableOutputs;
-  const auto id = key.starts_with("saved:") ? key.substr(6) : std::string(selected);
-  const auto oldOutput = std::find_if(candidate.outputs.begin(), candidate.outputs.end(),
-      [&id](const auto &output) { return output.id == id; });
-  if (oldOutput == candidate.outputs.end()) return;
-  const auto oldCard = outputCard(oldOutput->device);
-  auto choice = OutputReplacementChoice{};
-  if (key.starts_with("saved:")) {
-    const auto row = std::find_if(runtime->outputDeviceRows.begin(), runtime->outputDeviceRows.end(),
-        [&id](const auto &entry) { return entry.outputId == id; });
-    const auto index = gtk_combo_box_get_active(combo) - 1;
-    if (row == runtime->outputDeviceRows.end() || index < 0 || static_cast<std::size_t>(index) >= row->replacements.size()) return;
-    choice = row->replacements[static_cast<std::size_t>(index)];
-  } else {
-    const auto name = key.substr(5);
-    const auto available = std::find_if(inventory.begin(), inventory.end(),
-        [&name](const auto &output) { return output.nodeName == name; });
-    if (available == inventory.end()) return;
-    choice = {available->device, activeProfileForDevice(runtime->state.runtime, available->device)};
-    // An available device can take over a saved assignment directly from its row.
-    for (auto &output : candidate.outputs) if (output.id == id) output.enabled = true;
-  }
-  for (auto &output : candidate.outputs) if (output.id == id) output.profileIntent.reset();
-  auto proposal = replaceOutputDevice(candidate, id, choice.device);
-  if (proposal.error.empty()) {
-    if (std::none_of(proposal.configuration.outputs.begin(), proposal.configuration.outputs.end(),
-        [&oldCard](const auto &output) { return outputCard(output.device) == oldCard; })) {
-      // Replacing the last output of a card also abandons its draft profile.
-      auto &profiles = runtime->outputDraft->profiles;
-      const auto &before = runtime->outputDraft->beforeProfiles;
-      const auto previous = std::find_if(before.begin(), before.end(),
-          [&oldCard](const auto &profile) { return profile.card == oldCard; });
-      if (previous != before.end()) {
-        for (auto &profile : profiles) if (profile.card == oldCard) profile = *previous;
-      } else std::erase_if(profiles, [&oldCard](const auto &profile) { return profile.card == oldCard; });
-    }
-    if (choice.profile) {
-      for (auto &output : proposal.configuration.outputs)
-        if (output.id == id) output.profileIntent = pipetune::OutputProfileIntent{choice.profile->card, choice.profile->outputKey};
-      auto &profiles = runtime->outputDraft->profiles;
-      const auto previous = std::find_if(profiles.begin(), profiles.end(),
-          [&choice](const auto &profile) { return profile.card == choice.profile->card; });
-      if (previous == profiles.end()) profiles.push_back(*choice.profile);
-      else *previous = *choice.profile;
-    }
-    editOutputDraft(runtime, std::move(proposal.configuration));
-  }
   else { runtime->outputEditError = std::move(proposal.error); render(runtime); }
 }
 
@@ -1799,17 +1888,10 @@ static void onOutputConfigurationResponse(GtkDialog *, gint response, gpointer u
   auto *runtime = static_cast<GtkRuntime *>(userData);
   if (!runtime->outputDraft || runtime->outputDraft->applying) return;
   if (response != GTK_RESPONSE_ACCEPT) { closeOutputConfiguration(runtime); return; }
+  if (runtime->outputPickerTarget) return;
   auto &draft = *runtime->outputDraft;
   // Commit even the focused entry's unfinished text into this local snapshot.
-  const auto collectLabels = [&draft](const auto &channels) {
-    for (const auto &channel : channels) {
-      const auto slot = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(channel.purpose), "output-slot"));
-      if (slot != 0 && slot <= draft.configuration.channels.size())
-        draft.configuration.channels[slot - 1].label = gtk_entry_get_text(GTK_ENTRY(channel.purpose));
-    }
-  };
-  for (const auto &row : runtime->outputDeviceRows) collectLabels(row.channels);
-  collectLabels(runtime->outputReservedChannels);
+  captureOutputLabels(runtime);
   if (!controlsAreEditable(*runtime) || runtime->transaction.conflict ||
       runtime->state.runtime.outputProfileRestoring ||
       draft.revision != runtime->transaction.confirmedRevision ||
@@ -2758,6 +2840,14 @@ static void connectMainWindowSignals(GtkRuntime *runtime) {
                    G_CALLBACK(onRateChanged), runtime);
   g_signal_connect(runtime->ui.outputModeCombo, "changed", G_CALLBACK(onOutputModeChanged), runtime);
   g_signal_connect(runtime->ui.outputConfigureButton, "clicked", G_CALLBACK(onOutputConfigureClicked), runtime);
+  g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(runtime->ui.outputDeviceView)), "changed", G_CALLBACK(onOutputDeviceSelected), runtime);
+  g_signal_connect(runtime->ui.outputAddButton, "clicked", G_CALLBACK(onOutputAddClicked), runtime);
+  g_signal_connect(runtime->ui.outputDeleteButton, "clicked", G_CALLBACK(onOutputDeleteClicked), runtime);
+  g_signal_connect(runtime->ui.outputCompactButton, "clicked", G_CALLBACK(onOutputCompactClicked), runtime);
+  g_signal_connect(runtime->ui.outputReplaceButton, "clicked", G_CALLBACK(onOutputReplaceClicked), runtime);
+  g_signal_connect(runtime->ui.outputChooseButton, "clicked", G_CALLBACK(onOutputChooseClicked), runtime);
+  g_signal_connect(runtime->ui.outputChooseCancelButton, "clicked", G_CALLBACK(onOutputChooseCancelClicked), runtime);
+  g_signal_connect(runtime->ui.outputAvailableCombo, "changed", G_CALLBACK(onOutputAvailableChanged), runtime);
   g_signal_connect(runtime->ui.outputConfigurationDialog, "response", G_CALLBACK(onOutputConfigurationResponse), runtime);
   g_signal_connect(runtime->ui.outputConfigurationDialog, "delete-event", G_CALLBACK(onOutputConfigurationDelete), runtime);
   g_signal_connect(runtime->ui.outputConfigurationDialog, "key-press-event", G_CALLBACK(onOutputConfigurationKeyPress), runtime);

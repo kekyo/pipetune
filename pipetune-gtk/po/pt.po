@@ -94,6 +94,15 @@ msgstr "Ativo"
 msgid "Active plugins"
 msgstr "Plugins ativos"
 
+msgid "Add"
+msgstr "Adicionar"
+
+msgid "Add an output device to start configuring channels."
+msgstr "Adicione um dispositivo de saída para configurar os canais."
+
+msgid "Add device…"
+msgstr "Adicionar dispositivo…"
+
 msgid "Advanced"
 msgstr "Avançado"
 
@@ -105,9 +114,6 @@ msgstr "Todas as definições guardadas"
 
 msgid "Ambiguous device"
 msgstr "Dispositivo ambíguo"
-
-msgid "Ambiguous device. Reassign device to choose the output."
-msgstr "Dispositivo ambíguo. Reatribua o dispositivo para escolher a saída."
 
 msgid "Apply"
 msgstr "Aplicar"
@@ -138,9 +144,6 @@ msgstr "Automático"
 
 msgid "Automatic — follow PipeWire graph sampling frequency"
 msgstr "Automático — seguir a frequência de amostragem do grafo PipeWire"
-
-msgid "Available"
-msgstr "Disponível"
 
 msgid "Baseline"
 msgstr "Estado inicial"
@@ -199,9 +202,18 @@ msgstr "Alterando a suspensão em silêncio"
 msgid "Changing silence suspension failed"
 msgstr "Falha ao alterar a suspensão em silêncio"
 
+msgid "Channel changes"
+msgstr "Alterações de canais"
+
 #, brace-format
 msgid "Channel gains: {0}"
 msgstr "Ganhos dos canais: {0}"
+
+msgid "Channels"
+msgstr "Canais"
+
+msgid "Choose a device to add to this configuration."
+msgstr "Escolha o dispositivo a adicionar a esta configuração."
 
 msgid "Choose a preset before enabling DSP processing"
 msgstr "Escolha uma predefinição antes de ativar o processamento DSP"
@@ -211,6 +223,9 @@ msgstr "Escolha uma predefinição EffeTune padrão ou guardada…"
 
 msgid "Choose an EffeTune preset"
 msgstr "Escolha uma predefinição EffeTune"
+
+msgid "Choose an output profile or replace the device to review its channels."
+msgstr "Escolha um perfil de saída ou substitua o dispositivo para rever os canais."
 
 msgid "Choose bypass, Automatic + Suggest, and Scalar + Auto SIMD."
 msgstr "Escolha Ignorar, Automático + Sugerir e Scalar + SIMD automático."
@@ -296,6 +311,9 @@ msgstr "Estado de silêncio do dispositivo desconhecido"
 
 msgid "Device muted"
 msgstr "Dispositivo silenciado"
+
+msgid "Device name"
+msgstr "Nome do dispositivo"
 
 msgid "Device unmuted"
 msgstr "Dispositivo sem silêncio"
@@ -482,14 +500,14 @@ msgstr "Motor nativo"
 msgid "Never"
 msgstr "Nunca"
 
+msgid "No unconfigured output devices are available."
+msgstr "Não há dispositivos de saída não configurados disponíveis."
+
 msgid "None"
 msgstr "Nenhum"
 
 msgid "Not connected"
 msgstr "Não conectado"
-
-msgid "Not connected. Reconnect it or reassign this device."
-msgstr "Não conectado. Reconecte ou reatribua este dispositivo."
 
 msgid "Off"
 msgstr "Desativado"
@@ -499,6 +517,9 @@ msgstr "Abrir o PipeTune"
 
 msgid "Output"
 msgstr "Saída"
+
+msgid "Output channels"
+msgstr "Canais de saída"
 
 msgid "Output mode"
 msgstr "Modo de saída"
@@ -589,9 +610,6 @@ msgstr "Tempo de processamento"
 msgid "Profile changed"
 msgstr "Perfil alterado"
 
-msgid "Profile changed. Reassign device to update these channels."
-msgstr "O perfil mudou. Reatribua o dispositivo para atualizar estes canais."
-
 msgid "Purpose"
 msgstr "Finalidade"
 
@@ -601,14 +619,32 @@ msgstr "Rótulo de finalidade deste canal de saída."
 msgid "Quit"
 msgstr "Sair"
 
-msgid "Reassign device…"
-msgstr "Reatribuir dispositivo…"
+msgid "Reconnect this device, replace it, or remove it from the configuration."
+msgstr "Volte a ligar este dispositivo, substitua-o ou remova-o da configuração."
+
+msgid "Remove from configuration"
+msgstr "Remover da configuração"
+
+msgid "Remove this device while keeping other devices' channel numbers."
+msgstr "Remove este dispositivo mantendo os números de canal dos restantes."
+
+msgid "Remove unassigned channels and renumber the remaining channels."
+msgstr "Remove os canais não atribuídos e renumera os restantes."
+
+msgid "Remove unused channels"
+msgstr "Remover canais não utilizados"
+
+msgid "Removed devices"
+msgstr "Dispositivos removidos"
+
+msgid "Replace"
+msgstr "Substituir"
+
+msgid "Replace with another device…"
+msgstr "Substituir por outro dispositivo…"
 
 msgid "Reported device controls, separate from the OS master volume. Channel gains show the minimum and maximum across the device."
 msgstr "Controles informados pelo dispositivo, separados do volume principal do sistema operacional. Os ganhos dos canais mostram o mínimo e o máximo do dispositivo."
-
-msgid "Reserved EffeTune channels"
-msgstr "Canais reservados do EffeTune"
 
 msgid "Restart now"
 msgstr "Reiniciar agora"
@@ -630,6 +666,9 @@ msgstr "A restaurar as definições em direto capturadas ao abrir a caixa de di�
 
 msgid "Restoring the previous live settings…"
 msgstr "A restaurar as definições em direto anteriores…"
+
+msgid "Review the preset's channel assignments before applying these changes."
+msgstr "Reveja a atribuição de canais da predefinição antes de aplicar estas alterações."
 
 msgid "Rollback requested"
 msgstr "Reversão pedida"
@@ -737,14 +776,11 @@ msgstr "Sistema"
 msgid "System default"
 msgstr "Padrão do sistema"
 
-msgid "The 16-channel limit includes disabled and reserved channels. Use existing channels to replace a saved device."
-msgstr "O limite de 16 canais inclui canais desativados e reservados. Use os canais existentes para substituir um dispositivo salvo."
-
 msgid "The OS selects the output. Saved device assignments are inactive."
 msgstr "O sistema operacional seleciona a saída. As atribuições de dispositivos salvas estão inativas."
 
-msgid "The selected device cannot be identified uniquely."
-msgstr "Não é possível identificar o dispositivo selecionado de forma inequívoca."
+msgid "The replacement keeps the existing channel numbers and purpose labels."
+msgstr "A substituição mantém os números dos canais e as etiquetas de utilização."
 
 msgid "The selected output is no longer available with this profile. Review the configuration."
 msgstr "A saída selecionada não está mais disponível com este perfil. Revise a configuração."
@@ -752,11 +788,17 @@ msgstr "A saída selecionada não está mais disponível com este perfil. Revise
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "A alteração do idioma da interface terá efeito depois de reiniciar o PipeTune GTK."
 
+msgid "This device cannot be identified uniquely. Choose a replacement."
+msgstr "Não é possível identificar este dispositivo de forma única. Escolha um substituto."
+
 msgid "Turn off to pass audio through without an EffeTune preset."
 msgstr "Desative para deixar passar o áudio sem uma predefinição EffeTune."
 
 msgid "Unassigned"
 msgstr "Não atribuído"
+
+msgid "Unassigned channels"
+msgstr "Canais não atribuídos"
 
 msgid "unavailable"
 msgstr "indisponível"
@@ -776,17 +818,14 @@ msgstr "Desconhecido"
 msgid "Unknown sample format"
 msgstr "Formato de amostra desconhecido"
 
-msgid "Unsupported channel count"
-msgstr "Número de canais não suportado"
-
 msgid "Updating settings"
 msgstr "A atualizar as definições"
 
 msgid "Updating settings failed"
 msgstr "Falha ao atualizar as definições"
 
-msgid "Use existing channels…"
-msgstr "Usar canais existentes…"
+msgid "Use this device"
+msgstr "Utilizar este dispositivo"
 
 msgid "Versions"
 msgstr "Versões"

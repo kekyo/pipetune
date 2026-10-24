@@ -241,7 +241,20 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
       .outputModeCombo = requiredWidget(builder, "outputModeCombo", GTK_TYPE_COMBO_BOX_TEXT),
       .outputModeNotice = requiredWidget(builder, "outputModeNotice", GTK_TYPE_LABEL),
       .outputErrorLabel = requiredWidget(builder, "outputErrorLabel", GTK_TYPE_LABEL),
-      .outputDeviceList = requiredWidget(builder, "outputDeviceList", GTK_TYPE_LIST_BOX),
+      .outputDeviceView = requiredWidget(builder, "outputDeviceView", GTK_TYPE_TREE_VIEW),
+      .outputDeviceDetails = requiredWidget(builder, "outputDeviceDetails", GTK_TYPE_STACK),
+      .outputSelectedDeviceLabel = requiredWidget(builder, "outputSelectedDeviceLabel", GTK_TYPE_LABEL),
+      .outputEmptyLabel = requiredWidget(builder, "outputEmptyLabel", GTK_TYPE_LABEL),
+      .outputAddButton = requiredWidget(builder, "outputAddButton", GTK_TYPE_BUTTON),
+      .outputDeleteButton = requiredWidget(builder, "outputDeleteButton", GTK_TYPE_BUTTON),
+      .outputCompactButton = requiredWidget(builder, "outputCompactButton", GTK_TYPE_BUTTON),
+      .outputReplaceButton = requiredWidget(builder, "outputReplaceButton", GTK_TYPE_BUTTON),
+      .outputPickerBox = requiredWidget(builder, "outputPickerBox", GTK_TYPE_BOX),
+      .outputPickerNotice = requiredWidget(builder, "outputPickerNotice", GTK_TYPE_LABEL),
+      .outputAvailableCombo = requiredWidget(builder, "outputAvailableCombo", GTK_TYPE_COMBO_BOX_TEXT),
+      .outputChooseButton = requiredWidget(builder, "outputChooseButton", GTK_TYPE_BUTTON),
+      .outputChooseCancelButton = requiredWidget(builder, "outputChooseCancelButton", GTK_TYPE_BUTTON),
+      .outputChangeSummaryLabel = requiredWidget(builder, "outputChangeSummaryLabel", GTK_TYPE_LABEL),
       .outputReservedExpander = requiredWidget(builder, "outputReservedExpander", GTK_TYPE_EXPANDER),
       .outputReservedGrid = requiredWidget(builder, "outputReservedGrid", GTK_TYPE_GRID),
       .outputConfigureButton = requiredWidget(builder, "outputConfigureButton", GTK_TYPE_BUTTON),
@@ -314,6 +327,8 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
   gtk_combo_box_set_active(GTK_COMBO_BOX(ui.logFilterCombo), 0);
   gtk_window_set_default(GTK_WINDOW(ui.window), ui.applyButton);
   configureOutputOverview(ui.outputSummaryView, false);
+  configureOutputOverview(ui.outputDeviceView, true);
+  configureCompactComboBox(ui.outputAvailableCombo);
 
   auto geometry = GdkGeometry{};
   geometry.min_width = 900;

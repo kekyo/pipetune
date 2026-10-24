@@ -93,6 +93,15 @@ msgstr "활성"
 msgid "Active plugins"
 msgstr "활성 플러그인"
 
+msgid "Add"
+msgstr "추가"
+
+msgid "Add an output device to start configuring channels."
+msgstr "출력 장치를 추가하여 채널을 구성하세요."
+
+msgid "Add device…"
+msgstr "장치 추가…"
+
 msgid "Advanced"
 msgstr "고급"
 
@@ -104,9 +113,6 @@ msgstr "모든 설정을 저장했습니다"
 
 msgid "Ambiguous device"
 msgstr "장치를 구분할 수 없음"
-
-msgid "Ambiguous device. Reassign device to choose the output."
-msgstr "장치를 구분할 수 없습니다. 장치를 다시 할당하여 출력을 선택하세요."
 
 msgid "Apply"
 msgstr "적용"
@@ -137,9 +143,6 @@ msgstr "자동"
 
 msgid "Automatic — follow PipeWire graph sampling frequency"
 msgstr "자동 — PipeWire 그래프 샘플링 주파수 따르기"
-
-msgid "Available"
-msgstr "사용 가능"
 
 msgid "Baseline"
 msgstr "기준 상태"
@@ -198,9 +201,18 @@ msgstr "무음 시 일시 중단 변경 중"
 msgid "Changing silence suspension failed"
 msgstr "무음 시 일시 중단 변경 실패"
 
+msgid "Channel changes"
+msgstr "채널 번호 변경"
+
 #, brace-format
 msgid "Channel gains: {0}"
 msgstr "채널 게인: {0}"
+
+msgid "Channels"
+msgstr "채널"
+
+msgid "Choose a device to add to this configuration."
+msgstr "이 구성에 추가할 장치를 선택하세요."
 
 msgid "Choose a preset before enabling DSP processing"
 msgstr "DSP 처리를 활성화하기 전에 프리셋을 선택하세요"
@@ -210,6 +222,9 @@ msgstr "표준 또는 저장된 EffeTune 프리셋 선택…"
 
 msgid "Choose an EffeTune preset"
 msgstr "EffeTune 프리셋 선택"
+
+msgid "Choose an output profile or replace the device to review its channels."
+msgstr "출력 프로필을 선택하거나 장치를 교체하여 채널을 확인하세요."
 
 msgid "Choose bypass, Automatic + Suggest, and Scalar + Auto SIMD."
 msgstr "바이패스, 자동 + 제안, Scalar + 자동 SIMD를 선택합니다."
@@ -295,6 +310,9 @@ msgstr "장치 음소거 상태 알 수 없음"
 
 msgid "Device muted"
 msgstr "장치 음소거됨"
+
+msgid "Device name"
+msgstr "장치 이름"
 
 msgid "Device unmuted"
 msgstr "장치 음소거 해제됨"
@@ -481,14 +499,14 @@ msgstr "네이티브 백엔드"
 msgid "Never"
 msgstr "없음"
 
+msgid "No unconfigured output devices are available."
+msgstr "추가할 수 있는 미등록 출력 장치가 없습니다."
+
 msgid "None"
 msgstr "없음"
 
 msgid "Not connected"
 msgstr "연결되지 않음"
-
-msgid "Not connected. Reconnect it or reassign this device."
-msgstr "연결되지 않았습니다. 다시 연결하거나 이 장치를 다시 할당하세요."
 
 msgid "Off"
 msgstr "꺼짐"
@@ -498,6 +516,9 @@ msgstr "PipeTune 열기"
 
 msgid "Output"
 msgstr "출력"
+
+msgid "Output channels"
+msgstr "출력 채널 수"
 
 msgid "Output mode"
 msgstr "출력 모드"
@@ -588,9 +609,6 @@ msgstr "처리 시간"
 msgid "Profile changed"
 msgstr "프로필 변경됨"
 
-msgid "Profile changed. Reassign device to update these channels."
-msgstr "프로필이 변경되었습니다. 장치를 다시 할당하여 채널을 갱신하세요."
-
 msgid "Purpose"
 msgstr "용도"
 
@@ -600,14 +618,32 @@ msgstr "이 출력 채널의 용도 이름입니다."
 msgid "Quit"
 msgstr "종료"
 
-msgid "Reassign device…"
-msgstr "장치 재할당…"
+msgid "Reconnect this device, replace it, or remove it from the configuration."
+msgstr "이 장치를 다시 연결하거나 교체하거나 구성에서 제거하세요."
+
+msgid "Remove from configuration"
+msgstr "구성에서 제거"
+
+msgid "Remove this device while keeping other devices' channel numbers."
+msgstr "다른 장치의 채널 번호를 유지하면서 이 장치를 제거합니다."
+
+msgid "Remove unassigned channels and renumber the remaining channels."
+msgstr "할당되지 않은 채널을 제거하고 남은 채널의 번호를 다시 매깁니다."
+
+msgid "Remove unused channels"
+msgstr "사용하지 않는 채널 정리"
+
+msgid "Removed devices"
+msgstr "제거할 장치 수"
+
+msgid "Replace"
+msgstr "교체"
+
+msgid "Replace with another device…"
+msgstr "다른 장치로 교체…"
 
 msgid "Reported device controls, separate from the OS master volume. Channel gains show the minimum and maximum across the device."
 msgstr "장치에서 보고한 제어 값으로, OS의 마스터 볼륨과 별개입니다. 채널 게인은 장치 전체의 최솟값과 최댓값을 표시합니다."
-
-msgid "Reserved EffeTune channels"
-msgstr "예약된 EffeTune 채널"
 
 msgid "Restart now"
 msgstr "지금 다시 시작"
@@ -629,6 +665,9 @@ msgstr "대화 상자가 열릴 때 캡처한 실시간 설정을 복원하는 �
 
 msgid "Restoring the previous live settings…"
 msgstr "이전 실시간 설정 복원 중…"
+
+msgid "Review the preset's channel assignments before applying these changes."
+msgstr "변경 사항을 반영하기 전에 프리셋의 채널 할당을 확인하세요."
 
 msgid "Rollback requested"
 msgstr "롤백 요청됨"
@@ -736,14 +775,11 @@ msgstr "시스템"
 msgid "System default"
 msgstr "시스템 기본값"
 
-msgid "The 16-channel limit includes disabled and reserved channels. Use existing channels to replace a saved device."
-msgstr "16채널 제한에는 비활성화된 채널과 예약된 채널도 포함됩니다. 기존 채널을 사용하여 저장된 장치를 교체하세요."
-
 msgid "The OS selects the output. Saved device assignments are inactive."
 msgstr "OS가 출력을 선택합니다. 저장된 장치 할당은 사용하지 않습니다."
 
-msgid "The selected device cannot be identified uniquely."
-msgstr "선택한 장치를 고유하게 식별할 수 없습니다."
+msgid "The replacement keeps the existing channel numbers and purpose labels."
+msgstr "교체할 때 기존 채널 번호와 용도 이름을 유지합니다."
 
 msgid "The selected output is no longer available with this profile. Review the configuration."
 msgstr "선택한 출력은 이 프로필에서 더 이상 사용할 수 없습니다. 구성을 확인하세요."
@@ -751,11 +787,17 @@ msgstr "선택한 출력은 이 프로필에서 더 이상 사용할 수 없습�
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "PipeTune GTK가 다시 시작된 후 UI 언어 변경이 적용됩니다."
 
+msgid "This device cannot be identified uniquely. Choose a replacement."
+msgstr "이 장치를 고유하게 식별할 수 없습니다. 교체할 장치를 선택하세요."
+
 msgid "Turn off to pass audio through without an EffeTune preset."
 msgstr "EffeTune 프리셋 없이 오디오를 통과시키려면 끄세요."
 
 msgid "Unassigned"
 msgstr "할당되지 않음"
+
+msgid "Unassigned channels"
+msgstr "할당되지 않은 채널"
 
 msgid "unavailable"
 msgstr "사용 불가"
@@ -775,17 +817,14 @@ msgstr "알 수 없음"
 msgid "Unknown sample format"
 msgstr "알 수 없는 샘플 형식"
 
-msgid "Unsupported channel count"
-msgstr "지원하지 않는 채널 수"
-
 msgid "Updating settings"
 msgstr "설정 업데이트 중"
 
 msgid "Updating settings failed"
 msgstr "설정 업데이트 실패"
 
-msgid "Use existing channels…"
-msgstr "기존 채널 사용…"
+msgid "Use this device"
+msgstr "이 장치 사용"
 
 msgid "Versions"
 msgstr "버전"

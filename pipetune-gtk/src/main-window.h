@@ -80,8 +80,34 @@ struct MainWindowUi {
   GtkWidget *outputModeNotice = nullptr;
   /** Pending selection, enumeration, or selection-validation diagnostic. */
   GtkWidget *outputErrorLabel = nullptr;
-  /** Device parents with expandable channel controls in one scrolling tree. */
-  GtkWidget *outputDeviceList = nullptr;
+  /** Registered outputs, selected independently from their enabled state. */
+  GtkWidget *outputDeviceView = nullptr;
+  /** Retained device editors, showing only the selected device. */
+  GtkWidget *outputDeviceDetails = nullptr;
+  /** Full name of the selected registered device. */
+  GtkWidget *outputSelectedDeviceLabel = nullptr;
+  /** Guidance when no device is registered in the draft. */
+  GtkWidget *outputEmptyLabel = nullptr;
+  /** Opens the unregistered device picker. */
+  GtkWidget *outputAddButton = nullptr;
+  /** Removes the selected device from the local draft. */
+  GtkWidget *outputDeleteButton = nullptr;
+  /** Explicitly removes unassigned channels and closes numbering gaps. */
+  GtkWidget *outputCompactButton = nullptr;
+  /** Opens the picker to retain channel assignments with another device. */
+  GtkWidget *outputReplaceButton = nullptr;
+  /** Inline picker shared by device addition and replacement. */
+  GtkWidget *outputPickerBox = nullptr;
+  /** Explains the pending addition or replacement. */
+  GtkWidget *outputPickerNotice = nullptr;
+  /** Available, nonduplicated physical output choices. */
+  GtkWidget *outputAvailableCombo = nullptr;
+  /** Accepts the chosen device into the local draft. */
+  GtkWidget *outputChooseButton = nullptr;
+  /** Closes the picker without changing the local draft. */
+  GtkWidget *outputChooseCancelButton = nullptr;
+  /** Preview of removals and channel renumbering before confirmation. */
+  GtkWidget *outputChangeSummaryLabel = nullptr;
   /** Tree branch retaining slots left without a physical output. */
   GtkWidget *outputReservedExpander = nullptr;
   /** Channel editors within the reserved branch. */

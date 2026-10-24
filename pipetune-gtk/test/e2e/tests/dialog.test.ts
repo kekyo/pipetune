@@ -163,12 +163,79 @@ const openMultipleOutputConfiguration = async (): Promise<void> => {
 };
 
 const reassignOutputToFirstCandidate = async (row: number): Promise<void> => {
-  const combo = await getElement(`output-reassign-${String(row)}`, 'comboBox');
-  await combo.click();
-  const candidate = await combo.childAt(1);
-  if (candidate === undefined)
-    throw new Error('Output replacement is unavailable');
-  await candidate.click();
+  await selectOutputRow(row === 0 ? 0 : row - 1);
+  await (await getElement('outputReplaceButton', 'button')).click();
+  const choices = await getElement('outputAvailableCombo', 'comboBox');
+  const candidate = await waitForResult(
+    async () => {
+      for (let index = 0; index < (await choices.getChildCount()); index += 1) {
+        const item = await choices.childAt(index);
+        if ((await item?.info())?.name.includes('DAC')) return index;
+      }
+      throw new Error('Output replacement is unavailable');
+    },
+    { timeoutMs: 10_000, message: 'No replacement device became available' }
+  );
+  await choices.selectChildAt(candidate);
+  await (await getElement('outputChooseButton', 'button')).click();
+};
+
+const choosePickerOutput = async (name: string): Promise<void> => {
+  const choices = await getElement('outputAvailableCombo', 'comboBox');
+  const candidate = await waitForResult(
+    async () => {
+      for (let index = 0; index < (await choices.getChildCount()); index += 1) {
+        const item = await choices.childAt(index);
+        if ((await item?.info())?.name.includes(name)) return index;
+      }
+      throw new Error(`${name} is unavailable for addition`);
+    },
+    {
+      timeoutMs: 10_000,
+      message: `${name} did not appear in the available device picker`,
+    }
+  );
+  await choices.selectChildAt(candidate);
+  await (await getElement('outputChooseButton', 'button')).click();
+};
+
+const chooseAvailableOutput = async (name: string): Promise<void> => {
+  await (await getElement('outputAddButton', 'button')).click();
+  await choosePickerOutput(name);
+};
+
+const selectOutputRow = async (index: number): Promise<void> => {
+  if (session === undefined) throw new Error('GTK session is unavailable');
+  const devices = await getElement('outputDeviceView', 'table');
+  const cell = await devices.cellAt(index, 0);
+  if (cell === undefined)
+    throw new Error(`Output row ${String(index)} is unavailable`);
+  const name = (await cell.info()).name;
+  const bounds = (await cell.capture()).bounds;
+  await session.app.input.moveMouseTo(
+    bounds.x + Math.floor(bounds.width / 2),
+    bounds.y + Math.floor(bounds.height / 2)
+  );
+  await session.app.input.setMouseButton('left', true);
+  await session.app.input.setMouseButton('left', false);
+  await waitForLabel('outputSelectedDeviceLabel', name);
+};
+
+const replaceOutputWith = async (name: string): Promise<void> => {
+  await (await getElement('outputReplaceButton', 'button')).click();
+  await choosePickerOutput(name);
+};
+
+const toggleOutputDevice = async (savedIndex: number): Promise<void> => {
+  const devices = await getElement('outputDeviceView', 'table');
+  if ((await devices.getRowCount()) <= savedIndex) {
+    await chooseAvailableOutput(savedIndex === 0 ? 'DAC A' : 'DAC B');
+    return;
+  }
+  await selectOutputRow(savedIndex);
+  await (
+    await getElement(`output-device-${String(savedIndex)}`, 'checkbox')
+  ).toggle();
 };
 
 const selectSettingsPage = async (index: number): Promise<void> => {
@@ -379,6 +446,241 @@ const hideWithKeyboard = async (method: 'escape' | 'close'): Promise<void> => {
 };
 
 describe('PipeTune GTK dialog', () => {
+  it('shows device, state, and channel columns in the parent and editor', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await selectSettingsPage(3);
+    const summary = await getElement('outputSummaryView', 'table');
+    expect(await summary.getColumnCount()).toBe(3);
+    expect(await summary.getRowCount()).toBe(0);
+    await openMultipleOutputConfiguration();
+    const devices = await getElement('outputDeviceView', 'table');
+    expect(await devices.getColumnCount()).toBe(3);
+    expect(await devices.getRowCount()).toBe(0);
+    expect(
+      (await session.readRequests()).filter(
+        (item) => item.command === 'set-output'
+      )
+    ).toHaveLength(0);
+  });
+
+  it('orders visible devices by channel numbers while retaining their saved assignments', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await selectSettingsPage(3);
+    await openMultipleOutputConfiguration();
+    await chooseAvailableOutput('DAC B');
+    await chooseAvailableOutput('DAC A');
+    expect(
+      await (await getElement('outputChangeSummaryLabel', 'label')).text()
+    ).toContain('Output channels: 2 → 4');
+    const devices = await getElement('outputDeviceView', 'table');
+    await selectOutputRow(1);
+    await selectComboItem('output-channel-1-0', 0);
+    expect((await (await devices.cellAt(0, 0))?.info())?.name).toContain(
+      'DAC A'
+    );
+    const firstChannels = (await (await devices.cellAt(0, 2))?.info())?.name;
+    expect(firstChannels).toContain('Ch 1');
+    expect(firstChannels).toContain('Ch 4');
+    expect((await (await devices.cellAt(1, 0))?.info())?.name).toContain(
+      'DAC B'
+    );
+    expect(
+      (await session.readRequests()).filter(
+        (item) => item.command === 'set-output'
+      )
+    ).toHaveLength(0);
+    await applyOutputConfiguration();
+    const summary = await getElement('outputSummaryView', 'table');
+    expect((await (await summary.cellAt(0, 0))?.info())?.name).toContain(
+      'DAC A'
+    );
+    expect((await (await summary.cellAt(1, 0))?.info())?.name).toContain(
+      'DAC B'
+    );
+    const requests = (await session.readRequests()).filter(
+      (item) => item.command === 'set-output'
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.configuration).toMatchObject({
+      outputs: [{ device: { name: 'DAC B' } }, { device: { name: 'DAC A' } }],
+    });
+  });
+
+  it('keeps channel gaps after removing a device and compacts only on request', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await selectSettingsPage(3);
+    await openMultipleOutputConfiguration();
+    await chooseAvailableOutput('DAC A');
+    await chooseAvailableOutput('DAC B');
+    await applyOutputConfiguration();
+    await (await getElement('applyButton', 'button')).click();
+    await waitForLabel(
+      'transactionStateLabel',
+      'Live settings match the saved configuration'
+    );
+    const saved = await session.inspectConfig();
+    await session.clearRequests();
+    await reopenOutputConfiguration();
+    await selectOutputRow(0);
+    await (await getElement('outputDeleteButton', 'button')).click();
+    const devices = await getElement('outputDeviceView', 'table');
+    expect(await devices.getRowCount()).toBe(1);
+    expect((await (await devices.cellAt(0, 0))?.info())?.name).toContain(
+      'DAC B'
+    );
+    expect((await (await devices.cellAt(0, 2))?.info())?.name).toContain(
+      'Ch 3, Ch 4'
+    );
+    expect(
+      await (await getElement('outputChangeSummaryLabel', 'label')).text()
+    ).toContain('Removed devices: 1');
+    expect(
+      (await session.readRequests()).filter(
+        (item) => item.command === 'set-output'
+      )
+    ).toHaveLength(0);
+    await (await getElement('outputCompactButton', 'button')).click();
+    expect((await (await devices.cellAt(0, 2))?.info())?.name).toContain(
+      'Ch 1, Ch 2'
+    );
+    expect(
+      await (await getElement('outputChangeSummaryLabel', 'label')).text()
+    ).toContain('Output channels: 4 → 2');
+    expect(
+      (await session.readRequests()).filter(
+        (item) => item.command === 'set-output'
+      )
+    ).toHaveLength(0);
+    await applyOutputConfiguration();
+    const requests = (await session.readRequests()).filter(
+      (item) => item.command === 'set-output'
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.configuration).toMatchObject({
+      outputs: [{ device: { name: 'DAC B' } }],
+      channels: [{}, {}],
+    });
+    await (await getElement('cancelButton', 'button')).click();
+    await toPass(async () => {
+      expect(
+        (await session?.readRequests())
+          ?.filter((item) => item.command === 'set-output')
+          .at(-1)?.configuration
+      ).toEqual(saved.outputConfiguration);
+    });
+    expect(await session.inspectConfig()).toEqual(saved);
+  });
+
+  it('shrinks trailing channels on deletion and rejects an empty output draft', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await selectSettingsPage(3);
+    await openMultipleOutputConfiguration();
+    await chooseAvailableOutput('DAC A');
+    await chooseAvailableOutput('DAC B');
+    await applyOutputConfiguration();
+    await (await getElement('applyButton', 'button')).click();
+    await session.clearRequests();
+    await reopenOutputConfiguration();
+    await selectOutputRow(1);
+    await (await getElement('outputDeleteButton', 'button')).click();
+    const devices = await getElement('outputDeviceView', 'table');
+    expect(await devices.getRowCount()).toBe(1);
+    expect((await (await devices.cellAt(0, 2))?.info())?.name).toContain(
+      'Ch 1, Ch 2'
+    );
+    expect(
+      await (await getElement('outputChangeSummaryLabel', 'label')).text()
+    ).toContain('Output channels: 4 → 2');
+    await selectOutputRow(0);
+    await (await getElement('outputDeleteButton', 'button')).click();
+    expect(await devices.getRowCount()).toBe(0);
+    expect(
+      (
+        await (
+          await getElement('outputConfigurationApplyButton', 'button')
+        ).info()
+      ).states
+    ).not.toContain('sensitive');
+    expect(
+      (await session.readRequests()).filter(
+        (item) => item.command === 'set-output'
+      )
+    ).toHaveLength(0);
+  });
+
+  it('does not offer a registered device as a replacement and discards a deleted profile draft', async () => {
+    session = await launchPipeTuneGtk({
+      rejectedCommand: undefined,
+      outputProfilesEnabled: true,
+    });
+    await waitForConnected();
+    await selectSettingsPage(3);
+    await openMultipleOutputConfiguration();
+    await chooseAvailableOutput('DAC A');
+    await chooseAvailableOutput('DAC B');
+    await selectOutputRow(0);
+    await (await getElement('outputReplaceButton', 'button')).click();
+    const choices = await getElement('outputAvailableCombo', 'comboBox');
+    for (let index = 0; index < (await choices.getChildCount()); index += 1) {
+      expect(
+        (await (await choices.childAt(index))?.info())?.name
+      ).not.toContain('DAC B');
+    }
+    await (await getElement('outputChooseCancelButton', 'button')).click();
+    await selectComboItem('output-profile-0', 1);
+    await (await getElement('outputDeleteButton', 'button')).click();
+    expect(
+      (await session.readRequests()).filter(
+        (item) => item.command === 'set-output'
+      )
+    ).toHaveLength(0);
+    await applyOutputConfiguration();
+    const requests = (await session.readRequests()).filter(
+      (item) => item.command === 'set-output'
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.profileSelections ?? []).toEqual([]);
+  });
+
+  it('keeps unfinished device edits while selecting another row and discards them on editor Cancel', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    const saved = await session.inspectConfig();
+    await selectSettingsPage(3);
+    await openMultipleOutputConfiguration();
+    await chooseAvailableOutput('DAC A');
+    await chooseAvailableOutput('DAC B');
+    await selectOutputRow(0);
+    await (
+      await getElement('output-purpose-0-0', 'entry')
+    ).setText('Front left');
+    await selectOutputRow(1);
+    expect(
+      await (await getElement('output-purpose-1-0', 'entry')).text()
+    ).not.toBe('Front left');
+    await selectOutputRow(0);
+    expect(await (await getElement('output-purpose-0-0', 'entry')).text()).toBe(
+      'Front left'
+    );
+    expect(
+      (await session.readRequests()).filter(
+        (item) => item.command === 'set-output'
+      )
+    ).toHaveLength(0);
+    await (
+      await getElement('outputConfigurationCancelButton', 'button')
+    ).click();
+    expect(await session.inspectConfig()).toEqual(saved);
+    await reopenOutputConfiguration();
+    expect(
+      await (await getElement('outputDeviceView', 'table')).getRowCount()
+    ).toBe(0);
+  });
+
   it('retains a profile draft when a success reply does not confirm the selected OS profile', async () => {
     session = await launchPipeTuneGtk({
       rejectedCommand: undefined,
@@ -389,7 +691,7 @@ describe('PipeTune GTK dialog', () => {
     const saved = await session.inspectConfig();
     await selectSettingsPage(3);
     await openMultipleOutputConfiguration();
-    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await toggleOutputDevice(0);
     await selectComboItem('output-profile-0', 1);
     await (
       await getElement('outputConfigurationApplyButton', 'button')
@@ -443,7 +745,7 @@ describe('PipeTune GTK dialog', () => {
     await waitForConnected();
     await selectSettingsPage(3);
     await openMultipleOutputConfiguration();
-    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await toggleOutputDevice(0);
     await selectComboItem('output-profile-0', 1);
     await session.setOutputRestoration('restoring');
     await session.setOutputProfile('iec958-stereo');
@@ -487,15 +789,9 @@ describe('PipeTune GTK dialog', () => {
     await waitForConnected();
     await selectSettingsPage(3);
     await openMultipleOutputConfiguration();
-    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await toggleOutputDevice(0);
     await selectComboItem('output-profile-0', 1);
-    const replacement = await findComboItem(
-      'output-reassign-0',
-      'DAC B · Stereo'
-    );
-    const choices = await getElement('output-reassign-0', 'comboBox');
-    await choices.click();
-    await (await choices.childAt(replacement))?.click();
+    await replaceOutputWith('DAC B');
     await applyOutputConfiguration();
     const requests = (await session.readRequests()).filter(
       (r) => r.command === 'set-output'
@@ -515,7 +811,7 @@ describe('PipeTune GTK dialog', () => {
     await waitForConnected();
     await selectSettingsPage(3);
     await openMultipleOutputConfiguration();
-    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await toggleOutputDevice(0);
     await selectComboItem('output-profile-0', 1);
     await applyOutputConfiguration();
     await (await getElement('applyButton', 'button')).click();
@@ -553,7 +849,7 @@ describe('PipeTune GTK dialog', () => {
     await waitForConnected();
     await selectSettingsPage(3);
     await openMultipleOutputConfiguration();
-    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await toggleOutputDevice(0);
     await selectComboItem('output-profile-0', 1);
     await session.setOutputProfile('iec958-stereo');
     await toPass(async () =>
@@ -595,7 +891,7 @@ describe('PipeTune GTK dialog', () => {
     await session.setOutputProfile('analog-stereo');
     await session.publishStatus();
     await waitForLabel('status-errors-configuration', 'E2E manual status 1');
-    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await toggleOutputDevice(0);
     await expectComboItemSelected('output-profile-0', 0);
     await selectComboItem('output-profile-0', 1);
     await applyOutputConfiguration();
@@ -623,7 +919,7 @@ describe('PipeTune GTK dialog', () => {
     const saved = await session.inspectConfig();
     await selectSettingsPage(3);
     await openMultipleOutputConfiguration();
-    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await toggleOutputDevice(0);
     await (await getElement('output-purpose-0-0', 'entry')).setText('Front');
     await (
       await getElement('outputConfigurationApplyButton', 'button')
@@ -668,7 +964,7 @@ describe('PipeTune GTK dialog', () => {
     await waitForConnected();
     await selectSettingsPage(3);
     await openMultipleOutputConfiguration();
-    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await toggleOutputDevice(0);
     const apply = await getElement('outputConfigurationApplyButton', 'button');
     await apply.click();
     await waitForCommands(['set-output']);
@@ -699,7 +995,7 @@ describe('PipeTune GTK dialog', () => {
     const saved = await session.inspectConfig();
     await selectSettingsPage(3);
     await openMultipleOutputConfiguration();
-    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await toggleOutputDevice(0);
     await (await getElement('output-purpose-0-0', 'entry')).setText('Front');
     await selectComboItem('output-profile-0', 1);
     await (
@@ -715,13 +1011,7 @@ describe('PipeTune GTK dialog', () => {
       'Front'
     );
     expect(await session.inspectConfig()).toEqual(saved);
-    const replacement = await findComboItem(
-      'output-reassign-0',
-      'DAC A · iec958-stereo'
-    );
-    const choices = await getElement('output-reassign-0', 'comboBox');
-    await choices.click();
-    await (await choices.childAt(replacement))?.click();
+    await replaceOutputWith('DAC A · iec958-stereo');
     await waitForLabel('output-physical-0-3', '4 (RR)');
     await expectComboItemSelected('output-channel-0-3', 3);
     expect(
@@ -747,7 +1037,7 @@ describe('PipeTune GTK dialog', () => {
     const initial = await session.inspectConfig();
     await selectSettingsPage(3);
     await openMultipleOutputConfiguration();
-    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await toggleOutputDevice(0);
     await selectComboItem('output-profile-0', 1);
     expect(
       (await session.readRequests()).filter((r) => r.command === 'set-output')
@@ -802,12 +1092,12 @@ describe('PipeTune GTK dialog', () => {
     await selectSettingsPage(3);
     await openMultipleOutputConfiguration();
     const dialog = await getElement('outputConfigurationDialog', 'window');
+    await toggleOutputDevice(0);
     await expectInsideWindow(
       await getElement('output-device-0', 'checkbox'),
       dialog
     );
-    await (await getElement('output-device-0', 'checkbox')).toggle();
-    await (await getElement('output-device-1', 'checkbox')).toggle();
+    await toggleOutputDevice(1);
     await selectComboItem('output-channel-1-0', 1);
     await (await getElement('output-purpose-1-0', 'entry')).setText('Bass');
     expect(
@@ -844,7 +1134,7 @@ describe('PipeTune GTK dialog', () => {
       (await session.readRequests()).filter((r) => r.command === 'set-output')
     ).toHaveLength(1);
     await (await getElement('outputConfigureButton', 'button')).click();
-    await (await getElement('output-device-1', 'checkbox')).toggle();
+    await toggleOutputDevice(1);
     await (
       await getElement('outputConfigurationApplyButton', 'button')
     ).click();
@@ -870,7 +1160,7 @@ describe('PipeTune GTK dialog', () => {
     await selectSettingsPage(3);
     for (const method of ['button', 'escape', 'close'] as const) {
       await openMultipleOutputConfiguration();
-      await (await getElement('output-device-0', 'checkbox')).toggle();
+      await toggleOutputDevice(0);
       if (method === 'button')
         await (
           await getElement('outputConfigurationCancelButton', 'button')
@@ -902,7 +1192,7 @@ describe('PipeTune GTK dialog', () => {
     await waitForConnected();
     await selectSettingsPage(3);
     await openMultipleOutputConfiguration();
-    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await toggleOutputDevice(0);
     await applyOutputConfiguration();
     const apply = await getElement('applyButton', 'button');
     await toPass(async () =>
@@ -955,22 +1245,18 @@ describe('PipeTune GTK dialog', () => {
     await selectSettingsPage(3);
     await session.setOutputInventory('wide');
     await openMultipleOutputConfiguration();
+    await toggleOutputDevice(0);
     await waitForLabel('output-physical-0-15', '16 (AUX15)');
-    await (await getElement('output-device-0', 'checkbox')).toggle();
     await expectComboItemSelected('output-channel-0-15', 15);
-    expect(
-      (await (await getElement('output-device-1', 'checkbox')).info()).states
-    ).not.toContain('sensitive');
-    expect(
-      await (await getElement('output-notice-1', 'label')).text()
-    ).toContain('16-channel limit');
-    await (await getElement('output-device-0', 'checkbox')).toggle();
-    await waitForLabel('output-presence-0', 'Disabled');
-    await reassignOutputToFirstCandidate(1);
+    await (await getElement('outputAddButton', 'button')).click();
+    await choosePickerOutput('DAC B');
+    expect(await (await getElement('outputErrorLabel', 'label')).text()).toContain('exceeds sixteen channels');
+    await (await getElement('outputChooseCancelButton', 'button')).click();
+    await replaceOutputWith('DAC B');
     await waitForLabel('output-presence-0', 'Connected');
     expect(
-      (await (await getElement('output-device-0', 'checkbox')).info()).name
-    ).toBe('DAC B');
+      await (await getElement('outputSelectedDeviceLabel', 'label')).text()
+    ).toContain('DAC B');
     expect(
       await (await getElement('output-device-0', 'checkbox')).isChecked()
     ).toBe(true);
@@ -999,36 +1285,36 @@ describe('PipeTune GTK dialog', () => {
     });
   });
 
-  it('edits channels inside each output device and reassigns from its collapsed parent', async () => {
+  it('preserves channel assignments while selecting devices and replacing a changed profile', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     await selectSettingsPage(3);
     await openMultipleOutputConfiguration();
-    await (await getElement('output-device-0', 'checkbox')).toggle();
-    await (await getElement('output-device-1', 'checkbox')).toggle();
-    const first = await getElement('output-expander-0', 'expander');
-    const second = await getElement('output-expander-1', 'expander');
-    expect(await first.isExpanded()).toBe(true);
-    expect(await second.isExpanded()).toBe(true);
+    await toggleOutputDevice(0);
+    await toggleOutputDevice(1);
+    await selectOutputRow(0);
     await expectComboItemSelected('output-channel-0-0', 0);
     await expectComboItemSelected('output-channel-0-1', 1);
+    await selectOutputRow(1);
     await expectComboItemSelected('output-channel-1-0', 2);
     await expectComboItemSelected('output-channel-1-1', 3);
-    await first.collapse();
+    await selectOutputRow(0);
     await session.setOutputInventory('profileChanged');
     await waitForLabel('output-presence-0', 'Profile changed');
-    expect(await first.isExpanded()).toBe(false);
     expect(
       await (await getElement('output-notice-0', 'label')).text()
-    ).toContain('Reassign');
-    await reassignOutputToFirstCandidate(0);
+    ).toContain('replace the device');
+    await replaceOutputWith('DAC A');
     await waitForLabel('output-presence-0', 'Connected');
-    await first.expand();
     await waitForLabel('output-physical-0-0', '1 (AUX0)');
+    await selectOutputRow(1);
     await expectComboItemSelected('output-channel-1-0', 2);
-    await (await getElement('output-device-0', 'checkbox')).toggle();
-    await waitForLabel('output-presence-0', 'Disabled');
+    await selectOutputRow(0);
+    await toggleOutputDevice(0);
+    expect(await (await getElement('output-device-0', 'checkbox')).isChecked()).toBe(false);
+    expect((await (await (await getElement('outputDeviceView', 'table')).cellAt(0, 1))?.info())?.name).toContain('Disabled');
     await expectComboItemSelected('output-channel-0-0', 0);
+    await selectOutputRow(1);
     await expectComboItemSelected('output-channel-1-0', 2);
   });
 
@@ -1038,18 +1324,21 @@ describe('PipeTune GTK dialog', () => {
     await (await getElement('mainWindow', 'window')).resizeTo(1080, 800);
     await selectSettingsPage(3);
     await openMultipleOutputConfiguration();
-    await (await getElement('output-device-0', 'checkbox')).toggle();
-    await (await getElement('output-device-1', 'checkbox')).toggle();
+    await toggleOutputDevice(0);
+    await toggleOutputDevice(1);
     await applyOutputConfiguration();
     await reopenOutputConfiguration();
+    await selectOutputRow(0);
     await waitForLabel(
       'output-timing-0',
       'Audio path active · Estimated compensation: 2.000 ms'
     );
+    await selectOutputRow(1);
     await waitForLabel(
       'output-timing-1',
       'Audio path active · Estimated compensation: 0.000 ms'
     );
+    await selectOutputRow(0);
     const saved = await session.inspectConfig();
     await session.clearRequests();
     const purpose = await getElement('output-purpose-0-0', 'entry');
@@ -1116,7 +1405,7 @@ describe('PipeTune GTK dialog', () => {
       )
     ).toHaveLength(0);
     expect(await session.inspectConfig()).toEqual(saved);
-    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await toggleOutputDevice(0);
     await waitForLabel(
       'output-timing-0',
       'Audio path active · Estimated compensation: 2.000 ms'
@@ -1157,7 +1446,7 @@ describe('PipeTune GTK dialog', () => {
     await (await getElement('mainWindow', 'window')).resizeTo(1080, 800);
     await selectSettingsPage(3);
     await openMultipleOutputConfiguration();
-    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await toggleOutputDevice(0);
     await applyOutputConfiguration();
     await reopenOutputConfiguration();
     await toPass(async () => {
@@ -1243,8 +1532,8 @@ describe('PipeTune GTK dialog', () => {
     await (await getElement('mainWindow', 'window')).resizeTo(1080, 800);
     await selectSettingsPage(3);
     await openMultipleOutputConfiguration();
-    await (await getElement('output-device-0', 'checkbox')).toggle();
-    await (await getElement('output-device-1', 'checkbox')).toggle();
+    await toggleOutputDevice(0);
+    await toggleOutputDevice(1);
     await applyOutputConfiguration();
     const apply = await getElement('applyButton', 'button');
     await toPass(async () => {
@@ -1257,8 +1546,10 @@ describe('PipeTune GTK dialog', () => {
     );
     await session.clearRequests();
     await reopenOutputConfiguration();
+    await selectOutputRow(1);
     await (await getElement('output-channel-1-0', 'comboBox')).selectChildAt(1);
     await expectComboItemSelected('output-channel-1-0', 1);
+    await selectOutputRow(0);
     await expectComboItemSelected('output-channel-0-1', 2);
     await session.app.input.pressKey('Escape');
     expect(
@@ -1267,9 +1558,11 @@ describe('PipeTune GTK dialog', () => {
       )
     ).toHaveLength(0);
     await reopenOutputConfiguration();
+    await selectOutputRow(1);
     await expectComboItemSelected('output-channel-1-0', 2);
     await (await getElement('output-channel-1-0', 'comboBox')).selectChildAt(1);
     await expectComboItemSelected('output-channel-1-0', 1);
+    await selectOutputRow(0);
     await expectComboItemSelected('output-channel-0-1', 2);
     expect(
       (await session.readRequests()).filter(
@@ -1340,9 +1633,11 @@ describe('PipeTune GTK dialog', () => {
         (request) => request.command === 'set-output'
       )
     ).toHaveLength(0);
-    await (await getElement('output-device-0', 'checkbox')).toggle();
-    await (await getElement('output-device-1', 'checkbox')).toggle();
+    await toggleOutputDevice(0);
+    await toggleOutputDevice(1);
+    await selectOutputRow(0);
     await expectComboItemSelected('output-channel-0-0', 0);
+    await selectOutputRow(1);
     await expectComboItemSelected('output-channel-1-0', 2);
     await waitForLabel('output-physical-1-0', '1 (FL)');
     const purpose = await getElement('output-purpose-1-0', 'entry');
@@ -1387,12 +1682,13 @@ describe('PipeTune GTK dialog', () => {
     });
     const saved = await session.inspectConfig();
     await reopenOutputConfiguration();
-    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await toggleOutputDevice(0);
     expect(
       (await session.readRequests()).filter(
         (request) => request.command === 'set-output'
       )
     ).toHaveLength(1);
+    await selectOutputRow(1);
     await expectComboItemSelected('output-channel-1-0', 2);
     await applyOutputConfiguration();
     await toPass(async () => {
@@ -1425,9 +1721,11 @@ describe('PipeTune GTK dialog', () => {
       await (await getElement('outputModeCombo', 'comboBox')).isChildSelected(1)
     ).toBe(true);
     await reopenOutputConfiguration();
+    await selectOutputRow(0);
     expect(
       await (await getElement('output-device-0', 'checkbox')).isChecked()
     ).toBe(true);
+    await selectOutputRow(1);
     await expectComboItemSelected('output-channel-1-0', 2);
     expect(await (await getElement('output-purpose-1-0', 'entry')).text()).toBe(
       'sub'
@@ -1440,7 +1738,7 @@ describe('PipeTune GTK dialog', () => {
     const initial = await session.inspectConfig();
     await selectSettingsPage(3);
     await openMultipleOutputConfiguration();
-    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await toggleOutputDevice(0);
     await (
       await getElement('outputConfigurationApplyButton', 'button')
     ).click();
@@ -1467,10 +1765,9 @@ describe('PipeTune GTK dialog', () => {
     await waitForConnected();
     await selectSettingsPage(3);
     await openMultipleOutputConfiguration();
-    // DAC B is selected first and moves above the still-unselected DAC A.
-    await (await getElement('output-device-1', 'checkbox')).toggle();
-    await (await getElement('output-device-1', 'checkbox')).toggle();
-    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await chooseAvailableOutput('DAC B');
+    await toggleOutputDevice(0);
+    await chooseAvailableOutput('DAC A');
     await applyOutputConfiguration();
     const apply = await getElement('applyButton', 'button');
     await toPass(async () => {
@@ -1494,12 +1791,12 @@ describe('PipeTune GTK dialog', () => {
       ['connected', 'Connected'],
     ] as const) {
       await session.setOutputInventory(state);
+      await selectOutputRow(1);
       await waitForLabel('output-presence-1', presence);
-      await expectComboItemSelected('output-channel-0-0', 0);
       await expectComboItemSelected('output-channel-1-0', 2);
-      expect(
-        (await (await getElement('output-device-0', 'checkbox')).info()).name
-      ).toBe('DAC B');
+      await selectOutputRow(0);
+      await expectComboItemSelected('output-channel-0-0', 0);
+      await waitForLabel('outputSelectedDeviceLabel', 'DAC B');
     }
     expect(
       (await session.readRequests()).filter(
@@ -1554,7 +1851,7 @@ describe('PipeTune GTK dialog', () => {
       ['processingEnabledSwitch', 'presetCombo', 'presetChooser'],
       ['rateCombo', 'rateEnforcementCombo'],
       ['dspBackendCombo', 'dspIdleEnabledSwitch', 'dspIdleTimeoutSpin'],
-      ['outputModeCombo', 'outputConfigureButton', 'outputSummaryLabel'],
+      ['outputModeCombo', 'outputConfigureButton', 'outputSummaryView'],
       [
         'languageCombo',
         'restoreDefaultsButton',
@@ -1740,21 +2037,25 @@ describe('PipeTune GTK dialog', () => {
       'window'
     );
     const devices = await getWidget('outputDeviceScroll');
-    const channels = await getElement('output-expander-0', 'expander');
-    expect(await channels.isExpanded()).toBe(false);
-    const collapsedHeight = (await devices.capture()).bounds.height;
     const saved = await session.inspectConfig();
     await session.clearRequests();
+    await chooseAvailableOutput('DAC A');
+    await chooseAvailableOutput('DAC B');
+    await selectOutputRow(0);
+    await (await getElement('outputDeleteButton', 'button')).click();
+    const channels = await getElement('outputReservedExpander', 'expander');
+    await channels.collapse();
+    const collapsedHeight = (await devices.capture()).bounds.height;
     await channels.expand();
     await toPass(async () => {
       expect(await channels.isExpanded()).toBe(true);
       expect((await devices.capture()).bounds.height).toBe(collapsedHeight);
       await expectInsideWindow(
-        await getWidget('output-channel-0-0'),
+        await getWidget('output-channel-reserved-0'),
         outputDialog
       );
       await expectInsideWindow(
-        await getWidget('output-reassign-0'),
+        await getWidget('outputDeviceView'),
         outputDialog
       );
     });

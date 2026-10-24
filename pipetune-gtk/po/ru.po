@@ -95,6 +95,15 @@ msgstr "Активен"
 msgid "Active plugins"
 msgstr "Активные плагины"
 
+msgid "Add"
+msgstr "Добавить"
+
+msgid "Add an output device to start configuring channels."
+msgstr "Добавьте устройство вывода, чтобы настроить каналы."
+
+msgid "Add device…"
+msgstr "Добавить устройство…"
+
 msgid "Advanced"
 msgstr "Дополнительно"
 
@@ -106,9 +115,6 @@ msgstr "Все настройки сохранены"
 
 msgid "Ambiguous device"
 msgstr "Неоднозначное устройство"
-
-msgid "Ambiguous device. Reassign device to choose the output."
-msgstr "Устройство определено неоднозначно. Переназначьте устройство, чтобы выбрать выход."
 
 msgid "Apply"
 msgstr "Применить"
@@ -139,9 +145,6 @@ msgstr "Автоматически"
 
 msgid "Automatic — follow PipeWire graph sampling frequency"
 msgstr "Автоматически — следовать частоте дискретизации графа PipeWire"
-
-msgid "Available"
-msgstr "Доступно"
 
 msgid "Baseline"
 msgstr "Исходное состояние"
@@ -200,9 +203,18 @@ msgstr "Изменение приостановки при тишине"
 msgid "Changing silence suspension failed"
 msgstr "Не удалось изменить приостановку при тишине"
 
+msgid "Channel changes"
+msgstr "Изменения каналов"
+
 #, brace-format
 msgid "Channel gains: {0}"
 msgstr "Усиление каналов: {0}"
+
+msgid "Channels"
+msgstr "Каналы"
+
+msgid "Choose a device to add to this configuration."
+msgstr "Выберите устройство для добавления в эту конфигурацию."
 
 msgid "Choose a preset before enabling DSP processing"
 msgstr "Выберите предустановку перед включением обработки DSP"
@@ -212,6 +224,9 @@ msgstr "Выберите стандартную или сохранённую п
 
 msgid "Choose an EffeTune preset"
 msgstr "Выберите предустановку EffeTune"
+
+msgid "Choose an output profile or replace the device to review its channels."
+msgstr "Выберите профиль вывода или замените устройство, чтобы проверить его каналы."
 
 msgid "Choose bypass, Automatic + Suggest, and Scalar + Auto SIMD."
 msgstr "Выберите Обход, Автоматически + Предлагать и Scalar + Авто SIMD."
@@ -297,6 +312,9 @@ msgstr "Состояние отключения звука устройства 
 
 msgid "Device muted"
 msgstr "Звук устройства отключён"
+
+msgid "Device name"
+msgstr "Имя устройства"
 
 msgid "Device unmuted"
 msgstr "Звук устройства включён"
@@ -483,14 +501,14 @@ msgstr "Нативный бэкенд"
 msgid "Never"
 msgstr "Никогда"
 
+msgid "No unconfigured output devices are available."
+msgstr "Нет доступных ненастроенных устройств вывода."
+
 msgid "None"
 msgstr "Нет"
 
 msgid "Not connected"
 msgstr "Не подключено"
-
-msgid "Not connected. Reconnect it or reassign this device."
-msgstr "Не подключено. Подключите заново или переназначьте это устройство."
 
 msgid "Off"
 msgstr "Выключено"
@@ -500,6 +518,9 @@ msgstr "Открыть PipeTune"
 
 msgid "Output"
 msgstr "Выход"
+
+msgid "Output channels"
+msgstr "Каналы вывода"
 
 msgid "Output mode"
 msgstr "Режим вывода"
@@ -590,9 +611,6 @@ msgstr "Время обработки"
 msgid "Profile changed"
 msgstr "Профиль изменён"
 
-msgid "Profile changed. Reassign device to update these channels."
-msgstr "Профиль изменён. Переназначьте устройство, чтобы обновить эти каналы."
-
 msgid "Purpose"
 msgstr "Назначение"
 
@@ -602,14 +620,32 @@ msgstr "Название назначения этого выходного ка
 msgid "Quit"
 msgstr "Выход"
 
-msgid "Reassign device…"
-msgstr "Переназначить устройство…"
+msgid "Reconnect this device, replace it, or remove it from the configuration."
+msgstr "Подключите это устройство снова, замените его или удалите из конфигурации."
+
+msgid "Remove from configuration"
+msgstr "Удалить из конфигурации"
+
+msgid "Remove this device while keeping other devices' channel numbers."
+msgstr "Удаляет устройство, сохраняя номера каналов других устройств."
+
+msgid "Remove unassigned channels and renumber the remaining channels."
+msgstr "Удаляет неназначенные каналы и перенумеровывает оставшиеся."
+
+msgid "Remove unused channels"
+msgstr "Удалить неиспользуемые каналы"
+
+msgid "Removed devices"
+msgstr "Удалённые устройства"
+
+msgid "Replace"
+msgstr "Заменить"
+
+msgid "Replace with another device…"
+msgstr "Заменить другим устройством…"
 
 msgid "Reported device controls, separate from the OS master volume. Channel gains show the minimum and maximum across the device."
 msgstr "Значения, сообщённые устройством, отдельно от общей громкости ОС. Для усиления каналов показаны минимальное и максимальное значения устройства."
-
-msgid "Reserved EffeTune channels"
-msgstr "Зарезервированные каналы EffeTune"
 
 msgid "Restart now"
 msgstr "Перезапустить сейчас"
@@ -631,6 +667,9 @@ msgstr "Восстановление текущих настроек, зафик
 
 msgid "Restoring the previous live settings…"
 msgstr "Восстановление предыдущих текущих настроек…"
+
+msgid "Review the preset's channel assignments before applying these changes."
+msgstr "Перед применением изменений проверьте назначение каналов в пресете."
 
 msgid "Rollback requested"
 msgstr "Запрошен откат"
@@ -738,14 +777,11 @@ msgstr "Система"
 msgid "System default"
 msgstr "Система по умолчанию"
 
-msgid "The 16-channel limit includes disabled and reserved channels. Use existing channels to replace a saved device."
-msgstr "Лимит в 16 каналов включает отключённые и зарезервированные каналы. Используйте существующие каналы для замены сохранённого устройства."
-
 msgid "The OS selects the output. Saved device assignments are inactive."
 msgstr "Выход выбирает операционная система. Сохранённые назначения устройств неактивны."
 
-msgid "The selected device cannot be identified uniquely."
-msgstr "Выбранное устройство невозможно однозначно идентифицировать."
+msgid "The replacement keeps the existing channel numbers and purpose labels."
+msgstr "При замене сохраняются номера каналов и подписи их назначения."
 
 msgid "The selected output is no longer available with this profile. Review the configuration."
 msgstr "Выбранный выход больше недоступен с этим профилем. Проверьте конфигурацию."
@@ -753,11 +789,17 @@ msgstr "Выбранный выход больше недоступен с эт�
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "Изменение языка интерфейса вступит в силу после перезапуска PipeTune GTK."
 
+msgid "This device cannot be identified uniquely. Choose a replacement."
+msgstr "Невозможно однозначно определить устройство. Выберите замену."
+
 msgid "Turn off to pass audio through without an EffeTune preset."
 msgstr "Отключите, чтобы пропускать звук без предустановки EffeTune."
 
 msgid "Unassigned"
 msgstr "Не назначено"
+
+msgid "Unassigned channels"
+msgstr "Неназначенные каналы"
 
 msgid "unavailable"
 msgstr "недоступно"
@@ -777,17 +819,14 @@ msgstr "Неизвестно"
 msgid "Unknown sample format"
 msgstr "Неизвестный формат выборки"
 
-msgid "Unsupported channel count"
-msgstr "Неподдерживаемое число каналов"
-
 msgid "Updating settings"
 msgstr "Обновление настроек"
 
 msgid "Updating settings failed"
 msgstr "Не удалось обновить настройки"
 
-msgid "Use existing channels…"
-msgstr "Использовать существующие каналы…"
+msgid "Use this device"
+msgstr "Использовать это устройство"
 
 msgid "Versions"
 msgstr "Версии"
