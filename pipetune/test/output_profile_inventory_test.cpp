@@ -16,6 +16,8 @@ struct State {
   std::string error;
   bool complete = false;
   unsigned step = 0;
+  std::vector<pipetune::PipeWireInputRouteSnapshot> originalInputRoutes;
+  pipetune::OutputCardIdentity card;
 };
 
 static void changed(const pipetune::OutputInventoryResult &snapshot, void *data) {
@@ -37,12 +39,16 @@ static void changed(const pipetune::OutputInventoryResult &snapshot, void *data)
     return profile.card.api == "pipetune-fixture" &&
         profile.cardProfileName == "output:analog-stereo+input:other";
   });
+  const auto inputOnly = std::find_if(snapshot.profiles.begin(), snapshot.profiles.end(), [](const auto &profile) {
+    return profile.card.api == "pipetune-fixture" && profile.cardProfileName == "input:analog-stereo";
+  });
   if (first == snapshot.profiles.end() || second == snapshot.profiles.end() ||
-      inputChanging == snapshot.profiles.end() ||
+      inputChanging == snapshot.profiles.end() || inputOnly == snapshot.profiles.end() ||
       first->observedOutputs.empty()) return;
   if (first->card.location != "pipetune.visibility.fixture" ||
       first->outputKey != "analog-stereo" || second->outputKey != "iec958-stereo" ||
-      !first->preservesInput || !second->preservesInput || inputChanging->preservesInput ||
+      !first->preservesInput || !second->preservesInput || !inputOnly->preservesInput ||
+      !inputOnly->outputKey.empty() || inputChanging->preservesInput ||
       !first->available || !second->available || first->observedOutputs.size() != 1 ||
       first->observedOutputs[0].channelPositions != std::vector<std::string>{"FL", "FR"}) {
     state.error = "card profiles or observed output layouts were incorrect";
@@ -50,6 +56,29 @@ static void changed(const pipetune::OutputInventoryResult &snapshot, void *data)
     return;
   }
   if (state.step == 0 && first->active && !second->active) {
+    state.card = first->card;
+    state.originalInputRoutes = pipetune::pipeWireInputRoutes(*state.observer, state.card);
+    if (state.originalInputRoutes.size() != 1) {
+      state.error = "the synthetic input route was not captured";
+      pw_main_loop_quit(state.loop);
+      return;
+    }
+    const auto nodeCount = pipetune::pipeWireOutputProfileNodeCount(*state.observer,
+        {.card = first->card, .cardProfileName = first->cardProfileName,
+         .outputKey = first->outputKey, .allowMissingForRestore = false});
+    if (nodeCount != 1) {
+      state.error = "the selected profile did not report one output Node";
+      pw_main_loop_quit(state.loop);
+      return;
+    }
+    const auto inputOnlyNodeCount = pipetune::pipeWireOutputProfileNodeCount(*state.observer,
+        {.card = first->card, .cardProfileName = inputOnly->cardProfileName,
+         .outputKey = {}, .allowMissingForRestore = true});
+    if (inputOnlyNodeCount != 0) {
+      state.error = "the input-only profile did not report zero output Nodes";
+      pw_main_loop_quit(state.loop);
+      return;
+    }
     const auto refused = pipetune::setPipeWireOutputProfile(*state.observer,
         {.card = first->card, .cardProfileName = inputChanging->cardProfileName,
          .outputKey = inputChanging->outputKey, .allowMissingForRestore = false});
@@ -63,11 +92,26 @@ static void changed(const pipetune::OutputInventoryResult &snapshot, void *data)
         {.card = first->card, .cardProfileName = "output:iec958-stereo+input:analog-stereo",
          .outputKey = "iec958-stereo", .allowMissingForRestore = false});
   } else if (state.step == 1 && !first->active && second->active && !second->observedOutputs.empty()) {
+    if (pipetune::pipeWireInputRoutes(*state.observer, state.card) == state.originalInputRoutes) return;
     state.step = 2;
+    state.error = pipetune::restorePipeWireInputRoutes(*state.observer, state.card, state.originalInputRoutes);
+  } else if (state.step == 2 && !first->active && second->active &&
+             pipetune::pipeWireInputRoutes(*state.observer, state.card) == state.originalInputRoutes) {
+    state.step = 3;
     state.error = pipetune::setPipeWireOutputProfile(*state.observer,
         {.card = first->card, .cardProfileName = "output:analog-stereo+input:analog-stereo",
          .outputKey = "analog-stereo", .allowMissingForRestore = false});
-  } else if (state.step == 2 && first->active && !second->active && !second->observedOutputs.empty()) {
+  } else if (state.step == 3 && first->active && !second->active && !second->observedOutputs.empty()) {
+    state.step = 4;
+    state.error = pipetune::setPipeWireOutputProfile(*state.observer,
+        {.card = first->card, .cardProfileName = inputOnly->cardProfileName,
+         .outputKey = {}, .allowMissingForRestore = true});
+  } else if (state.step == 4 && inputOnly->active && !first->active) {
+    state.step = 5;
+    state.error = pipetune::setPipeWireOutputProfile(*state.observer,
+        {.card = first->card, .cardProfileName = first->cardProfileName,
+         .outputKey = first->outputKey, .allowMissingForRestore = false});
+  } else if (state.step == 5 && first->active && !inputOnly->active) {
     state.complete = true;
     pw_main_loop_quit(state.loop);
   }

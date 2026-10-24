@@ -696,6 +696,7 @@ static bool outputStatusIsConsistent(const ControlRuntimeStatus &status) {
   }
   return validateOutputConfiguration(status.outputConfiguration).empty() &&
       status.outputInventoryError.find('\0') == std::string::npos &&
+      status.outputProfileRestorationError.find('\0') == std::string::npos &&
       (status.outputInventoryReady || (status.availableOutputs.empty() && status.outputInventoryError.empty())) &&
       (status.outputInventoryError.empty() || status.availableOutputs.empty());
 }
@@ -816,7 +817,9 @@ static std::string makeControlStatusMessage(
       !yyjson_mut_obj_add_val(document.get(), root, "outputConfiguration", outputConfiguration) ||
       !yyjson_mut_obj_add_uint(document.get(), root, "outputInventoryRevision", status.outputInventoryRevision) ||
       !yyjson_mut_obj_add_bool(document.get(), root, "outputInventoryReady", status.outputInventoryReady) ||
-      !addNullableString(document.get(), root, "outputInventoryError", status.outputInventoryError))
+      !addNullableString(document.get(), root, "outputInventoryError", status.outputInventoryError) ||
+      !yyjson_mut_obj_add_bool(document.get(), root, "outputProfileRestoring", status.outputProfileRestoring) ||
+      !addNullableString(document.get(), root, "outputProfileRestorationError", status.outputProfileRestorationError))
     return makeControlErrorResponse("cannot encode output status");
   for (const auto &output : status.availableOutputs) {
     auto *item = yyjson_mut_arr_add_obj(document.get(), outputs);
@@ -1434,7 +1437,9 @@ static bool readOutputStatus(yyjson_val *root, ControlRuntimeStatus &status) {
   if (!configuration.error.empty() || !yyjson_is_arr(outputs) || !yyjson_is_arr(profiles) ||
       !yyjson_is_uint(inventoryRevision) ||
       !readBooleanField(root, "outputInventoryReady", status.outputInventoryReady) ||
-      !readNullableStringField(root, "outputInventoryError", status.outputInventoryError)) return false;
+      !readNullableStringField(root, "outputInventoryError", status.outputInventoryError) ||
+      !readBooleanField(root, "outputProfileRestoring", status.outputProfileRestoring) ||
+      !readNullableStringField(root, "outputProfileRestorationError", status.outputProfileRestorationError)) return false;
   status.outputConfiguration = std::move(configuration.configuration);
   status.outputInventoryRevision = yyjson_get_uint(inventoryRevision);
   for (auto index = std::size_t{0}; index < yyjson_arr_size(outputs); ++index) {

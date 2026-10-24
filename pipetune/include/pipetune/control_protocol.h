@@ -231,6 +231,10 @@ struct ControlRuntimeStatus {
   bool outputInventoryReady = false;
   /** Enumeration diagnostic, or empty for a successful or pending inventory. */
   std::string outputInventoryError = {};
+  /** True while a saved profile is being restored after its card reconnects. */
+  bool outputProfileRestoring = false;
+  /** Last reconnect profile restoration failure, or empty after success. */
+  std::string outputProfileRestorationError = {};
   /** Physical output controls, independent of saved routing and master gain. */
   std::vector<OutputVolumeState> outputVolumes = {};
   /** Current resolved output paths and explicitly estimated delay compensation. */

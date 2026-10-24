@@ -62,7 +62,9 @@ try {
   });
   assert.equal(code, 0, error);
   assert.match(fixtureOutput, /profile-set index=1 save=0/u);
+  assert.match(fixtureOutput, /profile-set index=3 save=0/u);
   assert.match(fixtureOutput, /profile-set index=0 save=0/u);
+  assert.match(fixtureOutput, /route-set device=1 index=2 mute=0 volume=1\.000000,1\.000000/u);
 } finally {
   if (card) card.kill("SIGTERM");
   server.kill("SIGTERM");

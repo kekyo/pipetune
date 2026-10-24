@@ -853,6 +853,8 @@ static bool testOutputStatus() {
       .observedOutputs = {status.outputConfiguration.outputs[0].device}}};
   status.outputInventoryRevision = 19;
   status.outputInventoryReady = true;
+  status.outputProfileRestoring = true;
+  status.outputProfileRestorationError = "previous reconnect failed";
   const auto selections = std::vector<pipetune::OutputProfileSelection>{{
       .card = card, .cardProfileName = "output:analog-stereo+input:analog-stereo",
       .outputKey = "analog-stereo", .allowMissingForRestore = false}};
@@ -896,6 +898,8 @@ static bool testOutputStatus() {
                parsed.status.availableOutputs == status.availableOutputs &&
                parsed.status.availableOutputProfiles == status.availableOutputProfiles &&
                parsed.status.outputInventoryRevision == status.outputInventoryRevision && parsed.status.outputInventoryReady &&
+               parsed.status.outputProfileRestoring == status.outputProfileRestoring &&
+               parsed.status.outputProfileRestorationError == status.outputProfileRestorationError &&
                parsed.status.outputVolumes == status.outputVolumes && parsed.status.outputTimings == status.outputTimings,
                "status and events must preserve saved mappings and the complete live inventory")) return false;
     const auto resolved = pipetune::resolveConfiguredOutputs(parsed.status.outputConfiguration, parsed.status.availableOutputs);

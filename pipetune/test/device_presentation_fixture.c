@@ -9,6 +9,7 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <pipewire/pipewire.h>
 #include <spa/monitor/utils.h>
 #include <spa/param/profile.h>
@@ -17,6 +18,7 @@
 #include <spa/pod/parser.h>
 #include <spa/param/props.h>
 #include <spa/param/audio/raw.h>
+#include <spa/param/audio/format-utils.h>
 
 struct fixture {
     struct spa_device device;
@@ -33,7 +35,126 @@ struct fixture {
     int active_profile;
     bool save_profile;
     bool output_profile_variant;
+    bool recreate_output_on_profile_change;
+    bool omit_profile_classes;
+    bool hold_output_node;
+    uint32_t card_id;
+    bool monitor_optical_pcm;
+    struct pw_stream *optical_monitor;
+    struct spa_hook optical_monitor_listener;
+    uint32_t optical_pcm_frames;
+    bool optical_sample_printed;
+    bool optical_format_printed;
 };
+
+static void capture_optical_pcm(void *data) {
+    struct fixture *self = data;
+    struct pw_buffer *queued = pw_stream_dequeue_buffer(self->optical_monitor);
+    if (!queued) return;
+    if (!self->optical_format_printed && queued->buffer) {
+        printf("optical-monitor-format=%u,%u,%u\n", queued->buffer->n_datas,
+            queued->buffer->n_datas > 0 && queued->buffer->datas[0].chunk ? queued->buffer->datas[0].chunk->stride : 0,
+            queued->buffer->n_datas > 1 && queued->buffer->datas[1].chunk ? queued->buffer->datas[1].chunk->stride : 0);
+        fflush(stdout);
+        self->optical_format_printed = true;
+    }
+    if (queued->buffer && queued->buffer->n_datas == 2) {
+        const struct spa_data *left = &queued->buffer->datas[0];
+        const struct spa_data *right = &queued->buffer->datas[1];
+        if (left->data && right->data && left->chunk && right->chunk &&
+                left->chunk->stride == sizeof(float) && right->chunk->stride == sizeof(float) &&
+                left->chunk->offset <= left->maxsize && right->chunk->offset <= right->maxsize &&
+                left->chunk->size <= left->maxsize - left->chunk->offset &&
+                right->chunk->size <= right->maxsize - right->chunk->offset) {
+            const uint32_t frames = SPA_MIN(left->chunk->size, right->chunk->size) / sizeof(float);
+            for (uint32_t frame = 0; frame < frames; ++frame) {
+                float a = 0, b = 0;
+                memcpy(&a, (const char *)left->data + left->chunk->offset + frame * sizeof(float), sizeof(float));
+                memcpy(&b, (const char *)right->data + right->chunk->offset + frame * sizeof(float), sizeof(float));
+                if (!self->optical_sample_printed && (a > 0.001f || a < -0.001f || b > 0.001f || b < -0.001f)) {
+                    printf("optical-pcm-sample=%f,%f\n", a, b); fflush(stdout);
+                    self->optical_sample_printed = true;
+                }
+                const float ratio = a != 0.0f ? b / a + 2.0f : 10.0f;
+                if ((a > 0.005f || a < -0.005f) && (b > 0.005f || b < -0.005f) &&
+                        ratio > -0.1f && ratio < 0.1f)
+                    ++self->optical_pcm_frames;
+                else self->optical_pcm_frames = 0;
+                if (self->optical_pcm_frames == 4096) {
+                    printf("optical-pcm-frames=4096\n");
+                    fflush(stdout);
+                }
+            }
+        }
+    }
+    pw_stream_queue_buffer(self->optical_monitor, queued);
+}
+
+static void optical_monitor_state(void *data, enum pw_stream_state old_state,
+        enum pw_stream_state state, const char *error) {
+    (void)data; (void)old_state;
+    printf("optical-monitor-state=%d error=%s\n", (int)state, error ? error : "");
+    fflush(stdout);
+}
+
+static void create_optical_monitor(struct fixture *self) {
+    if (!self->monitor_optical_pcm || self->optical_monitor) return;
+    self->optical_monitor = pw_stream_new(self->core, "Fixture optical monitor", pw_properties_new(
+        PW_KEY_NODE_NAME, "fixture.optical.monitor", PW_KEY_MEDIA_CLASS, "Stream/Input/Audio",
+        PW_KEY_TARGET_OBJECT, "fixture.output.iec958", PW_KEY_STREAM_CAPTURE_SINK, "true",
+        "node.link-group", "pipetune.profile-fixture-monitor",
+        "adapter.auto-port-config", "{ mode = dsp position = preserve }",
+        "node.dont-fallback", "true", "node.dont-move", "true", NULL));
+    if (!self->optical_monitor) {
+        printf("optical-monitor-create-failed\n"); fflush(stdout);
+        return;
+    }
+    static const struct pw_stream_events events = {
+        .version = PW_VERSION_STREAM_EVENTS, .state_changed = optical_monitor_state,
+        .process = capture_optical_pcm,
+    };
+    pw_stream_add_listener(self->optical_monitor, &self->optical_monitor_listener, &events, self);
+    struct spa_audio_info_raw format = {0};
+    format.format = SPA_AUDIO_FORMAT_F32P;
+    format.rate = 48000;
+    format.channels = 2;
+    format.position[0] = SPA_AUDIO_CHANNEL_FL;
+    format.position[1] = SPA_AUDIO_CHANNEL_FR;
+    uint8_t storage[512];
+    struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(storage, sizeof(storage));
+    const struct spa_pod *parameter = spa_format_audio_raw_build(&builder, SPA_PARAM_EnumFormat, &format);
+    if (pw_stream_connect(self->optical_monitor, PW_DIRECTION_INPUT, PW_ID_ANY,
+            PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS, &parameter, 1) < 0) {
+        printf("optical-monitor-connect-failed\n"); fflush(stdout);
+        spa_hook_remove(&self->optical_monitor_listener);
+        pw_stream_destroy(self->optical_monitor);
+        self->optical_monitor = NULL;
+    }
+}
+
+static void create_output_node(struct fixture *self) {
+    if (self->output_profile_variant && self->active_profile == 3) return;
+    if (self->hold_output_node) {
+        printf("output-node-held=%d\n", self->active_profile);
+        fflush(stdout);
+        return;
+    }
+    char card[32];
+    snprintf(card, sizeof(card), "%u", self->card_id);
+    const char *name = self->active_profile == 1 ? "fixture.output.iec958" : "fixture.output";
+    const char *profile = self->active_profile == 1 ? "iec958-stereo" : "analog-stereo";
+    struct pw_properties *props = pw_properties_new(
+        "factory.name", "support.null-audio-sink", "node.name", name,
+        "node.description", "Fixture Output", "media.class", "Audio/Sink",
+        "device.id", card, "card.profile.device", "0",
+        "node.device.profile.name", profile,
+        "audio.position", "[ FL FR ]", "audio.rate", "48000",
+        "monitor.channel-volumes", "true", "node.virtual", "false",
+        "priority.session", "1000", NULL);
+    self->nodes[0] = pw_core_create_object(self->core, "adapter", PW_TYPE_INTERFACE_Node,
+        PW_VERSION_NODE, &props->dict, 0);
+    pw_properties_free(props);
+}
 
 static const struct spa_dict_item properties[] = {
     { "device.name", "pipetune.visibility.fixture" },
@@ -77,6 +198,7 @@ static struct spa_pod *profile(struct fixture *self, struct spa_pod_builder *bui
     const char *name = self->output_profile_variant ?
         (index == 0 ? "output:analog-stereo+input:analog-stereo" :
          index == 1 ? "output:iec958-stereo+input:analog-stereo" :
+         index == 3 ? "input:analog-stereo" :
          "output:analog-stereo+input:other") :
         (index == 0 ? "duplex" : "duplex-alternative");
     spa_pod_builder_add(builder,
@@ -86,14 +208,17 @@ static struct spa_pod *profile(struct fixture *self, struct spa_pod_builder *bui
         SPA_PARAM_PROFILE_priority, SPA_POD_Int(index == 0 ? 100 : 90),
         SPA_PARAM_PROFILE_save, SPA_POD_Bool(self->save_profile),
         SPA_PARAM_PROFILE_available, SPA_POD_Id(SPA_PARAM_AVAILABILITY_yes), 0);
-    spa_pod_builder_prop(builder, SPA_PARAM_PROFILE_classes, 0);
-    spa_pod_builder_push_struct(builder, &frames[1]);
-    spa_pod_builder_int(builder, 2);
-    spa_pod_builder_add_struct(builder, SPA_POD_String("Audio/Sink"), SPA_POD_Int(1),
-        SPA_POD_String("card.profile.devices"), SPA_POD_Array(sizeof(int), SPA_TYPE_Int, 1, &output));
-    spa_pod_builder_add_struct(builder, SPA_POD_String("Audio/Source"), SPA_POD_Int(1),
-        SPA_POD_String("card.profile.devices"), SPA_POD_Array(sizeof(int), SPA_TYPE_Int, 1, &input));
-    spa_pod_builder_pop(builder, &frames[1]);
+    if (!self->omit_profile_classes) {
+        spa_pod_builder_prop(builder, SPA_PARAM_PROFILE_classes, 0);
+        spa_pod_builder_push_struct(builder, &frames[1]);
+        const bool input_only = self->output_profile_variant && index == 3;
+        spa_pod_builder_int(builder, input_only ? 1 : 2);
+        if (!input_only) spa_pod_builder_add_struct(builder, SPA_POD_String("Audio/Sink"), SPA_POD_Int(1),
+            SPA_POD_String("card.profile.devices"), SPA_POD_Array(sizeof(int), SPA_TYPE_Int, 1, &output));
+        spa_pod_builder_add_struct(builder, SPA_POD_String("Audio/Source"), SPA_POD_Int(1),
+            SPA_POD_String("card.profile.devices"), SPA_POD_Array(sizeof(int), SPA_TYPE_Int, 1, &input));
+        spa_pod_builder_pop(builder, &frames[1]);
+    }
     return spa_pod_builder_pop(builder, &frames[0]);
 }
 
@@ -133,7 +258,7 @@ static int enum_params(void *object, int seq, uint32_t id, uint32_t start,
         uint32_t maximum, const struct spa_pod *filter) {
     struct fixture *self = object;
     const uint32_t length = id == SPA_PARAM_EnumRoute ? 4 :
-        id == SPA_PARAM_EnumProfile ? (self->output_profile_variant ? 3 : 2) :
+        id == SPA_PARAM_EnumProfile ? (self->output_profile_variant ? 4 : 2) :
         id == SPA_PARAM_Route ? 2 : 1;
     uint32_t emitted = 0;
     for (uint32_t index = start; index < length && emitted < maximum; ++index) {
@@ -162,14 +287,35 @@ static int set_param(void *object, uint32_t id, uint32_t flags, const struct spa
         if (spa_pod_parse_object(param, SPA_TYPE_OBJECT_ParamProfile, NULL,
                 SPA_PARAM_PROFILE_index, SPA_POD_Int(&index),
                 SPA_PARAM_PROFILE_save, SPA_POD_OPT_Bool(&save)) < 0 || index < 0 ||
-                index > (self->output_profile_variant ? 2 : 1))
+                index > (self->output_profile_variant ? 3 : 1))
             return -EINVAL;
         if (index != self->active_profile || save != self->save_profile) {
+            const bool profile_changed = index != self->active_profile;
             self->active_profile = index;
             self->save_profile = save;
+            if (self->output_profile_variant && index == 1) {
+                self->active_routes[1] = 3;
+                self->volumes[1][0] = 0.4f;
+                self->volumes[1][1] = 0.4f;
+                self->mute[1] = true;
+            }
             self->params[1].flags ^= SPA_PARAM_INFO_SERIAL;
             self->params[3].flags ^= SPA_PARAM_INFO_SERIAL;
             emit_info(self);
+            if (profile_changed && self->recreate_output_on_profile_change) {
+                if (self->optical_monitor) {
+                    spa_hook_remove(&self->optical_monitor_listener);
+                    pw_stream_destroy(self->optical_monitor);
+                    self->optical_monitor = NULL;
+                    self->optical_pcm_frames = 0;
+                    self->optical_sample_printed = false;
+                    self->optical_format_printed = false;
+                }
+                if (self->nodes[0]) pw_proxy_destroy((struct pw_proxy *)self->nodes[0]);
+                self->nodes[0] = NULL;
+                create_output_node(self);
+                if (index == 1) create_optical_monitor(self);
+            }
         }
         printf("profile-set index=%d save=%d\n", index, save);
         fflush(stdout);
@@ -225,16 +371,24 @@ static const struct spa_device_methods methods = {
 };
 
 static void on_signal(void *data, int number) {
-    (void)number;
     struct fixture *self = data;
+    if (number == SIGUSR1) {
+        self->hold_output_node = true;
+        printf("output-node-hold-ready\n");
+        fflush(stdout);
+        return;
+    }
     pw_main_loop_quit(self->loop);
 }
 
 static void card_bound(void *data, uint32_t id) {
     struct fixture *self = data;
+    self->card_id = id;
+    if (self->recreate_output_on_profile_change && self->active_profile >= 0) create_output_node(self);
     char card[32];
     snprintf(card, sizeof(card), "%u", id);
-    for (unsigned direction = 0; direction < 2; ++direction) {
+    for (unsigned direction = self->recreate_output_on_profile_change ? 1U : 0U;
+         direction < 2; ++direction) {
         struct pw_properties *props = pw_properties_new(
             "factory.name", "support.null-audio-sink",
             "node.name", direction ? "fixture.input" : "fixture.output",
@@ -260,6 +414,9 @@ int main(int argc, char **argv) {
         { .id = SPA_PARAM_Route, .flags = SPA_PARAM_INFO_READWRITE },
     }, .active_routes = {0, 2}, .volumes = {{1.0f, 1.0f}, {1.0f, 1.0f}} };
     self.output_profile_variant = getenv("PIPETUNE_PROFILE_FIXTURE") != NULL;
+    self.recreate_output_on_profile_change = getenv("PIPETUNE_PROFILE_RECREATE") != NULL;
+    self.omit_profile_classes = getenv("PIPETUNE_PROFILE_NO_CLASSES") != NULL;
+    self.monitor_optical_pcm = getenv("PIPETUNE_PROFILE_MONITOR") != NULL;
     self.device.iface = SPA_INTERFACE_INIT(SPA_TYPE_INTERFACE_Device, SPA_VERSION_DEVICE, &methods, &self);
     spa_hook_list_init(&self.listeners);
     self.loop = pw_main_loop_new(NULL);
@@ -267,6 +424,7 @@ int main(int argc, char **argv) {
     struct spa_source *signals[] = {
         pw_loop_add_signal(loop, SIGTERM, on_signal, &self),
         pw_loop_add_signal(loop, SIGINT, on_signal, &self),
+        pw_loop_add_signal(loop, SIGUSR1, on_signal, &self),
     };
     struct pw_context *context = pw_context_new(loop, NULL, 0);
     /* Real hardware belongs to WirePlumber, which can see the internal capture
@@ -281,12 +439,16 @@ int main(int argc, char **argv) {
     if (!proxy) return 2;
     pw_proxy_add_listener(proxy, &self.bound_listener, &bound_events, &self);
     pw_main_loop_run(self.loop);
+    if (self.optical_monitor) {
+        spa_hook_remove(&self.optical_monitor_listener);
+        pw_stream_destroy(self.optical_monitor);
+    }
     for (unsigned i = 0; i < 2; ++i) if (self.nodes[i]) pw_proxy_destroy((struct pw_proxy *)self.nodes[i]);
     spa_hook_remove(&self.bound_listener);
     pw_proxy_destroy(proxy);
     pw_core_disconnect(core);
     pw_context_destroy(context);
-    for (unsigned i = 0; i < 2; ++i) pw_loop_destroy_source(loop, signals[i]);
+    for (unsigned i = 0; i < SPA_N_ELEMENTS(signals); ++i) pw_loop_destroy_source(loop, signals[i]);
     pw_main_loop_destroy(self.loop);
     pw_deinit();
     return 0;

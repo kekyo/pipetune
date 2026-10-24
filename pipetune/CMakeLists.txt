@@ -1003,15 +1003,17 @@ if(BUILD_TESTING)
   target_include_directories(pipetune_product_output_tests PRIVATE src)
   target_link_options(pipetune_product_output_tests PRIVATE -Wl,--wrap=pw_stream_connect)
   target_compile_options(pipetune_product_output_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  foreach(scenario product-bypass product-matrix product-slots product-sixteen product-volume product-disconnected product-reconnect product-profile product-restart product-restart-mute product-latency product-latency-units product-latency-reconnect product-time-alignment product-sfz-classic product-sfz-event product-controls product-output-clock product-output-clock-alt product-output-clock-unavailable product-output-change product-output-timeout product-output-status product-output-status-single product-output-recovery)
+  foreach(scenario product-bypass product-matrix product-slots product-sixteen product-volume product-disconnected product-reconnect product-profile product-restart product-restart-mute product-latency product-latency-units product-latency-reconnect product-time-alignment product-sfz-classic product-sfz-event product-controls product-output-clock product-output-clock-alt product-output-clock-unavailable product-output-change product-output-profile-unknown product-output-profile-shutdown product-output-timeout product-output-status product-output-status-single product-output-recovery)
     add_test(NAME pipetune_${scenario}
       COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
         ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
         $<TARGET_FILE:pipetune_product_output_tests> ${scenario}
-        $<TARGET_FILE:pipetune_wireplumber_policy_fixture> "" "" ""
+        $<TARGET_FILE:pipetune_wireplumber_policy_fixture> $<TARGET_FILE:pipetune_device_presentation_fixture> "" ""
         $<TARGET_FILE_DIR:pipetune_presentation> ${PIPETUNE_PIPEWIRE_MODULE_DIR})
     set_tests_properties(pipetune_${scenario} PROPERTIES TIMEOUT 45)
   endforeach()
+  # This case includes two reconnect restorations and mapped PCM.
+  set_tests_properties(pipetune_product-output-change PROPERTIES TIMEOUT 90)
   foreach(scenario product-daemon product-daemon-volume product-daemon-volume-zero)
     add_test(
       NAME pipetune_${scenario}

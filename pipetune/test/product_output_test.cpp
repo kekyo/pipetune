@@ -223,6 +223,7 @@ struct AudioTest {
   bool intentionalDelay = false;
   bool controls = false;
   bool outputChange = false;
+  bool profileUnknown = false;
   bool outputTimeout = false;
   bool recovery = false;
   bool graphClock = false;
@@ -608,7 +609,7 @@ static void capture(void *data) {
         return;
       }
     }
-    if (test.controls || test.outputChange || test.outputTimeout) {
+    if (test.controls || test.outputChange || test.outputTimeout || test.profileUnknown) {
       if (test.graphClock) {
         const auto expectedRate = test.stage == 0 ? test.initialGraphRate : test.stage < 8 ? 96000U : 48000U;
         // PipeWire scales the configured cycle size when the graph rate changes.
@@ -859,6 +860,7 @@ static int runAudio(std::string_view scenario) {
   test.graphQuantum = scenario.ends_with("-alt") ? 512 : 256;
   test.controls = scenario == "product-controls" || test.graphClock;
   test.outputChange = scenario == "product-output-change";
+  test.profileUnknown = scenario == "product-output-profile-unknown" || scenario == "product-output-profile-shutdown";
   test.outputTimeout = scenario == "product-output-timeout";
   test.recovery = scenario == "product-output-recovery";
   test.inventory = scenario.starts_with("product-output-status");
@@ -883,6 +885,11 @@ static int runAudio(std::string_view scenario) {
     }
     if (test.clockUnavailable || (test.graphClock && test.stage == 8)) {
       if (!test.awaitingControl) return fail(test, "unexpected final timing acknowledgement");
+      pw_main_loop_quit(test.loop);
+      return;
+    }
+    if (test.profileUnknown) {
+      if (!test.awaitingControl) return fail(test, "unexpected profile validation acknowledgement");
       pw_main_loop_quit(test.loop);
       return;
     }
@@ -977,7 +984,8 @@ static int runAudio(std::string_view scenario) {
   auto *timer = pw_loop_add_timer(pw_main_loop_get_loop(test.loop), [](void *data, std::uint64_t) {
     fail(*static_cast<AudioTest *>(data), "product PCM test timed out");
   }, &test);
-  auto deadline = timespec{.tv_sec = test.outputTimeout || test.recovery ? 30 : 15, .tv_nsec = 0}; auto interval = timespec{};
+  auto deadline = timespec{.tv_sec = test.outputChange ? 60 : test.outputTimeout || test.recovery ? 30 : 15,
+      .tv_nsec = 0}; auto interval = timespec{};
   if (timer == nullptr || signal == nullptr ||
       pw_loop_update_timer(pw_main_loop_get_loop(test.loop), timer, &deadline, &interval, false) < 0) return 1;
   pw_main_loop_run(test.loop);
