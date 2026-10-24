@@ -61,9 +61,10 @@ component later without changing status acquisition.
 ## Live preview and persistence
 
 The window treats all settings as one transaction. Opening it captures the
-saved startup configuration and the daemon's live configuration. Changing any
-control immediately previews that choice in PipeTune; no per-setting apply
-button remains. When several fields differ, requests are serialized in this
+saved startup configuration and the daemon's live configuration. Processing,
+rate, and DSP controls preview changes immediately. Device configuration stays
+in a separate draft until its dialog is confirmed. When several fields differ,
+requests are serialized in this
 dependency order:
 
 1. sample-rate policy;
@@ -73,14 +74,15 @@ dependency order:
 5. processing mode or preset when no output change is needed.
 
 The Output page selects either the existing OS-managed single mode or multiple
-devices managed by PipeTune. It lists saved and available devices with profile,
+devices managed by PipeTune, and summarizes the applied assignments. Open
+`Device configuration…` to edit saved and available devices with profile,
 channel count, fixed EffeTune Ch numbers, and presence. Missing devices remain
 visible, and clearing a check box reserves its numbers. The device tree uses
 the remaining panel height and scrolls as one list. Selecting a device expands
 its physical channels. Each child has an `EffeTune output` number selector and
-an optional purpose field; press Enter or leave the field to preview the label.
+an optional purpose field; press Enter or leave the field to update the draft.
 The arrow beside the device folds its channel controls without changing any
-assignments. Presence and any selection problem remain visible on the parent.
+assignments. Presence and any selection problem remain visible on the device row.
 The stereo desktop input uses Ch 1 and Ch 2; additional outputs must be
 created by the EffeTune preset. Single mode keeps the saved multiple-output
 mapping visible but inactive.
@@ -102,27 +104,43 @@ acoustic arrival time. Disconnects and unavailable inventory clear stale
 reports. These updates preserve in-progress purpose edits and never save settings.
 
 Choose a different `EffeTune output` number to move the physical channel and its
-purpose label to that position. Intervening assignments move as shown in the
-review. Use `Reassign device…` on the parent row to replace that device, including
+purpose label to that position. Intervening assignments move within the draft.
+Use `Reassign device…` on the device row to replace that device, including
 when its channels are collapsed or its profile has changed. An available
 device's `Use existing channels…` action selects a saved device to replace and
 enables the new output. This also works with disabled assignments at the
-16-channel limit. Channel moves and device replacements
-open a before/after review. `Preview mapping` sends the proposed configuration;
-Cancel or Escape in the review leaves it unchanged. The main window's Apply
-still performs the save, and its Cancel restores the confirmed baseline.
+16-channel limit. Device selections, profiles, channel moves, and labels stay
+local to this dialog until `Apply configuration` sends the completed configuration
+once. Cancel, Escape, and closing discard the draft. An unchanged confirmation
+sends no request. The main window's Apply saves without rebuilding outputs,
+and its Cancel restores the output configuration and OS profiles captured when
+the window opened or last saved.
 `Reassign device…` retains the device's enabled state and all other devices'
 numbers. Removed physical channels appear in the `Reserved EffeTune channels`
 branch with their labels;
 new channels append after the existing slots. Replacements exceeding sixteen
-slots or duplicating another output fail. If the selected profile disappears
-while reviewing, reopen the review and select a current output.
+slots or duplicating another output fail. If the selected output disappears
+while editing, review its presence and select a current output.
+
+An output profile determines how the OS exposes the device's outputs and is
+separate from an EffeTune preset. Supported cards offer profiles that preserve
+the input settings. Selecting one does not change the OS until confirmation.
+An unknown layout is discovered on confirmation; a mismatch restores the previous
+configuration and retains the draft. Select the discovered output through
+`Reassign device…`, review its channels, and confirm again. Failed requests and
+external setting changes keep the draft and diagnostic visible. A connection
+loss never queues an unconfirmed draft for automatic resubmission.
+
+If the current preset cannot handle the proposed channel count, cancel the
+device dialog and select a compatible preset or Bypass in the main window
+before changing the configuration. Entering multiple mode also waits for the
+device dialog's confirmation; canceling it preserves single mode.
 
 Presence distinguishes missing hardware, changed profiles, ambiguous matches,
 pending enumeration, and enumeration errors. It describes device matching, not
 audio activity or measured delay compensation. Live presence changes never
 renumber saved channels. A multiple-mode draft without an enabled device waits
-for a selection before previewing and cannot be applied.
+for a selection before confirmation and cannot be applied.
 
 The global **Apply** button becomes available only after the daemon has
 confirmed every requested live change. It atomically writes the complete

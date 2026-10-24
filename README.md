@@ -133,7 +133,9 @@ are shown on the right.
 
 ![PipeTune UI Window](./images/pipetune-ui-window.png)
 
-Changing a setting previews it immediately in the running daemon. The `Apply`
+Processing and rate settings take effect immediately in the running daemon.
+Device configuration changes are edited together in a separate dialog and
+applied on confirmation. The `Apply`
 button confirms and saves the current state. The `Cancel` button, Escape, or
 the title-bar close button restores the previous live state before hiding the
 window.
@@ -225,19 +227,18 @@ PipeTune also allows you to map multichannel output to any channel on any audio 
 To simplify configuration for standard 2-channel stereo, the default setting is “Single Mode.”
 In this case, the output device is determined based on the OS’s sound device assignment feature.
 
-On the other hand, selecting “Multiple Mode” allows you to handle any number of output devices.
+Selecting “Multiple Mode” lets you use multiple output devices together.
 In this case, the OS’s sound device assignment feature cannot be used, and you must configure the settings in PipeTune.
 
-You can switch between these modes on the `Output` page of the settings window.
+Switch modes on the `Output` page and open `Device configuration…` to edit the devices in a separate dialog. The main window summarizes the applied devices, channel numbers, and connection states. Switching from single to multiple mode opens this dialog first; canceling it keeps single mode active.
 
-In Multiple Mode, check the boxes next to the devices you want to use. You can view each device’s profile, number of channels, assigned channel numbers, and connection status.
-When you select a device, its internal channels will expand within the same list. Under `EffeTune Output` for each channel, you can select a channel number and enter a custom label in the “Purpose” field.
+Checking a device expands its physical channels. Choose each channel's `EffeTune output` number and enter an optional purpose label. Moving a number also moves the intervening assignments. `Reassign device…` selects a replacement even while its channels are collapsed. Disabled devices and removed physical channels retain reserved numbers without renumbering other devices. The limit is sixteen channels, including reservations.
 
-You can enter a purpose name to help identify the device’s intended use.
-You can select a replacement destination from `Reassign Device...` in the device row. There is no need to expand the channels.
+`Output profile` selects how the OS exposes a device's outputs; it is separate from an EffeTune processing preset. Supported devices offer profiles that preserve the input settings. If a profile's channel layout has not been observed yet, confirming the configuration discovers its actual outputs. A mismatch restores the previous configuration and displays an error. Reassign the discovered output, review its channels, and confirm again.
 
-Changes are previewed in real time; click `Apply` to save or `Cancel` to revert to the previous configuration.
-If you switch to multi-mode without selecting a device, the system enters edit mode, but the actual output remains unchanged.
+Editing the dialog does not change playback or OS profiles. `Apply configuration` applies the completed configuration once, without saving it. The dialog's Cancel, Escape, and close action discard its edits. Confirming an unchanged configuration does not rebuild the outputs.
+
+The main window's `Apply` saves the confirmed settings without applying the outputs again. Its `Cancel` restores the output configuration and profiles captured when the main window opened or last saved. Failed changes keep the draft and diagnostic visible. If a preset cannot handle the new channel count, cancel the device dialog, select a compatible preset or Bypass in the main window, and try the configuration again. Reconnecting never submits a pending device draft automatically. If another application changes the settings, cancel the device dialog and reopen the main window to review the current state.
 
 The device column displays the mute and gain levels reported by the device, separate from the OS’s overall volume.
 If the gain varies by channel, the minimum and maximum values are shown.
