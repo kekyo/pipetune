@@ -845,10 +845,22 @@ static bool testOutputStatus() {
                      .name = "Saved \"出力\"", .profile = "analog-stereo", .channelPositions = {"FL", "FR"}}}},
       .channels = {{"", 0, "Reserved"}, {"saved", 0, "Left"}, {"saved", 1, "Right"}}};
   status.availableOutputs = {{status.outputConfiguration.outputs[0].device, "current-node", 73, UINT64_MAX}};
+  const auto card = pipetune::OutputCardIdentity{.api = "alsa", .location = "usb:1",
+      .vendor = {}, .product = {}, .serial = {}};
+  status.availableOutputProfiles = {{.card = card, .cardProfileName = "output:analog-stereo+input:analog-stereo",
+      .outputKey = "analog-stereo", .description = "Analog Stereo Duplex", .available = true,
+      .active = true, .preservesInput = true,
+      .observedOutputs = {status.outputConfiguration.outputs[0].device}}};
+  status.outputInventoryRevision = 19;
   status.outputInventoryReady = true;
-  const auto request = pipetune::parseControlRequest(pipetune::makeSetOutputControlRequest(status.outputConfiguration, UINT64_MAX));
+  const auto selections = std::vector<pipetune::OutputProfileSelection>{{
+      .card = card, .cardProfileName = "output:analog-stereo+input:analog-stereo",
+      .outputKey = "analog-stereo", .allowMissingForRestore = false}};
+  const auto request = pipetune::parseControlRequest(pipetune::makeSetOutputControlRequest(
+      status.outputConfiguration, UINT64_MAX, std::nullopt, selections, 19));
   if (!check(request.error.empty() && request.request.command == pipetune::ControlCommand::setOutput &&
-             request.request.outputConfiguration == status.outputConfiguration && request.request.expectedRevision == UINT64_MAX,
+             request.request.outputConfiguration == status.outputConfiguration && request.request.expectedRevision == UINT64_MAX &&
+             request.request.outputProfileSelections == selections && request.request.expectedOutputInventoryRevision == 19,
              "output requests must preserve every fixed assignment")) return false;
   for (const auto json : {
       R"({"command":"set-output"})",
@@ -881,7 +893,9 @@ static bool testOutputStatus() {
     const auto encoded = event ? pipetune::makeControlStatusEvent(status) : pipetune::makeControlSuccessResponse(status, {});
     const auto parsed = pipetune::parseControlResponse(encoded);
     if (!check(parsed.valid && parsed.success && parsed.status.outputConfiguration == status.outputConfiguration &&
-               parsed.status.availableOutputs == status.availableOutputs && parsed.status.outputInventoryReady &&
+               parsed.status.availableOutputs == status.availableOutputs &&
+               parsed.status.availableOutputProfiles == status.availableOutputProfiles &&
+               parsed.status.outputInventoryRevision == status.outputInventoryRevision && parsed.status.outputInventoryReady &&
                parsed.status.outputVolumes == status.outputVolumes && parsed.status.outputTimings == status.outputTimings,
                "status and events must preserve saved mappings and the complete live inventory")) return false;
     const auto resolved = pipetune::resolveConfiguredOutputs(parsed.status.outputConfiguration, parsed.status.availableOutputs);
