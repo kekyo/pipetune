@@ -1549,6 +1549,9 @@ static void destroyOutputStream(PipeWireRuntime &runtime) {
     pw_stream_destroy(runtime.outputStream);
     runtime.outputStream = nullptr;
   }
+  // The old data-loop callback is quiescent before a new channel layout or
+  // routing configuration can reuse its logical channel numbers.
+  clearOutputPeaks(runtime.outputPeakTelemetry);
   resetOutputTransition(runtime, transitionSampleRate(runtime));
   runtime.rateBridgeReady.store(false, std::memory_order_release);
   runtime.outputReady = false;

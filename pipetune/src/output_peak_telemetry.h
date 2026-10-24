@@ -47,6 +47,13 @@ void recordOutputPeak(OutputPeakTelemetry &telemetry, std::size_t channel,
 bool publishOutputPeaks(OutputPeakTelemetry &telemetry) noexcept;
 
 /**
+ * Clears both interval and visible peaks after the old output stream stops.
+ *
+ * @param telemetry Shared meter state; its audio writer must be quiescent.
+ */
+void clearOutputPeaks(OutputPeakTelemetry &telemetry) noexcept;
+
+/**
  * Copies the most recently published peaks in logical channel order.
  *
  * @param telemetry Shared meter state.

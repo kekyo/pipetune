@@ -41,6 +41,13 @@ bool publishOutputPeaks(OutputPeakTelemetry &telemetry) noexcept {
   return changed;
 }
 
+void clearOutputPeaks(OutputPeakTelemetry &telemetry) noexcept {
+  for (auto &peak : telemetry.pending)
+    peak.store(0.0F, std::memory_order_relaxed);
+  for (auto &peak : telemetry.published)
+    peak.store(0.0F, std::memory_order_release);
+}
+
 std::vector<float> snapshotOutputPeaks(const OutputPeakTelemetry &telemetry,
                                        std::size_t channelCount) {
   if (channelCount == 0 || channelCount > kMaximumOutputPeakChannels) return {};
