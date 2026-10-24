@@ -748,7 +748,7 @@ msgid "Startup configuration path unavailable"
 msgstr "起動設定のパスを利用できません"
 
 msgid "State"
-msgstr "有効状態"
+msgstr "状態"
 
 msgid "Suggest"
 msgstr "提案"
