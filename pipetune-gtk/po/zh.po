@@ -502,6 +502,9 @@ msgstr "输出"
 msgid "Output mode"
 msgstr "输出模式"
 
+msgid "Output profile"
+msgstr "输出配置文件"
+
 msgid "Output settings changed. Cancel and reopen the configuration dialog."
 msgstr "输出设置已更改。请取消并重新打开配置对话框。"
 

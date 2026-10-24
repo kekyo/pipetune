@@ -504,6 +504,9 @@ msgstr "Выход"
 msgid "Output mode"
 msgstr "Режим вывода"
 
+msgid "Output profile"
+msgstr "Профиль вывода"
+
 msgid "Output settings changed. Cancel and reopen the configuration dialog."
 msgstr "Настройки вывода изменились. Отмените изменения и снова откройте диалог конфигурации."
 

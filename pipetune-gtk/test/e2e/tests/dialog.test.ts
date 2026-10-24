@@ -379,6 +379,63 @@ const hideWithKeyboard = async (method: 'escape' | 'close'): Promise<void> => {
 };
 
 describe('PipeTune GTK dialog', () => {
+  it('applies a profile with its channels and restores the original OS profile on parent Cancel', async () => {
+    session = await launchPipeTuneGtk({
+      rejectedCommand: undefined,
+      outputProfilesEnabled: true,
+    });
+    await waitForConnected();
+    const initial = await session.inspectConfig();
+    await selectSettingsPage(3);
+    await openMultipleOutputConfiguration();
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await selectComboItem('output-profile-0', 1);
+    expect(
+      (await session.readRequests()).filter((r) => r.command === 'set-output')
+    ).toHaveLength(0);
+    await applyOutputConfiguration();
+    const requests = (await session.readRequests()).filter(
+      (r) => r.command === 'set-output'
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      profileSelections: [
+        {
+          cardProfileName: 'output:iec958-stereo+input:analog-stereo',
+          outputKey: 'iec958-stereo',
+        },
+      ],
+      configuration: {
+        outputs: [
+          {
+            device: { profile: 'iec958-stereo' },
+            profileIntent: { outputKey: 'iec958-stereo' },
+          },
+        ],
+      },
+    });
+    expect(await session.inspectConfig()).toEqual(initial);
+    await (await getElement('cancelButton', 'button')).click();
+    await toPass(async () =>
+      expect(await session?.app.getWindowCount()).toBe(0)
+    );
+    const restored = (await session.readRequests()).filter(
+      (r) => r.command === 'set-output'
+    );
+    expect(restored).toHaveLength(2);
+    expect(restored[1]).toMatchObject({
+      configuration: initial.outputConfiguration,
+      profileSelections: [
+        {
+          cardProfileName: 'output:analog-stereo+input:analog-stereo',
+          outputKey: 'analog-stereo',
+          allowMissingForRestore: true,
+        },
+      ],
+    });
+    expect(await session.inspectConfig()).toEqual(initial);
+  });
+
   it('batches device edits until confirmation and preserves parent Apply and Cancel', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();

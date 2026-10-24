@@ -86,6 +86,8 @@ struct MainWindowUi {
   std::optional<pipetune::OutputConfiguration> displayedOutputConfiguration = {};
   /** Last rendered inventory, also used to resolve a user's row selection. */
   std::vector<pipetune::AvailableOutput> displayedOutputs = {};
+  /** Last rendered profile candidates, including layouts discovered on confirmation. */
+  std::vector<pipetune::AvailableOutputProfile> displayedOutputProfiles = {};
   /** Last rendered inventory-completion flag. */
   bool displayedOutputInventoryReady = false;
   /** Last rendered enumeration diagnostic. */

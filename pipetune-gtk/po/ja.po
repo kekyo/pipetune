@@ -502,6 +502,9 @@ msgstr "出力"
 msgid "Output mode"
 msgstr "出力モード"
 
+msgid "Output profile"
+msgstr "出力プロファイル"
+
 msgid "Output settings changed. Cancel and reopen the configuration dialog."
 msgstr "出力設定が変更されました。キャンセルしてデバイス構成を開き直してください。"
 

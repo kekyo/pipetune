@@ -507,6 +507,9 @@ msgstr "الإخراج"
 msgid "Output mode"
 msgstr "وضع الإخراج"
 
+msgid "Output profile"
+msgstr "ملف تعريف الإخراج"
+
 msgid "Output settings changed. Cancel and reopen the configuration dialog."
 msgstr "تغيرت إعدادات الإخراج. ألغِ العملية وأعد فتح نافذة التكوين."
 

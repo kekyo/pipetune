@@ -498,6 +498,9 @@ msgstr ""
 msgid "Output mode"
 msgstr ""
 
+msgid "Output profile"
+msgstr ""
+
 msgid "Output settings changed. Cancel and reopen the configuration dialog."
 msgstr ""
 

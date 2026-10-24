@@ -67,6 +67,8 @@ export interface PipeTuneGtkTestOptions {
   readonly staleStatusAfterChange?: boolean;
   /** Make the deterministic per-user setup helper fail. */
   readonly setupFails?: boolean;
+  /** Exposes a physical card with two input-preserving output profiles. */
+  readonly outputProfilesEnabled?: boolean;
 }
 
 /**
@@ -288,6 +290,8 @@ export const launchPipeTuneGtk = async (
       PIPETUNE_GTK_SETUP_HELPER_FAIL:
         options.setupFails === true ? '1' : undefined,
       PIPETUNE_GTK_E2E_PERSISTENCE_GUARD: persistenceGuardPath,
+      PIPETUNE_E2E_OUTPUT_PROFILES:
+        options.outputProfilesEnabled === true ? '1' : undefined,
     },
   });
   let daemon: FakeDaemon | undefined;

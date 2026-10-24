@@ -34,6 +34,9 @@ struct FakeDaemonState {
   std::string outputInventoryState = "connected";
   std::string outputVolumeState = "normal";
   std::string outputTimingState = "normal";
+  bool outputProfilesEnabled = false;
+  std::string outputProfileKey = "analog-stereo";
+  std::uint64_t outputInventoryRevision = 1;
 };
 
 static std::string environmentValue(const char *name) {
@@ -169,6 +172,22 @@ static pipetune::ControlRuntimeStatus snapshotStatus(
     stale = true;
   }
   auto status = makeStatus(config, revision);
+  if (state.outputProfilesEnabled) {
+    const auto card = pipetune::OutputCardIdentity{"alsa", "usb:test", "vendor", "product", "serial"};
+    auto &device = status.availableOutputs.front().device;
+    device.identity = {card.api, card.location, "pcm:0:0", card.vendor, card.product, card.serial};
+    device.profile = state.outputProfileKey;
+    for (const auto &key : {std::string("analog-stereo"), std::string("iec958-stereo")}) {
+      auto observed = device;
+      observed.profile = key;
+      status.availableOutputProfiles.push_back({
+          .card = card, .cardProfileName = "output:" + key + "+input:analog-stereo",
+          .outputKey = key, .description = key == "analog-stereo" ? "Analog stereo" : "Digital stereo",
+          .available = true, .active = key == state.outputProfileKey, .preservesInput = true,
+          .observedOutputs = {observed}});
+    }
+    status.outputInventoryRevision = state.outputInventoryRevision;
+  }
   if (state.outputInventoryState == "missing") {
     status.availableOutputs.erase(status.availableOutputs.begin());
   } else if (state.outputInventoryState == "profileChanged") {
@@ -337,6 +356,18 @@ static pipetune::ControlMessageResult handleRequest(
     case pipetune::ControlCommand::setOutput:
       if (parsed.request.expectedRevision.has_value() && *parsed.request.expectedRevision != state.configurationRevision)
         return closeResponse(pipetune::makeControlErrorResponse("configuration changed"), false);
+      if (parsed.request.expectedOutputInventoryRevision &&
+          *parsed.request.expectedOutputInventoryRevision != state.outputInventoryRevision)
+        return closeResponse(pipetune::makeControlErrorResponse("output inventory changed"), false);
+      for (const auto &profile : parsed.request.outputProfileSelections) {
+        if (!state.outputProfilesEnabled || profile.card.location != "usb:test" ||
+            profile.cardProfileName != "output:" + profile.outputKey + "+input:analog-stereo")
+          return closeResponse(pipetune::makeControlErrorResponse("output profile unavailable"), false);
+        if (state.outputProfileKey != profile.outputKey) {
+          state.outputProfileKey = profile.outputKey;
+          ++state.outputInventoryRevision;
+        }
+      }
       state.liveConfig.outputConfiguration = parsed.request.outputConfiguration;
       if (parsed.request.outputPreset.has_value()) {
         state.liveConfig.presetPath = *parsed.request.outputPreset;
@@ -463,7 +494,12 @@ int main(int argc, char **argv) {
           environmentValue("PIPETUNE_E2E_REJECT_COMMAND"),
       .dspTelemetrySequence = 0,
       .manualStatusSequence = 0,
+      .outputProfilesEnabled = environmentValue("PIPETUNE_E2E_OUTPUT_PROFILES") == "1",
   };
+  if (state.outputProfilesEnabled)
+    for (const auto &output : state.liveConfig.outputConfiguration.outputs)
+      if (output.profileIntent && output.profileIntent->card.location == "usb:test")
+        state.outputProfileKey = output.profileIntent->outputKey;
   auto started = pipetune::startControlServer(
       socketPath.path,
       {.handler = handleRequest,

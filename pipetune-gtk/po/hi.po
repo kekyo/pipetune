@@ -503,6 +503,9 @@ msgstr "आउटपुट"
 msgid "Output mode"
 msgstr "आउटपुट मोड"
 
+msgid "Output profile"
+msgstr "आउटपुट प्रोफ़ाइल"
+
 msgid "Output settings changed. Cancel and reopen the configuration dialog."
 msgstr "आउटपुट सेटिंग बदल गई हैं। रद्द करें और कॉन्फ़िगरेशन संवाद फिर खोलें।"
 

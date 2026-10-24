@@ -503,6 +503,9 @@ msgstr "Saída"
 msgid "Output mode"
 msgstr "Modo de saída"
 
+msgid "Output profile"
+msgstr "Perfil de saída"
+
 msgid "Output settings changed. Cancel and reopen the configuration dialog."
 msgstr "As configurações de saída foram alteradas. Cancele e abra novamente o diálogo de configuração."
 
