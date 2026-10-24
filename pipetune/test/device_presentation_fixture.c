@@ -39,6 +39,8 @@ struct fixture {
     bool omit_profile_classes;
     bool hold_output_node;
     bool override_profile_on_signal;
+    bool override_input_props_on_signal;
+    bool input_props_override_active;
     bool initial_input_only_profile;
     bool optical_profile_requested;
     bool omit_optical_profile;
@@ -234,10 +236,11 @@ static struct spa_pod *route(struct fixture *self, struct spa_pod_builder *build
     /* The override scenario has one optical input route so policy changes do
      * not race the profile rollback being tested. Other scenarios retain both. */
     const int override_line_profiles[] = {0};
+    const bool single_input_route = self->override_profile_on_signal || self->override_input_props_on_signal;
     const int *profiles = index == 2 ? input_only_profiles :
-        index == 3 && self->override_profile_on_signal ? override_line_profiles : regular_profiles;
+        index == 3 && single_input_route ? override_line_profiles : regular_profiles;
     const uint32_t profile_count = index == 2 ? 3 :
-        index == 3 && self->override_profile_on_signal ? 1 : 2;
+        index == 3 && single_input_route ? 1 : 2;
     const int device = index < 2 ? 0 : 1;
     struct spa_pod_frame frame;
     spa_pod_builder_push_object(builder, &frame, SPA_TYPE_OBJECT_ParamRoute, id);
@@ -304,6 +307,7 @@ static int set_param(void *object, uint32_t id, uint32_t flags, const struct spa
                 index > (self->output_profile_variant ? 3 : 1))
             return -EINVAL;
         if (self->initial_input_only_profile && !self->optical_profile_requested && index == 0) return 0;
+        if (self->override_input_props_on_signal && self->optical_profile_requested && index == 0) return 0;
         if (self->initial_input_only_profile && !self->optical_profile_requested && index == 1) {
             printf("input-before-target route=%d mute=%d volume=%f,%f\n",
                 self->active_routes[1], self->mute[1], self->volumes[1][0], self->volumes[1][1]);
@@ -314,9 +318,10 @@ static int set_param(void *object, uint32_t id, uint32_t flags, const struct spa
             const bool profile_changed = index != self->active_profile;
             self->active_profile = index;
             self->save_profile = save;
+            if (index == 3) self->input_props_override_active = false;
             if (self->output_profile_variant && index == 3) self->active_routes[1] = 2;
             if (self->output_profile_variant && index == 1) {
-                self->active_routes[1] = self->override_profile_on_signal ? 2 : 3;
+                self->active_routes[1] = self->override_profile_on_signal || self->override_input_props_on_signal ? 2 : 3;
                 self->volumes[1][0] = 0.4f;
                 self->volumes[1][1] = 0.4f;
                 self->mute[1] = true;
@@ -354,7 +359,12 @@ static int set_param(void *object, uint32_t id, uint32_t flags, const struct spa
             SPA_PARAM_ROUTE_props, SPA_POD_OPT_Pod(&props)) < 0 ||
             device < 0 || device > 1 || index < device * 2 || index >= device * 2 + 2 ||
             (self->output_profile_variant && self->active_profile == 3 && index != 2) ||
-            (self->override_profile_on_signal && self->active_profile == 1 && index == 3)) return -EINVAL;
+            ((self->override_profile_on_signal || self->override_input_props_on_signal) &&
+                self->active_profile == 1 && index == 3)) return -EINVAL;
+    /* Keep a late external Props change visible through the settle deadline.
+     * The prior input settings become writable again after profile rollback. */
+    if (self->override_input_props_on_signal && self->input_props_override_active &&
+            self->active_profile == 1 && device == 1) return 0;
     bool changed = self->active_routes[device] != index || self->save[device] != save;
     self->active_routes[device] = index;
     self->save[device] = save;
@@ -396,6 +406,26 @@ static const struct spa_device_methods methods = {
 
 static void on_signal(void *data, int number) {
     struct fixture *self = data;
+    if (number == SIGURG && self->override_input_props_on_signal) {
+        self->input_props_override_active = true;
+        self->volumes[1][0] = 0.173f;
+        self->volumes[1][1] = 0.173f;
+        self->mute[1] = true;
+        self->params[3].flags ^= SPA_PARAM_INFO_SERIAL;
+        emit_info(self);
+        if (self->nodes[1]) {
+            uint8_t buffer[512];
+            struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
+            const struct spa_pod *props = spa_pod_builder_add_object(&builder, SPA_TYPE_OBJECT_Props, SPA_PARAM_Props,
+                SPA_PROP_mute, SPA_POD_Bool(true),
+                SPA_PROP_channelVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, 2, self->volumes[1]));
+            pw_node_set_param(self->nodes[1], SPA_PARAM_Props, 0, props);
+        }
+        printf("input-props-overridden profile=%d route=%d mute=1 volume=0.173000\n",
+            self->active_profile, self->active_routes[1]);
+        fflush(stdout);
+        return;
+    }
     if (number == SIGWINCH) {
         printf("fixture-state profile=%d input-route=%d mute=%d volume=%f,%f\n",
             self->active_profile, self->active_routes[1], self->mute[1],
@@ -465,6 +495,7 @@ int main(int argc, char **argv) {
     self.omit_profile_classes = getenv("PIPETUNE_PROFILE_NO_CLASSES") != NULL;
     self.monitor_optical_pcm = getenv("PIPETUNE_PROFILE_MONITOR") != NULL;
     self.override_profile_on_signal = getenv("PIPETUNE_PROFILE_OVERRIDE_SIGNAL") != NULL;
+    self.override_input_props_on_signal = getenv("PIPETUNE_PROFILE_OVERRIDE_INPUT_SIGNAL") != NULL;
     self.initial_input_only_profile = getenv("PIPETUNE_PROFILE_INITIAL_INPUT_ONLY") != NULL;
     self.omit_optical_profile = getenv("PIPETUNE_PROFILE_OMIT_OPTICAL") != NULL;
     if (self.initial_input_only_profile) self.active_profile = 3;
@@ -478,6 +509,7 @@ int main(int argc, char **argv) {
         pw_loop_add_signal(loop, SIGUSR1, on_signal, &self),
         pw_loop_add_signal(loop, SIGUSR2, on_signal, &self),
         pw_loop_add_signal(loop, SIGWINCH, on_signal, &self),
+        pw_loop_add_signal(loop, SIGURG, on_signal, &self),
     };
     struct pw_context *context = pw_context_new(loop, NULL, 0);
     /* Real hardware belongs to WirePlumber, which can see the internal capture

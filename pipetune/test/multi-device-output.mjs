@@ -424,7 +424,8 @@ try {
     await waitForMessage(audio, "product:devices-ready");
     let profileFixture;
     if (["product-output-change", "product-output-profile-unknown", "product-output-profile-shutdown",
-      "product-output-profile-restore-failure", "product-output-profile-unavailable"].includes(scenario)) {
+      "product-output-profile-restore-failure", "product-output-profile-unavailable",
+      "product-output-profile-settle-input"].includes(scenario)) {
       profileFixture = start("product profile fixture", pulseServer, [], {
         ...environment, PIPETUNE_PROFILE_FIXTURE: "1", PIPETUNE_PROFILE_RECREATE: "1",
         ...(scenario === "product-output-change" ? { PIPETUNE_PROFILE_MONITOR: "1" } : {}),
@@ -467,7 +468,7 @@ try {
     audio.child.kill("SIGUSR1");
     if (graphClockTest || ["product-controls", "product-output-change", "product-output-profile-unknown",
       "product-output-profile-shutdown", "product-output-profile-restore-failure",
-      "product-output-profile-unavailable", "product-output-timeout",
+      "product-output-profile-unavailable", "product-output-profile-settle-input", "product-output-timeout",
       "product-output-clock-unavailable", "product-output-recovery"].includes(scenario)) {
       const control = async (request, success = true) => {
         const client = start("product control", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET, JSON.stringify(request)]);
@@ -630,7 +631,8 @@ try {
         assert.ok(retained.availableOutputProfiles.find((item) => item.card.api === "pipetune-fixture" &&
           item.outputKey === "iec958-stereo")?.observedOutputs.length);
         audio.child.kill("SIGUSR2");
-      } else if (["product-output-profile-restore-failure", "product-output-profile-unavailable"].includes(scenario)) {
+      } else if (["product-output-profile-restore-failure", "product-output-profile-unavailable",
+        "product-output-profile-settle-input"].includes(scenario)) {
         await next(0);
         audio.child.kill("SIGUSR2");
         assert.equal((await audio.completion).code, 0, audio.stderr);
@@ -664,6 +666,8 @@ try {
           ...environment, PIPETUNE_PROFILE_FIXTURE: "1", PIPETUNE_PROFILE_RECREATE: "1",
           ...(scenario === "product-output-profile-restore-failure" ? {
             PIPETUNE_PROFILE_OVERRIDE_SIGNAL: "1", PIPETUNE_PROFILE_INITIAL_INPUT_ONLY: "1",
+          } : scenario === "product-output-profile-settle-input" ? {
+            PIPETUNE_PROFILE_OVERRIDE_INPUT_SIGNAL: "1", PIPETUNE_PROFILE_INITIAL_INPUT_ONLY: "1",
           } : { PIPETUNE_PROFILE_OMIT_OPTICAL: "1" }),
         });
         if (scenario === "product-output-profile-unavailable") {
@@ -722,6 +726,47 @@ try {
             item.card.api === "pipetune-fixture" && item.active)?.cardProfileName, analog.cardProfileName);
           assert.deepEqual(retained.outputConfiguration, corrected);
           assert.doesNotMatch(profileFixture.stdout, /profile-set index=1 save=0/u);
+        } else if (scenario === "product-output-profile-settle-input") {
+          const subscription = createConnection(environment.PIPETUNE_PRODUCT_SOCKET);
+          const deadline = setTimeout(() => subscription.destroy(new Error("input settling diagnosis did not arrive")), 10000);
+          const lines = createInterface({ input: subscription });
+          let latestStatus;
+          let overridden = false;
+          let finished;
+          const changeInputAfterRestoration = () => {
+            if (overridden || !latestStatus?.outputProfileRestoring) return;
+            const active = latestStatus.availableOutputProfiles.some((item) => item.card.api === "pipetune-fixture" &&
+              item.active && item.cardProfileName === optical.cardProfileName);
+            const ready = latestStatus.availableOutputs.some((item) => item.nodeName === "fixture.output.iec958");
+            const restoredInput = /route-set device=1 index=2 mute=0 volume=1\.000000,1\.000000 changed=1/u
+              .test(profileFixture.stdout);
+            if (active && ready && restoredInput) {
+              profileFixture.child.kill("SIGURG");
+              overridden = true;
+            }
+          };
+          profileFixture.child.stdout.on("data", changeInputAfterRestoration);
+          try {
+            await once(subscription, "connect");
+            subscription.write(`${JSON.stringify({ command: "subscribe" })}\n`);
+            for await (const line of lines) {
+              const status = JSON.parse(line);
+              latestStatus = status;
+              changeInputAfterRestoration();
+              if (overridden && !status.outputProfileRestoring) { finished = status; break; }
+            }
+          } finally {
+            profileFixture.child.stdout.off("data", changeInputAfterRestoration);
+            clearTimeout(deadline);
+            lines.close();
+            subscription.destroy();
+          }
+          assert.equal(overridden, true);
+          assert.match(profileFixture.stdout, /input-props-overridden profile=1 route=2/u);
+          assert.match(finished?.outputProfileRestorationError ?? "", /input settings.*settling/u);
+          assert.equal(finished.availableOutputProfiles.find((item) =>
+            item.card.api === "pipetune-fixture" && item.active)?.cardProfileName, "input:analog-stereo");
+          assert.deepEqual(finished.outputConfiguration, savedIntent);
         } else {
           const subscription = createConnection(environment.PIPETUNE_PRODUCT_SOCKET);
           const deadline = setTimeout(() => subscription.destroy(new Error("profile rollback diagnosis did not arrive")), 20000);

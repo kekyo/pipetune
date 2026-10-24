@@ -1713,6 +1713,11 @@ static std::string verifyAppliedProfiles(const PipeWireRuntime &runtime) {
       if (fresh < *expected) return "the selected output profile has not settled on new output Nodes";
     }
   }
+  for (const auto &input : runtime.profileTransition.previousInputs) {
+    if (cardIsPresent(runtime, input.card) &&
+        pipeWireInputRoutes(*runtime.outputInventory, input.card) != input.routes)
+      return "input settings changed while applying the output configuration";
+  }
   return {};
 }
 
@@ -3295,6 +3300,33 @@ static bool createMainLoop(PipeWireRuntime &runtime) {
         const auto requested = runtime.requestedProfileRestorations.front();
         const auto *active = activeCardProfile(runtime, requested.first);
         if (active != nullptr && active->cardProfileName == requested.second) {
+          const auto expected = pipeWireOutputProfileNodeCount(*runtime.outputInventory,
+              {.card = requested.first, .cardProfileName = requested.second,
+               .outputKey = active->outputKey, .allowMissingForRestore = true});
+          const auto live = std::count_if(runtime.availableOutputs.outputs.begin(), runtime.availableOutputs.outputs.end(),
+              [&](const auto &output) { return outputBelongsToCard(output, requested.first); });
+          const auto fresh = std::count_if(runtime.availableOutputs.outputs.begin(), runtime.availableOutputs.outputs.end(),
+              [&](const auto &output) {
+                return outputBelongsToCard(output, requested.first) && !output.device.channelPositions.empty() &&
+                    std::find(runtime.pendingProfileOldNodeSerials.begin(), runtime.pendingProfileOldNodeSerials.end(),
+                        output.nodeSerial) == runtime.pendingProfileOldNodeSerials.end();
+              });
+          const auto nodesReady = expected ?
+              (*expected == 0 ? live == 0 : live == *expected && fresh == *expected) :
+              (active->outputKey.empty() ? live == 0 : fresh > 0);
+          const auto inputReady = pipeWireInputRoutes(*runtime.outputInventory, requested.first) ==
+              runtime.pendingProfileInputRoutes;
+          if (!nodesReady || !inputReady) {
+            runtime.pendingProfileRollback = true;
+            runtime.profileTransition = {};
+            runtime.profileTransition.previous.push_back(runtime.pendingPreviousProfile);
+            runtime.profileTransition.previousInputs.push_back({requested.first, runtime.pendingProfileInputRoutes});
+            beginProfileRestoration(runtime, inputReady ?
+                "output Nodes changed while settling the saved output profile" :
+                "input settings changed while settling the saved output profile");
+            advanceProfileTransition(runtime);
+            return;
+          }
           runtime.pendingProfileRestorations.erase(std::remove_if(runtime.pendingProfileRestorations.begin(),
               runtime.pendingProfileRestorations.end(), [&](const auto &item) { return item.card == requested.first; }),
               runtime.pendingProfileRestorations.end());
