@@ -210,8 +210,10 @@ const selectOutputRow = async (index: number): Promise<void> => {
   const cell = await devices.cellAt(index, 0);
   if (cell === undefined)
     throw new Error(`Output row ${String(index)} is unavailable`);
+  const dialog = await getElement('outputConfigurationDialog', 'window');
+  await dialog.activate();
   const name = (await cell.info()).name;
-  const bounds = (await cell.capture()).bounds;
+  const bounds = (await cell.capture()).visibleBounds;
   await session.app.input.moveMouseTo(
     bounds.x + Math.floor(bounds.width / 2),
     bounds.y + Math.floor(bounds.height / 2)
@@ -2004,7 +2006,7 @@ describe('PipeTune GTK dialog', () => {
     );
   });
 
-  it('resizes preset and device lists while folding the channel assignments', async () => {
+  it('resizes preset and device lists while selecting device details', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     const window = await getElement('mainWindow', 'window');
