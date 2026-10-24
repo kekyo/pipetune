@@ -41,6 +41,7 @@ struct fixture {
     bool override_profile_on_signal;
     bool initial_input_only_profile;
     bool optical_profile_requested;
+    bool omit_optical_profile;
     uint32_t card_id;
     bool monitor_optical_pcm;
     struct pw_stream *optical_monitor;
@@ -265,6 +266,7 @@ static int enum_params(void *object, int seq, uint32_t id, uint32_t start,
         id == SPA_PARAM_Route ? 2 : 1;
     uint32_t emitted = 0;
     for (uint32_t index = start; index < length && emitted < maximum; ++index) {
+        if (id == SPA_PARAM_EnumProfile && self->omit_optical_profile && index == 1) continue;
         uint8_t buffer[4096];
         struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
         struct spa_pod *pod;
@@ -452,6 +454,7 @@ int main(int argc, char **argv) {
     self.monitor_optical_pcm = getenv("PIPETUNE_PROFILE_MONITOR") != NULL;
     self.override_profile_on_signal = getenv("PIPETUNE_PROFILE_OVERRIDE_SIGNAL") != NULL;
     self.initial_input_only_profile = getenv("PIPETUNE_PROFILE_INITIAL_INPUT_ONLY") != NULL;
+    self.omit_optical_profile = getenv("PIPETUNE_PROFILE_OMIT_OPTICAL") != NULL;
     if (self.initial_input_only_profile) self.active_profile = 3;
     self.device.iface = SPA_INTERFACE_INIT(SPA_TYPE_INTERFACE_Device, SPA_VERSION_DEVICE, &methods, &self);
     spa_hook_list_init(&self.listeners);

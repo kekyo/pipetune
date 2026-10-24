@@ -1730,6 +1730,21 @@ static void queueProfileRestoration(PipeWireRuntime &runtime, OutputProfileSelec
   else *found = std::move(selection);
 }
 
+static void discardReplacedProfileRestorations(PipeWireRuntime &runtime,
+    const OutputConfiguration &previous, const OutputConfiguration &next) {
+  // A disconnected-card Cancel target has no output intent; keep it until an
+  // explicit selection replaces it. A changed saved intent supersedes its old target.
+  const auto intentFor = [](const OutputConfiguration &configuration, const OutputCardIdentity &card) {
+    for (const auto &output : configuration.outputs)
+      if (output.profileIntent && output.profileIntent->card == card)
+        return std::optional<std::string>{output.profileIntent->outputKey};
+    return std::optional<std::string>{};
+  };
+  std::erase_if(runtime.pendingProfileRestorations, [&](const auto &pending) {
+    return intentFor(previous, pending.card) != intentFor(next, pending.card);
+  });
+}
+
 static void completeProfileRequest(PipeWireRuntime &runtime, std::string error) {
   auto lock = std::scoped_lock(runtime.profileRequestMutex);
   runtime.profileRequestError = std::move(error);
@@ -1879,6 +1894,9 @@ static void profileChangeRequested(void *data, std::uint64_t) {
   if (action == PipeWireRuntime::ProfileRequestAction::finalize) {
     const auto error = verifyAppliedProfiles(runtime);
     if (!error.empty()) return completeProfileRequest(runtime, error);
+    for (const auto &selection : runtime.profileTransition.requested)
+      std::erase_if(runtime.pendingProfileRestorations,
+          [&](const auto &pending) { return pending.card == selection.card; });
     for (auto &selection : runtime.profileTransition.missingRestorations)
       queueProfileRestoration(runtime, std::move(selection));
     runtime.profileTransition = {};
@@ -1980,6 +1998,7 @@ static void finishOutputChange(PipeWireRuntime &runtime) {
   auto lock = std::scoped_lock(runtime.pipelineMutationMutex);
   if (!runtime.outputRollingBack) {
     runtime.pipeline.commitStaged();
+    discardReplacedProfileRestorations(runtime, *runtime.previousOutput, runtime.options.outputConfiguration);
     runtime.configurationRevision.fetch_add(1, std::memory_order_release);
     runtime.retiredOverrunFrames += runtime.previousAudioBuffers->ring.overrunFrames();
     runtime.retiredUnderrunFrames += runtime.previousAudioBuffers->ring.underrunFrames();
@@ -2066,6 +2085,7 @@ static void outputChangeRequested(void *data, std::uint64_t) {
       if (!arguments.error.empty()) return completeOutputRequest(runtime, arguments.error);
       if (arguments.arguments == runtime.outputDistributionArguments) {
         // Labels and retained choices in single mode do not alter the graph.
+        discardReplacedProfileRestorations(runtime, runtime.options.outputConfiguration, configuration);
         runtime.options.outputConfiguration = std::move(configuration);
         runtime.configurationRevision.fetch_add(1, std::memory_order_release);
         completeOutputRequest(runtime, {});
@@ -2266,7 +2286,12 @@ static bool advancePendingProfileRestorations(PipeWireRuntime &runtime) {
           (!pending.outputKey.empty() && profile.outputKey == pending.outputKey))
         candidates.push_back(&profile);
     }
-    if (candidates.size() != 1) continue;
+    if (candidates.size() != 1) {
+      setPendingProfileRestoreError(runtime, candidates.empty() ?
+          "saved output profile is unavailable after reconnect; choose another profile" :
+          "multiple saved output profiles match after reconnect; choose one");
+      continue;
+    }
     auto selection = pending;
     selection.cardProfileName = candidates.front()->cardProfileName;
     selection.allowMissingForRestore = true;
