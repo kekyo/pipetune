@@ -317,10 +317,12 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
             !readOutputCard(yyjson_obj_get(item, "card"), selection.card) ||
             !readRequiredString(item, "cardProfileName", selection.cardProfileName) ||
             !readRequiredString(item, "outputKey", selection.outputKey) ||
-            selection.cardProfileName.empty() || selection.outputKey.empty() || !yyjson_is_bool(allowMissing) ||
+            selection.cardProfileName.empty() || !yyjson_is_bool(allowMissing) ||
             std::any_of(selections.begin(), selections.end(), [&](const auto &existing) { return existing.card == selection.card; }))
           return requestError("profileSelections contain an invalid or duplicate card profile");
         selection.allowMissingForRestore = yyjson_get_bool(allowMissing);
+        if (selection.outputKey.empty() && !selection.allowMissingForRestore)
+          return requestError("profileSelections require an output key for ordinary changes");
         selections.push_back(std::move(selection));
       }
     }
@@ -643,7 +645,8 @@ std::string makeSetOutputControlRequest(const OutputConfiguration &configuration
       const auto key = selection.card.api + '\0' + selection.card.location + '\0' +
           selection.card.vendor + '\0' + selection.card.product + '\0' + selection.card.serial;
       if (selection.card.api.empty() || selection.card.location.empty() || selection.cardProfileName.empty() ||
-          selection.outputKey.empty() || selection.cardProfileName.find('\0') != std::string::npos ||
+          (selection.outputKey.empty() && !selection.allowMissingForRestore) ||
+          selection.cardProfileName.find('\0') != std::string::npos ||
           selection.outputKey.find('\0') != std::string::npos || !seen.insert(key).second) return {};
       auto *item = yyjson_mut_arr_add_obj(document.get(), items);
       auto *card = makeOutputCard(document.get(), selection.card);

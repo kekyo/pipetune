@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <pipewire/pipewire.h>
 #include <spa/monitor/utils.h>
 #include <spa/param/profile.h>
@@ -31,6 +32,7 @@ struct fixture {
     bool save[2];
     int active_profile;
     bool save_profile;
+    bool output_profile_variant;
 };
 
 static const struct spa_dict_item properties[] = {
@@ -72,9 +74,14 @@ static struct spa_pod *profile(struct fixture *self, struct spa_pod_builder *bui
     struct spa_pod_frame frames[2];
     const int output = 0, input = 1;
     spa_pod_builder_push_object(builder, &frames[0], SPA_TYPE_OBJECT_ParamProfile, id);
+    const char *name = self->output_profile_variant ?
+        (index == 0 ? "output:analog-stereo+input:analog-stereo" :
+         index == 1 ? "output:iec958-stereo+input:analog-stereo" :
+         "output:analog-stereo+input:other") :
+        (index == 0 ? "duplex" : "duplex-alternative");
     spa_pod_builder_add(builder,
         SPA_PARAM_PROFILE_index, SPA_POD_Int(index),
-        SPA_PARAM_PROFILE_name, SPA_POD_String(index == 0 ? "duplex" : "duplex-alternative"),
+        SPA_PARAM_PROFILE_name, SPA_POD_String(name),
         SPA_PARAM_PROFILE_description, SPA_POD_String(index == 0 ? "Stereo duplex" : "Alternative stereo duplex"),
         SPA_PARAM_PROFILE_priority, SPA_POD_Int(index == 0 ? 100 : 90),
         SPA_PARAM_PROFILE_save, SPA_POD_Bool(self->save_profile),
@@ -126,7 +133,8 @@ static int enum_params(void *object, int seq, uint32_t id, uint32_t start,
         uint32_t maximum, const struct spa_pod *filter) {
     struct fixture *self = object;
     const uint32_t length = id == SPA_PARAM_EnumRoute ? 4 :
-        (id == SPA_PARAM_Route || id == SPA_PARAM_EnumProfile) ? 2 : 1;
+        id == SPA_PARAM_EnumProfile ? (self->output_profile_variant ? 3 : 2) :
+        id == SPA_PARAM_Route ? 2 : 1;
     uint32_t emitted = 0;
     for (uint32_t index = start; index < length && emitted < maximum; ++index) {
         uint8_t buffer[4096];
@@ -153,7 +161,8 @@ static int set_param(void *object, uint32_t id, uint32_t flags, const struct spa
         bool save = self->save_profile;
         if (spa_pod_parse_object(param, SPA_TYPE_OBJECT_ParamProfile, NULL,
                 SPA_PARAM_PROFILE_index, SPA_POD_Int(&index),
-                SPA_PARAM_PROFILE_save, SPA_POD_OPT_Bool(&save)) < 0 || index < 0 || index > 1)
+                SPA_PARAM_PROFILE_save, SPA_POD_OPT_Bool(&save)) < 0 || index < 0 ||
+                index > (self->output_profile_variant ? 2 : 1))
             return -EINVAL;
         if (index != self->active_profile || save != self->save_profile) {
             self->active_profile = index;
@@ -250,6 +259,7 @@ int main(int argc, char **argv) {
         { .id = SPA_PARAM_EnumRoute, .flags = SPA_PARAM_INFO_READ },
         { .id = SPA_PARAM_Route, .flags = SPA_PARAM_INFO_READWRITE },
     }, .active_routes = {0, 2}, .volumes = {{1.0f, 1.0f}, {1.0f, 1.0f}} };
+    self.output_profile_variant = getenv("PIPETUNE_PROFILE_FIXTURE") != NULL;
     self.device.iface = SPA_INTERFACE_INIT(SPA_TYPE_INTERFACE_Device, SPA_VERSION_DEVICE, &methods, &self);
     spa_hook_list_init(&self.listeners);
     self.loop = pw_main_loop_new(NULL);

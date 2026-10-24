@@ -15,6 +15,8 @@ namespace pipetune {
 struct OutputInventoryResult {
   /** Outputs including devices whose layout cannot be selected. */
   std::vector<AvailableOutput> outputs;
+  /** Card profiles and layouts observed while each profile was active. */
+  std::vector<AvailableOutputProfile> profiles = {};
   /** Empty on success; an enumeration failure is never an empty success. */
   std::string error;
   /** Reported controls for current outputs; absent controls remain unknown. */

@@ -204,6 +204,7 @@ struct PipeWireRuntime {
   // complete snapshot under this mutex. Audio callbacks never acquire it.
   std::mutex outputStateMutex;
   bool outputInventoryReady = false;
+  std::uint64_t outputInventoryRevision = 0;
   pw_impl_module *outputDistribution = nullptr;
   spa_hook outputDistributionListener = {};
   spa_source *outputGraphSource = nullptr;
@@ -1806,6 +1807,8 @@ static void outputInventoryChanged(const OutputInventoryResult &snapshot, void *
     auto lock = std::scoped_lock(runtime.outputStateMutex);
     inventoryChanged = !runtime.outputInventoryReady || runtime.availableOutputs.outputs != snapshot.outputs ||
         runtime.availableOutputs.error != snapshot.error;
+    if (inventoryChanged || runtime.availableOutputs.profiles != snapshot.profiles)
+      ++runtime.outputInventoryRevision;
     runtime.availableOutputs = snapshot;
     runtime.outputInventoryReady = true;
   }
@@ -1929,12 +1932,14 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
   auto outputConfiguration = OutputConfiguration{};
   auto outputInventory = OutputInventoryResult{};
   auto outputInventoryReady = false;
+  auto outputInventoryRevision = std::uint64_t{0};
   auto outputTimings = std::vector<OutputTimingState>{};
   {
     auto lock = std::scoped_lock(runtime.outputStateMutex);
     outputConfiguration = runtime.options.outputConfiguration;
     outputInventory = runtime.availableOutputs;
     outputInventoryReady = runtime.outputInventoryReady;
+    outputInventoryRevision = runtime.outputInventoryRevision;
     if (outputInventoryReady && outputInventory.error.empty() && !rateTransitioning && !runtime.previousOutput)
       outputTimings = summarizeOutputTiming(outputConfiguration, outputInventory.outputs, runtime.outputPathSnapshots);
   }
@@ -1977,6 +1982,8 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .availableDspVariants = std::move(availableVariants),
           .outputConfiguration = std::move(outputConfiguration),
           .availableOutputs = outputInventory.error.empty() ? std::move(outputInventory.outputs) : std::vector<AvailableOutput>{},
+          .availableOutputProfiles = outputInventory.error.empty() ? std::move(outputInventory.profiles) : std::vector<AvailableOutputProfile>{},
+          .outputInventoryRevision = outputInventoryRevision,
           .outputInventoryReady = outputInventoryReady,
           .outputInventoryError = outputInventory.error,
           .outputVolumes = outputInventory.error.empty() ? std::move(outputInventory.volumes) : std::vector<OutputVolumeState>{},

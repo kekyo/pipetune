@@ -51,6 +51,10 @@ PipeWireOutputInventoryPtr observePipeWireOutputs(
  */
 std::uint64_t pipeWireOutputPolicyGeneration(const PipeWireOutputInventory &inventory) noexcept;
 
+/** Requests a card profile on the PipeWire loop without asking WirePlumber to save it. */
+std::string setPipeWireOutputProfile(
+    PipeWireOutputInventory &inventory, const OutputProfileSelection &selection);
+
 } // namespace pipetune
 
 #endif
