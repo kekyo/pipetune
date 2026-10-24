@@ -97,9 +97,6 @@ msgstr "Plugins ativos"
 msgid "Advanced"
 msgstr "Avançado"
 
-msgid "After"
-msgstr "Depois"
-
 msgid "All"
 msgstr "Tudo"
 
@@ -114,6 +111,9 @@ msgstr "Dispositivo ambíguo. Reatribua o dispositivo para escolher a saída."
 
 msgid "Apply"
 msgstr "Aplicar"
+
+msgid "Apply configuration"
+msgstr "Aplicar configuração"
 
 msgid "Audio outputs changed"
 msgstr "Saídas de áudio alteradas"
@@ -144,9 +144,6 @@ msgstr "Disponível"
 
 msgid "Baseline"
 msgstr "Estado inicial"
-
-msgid "Before"
-msgstr "Antes"
 
 msgid "Bypass"
 msgstr "Ignorar"
@@ -288,6 +285,12 @@ msgstr "Valores padrão selecionados"
 msgid "Device channel"
 msgstr "Canal do dispositivo"
 
+msgid "Device configuration"
+msgstr "Configuração de dispositivos"
+
+msgid "Device configuration…"
+msgstr "Configuração de dispositivos…"
+
 msgid "Device mute unknown"
 msgstr "Estado de silêncio do dispositivo desconhecido"
 
@@ -346,6 +349,9 @@ msgstr "Frequência de amostragem DSP"
 msgid "DSP sampling frequency {0}  •  PipeWire graph sampling frequency {1}"
 msgstr "Frequência de amostragem DSP {0}  •  Frequência de amostragem do grafo PipeWire {1}"
 
+msgid "Edit the complete output configuration, then apply it once. Use Apply in the main window to save it."
+msgstr "Edite toda a configuração de saída e aplique-a de uma só vez. Use Aplicar na janela principal para salvá-la."
+
 msgid "Effective backend"
 msgstr "Motor efetivo"
 
@@ -394,6 +400,9 @@ msgstr "Forçar"
 
 msgid "Force — request the fixed graph sampling frequency"
 msgstr "Forçar — pedir a frequência de amostragem fixa do grafo"
+
+msgid "If the preset does not support these channels, cancel and select a compatible preset or Bypass in the main window."
+msgstr "Se a predefinição não suportar estes canais, cancele e selecione uma predefinição compatível ou Bypass na janela principal."
 
 msgid "Ignore"
 msgstr "Ignorar"
@@ -491,14 +500,11 @@ msgstr "Abrir o PipeTune"
 msgid "Output"
 msgstr "Saída"
 
-msgid "Output devices"
-msgstr "Dispositivos de saída"
-
 msgid "Output mode"
 msgstr "Modo de saída"
 
-msgid "Output settings changed. Reopen the mapping review."
-msgstr "As configurações de saída mudaram. Abra novamente a revisão das atribuições."
+msgid "Output settings changed. Cancel and reopen the configuration dialog."
+msgstr "As configurações de saída foram alteradas. Cancele e abra novamente o diálogo de configuração."
 
 #, brace-format
 msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
@@ -565,12 +571,6 @@ msgstr "Predefinição necessária"
 msgid "Preset warnings"
 msgstr "Avisos da predefinição"
 
-msgid "Press Enter or leave the field to preview the purpose label."
-msgstr "Pressione Enter ou saia do campo para pré-visualizar o rótulo de finalidade."
-
-msgid "Preview mapping"
-msgstr "Pré-visualizar atribuição"
-
 msgid "Processing"
 msgstr "Processamento"
 
@@ -592,6 +592,9 @@ msgstr "O perfil mudou. Reatribua o dispositivo para atualizar estes canais."
 msgid "Purpose"
 msgstr "Finalidade"
 
+msgid "Purpose label for this output channel."
+msgstr "Rótulo de finalidade deste canal de saída."
+
 msgid "Quit"
 msgstr "Sair"
 
@@ -600,9 +603,6 @@ msgstr "Reatribuir dispositivo…"
 
 msgid "Reported device controls, separate from the OS master volume. Channel gains show the minimum and maximum across the device."
 msgstr "Controles informados pelo dispositivo, separados do volume principal do sistema operacional. Os ganhos dos canais mostram o mínimo e o máximo do dispositivo."
-
-msgid "Reserved"
-msgstr "Reservado"
 
 msgid "Reserved EffeTune channels"
 msgstr "Canais reservados do EffeTune"
@@ -627,12 +627,6 @@ msgstr "A restaurar as definições em direto capturadas ao abrir a caixa de di�
 
 msgid "Restoring the previous live settings…"
 msgstr "A restaurar as definições em direto anteriores…"
-
-msgid "Review channel mapping"
-msgstr "Revisar atribuição de canais"
-
-msgid "Review where each final EffeTune channel will play. Your preset is unchanged. Preview this mapping, then use Apply in the main window to save it."
-msgstr "Revise onde cada canal final do EffeTune será reproduzido. Sua predefinição não será alterada. Pré-visualize esta atribuição e use Aplicar na janela principal para salvá-la."
 
 msgid "Rollback requested"
 msgstr "Reversão pedida"
@@ -675,14 +669,8 @@ msgstr "Ganho global: {0}"
 msgid "seconds"
 msgstr "segundos"
 
-msgid "Select a replacement output device."
-msgstr "Selecione um dispositivo de saída substituto."
-
 msgid "Select at least one output device."
 msgstr "Selecione pelo menos um dispositivo de saída."
-
-msgid "Select the saved device whose channels this output will use."
-msgstr "Selecione o dispositivo salvo cujos canais esta saída usará."
 
 msgid "Setting up PipeTune for this user…"
 msgstr "Configurando o PipeTune para este usuário…"
@@ -749,14 +737,14 @@ msgstr "Padrão do sistema"
 msgid "The 16-channel limit includes disabled and reserved channels. Use existing channels to replace a saved device."
 msgstr "O limite de 16 canais inclui canais desativados e reservados. Use os canais existentes para substituir um dispositivo salvo."
 
-msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
-msgstr "O SO seleciona a saída. As atribuições de múltiplas saídas salvas abaixo estão inativas."
+msgid "The OS selects the output. Saved device assignments are inactive."
+msgstr "O sistema operacional seleciona a saída. As atribuições de dispositivos salvas estão inativas."
 
 msgid "The selected device cannot be identified uniquely."
 msgstr "Não é possível identificar o dispositivo selecionado de forma inequívoca."
 
-msgid "The selected output is no longer available with this profile. Reopen the mapping review."
-msgstr "A saída selecionada não está mais disponível com este perfil. Abra novamente a revisão das atribuições."
+msgid "The selected output is no longer available with this profile. Review the configuration."
+msgstr "A saída selecionada não está mais disponível com este perfil. Revise a configuração."
 
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "A alteração do idioma da interface terá efeito depois de reiniciar o PipeTune GTK."

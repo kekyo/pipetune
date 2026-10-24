@@ -97,9 +97,6 @@ msgstr "Complementos activos"
 msgid "Advanced"
 msgstr "Avanzado"
 
-msgid "After"
-msgstr "Después"
-
 msgid "All"
 msgstr "Todo"
 
@@ -114,6 +111,9 @@ msgstr "Dispositivo ambiguo. Reasigne el dispositivo para elegir la salida."
 
 msgid "Apply"
 msgstr "Aplicar"
+
+msgid "Apply configuration"
+msgstr "Aplicar configuración"
 
 msgid "Audio outputs changed"
 msgstr "Salidas de audio cambiadas"
@@ -144,9 +144,6 @@ msgstr "Disponible"
 
 msgid "Baseline"
 msgstr "Estado inicial"
-
-msgid "Before"
-msgstr "Antes"
 
 msgid "Bypass"
 msgstr "Omitir"
@@ -288,6 +285,12 @@ msgstr "Valores predeterminados seleccionados"
 msgid "Device channel"
 msgstr "Canal del dispositivo"
 
+msgid "Device configuration"
+msgstr "Configuración de dispositivos"
+
+msgid "Device configuration…"
+msgstr "Configuración de dispositivos…"
+
 msgid "Device mute unknown"
 msgstr "Silencio del dispositivo desconocido"
 
@@ -346,6 +349,9 @@ msgstr "Frecuencia de muestreo DSP"
 msgid "DSP sampling frequency {0}  •  PipeWire graph sampling frequency {1}"
 msgstr "Frecuencia de muestreo DSP {0}  •  Frecuencia de muestreo del grafo de PipeWire {1}"
 
+msgid "Edit the complete output configuration, then apply it once. Use Apply in the main window to save it."
+msgstr "Edite la configuración completa de salida y aplíquela de una vez. Use Aplicar en la ventana principal para guardarla."
+
 msgid "Effective backend"
 msgstr "Motor efectivo"
 
@@ -394,6 +400,9 @@ msgstr "Forzar"
 
 msgid "Force — request the fixed graph sampling frequency"
 msgstr "Forzar — solicitar la frecuencia de muestreo fija del grafo"
+
+msgid "If the preset does not support these channels, cancel and select a compatible preset or Bypass in the main window."
+msgstr "Si el preajuste no admite estos canales, cancele y seleccione un preajuste compatible o Bypass en la ventana principal."
 
 msgid "Ignore"
 msgstr "Ignorar"
@@ -491,14 +500,11 @@ msgstr "Abrir PipeTune"
 msgid "Output"
 msgstr "Salida"
 
-msgid "Output devices"
-msgstr "Dispositivos de salida"
-
 msgid "Output mode"
 msgstr "Modo de salida"
 
-msgid "Output settings changed. Reopen the mapping review."
-msgstr "La configuración de salida ha cambiado. Vuelva a abrir la revisión de asignaciones."
+msgid "Output settings changed. Cancel and reopen the configuration dialog."
+msgstr "Los ajustes de salida han cambiado. Cancele y vuelva a abrir el diálogo de configuración."
 
 #, brace-format
 msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
@@ -565,12 +571,6 @@ msgstr "Se requiere un preajuste"
 msgid "Preset warnings"
 msgstr "Advertencias del preajuste"
 
-msgid "Press Enter or leave the field to preview the purpose label."
-msgstr "Pulse Intro o salga del campo para previsualizar la etiqueta de uso."
-
-msgid "Preview mapping"
-msgstr "Previsualizar asignación"
-
 msgid "Processing"
 msgstr "Procesamiento"
 
@@ -592,6 +592,9 @@ msgstr "El perfil ha cambiado. Reasigne el dispositivo para actualizar estos can
 msgid "Purpose"
 msgstr "Uso"
 
+msgid "Purpose label for this output channel."
+msgstr "Etiqueta de uso de este canal de salida."
+
 msgid "Quit"
 msgstr "Salir"
 
@@ -600,9 +603,6 @@ msgstr "Reasignar dispositivo…"
 
 msgid "Reported device controls, separate from the OS master volume. Channel gains show the minimum and maximum across the device."
 msgstr "Controles informados por el dispositivo, separados del volumen maestro del sistema operativo. Las ganancias de canal muestran el mínimo y el máximo del dispositivo."
-
-msgid "Reserved"
-msgstr "Reservado"
 
 msgid "Reserved EffeTune channels"
 msgstr "Canales de EffeTune reservados"
@@ -627,12 +627,6 @@ msgstr "Restaurando la configuración en directo capturada al abrir el diálogo"
 
 msgid "Restoring the previous live settings…"
 msgstr "Restaurando la configuración en directo anterior…"
-
-msgid "Review channel mapping"
-msgstr "Revisar asignación de canales"
-
-msgid "Review where each final EffeTune channel will play. Your preset is unchanged. Preview this mapping, then use Apply in the main window to save it."
-msgstr "Revise dónde se reproducirá cada canal final de EffeTune. El preajuste no se modifica. Previsualice esta asignación y luego use Aplicar en la ventana principal para guardarla."
 
 msgid "Rollback requested"
 msgstr "Reversión solicitada"
@@ -675,14 +669,8 @@ msgstr "Ganancia global: {0}"
 msgid "seconds"
 msgstr "segundos"
 
-msgid "Select a replacement output device."
-msgstr "Seleccione un dispositivo de salida de reemplazo."
-
 msgid "Select at least one output device."
 msgstr "Seleccione al menos un dispositivo de salida."
-
-msgid "Select the saved device whose channels this output will use."
-msgstr "Seleccione el dispositivo guardado cuyos canales utilizará esta salida."
 
 msgid "Setting up PipeTune for this user…"
 msgstr "Configurando PipeTune para este usuario…"
@@ -749,14 +737,14 @@ msgstr "Valor predeterminado del sistema"
 msgid "The 16-channel limit includes disabled and reserved channels. Use existing channels to replace a saved device."
 msgstr "El límite de 16 canales incluye los desactivados y reservados. Use los canales existentes para reemplazar un dispositivo guardado."
 
-msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
-msgstr "El SO selecciona la salida. Las asignaciones de salida múltiple guardadas que aparecen abajo están inactivas."
+msgid "The OS selects the output. Saved device assignments are inactive."
+msgstr "El sistema operativo selecciona la salida. Las asignaciones de dispositivos guardadas están inactivas."
 
 msgid "The selected device cannot be identified uniquely."
 msgstr "No se puede identificar de forma inequívoca el dispositivo seleccionado."
 
-msgid "The selected output is no longer available with this profile. Reopen the mapping review."
-msgstr "La salida seleccionada ya no está disponible con este perfil. Vuelva a abrir la revisión de asignaciones."
+msgid "The selected output is no longer available with this profile. Review the configuration."
+msgstr "La salida seleccionada ya no está disponible con este perfil. Revise la configuración."
 
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "El cambio de idioma de la interfaz tendrá efecto después de reiniciar PipeTune GTK."

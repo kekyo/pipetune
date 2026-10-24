@@ -101,9 +101,6 @@ msgstr "الإضافات النشطة"
 msgid "Advanced"
 msgstr "متقدم"
 
-msgid "After"
-msgstr "بعد"
-
 msgid "All"
 msgstr "الكل"
 
@@ -118,6 +115,9 @@ msgstr "الجهاز غير محدد بوضوح. أعد تعيين الجهاز 
 
 msgid "Apply"
 msgstr "تطبيق"
+
+msgid "Apply configuration"
+msgstr "تطبيق التكوين"
 
 msgid "Audio outputs changed"
 msgstr "تم تغيير مخارج الصوت"
@@ -148,9 +148,6 @@ msgstr "متاح"
 
 msgid "Baseline"
 msgstr "خط الأساس"
-
-msgid "Before"
-msgstr "قبل"
 
 msgid "Bypass"
 msgstr "تجاوز"
@@ -292,6 +289,12 @@ msgstr "تم تحديد القيم الافتراضية"
 msgid "Device channel"
 msgstr "قناة الجهاز"
 
+msgid "Device configuration"
+msgstr "تكوين الأجهزة"
+
+msgid "Device configuration…"
+msgstr "تكوين الأجهزة…"
+
 msgid "Device mute unknown"
 msgstr "حالة كتم الجهاز غير معروفة"
 
@@ -350,6 +353,9 @@ msgstr "تردد أخذ عينات DSP"
 msgid "DSP sampling frequency {0}  •  PipeWire graph sampling frequency {1}"
 msgstr "تردد أخذ عينات DSP ‏{0}  •  تردد أخذ العينات لمخطط PipeWire ‏{1}"
 
+msgid "Edit the complete output configuration, then apply it once. Use Apply in the main window to save it."
+msgstr "حرّر تكوين الإخراج بالكامل، ثم طبّقه مرة واحدة. لحفظه، استخدم «تطبيق» في النافذة الرئيسية."
+
 msgid "Effective backend"
 msgstr "الواجهة الخلفية الفعلية"
 
@@ -398,6 +404,9 @@ msgstr "فرض"
 
 msgid "Force — request the fixed graph sampling frequency"
 msgstr "فرض — اطلب تردد أخذ العينات الثابت للمخطط"
+
+msgid "If the preset does not support these channels, cancel and select a compatible preset or Bypass in the main window."
+msgstr "إذا كان الإعداد المسبق لا يدعم هذه القنوات، فألغِ العملية واختر إعدادًا متوافقًا أو التجاوز في النافذة الرئيسية."
 
 msgid "Ignore"
 msgstr "تجاهل"
@@ -495,14 +504,11 @@ msgstr "فتح PipeTune"
 msgid "Output"
 msgstr "الإخراج"
 
-msgid "Output devices"
-msgstr "أجهزة الإخراج"
-
 msgid "Output mode"
 msgstr "وضع الإخراج"
 
-msgid "Output settings changed. Reopen the mapping review."
-msgstr "تغيّرت إعدادات الإخراج. أعد فتح مراجعة التعيين."
+msgid "Output settings changed. Cancel and reopen the configuration dialog."
+msgstr "تغيرت إعدادات الإخراج. ألغِ العملية وأعد فتح نافذة التكوين."
 
 #, brace-format
 msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
@@ -569,12 +575,6 @@ msgstr "يلزم إعداد مسبق"
 msgid "Preset warnings"
 msgstr "تحذيرات الإعداد المسبق"
 
-msgid "Press Enter or leave the field to preview the purpose label."
-msgstr "اضغط Enter أو غادر الحقل لمعاينة تسمية الغرض."
-
-msgid "Preview mapping"
-msgstr "معاينة التعيين"
-
 msgid "Processing"
 msgstr "المعالجة"
 
@@ -596,6 +596,9 @@ msgstr "تغيّر الملف التعريفي. أعد تعيين الجهاز �
 msgid "Purpose"
 msgstr "الغرض"
 
+msgid "Purpose label for this output channel."
+msgstr "تسمية الغرض من قناة الإخراج هذه."
+
 msgid "Quit"
 msgstr "إنهاء"
 
@@ -604,9 +607,6 @@ msgstr "إعادة تعيين الجهاز…"
 
 msgid "Reported device controls, separate from the OS master volume. Channel gains show the minimum and maximum across the device."
 msgstr "قيم التحكم التي أبلغ عنها الجهاز، وهي منفصلة عن مستوى الصوت الرئيسي لنظام التشغيل. يعرض كسب القنوات الحدين الأدنى والأقصى عبر الجهاز."
-
-msgid "Reserved"
-msgstr "محجوز"
 
 msgid "Reserved EffeTune channels"
 msgstr "قنوات EffeTune المحجوزة"
@@ -631,12 +631,6 @@ msgstr "جارٍ استعادة الإعدادات المباشرة الملتق
 
 msgid "Restoring the previous live settings…"
 msgstr "جارٍ استعادة الإعدادات المباشرة السابقة…"
-
-msgid "Review channel mapping"
-msgstr "مراجعة تعيين القنوات"
-
-msgid "Review where each final EffeTune channel will play. Your preset is unchanged. Preview this mapping, then use Apply in the main window to save it."
-msgstr "راجع وجهة تشغيل كل قناة إخراج نهائية في EffeTune. لن يتغير الإعداد المسبق. عاين هذا التعيين، ثم استخدم تطبيق في النافذة الرئيسية لحفظه."
 
 msgid "Rollback requested"
 msgstr "طُلب التراجع"
@@ -679,14 +673,8 @@ msgstr "الكسب العام: {0}"
 msgid "seconds"
 msgstr "ثوانٍ"
 
-msgid "Select a replacement output device."
-msgstr "اختر جهاز إخراج بديلًا."
-
 msgid "Select at least one output device."
 msgstr "اختر جهاز إخراج واحدًا على الأقل."
-
-msgid "Select the saved device whose channels this output will use."
-msgstr "اختر الجهاز المحفوظ الذي سيستخدم هذا المخرج قنواته."
 
 msgid "Setting up PipeTune for this user…"
 msgstr "جارٍ إعداد PipeTune لهذا المستخدم…"
@@ -753,14 +741,14 @@ msgstr "النظام الافتراضي"
 msgid "The 16-channel limit includes disabled and reserved channels. Use existing channels to replace a saved device."
 msgstr "يشمل حد 16 قناة القنوات المعطّلة والمحجوزة. استخدم القنوات الحالية لاستبدال جهاز محفوظ."
 
-msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
-msgstr "يحدّد نظام التشغيل المخرج. تعيينات المخارج المتعددة المحفوظة أدناه غير نشطة."
+msgid "The OS selects the output. Saved device assignments are inactive."
+msgstr "يختار نظام التشغيل الإخراج. تعيينات الأجهزة المحفوظة غير نشطة."
 
 msgid "The selected device cannot be identified uniquely."
 msgstr "لا يمكن تمييز الجهاز المحدّد بشكل فريد."
 
-msgid "The selected output is no longer available with this profile. Reopen the mapping review."
-msgstr "لم يعد المخرج المحدّد متاحًا بملف التعريف هذا. أعد فتح مراجعة التعيين."
+msgid "The selected output is no longer available with this profile. Review the configuration."
+msgstr "لم يعد الإخراج المحدد متاحًا بهذا الملف التعريفي. راجع التكوين."
 
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "سيُطبّق تغيير لغة الواجهة بعد إعادة تشغيل PipeTune GTK."

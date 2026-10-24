@@ -96,9 +96,6 @@ msgstr "有効なプラグイン"
 msgid "Advanced"
 msgstr "詳細"
 
-msgid "After"
-msgstr "変更後"
-
 msgid "All"
 msgstr "すべて"
 
@@ -113,6 +110,9 @@ msgstr "デバイスを一意に識別できません。デバイスを再割り
 
 msgid "Apply"
 msgstr "適用"
+
+msgid "Apply configuration"
+msgstr "構成を反映"
 
 msgid "Audio outputs changed"
 msgstr "音声出力を変更しました"
@@ -143,9 +143,6 @@ msgstr "利用可能"
 
 msgid "Baseline"
 msgstr "ベースライン"
-
-msgid "Before"
-msgstr "変更前"
 
 msgid "Bypass"
 msgstr "バイパス"
@@ -287,6 +284,12 @@ msgstr "既定値を選択しました"
 msgid "Device channel"
 msgstr "デバイス内チャンネル"
 
+msgid "Device configuration"
+msgstr "デバイス構成"
+
+msgid "Device configuration…"
+msgstr "デバイス構成…"
+
 msgid "Device mute unknown"
 msgstr "デバイス: ミュート状態不明"
 
@@ -345,6 +348,9 @@ msgstr "DSPサンプリング周波数"
 msgid "DSP sampling frequency {0}  •  PipeWire graph sampling frequency {1}"
 msgstr "DSPサンプリング周波数 {0}  •  PipeWireグラフのサンプリング周波数 {1}"
 
+msgid "Edit the complete output configuration, then apply it once. Use Apply in the main window to save it."
+msgstr "出力構成を編集してから、一度に反映します。保存するには、親画面の「適用」を押してください。"
+
 msgid "Effective backend"
 msgstr "実効バックエンド"
 
@@ -393,6 +399,9 @@ msgstr "強制"
 
 msgid "Force — request the fixed graph sampling frequency"
 msgstr "強制 — グラフの固定サンプリング周波数を要求"
+
+msgid "If the preset does not support these channels, cancel and select a compatible preset or Bypass in the main window."
+msgstr "プリセットがこのチャンネル構成に対応していない場合は、キャンセルして親画面で対応するプリセットまたはバイパスを選択してください。"
 
 msgid "Ignore"
 msgstr "無視"
@@ -490,14 +499,11 @@ msgstr "PipeTuneを開く"
 msgid "Output"
 msgstr "出力"
 
-msgid "Output devices"
-msgstr "出力デバイス"
-
 msgid "Output mode"
 msgstr "出力モード"
 
-msgid "Output settings changed. Reopen the mapping review."
-msgstr "出力設定が変更されました。割り当ての確認画面を開き直してください。"
+msgid "Output settings changed. Cancel and reopen the configuration dialog."
+msgstr "出力設定が変更されました。キャンセルしてデバイス構成を開き直してください。"
 
 #, brace-format
 msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
@@ -564,12 +570,6 @@ msgstr "プリセットが必要です"
 msgid "Preset warnings"
 msgstr "プリセット警告"
 
-msgid "Press Enter or leave the field to preview the purpose label."
-msgstr "Enterキーを押すか入力欄からフォーカスを移すと、用途名をプレビューします。"
-
-msgid "Preview mapping"
-msgstr "割り当てをプレビュー"
-
 msgid "Processing"
 msgstr "処理"
 
@@ -591,6 +591,9 @@ msgstr "プロファイルが変更されています。デバイスを再割り
 msgid "Purpose"
 msgstr "用途名"
 
+msgid "Purpose label for this output channel."
+msgstr "この出力チャンネルの用途名です。"
+
 msgid "Quit"
 msgstr "終了"
 
@@ -599,9 +602,6 @@ msgstr "デバイスを再割り当て…"
 
 msgid "Reported device controls, separate from the OS master volume. Channel gains show the minimum and maximum across the device."
 msgstr "デバイスが報告した制御値です。OSの全体音量とは別の値です。チャンネルゲインにはデバイス内の最小値と最大値を表示します。"
-
-msgid "Reserved"
-msgstr "予約済み"
 
 msgid "Reserved EffeTune channels"
 msgstr "予約済みのEffeTuneチャンネル"
@@ -626,12 +626,6 @@ msgstr "ダイアログを開いた時点のライブ設定を復元していま
 
 msgid "Restoring the previous live settings…"
 msgstr "以前のライブ設定を復元中…"
-
-msgid "Review channel mapping"
-msgstr "チャンネル割り当ての確認"
-
-msgid "Review where each final EffeTune channel will play. Your preset is unchanged. Preview this mapping, then use Apply in the main window to save it."
-msgstr "EffeTuneの各最終チャンネルの出力先を確認してください。プリセット自体は変更しません。この割り当てをプレビューしてから、メイン画面の「適用」で保存します。"
 
 msgid "Rollback requested"
 msgstr "ロールバックを要求しました"
@@ -674,14 +668,8 @@ msgstr "デバイス全体のゲイン: {0}"
 msgid "seconds"
 msgstr "秒"
 
-msgid "Select a replacement output device."
-msgstr "再割り当て先の出力デバイスを選択してください。"
-
 msgid "Select at least one output device."
 msgstr "出力デバイスを1つ以上選択してください。"
-
-msgid "Select the saved device whose channels this output will use."
-msgstr "この出力がチャンネルを引き継ぐ保存済みデバイスを選択してください。"
 
 msgid "Setting up PipeTune for this user…"
 msgstr "このユーザー向けに PipeTune をセットアップしています…"
@@ -748,14 +736,14 @@ msgstr "システム設定"
 msgid "The 16-channel limit includes disabled and reserved channels. Use existing channels to replace a saved device."
 msgstr "16チャンネルの上限には無効・予約済みのチャンネルも含まれます。「既存のチャンネルを使用」で保存済みデバイスを置き換えてください。"
 
-msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
-msgstr "出力先はOSが選択します。以下の保存済みの複数出力の割り当ては使用しません。"
+msgid "The OS selects the output. Saved device assignments are inactive."
+msgstr "OSが出力を選択します。保存済みのデバイス割り当ては使用しません。"
 
 msgid "The selected device cannot be identified uniquely."
 msgstr "選択したデバイスを一意に特定できません。"
 
-msgid "The selected output is no longer available with this profile. Reopen the mapping review."
-msgstr "選択した出力はこのプロファイルで利用できなくなりました。割り当ての確認画面を開き直してください。"
+msgid "The selected output is no longer available with this profile. Review the configuration."
+msgstr "選択した出力は、このプロファイルでは利用できなくなりました。構成を確認してください。"
 
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "UI言語の変更はPipeTune GTKの再起動後に反映されます。"

@@ -159,11 +159,11 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
       .outputDeviceList = requiredWidget(builder, "outputDeviceList", GTK_TYPE_LIST_BOX),
       .outputReservedExpander = requiredWidget(builder, "outputReservedExpander", GTK_TYPE_EXPANDER),
       .outputReservedGrid = requiredWidget(builder, "outputReservedGrid", GTK_TYPE_GRID),
-      .outputMappingDialog = requiredWidget(builder, "outputMappingDialog", GTK_TYPE_DIALOG),
-      .outputReplacementCombo = requiredWidget(builder, "outputReplacementCombo", GTK_TYPE_COMBO_BOX_TEXT),
-      .outputMappingErrorLabel = requiredWidget(builder, "outputMappingErrorLabel", GTK_TYPE_LABEL),
-      .outputMappingPreview = requiredWidget(builder, "outputMappingPreview", GTK_TYPE_TREE_VIEW),
-      .outputMappingUseButton = requiredWidget(builder, "outputMappingUseButton", GTK_TYPE_BUTTON),
+      .outputConfigureButton = requiredWidget(builder, "outputConfigureButton", GTK_TYPE_BUTTON),
+      .outputSummaryLabel = requiredWidget(builder, "outputSummaryLabel", GTK_TYPE_LABEL),
+      .outputConfigurationDialog = requiredWidget(builder, "outputConfigurationDialog", GTK_TYPE_DIALOG),
+      .outputConfigurationApplyButton = requiredWidget(builder, "outputConfigurationApplyButton", GTK_TYPE_BUTTON),
+      .outputConfigurationCancelButton = requiredWidget(builder, "outputConfigurationCancelButton", GTK_TYPE_BUTTON),
       .rateCombo =
           requiredWidget(builder, "rateCombo", GTK_TYPE_COMBO_BOX_TEXT),
       .rateEnforcementCombo = requiredWidget(
@@ -207,7 +207,6 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
   };
   configureCompactComboBox(ui.presetCombo);
   configureCompactComboBox(ui.outputModeCombo);
-  configureCompactComboBox(ui.outputReplacementCombo);
   gtk_widget_show_all(
       gtk_bin_get_child(GTK_BIN(ui.presetConfigurationSection)));
   configureCompactComboBox(ui.rateCombo);

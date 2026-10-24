@@ -92,9 +92,6 @@ msgstr ""
 msgid "Advanced"
 msgstr ""
 
-msgid "After"
-msgstr ""
-
 msgid "All"
 msgstr ""
 
@@ -108,6 +105,9 @@ msgid "Ambiguous device. Reassign device to choose the output."
 msgstr ""
 
 msgid "Apply"
+msgstr ""
+
+msgid "Apply configuration"
 msgstr ""
 
 msgid "Audio outputs changed"
@@ -138,9 +138,6 @@ msgid "Available"
 msgstr ""
 
 msgid "Baseline"
-msgstr ""
-
-msgid "Before"
 msgstr ""
 
 msgid "Bypass"
@@ -283,6 +280,12 @@ msgstr ""
 msgid "Device channel"
 msgstr ""
 
+msgid "Device configuration"
+msgstr ""
+
+msgid "Device configuration…"
+msgstr ""
+
 msgid "Device mute unknown"
 msgstr ""
 
@@ -341,6 +344,9 @@ msgstr ""
 msgid "DSP sampling frequency {0}  •  PipeWire graph sampling frequency {1}"
 msgstr ""
 
+msgid "Edit the complete output configuration, then apply it once. Use Apply in the main window to save it."
+msgstr ""
+
 msgid "Effective backend"
 msgstr ""
 
@@ -388,6 +394,9 @@ msgid "Force"
 msgstr ""
 
 msgid "Force — request the fixed graph sampling frequency"
+msgstr ""
+
+msgid "If the preset does not support these channels, cancel and select a compatible preset or Bypass in the main window."
 msgstr ""
 
 msgid "Ignore"
@@ -486,13 +495,10 @@ msgstr ""
 msgid "Output"
 msgstr ""
 
-msgid "Output devices"
-msgstr ""
-
 msgid "Output mode"
 msgstr ""
 
-msgid "Output settings changed. Reopen the mapping review."
+msgid "Output settings changed. Cancel and reopen the configuration dialog."
 msgstr ""
 
 #, brace-format
@@ -560,12 +566,6 @@ msgstr ""
 msgid "Preset warnings"
 msgstr ""
 
-msgid "Press Enter or leave the field to preview the purpose label."
-msgstr ""
-
-msgid "Preview mapping"
-msgstr ""
-
 msgid "Processing"
 msgstr ""
 
@@ -587,6 +587,9 @@ msgstr ""
 msgid "Purpose"
 msgstr ""
 
+msgid "Purpose label for this output channel."
+msgstr ""
+
 msgid "Quit"
 msgstr ""
 
@@ -594,9 +597,6 @@ msgid "Reassign device…"
 msgstr ""
 
 msgid "Reported device controls, separate from the OS master volume. Channel gains show the minimum and maximum across the device."
-msgstr ""
-
-msgid "Reserved"
 msgstr ""
 
 msgid "Reserved EffeTune channels"
@@ -621,12 +621,6 @@ msgid "Restoring the live settings captured when the dialog opened"
 msgstr ""
 
 msgid "Restoring the previous live settings…"
-msgstr ""
-
-msgid "Review channel mapping"
-msgstr ""
-
-msgid "Review where each final EffeTune channel will play. Your preset is unchanged. Preview this mapping, then use Apply in the main window to save it."
 msgstr ""
 
 msgid "Rollback requested"
@@ -670,13 +664,7 @@ msgstr ""
 msgid "seconds"
 msgstr ""
 
-msgid "Select a replacement output device."
-msgstr ""
-
 msgid "Select at least one output device."
-msgstr ""
-
-msgid "Select the saved device whose channels this output will use."
 msgstr ""
 
 msgid "Setting up PipeTune for this user…"
@@ -744,13 +732,13 @@ msgstr ""
 msgid "The 16-channel limit includes disabled and reserved channels. Use existing channels to replace a saved device."
 msgstr ""
 
-msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
+msgid "The OS selects the output. Saved device assignments are inactive."
 msgstr ""
 
 msgid "The selected device cannot be identified uniquely."
 msgstr ""
 
-msgid "The selected output is no longer available with this profile. Reopen the mapping review."
+msgid "The selected output is no longer available with this profile. Review the configuration."
 msgstr ""
 
 msgid "The UI language change will take effect after PipeTune GTK restarts."

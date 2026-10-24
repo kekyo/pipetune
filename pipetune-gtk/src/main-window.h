@@ -72,16 +72,16 @@ struct MainWindowUi {
   GtkWidget *outputReservedExpander = nullptr;
   /** Channel editors within the reserved branch. */
   GtkWidget *outputReservedGrid = nullptr;
-  /** Modal before/after review, retained and hidden between uses. */
-  GtkWidget *outputMappingDialog = nullptr;
-  /** Current replacement-device choices; hidden for channel moves. */
-  GtkWidget *outputReplacementCombo = nullptr;
-  /** Invalid or stale candidate diagnostic. */
-  GtkWidget *outputMappingErrorLabel = nullptr;
-  /** Read-only before/after channel mapping table. */
-  GtkWidget *outputMappingPreview = nullptr;
-  /** Starts a live preview after the mapping review is accepted. */
-  GtkWidget *outputMappingUseButton = nullptr;
+  /** Opens the output configuration editor without changing live settings. */
+  GtkWidget *outputConfigureButton = nullptr;
+  /** Read-only summary of the confirmed output configuration. */
+  GtkWidget *outputSummaryLabel = nullptr;
+  /** Modal editor whose changes remain local until confirmation. */
+  GtkWidget *outputConfigurationDialog = nullptr;
+  /** Applies the complete output draft in one live operation. */
+  GtkWidget *outputConfigurationApplyButton = nullptr;
+  /** Discards a draft without changing the parent transaction. */
+  GtkWidget *outputConfigurationCancelButton = nullptr;
   /** Last rendered settings; avoids replacing rows on telemetry updates. */
   std::optional<pipetune::OutputConfiguration> displayedOutputConfiguration = {};
   /** Last rendered inventory, also used to resolve a user's row selection. */

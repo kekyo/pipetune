@@ -98,9 +98,6 @@ msgstr "Активные плагины"
 msgid "Advanced"
 msgstr "Дополнительно"
 
-msgid "After"
-msgstr "После"
-
 msgid "All"
 msgstr "Все"
 
@@ -115,6 +112,9 @@ msgstr "Устройство определено неоднозначно. Пе
 
 msgid "Apply"
 msgstr "Применить"
+
+msgid "Apply configuration"
+msgstr "Применить конфигурацию"
 
 msgid "Audio outputs changed"
 msgstr "Аудиовыходы изменены"
@@ -145,9 +145,6 @@ msgstr "Доступно"
 
 msgid "Baseline"
 msgstr "Исходное состояние"
-
-msgid "Before"
-msgstr "До"
 
 msgid "Bypass"
 msgstr "Обход"
@@ -289,6 +286,12 @@ msgstr "Выбраны значения по умолчанию"
 msgid "Device channel"
 msgstr "Канал устройства"
 
+msgid "Device configuration"
+msgstr "Конфигурация устройств"
+
+msgid "Device configuration…"
+msgstr "Конфигурация устройств…"
+
 msgid "Device mute unknown"
 msgstr "Состояние отключения звука устройства неизвестно"
 
@@ -347,6 +350,9 @@ msgstr "Частота дискретизации DSP"
 msgid "DSP sampling frequency {0}  •  PipeWire graph sampling frequency {1}"
 msgstr "Частота дискретизации DSP {0}  •  Частота дискретизации графа PipeWire {1}"
 
+msgid "Edit the complete output configuration, then apply it once. Use Apply in the main window to save it."
+msgstr "Отредактируйте всю конфигурацию вывода и примените её целиком. Для сохранения нажмите «Применить» в главном окне."
+
 msgid "Effective backend"
 msgstr "Фактический бэкенд"
 
@@ -395,6 +401,9 @@ msgstr "Принудительно"
 
 msgid "Force — request the fixed graph sampling frequency"
 msgstr "Принудительно — запросить фиксированную частоту дискретизации графа"
+
+msgid "If the preset does not support these channels, cancel and select a compatible preset or Bypass in the main window."
+msgstr "Если пресет не поддерживает эти каналы, отмените изменения и выберите совместимый пресет или обход обработки в главном окне."
 
 msgid "Ignore"
 msgstr "Игнорировать"
@@ -492,14 +501,11 @@ msgstr "Открыть PipeTune"
 msgid "Output"
 msgstr "Выход"
 
-msgid "Output devices"
-msgstr "Устройства вывода"
-
 msgid "Output mode"
 msgstr "Режим вывода"
 
-msgid "Output settings changed. Reopen the mapping review."
-msgstr "Настройки вывода изменились. Откройте проверку назначений заново."
+msgid "Output settings changed. Cancel and reopen the configuration dialog."
+msgstr "Настройки вывода изменились. Отмените изменения и снова откройте диалог конфигурации."
 
 #, brace-format
 msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
@@ -566,12 +572,6 @@ msgstr "Требуется предустановка"
 msgid "Preset warnings"
 msgstr "Предупреждения предустановки"
 
-msgid "Press Enter or leave the field to preview the purpose label."
-msgstr "Нажмите Enter или покиньте поле, чтобы предварительно применить название назначения."
-
-msgid "Preview mapping"
-msgstr "Предпросмотр назначений"
-
 msgid "Processing"
 msgstr "Обработка"
 
@@ -593,6 +593,9 @@ msgstr "Профиль изменён. Переназначьте устройс
 msgid "Purpose"
 msgstr "Назначение"
 
+msgid "Purpose label for this output channel."
+msgstr "Название назначения этого выходного канала."
+
 msgid "Quit"
 msgstr "Выход"
 
@@ -601,9 +604,6 @@ msgstr "Переназначить устройство…"
 
 msgid "Reported device controls, separate from the OS master volume. Channel gains show the minimum and maximum across the device."
 msgstr "Значения, сообщённые устройством, отдельно от общей громкости ОС. Для усиления каналов показаны минимальное и максимальное значения устройства."
-
-msgid "Reserved"
-msgstr "Зарезервировано"
 
 msgid "Reserved EffeTune channels"
 msgstr "Зарезервированные каналы EffeTune"
@@ -628,12 +628,6 @@ msgstr "Восстановление текущих настроек, зафик
 
 msgid "Restoring the previous live settings…"
 msgstr "Восстановление предыдущих текущих настроек…"
-
-msgid "Review channel mapping"
-msgstr "Проверка назначений каналов"
-
-msgid "Review where each final EffeTune channel will play. Your preset is unchanged. Preview this mapping, then use Apply in the main window to save it."
-msgstr "Проверьте, куда будет выводиться каждый конечный канал EffeTune. Пресет останется без изменений. Проверьте звучание с этими назначениями, затем нажмите «Применить» в главном окне для сохранения."
 
 msgid "Rollback requested"
 msgstr "Запрошен откат"
@@ -676,14 +670,8 @@ msgstr "Общий коэффициент усиления: {0}"
 msgid "seconds"
 msgstr "секунды"
 
-msgid "Select a replacement output device."
-msgstr "Выберите устройство вывода для замены."
-
 msgid "Select at least one output device."
 msgstr "Выберите хотя бы одно устройство вывода."
-
-msgid "Select the saved device whose channels this output will use."
-msgstr "Выберите сохранённое устройство, каналы которого будет использовать этот выход."
 
 msgid "Setting up PipeTune for this user…"
 msgstr "Настройка PipeTune для этого пользователя…"
@@ -750,14 +738,14 @@ msgstr "Система по умолчанию"
 msgid "The 16-channel limit includes disabled and reserved channels. Use existing channels to replace a saved device."
 msgstr "Лимит в 16 каналов включает отключённые и зарезервированные каналы. Используйте существующие каналы для замены сохранённого устройства."
 
-msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
-msgstr "Выход выбирается операционной системой. Сохранённые ниже назначения для нескольких выходов неактивны."
+msgid "The OS selects the output. Saved device assignments are inactive."
+msgstr "Выход выбирает операционная система. Сохранённые назначения устройств неактивны."
 
 msgid "The selected device cannot be identified uniquely."
 msgstr "Выбранное устройство невозможно однозначно идентифицировать."
 
-msgid "The selected output is no longer available with this profile. Reopen the mapping review."
-msgstr "Выбранный выход больше недоступен с этим профилем. Откройте проверку назначений заново."
+msgid "The selected output is no longer available with this profile. Review the configuration."
+msgstr "Выбранный выход больше недоступен с этим профилем. Проверьте конфигурацию."
 
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "Изменение языка интерфейса вступит в силу после перезапуска PipeTune GTK."

@@ -96,9 +96,6 @@ msgstr "活动插件"
 msgid "Advanced"
 msgstr "高级"
 
-msgid "After"
-msgstr "更改后"
-
 msgid "All"
 msgstr "全部"
 
@@ -113,6 +110,9 @@ msgstr "无法唯一识别设备。请重新分配设备以选择输出。"
 
 msgid "Apply"
 msgstr "应用"
+
+msgid "Apply configuration"
+msgstr "应用配置"
 
 msgid "Audio outputs changed"
 msgstr "音频输出已更改"
@@ -143,9 +143,6 @@ msgstr "可用"
 
 msgid "Baseline"
 msgstr "基准状态"
-
-msgid "Before"
-msgstr "更改前"
 
 msgid "Bypass"
 msgstr "旁路"
@@ -287,6 +284,12 @@ msgstr "已选择默认值"
 msgid "Device channel"
 msgstr "设备通道"
 
+msgid "Device configuration"
+msgstr "设备配置"
+
+msgid "Device configuration…"
+msgstr "设备配置…"
+
 msgid "Device mute unknown"
 msgstr "设备静音状态未知"
 
@@ -345,6 +348,9 @@ msgstr "DSP 采样频率"
 msgid "DSP sampling frequency {0}  •  PipeWire graph sampling frequency {1}"
 msgstr "DSP 采样频率 {0}  •  PipeWire 图采样频率 {1}"
 
+msgid "Edit the complete output configuration, then apply it once. Use Apply in the main window to save it."
+msgstr "编辑完整的输出配置，然后一次性应用。要保存，请点击主窗口中的“应用”。"
+
 msgid "Effective backend"
 msgstr "实际后端"
 
@@ -393,6 +399,9 @@ msgstr "强制"
 
 msgid "Force — request the fixed graph sampling frequency"
 msgstr "强制 — 请求固定图采样频率"
+
+msgid "If the preset does not support these channels, cancel and select a compatible preset or Bypass in the main window."
+msgstr "如果预设不支持这些通道，请取消并在主窗口中选择兼容的预设或旁路模式。"
 
 msgid "Ignore"
 msgstr "忽略"
@@ -490,14 +499,11 @@ msgstr "打开 PipeTune"
 msgid "Output"
 msgstr "输出"
 
-msgid "Output devices"
-msgstr "输出设备"
-
 msgid "Output mode"
 msgstr "输出模式"
 
-msgid "Output settings changed. Reopen the mapping review."
-msgstr "输出设置已更改。请重新打开通道分配确认窗口。"
+msgid "Output settings changed. Cancel and reopen the configuration dialog."
+msgstr "输出设置已更改。请取消并重新打开配置对话框。"
 
 #, brace-format
 msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
@@ -564,12 +570,6 @@ msgstr "需要预设"
 msgid "Preset warnings"
 msgstr "预设警告"
 
-msgid "Press Enter or leave the field to preview the purpose label."
-msgstr "按 Enter 或离开输入框以预览用途标签。"
-
-msgid "Preview mapping"
-msgstr "预览分配"
-
 msgid "Processing"
 msgstr "处理"
 
@@ -591,6 +591,9 @@ msgstr "配置文件已更改。请重新分配设备以更新这些通道。"
 msgid "Purpose"
 msgstr "用途"
 
+msgid "Purpose label for this output channel."
+msgstr "此输出通道的用途名称。"
+
 msgid "Quit"
 msgstr "退出"
 
@@ -599,9 +602,6 @@ msgstr "重新分配设备…"
 
 msgid "Reported device controls, separate from the OS master volume. Channel gains show the minimum and maximum across the device."
 msgstr "设备报告的控制值，与操作系统的主音量相互独立。通道增益显示设备内各通道的最小值和最大值。"
-
-msgid "Reserved"
-msgstr "已保留"
 
 msgid "Reserved EffeTune channels"
 msgstr "保留的 EffeTune 通道"
@@ -626,12 +626,6 @@ msgstr "正在恢复打开对话框时捕获的实时设置"
 
 msgid "Restoring the previous live settings…"
 msgstr "正在恢复之前的实时设置…"
-
-msgid "Review channel mapping"
-msgstr "确认通道分配"
-
-msgid "Review where each final EffeTune channel will play. Your preset is unchanged. Preview this mapping, then use Apply in the main window to save it."
-msgstr "请确认 EffeTune 各最终通道的播放位置。预设本身不会更改。预览此分配后，在主窗口中使用“应用”保存。"
 
 msgid "Rollback requested"
 msgstr "已请求回滚"
@@ -674,14 +668,8 @@ msgstr "整体增益：{0}"
 msgid "seconds"
 msgstr "秒"
 
-msgid "Select a replacement output device."
-msgstr "请选择替换的输出设备。"
-
 msgid "Select at least one output device."
 msgstr "请至少选择一个输出设备。"
-
-msgid "Select the saved device whose channels this output will use."
-msgstr "请选择此输出将接替其通道的已保存设备。"
 
 msgid "Setting up PipeTune for this user…"
 msgstr "正在为此用户设置 PipeTune…"
@@ -748,14 +736,14 @@ msgstr "系统默认"
 msgid "The 16-channel limit includes disabled and reserved channels. Use existing channels to replace a saved device."
 msgstr "16 通道上限包括已禁用和保留的通道。请使用现有通道来替换已保存的设备。"
 
-msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
-msgstr "由操作系统选择输出。下方保存的多设备输出分配当前未启用。"
+msgid "The OS selects the output. Saved device assignments are inactive."
+msgstr "由操作系统选择输出。已保存的设备分配不生效。"
 
 msgid "The selected device cannot be identified uniquely."
 msgstr "无法唯一识别所选设备。"
 
-msgid "The selected output is no longer available with this profile. Reopen the mapping review."
-msgstr "所选输出已无法使用此配置。请重新打开通道分配确认窗口。"
+msgid "The selected output is no longer available with this profile. Review the configuration."
+msgstr "所选输出已无法使用此配置文件。请检查配置。"
 
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "界面语言更改将在 PipeTune GTK 重启后生效。"
