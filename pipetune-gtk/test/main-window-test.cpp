@@ -180,6 +180,27 @@ static bool checkSettingsPages(const pipetune_gtk::MainWindowUi &ui) {
                "advanced page is missing");
 }
 
+static bool checkOutputConfigurationDefaultAction(
+    const pipetune_gtk::MainWindowUi &ui) {
+  auto *defaultButton = gtk_window_get_default_widget(
+      GTK_WINDOW(ui.outputConfigurationDialog));
+  if (!check(defaultButton == ui.outputConfigurationCancelButton,
+             "Enter in device configuration must select Cancel")) {
+    return false;
+  }
+  auto response = gint{GTK_RESPONSE_NONE};
+  const auto handler = g_signal_connect(
+      ui.outputConfigurationDialog, "response",
+      G_CALLBACK(+[](GtkDialog *, gint value, gpointer data) {
+        *static_cast<gint *>(data) = value;
+      }),
+      &response);
+  gtk_button_clicked(GTK_BUTTON(defaultButton));
+  g_signal_handler_disconnect(ui.outputConfigurationDialog, handler);
+  return check(response == GTK_RESPONSE_CANCEL,
+               "the device configuration default must cancel without applying");
+}
+
 static bool checkLanguageChoices(const pipetune_gtk::MainWindowUi &ui) {
   constexpr auto expected = std::array<std::string_view, 11>{
       "System default", "English", "العربية", "Español", "Français",
@@ -402,6 +423,7 @@ int main(int argc, char **argv) {
   const auto valid =
       check(ui.builder != nullptr, "main window builder is unavailable") &&
       checkWidgetTypes(ui) && checkSettingsPages(ui) &&
+      checkOutputConfigurationDefaultAction(ui) &&
       checkDspIdleControls(ui) &&
       checkPresetConfiguration(ui, {"Enabled", "Off", "Ignored"}) &&
       checkLanguageChoices(ui) &&

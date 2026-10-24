@@ -1137,6 +1137,7 @@
     <child type="action">
       <object class="GtkButton" id="outputConfigurationCancelButton">
         <property name="label" translatable="yes">Cancel</property>
+        <property name="can-default">True</property>
       </object>
     </child>
     <child type="action">
