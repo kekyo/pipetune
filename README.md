@@ -230,6 +230,8 @@ In this case, the output device is determined based on the OS’s sound device a
 Selecting “Multiple Mode” lets you use multiple output devices together.
 In this case, the OS’s sound device assignment feature cannot be used, and you must configure the settings in PipeTune.
 
+The meters at the top of the `Output` page show whether each channel has an audio signal. They work in single mode, multiple mode, and bypass, following the confirmed Ch order. Values are peaks before device volume, in dBFS relative to digital full scale. Silence is `−∞`, unavailable or disconnected measurements are `—`, and peaks at or above 0 dBFS turn red. Device mute and connection state are not part of these measurements, so an active meter does not guarantee audible output from the device.
+
 Switch modes on the `Output` page and open `Device configuration…` to edit the devices in a separate dialog. The main window lists the applied configuration in three columns: `Device name`, `State`, and `Channels`. Devices appear in ascending order of their lowest assigned Ch number, and each device's numbers are also listed in ascending order. This display order does not change the assignments. Switching from single to multiple mode opens this dialog first; canceling it keeps single mode active.
 
 Select a device in the dialog's upper list to display its settings below. Use `Add device…` to choose a connected device, then `Add` to register it. Clearing `Use this device` disables it while retaining its registration and Ch numbers. Choose each physical channel's `EffeTune output` number and enter an optional purpose label. Moving a number also moves the intervening assignments.

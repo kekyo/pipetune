@@ -73,6 +73,13 @@ dependency order:
 4. output configuration, together with a changed processing mode or preset; and
 5. processing mode or preset when no output change is needed.
 
+The Output page begins with per-channel peak meters in confirmed Ch order,
+available in single mode, multiple mode, and bypass. They measure the audio
+before device volume in dBFS, relative to digital full scale. Silence is `−∞`,
+unavailable or disconnected measurements are `—`, and peaks at or above
+0 dBFS turn red. Device mute and connection state are not included, so an
+active meter does not guarantee audible output from the device.
+
 The Output page selects either the existing OS-managed single mode or multiple
 devices managed by PipeTune. Its applied configuration has `Device name`,
 `State`, and `Channels` columns. Devices appear in ascending order of their
