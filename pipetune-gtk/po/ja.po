@@ -520,6 +520,9 @@ msgstr "出力"
 msgid "Output channels"
 msgstr "出力チャンネル数"
 
+msgid "Output levels (dBFS)"
+msgstr "出力レベル（dBFS）"
+
 msgid "Output mode"
 msgstr "出力モード"
 
@@ -538,6 +541,12 @@ msgstr "オーバーランフレーム"
 
 msgid "PCM data rate"
 msgstr "PCMデータレート"
+
+msgid "Peak levels before device volume."
+msgstr "機器の音量調整前のピーク値です。"
+
+msgid "Peak output level before device volume. Silence is −∞ dBFS; 0 dBFS is full scale."
+msgstr "機器の音量調整前の出力ピーク値。無音は −∞ dBFS、最大振幅は 0 dBFS です。"
 
 msgid "Pending dialog settings will be reapplied"
 msgstr "保留中のダイアログ設定を再適用します"

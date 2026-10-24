@@ -516,6 +516,9 @@ msgstr ""
 msgid "Output channels"
 msgstr ""
 
+msgid "Output levels (dBFS)"
+msgstr ""
+
 msgid "Output mode"
 msgstr ""
 
@@ -533,6 +536,12 @@ msgid "Overrun frames"
 msgstr ""
 
 msgid "PCM data rate"
+msgstr ""
+
+msgid "Peak levels before device volume."
+msgstr ""
+
+msgid "Peak output level before device volume. Silence is −∞ dBFS; 0 dBFS is full scale."
 msgstr ""
 
 msgid "Pending dialog settings will be reapplied"

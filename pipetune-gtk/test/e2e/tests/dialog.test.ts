@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { resolve } from 'node:path';
 import { PNG } from 'pngjs';
 
 import type {
@@ -448,6 +451,235 @@ const hideWithKeyboard = async (method: 'escape' | 'close'): Promise<void> => {
 };
 
 describe('PipeTune GTK dialog', () => {
+  it('shows independent live output peaks in both modes and clears stale levels', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await selectSettingsPage(3);
+    const expectPeak = async (
+      channel: number,
+      db: number | undefined
+    ): Promise<void> => {
+      const meter = await getElement(
+        `output-level-${String(channel)}`,
+        'progressBar'
+      );
+      await toPass(async () => {
+        expect((await meter.valueInfo()).value).toBeCloseTo(
+          db === undefined ? 0 : Math.max(0, Math.min(60, db + 60)),
+          2
+        );
+        const text =
+          db === undefined
+            ? 'Unavailable'
+            : db === -Infinity
+              ? '−∞ dBFS'
+              : `${db.toFixed(1)} dBFS`;
+        expect((await meter.info()).name).toContain(text);
+      });
+    };
+    await expectPeak(1, 20 * Math.log10(0.5));
+    await expectPeak(2, 20 * Math.log10(0.25));
+    const meters = await getElement('outputLevelMeters', 'container');
+    expect(await meters.getChildCount()).toBe(2);
+    const mode = await getElement('outputModeCombo', 'comboBox');
+    await toPass(async () => {
+      const meterBounds = (await meters.capture()).bounds;
+      expect(meterBounds.y + meterBounds.height).toBeLessThan(
+        (await mode.capture()).bounds.y
+      );
+    });
+
+    await openMultipleOutputConfiguration();
+    await chooseAvailableOutput('DAC A');
+    await chooseAvailableOutput('DAC B');
+    expect(await meters.getChildCount()).toBe(2);
+    await applyOutputConfiguration();
+    await expectPeak(3, 20 * Math.log10(0.125));
+    await expectPeak(4, -Infinity);
+    expect(await meters.getChildCount()).toBe(4);
+    await session.clearRequests();
+    await session.setOutputPeaks([0, 0.5, 0, 0.25]);
+    await expectPeak(1, -Infinity);
+    await expectPeak(2, 20 * Math.log10(0.5));
+    await expectPeak(3, -Infinity);
+    await expectPeak(4, 20 * Math.log10(0.25));
+    await session.setOutputPeaks([0, 0, 0, 0]);
+    for (const channel of [1, 2, 3, 4]) await expectPeak(channel, -Infinity);
+    expect(
+      (await session.readRequests()).filter(
+        (request) => request.command !== 'subscribe'
+      )
+    ).toHaveLength(0);
+    await session.disconnectDaemon();
+    for (const channel of [1, 2, 3, 4]) await expectPeak(channel, undefined);
+  });
+
+  it('records output meter movement and clearing in video', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await selectSettingsPage(3);
+    const window = await getElement('mainWindow', 'window');
+    await window.activate();
+    const bars = await Promise.all(
+      [1, 2].map(async (channel) =>
+        getElement(`output-level-${String(channel)}`, 'progressBar')
+      )
+    );
+    const captures = await waitForResult(async () => {
+      const captured = await Promise.all(
+        bars.map(async (bar) => bar.capture())
+      );
+      if (captured.some((item) => item.clipped))
+        throw new Error('Meters are not fully visible');
+      return captured;
+    });
+    const first = captures[0]?.bounds;
+    const last = captures[1]?.bounds;
+    if (first === undefined || last === undefined)
+      throw new Error('Meter bounds unavailable');
+    const width = last.x + last.width - first.x;
+    const height = first.height;
+    const directory = resolve('test-results');
+    await mkdir(directory, { recursive: true });
+    const path = resolve(directory, 'output-levels.mkv');
+    const recording = spawn(
+      'ffmpeg',
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-f',
+        'x11grab',
+        '-framerate',
+        '10',
+        '-draw_mouse',
+        '0',
+        '-video_size',
+        `${String(width)}x${String(height)}`,
+        '-i',
+        `${(await session.app.environment()).DISPLAY}+${String(first.x)},${String(first.y)}`,
+        '-c:v',
+        'ffv1',
+        '-threads',
+        '1',
+        '-stats_period',
+        '0.1',
+        '-progress',
+        'pipe:1',
+        path,
+      ],
+      { env: await session.app.environment(), stdio: ['pipe', 'pipe', 'pipe'] }
+    );
+    const recordingFinished = once(recording, 'close');
+    let frames = 0;
+    let error = '';
+    recording.stdout.on('data', (chunk: Buffer) => {
+      for (const match of chunk.toString().matchAll(/(?:^|\n)frame=(\d+)/gu))
+        frames = Number(match[1]);
+    });
+    recording.stderr.on('data', (chunk: Buffer) => {
+      error += chunk.toString();
+    });
+    try {
+      // Wait for encoded frames of each confirmed state, rather than sleeping
+      // for an assumed draw interval on fast or emulated test environments.
+      for (const peaks of [
+        [0.5, 0],
+        [0, 0.25],
+        [0, 0],
+      ]) {
+        await session.setOutputPeaks(peaks);
+        await toPass(async () => {
+          for (let channel = 0; channel < bars.length; channel += 1) {
+            const peak = peaks[channel] ?? 0;
+            const value = (await bars[channel]?.valueInfo())?.value;
+            expect(value).toBeCloseTo(
+              peak === 0 ? 0 : 60 + 20 * Math.log10(peak),
+              2
+            );
+          }
+        });
+        const previous = frames;
+        await toPass(async () => {
+          if (recording.exitCode !== null) throw new Error(error);
+          expect(frames).toBeGreaterThan(previous + 2);
+        });
+      }
+      await writeFile(
+        resolve(directory, 'output-levels.png'),
+        (await window.capture()).image
+      );
+    } finally {
+      recording.stdin.end('q\n');
+      await recordingFinished;
+    }
+    expect(recording.exitCode, error).toBe(0);
+    const decoder = spawn('ffmpeg', [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-i',
+      path,
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgb24',
+      '-threads',
+      '1',
+      'pipe:1',
+    ]);
+    const decoded = once(decoder, 'close');
+    const chunks: Buffer[] = [];
+    decoder.stdout.on('data', (chunk: Buffer) => {
+      chunks.push(chunk);
+    });
+    decoder.stderr.on('data', (chunk: Buffer) => {
+      error += chunk.toString();
+    });
+    await decoded;
+    expect(decoder.exitCode, error).toBe(0);
+    const pixels = Buffer.concat(chunks);
+    const frameBytes = width * height * 3;
+    const expected = [
+      [true, false],
+      [false, true],
+      [false, false],
+    ];
+    let matched = 0;
+    for (
+      let frame = 0;
+      frame + frameBytes <= pixels.length;
+      frame += frameBytes
+    ) {
+      const active = captures.map((capture) => {
+        let green = 0;
+        for (let y = 0; y < height; y += 1) {
+          for (
+            let x = capture.bounds.x - first.x;
+            x < capture.bounds.x - first.x + capture.bounds.width;
+            x += 1
+          ) {
+            const offset = frame + (y * width + x) * 3;
+            const red = pixels[offset] ?? 0;
+            const color = pixels[offset + 1] ?? 0;
+            const blue = pixels[offset + 2] ?? 0;
+            if (color > red * 1.4 && color > blue * 1.3 && color > 100)
+              green += 1;
+          }
+        }
+        return green > 100;
+      });
+      if (JSON.stringify(active) === JSON.stringify(expected[matched]))
+        matched += 1;
+      if (matched === expected.length) break;
+    }
+    expect(
+      matched,
+      'Video must show left signal, right signal, then both bars empty in order'
+    ).toBe(3);
+  });
+
   it('shows device, state, and channel columns in the parent and editor', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
@@ -1872,7 +2104,7 @@ describe('PipeTune GTK dialog', () => {
       ['processingEnabledSwitch', 'presetCombo', 'presetChooser'],
       ['rateCombo', 'rateEnforcementCombo'],
       ['dspBackendCombo', 'dspIdleEnabledSwitch', 'dspIdleTimeoutSpin'],
-      ['outputModeCombo', 'outputConfigureButton', 'outputSummaryView'],
+      ['outputLevelMeters', 'outputModeCombo'],
       [
         'languageCombo',
         'restoreDefaultsButton',
@@ -1910,6 +2142,24 @@ describe('PipeTune GTK dialog', () => {
             await getWidget(controlId),
             settingsCapture.bounds
           );
+        }
+        if (page === 3) {
+          // Output meters add content above the device list. Compact windows
+          // must keep every control reachable through the page scrollbar.
+          const scroll = await getElement('outputScrollbar', 'scrollbar');
+          await toPass(async () => {
+            await scroll.setValue((await scroll.valueInfo()).maximum);
+            for (const controlId of [
+              'outputSummaryScroll',
+              'outputConfigureButton',
+            ]) {
+              await expectInsideBounds(
+                await getWidget(controlId),
+                settingsCapture.bounds
+              );
+            }
+          });
+          await scroll.setValue(0);
         }
       }
     }

@@ -521,6 +521,9 @@ msgstr "Sortie"
 msgid "Output channels"
 msgstr "Canaux de sortie"
 
+msgid "Output levels (dBFS)"
+msgstr "Niveaux de sortie (dBFS)"
+
 msgid "Output mode"
 msgstr "Mode de sortie"
 
@@ -539,6 +542,12 @@ msgstr "Images en dépassement"
 
 msgid "PCM data rate"
 msgstr "Débit de données PCM"
+
+msgid "Peak levels before device volume."
+msgstr "Niveaux de crête avant le volume du périphérique."
+
+msgid "Peak output level before device volume. Silence is −∞ dBFS; 0 dBFS is full scale."
+msgstr "Niveau de crête de sortie avant le volume du périphérique. Le silence est à −∞ dBFS ; 0 dBFS correspond à la pleine échelle."
 
 msgid "Pending dialog settings will be reapplied"
 msgstr "Les paramètres en attente de la boîte de dialogue seront réappliqués"

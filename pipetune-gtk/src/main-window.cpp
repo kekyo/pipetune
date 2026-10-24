@@ -16,10 +16,38 @@
 #include <gdk/gdkx.h>
 
 #include <optional>
+#include <algorithm>
 #include <array>
 #include <string>
 
 namespace pipetune_gtk {
+
+void renderOutputLevels(MainWindowUi &ui,
+    const pipetune::OutputConfiguration &configuration,
+    std::span<const float> peaks, bool connected) {
+  const auto single = configuration.mode == pipetune::OutputMode::single;
+  const auto count = std::min<std::size_t>(16, peaks.empty()
+      ? (single ? 2 : configuration.channels.size()) : peaks.size());
+  if (ui.outputLevelRows.size() != count) {
+    for (const auto &row : ui.outputLevelRows) gtk_widget_destroy(row.root);
+    ui.outputLevelRows.clear();
+    for (auto index = std::size_t{0}; index < count; ++index) {
+      auto row = createOutputLevelMeter();
+#ifdef PIPETUNE_GTK_E2E_ACCESSIBILITY
+      gestament_gtk_assign_accessible_id(row.levelBar, ("output-level-" + std::to_string(index + 1)).c_str());
+#endif
+      gtk_box_pack_start(GTK_BOX(ui.outputLevelMeters), row.root, FALSE, FALSE, 0);
+      ui.outputLevelRows.push_back(row);
+    }
+    gtk_widget_show_all(ui.outputLevelMeters);
+  }
+  for (auto index = std::size_t{0}; index < count; ++index) {
+    const auto purpose = !single && index < configuration.channels.size()
+        ? std::string_view(configuration.channels[index].label) : std::string_view{};
+    updateOutputLevelMeter(ui.outputLevelRows[index], "Ch " + std::to_string(index + 1), purpose,
+        connected && index < peaks.size() ? std::optional<float>{peaks[index]} : std::nullopt);
+  }
+}
 
 static void configureOutputOverview(GtkWidget *widget, bool selectable) {
   auto *view = GTK_TREE_VIEW(widget);
@@ -201,6 +229,10 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
       gtk_scrolled_window_get_vscrollbar(
           GTK_SCROLLED_WINDOW(statusScrolledWindow)),
       "statusScrollbar");
+  gestament_gtk_assign_accessible_id(
+      gtk_scrolled_window_get_vscrollbar(GTK_SCROLLED_WINDOW(
+          requiredWidget(builder, "outputScrolledWindow", GTK_TYPE_SCROLLED_WINDOW))),
+      "outputScrollbar");
 #endif
   auto ui = MainWindowUi{
       .builder = builder,
@@ -238,6 +270,7 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
           builder, "presetConfigurationSection", GTK_TYPE_FRAME),
       .presetEntryView = requiredWidget(
           builder, "presetEntryView", GTK_TYPE_TREE_VIEW),
+      .outputLevelMeters = requiredWidget(builder, "outputLevelMeters", GTK_TYPE_BOX),
       .outputModeCombo = requiredWidget(builder, "outputModeCombo", GTK_TYPE_COMBO_BOX_TEXT),
       .outputModeNotice = requiredWidget(builder, "outputModeNotice", GTK_TYPE_LABEL),
       .outputErrorLabel = requiredWidget(builder, "outputErrorLabel", GTK_TYPE_LABEL),

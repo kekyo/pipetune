@@ -525,6 +525,9 @@ msgstr "الإخراج"
 msgid "Output channels"
 msgstr "قنوات الإخراج"
 
+msgid "Output levels (dBFS)"
+msgstr "مستويات الإخراج (dBFS)"
+
 msgid "Output mode"
 msgstr "وضع الإخراج"
 
@@ -543,6 +546,12 @@ msgstr "إطارات التجاوز"
 
 msgid "PCM data rate"
 msgstr "معدل بيانات PCM"
+
+msgid "Peak levels before device volume."
+msgstr "مستويات الذروة قبل ضبط مستوى صوت الجهاز."
+
+msgid "Peak output level before device volume. Silence is −∞ dBFS; 0 dBFS is full scale."
+msgstr "مستوى ذروة الإخراج قبل ضبط مستوى صوت الجهاز. الصمت هو −∞ dBFS؛ و0 dBFS هو المقياس الكامل."
 
 msgid "Pending dialog settings will be reapplied"
 msgstr "ستُعاد تطبيق إعدادات مربع الحوار المعلقة"

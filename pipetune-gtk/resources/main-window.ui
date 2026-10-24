@@ -633,7 +633,7 @@
                       </packing>
                     </child>
                     <child>
-                      <object class="GtkScrolledWindow">
+                      <object class="GtkScrolledWindow" id="outputScrolledWindow">
                         <property name="hscrollbar-policy">never</property>
                         <property name="vscrollbar-policy">automatic</property>
                         <child>
@@ -641,6 +641,34 @@
                             <property name="orientation">vertical</property>
                             <property name="spacing">10</property>
                             <property name="margin">14</property>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">Output levels (dBFS)</property>
+                                <property name="xalign">0</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkScrolledWindow">
+                                <property name="hscrollbar-policy">automatic</property>
+                                <property name="vscrollbar-policy">never</property>
+                                <property name="propagate-natural-height">True</property>
+                                <child>
+                                  <object class="GtkBox" id="outputLevelMeters">
+                                    <property name="spacing">8</property>
+                                    <property name="margin-bottom">4</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">Peak levels before device volume.</property>
+                                <property name="xalign">0</property>
+                                <property name="wrap">True</property>
+                                <property name="max-width-chars">45</property>
+                                <style><class name="device-name"/></style>
+                              </object>
+                            </child>
                             <child>
                               <object class="GtkLabel">
                                 <property name="label" translatable="yes">Output mode</property>
@@ -663,7 +691,7 @@
                               </object>
                             </child>
                             <child>
-                              <object class="GtkScrolledWindow">
+                              <object class="GtkScrolledWindow" id="outputSummaryScroll">
                                 <property name="hscrollbar-policy">never</property>
                                 <property name="min-content-height">145</property>
                                 <property name="shadow-type">in</property>

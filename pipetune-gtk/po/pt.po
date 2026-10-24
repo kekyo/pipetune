@@ -521,6 +521,9 @@ msgstr "Saída"
 msgid "Output channels"
 msgstr "Canais de saída"
 
+msgid "Output levels (dBFS)"
+msgstr "Níveis de saída (dBFS)"
+
 msgid "Output mode"
 msgstr "Modo de saída"
 
@@ -539,6 +542,12 @@ msgstr "Fotogramas de sobrecarga"
 
 msgid "PCM data rate"
 msgstr "Taxa de dados PCM"
+
+msgid "Peak levels before device volume."
+msgstr "Níveis de pico antes do volume do dispositivo."
+
+msgid "Peak output level before device volume. Silence is −∞ dBFS; 0 dBFS is full scale."
+msgstr "Nível de pico de saída antes do volume do dispositivo. O silêncio é −∞ dBFS; 0 dBFS é a escala completa."
 
 msgid "Pending dialog settings will be reapplied"
 msgstr "As definições pendentes da caixa de diálogo serão reaplicadas"

@@ -1498,6 +1498,9 @@ static void render(GtkRuntime *runtime) {
   }
   renderStatusArtwork(runtime);
   renderStatusRows(runtime);
+  renderOutputLevels(runtime->ui, runtime->state.runtime.outputConfiguration,
+      runtime->state.runtime.outputPeaks,
+      runtime->state.connection == ControlConnectionState::connected);
   renderSettingsControls(runtime);
   renderActionLog(runtime);
 }

@@ -8,6 +8,7 @@
 
 #include "pipetune/preset_entry.h"
 #include "pipetune/output_configuration.h"
+#include "output-level-meter.h"
 
 #include <gtk/gtk.h>
 
@@ -74,6 +75,10 @@ struct MainWindowUi {
   GtkWidget *presetEntryView = nullptr;
   /** Last rendered entries, avoiding model replacement on telemetry updates. */
   std::optional<std::vector<pipetune::PresetEntry>> displayedPresetEntries = {};
+  /** Live channel peaks displayed independently of editable output settings. */
+  GtkWidget *outputLevelMeters = nullptr;
+  /** Retained channel widgets, replaced only when the live width changes. */
+  std::vector<OutputLevelMeterWidgets> outputLevelRows = {};
   /** OS-managed or explicitly selected physical output mode. */
   GtkWidget *outputModeCombo = nullptr;
   /** Explains which output choices are active in the selected mode. */
@@ -197,6 +202,17 @@ struct MainWindowViewState {
   /** Whether the window is maximized. */
   bool maximized;
 };
+
+/**
+ * Displays current output peaks, keeping unconfirmed drafts out of the meters.
+ * @param ui Output page and retained meter widgets.
+ * @param configuration Confirmed live configuration used for channel labels.
+ * @param peaks Linear peaks in actual logical output order; empty if unavailable.
+ * @param connected Whether measurements belong to the current daemon connection.
+ */
+void renderOutputLevels(MainWindowUi &ui,
+    const pipetune::OutputConfiguration &configuration,
+    std::span<const float> peaks, bool connected);
 
 /**
  * Builds the main window from the embedded GtkBuilder UI definition.

@@ -30,7 +30,9 @@ static bool approximately(double actual, double expected) {
 }
 
 static bool checkWidgetTypes(const pipetune_gtk::MainWindowUi &ui) {
-  return check(GTK_IS_APPLICATION_WINDOW(ui.window),
+  return check(GTK_IS_BOX(gtk_builder_get_object(ui.builder, "outputLevelMeters")),
+               "output channel meter host must exist in both output modes") &&
+         check(GTK_IS_APPLICATION_WINDOW(ui.window),
                "main window type differs") &&
          check(GTK_IS_BUTTON(ui.closeButton),
                "close button type differs") &&

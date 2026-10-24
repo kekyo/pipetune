@@ -520,6 +520,9 @@ msgstr "输出"
 msgid "Output channels"
 msgstr "输出声道数"
 
+msgid "Output levels (dBFS)"
+msgstr "输出电平（dBFS）"
+
 msgid "Output mode"
 msgstr "输出模式"
 
@@ -538,6 +541,12 @@ msgstr "溢出帧"
 
 msgid "PCM data rate"
 msgstr "PCM 数据速率"
+
+msgid "Peak levels before device volume."
+msgstr "设备音量调节前的峰值电平。"
+
+msgid "Peak output level before device volume. Silence is −∞ dBFS; 0 dBFS is full scale."
+msgstr "设备音量调节前的输出峰值电平。静音为 −∞ dBFS；0 dBFS 为满幅。"
 
 msgid "Pending dialog settings will be reapplied"
 msgstr "将重新应用待处理的对话框设置"

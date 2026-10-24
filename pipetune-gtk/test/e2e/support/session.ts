@@ -139,6 +139,8 @@ export interface PipeTuneGtkTestSession {
   readonly setOutputTiming: (
     state: 'normal' | 'pending' | 'idle' | 'error' | 'unknown'
   ) => Promise<void>;
+  /** Publishes independent measured channel peaks without changing settings. */
+  readonly setOutputPeaks: (peaks: readonly number[]) => Promise<void>;
   /** Atomically replaces EffeTune's saved-preset JSON file. */
   readonly replaceEffeTuneSavedPresets: (contents: string) => Promise<void>;
   /** Stops all processes and removes the isolated filesystem root. */
@@ -494,6 +496,18 @@ export const launchPipeTuneGtk = async (
       });
     },
     replaceEffeTuneSavedPresets,
+    setOutputPeaks: async (peaks) => {
+      if (daemon === undefined) throw new Error('fake daemon is unavailable');
+      await new Promise<void>((resolve, reject) => {
+        daemon?.process.stdin.write(
+          `output-peaks ${peaks.join(' ')}\n`,
+          (error) => {
+            if (error !== null && error !== undefined) reject(error);
+            else resolve();
+          }
+        );
+      });
+    },
     release,
   };
 };

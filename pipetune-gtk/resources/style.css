@@ -124,6 +124,37 @@ levelbar.status-level-meter.status-level-hue-10 trough block.filled {
   background-color: alpha(@theme_bg_color, 0.72);
 }
 
+levelbar.output-level-meter trough {
+  min-width: 22px;
+  border: 0;
+  border-radius: 3px;
+  background-color: alpha(@theme_fg_color, 0.1);
+}
+
+levelbar.output-level-meter trough block {
+  min-width: 22px;
+  min-height: 0;
+  border: 0;
+  border-radius: 3px;
+  background-image: none;
+}
+
+levelbar.output-level-meter trough block.empty {
+  background-color: transparent;
+}
+
+levelbar.output-level-meter trough block.filled {
+  background-color: #51a66c;
+}
+
+levelbar.output-level-meter.output-level-high trough block.filled {
+  background-color: #c5a34e;
+}
+
+levelbar.output-level-meter.output-level-overload trough block.filled {
+  background-color: #cc665f;
+}
+
 .device-name,
 .log-detail {
   color: alpha(@theme_fg_color, 0.62);

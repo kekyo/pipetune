@@ -16,6 +16,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -36,6 +37,7 @@ struct FakeDaemonState {
   std::string outputInventoryState = "connected";
   std::string outputVolumeState = "normal";
   std::string outputTimingState = "normal";
+  std::vector<float> outputPeaks = {0.5F, 0.25F, 0.125F, 0.0F};
   bool outputProfilesEnabled = false;
   bool unknownOutputProfile = false;
   bool unconfirmedOutputProfile = false;
@@ -269,6 +271,10 @@ static pipetune::ControlRuntimeStatus snapshotStatus(
   status.dspProcessingNanoseconds +=
       state.dspTelemetrySequence * std::uint64_t{600000000};
   ++state.dspTelemetrySequence;
+  status.outputPeaks.resize(config.outputConfiguration.mode == pipetune::OutputMode::single
+      ? 2 : config.outputConfiguration.channels.size(), 0);
+  std::copy_n(state.outputPeaks.begin(), std::min(state.outputPeaks.size(), status.outputPeaks.size()),
+      status.outputPeaks.begin());
   return status;
 }
 
@@ -599,6 +605,16 @@ int main(int argc, char **argv) {
       {
         auto lock = std::scoped_lock(state.mutex);
         state.outputInventoryState = input.substr(17);
+      }
+      pipetune::publishControlStatus(started.server.get());
+    }
+    if (input.starts_with("output-peaks ")) {
+      {
+        auto lock = std::scoped_lock(state.mutex);
+        auto values = std::istringstream(input.substr(13));
+        state.outputPeaks.clear();
+        auto value = float{};
+        while (values >> value) state.outputPeaks.push_back(value);
       }
       pipetune::publishControlStatus(started.server.get());
     }
