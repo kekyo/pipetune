@@ -725,6 +725,43 @@ static bool testOutputProfileCheckpoint() {
                "a failed profile operation must retain the confirmed profiles and block saving");
 }
 
+static bool testOutputProfileObservation() {
+  const auto configuration = baseConfig();
+  const auto card = pipetune::OutputCardIdentity{"alsa", "usb:test", "vendor", "product", "serial"};
+  const auto analog = std::vector{pipetune::OutputProfileSelection{card, "output:analog-stereo+input:analog-stereo", "analog-stereo", false}};
+  const auto digital = std::vector{pipetune::OutputProfileSelection{card, "output:iec958-stereo+input:analog-stereo", "iec958-stereo", false}};
+  auto transaction = pipetune_gtk::beginSettingsTransaction(configuration, configuration, 1, true);
+  pipetune_gtk::observeSettingsRuntime(transaction, configuration, 1, analog);
+  if (!check(transaction.baselineOutputProfiles == analog &&
+             transaction.desiredOutputProfiles == analog && transaction.confirmedOutputProfiles == analog &&
+             !transaction.conflict,
+             "a newly connected card must establish its rollback checkpoint before editing")) return false;
+  pipetune_gtk::observeSettingsRuntime(transaction, configuration, 1, digital);
+  if (!check(transaction.conflict && transaction.confirmedOutputProfiles == digital &&
+             transaction.desiredOutputProfiles == analog &&
+             pipetune_gtk::nextSettingsOperation(transaction) == pipetune_gtk::SettingsOperation::none,
+             "an external OS profile change must block stale edits without replaying them")) return false;
+  pipetune_gtk::requestSettingsCancel(transaction);
+  if (!check(transaction.desiredOutputProfiles == analog &&
+             pipetune_gtk::nextSettingsOperation(transaction) == pipetune_gtk::SettingsOperation::output,
+             "Cancel must restore a card connected after the parent opened")) return false;
+  transaction = pipetune_gtk::beginSettingsTransaction(configuration, configuration, 1, true, analog);
+  transaction.desiredOutputProfiles = digital;
+  pipetune_gtk::beginSettingsOperation(transaction, pipetune_gtk::SettingsOperation::output);
+  pipetune_gtk::observeSettingsRuntime(transaction, configuration, 1, digital);
+  if (!check(!transaction.conflict && transaction.confirmedOutputProfiles == analog,
+             "an output transition must await its explicit reply before confirming profiles")) return false;
+  pipetune_gtk::completeSettingsOperation(transaction, true, configuration, 2, {});
+  pipetune_gtk::markSettingsDisconnected(transaction, "disconnected");
+  pipetune_gtk::reconnectSettingsTransaction(transaction, configuration, 1, analog);
+  if (!check(transaction.confirmedOutputProfiles == analog && transaction.desiredOutputProfiles == digital &&
+             pipetune_gtk::nextSettingsOperation(transaction) == pipetune_gtk::SettingsOperation::output,
+             "reconnection must compare actual profiles against confirmed live edits")) return false;
+  pipetune_gtk::observeSettingsRuntime(transaction, configuration, 1, {});
+  return check(transaction.baselineOutputProfiles == analog && transaction.desiredOutputProfiles == digital,
+               "missing cards must retain restoration checkpoints and selected profiles");
+}
+
 static bool testSfzStartupBudget() {
   auto saved = baseConfig();
   saved.sfzMaxSizeMiB = 512;
@@ -765,6 +802,7 @@ static bool testSfzStartupBudget() {
 }
 
 int main() {
+  if (!testOutputProfileObservation()) return 1;
   if (!testOutputProfileCheckpoint()) return 1;
   if (!testSfzStartupBudget()) return 1;
   if (!testOutputPreviewAndJointCancel()) return 1;

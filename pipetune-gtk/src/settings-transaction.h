@@ -160,11 +160,13 @@ void markSettingsDisconnected(SettingsTransaction &transaction,
  * @param transaction Transaction to update.
  * @param live Complete state received after reconnection.
  * @param liveRevision Revision associated with live.
+ * @param outputProfiles Active profiles observed after reconnection; missing cards retain their checkpoint.
  */
 void reconnectSettingsTransaction(
     SettingsTransaction &transaction,
     const pipetune::StartupConfig &live,
-    std::uint64_t liveRevision);
+    std::uint64_t liveRevision,
+    std::span<const pipetune::OutputProfileSelection> outputProfiles = {});
 
 /**
  * Observes a subscribed live state change outside an explicit operation.
@@ -174,11 +176,13 @@ void reconnectSettingsTransaction(
  * @param transaction Transaction to update.
  * @param live Complete subscribed live state.
  * @param liveRevision Revision associated with live.
+ * @param outputProfiles Active profiles; newly connected cards establish their own checkpoint.
  */
 void observeSettingsRuntime(
     SettingsTransaction &transaction,
     const pipetune::StartupConfig &live,
-    std::uint64_t liveRevision);
+    std::uint64_t liveRevision,
+    std::span<const pipetune::OutputProfileSelection> outputProfiles = {});
 
 /**
  * Requests restoration of the baseline captured when the dialog opened.

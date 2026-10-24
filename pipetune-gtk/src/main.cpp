@@ -182,6 +182,7 @@ struct GtkRuntime {
   std::vector<OutputDeviceWidgets> outputDeviceRows = {};
   std::vector<OutputChannelWidgets> outputReservedChannels = {};
   std::optional<OutputConfigurationDraft> outputDraft = {};
+  bool outputReconciliationPending = false;
 };
 
 static void render(GtkRuntime *runtime);
@@ -936,6 +937,8 @@ static void renderOutputControls(GtkRuntime *runtime) {
       translate("The OS selects the output. Saved device assignments are inactive.") :
       translate("Input uses Ch 1 and Ch 2. Create additional outputs in your EffeTune preset. Disabled devices keep their Ch numbers."));
   auto diagnostic = runtime->outputEditError;
+  if (runtime->transactionReady && runtime->transaction.conflict)
+    diagnostic = runtime->transaction.diagnostic;
   if (diagnostic.empty() && !single && std::none_of(configuration.outputs.begin(), configuration.outputs.end(),
       [](const auto &output) { return output.enabled; })) diagnostic = translate("Select at least one output device.");
   if (diagnostic.empty()) diagnostic = pipetune::validateOutputConfiguration(configuration);
@@ -2414,6 +2417,17 @@ static void onLogClearClicked(GtkButton *, gpointer userData) {
   renderActionLog(runtime);
 }
 
+static void interruptOutputConfiguration(GtkRuntime *runtime, std::string_view error) {
+  if (!runtime->outputDraft || !runtime->outputDraft->applying) return;
+  runtime->outputDraft->applying = false;
+  runtime->transaction.desiredLive.outputConfiguration = runtime->transaction.confirmedLive.outputConfiguration;
+  runtime->transaction.desiredOutputProfiles = runtime->transaction.confirmedOutputProfiles;
+  runtime->outputEditError = error;
+  // The reply may have been lost after applying the request. On reconnect,
+  // observe the actual outputs before permitting any further output operation.
+  runtime->outputReconciliationPending = true;
+}
+
 static void onSettingsOperationReply(const ControlClientReply &reply,
                                      void *userData) {
   auto *runtime = static_cast<GtkRuntime *>(userData);
@@ -2425,6 +2439,7 @@ static void onSettingsOperationReply(const ControlClientReply &reply,
   runtime->pendingActionId = 0;
   setControlOperationPending(runtime->state, false);
   if (!reply.transportError.empty()) {
+    interruptOutputConfiguration(runtime, reply.transportError);
     markControlDisconnected(runtime->state, reply.transportError);
     markSettingsDisconnected(runtime->transaction, reply.transportError);
     completePendingAction(
@@ -2439,17 +2454,21 @@ static void onSettingsOperationReply(const ControlClientReply &reply,
 
   applyControlResponse(runtime->state, reply.response,
                        currentMonotonicMilliseconds());
-  const auto success = reply.response.valid && reply.response.success;
+  auto success = reply.response.valid && reply.response.success;
   const auto confirmed =
       success ? startupConfigFromRuntime(reply.response.status)
               : runtime->transaction.confirmedLive;
-  const auto diagnostic =
+  auto diagnostic =
       success ? std::string{} : controlDiagnostic(reply);
   completeSettingsOperation(runtime->transaction, success, confirmed,
                             success
                                 ? reply.response.status.configurationRevision
                                 : runtime->transaction.confirmedRevision,
                             diagnostic);
+  if (runtime->transaction.liveChangeFailed) {
+    success = false;
+    diagnostic = runtime->transaction.diagnostic;
+  }
   if (operation == SettingsOperation::output && runtime->outputDraft && runtime->outputDraft->applying) {
     if (success) closeOutputConfiguration(runtime);
     else {
@@ -2601,7 +2620,14 @@ static void onSubscriptionMessage(
     } else if (!runtime->transaction.connected) {
       reconnectSettingsTransaction(
           runtime->transaction, live,
-          runtime->state.runtime.configurationRevision);
+          runtime->state.runtime.configurationRevision, activeOutputProfiles(runtime->state.runtime));
+      if (runtime->outputReconciliationPending) {
+        if (!runtime->transaction.cancelRequested) {
+          runtime->transaction.desiredLive.outputConfiguration = live.outputConfiguration;
+          runtime->transaction.desiredOutputProfiles = runtime->transaction.confirmedOutputProfiles;
+        }
+        runtime->outputReconciliationPending = false;
+      }
       appendCompletedAction(
           runtime, ActionLogSeverity::info, ActionLogCategory::control,
           true, localizedMessage("PipeTune reconnected", {}),
@@ -2610,13 +2636,23 @@ static void onSubscriptionMessage(
     } else {
       observeSettingsRuntime(
           runtime->transaction, live,
-          runtime->state.runtime.configurationRevision);
+          runtime->state.runtime.configurationRevision, activeOutputProfiles(runtime->state.runtime));
       if (runtime->transaction.conflict) {
         appendCompletedAction(
             runtime, ActionLogSeverity::warning,
             ActionLogCategory::settings, false,
             localizedMessage("Live settings changed externally", {}),
             technicalMessage(runtime->transaction.diagnostic));
+      }
+    }
+    if (runtime->outputDraft && !runtime->outputDraft->applying) {
+      auto &draft = *runtime->outputDraft;
+      for (const auto &profile : runtime->transaction.baselineOutputProfiles) {
+        if (std::none_of(draft.beforeProfiles.begin(), draft.beforeProfiles.end(),
+            [&profile](const auto &entry) { return entry.card == profile.card; })) {
+          draft.beforeProfiles.push_back(profile);
+          draft.profiles.push_back(profile);
+        }
       }
     }
   }
@@ -2632,6 +2668,7 @@ static void onConnectionChanged(bool connected, std::string_view error,
   }
   markControlDisconnected(runtime->state, error);
   if (runtime->transactionReady) {
+    interruptOutputConfiguration(runtime, error);
     markSettingsDisconnected(runtime->transaction, error);
   }
   appendCompletedAction(

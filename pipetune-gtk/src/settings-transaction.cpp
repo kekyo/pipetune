@@ -211,10 +211,32 @@ void markSettingsDisconnected(SettingsTransaction &transaction,
   transaction.diagnostic = diagnostic;
 }
 
+static bool observeOutputProfiles(SettingsTransaction &transaction,
+    std::span<const pipetune::OutputProfileSelection> profiles) {
+  auto changed = false;
+  for (const auto &profile : profiles) {
+    const auto known = std::find_if(transaction.confirmedOutputProfiles.begin(),
+        transaction.confirmedOutputProfiles.end(),
+        [&profile](const auto &entry) { return entry.card == profile.card; });
+    if (known == transaction.confirmedOutputProfiles.end()) {
+      // A card first seen after opening the dialog still needs a checkpoint.
+      transaction.baselineOutputProfiles.push_back(profile);
+      transaction.desiredOutputProfiles.push_back(profile);
+      transaction.confirmedOutputProfiles.push_back(profile);
+    } else if (*known != profile) {
+      *known = profile;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 void reconnectSettingsTransaction(
     SettingsTransaction &transaction,
     const pipetune::StartupConfig &live,
-    std::uint64_t liveRevision) {
+    std::uint64_t liveRevision,
+    std::span<const pipetune::OutputProfileSelection> outputProfiles) {
+  observeOutputProfiles(transaction, outputProfiles);
   transaction.connected = true;
   transaction.confirmedLive = live;
   transaction.confirmedRevision = liveRevision;
@@ -228,16 +250,18 @@ void reconnectSettingsTransaction(
 void observeSettingsRuntime(
     SettingsTransaction &transaction,
     const pipetune::StartupConfig &live,
-    std::uint64_t liveRevision) {
+    std::uint64_t liveRevision,
+    std::span<const pipetune::OutputProfileSelection> outputProfiles) {
   if (!transaction.connected) {
-    reconnectSettingsTransaction(transaction, live, liveRevision);
+    reconnectSettingsTransaction(transaction, live, liveRevision, outputProfiles);
     return;
   }
   if (transaction.inFlight != SettingsOperation::none ||
       liveRevision < transaction.confirmedRevision) {
     return;
   }
-  if (configMatches(transaction.confirmedLive, live)) {
+  const auto profilesChanged = observeOutputProfiles(transaction, outputProfiles);
+  if (!profilesChanged && configMatches(transaction.confirmedLive, live)) {
     transaction.confirmedRevision = liveRevision;
     return;
   }

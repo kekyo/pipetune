@@ -19,6 +19,8 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <sys/eventfd.h>
+#include <unistd.h>
 
 struct FakeDaemonState {
   std::mutex mutex;
@@ -39,6 +41,9 @@ struct FakeDaemonState {
   bool outputProfileDiscovered = false;
   std::string outputProfileKey = "analog-stereo";
   std::uint64_t outputInventoryRevision = 1;
+  bool holdOutputChange = false;
+  int releaseOutputChange = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+  ~FakeDaemonState() { close(releaseOutputChange); }
 };
 
 static std::string environmentValue(const char *name) {
@@ -311,10 +316,6 @@ static pipetune::ControlMessageResult closeResponse(std::string response,
 static pipetune::ControlMessageResult handleRequest(
     std::string_view message, void *userData) {
   auto &state = *static_cast<FakeDaemonState *>(userData);
-  {
-    auto lock = std::scoped_lock(state.mutex);
-    appendRequestLog(state, message);
-  }
   const auto parsed = pipetune::parseControlRequest(message);
   if (!parsed.error.empty()) {
     return closeResponse(pipetune::makeControlErrorResponse(parsed.error),
@@ -407,6 +408,27 @@ static pipetune::ControlMessageResult handleRequest(
           snapshotStatus(state, false),
           std::span<const pipetune::ControlWarning>{}),
       true);
+}
+
+static cardio::promise<pipetune::ControlMessageResult> handleAsyncRequest(
+    std::string_view message, void *userData, cardio::cancellation cancellation) {
+  auto &state = *static_cast<FakeDaemonState *>(userData);
+  const auto parsed = pipetune::parseControlRequest(message);
+  auto hold = false;
+  {
+    auto lock = std::scoped_lock(state.mutex);
+    appendRequestLog(state, message);
+    hold = parsed.error.empty() &&
+           parsed.request.command == pipetune::ControlCommand::setOutput &&
+           std::exchange(state.holdOutputChange, false);
+  }
+  if (hold) {
+    // Cancellation closes the suspended request without applying its contents.
+    co_await cardio::from_fd(state.releaseOutputChange, cardio::fd_event::read, cancellation);
+    auto value = eventfd_t{0};
+    static_cast<void>(eventfd_read(state.releaseOutputChange, &value));
+  }
+  co_return handleRequest(message, userData);
 }
 
 static std::string jsonString(std::string_view value) {
@@ -515,6 +537,7 @@ int main(int argc, char **argv) {
       .manualStatusSequence = 0,
       .outputProfilesEnabled = environmentValue("PIPETUNE_E2E_OUTPUT_PROFILES") == "1",
       .unknownOutputProfile = environmentValue("PIPETUNE_E2E_UNKNOWN_OUTPUT_PROFILE") == "1",
+      .holdOutputChange = environmentValue("PIPETUNE_E2E_HOLD_OUTPUT_CHANGE") == "1",
   };
   if (state.outputProfilesEnabled)
     for (const auto &output : state.liveConfig.outputConfiguration.outputs)
@@ -522,9 +545,10 @@ int main(int argc, char **argv) {
         state.outputProfileKey = output.profileIntent->outputKey;
   auto started = pipetune::startControlServer(
       socketPath.path,
-      {.handler = handleRequest,
+      {.handler = nullptr,
        .statusProvider = provideStatus,
-       .userData = &state});
+       .userData = &state,
+       .asyncHandler = handleAsyncRequest});
   if (started.server == nullptr) {
     std::cerr << started.error << '\n';
     return 1;
@@ -533,6 +557,18 @@ int main(int argc, char **argv) {
   std::cout << "READY\n" << std::flush;
   auto input = std::string{};
   while (std::getline(std::cin, input)) {
+    if (input.starts_with("output-profile ")) {
+      {
+        auto lock = std::scoped_lock(state.mutex);
+        state.outputProfilesEnabled = true;
+        state.outputProfileKey = input.substr(15);
+        ++state.outputInventoryRevision;
+      }
+      pipetune::publishControlStatus(started.server.get());
+    }
+    if (input == "release-output") {
+      static_cast<void>(eventfd_write(state.releaseOutputChange, 1));
+    }
     if (input.starts_with("output-timing ")) {
       {
         auto lock = std::scoped_lock(state.mutex);
