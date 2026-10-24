@@ -917,20 +917,8 @@ static void renderOutputControls(GtkRuntime *runtime) {
   // Keep the initiating choice visible while its modal draft is open. Closing
   // without confirmation renders the unchanged parent mode again.
   setComboBoxActive(ui.outputModeCombo, single ? 0 : 1);
-  auto summary = std::ostringstream{};
-  const auto resolvedParent = pipetune::resolveConfiguredOutputs(parent, status.availableOutputs);
-  for (auto index = std::size_t{0}; index < parent.outputs.size(); ++index) {
-    const auto &output = parent.outputs[index];
-    if (index != 0) summary << '\n';
-    summary << output.device.name << " · " << output.device.profile << " · " << outputPresence(resolvedParent[index].state);
-    auto first = true;
-    for (auto slot = std::size_t{0}; slot < parent.channels.size(); ++slot) {
-      if (parent.channels[slot].outputId != output.id) continue;
-      summary << (first ? " · Ch " : ", ") << slot + 1;
-      first = false;
-    }
-  }
-  gtk_label_set_text(GTK_LABEL(ui.outputSummaryLabel), summary.str().c_str());
+  renderOutputOverview(ui.outputSummaryView, parent, status.availableOutputs,
+      status.outputInventoryReady, status.outputInventoryError);
   gtk_widget_set_sensitive(ui.outputConfigureButton, controlsAreEditable(*runtime) &&
       runtime->transaction.inFlight == SettingsOperation::none);
   auto modeNotice = std::string(single ?

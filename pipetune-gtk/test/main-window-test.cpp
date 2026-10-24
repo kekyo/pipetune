@@ -201,6 +201,57 @@ static bool checkOutputConfigurationDefaultAction(
                "the device configuration default must cancel without applying");
 }
 
+static bool checkOutputOverview(const pipetune_gtk::MainWindowUi &ui) {
+  auto *view = GTK_WIDGET(gtk_builder_get_object(ui.builder, "outputSummaryView"));
+  if (!check(GTK_IS_TREE_VIEW(view), "outputs must expose a device/state/channel table")) return false;
+  const auto a = pipetune::OutputDeviceDescription{
+      .identity = {"node", "a", "a", "", "", ""}, .name = "DAC A",
+      .profile = "Stereo", .channelPositions = {"FL", "FR"}};
+  auto b = a;
+  b.identity.location = "b";
+  b.name = "DAC B";
+  const auto configuration = pipetune::OutputConfiguration{
+      .mode = pipetune::OutputMode::multiple,
+      .outputs = {{"b", false, b}, {"a", true, a}},
+      .channels = {{"a", 0, "Left"}, {"b", 0, ""}, {"b", 1, ""}, {"a", 1, "Right"}}};
+  const auto inventory = std::vector<pipetune::AvailableOutput>{{a, "dac-a", 1, 1}};
+  pipetune_gtk::renderOutputOverview(view, configuration, inventory, true, {});
+  auto *model = gtk_tree_view_get_model(GTK_TREE_VIEW(view));
+  if (!check(gtk_tree_view_get_n_columns(GTK_TREE_VIEW(view)) == 3 &&
+      gtk_tree_model_iter_n_children(model, nullptr) == 2,
+      "output overview must retain disabled devices in three columns")) return false;
+  const auto expected = std::array{
+      std::array{"DAC A", "Connected", "Ch 1, Ch 4"},
+      std::array{"DAC B", "Disabled · Not connected", "Ch 2, Ch 3"}};
+  for (auto row = 0; row < 2; ++row) {
+    auto iter = GtkTreeIter{};
+    gtk_tree_model_iter_nth_child(model, &iter, nullptr, row);
+    for (auto column = 0; column < 3; ++column) {
+      auto *text = static_cast<gchar *>(nullptr);
+      gtk_tree_model_get(model, &iter, column, &text, -1);
+      const auto correct = text != nullptr && std::string_view(text) == expected[row][column];
+      g_free(text);
+      if (!check(correct, "outputs must sort by the lowest channel and list nonconsecutive channels")) return false;
+    }
+  }
+  auto iter = GtkTreeIter{};
+  gtk_tree_model_get_iter_first(model, &iter);
+  auto *path = gtk_tree_model_get_path(model, &iter);
+  auto *reference = gtk_tree_row_reference_new(model, path);
+  gtk_tree_path_free(path);
+  pipetune_gtk::renderOutputOverview(view, configuration, inventory, true, {});
+  const auto retained = gtk_tree_row_reference_valid(reference) != FALSE;
+  gtk_tree_row_reference_free(reference);
+  if (!check(retained, "unchanged output status must preserve overview rows")) return false;
+  pipetune_gtk::renderOutputOverview(view, configuration, {}, false, {});
+  gtk_tree_model_get_iter_first(model, &iter);
+  auto *state = static_cast<gchar *>(nullptr);
+  gtk_tree_model_get(model, &iter, 1, &state, -1);
+  const auto waiting = state != nullptr && std::string_view(state) == "Waiting for output devices…";
+  g_free(state);
+  return check(waiting, "incomplete enumeration must not appear connected");
+}
+
 static bool checkLanguageChoices(const pipetune_gtk::MainWindowUi &ui) {
   constexpr auto expected = std::array<std::string_view, 11>{
       "System default", "English", "العربية", "Español", "Français",
@@ -424,6 +475,7 @@ int main(int argc, char **argv) {
       check(ui.builder != nullptr, "main window builder is unavailable") &&
       checkWidgetTypes(ui) && checkSettingsPages(ui) &&
       checkOutputConfigurationDefaultAction(ui) &&
+      checkOutputOverview(ui) &&
       checkDspIdleControls(ui) &&
       checkPresetConfiguration(ui, {"Enabled", "Off", "Ignored"}) &&
       checkLanguageChoices(ui) &&

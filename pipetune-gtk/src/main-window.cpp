@@ -7,6 +7,7 @@
 
 #include "gtk-resources.h"
 #include "localization.h"
+#include "output-mapping-model.h"
 
 #ifdef PIPETUNE_GTK_E2E_ACCESSIBILITY
 #include <gestament/gtk.h>
@@ -15,9 +16,93 @@
 #include <gdk/gdkx.h>
 
 #include <optional>
+#include <array>
 #include <string>
 
 namespace pipetune_gtk {
+
+static void configureOutputOverview(GtkWidget *widget, bool selectable) {
+  auto *view = GTK_TREE_VIEW(widget);
+  auto *store = gtk_list_store_new(5, G_TYPE_STRING, G_TYPE_STRING,
+      G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
+  gtk_tree_view_set_model(view, GTK_TREE_MODEL(store));
+  g_object_unref(store);
+  const auto headings = std::array{translate("Device name"), translate("State"), translate("Channels")};
+  const auto widths = std::array{150, 125, 130};
+  for (auto index = 0; index < 3; ++index) {
+    auto *cell = gtk_cell_renderer_text_new();
+    g_object_set(cell, "ypad", 6, "xpad", 8, nullptr);
+    if (index == 0) g_object_set(cell, "ellipsize", PANGO_ELLIPSIZE_END, nullptr);
+    else g_object_set(cell, "wrap-mode", PANGO_WRAP_WORD_CHAR,
+        "wrap-width", widths[index] - 16, nullptr);
+    auto *column = gtk_tree_view_column_new_with_attributes(headings[index], cell, "text", index, nullptr);
+    gtk_tree_view_column_set_sizing(column, GTK_TREE_VIEW_COLUMN_FIXED);
+    gtk_tree_view_column_set_fixed_width(column, widths[index]);
+    gtk_tree_view_column_set_expand(column, index == 0);
+    gtk_tree_view_append_column(view, column);
+  }
+  gtk_tree_view_set_tooltip_column(view, 4);
+  gtk_tree_selection_set_mode(gtk_tree_view_get_selection(view), selectable ? GTK_SELECTION_SINGLE : GTK_SELECTION_NONE);
+}
+
+void renderOutputOverview(GtkWidget *widget,
+    const pipetune::OutputConfiguration &configuration,
+    std::span<const pipetune::AvailableOutput> inventory,
+    bool inventoryReady, std::string_view inventoryError) {
+  auto enabled = configuration;
+  for (auto &output : enabled.outputs) output.enabled = true;
+  const auto resolved = pipetune::resolveConfiguredOutputs(enabled, inventory);
+  auto rows = std::vector<std::array<std::string, 5>>{};
+  for (const auto index : configuredOutputOrder(configuration)) {
+    const auto &output = configuration.outputs[index];
+    auto state = std::string{};
+    if (!inventoryError.empty()) state = translate("Inventory unavailable");
+    else if (!inventoryReady) state = translate("Waiting for output devices…");
+    else switch (resolved[index].state) {
+    case pipetune::OutputConnectionState::connected: state = translate("Connected"); break;
+    case pipetune::OutputConnectionState::missing: state = translate("Not connected"); break;
+    case pipetune::OutputConnectionState::profileMismatch: state = translate("Profile changed"); break;
+    case pipetune::OutputConnectionState::ambiguous: state = translate("Ambiguous device"); break;
+    case pipetune::OutputConnectionState::disabled: break;
+    }
+    if (!output.enabled) state = std::string(translate("Disabled")) + " · " + state;
+    auto channels = std::string{};
+    for (auto slot = std::size_t{0}; slot < configuration.channels.size(); ++slot) {
+      if (configuration.channels[slot].outputId != output.id) continue;
+      if (!channels.empty()) channels += ", ";
+      channels += "Ch " + std::to_string(slot + 1);
+    }
+    if (channels.empty()) channels = translate("Unassigned");
+    rows.push_back({output.device.name, state, channels, output.id,
+        output.device.name + "\n" + translate("Output profile") + ": " + output.device.profile});
+  }
+  auto *view = GTK_TREE_VIEW(widget);
+  auto *model = gtk_tree_view_get_model(view);
+  auto same = gtk_tree_model_iter_n_children(model, nullptr) == static_cast<int>(rows.size());
+  auto iter = GtkTreeIter{};
+  for (auto index = std::size_t{0}; same && index < rows.size(); ++index) {
+    gtk_tree_model_iter_nth_child(model, &iter, nullptr, static_cast<int>(index));
+    for (auto column = 0; column < 5; ++column) {
+      auto *text = static_cast<gchar *>(nullptr);
+      gtk_tree_model_get(model, &iter, column, &text, -1);
+      same = same && text != nullptr && rows[index][column] == text;
+      g_free(text);
+    }
+  }
+  if (same) return;
+  auto *selection = gtk_tree_view_get_selection(view);
+  auto *selectedId = static_cast<gchar *>(nullptr);
+  if (gtk_tree_selection_get_selected(selection, nullptr, &iter))
+    gtk_tree_model_get(model, &iter, 3, &selectedId, -1);
+  auto *store = GTK_LIST_STORE(model);
+  gtk_list_store_clear(store);
+  for (const auto &row : rows) {
+    gtk_list_store_insert_with_values(store, &iter, -1, 0, row[0].c_str(),
+        1, row[1].c_str(), 2, row[2].c_str(), 3, row[3].c_str(), 4, row[4].c_str(), -1);
+    if (selectedId != nullptr && row[3] == selectedId) gtk_tree_selection_select_iter(selection, &iter);
+  }
+  g_free(selectedId);
+}
 
 constexpr char kMainWindowResourcePath[] =
     "/net/kekyo/pipetune-gtk/ui/main-window.ui";
@@ -160,7 +245,7 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
       .outputReservedExpander = requiredWidget(builder, "outputReservedExpander", GTK_TYPE_EXPANDER),
       .outputReservedGrid = requiredWidget(builder, "outputReservedGrid", GTK_TYPE_GRID),
       .outputConfigureButton = requiredWidget(builder, "outputConfigureButton", GTK_TYPE_BUTTON),
-      .outputSummaryLabel = requiredWidget(builder, "outputSummaryLabel", GTK_TYPE_LABEL),
+      .outputSummaryView = requiredWidget(builder, "outputSummaryView", GTK_TYPE_TREE_VIEW),
       .outputConfigurationDialog = requiredWidget(builder, "outputConfigurationDialog", GTK_TYPE_DIALOG),
       .outputConfigurationApplyButton = requiredWidget(builder, "outputConfigurationApplyButton", GTK_TYPE_BUTTON),
       .outputConfigurationCancelButton = requiredWidget(builder, "outputConfigurationCancelButton", GTK_TYPE_BUTTON),
@@ -228,6 +313,7 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
                        effetuneVersionText.c_str());
   gtk_combo_box_set_active(GTK_COMBO_BOX(ui.logFilterCombo), 0);
   gtk_window_set_default(GTK_WINDOW(ui.window), ui.applyButton);
+  configureOutputOverview(ui.outputSummaryView, false);
 
   auto geometry = GdkGeometry{};
   geometry.min_width = 900;

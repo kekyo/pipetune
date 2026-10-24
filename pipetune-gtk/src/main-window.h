@@ -12,11 +12,25 @@
 #include <gtk/gtk.h>
 
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace pipetune_gtk {
+
+/**
+ * Renders configured outputs in ascending channel order without changing routing.
+ * @param view Three-column output overview.
+ * @param configuration Confirmed or locally edited output assignments.
+ * @param inventory Current physical output descriptions.
+ * @param inventoryReady Whether device enumeration has completed.
+ * @param inventoryError Device enumeration diagnostic, empty on success.
+ */
+void renderOutputOverview(GtkWidget *view,
+    const pipetune::OutputConfiguration &configuration,
+    std::span<const pipetune::AvailableOutput> inventory,
+    bool inventoryReady, std::string_view inventoryError);
 
 /**
  * Holds the GtkBuilder and widgets required by the main window controller.
@@ -74,8 +88,8 @@ struct MainWindowUi {
   GtkWidget *outputReservedGrid = nullptr;
   /** Opens the output configuration editor without changing live settings. */
   GtkWidget *outputConfigureButton = nullptr;
-  /** Read-only summary of the confirmed output configuration. */
-  GtkWidget *outputSummaryLabel = nullptr;
+  /** Device, connection state, and channel columns for the confirmed outputs. */
+  GtkWidget *outputSummaryView = nullptr;
   /** Modal editor whose changes remain local until confirmation. */
   GtkWidget *outputConfigurationDialog = nullptr;
   /** Applies the complete output draft in one live operation. */
