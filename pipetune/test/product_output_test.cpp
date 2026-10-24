@@ -860,7 +860,8 @@ static int runAudio(std::string_view scenario) {
   test.graphQuantum = scenario.ends_with("-alt") ? 512 : 256;
   test.controls = scenario == "product-controls" || test.graphClock;
   test.outputChange = scenario == "product-output-change";
-  test.profileUnknown = scenario == "product-output-profile-unknown" || scenario == "product-output-profile-shutdown";
+  test.profileUnknown = scenario == "product-output-profile-unknown" || scenario == "product-output-profile-shutdown" ||
+      scenario == "product-output-profile-restore-failure";
   test.outputTimeout = scenario == "product-output-timeout";
   test.recovery = scenario == "product-output-recovery";
   test.inventory = scenario.starts_with("product-output-status");

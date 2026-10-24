@@ -2200,6 +2200,7 @@ static bool advancePendingProfileRestorations(PipeWireRuntime &runtime) {
     }
     if (cardIsPresent(runtime, requested.first)) {
       if (!runtime.pendingProfileTargetObserved) return true;
+      auto failure = std::string{};
       if (runtime.pendingProfileRetryCount < 2) {
         auto retry = OutputProfileSelection{.card = requested.first, .cardProfileName = requested.second,
             .outputKey = {}, .allowMissingForRestore = true};
@@ -2219,11 +2220,18 @@ static bool advancePendingProfileRestorations(PipeWireRuntime &runtime) {
               &delay, &interval, false);
           return true;
         }
-        setPendingProfileRestoreError(runtime, "cannot reapply saved output profile: " + error);
-      } else setPendingProfileRestoreError(runtime, "saved output profile was repeatedly overridden after reconnect");
+        failure = "cannot reapply saved output profile: " + error;
+      } else failure = "saved output profile was repeatedly overridden after reconnect";
       runtime.pendingProfileRestorations.erase(std::remove_if(runtime.pendingProfileRestorations.begin(),
           runtime.pendingProfileRestorations.end(), [&](const auto &item) { return item.card == requested.first; }),
           runtime.pendingProfileRestorations.end());
+      runtime.pendingProfileRollback = true;
+      runtime.profileTransition = {};
+      runtime.profileTransition.previous.push_back(runtime.pendingPreviousProfile);
+      runtime.profileTransition.previousInputs.push_back({requested.first, runtime.pendingProfileInputRoutes});
+      beginProfileRestoration(runtime, std::move(failure));
+      advanceProfileTransition(runtime);
+      return true;
     }
     runtime.requestedProfileRestorations.clear();
     runtime.pendingProfileOldNodeSerials.clear();

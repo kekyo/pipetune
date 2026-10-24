@@ -38,6 +38,9 @@ struct fixture {
     bool recreate_output_on_profile_change;
     bool omit_profile_classes;
     bool hold_output_node;
+    bool override_profile_on_signal;
+    bool initial_input_only_profile;
+    bool optical_profile_requested;
     uint32_t card_id;
     bool monitor_optical_pcm;
     struct pw_stream *optical_monitor;
@@ -289,6 +292,13 @@ static int set_param(void *object, uint32_t id, uint32_t flags, const struct spa
                 SPA_PARAM_PROFILE_save, SPA_POD_OPT_Bool(&save)) < 0 || index < 0 ||
                 index > (self->output_profile_variant ? 3 : 1))
             return -EINVAL;
+        if (self->initial_input_only_profile && !self->optical_profile_requested && index == 0) return 0;
+        if (self->initial_input_only_profile && !self->optical_profile_requested && index == 1) {
+            printf("input-before-target route=%d mute=%d volume=%f,%f\n",
+                self->active_routes[1], self->mute[1], self->volumes[1][0], self->volumes[1][1]);
+            fflush(stdout);
+        }
+        if (index == 1) self->optical_profile_requested = true;
         if (index != self->active_profile || save != self->save_profile) {
             const bool profile_changed = index != self->active_profile;
             self->active_profile = index;
@@ -372,6 +382,29 @@ static const struct spa_device_methods methods = {
 
 static void on_signal(void *data, int number) {
     struct fixture *self = data;
+    if (number == SIGWINCH) {
+        printf("fixture-state profile=%d input-route=%d mute=%d volume=%f,%f\n",
+            self->active_profile, self->active_routes[1], self->mute[1],
+            self->volumes[1][0], self->volumes[1][1]);
+        fflush(stdout);
+        return;
+    }
+    if (number == SIGUSR2 && self->override_profile_on_signal) {
+        self->active_profile = 0;
+        self->active_routes[1] = 3;
+        self->volumes[1][0] = 0.173f;
+        self->volumes[1][1] = 0.173f;
+        self->mute[1] = true;
+        self->params[1].flags ^= SPA_PARAM_INFO_SERIAL;
+        self->params[3].flags ^= SPA_PARAM_INFO_SERIAL;
+        emit_info(self);
+        if (self->nodes[0]) pw_proxy_destroy((struct pw_proxy *)self->nodes[0]);
+        self->nodes[0] = NULL;
+        create_output_node(self);
+        printf("profile-overridden input-route=3 mute=1 volume=0.173000\n");
+        fflush(stdout);
+        return;
+    }
     if (number == SIGUSR1) {
         self->hold_output_node = true;
         printf("output-node-hold-ready\n");
@@ -417,6 +450,9 @@ int main(int argc, char **argv) {
     self.recreate_output_on_profile_change = getenv("PIPETUNE_PROFILE_RECREATE") != NULL;
     self.omit_profile_classes = getenv("PIPETUNE_PROFILE_NO_CLASSES") != NULL;
     self.monitor_optical_pcm = getenv("PIPETUNE_PROFILE_MONITOR") != NULL;
+    self.override_profile_on_signal = getenv("PIPETUNE_PROFILE_OVERRIDE_SIGNAL") != NULL;
+    self.initial_input_only_profile = getenv("PIPETUNE_PROFILE_INITIAL_INPUT_ONLY") != NULL;
+    if (self.initial_input_only_profile) self.active_profile = 3;
     self.device.iface = SPA_INTERFACE_INIT(SPA_TYPE_INTERFACE_Device, SPA_VERSION_DEVICE, &methods, &self);
     spa_hook_list_init(&self.listeners);
     self.loop = pw_main_loop_new(NULL);
@@ -425,6 +461,8 @@ int main(int argc, char **argv) {
         pw_loop_add_signal(loop, SIGTERM, on_signal, &self),
         pw_loop_add_signal(loop, SIGINT, on_signal, &self),
         pw_loop_add_signal(loop, SIGUSR1, on_signal, &self),
+        pw_loop_add_signal(loop, SIGUSR2, on_signal, &self),
+        pw_loop_add_signal(loop, SIGWINCH, on_signal, &self),
     };
     struct pw_context *context = pw_context_new(loop, NULL, 0);
     /* Real hardware belongs to WirePlumber, which can see the internal capture
