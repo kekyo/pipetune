@@ -229,7 +229,15 @@ static struct spa_pod *profile(struct fixture *self, struct spa_pod_builder *bui
 static struct spa_pod *route(struct fixture *self, struct spa_pod_builder *builder, uint32_t id, uint32_t index) {
     const char *names[] = { "fixture-output-analog", "fixture-output-hdmi", "fixture-input-mic", "fixture-input-line" };
     const char *descriptions[] = { "Fixture Analog Output", "Fixture HDMI Output", "Fixture Microphone", "Fixture Line Input" };
-    const int profiles[] = {0, 1};
+    const int regular_profiles[] = {0, 1};
+    const int input_only_profiles[] = {0, 1, 3};
+    /* The override scenario has one optical input route so policy changes do
+     * not race the profile rollback being tested. Other scenarios retain both. */
+    const int override_line_profiles[] = {0};
+    const int *profiles = index == 2 ? input_only_profiles :
+        index == 3 && self->override_profile_on_signal ? override_line_profiles : regular_profiles;
+    const uint32_t profile_count = index == 2 ? 3 :
+        index == 3 && self->override_profile_on_signal ? 1 : 2;
     const int device = index < 2 ? 0 : 1;
     struct spa_pod_frame frame;
     spa_pod_builder_push_object(builder, &frame, SPA_TYPE_OBJECT_ParamRoute, id);
@@ -240,7 +248,7 @@ static struct spa_pod *route(struct fixture *self, struct spa_pod_builder *build
         SPA_PARAM_ROUTE_description, SPA_POD_String(descriptions[index]),
         SPA_PARAM_ROUTE_priority, SPA_POD_Int(100),
         SPA_PARAM_ROUTE_available, SPA_POD_Id(SPA_PARAM_AVAILABILITY_yes),
-        SPA_PARAM_ROUTE_profiles, SPA_POD_Array(sizeof(int), SPA_TYPE_Int, 2, profiles),
+        SPA_PARAM_ROUTE_profiles, SPA_POD_Array(sizeof(int), SPA_TYPE_Int, profile_count, profiles),
         SPA_PARAM_ROUTE_devices, SPA_POD_Array(sizeof(int), SPA_TYPE_Int, 1, &device), 0);
     if (id == SPA_PARAM_Route) {
         spa_pod_builder_add(builder,
@@ -267,6 +275,7 @@ static int enum_params(void *object, int seq, uint32_t id, uint32_t start,
     uint32_t emitted = 0;
     for (uint32_t index = start; index < length && emitted < maximum; ++index) {
         if (id == SPA_PARAM_EnumProfile && self->omit_optical_profile && index == 1) continue;
+        if (id == SPA_PARAM_Route && self->output_profile_variant && self->active_profile == 3 && index == 0) continue;
         uint8_t buffer[4096];
         struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
         struct spa_pod *pod;
@@ -305,8 +314,9 @@ static int set_param(void *object, uint32_t id, uint32_t flags, const struct spa
             const bool profile_changed = index != self->active_profile;
             self->active_profile = index;
             self->save_profile = save;
+            if (self->output_profile_variant && index == 3) self->active_routes[1] = 2;
             if (self->output_profile_variant && index == 1) {
-                self->active_routes[1] = 3;
+                self->active_routes[1] = self->override_profile_on_signal ? 2 : 3;
                 self->volumes[1][0] = 0.4f;
                 self->volumes[1][1] = 0.4f;
                 self->mute[1] = true;
@@ -342,7 +352,9 @@ static int set_param(void *object, uint32_t id, uint32_t flags, const struct spa
             SPA_PARAM_ROUTE_device, SPA_POD_Int(&device),
             SPA_PARAM_ROUTE_save, SPA_POD_OPT_Bool(&save),
             SPA_PARAM_ROUTE_props, SPA_POD_OPT_Pod(&props)) < 0 ||
-            device < 0 || device > 1 || index < device * 2 || index >= device * 2 + 2) return -EINVAL;
+            device < 0 || device > 1 || index < device * 2 || index >= device * 2 + 2 ||
+            (self->output_profile_variant && self->active_profile == 3 && index != 2) ||
+            (self->override_profile_on_signal && self->active_profile == 1 && index == 3)) return -EINVAL;
     bool changed = self->active_routes[device] != index || self->save[device] != save;
     self->active_routes[device] = index;
     self->save[device] = save;
