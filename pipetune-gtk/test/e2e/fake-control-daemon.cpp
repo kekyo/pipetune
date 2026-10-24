@@ -38,9 +38,11 @@ struct FakeDaemonState {
   std::string outputTimingState = "normal";
   bool outputProfilesEnabled = false;
   bool unknownOutputProfile = false;
+  bool unconfirmedOutputProfile = false;
   bool outputProfileDiscovered = false;
   std::string outputProfileKey = "analog-stereo";
   std::uint64_t outputInventoryRevision = 1;
+  std::string outputProfileRestoration = "ready";
   bool holdOutputChange = false;
   int releaseOutputChange = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
   ~FakeDaemonState() { close(releaseOutputChange); }
@@ -179,6 +181,8 @@ static pipetune::ControlRuntimeStatus snapshotStatus(
     stale = true;
   }
   auto status = makeStatus(config, revision);
+  status.outputProfileRestoring = state.outputProfileRestoration == "restoring";
+  status.outputProfileRestorationError = state.outputProfileRestoration == "failed" ? "E2E profile restoration failed" : "";
   if (state.outputProfilesEnabled) {
     const auto card = pipetune::OutputCardIdentity{"alsa", "usb:test", "vendor", "product", "serial"};
     auto &device = status.availableOutputs.front().device;
@@ -383,7 +387,7 @@ static pipetune::ControlMessageResult handleRequest(
             return closeResponse(pipetune::makeControlErrorResponse("E2E profile layout differs; review discovered channels"), true);
           }
         }
-        if (state.outputProfileKey != profile.outputKey) {
+        if (!state.unconfirmedOutputProfile && state.outputProfileKey != profile.outputKey) {
           state.outputProfileKey = profile.outputKey;
           ++state.outputInventoryRevision;
         }
@@ -537,6 +541,7 @@ int main(int argc, char **argv) {
       .manualStatusSequence = 0,
       .outputProfilesEnabled = environmentValue("PIPETUNE_E2E_OUTPUT_PROFILES") == "1",
       .unknownOutputProfile = environmentValue("PIPETUNE_E2E_UNKNOWN_OUTPUT_PROFILE") == "1",
+      .unconfirmedOutputProfile = environmentValue("PIPETUNE_E2E_UNCONFIRMED_OUTPUT_PROFILE") == "1",
       .holdOutputChange = environmentValue("PIPETUNE_E2E_HOLD_OUTPUT_CHANGE") == "1",
   };
   if (state.outputProfilesEnabled)
@@ -557,6 +562,13 @@ int main(int argc, char **argv) {
   std::cout << "READY\n" << std::flush;
   auto input = std::string{};
   while (std::getline(std::cin, input)) {
+    if (input.starts_with("output-restoration ")) {
+      {
+        auto lock = std::scoped_lock(state.mutex);
+        state.outputProfileRestoration = input.substr(19);
+      }
+      pipetune::publishControlStatus(started.server.get());
+    }
     if (input.starts_with("output-profile ")) {
       {
         auto lock = std::scoped_lock(state.mutex);

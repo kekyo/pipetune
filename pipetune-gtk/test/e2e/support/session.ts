@@ -71,6 +71,8 @@ export interface PipeTuneGtkTestOptions {
   readonly outputProfilesEnabled?: boolean;
   /** Requires explicit discovery before the digital profile exposes its layout. */
   readonly unknownOutputProfile?: boolean;
+  /** Accepts the output request while reporting an unchanged OS profile. */
+  readonly unconfirmedOutputProfile?: boolean;
   /** Suspends the first output request until released or disconnected. */
   readonly holdOutputChange?: boolean;
 }
@@ -109,6 +111,10 @@ export interface PipeTuneGtkTestSession {
   readonly publishStatus: () => Promise<void>;
   /** Allows the held output request to complete. */
   readonly releaseOutputChange: () => Promise<void>;
+  /** Publishes restoration progress or a diagnostic independently of a draft. */
+  readonly setOutputRestoration: (
+    state: 'ready' | 'restoring' | 'failed'
+  ) => Promise<void>;
   /** Changes the OS profile externally without incrementing the configuration revision. */
   readonly setOutputProfile: (
     profile: 'analog-stereo' | 'iec958-stereo'
@@ -304,6 +310,8 @@ export const launchPipeTuneGtk = async (
         options.outputProfilesEnabled === true ? '1' : undefined,
       PIPETUNE_E2E_UNKNOWN_OUTPUT_PROFILE:
         options.unknownOutputProfile === true ? '1' : undefined,
+      PIPETUNE_E2E_UNCONFIRMED_OUTPUT_PROFILE:
+        options.unconfirmedOutputProfile === true ? '1' : undefined,
       PIPETUNE_E2E_HOLD_OUTPUT_CHANGE:
         options.holdOutputChange === true ? '1' : undefined,
     },
@@ -443,6 +451,18 @@ export const launchPipeTuneGtk = async (
           if (error !== null && error !== undefined) reject(error);
           else resolve();
         });
+      });
+    },
+    setOutputRestoration: async (state) => {
+      if (daemon === undefined) throw new Error('fake daemon is unavailable');
+      await new Promise<void>((resolve, reject) => {
+        daemon?.process.stdin.write(
+          `output-restoration ${state}\n`,
+          (error) => {
+            if (error !== null && error !== undefined) reject(error);
+            else resolve();
+          }
+        );
       });
     },
     setOutputProfile: async (profile) => {

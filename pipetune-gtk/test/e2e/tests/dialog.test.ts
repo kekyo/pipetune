@@ -379,6 +379,172 @@ const hideWithKeyboard = async (method: 'escape' | 'close'): Promise<void> => {
 };
 
 describe('PipeTune GTK dialog', () => {
+  it('retains a profile draft when a success reply does not confirm the selected OS profile', async () => {
+    session = await launchPipeTuneGtk({
+      rejectedCommand: undefined,
+      outputProfilesEnabled: true,
+      unconfirmedOutputProfile: true,
+    });
+    await waitForConnected();
+    const saved = await session.inspectConfig();
+    await selectSettingsPage(3);
+    await openMultipleOutputConfiguration();
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await selectComboItem('output-profile-0', 1);
+    await (
+      await getElement('outputConfigurationApplyButton', 'button')
+    ).click();
+    await toPass(async () =>
+      expect(
+        (
+          await (
+            await getElement('outputConfigurationCancelButton', 'button')
+          ).info()
+        ).states
+      ).toContain('sensitive')
+    );
+    expect(
+      (await (await getElement('outputConfigurationDialog', 'window')).info())
+        .states
+    ).toContain('visible');
+    await expectComboItemSelected('output-profile-0', 1);
+    expect(await session.inspectConfig()).toEqual(saved);
+    expect(
+      (await (await getElement('applyButton', 'button')).info()).states
+    ).not.toContain('sensitive');
+  });
+
+  it('waits for automatic profile restoration before completing parent Cancel', async () => {
+    session = await launchPipeTuneGtk({
+      rejectedCommand: undefined,
+      outputProfilesEnabled: true,
+    });
+    await waitForConnected();
+    await selectSettingsPage(3);
+    await session.setOutputRestoration('restoring');
+    await session.publishStatus();
+    await waitForLabel('status-errors-configuration', 'E2E manual status 1');
+    await (await getElement('cancelButton', 'button')).click();
+    expect(await session.app.getWindowCount()).toBe(1);
+    await session.setOutputRestoration('ready');
+    await toPass(async () =>
+      expect(await session?.app.getWindowCount()).toBe(0)
+    );
+    expect(
+      (await session.readRequests()).filter((r) => r.command === 'set-output')
+    ).toHaveLength(0);
+  });
+
+  it('waits for profile restoration before confirming a draft and shows restoration failures', async () => {
+    session = await launchPipeTuneGtk({
+      rejectedCommand: undefined,
+      outputProfilesEnabled: true,
+    });
+    await waitForConnected();
+    await selectSettingsPage(3);
+    await openMultipleOutputConfiguration();
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await selectComboItem('output-profile-0', 1);
+    await session.setOutputRestoration('restoring');
+    await session.setOutputProfile('iec958-stereo');
+    await waitForLabel('outputErrorLabel', 'Waiting for output devices…');
+    expect(
+      (
+        await (
+          await getElement('outputConfigurationApplyButton', 'button')
+        ).info()
+      ).states
+    ).not.toContain('sensitive');
+    await session.setOutputProfile('analog-stereo');
+    await session.setOutputRestoration('ready');
+    await waitForLabel('outputErrorLabel', '');
+    await applyOutputConfiguration();
+    await session.setOutputRestoration('failed');
+    await toPass(async () =>
+      expect(
+        await (await getElement('outputModeNotice', 'label')).text()
+      ).toContain('E2E profile restoration failed')
+    );
+    await reopenOutputConfiguration();
+    await waitForLabel('outputErrorLabel', 'E2E profile restoration failed');
+    expect(
+      (
+        await (
+          await getElement('outputConfigurationApplyButton', 'button')
+        ).info()
+      ).states
+    ).toContain('sensitive');
+    expect(
+      (await session.readRequests()).filter((r) => r.command === 'set-output')
+    ).toHaveLength(1);
+  });
+
+  it('discards a profile choice when its device is replaced by another card', async () => {
+    session = await launchPipeTuneGtk({
+      rejectedCommand: undefined,
+      outputProfilesEnabled: true,
+    });
+    await waitForConnected();
+    await selectSettingsPage(3);
+    await openMultipleOutputConfiguration();
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await selectComboItem('output-profile-0', 1);
+    const replacement = await findComboItem(
+      'output-reassign-0',
+      'DAC B · Stereo'
+    );
+    const choices = await getElement('output-reassign-0', 'comboBox');
+    await choices.click();
+    await (await choices.childAt(replacement))?.click();
+    await applyOutputConfiguration();
+    const requests = (await session.readRequests()).filter(
+      (r) => r.command === 'set-output'
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.profileSelections ?? []).toEqual([]);
+    expect(requests[0]?.configuration).toMatchObject({
+      outputs: [{ device: { name: 'DAC B' } }],
+    });
+  });
+
+  it('saves a confirmed profile without another output request and preserves it across reconnect', async () => {
+    session = await launchPipeTuneGtk({
+      rejectedCommand: undefined,
+      outputProfilesEnabled: true,
+    });
+    await waitForConnected();
+    await selectSettingsPage(3);
+    await openMultipleOutputConfiguration();
+    await (await getElement('output-device-0', 'checkbox')).toggle();
+    await selectComboItem('output-profile-0', 1);
+    await applyOutputConfiguration();
+    await (await getElement('applyButton', 'button')).click();
+    await waitForLabel(
+      'transactionStateLabel',
+      'Live settings match the saved configuration'
+    );
+    const saved = await session.inspectConfig();
+    expect(saved.outputConfiguration).toMatchObject({
+      outputs: [{ profileIntent: { outputKey: 'iec958-stereo' } }],
+    });
+    await session.disconnectDaemon();
+    await session.reconnectDaemon();
+    await waitForConnected();
+    await reopenOutputConfiguration();
+    await expectComboItemSelected('output-profile-0', 1);
+    await (
+      await getElement('outputConfigurationCancelButton', 'button')
+    ).click();
+    await (await getElement('cancelButton', 'button')).click();
+    await toPass(async () =>
+      expect(await session?.app.getWindowCount()).toBe(0)
+    );
+    expect(
+      (await session.readRequests()).filter((r) => r.command === 'set-output')
+    ).toHaveLength(1);
+    expect(await session.inspectConfig()).toEqual(saved);
+  });
+
   it('explains an external OS profile conflict and preserves the local draft', async () => {
     session = await launchPipeTuneGtk({
       rejectedCommand: undefined,
@@ -702,7 +868,7 @@ describe('PipeTune GTK dialog', () => {
     await waitForConnected();
     const saved = await session.inspectConfig();
     await selectSettingsPage(3);
-    for (const method of ['button', 'escape'] as const) {
+    for (const method of ['button', 'escape', 'close'] as const) {
       await openMultipleOutputConfiguration();
       await (await getElement('output-device-0', 'checkbox')).toggle();
       if (method === 'button')
@@ -713,7 +879,12 @@ describe('PipeTune GTK dialog', () => {
         await (
           await getElement('outputConfigurationDialog', 'window')
         ).activate();
-        await session.app.input.pressKey('Escape');
+        if (method === 'escape') await session.app.input.pressKey('Escape');
+        else {
+          await session.app.input.setModifier('alt', true);
+          await session.app.input.pressKey('F4');
+          await session.app.input.setModifier('alt', false);
+        }
       }
       await toPass(async () =>
         expect(await session?.app.getWindowCount()).toBe(1)

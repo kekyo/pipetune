@@ -682,7 +682,7 @@ static bool languagePreferenceIsDirty(
 }
 
 static bool dialogCanApply(const GtkRuntime &runtime) noexcept {
-  if (!runtime.dialogActive || runtime.userSetupPending) {
+  if (!runtime.dialogActive || runtime.userSetupPending || runtime.state.runtime.outputProfileRestoring) {
     return false;
   }
   const auto languageDirty = languagePreferenceIsDirty(runtime);
@@ -933,9 +933,12 @@ static void renderOutputControls(GtkRuntime *runtime) {
   gtk_label_set_text(GTK_LABEL(ui.outputSummaryLabel), summary.str().c_str());
   gtk_widget_set_sensitive(ui.outputConfigureButton, controlsAreEditable(*runtime) &&
       runtime->transaction.inFlight == SettingsOperation::none);
-  gtk_label_set_text(GTK_LABEL(ui.outputModeNotice), single ?
+  auto modeNotice = std::string(single ?
       translate("The OS selects the output. Saved device assignments are inactive.") :
       translate("Input uses Ch 1 and Ch 2. Create additional outputs in your EffeTune preset. Disabled devices keep their Ch numbers."));
+  if (status.outputProfileRestoring) modeNotice += "\n" + std::string(translate("Waiting for output devices…"));
+  else if (!status.outputProfileRestorationError.empty()) modeNotice += "\n" + status.outputProfileRestorationError;
+  gtk_label_set_text(GTK_LABEL(ui.outputModeNotice), modeNotice.c_str());
   auto diagnostic = runtime->outputEditError;
   if (runtime->transactionReady && runtime->transaction.conflict)
     diagnostic = runtime->transaction.diagnostic;
@@ -944,12 +947,16 @@ static void renderOutputControls(GtkRuntime *runtime) {
   if (diagnostic.empty()) diagnostic = pipetune::validateOutputConfiguration(configuration);
   if (diagnostic.empty()) diagnostic = status.outputInventoryError;
   if (diagnostic.empty() && !status.outputInventoryReady) diagnostic = translate("Waiting for output devices…");
+  if (status.outputProfileRestoring) diagnostic = translate("Waiting for output devices…");
+  const auto canConfirm = diagnostic.empty();
+  // Restoration failure remains visible while allowing an explicit correction.
+  if (diagnostic.empty()) diagnostic = status.outputProfileRestorationError;
   gtk_label_set_text(GTK_LABEL(ui.outputErrorLabel), diagnostic.c_str());
   gtk_widget_set_visible(ui.outputErrorLabel, !diagnostic.empty());
   gtk_widget_set_sensitive(ui.outputModeCombo, controlsAreEditable(*runtime));
   const auto editing = runtime->outputDraft && !runtime->outputDraft->applying;
   gtk_widget_set_sensitive(ui.outputDeviceList, controlsAreEditable(*runtime) && editing);
-  gtk_widget_set_sensitive(ui.outputConfigurationApplyButton, controlsAreEditable(*runtime) && editing && diagnostic.empty());
+  gtk_widget_set_sensitive(ui.outputConfigurationApplyButton, controlsAreEditable(*runtime) && editing && canConfirm);
   gtk_widget_set_sensitive(ui.outputConfigurationCancelButton, editing);
   if (!runtime->outputDraft) return;
   if (ui.displayedOutputConfiguration == configuration && ui.displayedOutputs == status.availableOutputs &&
@@ -1494,6 +1501,7 @@ static void hideAfterRollback(GtkRuntime *runtime) {
 
 static void finishRollbackIfReady(GtkRuntime *runtime) {
   if (runtime->closeAfterRollback && runtime->transactionReady &&
+      !runtime->state.runtime.outputProfileRestoring &&
       settingsTransactionShouldClose(runtime->transaction)) {
     hideAfterRollback(runtime);
   }
@@ -1711,6 +1719,10 @@ static void onOutputReassignChanged(GtkComboBox *combo, gpointer userData) {
   auto candidate = runtime->outputDraft->configuration;
   const auto &inventory = runtime->state.runtime.availableOutputs;
   const auto id = key.starts_with("saved:") ? key.substr(6) : std::string(selected);
+  const auto oldOutput = std::find_if(candidate.outputs.begin(), candidate.outputs.end(),
+      [&id](const auto &output) { return output.id == id; });
+  if (oldOutput == candidate.outputs.end()) return;
+  const auto oldCard = outputCard(oldOutput->device);
   auto choice = OutputReplacementChoice{};
   if (key.starts_with("saved:")) {
     const auto row = std::find_if(runtime->outputDeviceRows.begin(), runtime->outputDeviceRows.end(),
@@ -1730,6 +1742,17 @@ static void onOutputReassignChanged(GtkComboBox *combo, gpointer userData) {
   for (auto &output : candidate.outputs) if (output.id == id) output.profileIntent.reset();
   auto proposal = replaceOutputDevice(candidate, id, choice.device);
   if (proposal.error.empty()) {
+    if (std::none_of(proposal.configuration.outputs.begin(), proposal.configuration.outputs.end(),
+        [&oldCard](const auto &output) { return outputCard(output.device) == oldCard; })) {
+      // Replacing the last output of a card also abandons its draft profile.
+      auto &profiles = runtime->outputDraft->profiles;
+      const auto &before = runtime->outputDraft->beforeProfiles;
+      const auto previous = std::find_if(before.begin(), before.end(),
+          [&oldCard](const auto &profile) { return profile.card == oldCard; });
+      if (previous != before.end()) {
+        for (auto &profile : profiles) if (profile.card == oldCard) profile = *previous;
+      } else std::erase_if(profiles, [&oldCard](const auto &profile) { return profile.card == oldCard; });
+    }
     if (choice.profile) {
       for (auto &output : proposal.configuration.outputs)
         if (output.id == id) output.profileIntent = pipetune::OutputProfileIntent{choice.profile->card, choice.profile->outputKey};
@@ -1800,6 +1823,7 @@ static void onOutputConfigurationResponse(GtkDialog *, gint response, gpointer u
   for (const auto &row : runtime->outputDeviceRows) collectLabels(row.channels);
   collectLabels(runtime->outputReservedChannels);
   if (!controlsAreEditable(*runtime) || runtime->transaction.conflict ||
+      runtime->state.runtime.outputProfileRestoring ||
       draft.revision != runtime->transaction.confirmedRevision ||
       draft.before != runtime->transaction.desiredLive.outputConfiguration) {
     runtime->outputEditError = translate("Output settings changed. Cancel and reopen the configuration dialog.");
@@ -1830,6 +1854,12 @@ static void onOutputConfigurationResponse(GtkDialog *, gint response, gpointer u
 }
 
 static gboolean onOutputConfigurationDelete(GtkWidget *, GdkEvent *, gpointer userData) {
+  onOutputConfigurationResponse(nullptr, GTK_RESPONSE_CANCEL, userData);
+  return TRUE;
+}
+
+static gboolean onOutputConfigurationKeyPress(GtkWidget *, GdkEventKey *event, gpointer userData) {
+  if (event->keyval != GDK_KEY_F4 || (event->state & GDK_MOD1_MASK) == 0) return FALSE;
   onOutputConfigurationResponse(nullptr, GTK_RESPONSE_CANCEL, userData);
   return TRUE;
 }
@@ -2460,6 +2490,27 @@ static void onSettingsOperationReply(const ControlClientReply &reply,
               : runtime->transaction.confirmedLive;
   auto diagnostic =
       success ? std::string{} : controlDiagnostic(reply);
+  if (success && operation == SettingsOperation::output) {
+    const auto &observed = reply.response.status.availableOutputProfiles;
+    for (const auto &selected : runtime->transaction.inFlightOutputProfiles) {
+      if (std::find(runtime->transaction.confirmedOutputProfiles.begin(),
+          runtime->transaction.confirmedOutputProfiles.end(), selected) !=
+          runtime->transaction.confirmedOutputProfiles.end()) continue;
+      const auto matches = std::any_of(observed.begin(), observed.end(), [&selected](const auto &profile) {
+        return profile.active && profile.card == selected.card &&
+            profile.cardProfileName == selected.cardProfileName && profile.outputKey == selected.outputKey;
+      });
+      const auto missing = std::none_of(observed.begin(), observed.end(),
+          [&selected](const auto &profile) { return profile.card == selected.card; });
+      // Cancel may queue restoration for a disconnected card. Every present
+      // card must confirm the selected profile in the successful reply itself.
+      if (!matches && !(runtime->transaction.cancelRequested && missing)) {
+        success = false;
+        diagnostic = "Daemon did not confirm the requested output profile";
+        break;
+      }
+    }
+  }
   completeSettingsOperation(runtime->transaction, success, confirmed,
                             success
                                 ? reply.response.status.configurationRevision
@@ -2545,7 +2596,7 @@ static void dispatchSettingsOperation(
 }
 
 static void driveSettings(GtkRuntime *runtime) {
-  if (!runtime->transactionReady || runtime->controlClient == nullptr) {
+  if (!runtime->transactionReady || runtime->controlClient == nullptr || runtime->state.runtime.outputProfileRestoring) {
     return;
   }
   finishRollbackIfReady(runtime);
@@ -2571,7 +2622,7 @@ static void driveSettings(GtkRuntime *runtime) {
 static void beginTransactionFromRuntime(GtkRuntime *runtime) {
   if (!runtime->dialogActive ||
       runtime->state.connection != ControlConnectionState::connected ||
-      !runtime->state.hasRuntimeStatus) {
+      !runtime->state.hasRuntimeStatus || runtime->state.runtime.outputProfileRestoring) {
     return;
   }
   const auto live = startupConfigFromRuntime(runtime->state.runtime);
@@ -2615,12 +2666,14 @@ static void onSubscriptionMessage(
   }
   if (runtime->dialogActive) {
     const auto live = startupConfigFromRuntime(runtime->state.runtime);
+    const auto profiles = runtime->state.runtime.outputProfileRestoring ?
+        std::vector<pipetune::OutputProfileSelection>{} : activeOutputProfiles(runtime->state.runtime);
     if (!runtime->transactionReady) {
       beginTransactionFromRuntime(runtime);
     } else if (!runtime->transaction.connected) {
       reconnectSettingsTransaction(
           runtime->transaction, live,
-          runtime->state.runtime.configurationRevision, activeOutputProfiles(runtime->state.runtime));
+          runtime->state.runtime.configurationRevision, profiles);
       if (runtime->outputReconciliationPending) {
         if (!runtime->transaction.cancelRequested) {
           runtime->transaction.desiredLive.outputConfiguration = live.outputConfiguration;
@@ -2636,7 +2689,7 @@ static void onSubscriptionMessage(
     } else {
       observeSettingsRuntime(
           runtime->transaction, live,
-          runtime->state.runtime.configurationRevision, activeOutputProfiles(runtime->state.runtime));
+          runtime->state.runtime.configurationRevision, profiles);
       if (runtime->transaction.conflict) {
         appendCompletedAction(
             runtime, ActionLogSeverity::warning,
@@ -2719,6 +2772,7 @@ static void connectMainWindowSignals(GtkRuntime *runtime) {
   g_signal_connect(runtime->ui.outputConfigureButton, "clicked", G_CALLBACK(onOutputConfigureClicked), runtime);
   g_signal_connect(runtime->ui.outputConfigurationDialog, "response", G_CALLBACK(onOutputConfigurationResponse), runtime);
   g_signal_connect(runtime->ui.outputConfigurationDialog, "delete-event", G_CALLBACK(onOutputConfigurationDelete), runtime);
+  g_signal_connect(runtime->ui.outputConfigurationDialog, "key-press-event", G_CALLBACK(onOutputConfigurationKeyPress), runtime);
   g_signal_connect(runtime->ui.rateEnforcementCombo, "changed",
                    G_CALLBACK(onRateEnforcementChanged), runtime);
   g_signal_connect(runtime->ui.dspBackendCombo, "changed",
