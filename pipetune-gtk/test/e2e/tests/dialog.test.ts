@@ -525,6 +525,15 @@ describe('PipeTune GTK dialog', () => {
     await session.clearRequests();
     await reopenOutputConfiguration();
     await selectOutputRow(0);
+    await session.setOutputInventory('missing');
+    await waitForLabel('output-presence-0', 'Not connected');
+    expect(
+      (
+        await (
+          await (await getElement('outputDeviceView', 'table')).cellAt(0, 1)
+        )?.info()
+      )?.name
+    ).toContain('Not connected');
     await (await getElement('outputDeleteButton', 'button')).click();
     const devices = await getElement('outputDeviceView', 'table');
     expect(await devices.getRowCount()).toBe(1);
@@ -1250,7 +1259,9 @@ describe('PipeTune GTK dialog', () => {
     await expectComboItemSelected('output-channel-0-15', 15);
     await (await getElement('outputAddButton', 'button')).click();
     await choosePickerOutput('DAC B');
-    expect(await (await getElement('outputErrorLabel', 'label')).text()).toContain('exceeds sixteen channels');
+    expect(
+      await (await getElement('outputErrorLabel', 'label')).text()
+    ).toContain('exceeds sixteen channels');
     await (await getElement('outputChooseCancelButton', 'button')).click();
     await replaceOutputWith('DAC B');
     await waitForLabel('output-presence-0', 'Connected');
@@ -1311,8 +1322,16 @@ describe('PipeTune GTK dialog', () => {
     await expectComboItemSelected('output-channel-1-0', 2);
     await selectOutputRow(0);
     await toggleOutputDevice(0);
-    expect(await (await getElement('output-device-0', 'checkbox')).isChecked()).toBe(false);
-    expect((await (await (await getElement('outputDeviceView', 'table')).cellAt(0, 1))?.info())?.name).toContain('Disabled');
+    expect(
+      await (await getElement('output-device-0', 'checkbox')).isChecked()
+    ).toBe(false);
+    expect(
+      (
+        await (
+          await (await getElement('outputDeviceView', 'table')).cellAt(0, 1)
+        )?.info()
+      )?.name
+    ).toContain('Disabled');
     await expectComboItemSelected('output-channel-0-0', 0);
     await selectOutputRow(1);
     await expectComboItemSelected('output-channel-1-0', 2);
