@@ -198,6 +198,12 @@ SFZ本体、include先、ARIAのXMLはUTF-8を優先して読み、不正なバ�
 サンプルに`*sine`、`*saw`、`*square`、`*triangle`、`*tri`、`*noise`、`*silence`を指定した
 生成波形は、外部の音声ファイルなしで再生できます。
 Sample Shift（`ss`）は選ぶサンプルを最大6半音ずらします。出力する音高は同じです。
+SFZ Note Playerの音符検出方式はEffeTune 2.15.0の設定画面にあるDetection Modeで
+`Classic`または`Event`を選び、プリセットに保存します。PipeTuneは保存された方式を使用し、
+指定がない場合は`Classic`で再生します。`Event`は確定した音符の開始と終了を使って発音を制御し、
+`Classic`より約140 ms遅延が増えます。この遅延は他の音声経路との自動補償に含まれます。
+検出方式だけを切り替える場合、準備済みの音源は再利用されます。
+設定項目は[EffeTune 2.15.0のSFZ Note Player](https://github.com/Frieve-A/effetune/blob/v2.15.0/plugins/others/sfz_note_player.js)を参照してください。
 バンク予算は既定256 MiBで、設定画面から64 / 128 / 256 / 512 / 1024 MiBを選べます。
 直接実行では`--sfz-max-size MIB`、daemon設定では`PIPETUNE_SFZ_MAX_SIZE_MIB`を使います。
 必要に応じて上流と同じ規則で再生可能な全キーを残しながらレイヤーを減らします。

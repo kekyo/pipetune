@@ -221,6 +221,13 @@ fall back to Windows-1252 for invalid bytes. `*sine`, `*saw`, `*square`,
 `*triangle`, `*tri`, `*noise`, and `*silence`
 generate samples without an external audio file. Sample Shift (`ss`) selects a
 sample up to six semitones away while preserving the output pitch.
+Select `Classic` or `Event` with Detection Mode in EffeTune 2.15.0's SFZ Note
+Player settings, then save the preset. PipeTune uses the saved mode; a preset
+without one uses `Classic`. `Event` uses confirmed note starts and ends to
+control playback and adds about 140 ms of latency compared with `Classic`.
+PipeTune includes that latency in automatic alignment with other audio paths.
+Changing only the detection mode reuses the prepared instrument.
+See [EffeTune 2.15.0's SFZ Note Player settings](https://github.com/Frieve-A/effetune/blob/v2.15.0/plugins/others/sfz_note_player.js).
 The bank budget defaults to 256 MiB; select
 64, 128, 256, 512, or 1024 MiB in settings, with `--sfz-max-size MIB` for direct
 runs or `PIPETUNE_SFZ_MAX_SIZE_MIB` in the daemon configuration. When necessary,
