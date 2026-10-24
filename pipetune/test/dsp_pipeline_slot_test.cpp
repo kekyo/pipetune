@@ -69,6 +69,16 @@ static std::filesystem::path writeTubeSimulatorPreset(
   return path;
 }
 
+static std::filesystem::path writeMatrixPreset(
+    const std::filesystem::path &directory, std::string_view name,
+    std::string_view routes) {
+  const auto path = directory / name;
+  auto stream = std::ofstream(path, std::ios::binary);
+  stream << R"json({"pipeline":[{"name":"Matrix","enabled":true,"channel":"All","parameters":{"mx":")json"
+         << routes << R"json("}}]})json";
+  return path;
+}
+
 static std::unique_ptr<pipetune::DspPipeline> loadPipeline(
     const std::filesystem::path &path) {
   auto loaded = pipetune::loadDspPipeline(
@@ -81,6 +91,99 @@ static std::unique_ptr<pipetune::DspPipeline> loadPipeline(
 
 static bool approximately(float actual, float expected) {
   return std::abs(actual - expected) <= 1.0e-6F;
+}
+
+static bool allApproximately(std::span<const float> samples, float expected);
+
+static bool testMatrixResetRoutes(const std::filesystem::path &directory) {
+  struct Scenario {
+    std::string_view name;
+    std::string_view routes;
+    std::vector<float> expected;
+  };
+  auto wide = std::vector<float>(16, 0.0F);
+  wide[0] = 16.0F / 64.0F;
+  wide[15] = 1.0F / 64.0F;
+  const auto scenarios = std::vector<Scenario>{
+      {"swap.effetune_preset", "0110", {2.0F / 64.0F, 1.0F / 64.0F}},
+      {"empty.effetune_preset", "", {0.0F, 0.0F}},
+      {"sum.effetune_preset", "001000", {4.0F / 64.0F, 0.0F}},
+      {"phase.effetune_preset", "p0011", {-1.0F / 64.0F, 2.0F / 64.0F}},
+      {"sixteen.effetune_preset", "0ff0", wide},
+  };
+  for (const auto &scenario : scenarios) {
+    const auto path = writeMatrixPreset(directory, scenario.name, scenario.routes);
+    const auto channels = static_cast<std::uint32_t>(scenario.expected.size());
+    auto loaded = pipetune::loadDspPipeline(path,
+        {.sampleRate = 48000.0F, .maxChannels = channels, .maxFrames = 128});
+    if (!check(loaded.pipeline != nullptr, loaded.error) ||
+        !check(loaded.warnings.empty() && loaded.pipeline->activePluginCount() == 1,
+            "Matrix route scenario must prepare one active plugin")) return false;
+    const auto render = [&](std::uint32_t frames, double time) {
+      auto samples = std::vector<float>(channels * frames);
+      for (auto channel = 0u; channel < channels; ++channel)
+        std::fill_n(samples.begin() + channel * frames, frames,
+            (channel + 1.0F) / 64.0F);
+      if (!check(loaded.pipeline->process(samples, channels, frames, time) ==
+              pipetune::ProcessStatus::ok, "Matrix processing failed")) return false;
+      for (auto channel = 0u; channel < channels; ++channel)
+        for (auto frame = 0u; frame < frames; ++frame)
+          if (!check(approximately(samples[channel * frames + frame],
+                  scenario.expected[channel]), "Matrix routing PCM differs")) return false;
+      return true;
+    };
+    if (!check(loaded.pipeline->reset() == pipetune::ProcessStatus::ok,
+            "Matrix reset before processing failed")) return false;
+    for (const auto frames : {32u, 64u, 128u})
+      if (!render(frames, 0.0) ||
+          !check(loaded.pipeline->reset() == pipetune::ProcessStatus::ok,
+              "Matrix reset after processing failed") ||
+          !render(frames, frames / 48000.0)) return false;
+  }
+  return true;
+}
+
+static bool testMatrixIdleResume(const std::filesystem::path &directory) {
+  const auto path = writeMatrixPreset(directory, "matrix-idle.effetune_preset", "0110");
+  auto pipeline = loadPipeline(path);
+  if (pipeline == nullptr) return false;
+  auto slot = pipetune::DspPipelineSlot(std::move(pipeline));
+  constexpr auto frames = 32u;
+  constexpr auto policy = pipetune::DspIdlePolicy{.timeoutMilliseconds = 100};
+  auto at = std::uint32_t{0};
+  const auto process = [&](bool active) {
+    auto samples = std::vector<float>(2 * frames, 0.0F);
+    if (active) {
+      std::fill_n(samples.begin(), frames, 0.25F);
+      std::fill_n(samples.begin() + frames, frames, 0.5F);
+    }
+    const auto result = slot.processWithIdle(samples, 2, frames,
+        at / 48000.0, policy);
+    at += frames;
+    if (!check(result.status == pipetune::ProcessStatus::ok,
+            "Matrix slot processing failed")) return pipetune::DspActivity::bypassed;
+    if (active && !check(allApproximately(std::span(samples).first(frames), 0.5F) &&
+            allApproximately(std::span(samples).subspan(frames), 0.25F),
+            "Matrix route changed after idle reset")) return pipetune::DspActivity::bypassed;
+    return result.activity;
+  };
+  if (!check(process(true) == pipetune::DspActivity::active,
+          "Matrix must start active")) return false;
+  auto sleeping = false;
+  for (auto block = 0u; block < 300u; ++block)
+    if (process(false) == pipetune::DspActivity::sleeping) {
+      sleeping = true;
+      break;
+    }
+  if (!check(sleeping, "Matrix did not suspend after the frame-based idle timeout"))
+    return false;
+  const auto stopped = slot.performanceCounters().processedFrames;
+  if (!check(process(false) == pipetune::DspActivity::sleeping &&
+          slot.performanceCounters().processedFrames == stopped,
+          "sleeping Matrix must skip native processing")) return false;
+  return check(process(true) == pipetune::DspActivity::active &&
+          slot.performanceCounters().processedFrames > stopped,
+          "Matrix route must resume after idle reset");
 }
 
 static bool testReplacementChangesPcm(
@@ -819,7 +922,8 @@ int main() {
   const auto dcOffset = writeDcOffsetPreset(directory);
   const auto delay = writeDelayPreset(directory);
   const auto tubeSimulator = writeTubeSimulatorPreset(directory);
-  const auto passed = testMeasurementIdlePolicy(directory) && testBassManagementIdlePolicy(directory) && testAttackBassIdlePolicy(directory) && testTvIdlePolicy(directory) && testReplacementChangesPcm(positive, negative) &&
+  const auto passed = testMatrixResetRoutes(directory) && testMatrixIdleResume(directory) &&
+                      testMeasurementIdlePolicy(directory) && testBassManagementIdlePolicy(directory) && testAttackBassIdlePolicy(directory) && testTvIdlePolicy(directory) && testReplacementChangesPcm(positive, negative) &&
                       testBypassDoesNotReportDspWork() &&
                       testActivePipelineLatencyTracksReplacement(
                           tubeSimulator, positive) &&

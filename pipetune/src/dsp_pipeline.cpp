@@ -44,11 +44,47 @@ constexpr auto kPipelineDescriptorVersion = std::uint32_t{1};
 constexpr auto kPipelineDescriptorHeaderBytes = std::size_t{8};
 constexpr auto kPipelineDescriptorNodeBytes = std::size_t{12};
 
-struct RetainedParameterBytes {
+struct SfzEventInstance {
   et_instance instance;
+  std::uint32_t channels;
   std::uint32_t hash;
-  std::vector<std::uint8_t> bytes;
+  std::vector<float> parameters;
+  std::size_t previewIndex;
 };
+
+// Event detection suppresses note starts in its first analysis frame. Seed that
+// frame with silence so the first input after preparation or reset is admitted.
+static et_status primeSfzEvent(const DspBackendApi &api, et_engine engine,
+    SfzEventInstance &sfz, float sampleRate, std::uint32_t maxFrames) noexcept {
+  auto *silence = api.arenaCombinedPtr(engine);
+  if (silence == nullptr) return ET_ERR_STATE;
+  const auto preview = sfz.parameters[sfz.previewIndex];
+  if (preview >= 0.0F) {
+    // Keep preview playback at its first sample while priming only the analysis.
+    sfz.parameters[sfz.previewIndex] = -1.0F;
+    const auto status = api.instanceSetParams(engine, sfz.instance,
+        sfz.parameters.data(), static_cast<std::uint32_t>(sfz.parameters.size()), sfz.hash, 0u);
+    sfz.parameters[sfz.previewIndex] = preview;
+    if (status != ET_OK) return status;
+  }
+  // Match SFZ's 20 ms analysis hop, including the upstream frame bounds.
+  const auto hop = std::clamp(static_cast<std::uint32_t>(std::lround(sampleRate * 0.02)), 16u, 8192u);
+  auto status = et_status{ET_OK};
+  for (auto offset = 0u; offset < hop; ) {
+    const auto frames = std::min(maxFrames, hop - offset);
+    std::fill_n(silence, sfz.channels * frames, 0.0F);
+    status = api.instanceProcess(engine, sfz.instance, silence, sfz.channels,
+        frames, offset / static_cast<double>(sampleRate));
+    if (status != ET_OK) break;
+    offset += frames;
+  }
+  if (preview >= 0.0F) {
+    const auto restored = api.instanceSetParams(engine, sfz.instance,
+        sfz.parameters.data(), static_cast<std::uint32_t>(sfz.parameters.size()), sfz.hash, 0u);
+    if (status == ET_OK) status = restored;
+  }
+  return status;
+}
 
 struct DspPipeline::Impl {
   std::shared_ptr<const DspBackend> backend;
@@ -65,7 +101,7 @@ struct DspPipeline::Impl {
   std::vector<std::filesystem::path> dependencyFiles;
   std::vector<std::shared_ptr<const AssetCachePin>> assetCachePins;
   std::vector<AssetMemoryReservation> nativeAssetMemory;
-  std::vector<RetainedParameterBytes> retainedParameterBytes;
+  std::vector<SfzEventInstance> sfzEventInstances;
 
   ~Impl() {
     if (engine != 0 && backend != nullptr) {
@@ -408,13 +444,10 @@ ProcessStatus DspPipeline::reset() noexcept {
   }
   const auto &api = dspBackendApi(*implementation_->backend);
   if (api.engineReset(implementation_->engine) != ET_OK) return ProcessStatus::dspError;
-  // Matrix resets its routes to the defaults. Re-stage the already packed
-  // bytes to preserve the preset without allocating on the audio thread.
-  for (const auto &parameters : implementation_->retainedParameterBytes) {
-    if (api.instanceSetParamBytes(implementation_->engine, parameters.instance,
-          parameters.bytes.data(), static_cast<std::uint32_t>(parameters.bytes.size()),
-          parameters.hash, 0u) != ET_OK) return ProcessStatus::dspError;
-  }
+  for (auto &sfz : implementation_->sfzEventInstances)
+    if (primeSfzEvent(api, implementation_->engine, sfz,
+            implementation_->sampleRate, implementation_->maxFrames) != ET_OK)
+      return ProcessStatus::dspError;
   return ProcessStatus::ok;
 }
 
@@ -745,8 +778,6 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
         co_return fail(nodeError(index, "native DSP rejected structured parameters"),
                          std::move(warnings));
       }
-      implementation->retainedParameterBytes.push_back(
-          {instance, definition->hash, std::move(packed.bytes)});
     }
     if (generatedAssetDsp && !generatedAsset.payload.empty()) {
       try {
@@ -786,6 +817,20 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
         if (api.instanceAssetState(implementation->engine, instance, 0u) != ET_ASSET_STATE_ACTIVE ||
             api.instanceReset(implementation->engine, instance) != ET_OK)
           co_return fail(nodeError(index, std::string(node.name) + " preparation did not reach ACTIVE"), std::move(warnings));
+      }
+    }
+    if (sfzPlayer) {
+      const auto elements = definition->elements;
+      const auto detection = std::ranges::find(elements, "dt", &ParameterElement::directKey);
+      const auto preview = std::ranges::find(elements, "pm", &ParameterElement::directKey);
+      if (detection == elements.end() || preview == elements.end())
+        co_return fail(nodeError(index, "SFZ detection parameters are unavailable"), std::move(warnings));
+      if (packed.floats[std::distance(elements.begin(), detection)] == 1.0F) {
+        auto &sfz = implementation->sfzEventInstances.emplace_back(SfzEventInstance{
+            instance, selectedProcessingChannels(channelSpec, options.maxChannels), definition->hash,
+            std::move(packed.floats), static_cast<std::size_t>(std::distance(elements.begin(), preview))});
+        if (primeSfzEvent(api, implementation->engine, sfz, options.sampleRate, options.maxFrames) != ET_OK)
+          co_return fail(nodeError(index, "SFZ Event analysis initialization failed"), std::move(warnings));
       }
     }
     activeNodes.push_back({.instance = instance,

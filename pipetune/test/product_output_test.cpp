@@ -156,6 +156,14 @@ static int runProduct(const char *preset, std::string_view scenario) {
   else {
     auto loaded = pipetune::loadDspPipeline(preset, build);
     if (loaded.pipeline == nullptr) { std::cerr << loaded.error << '\n'; return 1; }
+    if (scenario.starts_with("product-sfz-")) {
+      const auto expectedLatency = scenario == "product-sfz-event" ? 11040u : 4320u;
+      if (!loaded.warnings.empty() || loaded.pipeline->activePluginCount() != 2u ||
+          loaded.pipeline->latencyFrames() != expectedLatency) {
+        std::cerr << "SFZ multi-output preset must apply its selected detection latency\n";
+        return 1;
+      }
+    }
     pipeline = std::move(loaded.pipeline);
   }
   const auto result = pipetune::runPipeWirePipeline(std::move(pipeline), {
@@ -210,6 +218,7 @@ struct AudioTest {
   bool restartResumed = false;
   bool latency = false;
   bool latencyUnits = false;
+  bool fixedLatency = false;
   bool latencyReconnect = false;
   bool intentionalDelay = false;
   bool controls = false;
@@ -322,8 +331,12 @@ static void captureLatency(TestOutput &output, pw_buffer &buffer) {
     validFrame = validFrame && tags[0] == tags[1];
     const auto consecutive = output.previousTag < 0 || tags[0] == (output.previousTag + 1) % tagPeriod;
     if (test.latencySettled && (!validFrame || !consecutive)) {
-      if (!test.latencyReconnect || test.stage == 0)
+      if (!test.latencyReconnect || test.stage == 0) {
+        std::cerr << "latency PCM mismatch: output=" << output.index << " frame=" << frame
+                  << " previous=" << output.previousTag << " tags=" << tags[0] << ',' << tags[1]
+                  << " valid=" << validFrame << " time=" << buffer.time << '\n';
         return fail(test, "steady latency PCM lost channel identity or frame order");
+      }
       // Rebuilding the distribution intentionally fades and discards queued
       // audio. Start the consecutive measurement window after that boundary.
       test.latencySettled = false;
@@ -337,13 +350,15 @@ static void captureLatency(TestOutput &output, pw_buffer &buffer) {
   output.matched = validBlock;
   output.blockTime = static_cast<std::int64_t>(buffer.time);
   output.blockFrames = frames;
-  if (validBlock && test.latencySettled) output.frames += frames;
-  const auto &a = test.outputs[0];
-  const auto &b = test.outputs[1];
+  auto &a = test.outputs[0];
+  auto &b = test.outputs[1];
   const auto single = test.latencyReconnect && test.stage == 1;
   if (!a.matched || (!single && !b.matched) || a.blockTime == 0 || (!single && b.blockTime == 0)) return;
-  const auto elapsedFrames = std::llround(static_cast<double>(a.blockTime - b.blockTime) * 48000 / 1000000000);
-  const auto relative = elapsedFrames + a.blockFrames - b.blockFrames + b.previousTag - a.previousTag +
+  // Compare buffers from the same graph cycle. Scheduling gaps can advance
+  // cycle time without inserting PCM, so elapsed nanoseconds cannot stand in
+  // for the frame distance between callbacks from different cycles.
+  if (!single && a.blockTime != b.blockTime) return;
+  const auto relative = static_cast<std::int64_t>(a.blockFrames) - b.blockFrames + b.previousTag - a.previousTag +
       (test.intentionalDelay ? 48 : 0);
   const auto compensation = single ? -1 : (relative % tagPeriod + tagPeriod) % tagPeriod;
   const auto aligned = single || (compensation <= test.declaredLatency && test.declaredLatency - compensation <= 1);
@@ -355,12 +370,21 @@ static void captureLatency(TestOutput &output, pw_buffer &buffer) {
     return;
   }
   if (!aligned) {
-    if (!test.latencyReconnect || test.stage == 0)
+    if (!test.latencyReconnect || test.stage == 0) {
+      std::cerr << "latency mismatch: compensation=" << compensation
+                << " declared=" << test.declaredLatency << " stage=" << test.stage
+                << " times=" << a.blockTime << ',' << b.blockTime
+                << " blocks=" << a.blockFrames << ',' << b.blockFrames
+                << " tags=" << a.previousTag << ',' << b.previousTag << '\n';
       return fail(test, "steady product delay compensation differs from the device latency");
+    }
     test.latencySettled = false;
     for (auto &item : test.outputs) item.frames = 0;
     return;
   }
+  if (single && output.index != 0) return;
+  a.frames += a.blockFrames;
+  if (!single) b.frames += b.blockFrames;
   if (a.frames < 32768 || (!single && b.frames < 32768)) return;
   auto latencies = std::array<double, 2>{};
   for (auto index = 0U; index < 2; ++index) {
@@ -372,14 +396,20 @@ static void captureLatency(TestOutput &output, pw_buffer &buffer) {
     } else {
       if (path == test.paths.end() || path->activity != pipetune::OutputPathActivity::active ||
           path->targetNodeId != pw_stream_get_node_id(test.outputs[index].stream) ||
-          path->targetSerial == 0 || path->streamSerial == 0 || !path->reportedLatencyNanoseconds) return;
-      latencies[index] = *path->reportedLatencyNanoseconds;
+          path->targetSerial == 0 || path->streamSerial == 0) return;
+      // Freewheel SFZ cases measure PCM alignment. The real-time scenarios
+      // also check downstream latency reports, which need Profiler clocks.
+      if (!test.fixedLatency) {
+        if (!path->reportedLatencyNanoseconds) return;
+        latencies[index] = *path->reportedLatencyNanoseconds;
+      }
     }
   }
-  if (!single && std::abs(latencies[1] - latencies[0] - test.declaredLatency * 1000000000.0 / 48000) > 1.0) return;
+  if (!single && !test.fixedLatency &&
+      std::abs(latencies[1] - latencies[0] - test.declaredLatency * 1000000000.0 / 48000) > 1.0) return;
   test.stageFrames[test.stage] = {a.frames, b.frames};
   test.compensation[test.stage] = compensation;
-  if (test.stage == 2) return static_cast<void>(pw_main_loop_quit(test.loop));
+  if (test.stage == 2 || test.fixedLatency) return static_cast<void>(pw_main_loop_quit(test.loop));
   ++test.stage;
   test.declaredLatency = test.latencyReconnect ? (test.stage == 1 ? 0 : 63) : test.stage == 1 ? 127 : 31;
   test.latencySettled = false;
@@ -716,9 +746,12 @@ static bool createTestOutput(TestOutput &output) {
     value.param_changed = outputParameterChanged; return value;
   }();
   const auto name = "pipetune_product_device_" + std::to_string(output.index);
+  // SFZ PCM checks run without real-time deadlines, including Debug builds.
+  // Their progress and completion are determined by the processed frame tags.
+  const auto *group = output.test->fixedLatency ? "pipewire.freewheel" : "pipewire.dummy";
   output.stream = pw_stream_new(output.test->core, name.c_str(), pw_properties_new(
       PW_KEY_NODE_NAME, name.c_str(), PW_KEY_NODE_DESCRIPTION, name.c_str(), PW_KEY_MEDIA_CLASS, "Audio/Sink",
-      PW_KEY_NODE_GROUP, "pipewire.dummy", PW_KEY_NODE_VIRTUAL, "false",
+      PW_KEY_NODE_GROUP, group, PW_KEY_NODE_VIRTUAL, "false",
       PW_KEY_PRIORITY_SESSION, output.index == 2 ? "2000" : "1000",
       "node.want-driver", "true", "node.pause-on-idle", "false",
       "audio.channels", "2", "audio.position", "[ FL FR ]",
@@ -817,7 +850,8 @@ static int runAudio(std::string_view scenario) {
   test.intentionalDelay = scenario == "product-time-alignment";
   test.latencyReconnect = scenario == "product-latency-reconnect";
   test.latencyUnits = scenario == "product-latency-units";
-  test.latency = scenario == "product-latency" || test.latencyUnits || test.intentionalDelay || test.latencyReconnect;
+  test.fixedLatency = scenario.starts_with("product-sfz-");
+  test.latency = scenario == "product-latency" || test.latencyUnits || test.intentionalDelay || test.latencyReconnect || test.fixedLatency;
   test.graphClock = scenario == "product-output-clock" || scenario == "product-output-clock-alt";
   test.clockUnavailable = scenario == "product-output-clock-unavailable";
   test.clockReconnect = scenario == "product-reconnect";

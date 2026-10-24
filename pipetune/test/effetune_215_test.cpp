@@ -24,9 +24,57 @@ static bool check(bool condition, std::string_view message) {
   return condition;
 }
 
+static void testMatrixReset(const pipetune::DspBackendApi &api) {
+  const auto *definition = pipetune::findDspByTypeName("MatrixPlugin");
+  if (!check(definition != nullptr, "Matrix must be available")) return;
+  for (const auto resetEngine : {false, true}) {
+    for (const auto applyBeforeReset : {false, true}) {
+      for (const auto empty : {false, true}) {
+        const auto engine = api.engineCreate();
+        if (!check(engine != 0, "Matrix reset engine must be created")) continue;
+        if (!check(api.enginePrepare(engine, 48000, 4, 64, 0) == ET_OK,
+                   "Matrix reset engine must prepare")) {
+          api.engineDestroy(engine);
+          continue;
+        }
+        const auto instance = api.instanceCreate(engine, "MatrixPlugin");
+        if (!check(instance != 0, "Matrix reset instance must be created")) {
+          api.engineDestroy(engine);
+          continue;
+        }
+        const auto render = [&]() {
+          auto audio = std::array{0.25F, 0.125F, 0.75F, 0.5F};
+          check(api.instanceProcess(engine, instance, audio.data(), 4, 1, 0) == ET_OK,
+                "Matrix must process after reset");
+          return audio;
+        };
+        check(render() == std::array{0.25F, 0.125F, 0.0F, 0.0F},
+              "a new Matrix instance must start with stereo routing");
+        // Keep inputs 1/2 and mix both into output 3 (mx = "00021112").
+        auto routes = std::array<std::uint8_t, 16>{
+            1, 0, 4, 0, 0, 0, 0, 0, 2, 0, 1, 1, 0, 1, 2, 0};
+        if (empty) routes[2] = 0;
+        check(api.instanceSetParams(engine, instance, nullptr, 0, definition->hash, 0) == ET_OK &&
+                  api.instanceSetParamBytes(engine, instance, routes.data(), empty ? 4 : routes.size(),
+                                            definition->hash, 0) == ET_OK,
+              "Matrix routes must be staged");
+        const auto expected = empty ? std::array<float, 4>{} : std::array{0.25F, 0.125F, 0.375F, 0.0F};
+        if (applyBeforeReset) check(render() == expected, "Matrix must apply staged routes");
+        for (auto repeat = 0; repeat < 2; ++repeat) {
+          check((resetEngine ? api.engineReset(engine) : api.instanceReset(engine, instance)) == ET_OK,
+                "Matrix instance and engine resets must succeed");
+          check(render() == expected,
+                "Matrix reset must retain active and pending routes, including empty routing");
+        }
+        api.engineDestroy(engine);
+      }
+    }
+  }
+}
+
 int main(int argc, char **argv) {
   if (argc != 2) return 2;
-  check(pipetune::effetuneVersion() == "2.14.0", "the embedded app version must be 2.14.0");
+  check(pipetune::effetuneVersion() == "2.15.0", "the embedded app version must be 2.15.0");
   check(pipetune::generatedDspCatalog().size() == 112, "the app catalog must contain 112 DSPs");
   struct Contract {
     const char *type;
@@ -37,7 +85,7 @@ int main(int argc, char **argv) {
   for (const auto &contract : std::array{
            Contract{"AnalogMeterPlugin", 0xad3d461cu, 7u, 0u},
            Contract{"AdaptivePredictionEffectPlugin", 0xebd8a6f0u, 10u, 0u},
-           Contract{"SFZNotePlayerPlugin", 0x378e7f2bu, 19u, 1073741824u},
+           Contract{"SFZNotePlayerPlugin", 0xdfb4bbc5u, 20u, 1073741824u},
            Contract{"CassetteArtifactsPlugin", 0x328491aeu, 13u, 0u},
            Contract{"NoteSpectrogramPlugin", 0xafc5ff07u, 3u, 0u}}) {
     const auto *definition = pipetune::findDspByTypeName(contract.type);
@@ -55,17 +103,18 @@ int main(int argc, char **argv) {
   for (const auto &backend : backends) {
     if (!check(backend != nullptr, "the scalar backend must be available")) continue;
     const auto &api = pipetune::dspBackendApi(*backend);
+    testMatrixReset(api);
     const auto engine = api.engineCreate();
     if (check(engine != 0, "the backend must create an engine")) {
       if (check(api.enginePrepare(engine, 48000.0F, 2u, 64u, 0u) == ET_OK,
                 "the backend must prepare its engine")) {
         const auto instance = api.instanceCreate(engine, "SFZNotePlayerPlugin");
         if (check(instance != 0, "the backend must create SFZ Note Player")) {
-          const auto parameters = std::array<float, 19>{
-              0.1F, -60, 0, 21, 108, 64, 100, 0, 0, 0, 1, 1, 1, 0, 40, 50, 0, -1, 100};
+          const auto parameters = std::array<float, 20>{
+              0.1F, -60, 0, 21, 108, 64, 100, 0, 0, 0, 1, 1, 1, 0, 40, 50, 0, -1, 100, 1};
           check(api.instanceSetParams(engine, instance, parameters.data(), parameters.size(),
-                                      0x378e7f2bu, 0u) == ET_OK,
-                "the backend must accept the 2.14 SFZ sample selection and preview parameters");
+                                      0xdfb4bbc5u, 0u) == ET_OK,
+                "the backend must accept the 2.15 SFZ Event detection parameters");
         }
       }
       api.engineDestroy(engine);
@@ -84,7 +133,7 @@ int main(int argc, char **argv) {
       }
       check(loaded.pipeline->process(audio, 2u, 64u, block * 64.0 / 48000.0) ==
                 pipetune::ProcessStatus::ok,
-            "the minimal 2.14 preset must process PCM");
+            "the minimal 2.15 preset must process PCM");
     }
     for (auto frame = 0u; frame < 64u; ++frame)
       check(std::abs(audio[frame] - 0.0625F) < 1e-6F &&

@@ -2,10 +2,12 @@
 
 ## Boundary and replacement policy
 
-PipeTune follows the EffeTune application tag v2.14.0, commit
-`01c96f00f8e93595aefab96de4bc4d210e61c53b`. The C++20 libraries in
+PipeTune's native DSP engine follows the EffeTune application tag v2.15.0, commit
+`45d2f69b63483c4a2e98758bd8a5715cb13e3266`. The C++20 libraries in
 `asset-preparation/` adapt the JavaScript preparation needed before the upstream
-native kernels can run. They accept values, source text, and decoded PCM in
+native kernels can run. The SFZ preparation source remains EffeTune v2.14.0,
+commit `01c96f00f8e93595aefab96de4bc4d210e61c53b`; its source identity remains
+part of the cache key. The libraries accept values, source text, and decoded PCM in
 memory, and return prepared data, source requests, and diagnostics. They do not
 depend on PipeWire, GTK, JSON storage, XDG paths, a decoder, or the native engine.
 
@@ -89,10 +91,11 @@ caching is disabled. Cancelling one request does not cancel another owner's
 result. The control server drains pending operations on shutdown.
 
 The `assets-v1` cache uses validated PTAC0001 records and atomic replacement.
-Its key includes the upstream commit, preparation contract, original content,
+Its key includes the preparation-source commit, preparation contract, original content,
 and every setting affecting generated data, plus decoder identity where used.
 Room/IR keys include design rate and effective layout. SFZ retains source-rate
-samples and is reusable across output rate and backend changes. Runtime-only
+samples and is reusable across output rate, backend, and `Classic`/`Event`
+detection-mode changes. Runtime-only
 gain/delay controls do not invalidate Room's generated FIR. A cache hit still
 requires valid originals; corrupt entries regenerate, and an unwritable cache
 does not discard a successfully prepared payload.
@@ -122,7 +125,7 @@ Tests compare observable normalized regions, byte-level bank data, numeric
 FIR/phase results, diagnostics, and rendered PCM. Separate integration tests
 cover actual files/formats, registrations, cache invalidation, cancellation,
 source mutation during preparation, memory rejection, and preservation of the
-old pipeline. Official SFZ and IR golden cases run through installed-style
+old pipeline. All 13 official SFZ and 13 IR golden cases run through installed-style
 shared backends with the original tolerances. The mixed preset activates all
 nine asset-using effects, checking each effect's contribution, multichannel
 routing, rate/backend rebuilds, and reset.

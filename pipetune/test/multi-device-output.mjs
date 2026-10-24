@@ -428,6 +428,19 @@ try {
     ];
     if (["product-volume", "product-reconnect", "product-profile", "product-restart", "product-restart-mute"].includes(scenario)) pipeline.push({ name: "DC Offset", enabled: true, channel: "All", parameters: { of: 0.125 } });
     if (scenario === "product-time-alignment") pipeline.push({ name: "Time Alignment", enabled: true, channel: "34", parameters: { dl: 1 } });
+    if (scenario.startsWith("product-sfz-")) {
+      const root = join(config, "effetune");
+      writeConfiguration("effetune/main.sfz", "<region> sample=*sine key=83\n");
+      writeConfiguration("effetune/sfz-references.json", JSON.stringify([{
+        id: "0123456789abcdef01234567", name: "Output alignment", root,
+        path: join(root, "main.sfz"),
+      }]));
+      environment.XDG_CACHE_HOME = join(directory, "cache");
+      pipeline.push({ name: "SFZ Note Player", enabled: true, channel: "34", parameters: {
+        sf: "0123456789abcdef01234567", dt: scenario === "product-sfz-event" ? "Event" : "Classic",
+        mn: 83, mx: 83, dm: 100, wm: 0,
+      } });
+    }
     writeFileSync(preset, JSON.stringify({ pipeline }));
     const runtime = start("product runtime", driver, ["runtime", scenario === "product-bypass" ? "bypass" : preset, scenario]);
     await waitForMessage(runtime, "product:runtime-ready");
@@ -736,8 +749,8 @@ try {
       assert.ok(report.clockGenerations.every((serial) => serial > 0));
       assert.notEqual(report.clockGenerations[0], report.clockGenerations[1]);
     }
-    if (["product-latency", "product-latency-units", "product-time-alignment"].includes(scenario)) {
-      for (const [index, declared] of [63, 127, 31].entries())
+    if (["product-latency", "product-latency-units", "product-time-alignment", "product-sfz-classic", "product-sfz-event"].includes(scenario)) {
+      for (const [index, declared] of (scenario.startsWith("product-sfz-") ? [63] : [63, 127, 31]).entries())
         assert.ok(report.compensationFrames[index] <= declared && declared - report.compensationFrames[index] <= 1,
           "automatic output compensation must preserve the preset's intentional channel delay");
     }

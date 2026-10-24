@@ -678,12 +678,12 @@ if(BUILD_TESTING)
   set_tests_properties(pipetune_asset_preparation_contracts PROPERTIES
     WORKING_DIRECTORY "${PIPETUNE_ASSET_TEST_DIR}" TIMEOUT 300)
 
-  add_executable(pipetune_effetune_214_tests test/effetune_214_test.cpp)
-  target_include_directories(pipetune_effetune_214_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
-  target_link_libraries(pipetune_effetune_214_tests PRIVATE pipetune_core)
-  target_compile_options(pipetune_effetune_214_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  add_dependencies(pipetune_effetune_214_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
-  add_test(NAME pipetune_effetune_214_tests COMMAND pipetune_effetune_214_tests
+  add_executable(pipetune_effetune_215_tests test/effetune_215_test.cpp)
+  target_include_directories(pipetune_effetune_215_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_link_libraries(pipetune_effetune_215_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_effetune_215_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_effetune_215_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
+  add_test(NAME pipetune_effetune_215_tests COMMAND pipetune_effetune_215_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test/presets/effetune-2.13/adaptive-original.effetune_preset)
 
   add_executable(pipetune_adaptive_prediction_tests test/adaptive_prediction_test.cpp)
@@ -994,7 +994,7 @@ if(BUILD_TESTING)
   target_include_directories(pipetune_product_output_tests PRIVATE src)
   target_link_options(pipetune_product_output_tests PRIVATE -Wl,--wrap=pw_stream_connect)
   target_compile_options(pipetune_product_output_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  foreach(scenario product-bypass product-matrix product-slots product-sixteen product-volume product-disconnected product-reconnect product-profile product-restart product-restart-mute product-latency product-latency-units product-latency-reconnect product-time-alignment product-controls product-output-clock product-output-clock-alt product-output-clock-unavailable product-output-change product-output-timeout product-output-status product-output-status-single product-output-recovery)
+  foreach(scenario product-bypass product-matrix product-slots product-sixteen product-volume product-disconnected product-reconnect product-profile product-restart product-restart-mute product-latency product-latency-units product-latency-reconnect product-time-alignment product-sfz-classic product-sfz-event product-controls product-output-clock product-output-clock-alt product-output-clock-unavailable product-output-change product-output-timeout product-output-status product-output-status-single product-output-recovery)
     add_test(NAME pipetune_${scenario}
       COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
         ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
