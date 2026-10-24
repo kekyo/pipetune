@@ -476,21 +476,6 @@ describe('PipeTune GTK dialog', () => {
     expect(await session.inspectConfig()).toEqual(saved);
   });
 
-  // Temporary removal check: per-channel review windows are being retired.
-  it('removes the extra confirmation window when moving a device channel', async () => {
-    session = await launchPipeTuneGtk();
-    await waitForConnected();
-    await selectSettingsPage(3);
-    await openMultipleOutputConfiguration();
-    await (await getElement('output-device-0', 'checkbox')).toggle();
-    await selectComboItem('output-channel-0-0', 1);
-    await expectComboItemSelected('output-channel-0-0', 1);
-    expect(await session.app.getWindowCount()).toBe(2);
-    expect(
-      (await session.readRequests()).filter((r) => r.command === 'set-output')
-    ).toHaveLength(0);
-  });
-
   it('discards an unfinished output purpose when cancelling and reopening the window', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
