@@ -8,7 +8,39 @@
 
 #include "pipetune/output_configuration.h"
 
+#include <vector>
+
 namespace pipetune_gtk {
+
+/**
+ * Orders configured devices by their lowest EffeTune output number.
+ * @param configuration Fixed assignments, including disabled devices.
+ * @return Indices into outputs; unassigned devices follow assigned devices.
+ * @remarks Equal keys retain the saved device order.
+ */
+std::vector<std::size_t> configuredOutputOrder(
+    const pipetune::OutputConfiguration &configuration);
+
+/**
+ * Removes a saved device while retaining the other channel numbers.
+ * @param configuration Draft configuration to edit.
+ * @param outputId Identifier of the device to remove.
+ * @return Edited draft, or the original configuration and a diagnostic.
+ * @remarks Removed channels become reserved with their purpose labels. Only
+ * trailing slots owned by the removed device are dropped automatically.
+ */
+pipetune::OutputConfigurationResult removeOutputDevice(
+    const pipetune::OutputConfiguration &configuration,
+    std::string_view outputId);
+
+/**
+ * Explicitly removes every reserved channel and closes the numbering gaps.
+ * @param configuration Draft configuration to edit.
+ * @return Edited draft, or the original configuration and a diagnostic.
+ * @remarks Channels belonging to disabled devices remain assigned.
+ */
+pipetune::OutputConfigurationResult compactOutputChannels(
+    const pipetune::OutputConfiguration &configuration);
 
 /**
  * Proposes an explicit channel move for review before live application.
