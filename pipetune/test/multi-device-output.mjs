@@ -267,6 +267,9 @@ try {
         const status = JSON.parse(line);
         assert.equal(status.ok, true, line);
         assert.equal(status.outputConfiguration.mode, scenario.endsWith("-single") ? "single" : "multiple");
+        assert.equal(status.outputPeaks.length, scenario.endsWith("-single") ? 2 : 4,
+          "output meters must follow the running stream width in either mode");
+        assert.ok(status.outputPeaks.every((peak) => Number.isFinite(peak) && peak >= 0));
         if (!saved) saved = status.outputConfiguration;
         assert.deepEqual(status.outputConfiguration, saved, "inventory changes must preserve every saved slot");
         if (!status.outputInventoryReady) continue;
@@ -1073,6 +1076,17 @@ try {
       const rate = (sampleRate) => control({ command: "set-rate", rateMode: "fixed", sampleRate, enforcement: graphClockTest ? "force" : "suggest" });
       const backend = (backend) => control({ command: "set-dsp-backend", backend, simdVariant: "auto" });
       await next(0);
+      if (scenario === "product-controls") {
+        const deadline = Date.now() + 2000;
+        let peaks = [];
+        while (Date.now() < deadline) {
+          peaks = (await control({ command: "status" })).outputPeaks;
+          if (peaks.length === 4 && peaks.every((peak) => peak > 0)) break;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        assert.equal(peaks.length, 4, "the running multi-output stream must report four channels");
+        assert.ok(peaks.every((peak) => peak > 0), "each active output channel must report PCM");
+      }
       assert.equal((await rate(96000)).dspSampleRate, 96000);
       audio.child.kill("SIGUSR2");
       await next(1);

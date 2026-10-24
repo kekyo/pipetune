@@ -12,6 +12,7 @@
 #include "dsp_pipeline_slot.h"
 #include "filter_graph_properties.h"
 #include "input_telemetry.h"
+#include "output_peak_telemetry.h"
 #include "output_distribution.h"
 #include "pipewire_buffer_io.h"
 #include "pipewire_latency.h"
@@ -136,6 +137,7 @@ struct PipeWireRuntime {
   AudioTransitionSilencer outputTransitionSilencer;
   std::atomic<std::uint64_t> processingErrors;
   InputTelemetry inputTelemetry;
+  OutputPeakTelemetry outputPeakTelemetry;
   std::atomic<bool> rateBridgeReady;
   std::atomic<bool> inputFormatNegotiated;
   std::atomic<std::uint32_t> dspSampleRate;
@@ -178,6 +180,7 @@ struct PipeWireRuntime {
   spa_source *rateChangeSource;
   spa_source *latencyUpdateSource;
   spa_source *timeoutSource;
+  spa_source *outputPeakSource;
   spa_source *interruptSource;
   spa_source *terminateSource;
   pw_stream_events inputEvents;
@@ -289,7 +292,7 @@ struct PipeWireRuntime {
         audioBuffers(std::make_unique<PipeWireAudioBuffers>(runtimeOptions.channelCount,
             runtimeOptions.ringCapacityFrames, runtimeOptions.maxFrames)),
         bridgeLatency(), latencyState(), outputTransitionSilencer(0),
-        processingErrors(0), inputTelemetry(),
+        processingErrors(0), inputTelemetry(), outputPeakTelemetry(),
         rateBridgeReady(false), inputFormatNegotiated(false),
         dspSampleRate(runtimeOptions.dspSampleRate),
         inputStreamSampleRate(0), outputStreamSampleRate(0),
@@ -324,6 +327,7 @@ struct PipeWireRuntime {
         context(nullptr), core(nullptr), inputStream(nullptr),
         outputStream(nullptr), rateChangeSource(nullptr),
         latencyUpdateSource(nullptr), timeoutSource(nullptr),
+        outputPeakSource(nullptr),
         interruptSource(nullptr), terminateSource(nullptr),
         inputEvents{}, outputEvents{}, inputListener{}, outputListener{},
         inputContext{this, true}, outputContext{this, false},
@@ -385,6 +389,9 @@ struct PipeWireRuntime {
       }
       if (timeoutSource != nullptr) {
         pw_loop_destroy_source(loop, timeoutSource);
+      }
+      if (outputPeakSource != nullptr) {
+        pw_loop_destroy_source(loop, outputPeakSource);
       }
       if (interruptSource != nullptr) {
         pw_loop_destroy_source(loop, interruptSource);
@@ -464,6 +471,12 @@ static std::uint64_t currentUnixMilliseconds() noexcept {
 
 static void requestControlStatusUpdate(PipeWireRuntime &runtime) {
   publishControlStatus(runtime.controlServer.get());
+}
+
+static void outputPeaksTimedOut(void *data, std::uint64_t) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  if (publishOutputPeaks(runtime.outputPeakTelemetry))
+    requestControlStatusUpdate(runtime);
 }
 
 static void completePendingRateRequest(PipeWireRuntime &runtime,
@@ -1431,6 +1444,9 @@ static void outputProcess(void *data) {
         if (gain == 0) std::fill_n(destination + outputFrame, blockFrames, 0.0F);
         else std::transform(source.begin(), source.end(), destination + outputFrame, [gain](float sample) { return sample * gain; });
       } else std::copy(source.begin(), source.end(), destination + outputFrame);
+      recordOutputPeak(runtime.outputPeakTelemetry, channel,
+                       std::span<const float>(destination + outputFrame,
+                                              blockFrames));
     }
     outputFrame += blockFrames;
   }
@@ -2506,9 +2522,12 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
   auto outputInventoryRevision = std::uint64_t{0};
   auto outputProfileRestorationError = std::string{};
   auto outputTimings = std::vector<OutputTimingState>{};
+  auto outputPeaks = std::vector<float>{};
   {
     auto lock = std::scoped_lock(runtime.outputStateMutex);
     outputConfiguration = runtime.options.outputConfiguration;
+    outputPeaks = snapshotOutputPeaks(runtime.outputPeakTelemetry,
+                                      runtime.options.channelCount);
     outputInventory = runtime.availableOutputs;
     outputInventoryReady = runtime.outputInventoryReady;
     outputInventoryRevision = runtime.outputInventoryRevision;
@@ -2562,7 +2581,8 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .outputProfileRestoring = runtime.pendingProfileRestoreActive || runtime.profileRestoreDecisionPending,
           .outputProfileRestorationError = outputProfileRestorationError,
           .outputVolumes = outputInventory.error.empty() ? std::move(outputInventory.volumes) : std::vector<OutputVolumeState>{},
-          .outputTimings = std::move(outputTimings)};
+          .outputTimings = std::move(outputTimings),
+          .outputPeaks = std::move(outputPeaks)};
 }
 
 static ControlMessageResult closeControlResponse(std::string response,
@@ -3467,6 +3487,19 @@ static bool configureCompletionSources(PipeWireRuntime &runtime) {
   if (runtime.interruptSource == nullptr || runtime.terminateSource == nullptr) {
     failRuntime(runtime,
                 systemError("cannot install PipeWire signal handlers", -errno));
+    return false;
+  }
+  runtime.outputPeakSource = pw_loop_add_timer(loop, outputPeaksTimedOut,
+                                                &runtime);
+  if (runtime.outputPeakSource == nullptr) {
+    failRuntime(runtime, systemError("cannot create output peak timer", -errno));
+    return false;
+  }
+  auto interval = timespec{.tv_sec = 0, .tv_nsec = 100'000'000};
+  if (const auto result = pw_loop_update_timer(loop, runtime.outputPeakSource,
+                                                &interval, &interval, false);
+      result < 0) {
+    failRuntime(runtime, systemError("cannot arm output peak timer", result));
     return false;
   }
   return true;

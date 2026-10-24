@@ -973,10 +973,46 @@ static bool testOutputStatus() {
                "an inventory failure must preserve saved assignments and report its cause");
 }
 
+static bool testOutputPeaks() {
+  auto status = pipetune::ControlRuntimeStatus{
+      .processingMode = pipetune::ProcessingMode::bypass,
+      .activePreset = {},
+      .configurationError = {},
+      .activePluginCount = 0,
+      .overrunFrames = 0,
+      .underrunFrames = 0,
+      .processingErrors = 0,
+      .dspProcessedFrames = 0,
+      .dspProcessingNanoseconds = 0,
+      .inputSampleFormat = {},
+      .inputSampleRate = 0,
+      .inputChannelCount = 0,
+      .inputFramesReceived = 0,
+      .inputLastReceivedUnixMilliseconds = 0};
+  status.outputPeaks = {0.0F, 0.5F, 1.25F};
+  const auto encoded = pipetune::makeControlStatusEvent(status);
+  const auto parsed = pipetune::parseControlResponse(encoded);
+  if (!check(parsed.valid && parsed.success &&
+             parsed.status.outputPeaks == status.outputPeaks,
+             "per-channel output peaks must round-trip, including above full scale")) return false;
+  for (const auto &[from, to] : std::array<std::pair<std::string_view, std::string_view>, 4>{
+           {{R"("outputPeaks":[0.0,0.5,1.25])", R"("outputPeaks":[0.0,-0.5,1.25])"},
+            {R"("outputPeaks":[0.0,0.5,1.25])", R"("outputPeaks":[0.0,true,1.25])"},
+            {R"("outputPeaks":[0.0,0.5,1.25])", R"("outputPeaks":[0.0,1e100,1.25])"},
+            {R"("outputPeaks":[0.0,0.5,1.25])", R"("outputPeaks":null)"}}}) {
+    auto invalid = encoded;
+    if (!check(replaceOnce(invalid, from, to) &&
+               !pipetune::parseControlResponse(invalid).valid,
+               "malformed output peaks must be rejected")) return false;
+  }
+  return true;
+}
+
 int main() {
   if (!testPresetEntries()) return 1;
   if (!testOutputStatus()) return 1;
   return testRequests() && testRejectedRequests() && testSuccessResponse() &&
+                 testOutputPeaks() &&
                  testStatusEvent() && testBypassStatus() &&
                  testDspBackendFallbackStatus() &&
                  testFixedDspAndGraphRatesCanDiffer() &&

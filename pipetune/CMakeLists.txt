@@ -268,6 +268,7 @@ add_library(
   src/dsp_pipeline_slot.cpp
   src/filter_graph_properties.cpp
   src/input_telemetry.cpp
+  src/output_peak_telemetry.cpp
   src/output_inventory.cpp
   src/output_command.cpp
   src/output_distribution.cpp

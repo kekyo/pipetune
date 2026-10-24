@@ -239,6 +239,8 @@ struct ControlRuntimeStatus {
   std::vector<OutputVolumeState> outputVolumes = {};
   /** Current resolved output paths and explicitly estimated delay compensation. */
   std::vector<OutputTimingState> outputTimings = {};
+  /** Recent final PCM peak per logical output channel, in linear amplitude. */
+  std::vector<float> outputPeaks = {};
 };
 
 /**

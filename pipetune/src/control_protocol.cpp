@@ -670,6 +670,10 @@ static std::string_view outputActivityName(OutputPathActivity activity) noexcept
 }
 
 static bool outputStatusIsConsistent(const ControlRuntimeStatus &status) {
+  if (status.outputPeaks.size() > 16 ||
+      std::any_of(status.outputPeaks.begin(), status.outputPeaks.end(),
+                  [](float peak) { return !std::isfinite(peak) || peak < 0; }))
+    return false;
   auto serials = std::set<std::uint64_t>{};
   const auto validGain = [](float value) { return std::isfinite(value) && value >= 0; };
   for (const auto &volume : status.outputVolumes) {
@@ -821,6 +825,11 @@ static std::string makeControlStatusMessage(
       !yyjson_mut_obj_add_bool(document.get(), root, "outputProfileRestoring", status.outputProfileRestoring) ||
       !addNullableString(document.get(), root, "outputProfileRestorationError", status.outputProfileRestorationError))
     return makeControlErrorResponse("cannot encode output status");
+  auto *peaks = yyjson_mut_obj_add_arr(document.get(), root, "outputPeaks");
+  if (peaks == nullptr) return makeControlErrorResponse("cannot encode output peaks");
+  for (const auto peak : status.outputPeaks)
+    if (!yyjson_mut_arr_add_real(document.get(), peaks, peak))
+      return makeControlErrorResponse("cannot encode output peaks");
   for (const auto &output : status.availableOutputs) {
     auto *item = yyjson_mut_arr_add_obj(document.get(), outputs);
     auto *device = makeOutputDeviceJson(document.get(), output.device);
@@ -1442,6 +1451,13 @@ static bool readOutputStatus(yyjson_val *root, ControlRuntimeStatus &status) {
       !readNullableStringField(root, "outputProfileRestorationError", status.outputProfileRestorationError)) return false;
   status.outputConfiguration = std::move(configuration.configuration);
   status.outputInventoryRevision = yyjson_get_uint(inventoryRevision);
+  auto *peaks = yyjson_obj_get(root, "outputPeaks");
+  if (!yyjson_is_arr(peaks) || yyjson_arr_size(peaks) > 16) return false;
+  for (auto index = std::size_t{0}; index < yyjson_arr_size(peaks); ++index) {
+    auto value = 0.0F;
+    if (!readOutputGain(yyjson_arr_get(peaks, index), value)) return false;
+    status.outputPeaks.push_back(value);
+  }
   for (auto index = std::size_t{0}; index < yyjson_arr_size(outputs); ++index) {
     auto *item = yyjson_arr_get(outputs, index);
     auto output = AvailableOutput{};
