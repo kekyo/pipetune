@@ -1319,6 +1319,13 @@ static bool testInferredPresetChannels(const std::filesystem::path &directory) {
       !check(fir.pipeline->maxChannels() == 6 && fir.pipeline->outputChannelCount() == 6,
              "FIR Crossover bands must determine the output width")) return false;
   for (const auto effect : {"Channel Divider", "FIR Crossover"}) {
+    const auto narrowedJson = std::string(R"json({"pipeline":[
+        {"name":"Matrix","channel":"A","parameters":{"mx":"001102p1304p1506p17"}},
+        {"name":")json") + effect + R"json(","channel":"A","parameters":{"bc":2}}]})json";
+    const auto narrowed = load(std::string("infer-narrowed-") + effect + ".effetune_preset", narrowedJson);
+    if (!check(narrowed.pipeline != nullptr, narrowed.error) ||
+        !check(narrowed.pipeline->maxChannels() == 8 && narrowed.pipeline->outputChannelCount() == 4,
+               "a final band splitter must discard lanes outside its configured stereo bands")) return false;
     const auto json = std::string(R"json({"pipeline":[{"name":")json") + effect +
         R"json(","channel":"A","parameters":{"bc":2}},
         {"name":"Volume","channel":"5","parameters":{"vl":0}}]})json";

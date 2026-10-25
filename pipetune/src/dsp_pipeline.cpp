@@ -475,8 +475,9 @@ static PresetChannelLayout inferPresetChannelLayout(yyjson_val *pipelineValue) {
       // a matrix destination retain their dry input in the native processor.
       const auto inputs = ((1u << node.spatialInputChannels) - 1u) << first;
       result = (source & ~inputs) | (node.spatialMask << first);
-    } else if (node.bandCount != 0 && node.channelSpec == -2 && (source & 3u) != 0) {
-      result |= (1u << (node.bandCount * 2u)) - 1u;
+    } else if (node.bandCount != 0 && node.channelSpec == -2) {
+      // Both splitters replace the full bus and clear lanes beyond their bands.
+      result = (1u << (node.bandCount * 2u)) - 1u;
     } else if (node.name == "Bass Management" && source != 0) {
       result |= node.bassMask;
     } else if (node.name == "DC Offset" || node.name == "Hum Generator") {
