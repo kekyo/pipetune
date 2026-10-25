@@ -246,7 +246,51 @@ try {
     await socketReady(join(runtime, "pulse-native"), undefined);
   }
   let manager = start("WirePlumber", "dbus-run-session", ["--", wireplumber]);
-  if (scenario === "product-preset-meters") {
+  if (scenario.startsWith("product-source-resume")) {
+    const audio = start("source switching fixtures", driver, ["audio", scenario]);
+    await waitForMessage(audio, "product:devices-ready");
+    const preset = join(directory, "source-resume.effetune_preset");
+    const identity = Array.from({ length: 256 }, (_, index) => index === 0 || index === 17 ? 1 : 0);
+    writeFileSync(preset, JSON.stringify({ pipeline: [
+      { name: "Spatial Mapper", enabled: true, channel: "All",
+        parameters: { ic: 2, ep: false, dm: identity, fm: identity, rm: identity } },
+      { name: "Matrix", enabled: true, channel: "All", parameters: { mx: "001102p13" } },
+    ] }));
+    const product = start("source switching runtime", driver, ["runtime", preset, scenario]);
+    await waitForMessage(product, "product:runtime-ready");
+    audio.child.kill("SIGUSR1");
+    await waitForMessage(audio, "product:source-a-heard");
+    audio.child.kill("SIGUSR2");
+    await waitForMessage(audio, "product:source-stopped");
+    const client = createConnection(environment.PIPETUNE_PRODUCT_SOCKET);
+    const deadline = setTimeout(() => client.destroy(), 15000);
+    let lines;
+    let transportError;
+    client.on("error", (error) => { transportError = error; });
+    client.on("close", () => lines?.close());
+    try {
+      await once(client, "connect");
+      lines = createInterface({ input: client, crlfDelay: Infinity });
+      client.write(`${JSON.stringify({ command: "subscribe" })}\n`);
+      let stopped = false;
+      for await (const line of lines) {
+        const status = JSON.parse(line);
+        assert.equal(status.ok, true);
+        if (status.inputSampleRate === 0) { stopped = true; break; }
+      }
+      assert.ok(stopped, transportError?.message ?? "the input graph never stopped after source A closed");
+    } finally {
+      clearTimeout(deadline);
+      lines?.close();
+      client.destroy();
+    }
+    audio.child.kill("SIGUSR2");
+    await waitForMessage(audio, "product:source-b-clean");
+    audio.child.kill("SIGUSR2");
+    assert.equal((await audio.completion).code, 0, audio.stderr);
+    terminate(product, "SIGTERM");
+    assert.equal((await product.completion).code, 0, product.stderr);
+  } else if (scenario === "product-preset-meters") {
     const audio = start("meter PCM fixtures", driver, ["audio", scenario]);
     await waitForMessage(audio, "product:devices-ready");
     const preset = join(directory, "meter.effetune_preset");
