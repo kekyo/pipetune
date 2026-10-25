@@ -1898,20 +1898,20 @@ static std::string verifyAppliedProfiles(const PipeWireRuntime &runtime) {
     if (active->cardProfileName != selection.cardProfileName)
       return "the selected output profile changed while applying the output configuration";
     const auto expected = pipeWireOutputProfileNodeCount(*runtime.outputInventory, selection);
-    const auto live = std::count_if(runtime.availableOutputs.outputs.begin(), runtime.availableOutputs.outputs.end(),
+    const auto live = static_cast<std::size_t>(std::count_if(runtime.availableOutputs.outputs.begin(), runtime.availableOutputs.outputs.end(),
         [&](const auto &output) {
           return outputBelongsToCard(output, selection.card) && !output.device.channelPositions.empty();
-        });
+        }));
     if (expected && live != *expected)
       return "the selected output profile no longer exposes its expected output Nodes";
     const auto replaced = std::find_if(runtime.profileTransition.replacedNodeSerials.begin(),
         runtime.profileTransition.replacedNodeSerials.end(), [&](const auto &item) { return item.first == selection.card; });
     if (expected && replaced != runtime.profileTransition.replacedNodeSerials.end()) {
-      const auto fresh = std::count_if(runtime.availableOutputs.outputs.begin(), runtime.availableOutputs.outputs.end(),
+      const auto fresh = static_cast<std::size_t>(std::count_if(runtime.availableOutputs.outputs.begin(), runtime.availableOutputs.outputs.end(),
           [&](const auto &output) {
             return outputBelongsToCard(output, selection.card) && !output.device.channelPositions.empty() &&
                 std::find(replaced->second.begin(), replaced->second.end(), output.nodeSerial) == replaced->second.end();
-          });
+          }));
       if (fresh < *expected) return "the selected output profile has not settled on new output Nodes";
     }
   }
@@ -2048,11 +2048,11 @@ static void advanceProfileTransition(PipeWireRuntime &runtime) {
         const auto expected = pipeWireOutputProfileNodeCount(*runtime.outputInventory, selection);
         if (expected == 0 && std::any_of(runtime.availableOutputs.outputs.begin(), runtime.availableOutputs.outputs.end(),
             [&](const auto &output) { return outputBelongsToCard(output, selection.card); })) return;
-        const auto ready = std::count_if(runtime.availableOutputs.outputs.begin(), runtime.availableOutputs.outputs.end(),
+        const auto ready = static_cast<std::size_t>(std::count_if(runtime.availableOutputs.outputs.begin(), runtime.availableOutputs.outputs.end(),
             [&](const auto &output) {
               return outputBelongsToCard(output, selection.card) && !output.device.channelPositions.empty() &&
                   std::find(replaced->second.begin(), replaced->second.end(), output.nodeSerial) == replaced->second.end();
-            });
+            }));
         if (!expected && !selection.outputKey.empty() && !restoring && ready > 0) {
           beginProfileRestoration(runtime, "the card did not report how many output Nodes its profile exposes");
           advanceProfileTransition(runtime);
@@ -2395,12 +2395,12 @@ static bool advancePendingProfileRestorations(PipeWireRuntime &runtime) {
            .outputKey = active->outputKey, .allowMissingForRestore = true});
       if (expected == 0 && std::any_of(runtime.availableOutputs.outputs.begin(), runtime.availableOutputs.outputs.end(),
           [&](const auto &output) { return outputBelongsToCard(output, requested.first); })) return true;
-      const auto ready = std::count_if(runtime.availableOutputs.outputs.begin(), runtime.availableOutputs.outputs.end(),
+      const auto ready = static_cast<std::size_t>(std::count_if(runtime.availableOutputs.outputs.begin(), runtime.availableOutputs.outputs.end(),
           [&](const auto &output) {
             return outputBelongsToCard(output, requested.first) && !output.device.channelPositions.empty() &&
                 std::find(runtime.pendingProfileOldNodeSerials.begin(), runtime.pendingProfileOldNodeSerials.end(),
                     output.nodeSerial) == runtime.pendingProfileOldNodeSerials.end();
-          });
+          }));
       if (expected && ready < *expected) return true;
       if (pipeWireInputRoutes(*runtime.outputInventory, requested.first) != runtime.pendingProfileInputRoutes) {
         if (!runtime.pendingInputRestoreRequested) {
@@ -3573,14 +3573,14 @@ static bool createMainLoop(PipeWireRuntime &runtime) {
           const auto expected = pipeWireOutputProfileNodeCount(*runtime.outputInventory,
               {.card = requested.first, .cardProfileName = requested.second,
                .outputKey = active->outputKey, .allowMissingForRestore = true});
-          const auto live = std::count_if(runtime.availableOutputs.outputs.begin(), runtime.availableOutputs.outputs.end(),
-              [&](const auto &output) { return outputBelongsToCard(output, requested.first); });
-          const auto fresh = std::count_if(runtime.availableOutputs.outputs.begin(), runtime.availableOutputs.outputs.end(),
+          const auto live = static_cast<std::size_t>(std::count_if(runtime.availableOutputs.outputs.begin(), runtime.availableOutputs.outputs.end(),
+              [&](const auto &output) { return outputBelongsToCard(output, requested.first); }));
+          const auto fresh = static_cast<std::size_t>(std::count_if(runtime.availableOutputs.outputs.begin(), runtime.availableOutputs.outputs.end(),
               [&](const auto &output) {
                 return outputBelongsToCard(output, requested.first) && !output.device.channelPositions.empty() &&
                     std::find(runtime.pendingProfileOldNodeSerials.begin(), runtime.pendingProfileOldNodeSerials.end(),
                         output.nodeSerial) == runtime.pendingProfileOldNodeSerials.end();
-              });
+              }));
           const auto nodesReady = expected ?
               (*expected == 0 ? live == 0 : live == *expected && fresh == *expected) :
               (active->outputKey.empty() ? live == 0 : fresh > 0);
