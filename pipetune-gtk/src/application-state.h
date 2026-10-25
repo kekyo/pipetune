@@ -63,7 +63,7 @@ struct InputRateState {
 };
 
 /**
- * Stores the latest interval average for native EffeTune processing.
+ * Stores native EffeTune timing averaged over at least one second.
  */
 struct DspTimingState {
   /** True after cumulative DSP counters established a baseline. */
@@ -72,6 +72,10 @@ struct DspTimingState {
   std::uint64_t baselineFrames;
   /** Cumulative processing nanoseconds at the current baseline. */
   std::uint64_t baselineNanoseconds;
+  /** Monotonic receipt time of the current baseline, in milliseconds. */
+  std::int64_t baselineMonotonicMilliseconds;
+  /** DSP sample rate shared by every counter sample in this window. */
+  std::uint32_t baselineSampleRate;
   /** True when the latest active interval contained DSP frames. */
   bool hasAverage;
   /** Latest active-interval DSP processing nanoseconds per frame. */

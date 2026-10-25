@@ -33,6 +33,7 @@ struct FakeDaemonState {
   std::filesystem::path requestLogPath;
   std::string rejectedCommand;
   std::uint64_t dspTelemetrySequence;
+  bool freezeDspTelemetry = false;
   std::uint64_t manualStatusSequence;
   std::string outputInventoryState = "connected";
   std::string outputVolumeState = "normal";
@@ -270,7 +271,7 @@ static pipetune::ControlRuntimeStatus snapshotStatus(
       state.dspTelemetrySequence * status.inputSampleRate;
   status.dspProcessingNanoseconds +=
       state.dspTelemetrySequence * std::uint64_t{600000000};
-  ++state.dspTelemetrySequence;
+  if (!state.freezeDspTelemetry) ++state.dspTelemetrySequence;
   status.outputPeaks = state.outputPeaks;
   return status;
 }
@@ -612,6 +613,20 @@ int main(int argc, char **argv) {
         state.outputPeaks.clear();
         auto value = float{};
         while (values >> value) state.outputPeaks.push_back(value);
+      }
+      pipetune::publishControlStatus(started.server.get());
+    }
+    if (input == "dsp-telemetry freeze") {
+      {
+        auto lock = std::scoped_lock(state.mutex);
+        state.freezeDspTelemetry = true;
+      }
+      pipetune::publishControlStatus(started.server.get());
+    }
+    if (input == "dsp-telemetry advance") {
+      {
+        auto lock = std::scoped_lock(state.mutex);
+        ++state.dspTelemetrySequence;
       }
       pipetune::publishControlStatus(started.server.get());
     }

@@ -740,6 +740,206 @@ describe('PipeTune GTK dialog', () => {
     ).toBe(3);
   });
 
+  it('records steady DSP load while duplicate statuses move output meters', async () => {
+    session = await launchPipeTuneGtk();
+    await waitForConnected();
+    await selectSettingsPage(3);
+    const window = await getElement('mainWindow', 'window');
+    await window.activate();
+    const load = await getElement('status-dsp-load-meter', 'progressBar');
+    const bars = await Promise.all(
+      [1, 2].map(async (channel) =>
+        getElement(`output-level-${String(channel)}`, 'progressBar')
+      )
+    );
+    await toPass(async () =>
+      expect((await load.info()).name).toBe('Load 60.0%')
+    );
+    const windowBounds = (await window.capture()).visibleBounds;
+    const loadBounds = (await load.capture()).visibleBounds;
+    const barBounds = await Promise.all(
+      bars.map(async (bar) => (await bar.capture()).visibleBounds)
+    );
+    const width = windowBounds.width;
+    const height = windowBounds.height;
+    const directory = resolve('test-results');
+    await mkdir(directory, { recursive: true });
+    const path = resolve(directory, 'stable-dsp-load.mkv');
+    const recording = spawn(
+      'ffmpeg',
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-f',
+        'x11grab',
+        '-framerate',
+        '10',
+        '-draw_mouse',
+        '0',
+        '-video_size',
+        `${String(width)}x${String(height)}`,
+        '-i',
+        `${(await session.app.environment()).DISPLAY}+${String(windowBounds.x)},${String(windowBounds.y)}`,
+        '-c:v',
+        'ffv1',
+        '-threads',
+        '1',
+        '-stats_period',
+        '0.1',
+        '-progress',
+        'pipe:1',
+        path,
+      ],
+      { env: await session.app.environment(), stdio: ['pipe', 'pipe', 'pipe'] }
+    );
+    const recordingFinished = once(recording, 'close');
+    let frames = 0;
+    let error = '';
+    recording.stdout.on('data', (chunk: Buffer) => {
+      for (const match of chunk.toString().matchAll(/(?:^|\n)frame=(\d+)/gu))
+        frames = Number(match[1]);
+    });
+    recording.stderr.on('data', (chunk: Buffer) => {
+      error += chunk.toString();
+    });
+    try {
+      await session.freezeDspTelemetry();
+      for (const [index, peaks] of [
+        [0.5, 0],
+        [0, 0.25],
+        [0, 0],
+      ].entries()) {
+        await session.advanceDspTelemetry();
+        await session.publishStatus();
+        await waitForLabel(
+          'status-errors-configuration',
+          `E2E manual status ${String(index + 1)}`
+        );
+        await session.setOutputPeaks(peaks);
+        await toPass(async () => {
+          expect((await load.info()).name).toBe('Load 60.0%');
+          for (let channel = 0; channel < bars.length; channel += 1) {
+            const peak = peaks[channel] ?? 0;
+            expect((await bars[channel]?.valueInfo())?.value).toBeCloseTo(
+              peak === 0 ? 0 : 60 + 20 * Math.log10(peak),
+              2
+            );
+          }
+        });
+        const previous = frames;
+        await toPass(async () => {
+          await session?.advanceDspTelemetry();
+          if (recording.exitCode !== null) throw new Error(error);
+          expect(frames).toBeGreaterThan(previous + 2);
+        });
+      }
+      await writeFile(
+        resolve(directory, 'stable-dsp-load.png'),
+        (await window.capture()).image
+      );
+    } finally {
+      recording.stdin.end('q\n');
+      await recordingFinished;
+    }
+    expect(recording.exitCode, error).toBe(0);
+    const decoder = spawn('ffmpeg', [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-i',
+      path,
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgb24',
+      '-threads',
+      '1',
+      'pipe:1',
+    ]);
+    const decoded = once(decoder, 'close');
+    const chunks: Buffer[] = [];
+    decoder.stdout.on('data', (chunk: Buffer) => {
+      chunks.push(chunk);
+    });
+    decoder.stderr.on('data', (chunk: Buffer) => {
+      error += chunk.toString();
+    });
+    await decoded;
+    expect(decoder.exitCode, error).toBe(0);
+    const pixels = Buffer.concat(chunks);
+    const frameBytes = width * height * 3;
+    const expected = [
+      [true, false],
+      [false, true],
+      [false, false],
+    ];
+    let matched = 0;
+    let consecutive = 0;
+    let referenceLoadPixels: number | undefined;
+    for (
+      let frame = 0;
+      frame + frameBytes <= pixels.length;
+      frame += frameBytes
+    ) {
+      const greenCount = (bounds: GtkCaptureBounds, loadColor: boolean) => {
+        let found = 0;
+        for (
+          let y = bounds.y - windowBounds.y;
+          y < bounds.y - windowBounds.y + bounds.height;
+          y += 1
+        ) {
+          for (
+            let x = bounds.x - windowBounds.x;
+            x < bounds.x - windowBounds.x + bounds.width;
+            x += 1
+          ) {
+            const offset = frame + (y * width + x) * 3;
+            const red = pixels[offset] ?? 0;
+            const green = pixels[offset + 1] ?? 0;
+            const blue = pixels[offset + 2] ?? 0;
+            if (
+              loadColor
+                ? red === 134 && green === 166 && blue === 78
+                : green > red * 1.4 && green > blue * 1.3 && green > 100
+            )
+              found += 1;
+          }
+        }
+        return found;
+      };
+      const active = barBounds.map((bounds) => greenCount(bounds, false) > 100);
+      const pattern = JSON.stringify(active);
+      const current = JSON.stringify(expected[matched]);
+      const previous = matched > 0 ? JSON.stringify(expected[matched - 1]) : '';
+      if (pattern !== current && pattern !== previous) {
+        consecutive = 0;
+        continue;
+      }
+      const loadPixels = greenCount(loadBounds, true);
+      expect(
+        loadPixels,
+        'The video load bar must remain filled while the output meters change'
+      ).toBeGreaterThan(100);
+      referenceLoadPixels ??= loadPixels;
+      expect(
+        Math.abs(loadPixels - referenceLoadPixels),
+        'The video load bar must retain its width across peak updates'
+      ).toBeLessThanOrEqual(Math.max(20, referenceLoadPixels * 0.05));
+      if (pattern !== current) continue;
+      consecutive += 1;
+      if (consecutive < 2) continue;
+      matched += 1;
+      consecutive = 0;
+      if (matched === expected.length) break;
+    }
+    expect(
+      matched,
+      'The video must show each output peak state with stable DSP load'
+    ).toBe(3);
+  });
+
   it('shows device, state, and channel columns in the parent and editor', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
