@@ -169,6 +169,9 @@ static bool testMatrixIdleResume(const std::filesystem::path &directory) {
   };
   if (!check(process(true) == pipetune::DspActivity::active,
           "Matrix must start active")) return false;
+  if (!check(slot.resetProcessingState() == pipetune::ProcessStatus::ok &&
+             process(true) == pipetune::DspActivity::active,
+             "a stream boundary must preserve Matrix routing")) return false;
   auto sleeping = false;
   for (auto block = 0u; block < 300u; ++block)
     if (process(false) == pipetune::DspActivity::sleeping) {
@@ -645,6 +648,71 @@ static bool testBackendReplacementPreservesCounters(
                "backend switch must preserve cumulative DSP time");
 }
 
+static bool testStoppedSpatialMapperResumesWithoutPreviousAudio(
+    const std::filesystem::path &directory) {
+  const auto path = directory / "source-resume-spatial.effetune_preset";
+  {
+    auto file = std::ofstream(path, std::ios::binary);
+    file << R"json({"pipeline":[{"name":"Spatial Mapper","channel":"All","parameters":{"ic":2}}]})json";
+  }
+  const auto options = pipetune::PipelineBuildOptions{
+      .sampleRate = 96000.0F, .maxChannels = 2, .maxFrames = 256};
+  auto loaded = pipetune::loadDspPipeline(path, options);
+  auto fresh = pipetune::loadDspPipeline(path, options);
+  if (!check(loaded.pipeline != nullptr && fresh.pipeline != nullptr,
+             loaded.error + fresh.error)) return false;
+  auto slot = pipetune::DspPipelineSlot(std::move(loaded.pipeline));
+  constexpr auto frames = 256u;
+  constexpr auto policy = pipetune::DspIdlePolicy{.timeoutMilliseconds = 3000};
+  for (auto start = 0u; start < 8192u; start += frames) {
+    auto previousAudio = std::vector<float>(2u * frames, 0.25F);
+    if (!check(slot.processWithIdle(previousAudio, 2, frames,
+                start / 96000.0, policy).status == pipetune::ProcessStatus::ok,
+               "Spatial Mapper failed while playing the previous source")) return false;
+  }
+
+  // A paused capture stream delivers no silent blocks, so the idle policy
+  // cannot drain the previous source or reset the native delay history.
+  auto stale = std::vector<float>(2u * frames, 0.10F);
+  if (!check(slot.processWithIdle(stale, 2, frames, 10.0, policy).status ==
+                 pipetune::ProcessStatus::ok,
+             "Spatial Mapper failed when the new source resumed") ||
+      !check(std::any_of(stale.begin(), stale.end(),
+                         [](float value) { return value > 0.05F; }),
+             "the paused source must leave an audible DSP history")) return false;
+
+  const auto counters = slot.performanceCounters();
+  const auto generation = slot.activeGeneration();
+  if (!check(slot.resetProcessingState() == pipetune::ProcessStatus::ok,
+             "resuming a source must reset DSP delay history") ||
+      !check(slot.activeGeneration() == generation &&
+             slot.performanceCounters().processedFrames == counters.processedFrames &&
+             slot.activePluginCount() == 1,
+             "resetting DSP history must retain the preset and cumulative counters")) return false;
+
+  auto audibleNewAudio = 0.0;
+  for (auto start = 0u; start < slot.activeLatencyFrames() + 1024u;
+       start += frames) {
+    auto audio = std::vector<float>(2u * frames, 0.10F);
+    auto expected = audio;
+    const auto processed = slot.processWithIdle(audio, 2, frames,
+        start / 96000.0, policy);
+    if (!check(processed.status == pipetune::ProcessStatus::ok &&
+               processed.activity == pipetune::DspActivity::active &&
+               fresh.pipeline->process(expected, 2, frames,
+                   start / 96000.0) == pipetune::ProcessStatus::ok,
+               "Spatial Mapper failed after the source boundary")) return false;
+    for (auto index = std::size_t{0}; index < audio.size(); ++index) {
+      if (!check(std::abs(audio[index] - expected[index]) <= 3.0e-5F,
+                 "the resumed source must match a fresh Spatial Mapper"))
+        return false;
+      audibleNewAudio += static_cast<double>(audio[index]) * audio[index];
+    }
+  }
+  return check(audibleNewAudio > 0.01,
+               "the new source must remain audible after resetting DSP history");
+}
+
 static bool testAttackBassIdlePolicy(const std::filesystem::path &directory) {
   const auto backends = pipetune::discoverDspBackends();
   for (const auto name : {"Attack Tonal Balance", "Bass Extender"}) {
@@ -743,6 +811,8 @@ static bool testBassManagementIdlePolicy(const std::filesystem::path &directory)
       if (!check(slot.processWithIdle(silence, 2, 128, 7.0, {.timeoutMilliseconds = 100}).activity ==
                      pipetune::DspActivity::sleeping && slot.performanceCounters().processedFrames == before.processedFrames,
                  "sleep must stop Bass Management DSP calls") ||
+          !check(slot.resetProcessingState() == pipetune::ProcessStatus::ok,
+                 "a stream boundary must retain the prepared Bass Management asset") ||
           !check(reference.pipeline->reset() == pipetune::ProcessStatus::ok, "reference FIR reset failed")) return false;
       auto subEnergy = 0.0;
       for (auto start = 0u; start < latency + 8192u; start += 128u) {
@@ -937,7 +1007,8 @@ int main() {
                           positive, negative) &&
                       testStagedReplacementCanCommitAndRollback(
                           positive, negative) &&
-                      testBackendReplacementPreservesCounters(positive);
+                      testBackendReplacementPreservesCounters(positive) &&
+                      testStoppedSpatialMapperResumesWithoutPreviousAudio(directory);
   std::filesystem::remove_all(directory);
   return passed ? 0 : 1;
 }
