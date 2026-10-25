@@ -94,6 +94,10 @@ struct StreamCallbackContext {
   bool input;
 };
 
+static constexpr std::uint32_t kStartOutputTransition = 1U;
+static constexpr std::uint32_t kResetOutputTransition = 2U;
+static constexpr std::uint32_t kResetSourceHistory = 4U;
+
 static bool backendDiscoveryWasSupplied(
     const DspBackendLoadResult &result) {
   return result.backend != nullptr || !result.attemptedPath.empty() ||
@@ -138,6 +142,7 @@ struct PipeWireRuntime {
   AudioBridgeLatencyController bridgeLatency;
   PipeWireLatencyState latencyState;
   AudioTransitionSilencer outputTransitionSilencer;
+  std::atomic<std::uint32_t> pendingAudioTransition{0};
   std::atomic<std::uint64_t> processingErrors;
   InputTelemetry inputTelemetry;
   OutputPeakTelemetry outputPeakTelemetry;
@@ -418,29 +423,68 @@ static std::uint32_t transitionSampleRate(
   }
   const auto inputRate =
       runtime.inputStreamSampleRate.load(std::memory_order_acquire);
-  return inputRate == 0 ? runtime.rateBridgeStreamRate : inputRate;
+  return inputRate == 0
+      ? runtime.dspSampleRate.load(std::memory_order_acquire) : inputRate;
 }
 
-static void startOutputTransition(PipeWireRuntime &runtime,
-                                  std::uint32_t sampleRate) noexcept {
-  // Both stream callbacks run on this runtime's pw_main_loop, so the ring
-  // consumer cannot run concurrently with this intentional discard.
-  static_cast<void>(runtime.audioBuffers->ring.discardQueuedFrames());
-  runtime.bridgeLatency.reset();
-  runtime.outputTransitionSilencer.start(
-      pipelineTransitionSilenceFrames(sampleRate),
-      pipelineTransitionFadeFrames(sampleRate));
+static void startOutputTransition(PipeWireRuntime &runtime) noexcept {
+  // State and format notifications run on the main loop, whereas RT_PROCESS
+  // callbacks own the audio history. Defer its mutation to the data loop.
+  runtime.pendingAudioTransition.fetch_or(kStartOutputTransition,
+                                          std::memory_order_release);
 }
 
-static void resetOutputTransition(PipeWireRuntime &runtime,
-                                  std::uint32_t sampleRate) noexcept {
-  // Output callbacks share the pw_main_loop with format callbacks, so the
-  // consumer cannot run while its disconnected queue is discarded.
+static void resetOutputTransition(PipeWireRuntime &runtime) noexcept {
+  // A disconnected output must forget its last sample rather than fading
+  // audio from a previous activation into the next source.
+  runtime.pendingAudioTransition.fetch_or(kResetOutputTransition,
+                                          std::memory_order_release);
+}
+
+static void resetSourceHistory(PipeWireRuntime &runtime) noexcept {
+  runtime.pendingAudioTransition.fetch_or(
+      kResetOutputTransition | kResetSourceHistory, std::memory_order_release);
+}
+
+static bool applyPendingAudioTransition(PipeWireRuntime &runtime) noexcept {
+  const auto pending = runtime.pendingAudioTransition.exchange(
+      0, std::memory_order_acq_rel);
+  if (pending == 0) return true;
+
   static_cast<void>(runtime.audioBuffers->ring.discardQueuedFrames());
   runtime.bridgeLatency.reset();
-  runtime.outputTransitionSilencer.reset(
-      pipelineTransitionSilenceFrames(sampleRate),
-      pipelineTransitionFadeFrames(sampleRate));
+  const auto sampleRate = transitionSampleRate(runtime);
+  if ((pending & kResetOutputTransition) != 0) {
+    runtime.outputTransitionSilencer.reset(
+        pipelineTransitionSilenceFrames(sampleRate),
+        pipelineTransitionFadeFrames(sampleRate));
+  } else {
+    runtime.outputTransitionSilencer.start(
+        pipelineTransitionSilenceFrames(sampleRate),
+        pipelineTransitionFadeFrames(sampleRate));
+  }
+  if ((pending & kResetSourceHistory) == 0) return true;
+
+  // No silence frames arrive while the graph is stopped, so DSP idle timeout
+  // cannot drain delay lines. Reset them before processing a new activation,
+  // together with converter history even when its rates have not changed.
+  const auto streamRate = runtime.inputStreamSampleRate.load(std::memory_order_acquire);
+  const auto dspRate = runtime.dspSampleRate.load(std::memory_order_acquire);
+  if (!runtime.rateBridgeReady.load(std::memory_order_acquire) ||
+      streamRate == 0 || dspRate == 0) {
+    runtime.pendingAudioTransition.fetch_or(pending, std::memory_order_release);
+    return false;
+  }
+  const auto resetStatus = runtime.pipeline.resetProcessingState();
+  const auto inputError = runtime.audioBuffers->inputRateConverter.configure(streamRate, dspRate);
+  const auto outputError = runtime.audioBuffers->outputRateConverter.configure(dspRate, streamRate);
+  if (resetStatus != ProcessStatus::ok || inputError != 0 || outputError != 0) {
+    runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
+    runtime.pendingAudioTransition.fetch_or(pending, std::memory_order_release);
+    return false;
+  }
+  clearOutputPeaks(runtime.outputPeakTelemetry);
+  return true;
 }
 
 struct PipeWireLibraryScope {
@@ -743,7 +787,13 @@ static void streamStateChanged(void *data, pw_stream_state previousState,
     if (stream != nullptr && pw_stream_flush(stream, false) < 0) {
       runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
     }
-    resetOutputTransition(runtime, transitionSampleRate(runtime));
+    if (context.input) {
+      if (runtime.outputStream != nullptr && pw_stream_flush(runtime.outputStream, false) < 0)
+        runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
+      resetSourceHistory(runtime);
+    } else {
+      resetOutputTransition(runtime);
+    }
   }
   if (context.input) {
     runtime.inputReady = isReadyState(state);
@@ -1024,7 +1074,7 @@ static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
         (runtime.rateBridgeStreamRate != bridgeRates.streamSampleRate ||
          runtime.rateBridgeDspRate != bridgeRates.dspSampleRate);
     if (bridgeChanged || runtime.silenceNextRateBridge) {
-      startOutputTransition(runtime, bridgeRates.streamSampleRate);
+      startOutputTransition(runtime);
     }
     runtime.rateBridgeStreamRate = bridgeRates.streamSampleRate;
     runtime.rateBridgeDspRate = bridgeRates.dspSampleRate;
@@ -1119,11 +1169,10 @@ static void streamParameterChanged(void *data, std::uint32_t id,
     return;
   }
   if (parameter == nullptr) {
-    const auto sampleRate = transitionSampleRate(runtime);
     if (context.input) {
-      startOutputTransition(runtime, sampleRate);
+      resetSourceHistory(runtime);
     } else {
-      resetOutputTransition(runtime, sampleRate);
+      resetOutputTransition(runtime);
     }
     runtime.silenceNextRateBridge = true;
     runtime.rateBridgeReady.store(false, std::memory_order_release);
@@ -1396,7 +1445,9 @@ static void clearOutputChunks(spa_buffer &buffer,
 static void outputProcess(void *data) {
   auto &runtime =
       *static_cast<StreamCallbackContext *>(data)->runtime;
-  processAvailableInput(runtime);
+  const auto historyReady = applyPendingAudioTransition(runtime);
+  if (historyReady) processAvailableInput(runtime);
+  else discardAvailableInput(runtime);
   updateGraphSampleRate(runtime, runtime.outputStream);
   auto *pipeWireBuffer = pw_stream_dequeue_buffer(runtime.outputStream);
   if (pipeWireBuffer == nullptr || pipeWireBuffer->buffer == nullptr) {
@@ -1428,7 +1479,7 @@ static void outputProcess(void *data) {
                               blockFrames);
     const auto pipelineGeneration = runtime.pipeline.activeGeneration();
     const auto silencePrefixFrames =
-        runtime.rateBridgeReady.load(std::memory_order_acquire)
+        historyReady && runtime.rateBridgeReady.load(std::memory_order_acquire)
             ? runtime.bridgeLatency.consumePrefixFrames(blockFrames)
             : blockFrames;
     const auto audioRead = runtime.audioBuffers->ring.readWithSilencePrefix(
@@ -1565,7 +1616,7 @@ static void destroyOutputStream(PipeWireRuntime &runtime) {
   // The old data-loop callback is quiescent before a new channel layout or
   // routing configuration can reuse its logical channel numbers.
   clearOutputPeaks(runtime.outputPeakTelemetry);
-  resetOutputTransition(runtime, transitionSampleRate(runtime));
+  resetOutputTransition(runtime);
   runtime.rateBridgeReady.store(false, std::memory_order_release);
   runtime.outputReady = false;
   runtime.outputFormatReady = false;
