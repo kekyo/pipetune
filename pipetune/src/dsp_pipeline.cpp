@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <charconv>
 #include <cmath>
 #include <cstddef>
@@ -92,6 +93,7 @@ struct DspPipeline::Impl {
   bool bypass = false;
   float sampleRate = 0.0F;
   std::uint32_t maxChannels = 0;
+  std::uint32_t outputChannelCount = 0;
   std::uint32_t maxFrames = 0;
   std::uint32_t latencyFrames = 0;
   std::size_t activePluginCount = 0;
@@ -331,6 +333,168 @@ static std::uint32_t selectedProcessingChannels(std::int8_t channelSpec,
   return 1u;
 }
 
+struct PresetChannelLayout {
+  std::uint32_t processingChannels = 2;
+  std::uint32_t outputChannels = 2;
+};
+
+struct LayoutNode {
+  std::string_view name;
+  std::int8_t channelSpec;
+  std::uint8_t inputBus;
+  std::uint8_t outputBus;
+  std::uint32_t bandCount = 0;
+  std::uint32_t bassMask = 0;
+  std::uint32_t spatialInputChannels = 0;
+  std::uint32_t spatialMask = 0;
+  std::vector<std::uint8_t> matrixRoutes;
+};
+
+static std::uint32_t layoutParameter(const PackedParameters &packed, std::string_view key,
+    std::string_view arrayKey = {}, std::size_t index = 0) {
+  for (auto i = std::size_t{0}; i < packed.floats.size(); ++i) {
+    const auto &element = packed.definition->elements[i];
+    if ((!arrayKey.empty() && element.arrayKey == arrayKey && element.containerIndex == index) ||
+        (arrayKey.empty() && element.directKey == key))
+      return static_cast<std::uint32_t>(std::max(0.0F, packed.floats[i]));
+  }
+  return 0;
+}
+
+static std::uint32_t channelSpecWidth(std::int8_t spec) {
+  if (spec >= 16) return static_cast<std::uint32_t>(spec - 16) * 2u + 2u;
+  return spec >= 0 ? static_cast<std::uint32_t>(spec) + 1u : 2u;
+}
+
+static std::uint32_t bitWidth(std::uint32_t mask) {
+  return mask == 0 ? 0u : 32u - static_cast<std::uint32_t>(std::countl_zero(mask));
+}
+
+static PresetChannelLayout inferPresetChannelLayout(yyjson_val *pipelineValue) {
+  auto nodes = std::vector<LayoutNode>{};
+  auto layout = PresetChannelLayout{};
+  auto needsStereoBands = false;
+  auto insideSection = false;
+  auto sectionEnabled = true;
+  const auto count = yyjson_arr_size(pipelineValue);
+  for (auto index = std::size_t{0}; index < count; ++index) {
+    auto node = PresetNode{};
+    auto error = std::string{};
+    if (!normalizeNode(yyjson_arr_get(pipelineValue, index), index, node, error)) continue;
+    if (node.name == "Section") {
+      insideSection = true;
+      sectionEnabled = node.enabled;
+      continue;
+    }
+    const auto *definition = findDspByDisplayName(node.name);
+    if (!node.enabled || (insideSection && !sectionEnabled) || definition == nullptr ||
+        definition->visualizationOnly ||
+        (definition->requiresExternalAssets &&
+         !(node.name == "IR Reverb" || node.name == "SFZ Note Player" ||
+           node.name == "Room EQ" || node.name == "Bass Management" ||
+           node.name == "Crosstalk Cancellation" || supportsGeneratedFirAsset(node.name)))) continue;
+    auto inputBus = std::uint8_t{0};
+    auto outputBus = std::uint8_t{0};
+    auto channelSpec = std::int8_t{-1};
+    if (!parseBus(node.inputBus, inputBus) || !parseBus(node.outputBus, outputBus) ||
+        !parseChannel(node.channel, channelSpec)) continue;
+    auto packed = packDspParameters(*definition, node.parameters);
+    if (!packed.error.empty()) continue;
+    auto item = LayoutNode{.name = node.name, .channelSpec = channelSpec,
+        .inputBus = inputBus, .outputBus = outputBus, .bandCount = 0,
+        .bassMask = 0, .spatialInputChannels = 0, .spatialMask = 0, .matrixRoutes = {}};
+    layout.processingChannels = std::max(layout.processingChannels, channelSpecWidth(channelSpec));
+    if (node.name == "Matrix") {
+      item.matrixRoutes = std::move(packed.bytes);
+      for (auto offset = std::size_t{4}; offset + 2 < item.matrixRoutes.size(); offset += 3) {
+        const auto routeWidth = std::max(item.matrixRoutes[offset], item.matrixRoutes[offset + 1]) + 1u;
+        if (channelSpec == -2) layout.processingChannels = std::max(layout.processingChannels, routeWidth);
+      }
+    } else if (node.name == "Channel Divider" || node.name == "FIR Crossover") {
+      item.bandCount = std::clamp(layoutParameter(packed, "bc"), 2u, 4u);
+      if (channelSpec == -2) {
+        needsStereoBands = true;
+        layout.processingChannels = std::max(layout.processingChannels, item.bandCount * 2u);
+      }
+    } else if (node.name == "Spatial Mapper") {
+      const auto localWidth = selectedProcessingChannels(channelSpec, 16u);
+      item.spatialInputChannels = std::min(localWidth, std::clamp(layoutParameter(packed, "ic"), 1u, 16u));
+      for (auto parameter = std::size_t{0}; parameter < packed.floats.size(); ++parameter) {
+        const auto &element = packed.definition->elements[parameter];
+        if (element.arrayKey != "dm" && element.arrayKey != "fm" && element.arrayKey != "rm") continue;
+        const auto input = element.containerIndex % 16u;
+        const auto output = element.containerIndex / 16u;
+        if (input < item.spatialInputChannels && output < localWidth && packed.floats[parameter] != 0.0F)
+          item.spatialMask |= 1u << output;
+      }
+      if (channelSpec == -2) layout.processingChannels = std::max(layout.processingChannels,
+          std::max(item.spatialInputChannels, bitWidth(item.spatialMask)));
+    } else if (node.name == "Bass Management") {
+      item.bassMask = layoutParameter(packed, "su");
+      for (auto channel = std::size_t{0}; channel < 16; ++channel) {
+        const auto role = layoutParameter(packed, {}, "ro", channel);
+        const auto routes = layoutParameter(packed, {}, "rt", channel);
+        item.bassMask |= routes;
+        if (role == 1u || role == 2u || routes != 0u)
+          layout.processingChannels = std::max(layout.processingChannels,
+              static_cast<std::uint32_t>(channel + 1u));
+      }
+      layout.processingChannels = std::max(layout.processingChannels, bitWidth(item.bassMask));
+    }
+    nodes.push_back(std::move(item));
+  }
+  // The band splitters require stereo pairs even when a later node addresses
+  // an odd final channel. The padding channel is not itself a preset output.
+  if (needsStereoBands) layout.processingChannels += layout.processingChannels % 2u;
+  layout.processingChannels = std::min(layout.processingChannels, 16u);
+
+  auto busMasks = std::array<std::uint32_t, 5>{3u, 0u, 0u, 0u, 0u};
+  for (const auto &node : nodes) {
+    const auto source = busMasks[node.inputBus];
+    const auto first = node.channelSpec >= 16 ?
+        static_cast<std::uint32_t>(node.channelSpec - 16) * 2u :
+        node.channelSpec >= 0 ? static_cast<std::uint32_t>(node.channelSpec) : 0u;
+    const auto selection = node.channelSpec == -2 ?
+        ((1u << layout.processingChannels) - 1u) :
+        ((1u << selectedProcessingChannels(node.channelSpec, layout.processingChannels)) - 1u) << first;
+    auto result = source;
+    if (node.name == "Matrix") {
+      result = source & ~selection;
+      for (auto offset = std::size_t{4}; offset + 2 < node.matrixRoutes.size(); offset += 3) {
+        const auto localWidth = selectedProcessingChannels(node.channelSpec, layout.processingChannels);
+        if (node.matrixRoutes[offset] >= localWidth || node.matrixRoutes[offset + 1] >= localWidth)
+          continue;
+        const auto input = first + node.matrixRoutes[offset];
+        const auto output = first + node.matrixRoutes[offset + 1];
+        if (input < layout.processingChannels && output < layout.processingChannels &&
+            (selection & (1u << input)) != 0)
+          result |= 1u << output;
+      }
+    } else if (node.spatialInputChannels != 0) {
+      // Spatial Mapper replaces its selected input lanes. Higher lanes without
+      // a matrix destination retain their dry input in the native processor.
+      const auto inputs = ((1u << node.spatialInputChannels) - 1u) << first;
+      result = (source & ~inputs) | (node.spatialMask << first);
+    } else if (node.bandCount != 0 && node.channelSpec == -2) {
+      // Both splitters replace the full bus and clear lanes beyond their bands.
+      result = (1u << (node.bandCount * 2u)) - 1u;
+    } else if (node.name == "Bass Management" && source != 0) {
+      result |= node.bassMask;
+    } else if (node.name == "DC Offset" || node.name == "Hum Generator") {
+      result |= selection;
+    } else if (node.name == "Oscillator" || node.name == "SFZ Note Player") {
+      result |= node.channelSpec == -2 ? 3u : selection;
+    } else if (node.channelSpec >= 0) {
+      // An explicit channel address declares a bus lane even when its input is silent.
+      result |= selection;
+    }
+    if (node.inputBus == node.outputBus) busMasks[node.outputBus] = result;
+    else busMasks[node.outputBus] |= result & selection;
+  }
+  layout.outputChannels = std::clamp(bitWidth(busMasks[0]), 1u, 16u);
+  return layout;
+}
+
 static bool replacePackedParameter(PackedParameters &packed,
                                    std::string_view key, float value) {
   const auto elements = packed.definition->elements;
@@ -455,6 +619,10 @@ std::uint32_t DspPipeline::maxChannels() const noexcept {
   return implementation_ == nullptr ? 0 : implementation_->maxChannels;
 }
 
+std::uint32_t DspPipeline::outputChannelCount() const noexcept {
+  return implementation_ == nullptr ? 0 : implementation_->outputChannelCount;
+}
+
 float DspPipeline::sampleRate() const noexcept {
   return implementation_ == nullptr ? 0.0F : implementation_->sampleRate;
 }
@@ -499,7 +667,8 @@ createBypassDspPipeline(const PipelineBuildOptions &options) {
   auto implementation = std::make_unique<DspPipeline::Impl>();
   implementation->bypass = true;
   implementation->sampleRate = options.sampleRate;
-  implementation->maxChannels = options.maxChannels;
+  implementation->maxChannels = options.inferChannelsFromPreset ? 2u : options.maxChannels;
+  implementation->outputChannelCount = implementation->maxChannels;
   implementation->maxFrames = options.maxFrames;
   auto pipeline =
       std::unique_ptr<DspPipeline>(new DspPipeline(std::move(implementation)));
@@ -533,12 +702,17 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
     co_return loadError("preset root must contain a pipeline or plugins array");
   }
 
+  const auto layout = options.inferChannelsFromPreset ? inferPresetChannelLayout(pipelineValue) :
+      PresetChannelLayout{options.maxChannels, options.maxChannels};
+  options.maxChannels = layout.processingChannels;
+
   auto implementation = std::make_unique<DspPipeline::Impl>();
   const auto fail = [&implementation](std::string message, std::vector<PipelineWarning> warnings = {}) {
     return loadError(std::move(message), std::move(warnings), implementation->dependencyFiles);
   };
   implementation->sampleRate = options.sampleRate;
   implementation->maxChannels = options.maxChannels;
+  implementation->outputChannelCount = layout.outputChannels;
   implementation->maxFrames = options.maxFrames;
   implementation->loadContext = context;
   auto measurementStore = MeasurementStore{context.measurementDirectory, {}};

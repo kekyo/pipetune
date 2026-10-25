@@ -29,6 +29,7 @@ struct ServerState {
   pipetune::DspIdlePolicy dspIdlePolicy;
   pipetune::OutputConfiguration outputConfiguration = {};
   std::uint64_t outputRevision = 42;
+  bool profileRequestMatched = false;
 };
 
 static pipetune::ControlRuntimeStatus serverStatus(ServerState &state) {
@@ -177,6 +178,11 @@ static pipetune::ControlMessageResult handleRequest(
   if (request.request.command == pipetune::ControlCommand::setOutput) {
     {
       auto lock = std::scoped_lock(state.mutex);
+      const auto &profiles = request.request.outputProfileSelections;
+      state.profileRequestMatched = request.request.expectedOutputInventoryRevision == 17 &&
+          profiles.size() == 1 && profiles.front().card.location == "usb:test" &&
+          profiles.front().cardProfileName == "output:analog-stereo+input:analog-stereo" &&
+          profiles.front().outputKey == "analog-stereo" && !profiles.front().allowMissingForRestore;
       if (request.request.expectedRevision != state.outputRevision)
         return {.response = pipetune::makeControlErrorResponse("output revision differs"),
                 .connectionMode = pipetune::ControlConnectionMode::close, .publishStatus = false};
@@ -259,8 +265,11 @@ static void maybeStartSetOutput(ClientTestState &state) {
     state.setOutputRequested = true;
     auto configuration = pipetune::OutputConfiguration{};
     configuration.channels.resize(4, {"", 0, "Reserved"});
+    const auto profiles = std::vector{pipetune::OutputProfileSelection{
+        {"alsa", "usb:test", "vendor", "product", "serial"},
+        "output:analog-stereo+input:analog-stereo", "analog-stereo", false}};
     pipetune_gtk::setControlOutputAsync(state.client, configuration,
-        std::filesystem::path("/tmp/output.effetune_preset"), 42, onSetOutputReply, &state);
+        std::filesystem::path("/tmp/output.effetune_preset"), 42, onSetOutputReply, &state, profiles, 17);
   }
 }
 
@@ -536,6 +545,10 @@ int main() {
       !state.publishedSetDspBackend || !state.setDspIdleReply ||
       !state.publishedSetDspIdle || !state.setOutputReply || !state.publishedSetOutput || !state.disconnected) {
     std::cerr << "asynchronous control client lifecycle differs\n";
+    return 1;
+  }
+  if (!serverState.profileRequestMatched) {
+    std::cerr << "OS profile choices and their inventory guard did not reach the control server\n";
     return 1;
   }
   return 0;

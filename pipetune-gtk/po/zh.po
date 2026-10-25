@@ -93,11 +93,17 @@ msgstr "活动中"
 msgid "Active plugins"
 msgstr "活动插件"
 
+msgid "Add"
+msgstr "添加"
+
+msgid "Add an output device to start configuring channels."
+msgstr "请添加输出设备以配置声道。"
+
+msgid "Add device…"
+msgstr "添加设备…"
+
 msgid "Advanced"
 msgstr "高级"
-
-msgid "After"
-msgstr "更改后"
 
 msgid "All"
 msgstr "全部"
@@ -108,11 +114,11 @@ msgstr "所有设置已保存"
 msgid "Ambiguous device"
 msgstr "设备标识不唯一"
 
-msgid "Ambiguous device. Reassign device to choose the output."
-msgstr "无法唯一识别设备。请重新分配设备以选择输出。"
-
 msgid "Apply"
 msgstr "应用"
+
+msgid "Apply configuration"
+msgstr "应用配置"
 
 msgid "Audio outputs changed"
 msgstr "音频输出已更改"
@@ -138,14 +144,8 @@ msgstr "自动"
 msgid "Automatic — follow PipeWire graph sampling frequency"
 msgstr "自动 — 跟随 PipeWire 图采样频率"
 
-msgid "Available"
-msgstr "可用"
-
 msgid "Baseline"
 msgstr "基准状态"
-
-msgid "Before"
-msgstr "更改前"
 
 msgid "Bypass"
 msgstr "旁路"
@@ -201,9 +201,18 @@ msgstr "正在更改静音暂停"
 msgid "Changing silence suspension failed"
 msgstr "更改静音暂停失败"
 
+msgid "Channel changes"
+msgstr "声道编号变更"
+
 #, brace-format
 msgid "Channel gains: {0}"
 msgstr "通道增益：{0}"
+
+msgid "Channels"
+msgstr "声道"
+
+msgid "Choose a device to add to this configuration."
+msgstr "请选择要添加到此配置的设备。"
 
 msgid "Choose a preset before enabling DSP processing"
 msgstr "启用 DSP 处理前请选择预设"
@@ -213,6 +222,9 @@ msgstr "选择标准或已保存的 EffeTune 预设…"
 
 msgid "Choose an EffeTune preset"
 msgstr "选择 EffeTune 预设"
+
+msgid "Choose an output profile or replace the device to review its channels."
+msgstr "请选择输出配置或替换设备，以检查其声道。"
 
 msgid "Choose bypass, Automatic + Suggest, and Scalar + Auto SIMD."
 msgstr "选择旁路、自动 + 建议以及 Scalar + 自动 SIMD。"
@@ -287,11 +299,20 @@ msgstr "已选择默认值"
 msgid "Device channel"
 msgstr "设备通道"
 
+msgid "Device configuration"
+msgstr "设备配置"
+
+msgid "Device configuration…"
+msgstr "设备配置…"
+
 msgid "Device mute unknown"
 msgstr "设备静音状态未知"
 
 msgid "Device muted"
 msgstr "设备已静音"
+
+msgid "Device name"
+msgstr "设备名称"
 
 msgid "Device unmuted"
 msgstr "设备未静音"
@@ -345,6 +366,9 @@ msgstr "DSP 采样频率"
 msgid "DSP sampling frequency {0}  •  PipeWire graph sampling frequency {1}"
 msgstr "DSP 采样频率 {0}  •  PipeWire 图采样频率 {1}"
 
+msgid "Edit the complete output configuration, then apply it once. Use Apply in the main window to save it."
+msgstr "编辑完整的输出配置，然后一次性应用。要保存，请点击主窗口中的“应用”。"
+
 msgid "Effective backend"
 msgstr "实际后端"
 
@@ -393,6 +417,9 @@ msgstr "强制"
 
 msgid "Force — request the fixed graph sampling frequency"
 msgstr "强制 — 请求固定图采样频率"
+
+msgid "If the preset does not support these channels, cancel and select a compatible preset or Bypass in the main window."
+msgstr "如果预设不支持这些通道，请取消并在主窗口中选择兼容的预设或旁路模式。"
 
 msgid "Ignore"
 msgstr "忽略"
@@ -472,14 +499,14 @@ msgstr "原生后端"
 msgid "Never"
 msgstr "从不"
 
+msgid "No unconfigured output devices are available."
+msgstr "没有可用的未配置输出设备。"
+
 msgid "None"
 msgstr "无"
 
 msgid "Not connected"
 msgstr "未连接"
-
-msgid "Not connected. Reconnect it or reassign this device."
-msgstr "未连接。请重新连接或重新分配此设备。"
 
 msgid "Off"
 msgstr "关闭"
@@ -490,14 +517,20 @@ msgstr "打开 PipeTune"
 msgid "Output"
 msgstr "输出"
 
-msgid "Output devices"
-msgstr "输出设备"
+msgid "Output channels"
+msgstr "输出声道数"
+
+msgid "Output levels (dBFS)"
+msgstr "输出电平（dBFS）"
 
 msgid "Output mode"
 msgstr "输出模式"
 
-msgid "Output settings changed. Reopen the mapping review."
-msgstr "输出设置已更改。请重新打开通道分配确认窗口。"
+msgid "Output profile"
+msgstr "输出配置文件"
+
+msgid "Output settings changed. Cancel and reopen the configuration dialog."
+msgstr "输出设置已更改。请取消并重新打开配置对话框。"
 
 #, brace-format
 msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
@@ -508,6 +541,12 @@ msgstr "溢出帧"
 
 msgid "PCM data rate"
 msgstr "PCM 数据速率"
+
+msgid "Peak levels before device volume."
+msgstr "设备音量调节前的峰值电平。"
+
+msgid "Peak output level before device volume. Silence is −∞ dBFS; 0 dBFS is full scale."
+msgstr "设备音量调节前的输出峰值电平。静音为 −∞ dBFS；0 dBFS 为满幅。"
 
 msgid "Pending dialog settings will be reapplied"
 msgstr "将重新应用待处理的对话框设置"
@@ -564,12 +603,6 @@ msgstr "需要预设"
 msgid "Preset warnings"
 msgstr "预设警告"
 
-msgid "Press Enter or leave the field to preview the purpose label."
-msgstr "按 Enter 或离开输入框以预览用途标签。"
-
-msgid "Preview mapping"
-msgstr "预览分配"
-
 msgid "Processing"
 msgstr "处理"
 
@@ -585,26 +618,41 @@ msgstr "处理时间"
 msgid "Profile changed"
 msgstr "配置已更改"
 
-msgid "Profile changed. Reassign device to update these channels."
-msgstr "配置文件已更改。请重新分配设备以更新这些通道。"
-
 msgid "Purpose"
 msgstr "用途"
+
+msgid "Purpose label for this output channel."
+msgstr "此输出通道的用途名称。"
 
 msgid "Quit"
 msgstr "退出"
 
-msgid "Reassign device…"
-msgstr "重新分配设备…"
+msgid "Reconnect this device, replace it, or remove it from the configuration."
+msgstr "请重新连接此设备、替换设备或将其从配置中移除。"
+
+msgid "Remove from configuration"
+msgstr "从配置中移除"
+
+msgid "Remove this device while keeping other devices' channel numbers."
+msgstr "移除此设备，同时保留其他设备的声道编号。"
+
+msgid "Remove unassigned channels and renumber the remaining channels."
+msgstr "删除未分配声道，并重新编号其余声道。"
+
+msgid "Remove unused channels"
+msgstr "整理未使用声道"
+
+msgid "Removed devices"
+msgstr "移除的设备数"
+
+msgid "Replace"
+msgstr "替换"
+
+msgid "Replace with another device…"
+msgstr "替换为其他设备…"
 
 msgid "Reported device controls, separate from the OS master volume. Channel gains show the minimum and maximum across the device."
 msgstr "设备报告的控制值，与操作系统的主音量相互独立。通道增益显示设备内各通道的最小值和最大值。"
-
-msgid "Reserved"
-msgstr "已保留"
-
-msgid "Reserved EffeTune channels"
-msgstr "保留的 EffeTune 通道"
 
 msgid "Restart now"
 msgstr "立即重启"
@@ -627,11 +675,8 @@ msgstr "正在恢复打开对话框时捕获的实时设置"
 msgid "Restoring the previous live settings…"
 msgstr "正在恢复之前的实时设置…"
 
-msgid "Review channel mapping"
-msgstr "确认通道分配"
-
-msgid "Review where each final EffeTune channel will play. Your preset is unchanged. Preview this mapping, then use Apply in the main window to save it."
-msgstr "请确认 EffeTune 各最终通道的播放位置。预设本身不会更改。预览此分配后，在主窗口中使用“应用”保存。"
+msgid "Review the preset's channel assignments before applying these changes."
+msgstr "应用这些更改前，请检查预设的声道分配。"
 
 msgid "Rollback requested"
 msgstr "已请求回滚"
@@ -674,14 +719,8 @@ msgstr "整体增益：{0}"
 msgid "seconds"
 msgstr "秒"
 
-msgid "Select a replacement output device."
-msgstr "请选择替换的输出设备。"
-
 msgid "Select at least one output device."
 msgstr "请至少选择一个输出设备。"
-
-msgid "Select the saved device whose channels this output will use."
-msgstr "请选择此输出将接替其通道的已保存设备。"
 
 msgid "Setting up PipeTune for this user…"
 msgstr "正在为此用户设置 PipeTune…"
@@ -745,26 +784,29 @@ msgstr "系统"
 msgid "System default"
 msgstr "系统默认"
 
-msgid "The 16-channel limit includes disabled and reserved channels. Use existing channels to replace a saved device."
-msgstr "16 通道上限包括已禁用和保留的通道。请使用现有通道来替换已保存的设备。"
+msgid "The OS selects the output. Saved device assignments are inactive."
+msgstr "由操作系统选择输出。已保存的设备分配不生效。"
 
-msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
-msgstr "由操作系统选择输出。下方保存的多设备输出分配当前未启用。"
+msgid "The replacement keeps the existing channel numbers and purpose labels."
+msgstr "替换时将保留现有声道编号和用途标签。"
 
-msgid "The selected device cannot be identified uniquely."
-msgstr "无法唯一识别所选设备。"
-
-msgid "The selected output is no longer available with this profile. Reopen the mapping review."
-msgstr "所选输出已无法使用此配置。请重新打开通道分配确认窗口。"
+msgid "The selected output is no longer available with this profile. Review the configuration."
+msgstr "所选输出已无法使用此配置文件。请检查配置。"
 
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "界面语言更改将在 PipeTune GTK 重启后生效。"
+
+msgid "This device cannot be identified uniquely. Choose a replacement."
+msgstr "无法唯一识别此设备。请选择替换设备。"
 
 msgid "Turn off to pass audio through without an EffeTune preset."
 msgstr "关闭可在不使用 EffeTune 预设的情况下直通音频。"
 
 msgid "Unassigned"
 msgstr "未分配"
+
+msgid "Unassigned channels"
+msgstr "未分配声道"
 
 msgid "unavailable"
 msgstr "不可用"
@@ -784,17 +826,14 @@ msgstr "未知"
 msgid "Unknown sample format"
 msgstr "未知采样格式"
 
-msgid "Unsupported channel count"
-msgstr "不支持的通道数量"
-
 msgid "Updating settings"
 msgstr "正在更新设置"
 
 msgid "Updating settings failed"
 msgstr "更新设置失败"
 
-msgid "Use existing channels…"
-msgstr "使用现有通道…"
+msgid "Use this device"
+msgstr "使用此设备"
 
 msgid "Versions"
 msgstr "版本"

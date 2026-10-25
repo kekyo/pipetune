@@ -42,6 +42,32 @@ struct OutputDeviceIdentity {
   bool operator==(const OutputDeviceIdentity &) const = default;
 };
 
+/** Identifies a physical card independently of its currently exposed output ports. */
+struct OutputCardIdentity {
+  /** Device backend. */
+  std::string api;
+  /** Stable bus location or backend-provided card identifier. */
+  std::string location;
+  /** Vendor identifier, or empty when unavailable. */
+  std::string vendor;
+  /** Product identifier, or empty when unavailable. */
+  std::string product;
+  /** Reported serial information, which need not be globally unique. */
+  std::string serial;
+  /** Compares every card identity component. */
+  bool operator==(const OutputCardIdentity &) const = default;
+};
+
+/** Persists an output choice without pinning a card's input profile. */
+struct OutputProfileIntent {
+  /** Card that owns the selected output profile. */
+  OutputCardIdentity card;
+  /** Backend-specific output choice, independent of an input profile. */
+  std::string outputKey;
+  /** Compares the saved output choice. */
+  bool operator==(const OutputProfileIntent &) const = default;
+};
+
 /** Describes every channel exposed by one active output profile. */
 struct OutputDeviceDescription {
   /** Stable matching information. */
@@ -64,6 +90,8 @@ struct ConfiguredOutput {
   bool enabled = true;
   /** Saved identity, label, profile, and complete channel layout. */
   OutputDeviceDescription device;
+  /** OS profile choice, absent for outputs without a managed card profile. */
+  std::optional<OutputProfileIntent> profileIntent = std::nullopt;
   /** Compares all saved output settings. */
   bool operator==(const ConfiguredOutput &) const = default;
 };
@@ -112,6 +140,42 @@ struct AvailableOutput {
   std::uint64_t nodeSerial = 0;
   /** Compares the device description and its current runtime identifiers. */
   bool operator==(const AvailableOutput &) const = default;
+};
+
+/** One user-selectable card profile and output layouts actually observed with it. */
+struct AvailableOutputProfile {
+  /** Physical card independent of an active Node. */
+  OutputCardIdentity card;
+  /** Full runtime card profile name used by PipeWire Device.Profile. */
+  std::string cardProfileName;
+  /** Output-only key suitable for persistence, or empty when unsupported. */
+  std::string outputKey;
+  /** User-facing profile description. */
+  std::string description;
+  /** True when the card reports this profile as available. */
+  bool available = false;
+  /** True when this is the card's currently selected profile. */
+  bool active = false;
+  /** True when selecting it preserves the current input profile. */
+  bool preservesInput = false;
+  /** Outputs seen while this card profile was active; empty means unknown. */
+  std::vector<OutputDeviceDescription> observedOutputs;
+  /** Compares the profile inventory entry. */
+  bool operator==(const AvailableOutputProfile &) const = default;
+};
+
+/** Identifies one complete card profile for a single live output operation. */
+struct OutputProfileSelection {
+  /** Physical card to change. */
+  OutputCardIdentity card;
+  /** Full card profile name, resolved against the latest EnumProfile. */
+  std::string cardProfileName;
+  /** Output-only intent used to choose a compatible profile after reconnection. */
+  std::string outputKey;
+  /** Permit a disconnected card to complete a rollback and restore later. */
+  bool allowMissingForRestore = false;
+  /** Compares the requested card profile. */
+  bool operator==(const OutputProfileSelection &) const = default;
 };
 
 /** Explains whether one saved output can currently receive its assigned audio. */

@@ -28,6 +28,18 @@ std::string validateOutputConfiguration(const OutputConfiguration &configuration
          &device.identity.vendor, &device.identity.product, &device.identity.serial}) {
       if (field->find('\0') != std::string::npos) return "output fields must not contain NUL";
     }
+    if (output.profileIntent) {
+      const auto &intent = *output.profileIntent;
+      if (intent.outputKey.empty() || intent.outputKey.find('\0') != std::string::npos ||
+          intent.card.api.find('\0') != std::string::npos || intent.card.location.find('\0') != std::string::npos ||
+          intent.card.vendor.find('\0') != std::string::npos || intent.card.product.find('\0') != std::string::npos ||
+          intent.card.serial.find('\0') != std::string::npos)
+        return "output profile intent must have a nonempty key and contain no NUL";
+      if (intent.card.api != device.identity.api || intent.card.location != device.identity.location ||
+          intent.card.vendor != device.identity.vendor || intent.card.product != device.identity.product ||
+          intent.card.serial != device.identity.serial)
+        return "output profile intent must identify the configured output's card";
+    }
     if (output.id.empty() || assigned.contains(output.id))
       return "configured output identifiers must be nonempty and unique";
     if (device.identity.api.empty() || device.identity.location.empty() || device.identity.port.empty())
@@ -74,7 +86,8 @@ OutputConfigurationResult appendConfiguredOutput(
   if (found != candidate.outputs.end()) {
     if (found->device.identity != output.device.identity ||
         found->device.profile != output.device.profile ||
-        found->device.channelPositions != output.device.channelPositions)
+        found->device.channelPositions != output.device.channelPositions ||
+        found->profileIntent != output.profileIntent)
       return {.configuration = configuration, .error = "changed output identity or layout requires explicit reassignment"};
     // Labels and channel slots are independent of live device descriptions.
     found->enabled = output.enabled;

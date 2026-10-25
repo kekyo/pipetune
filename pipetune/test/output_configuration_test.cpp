@@ -136,6 +136,10 @@ static bool testDspWidth() {
 
 static bool testJsonRoundTrip() {
   auto configuration = twoOutputs();
+  configuration.outputs[0].profileIntent = pipetune::OutputProfileIntent{
+      .card = {.api = "alsa", .location = "usb:1", .vendor = "vendor",
+          .product = "product", .serial = "model"},
+      .outputKey = "analog-stereo"};
   configuration.outputs[0].enabled = false;
   configuration.outputs[1].device.name = "USB \"右\" \\ output\nsecond line";
   configuration.outputs[1].device.identity.serial.clear();
@@ -152,7 +156,9 @@ static bool testJsonRoundTrip() {
   }
   const auto defaults = pipetune::parseOutputConfiguration(R"({"mode":"single","outputs":[],"channels":[]})");
   return check(defaults.error.empty() && defaults.configuration == pipetune::OutputConfiguration{},
-               "explicit empty single mode must decode to defaults");
+               "explicit empty single mode must decode to defaults") &&
+      check(pipetune::formatOutputConfiguration(configuration).find("\"outputKey\":\"analog-stereo\"") != std::string::npos,
+          "saved output profile intent must name only the output choice");
 }
 
 static bool testRejectedJson() {

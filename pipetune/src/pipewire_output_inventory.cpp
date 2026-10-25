@@ -10,8 +10,11 @@
 #include <spa/param/audio/raw-types.h>
 #include <spa/param/format.h>
 #include <spa/param/port-config.h>
+#include <spa/param/profile.h>
+#include <spa/param/route.h>
 #include <spa/param/props.h>
 #include <spa/pod/iter.h>
+#include <spa/pod/builder.h>
 #include <spa/pod/parser.h>
 
 #include <algorithm>
@@ -23,6 +26,7 @@
 #include <map>
 #include <optional>
 #include <string_view>
+#include <tuple>
 
 namespace pipetune {
 
@@ -36,6 +40,18 @@ struct InventoryObject {
   // Each parameter family is replaced when the node announces a change.
   std::map<std::uint32_t, std::vector<std::vector<std::string>>> layouts;
   bool canEnumerate = false;
+  bool canWrite = false;
+  struct CardProfile {
+    std::int32_t index = -1;
+    std::string name;
+    std::string description;
+    bool available = false;
+    std::uint32_t outputNodes = 0;
+    bool hasClasses = false;
+  };
+  std::vector<CardProfile> profiles;
+  std::int32_t activeProfile = -1;
+  std::vector<PipeWireInputRouteSnapshot> inputRoutes;
   OutputVolumeState volume;
 
   ~InventoryObject() {
@@ -58,6 +74,7 @@ struct PipeWireOutputInventory {
   int pending = 0;
   std::uint32_t defaultMetadataId = PW_ID_ANY;
   std::uint64_t policyGeneration = 0;
+  std::map<std::string, std::vector<OutputDeviceDescription>> observedLayouts;
 };
 
 static void updateProperties(InventoryProperties &properties, const spa_dict *dictionary) {
@@ -72,6 +89,43 @@ static void updateProperties(InventoryProperties &properties, const spa_dict *di
 static std::string property(const InventoryProperties &properties, std::string_view key) {
   const auto found = properties.find(key);
   return found == properties.end() ? std::string{} : found->second;
+}
+
+static OutputCardIdentity cardIdentity(const InventoryProperties &properties) {
+  auto card = OutputCardIdentity{};
+  card.api = property(properties, "device.api");
+  card.location = property(properties, "device.bus-path");
+  if (card.location.empty()) card.location = property(properties, "device.name");
+  card.vendor = property(properties, "device.vendor.id");
+  card.product = property(properties, "device.product.id");
+  card.serial = property(properties, "device.serial");
+  return card;
+}
+
+static std::string cardKey(const OutputCardIdentity &card, std::string_view profile) {
+  return card.api + '\0' + card.location + '\0' + card.vendor + '\0' + card.product + '\0' +
+      card.serial + '\0' + std::string(profile);
+}
+
+static std::string outputProfileKey(std::string_view name) {
+  if (name.starts_with("input:")) return {};
+  if (name.starts_with("output:")) {
+    name.remove_prefix(7);
+    const auto end = name.find('+');
+    if (end != std::string_view::npos && !name.substr(end).starts_with("+input:")) return {};
+    return std::string(name.substr(0, end));
+  }
+  if (name == "pro-audio") return "pro-audio";
+  return {};
+}
+
+static std::string_view inputProfilePart(std::string_view name) {
+  if (name.starts_with("output:")) {
+    const auto separator = name.find("+input:");
+    return separator == std::string_view::npos ? std::string_view{} : name.substr(separator + 1);
+  }
+  if (name.starts_with("input:")) return name;
+  return {};
 }
 
 static std::optional<std::uint32_t> unsignedValue(std::string_view value) {
@@ -272,11 +326,115 @@ static void nodeParam(void *data, int, std::uint32_t id, std::uint32_t, std::uin
 static void deviceInfo(void *data, const pw_device_info *info) {
   auto &device = *static_cast<InventoryObject *>(data);
   if ((info->change_mask & PW_DEVICE_CHANGE_MASK_PROPS) != 0) updateProperties(device.properties, info->props);
+  if ((info->change_mask & PW_DEVICE_CHANGE_MASK_PARAMS) != 0 && device.canEnumerate) {
+    device.profiles.clear();
+    device.activeProfile = -1;
+    device.inputRoutes.clear();
+    for (auto index = std::uint32_t{0}; index < info->n_params; ++index) {
+      const auto &parameter = info->params[index];
+      if ((parameter.flags & SPA_PARAM_INFO_READ) == 0 ||
+          (parameter.id != SPA_PARAM_EnumProfile && parameter.id != SPA_PARAM_Profile &&
+           parameter.id != SPA_PARAM_Route)) continue;
+      pw_device_enum_params(reinterpret_cast<pw_device *>(device.proxy), 0,
+          parameter.id, 0, UINT32_MAX, nullptr);
+    }
+  }
+  scheduleSnapshot(*device.owner);
+}
+
+static void deviceParam(void *data, int, std::uint32_t id, std::uint32_t,
+                        std::uint32_t, const spa_pod *param) {
+  auto &device = *static_cast<InventoryObject *>(data);
+  if (param == nullptr) return;
+  if (id == SPA_PARAM_Route) {
+    auto direction = std::uint32_t{SPA_ID_INVALID};
+    auto index = std::int32_t{-1};
+    auto logicalDevice = std::int32_t{-1};
+    auto *props = static_cast<spa_pod *>(nullptr);
+    if (spa_pod_parse_object(param, SPA_TYPE_OBJECT_ParamRoute, nullptr,
+        SPA_PARAM_ROUTE_direction, SPA_POD_Id(&direction),
+        SPA_PARAM_ROUTE_index, SPA_POD_Int(&index),
+        SPA_PARAM_ROUTE_device, SPA_POD_Int(&logicalDevice),
+        SPA_PARAM_ROUTE_props, SPA_POD_OPT_Pod(&props)) < 0 ||
+        direction != SPA_DIRECTION_INPUT || index < 0 || logicalDevice < 0) return;
+    auto route = PipeWireInputRouteSnapshot{.index = index, .device = logicalDevice, .props = {}};
+    if (props != nullptr) {
+      const auto size = SPA_POD_SIZE(props);
+      if (size > 0 && size <= 65536) {
+        route.props.resize(size);
+        std::memcpy(route.props.data(), props, size);
+      }
+    }
+    const auto existing = std::find_if(device.inputRoutes.begin(), device.inputRoutes.end(),
+        [&](const auto &item) { return item.device == route.device; });
+    if (existing == device.inputRoutes.end()) device.inputRoutes.push_back(std::move(route));
+    else *existing = std::move(route);
+    std::sort(device.inputRoutes.begin(), device.inputRoutes.end(), [](const auto &left, const auto &right) {
+      return left.device < right.device;
+    });
+    scheduleSnapshot(*device.owner);
+    return;
+  }
+  if (id != SPA_PARAM_EnumProfile && id != SPA_PARAM_Profile) return;
+  auto index = std::int32_t{-1};
+  const auto *name = static_cast<const char *>(nullptr);
+  const auto *description = static_cast<const char *>(nullptr);
+  auto available = std::uint32_t{SPA_PARAM_AVAILABILITY_unknown};
+  auto *classes = static_cast<spa_pod *>(nullptr);
+  if (spa_pod_parse_object(param, SPA_TYPE_OBJECT_ParamProfile, nullptr,
+      SPA_PARAM_PROFILE_index, SPA_POD_Int(&index),
+      SPA_PARAM_PROFILE_name, SPA_POD_OPT_String(&name),
+      SPA_PARAM_PROFILE_description, SPA_POD_OPT_String(&description),
+      SPA_PARAM_PROFILE_available, SPA_POD_OPT_Id(&available),
+      SPA_PARAM_PROFILE_classes, SPA_POD_OPT_Pod(&classes)) < 0 || index < 0) return;
+  if (id == SPA_PARAM_Profile) device.activeProfile = index;
+  else if (name != nullptr && name[0] != '\0') {
+    auto profile = InventoryObject::CardProfile{};
+    profile.index = index;
+    profile.name = name;
+    profile.description = description == nullptr ? name : description;
+    profile.available = available != SPA_PARAM_AVAILABILITY_no;
+    if (classes != nullptr && spa_pod_is_struct(classes)) {
+      auto parser = spa_pod_parser{};
+      spa_pod_parser_pod(&parser, classes);
+      auto frame = spa_pod_frame{};
+      auto count = std::int32_t{0};
+      if (spa_pod_parser_push_struct(&parser, &frame) == 0 &&
+          spa_pod_parser_get(&parser, SPA_POD_Int(&count), 0) >= 0 && count >= 0 && count <= 64) {
+        auto complete = true;
+        for (auto item = 0; item < count; ++item) {
+          const auto *className = static_cast<const char *>(nullptr);
+          const auto *propertyName = static_cast<const char *>(nullptr);
+          auto nodes = std::int32_t{0};
+          auto *devices = static_cast<spa_pod *>(nullptr);
+          auto classFrame = spa_pod_frame{};
+          if (spa_pod_parser_push_struct(&parser, &classFrame) < 0) {
+            complete = false;
+            break;
+          }
+          const auto parsed = spa_pod_parser_get(&parser, SPA_POD_String(&className), SPA_POD_Int(&nodes),
+              SPA_POD_String(&propertyName), SPA_POD_Pod(&devices), 0);
+          spa_pod_parser_pop(&parser, &classFrame);
+          if (parsed < 0 || className == nullptr) {
+            complete = false;
+            break;
+          }
+          static_cast<void>(propertyName);
+          static_cast<void>(devices);
+          if (className != nullptr && std::strcmp(className, "Audio/Sink") == 0 && nodes > 0)
+            profile.outputNodes += static_cast<std::uint32_t>(nodes);
+        }
+        profile.hasClasses = complete;
+        if (!complete) profile.outputNodes = 0;
+      }
+    }
+    device.profiles.push_back(std::move(profile));
+  }
   scheduleSnapshot(*device.owner);
 }
 
 static const pw_node_events nodeEvents = {.version = PW_VERSION_NODE_EVENTS, .info = nodeInfo, .param = nodeParam};
-static const pw_device_events deviceEvents = {.version = PW_VERSION_DEVICE_EVENTS, .info = deviceInfo, .param = nullptr};
+static const pw_device_events deviceEvents = {.version = PW_VERSION_DEVICE_EVENTS, .info = deviceInfo, .param = deviceParam};
 
 static void globalAdded(void *data, std::uint32_t id, std::uint32_t permissions,
                         const char *type, std::uint32_t version, const spa_dict *props) {
@@ -293,6 +451,7 @@ static void globalAdded(void *data, std::uint32_t id, std::uint32_t permissions,
   auto object = std::make_unique<InventoryObject>();
   object->owner = &inventory;
   object->canEnumerate = (permissions & PW_PERM_X) != 0;
+  object->canWrite = (permissions & (PW_PERM_W | PW_PERM_X)) == (PW_PERM_W | PW_PERM_X);
   updateProperties(object->properties, props);
   if (isNode && !isOutput(object->properties)) return;
   object->proxy = static_cast<pw_proxy *>(pw_registry_bind(inventory.registry, id, type,
@@ -337,6 +496,48 @@ static void coreDone(void *data, std::uint32_t id, int sequence) {
   std::sort(snapshot.outputs.begin(), snapshot.outputs.end(), [](const auto &left, const auto &right) {
     return left.nodeName < right.nodeName || (left.nodeName == right.nodeName && left.nodeId < right.nodeId);
   });
+  for (const auto &[deviceId, device] : inventory.devices) {
+    const auto card = cardIdentity(device->properties);
+    if (card.api.empty() || card.location.empty()) continue;
+    const auto active = std::find_if(device->profiles.begin(), device->profiles.end(), [&](const auto &profile) {
+      return profile.index == device->activeProfile;
+    });
+    const auto activeName = active == device->profiles.end() ? std::string{} : active->name;
+    if (!activeName.empty()) {
+      auto activeOutputs = std::vector<OutputDeviceDescription>{};
+      for (const auto &[nodeId, node] : inventory.nodes) {
+        const auto linked = unsignedValue(property(node->properties, "device.id"));
+        if (linked && *linked == deviceId && isOutput(node->properties)) {
+          auto output = describeOutput(nodeId, *node, inventory).device;
+          if (!output.channelPositions.empty()) activeOutputs.push_back(std::move(output));
+        }
+      }
+      if (!activeOutputs.empty()) inventory.observedLayouts[cardKey(card, activeName)] = std::move(activeOutputs);
+    }
+    for (const auto &profile : device->profiles) {
+      auto entry = AvailableOutputProfile{};
+      entry.card = card;
+      entry.cardProfileName = profile.name;
+      entry.outputKey = outputProfileKey(profile.name);
+      entry.description = profile.description;
+      entry.available = profile.available;
+      entry.active = profile.index == device->activeProfile;
+      const auto managedActive = activeName.starts_with("output:") || activeName.starts_with("input:") || activeName == "off";
+      const auto managedCandidate = profile.name.starts_with("output:") ||
+          profile.name.starts_with("input:") || profile.name == "off";
+      entry.preservesInput = entry.active ||
+          (managedActive && managedCandidate && inputProfilePart(profile.name) == inputProfilePart(activeName));
+      const auto observed = inventory.observedLayouts.find(cardKey(card, profile.name));
+      if (observed != inventory.observedLayouts.end()) entry.observedOutputs = observed->second;
+      snapshot.profiles.push_back(std::move(entry));
+    }
+  }
+  std::sort(snapshot.profiles.begin(), snapshot.profiles.end(), [](const auto &left, const auto &right) {
+    return std::tie(left.card.api, left.card.location, left.card.vendor, left.card.product, left.card.serial,
+               left.cardProfileName) <
+        std::tie(right.card.api, right.card.location, right.card.vendor, right.card.product, right.card.serial,
+               right.cardProfileName);
+  });
   inventory.callback(snapshot, inventory.userData);
 }
 
@@ -376,6 +577,112 @@ PipeWireOutputInventoryPtr observePipeWireOutputs(
 
 std::uint64_t pipeWireOutputPolicyGeneration(const PipeWireOutputInventory &inventory) noexcept {
   return inventory.policyGeneration;
+}
+
+std::string setPipeWireOutputProfile(
+    PipeWireOutputInventory &inventory, const OutputProfileSelection &selection) {
+  auto *target = static_cast<InventoryObject *>(nullptr);
+  for (const auto &[id, device] : inventory.devices) {
+    static_cast<void>(id);
+    if (cardIdentity(device->properties) != selection.card) continue;
+    if (target != nullptr) return "multiple cards match the selected profile identity";
+    target = device.get();
+  }
+  if (target == nullptr) return "the selected output card is unavailable";
+  if (!target->canWrite) return "the selected output card does not permit profile changes";
+  const auto candidate = std::find_if(target->profiles.begin(), target->profiles.end(), [&](const auto &profile) {
+    return profile.name == selection.cardProfileName;
+  });
+  if (candidate == target->profiles.end() || !candidate->available)
+    return "the selected output profile is unavailable";
+  if (outputProfileKey(candidate->name) != selection.outputKey && !selection.allowMissingForRestore)
+    return "the selected card profile does not match the output intent";
+  if (candidate->index == target->activeProfile) return {};
+  const auto active = std::find_if(target->profiles.begin(), target->profiles.end(), [&](const auto &profile) {
+    return profile.index == target->activeProfile;
+  });
+  if (active == target->profiles.end() ||
+      (!active->name.starts_with("output:") && !active->name.starts_with("input:") &&
+       active->name != "off") ||
+      (!candidate->name.starts_with("output:") && !candidate->name.starts_with("input:") &&
+       candidate->name != "off") ||
+      inputProfilePart(candidate->name) != inputProfilePart(active->name))
+    return "the selected card profile would change the input profile";
+  auto storage = std::array<std::uint8_t, 256>{};
+  auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
+  const auto *parameter = static_cast<const spa_pod *>(spa_pod_builder_add_object(&builder,
+      SPA_TYPE_OBJECT_ParamProfile, SPA_PARAM_Profile,
+      SPA_PARAM_PROFILE_index, SPA_POD_Int(candidate->index),
+      SPA_PARAM_PROFILE_save, SPA_POD_Bool(false)));
+  if (parameter == nullptr) return "cannot build the output profile request";
+  const auto result = pw_device_set_param(reinterpret_cast<pw_device *>(target->proxy), SPA_PARAM_Profile, 0, parameter);
+  return result < 0 ? "PipeWire rejected the output profile request: " + std::to_string(result) : std::string{};
+}
+
+std::optional<std::uint32_t> pipeWireOutputProfileNodeCount(
+    const PipeWireOutputInventory &inventory, const OutputProfileSelection &selection) {
+  for (const auto &[id, device] : inventory.devices) {
+    static_cast<void>(id);
+    if (cardIdentity(device->properties) != selection.card) continue;
+    const auto found = std::find_if(device->profiles.begin(), device->profiles.end(), [&](const auto &profile) {
+      return profile.name == selection.cardProfileName;
+    });
+    if (found != device->profiles.end() && found->hasClasses) return found->outputNodes;
+  }
+  return {};
+}
+
+std::vector<PipeWireInputRouteSnapshot> pipeWireInputRoutes(
+    const PipeWireOutputInventory &inventory, const OutputCardIdentity &card) {
+  for (const auto &[id, device] : inventory.devices) {
+    static_cast<void>(id);
+    if (cardIdentity(device->properties) == card) return device->inputRoutes;
+  }
+  return {};
+}
+
+std::string restorePipeWireInputRoutes(PipeWireOutputInventory &inventory,
+    const OutputCardIdentity &card, std::span<const PipeWireInputRouteSnapshot> routes) {
+  auto *target = static_cast<InventoryObject *>(nullptr);
+  for (const auto &[id, device] : inventory.devices) {
+    static_cast<void>(id);
+    if (cardIdentity(device->properties) != card) continue;
+    if (target != nullptr) return "multiple cards match the saved input route identity";
+    target = device.get();
+  }
+  if (target == nullptr) return "the input card is unavailable";
+  if (!target->canWrite) return "the input card does not permit route restoration";
+  for (const auto &route : routes) {
+    if (route.index < 0 || route.device < 0 || route.props.size() > 65536)
+      return "invalid saved input route";
+    const auto current = std::find_if(target->inputRoutes.begin(), target->inputRoutes.end(), [&](const auto &item) {
+      return item.device == route.device;
+    });
+    if (current != target->inputRoutes.end() && *current == route) continue;
+    auto storage = std::array<std::uint8_t, 66048>{};
+    auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
+    auto *parameter = static_cast<spa_pod *>(nullptr);
+    if (route.props.empty()) {
+      parameter = static_cast<spa_pod *>(spa_pod_builder_add_object(&builder,
+          SPA_TYPE_OBJECT_ParamRoute, SPA_PARAM_Route,
+          SPA_PARAM_ROUTE_index, SPA_POD_Int(route.index),
+          SPA_PARAM_ROUTE_device, SPA_POD_Int(route.device),
+          SPA_PARAM_ROUTE_save, SPA_POD_Bool(false)));
+    } else {
+      alignas(8) auto aligned = std::array<std::uint8_t, 65536>{};
+      std::memcpy(aligned.data(), route.props.data(), route.props.size());
+      parameter = static_cast<spa_pod *>(spa_pod_builder_add_object(&builder,
+          SPA_TYPE_OBJECT_ParamRoute, SPA_PARAM_Route,
+          SPA_PARAM_ROUTE_index, SPA_POD_Int(route.index),
+          SPA_PARAM_ROUTE_device, SPA_POD_Int(route.device),
+          SPA_PARAM_ROUTE_save, SPA_POD_Bool(false),
+          SPA_PARAM_ROUTE_props, SPA_POD_Pod(reinterpret_cast<const spa_pod *>(aligned.data()))));
+    }
+    if (parameter == nullptr) return "cannot build the input route restoration request";
+    const auto result = pw_device_set_param(reinterpret_cast<pw_device *>(target->proxy), SPA_PARAM_Route, 0, parameter);
+    if (result < 0) return "PipeWire rejected input route restoration: " + std::to_string(result);
+  }
+  return {};
 }
 
 void PipeWireOutputInventoryDeleter::operator()(PipeWireOutputInventory *inventory) const noexcept {

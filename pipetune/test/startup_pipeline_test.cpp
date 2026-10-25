@@ -253,28 +253,35 @@ static bool testOutputConfiguration(const std::filesystem::path &directory) {
   const auto options = pipetune::PipelineBuildOptions{.sampleRate = 48000, .maxChannels = 2, .maxFrames = 64};
   auto prepared = pipetune::prepareStartupPipeline(configPath, options);
   if (!check(prepared.pipeline != nullptr && prepared.configurationError.empty(), "saved multi-output preset must prepare") ||
-      !check(prepared.outputConfiguration == config.outputConfiguration && prepared.pipeline->maxChannels() == 16,
-             "startup must recover saved slots and build the matching DSP width")) return false;
-  auto samples = std::vector<float>(16, 0.0F);
+      !check(prepared.outputConfiguration == config.outputConfiguration && prepared.pipeline->maxChannels() == 4,
+             "startup must derive the preset width independently of sixteen saved device slots")) return false;
+  auto samples = std::vector<float>(4, 0.0F);
   samples[0] = 0.25F;
   samples[1] = 0.5F;
-  if (!check(prepared.pipeline->process(samples, 16, 1, 0) == pipetune::ProcessStatus::ok &&
+  if (!check(prepared.pipeline->process(samples, 4, 1, 0) == pipetune::ProcessStatus::ok &&
              samples[0] == 0.25F && samples[1] == 0.5F && samples[2] == 0.25F && samples[3] == -0.5F,
              "restored startup preset must generate the configured extra output channels")) return false;
+  config.outputConfiguration.mode = pipetune::OutputMode::single;
+  if (!check(pipetune::saveStartupConfig(configPath, config).empty(), "single-output preset settings must save")) return false;
+  prepared = pipetune::prepareStartupPipeline(configPath, options);
+  if (!check(prepared.pipeline != nullptr && prepared.pipeline->maxChannels() == 4,
+             "single output must still prepare all four preset channels")) return false;
+  config.outputConfiguration.mode = pipetune::OutputMode::multiple;
   for (const auto missing : {false, true}) {
     config.presetFound = missing;
     config.presetPath = directory / "missing-output-preset";
     if (!check(pipetune::saveStartupConfig(configPath, config).empty(), "bypass settings must save")) return false;
     prepared = pipetune::prepareStartupPipeline(configPath, options);
-    if (!check(prepared.pipeline != nullptr && prepared.pipeline->maxChannels() == 16 &&
+    if (!check(prepared.pipeline != nullptr && prepared.pipeline->maxChannels() == 2 &&
                prepared.outputConfiguration == config.outputConfiguration && prepared.activePresetPath.empty() &&
                prepared.configurationError.empty() != missing,
-               "intentional and degraded bypass must retain saved routes and width")) return false;
+               "bypass must retain saved routes while processing the stereo input")) return false;
+    samples.resize(2);
     std::fill(samples.begin(), samples.end(), 0.0F);
     samples[0] = 0.25F;
     samples[1] = 0.5F;
     const auto expected = samples;
-    if (!check(prepared.pipeline->process(samples, 16, 1, 0) == pipetune::ProcessStatus::ok && samples == expected,
+    if (!check(prepared.pipeline->process(samples, 2, 1, 0) == pipetune::ProcessStatus::ok && samples == expected,
                "restored bypass must leave added channels silent")) return false;
   }
   config.presetFound = false;

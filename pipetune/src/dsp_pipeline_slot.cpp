@@ -378,6 +378,14 @@ std::uint32_t DspPipelineSlot::activeLatencyFrames() const noexcept {
   return active_.load(std::memory_order_acquire)->latencyFrames();
 }
 
+std::uint32_t DspPipelineSlot::maxChannels() const noexcept {
+  return current_->maxChannels();
+}
+
+std::uint32_t DspPipelineSlot::outputChannelCount() const noexcept {
+  return current_->outputChannelCount();
+}
+
 std::optional<DspBackendKind>
 DspPipelineSlot::backendKind() const noexcept {
   return active_.load(std::memory_order_acquire)->backendKind();

@@ -133,7 +133,9 @@ are shown on the right.
 
 ![PipeTune UI Window](./images/pipetune-ui-window.png)
 
-Changing a setting previews it immediately in the running daemon. The `Apply`
+Processing and rate settings take effect immediately in the running daemon.
+Device configuration changes are edited together in a separate dialog and
+applied on confirmation. The `Apply`
 button confirms and saves the current state. The `Cancel` button, Escape, or
 the title-bar close button restores the previous live state before hiding the
 window.
@@ -225,21 +227,30 @@ PipeTune also allows you to map multichannel output to any channel on any audio 
 To simplify configuration for standard 2-channel stereo, the default setting is “Single Mode.”
 In this case, the output device is determined based on the OS’s sound device assignment feature.
 
-On the other hand, selecting “Multiple Mode” allows you to handle any number of output devices.
+Selecting “Multiple Mode” lets you use multiple output devices together.
 In this case, the OS’s sound device assignment feature cannot be used, and you must configure the settings in PipeTune.
 
-You can switch between these modes on the `Output` page of the settings window.
+The meters at the top of the `Output` page show whether each preset output channel has an audio signal. The channel count is inferred from Matrix and Spatial Mapper routes, crossover band counts, channel selections, and other preset settings when the preset loads. Reloading updates the count; signal activity during playback does not. Meters follow Ch order and show the same count in single and multiple modes. For example, a four-channel preset generates and measures all four channels in single mode, including unassigned Ch 3 and 4. Bypass shows two meters.
 
-In Multiple Mode, check the boxes next to the devices you want to use. You can view each device’s profile, number of channels, assigned channel numbers, and connection status.
-When you select a device, its internal channels will expand within the same list. Under `EffeTune Output` for each channel, you can select a channel number and enter a custom label in the “Purpose” field.
+Values are peaks before device volume, in dBFS relative to digital full scale. Silence is `−∞`, unavailable or disconnected measurements are `—`, and peaks at or above 0 dBFS turn red. Device mute and connection state are not part of these measurements. Unassigned channels are also displayed, so an active meter does not guarantee audible output from the device.
 
-You can enter a purpose name to help identify the device’s intended use.
-You can select a replacement destination from `Reassign Device...` in the device row. There is no need to expand the channels.
+Switch modes on the `Output` page and open `Device configuration…` to edit the devices in a separate dialog. The main window lists the applied configuration in three columns: `Device name`, `State`, and `Channels`. Devices appear in ascending order of their lowest assigned Ch number, and each device's numbers are also listed in ascending order. This display order does not change the assignments. Switching from single to multiple mode opens this dialog first; canceling it keeps single mode active.
 
-Changes are previewed in real time; click `Apply` to save or `Cancel` to revert to the previous configuration.
-If you switch to multi-mode without selecting a device, the system enters edit mode, but the actual output remains unchanged.
+Select a device in the dialog's upper list to display its settings below. Use `Add device…` to choose a connected device, then `Add` to register it. Clearing `Use this device` disables it while retaining its registration and Ch numbers. Choose each physical channel's `EffeTune output` number and enter an optional purpose label. Moving a number also moves the intervening assignments.
 
-The device column displays the mute and gain levels reported by the device, separate from the OS’s overall volume.
+To exchange hardware, select the existing device and choose `Replace with another device…`. Choose its replacement and click `Replace` to retain the original Ch numbers, purpose labels, and enabled state. If the replacement has fewer physical channels, the removed channels' numbers and labels remain under `Unassigned channels`. Additional channels append after the existing numbers.
+
+Use `Remove from configuration` to forget a device, whether connected or disconnected. Other devices keep their Ch numbers. Removed channels in the middle retain their numbers and purpose labels as unassigned slots. Consecutive removed channels at the end are trimmed, while previously unassigned channels remain.
+
+Use `Remove unused channels` to remove all unassigned channels and their labels, closing the numbering gaps while preserving the order of the remaining assignments. Channels assigned to disabled devices remain. Review the displayed changes to the output channel count and Ch numbers, and check the preset's assignments before applying the configuration. The limit is sixteen channels, including unassigned slots.
+
+`Output profile` selects how the OS exposes a device's outputs; it is separate from an EffeTune processing preset. Supported devices offer profiles that preserve the input settings. If a profile's channel layout has not been observed yet, confirming the configuration discovers its actual outputs. A mismatch restores the previous configuration and displays an error. Choose the discovered output through `Replace with another device…`, review its channels, and confirm again.
+
+Editing the dialog does not change playback or OS profiles. `Apply configuration` applies the completed configuration once, without saving it. The dialog's Cancel, Escape, and close action discard its edits. Confirming an unchanged configuration does not rebuild the outputs.
+
+The main window's `Apply` saves the confirmed settings without applying the outputs again. Its `Cancel` restores the output configuration and profiles captured when the main window opened or last saved. Failed changes keep the draft and diagnostic visible. If a preset cannot handle the new channel count, cancel the device dialog, select a compatible preset or Bypass in the main window, and try the configuration again. Reconnecting never submits a pending device draft automatically. If another application changes the settings, cancel the device dialog and reopen the main window to review the current state.
+
+The selected device's details display its reported mute and gain levels, separate from the OS’s overall volume.
 If the gain varies by channel, the minimum and maximum values are shown.
 These are read-only; unreported control values or unconnected devices are displayed as “Unknown.”
 Hover your mouse over a value to view its description.

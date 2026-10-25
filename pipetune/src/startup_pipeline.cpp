@@ -17,7 +17,7 @@ static PipelineBuildOptions startupBuildOptions(
     const PipelineBuildOptions &options,
     const StartupConfig &config) {
   auto resolved = options;
-  resolved.maxChannels = outputDspChannelCount(config.outputConfiguration);
+  resolved.inferChannelsFromPreset = true;
   if (config.ratePolicy.mode == SampleRateMode::fixed) {
     resolved.sampleRate = static_cast<float>(config.ratePolicy.fixedRate);
   }

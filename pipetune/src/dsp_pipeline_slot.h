@@ -206,6 +206,12 @@ public:
   /** Returns the active pipeline's aggregate latency in DSP frames. */
   std::uint32_t activeLatencyFrames() const noexcept;
 
+  /** Returns the prepared processing width. Call only on the replacement thread. */
+  std::uint32_t maxChannels() const noexcept;
+
+  /** Returns the final preset output width. Call only on the replacement thread. */
+  std::uint32_t outputChannelCount() const noexcept;
+
   /** Returns the active native backend, or no value for bypass. */
   std::optional<DspBackendKind> backendKind() const noexcept;
 

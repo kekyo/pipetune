@@ -89,10 +89,16 @@ msgstr ""
 msgid "Active plugins"
 msgstr ""
 
-msgid "Advanced"
+msgid "Add"
 msgstr ""
 
-msgid "After"
+msgid "Add an output device to start configuring channels."
+msgstr ""
+
+msgid "Add device…"
+msgstr ""
+
+msgid "Advanced"
 msgstr ""
 
 msgid "All"
@@ -104,10 +110,10 @@ msgstr ""
 msgid "Ambiguous device"
 msgstr ""
 
-msgid "Ambiguous device. Reassign device to choose the output."
+msgid "Apply"
 msgstr ""
 
-msgid "Apply"
+msgid "Apply configuration"
 msgstr ""
 
 msgid "Audio outputs changed"
@@ -134,13 +140,7 @@ msgstr ""
 msgid "Automatic — follow PipeWire graph sampling frequency"
 msgstr ""
 
-msgid "Available"
-msgstr ""
-
 msgid "Baseline"
-msgstr ""
-
-msgid "Before"
 msgstr ""
 
 msgid "Bypass"
@@ -197,8 +197,17 @@ msgstr ""
 msgid "Changing silence suspension failed"
 msgstr ""
 
+msgid "Channel changes"
+msgstr ""
+
 #, brace-format
 msgid "Channel gains: {0}"
+msgstr ""
+
+msgid "Channels"
+msgstr ""
+
+msgid "Choose a device to add to this configuration."
 msgstr ""
 
 msgid "Choose a preset before enabling DSP processing"
@@ -208,6 +217,9 @@ msgid "Choose a standard or saved EffeTune preset…"
 msgstr ""
 
 msgid "Choose an EffeTune preset"
+msgstr ""
+
+msgid "Choose an output profile or replace the device to review its channels."
 msgstr ""
 
 msgid "Choose bypass, Automatic + Suggest, and Scalar + Auto SIMD."
@@ -283,10 +295,19 @@ msgstr ""
 msgid "Device channel"
 msgstr ""
 
+msgid "Device configuration"
+msgstr ""
+
+msgid "Device configuration…"
+msgstr ""
+
 msgid "Device mute unknown"
 msgstr ""
 
 msgid "Device muted"
+msgstr ""
+
+msgid "Device name"
 msgstr ""
 
 msgid "Device unmuted"
@@ -341,6 +362,9 @@ msgstr ""
 msgid "DSP sampling frequency {0}  •  PipeWire graph sampling frequency {1}"
 msgstr ""
 
+msgid "Edit the complete output configuration, then apply it once. Use Apply in the main window to save it."
+msgstr ""
+
 msgid "Effective backend"
 msgstr ""
 
@@ -388,6 +412,9 @@ msgid "Force"
 msgstr ""
 
 msgid "Force — request the fixed graph sampling frequency"
+msgstr ""
+
+msgid "If the preset does not support these channels, cancel and select a compatible preset or Bypass in the main window."
 msgstr ""
 
 msgid "Ignore"
@@ -468,13 +495,13 @@ msgstr ""
 msgid "Never"
 msgstr ""
 
+msgid "No unconfigured output devices are available."
+msgstr ""
+
 msgid "None"
 msgstr ""
 
 msgid "Not connected"
-msgstr ""
-
-msgid "Not connected. Reconnect it or reassign this device."
 msgstr ""
 
 msgid "Off"
@@ -486,13 +513,19 @@ msgstr ""
 msgid "Output"
 msgstr ""
 
-msgid "Output devices"
+msgid "Output channels"
+msgstr ""
+
+msgid "Output levels (dBFS)"
 msgstr ""
 
 msgid "Output mode"
 msgstr ""
 
-msgid "Output settings changed. Reopen the mapping review."
+msgid "Output profile"
+msgstr ""
+
+msgid "Output settings changed. Cancel and reopen the configuration dialog."
 msgstr ""
 
 #, brace-format
@@ -503,6 +536,12 @@ msgid "Overrun frames"
 msgstr ""
 
 msgid "PCM data rate"
+msgstr ""
+
+msgid "Peak levels before device volume."
+msgstr ""
+
+msgid "Peak output level before device volume. Silence is −∞ dBFS; 0 dBFS is full scale."
 msgstr ""
 
 msgid "Pending dialog settings will be reapplied"
@@ -560,12 +599,6 @@ msgstr ""
 msgid "Preset warnings"
 msgstr ""
 
-msgid "Press Enter or leave the field to preview the purpose label."
-msgstr ""
-
-msgid "Preview mapping"
-msgstr ""
-
 msgid "Processing"
 msgstr ""
 
@@ -581,25 +614,40 @@ msgstr ""
 msgid "Profile changed"
 msgstr ""
 
-msgid "Profile changed. Reassign device to update these channels."
+msgid "Purpose"
 msgstr ""
 
-msgid "Purpose"
+msgid "Purpose label for this output channel."
 msgstr ""
 
 msgid "Quit"
 msgstr ""
 
-msgid "Reassign device…"
+msgid "Reconnect this device, replace it, or remove it from the configuration."
+msgstr ""
+
+msgid "Remove from configuration"
+msgstr ""
+
+msgid "Remove this device while keeping other devices' channel numbers."
+msgstr ""
+
+msgid "Remove unassigned channels and renumber the remaining channels."
+msgstr ""
+
+msgid "Remove unused channels"
+msgstr ""
+
+msgid "Removed devices"
+msgstr ""
+
+msgid "Replace"
+msgstr ""
+
+msgid "Replace with another device…"
 msgstr ""
 
 msgid "Reported device controls, separate from the OS master volume. Channel gains show the minimum and maximum across the device."
-msgstr ""
-
-msgid "Reserved"
-msgstr ""
-
-msgid "Reserved EffeTune channels"
 msgstr ""
 
 msgid "Restart now"
@@ -623,10 +671,7 @@ msgstr ""
 msgid "Restoring the previous live settings…"
 msgstr ""
 
-msgid "Review channel mapping"
-msgstr ""
-
-msgid "Review where each final EffeTune channel will play. Your preset is unchanged. Preview this mapping, then use Apply in the main window to save it."
+msgid "Review the preset's channel assignments before applying these changes."
 msgstr ""
 
 msgid "Rollback requested"
@@ -670,13 +715,7 @@ msgstr ""
 msgid "seconds"
 msgstr ""
 
-msgid "Select a replacement output device."
-msgstr ""
-
 msgid "Select at least one output device."
-msgstr ""
-
-msgid "Select the saved device whose channels this output will use."
 msgstr ""
 
 msgid "Setting up PipeTune for this user…"
@@ -741,25 +780,28 @@ msgstr ""
 msgid "System default"
 msgstr ""
 
-msgid "The 16-channel limit includes disabled and reserved channels. Use existing channels to replace a saved device."
+msgid "The OS selects the output. Saved device assignments are inactive."
 msgstr ""
 
-msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
+msgid "The replacement keeps the existing channel numbers and purpose labels."
 msgstr ""
 
-msgid "The selected device cannot be identified uniquely."
-msgstr ""
-
-msgid "The selected output is no longer available with this profile. Reopen the mapping review."
+msgid "The selected output is no longer available with this profile. Review the configuration."
 msgstr ""
 
 msgid "The UI language change will take effect after PipeTune GTK restarts."
+msgstr ""
+
+msgid "This device cannot be identified uniquely. Choose a replacement."
 msgstr ""
 
 msgid "Turn off to pass audio through without an EffeTune preset."
 msgstr ""
 
 msgid "Unassigned"
+msgstr ""
+
+msgid "Unassigned channels"
 msgstr ""
 
 msgid "unavailable"
@@ -780,16 +822,13 @@ msgstr ""
 msgid "Unknown sample format"
 msgstr ""
 
-msgid "Unsupported channel count"
-msgstr ""
-
 msgid "Updating settings"
 msgstr ""
 
 msgid "Updating settings failed"
 msgstr ""
 
-msgid "Use existing channels…"
+msgid "Use this device"
 msgstr ""
 
 msgid "Versions"

@@ -845,10 +845,24 @@ static bool testOutputStatus() {
                      .name = "Saved \"出力\"", .profile = "analog-stereo", .channelPositions = {"FL", "FR"}}}},
       .channels = {{"", 0, "Reserved"}, {"saved", 0, "Left"}, {"saved", 1, "Right"}}};
   status.availableOutputs = {{status.outputConfiguration.outputs[0].device, "current-node", 73, UINT64_MAX}};
+  const auto card = pipetune::OutputCardIdentity{.api = "alsa", .location = "usb:1",
+      .vendor = {}, .product = {}, .serial = {}};
+  status.availableOutputProfiles = {{.card = card, .cardProfileName = "output:analog-stereo+input:analog-stereo",
+      .outputKey = "analog-stereo", .description = "Analog Stereo Duplex", .available = true,
+      .active = true, .preservesInput = true,
+      .observedOutputs = {status.outputConfiguration.outputs[0].device}}};
+  status.outputInventoryRevision = 19;
   status.outputInventoryReady = true;
-  const auto request = pipetune::parseControlRequest(pipetune::makeSetOutputControlRequest(status.outputConfiguration, UINT64_MAX));
+  status.outputProfileRestoring = true;
+  status.outputProfileRestorationError = "previous reconnect failed";
+  const auto selections = std::vector<pipetune::OutputProfileSelection>{{
+      .card = card, .cardProfileName = "output:analog-stereo+input:analog-stereo",
+      .outputKey = "analog-stereo", .allowMissingForRestore = false}};
+  const auto request = pipetune::parseControlRequest(pipetune::makeSetOutputControlRequest(
+      status.outputConfiguration, UINT64_MAX, std::nullopt, selections, 19));
   if (!check(request.error.empty() && request.request.command == pipetune::ControlCommand::setOutput &&
-             request.request.outputConfiguration == status.outputConfiguration && request.request.expectedRevision == UINT64_MAX,
+             request.request.outputConfiguration == status.outputConfiguration && request.request.expectedRevision == UINT64_MAX &&
+             request.request.outputProfileSelections == selections && request.request.expectedOutputInventoryRevision == 19,
              "output requests must preserve every fixed assignment")) return false;
   for (const auto json : {
       R"({"command":"set-output"})",
@@ -881,7 +895,11 @@ static bool testOutputStatus() {
     const auto encoded = event ? pipetune::makeControlStatusEvent(status) : pipetune::makeControlSuccessResponse(status, {});
     const auto parsed = pipetune::parseControlResponse(encoded);
     if (!check(parsed.valid && parsed.success && parsed.status.outputConfiguration == status.outputConfiguration &&
-               parsed.status.availableOutputs == status.availableOutputs && parsed.status.outputInventoryReady &&
+               parsed.status.availableOutputs == status.availableOutputs &&
+               parsed.status.availableOutputProfiles == status.availableOutputProfiles &&
+               parsed.status.outputInventoryRevision == status.outputInventoryRevision && parsed.status.outputInventoryReady &&
+               parsed.status.outputProfileRestoring == status.outputProfileRestoring &&
+               parsed.status.outputProfileRestorationError == status.outputProfileRestorationError &&
                parsed.status.outputVolumes == status.outputVolumes && parsed.status.outputTimings == status.outputTimings,
                "status and events must preserve saved mappings and the complete live inventory")) return false;
     const auto resolved = pipetune::resolveConfiguredOutputs(parsed.status.outputConfiguration, parsed.status.availableOutputs);
@@ -955,10 +973,46 @@ static bool testOutputStatus() {
                "an inventory failure must preserve saved assignments and report its cause");
 }
 
+static bool testOutputPeaks() {
+  auto status = pipetune::ControlRuntimeStatus{
+      .processingMode = pipetune::ProcessingMode::bypass,
+      .activePreset = {},
+      .configurationError = {},
+      .activePluginCount = 0,
+      .overrunFrames = 0,
+      .underrunFrames = 0,
+      .processingErrors = 0,
+      .dspProcessedFrames = 0,
+      .dspProcessingNanoseconds = 0,
+      .inputSampleFormat = {},
+      .inputSampleRate = 0,
+      .inputChannelCount = 0,
+      .inputFramesReceived = 0,
+      .inputLastReceivedUnixMilliseconds = 0};
+  status.outputPeaks = {0.0F, 0.5F, 1.25F};
+  const auto encoded = pipetune::makeControlStatusEvent(status);
+  const auto parsed = pipetune::parseControlResponse(encoded);
+  if (!check(parsed.valid && parsed.success &&
+             parsed.status.outputPeaks == status.outputPeaks,
+             "per-channel output peaks must round-trip, including above full scale")) return false;
+  for (const auto &[from, to] : std::array<std::pair<std::string_view, std::string_view>, 4>{
+           {{R"("outputPeaks":[0.0,0.5,1.25])", R"("outputPeaks":[0.0,-0.5,1.25])"},
+            {R"("outputPeaks":[0.0,0.5,1.25])", R"("outputPeaks":[0.0,true,1.25])"},
+            {R"("outputPeaks":[0.0,0.5,1.25])", R"("outputPeaks":[0.0,1e100,1.25])"},
+            {R"("outputPeaks":[0.0,0.5,1.25])", R"("outputPeaks":null)"}}}) {
+    auto invalid = encoded;
+    if (!check(replaceOnce(invalid, from, to) &&
+               !pipetune::parseControlResponse(invalid).valid,
+               "malformed output peaks must be rejected")) return false;
+  }
+  return true;
+}
+
 int main() {
   if (!testPresetEntries()) return 1;
   if (!testOutputStatus()) return 1;
   return testRequests() && testRejectedRequests() && testSuccessResponse() &&
+                 testOutputPeaks() &&
                  testStatusEvent() && testBypassStatus() &&
                  testDspBackendFallbackStatus() &&
                  testFixedDspAndGraphRatesCanDiffer() &&

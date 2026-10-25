@@ -46,7 +46,7 @@ struct PipeWirePipelineOptions {
   std::uint32_t dspSampleRate;
   /** Initial automatic/fixed graph-rate policy. */
   SampleRatePolicy ratePolicy;
-  /** DSP and output planar channel count, from one through sixteen. */
+  /** Device-facing output planar channel count, from one through sixteen. */
   std::uint32_t channelCount;
   /** Largest DSP block processed in one call; must be at least 32. */
   std::uint32_t maxFrames;
@@ -70,12 +70,14 @@ struct PipeWirePipelineOptions {
       DspSimdVariant::automatic;
   /** Initial persisted automatic DSP suspension policy. */
   DspIdlePolicy dspIdlePolicy = {};
-  /** Input width, at most channelCount; zero uses channelCount for both streams. */
+  /** Input width, at most the prepared DSP width; zero uses channelCount. */
   std::uint32_t inputChannelCount = 0;
   /** Fixed multiple-output routing; single mode retains OS-managed selection. */
   OutputConfiguration outputConfiguration = {};
   /** Startup SFZ budget in MiB, retained for live preset loads and rebuilds. */
   std::uint32_t sfzMaxSizeMiB = kDefaultSfzMaxSizeMiB;
+  /** Infer DSP and meter widths from loaded presets, independently of device routing. */
+  bool inferChannelsFromPreset = false;
 };
 
 /**

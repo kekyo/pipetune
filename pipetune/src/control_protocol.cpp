@@ -61,6 +61,30 @@ static bool addNullableString(yyjson_mut_doc *document,
                        : addString(document, object, key, value);
 }
 
+static bool readRequiredString(yyjson_val *object, const char *key, std::string &value) {
+  auto *field = yyjson_obj_get(object, key);
+  if (!yyjson_is_str(field)) return false;
+  value.assign(yyjson_get_str(field), yyjson_get_len(field));
+  return value.find('\0') == std::string::npos;
+}
+
+static bool readOutputCard(yyjson_val *value, OutputCardIdentity &card) {
+  return yyjson_is_obj(value) && yyjson_obj_size(value) == 5 &&
+      readRequiredString(value, "api", card.api) && readRequiredString(value, "location", card.location) &&
+      readRequiredString(value, "vendor", card.vendor) && readRequiredString(value, "product", card.product) &&
+      readRequiredString(value, "serial", card.serial) && !card.api.empty() && !card.location.empty();
+}
+
+static yyjson_mut_val *makeOutputCard(yyjson_mut_doc *document, const OutputCardIdentity &card) {
+  auto *value = yyjson_mut_obj(document);
+  if (value == nullptr || !addString(document, value, "api", card.api) ||
+      !addString(document, value, "location", card.location) ||
+      !addString(document, value, "vendor", card.vendor) ||
+      !addString(document, value, "product", card.product) ||
+      !addString(document, value, "serial", card.serial)) return nullptr;
+  return value;
+}
+
 static std::string writeDocument(yyjson_mut_doc *document) {
   auto length = std::size_t{0};
   auto *encoded = yyjson_mut_write(document, kJsonWriteFlags, &length);
@@ -254,8 +278,11 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
   if (command == "set-output") {
     auto *revision = yyjson_obj_get(root, "expectedRevision");
     auto *presetValue = yyjson_obj_get(root, "preset");
-    if (yyjson_obj_size(root) != 2U + (revision != nullptr) + (presetValue != nullptr))
-      return requestError("set-output requires command, configuration, and optional expectedRevision and preset");
+    auto *selectionsValue = yyjson_obj_get(root, "profileSelections");
+    auto *inventoryRevision = yyjson_obj_get(root, "expectedOutputInventoryRevision");
+    if (yyjson_obj_size(root) != 2U + (revision != nullptr) + (presetValue != nullptr) +
+        (selectionsValue != nullptr) + (inventoryRevision != nullptr))
+      return requestError("set-output has unknown or duplicate fields");
     auto expected = std::optional<std::uint64_t>{};
     if (revision != nullptr) {
       if (!yyjson_is_uint(revision)) return requestError("expectedRevision must be an unsigned integer");
@@ -272,10 +299,40 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
         preset = path;
       }
     }
+    auto expectedInventory = std::optional<std::uint64_t>{};
+    if (inventoryRevision != nullptr) {
+      if (!yyjson_is_uint(inventoryRevision))
+        return requestError("expectedOutputInventoryRevision must be an unsigned integer");
+      expectedInventory = yyjson_get_uint(inventoryRevision);
+    }
+    auto selections = std::vector<OutputProfileSelection>{};
+    if (selectionsValue != nullptr) {
+      if (!yyjson_is_arr(selectionsValue) || yyjson_arr_size(selectionsValue) > 16)
+        return requestError("profileSelections must contain at most sixteen entries");
+      for (auto index = std::size_t{0}; index < yyjson_arr_size(selectionsValue); ++index) {
+        auto *item = yyjson_arr_get(selectionsValue, index);
+        auto selection = OutputProfileSelection{};
+        auto *allowMissing = yyjson_obj_get(item, "allowMissingForRestore");
+        if (!yyjson_is_obj(item) || yyjson_obj_size(item) != 4 ||
+            !readOutputCard(yyjson_obj_get(item, "card"), selection.card) ||
+            !readRequiredString(item, "cardProfileName", selection.cardProfileName) ||
+            !readRequiredString(item, "outputKey", selection.outputKey) ||
+            selection.cardProfileName.empty() || !yyjson_is_bool(allowMissing) ||
+            std::any_of(selections.begin(), selections.end(), [&](const auto &existing) { return existing.card == selection.card; }))
+          return requestError("profileSelections contain an invalid or duplicate card profile");
+        selection.allowMissingForRestore = yyjson_get_bool(allowMissing);
+        if (selection.outputKey.empty() && !selection.allowMissingForRestore)
+          return requestError("profileSelections require an output key for ordinary changes");
+        selections.push_back(std::move(selection));
+      }
+    }
     auto configuration = parseOutputConfigurationJson(yyjson_obj_get(root, "configuration"));
     if (!configuration.error.empty()) return requestError(std::move(configuration.error));
     return {.request = {.command = ControlCommand::setOutput, .presetPath = {},
-                        .outputConfiguration = std::move(configuration.configuration), .expectedRevision = expected,
+                        .outputConfiguration = std::move(configuration.configuration),
+                        .outputProfileSelections = std::move(selections),
+                        .expectedOutputInventoryRevision = expectedInventory,
+                        .expectedRevision = expected,
                         .outputPreset = std::move(preset)}, .error = {}};
   }
   if (command != "load") {
@@ -562,7 +619,9 @@ static bool parsePresetEntryState(std::string_view name, PresetEntryState &state
 }
 
 std::string makeSetOutputControlRequest(const OutputConfiguration &configuration,
-    std::optional<std::uint64_t> expectedRevision, const std::optional<std::filesystem::path> &preset) {
+    std::optional<std::uint64_t> expectedRevision, const std::optional<std::filesystem::path> &preset,
+    std::span<const OutputProfileSelection> profileSelections,
+    std::optional<std::uint64_t> expectedOutputInventoryRevision) {
   auto *root = static_cast<yyjson_mut_val *>(nullptr);
   auto document = createObjectDocument(root);
   if (document == nullptr) return {};
@@ -571,9 +630,31 @@ std::string makeSetOutputControlRequest(const OutputConfiguration &configuration
       !yyjson_mut_obj_add_val(document.get(), root, "configuration", output)) return {};
   if (expectedRevision.has_value() &&
       !yyjson_mut_obj_add_uint(document.get(), root, "expectedRevision", *expectedRevision)) return {};
+  if (expectedOutputInventoryRevision.has_value() &&
+      !yyjson_mut_obj_add_uint(document.get(), root, "expectedOutputInventoryRevision", *expectedOutputInventoryRevision)) return {};
   if (preset.has_value()) {
     const auto path = preset->string();
     if (path.find('\0') != std::string::npos || !addNullableString(document.get(), root, "preset", path)) return {};
+  }
+  if (!profileSelections.empty()) {
+    if (profileSelections.size() > 16) return {};
+    auto *items = yyjson_mut_obj_add_arr(document.get(), root, "profileSelections");
+    if (items == nullptr) return {};
+    auto seen = std::set<std::string>{};
+    for (const auto &selection : profileSelections) {
+      const auto key = selection.card.api + '\0' + selection.card.location + '\0' +
+          selection.card.vendor + '\0' + selection.card.product + '\0' + selection.card.serial;
+      if (selection.card.api.empty() || selection.card.location.empty() || selection.cardProfileName.empty() ||
+          (selection.outputKey.empty() && !selection.allowMissingForRestore) ||
+          selection.cardProfileName.find('\0') != std::string::npos ||
+          selection.outputKey.find('\0') != std::string::npos || !seen.insert(key).second) return {};
+      auto *item = yyjson_mut_arr_add_obj(document.get(), items);
+      auto *card = makeOutputCard(document.get(), selection.card);
+      if (item == nullptr || card == nullptr || !yyjson_mut_obj_add_val(document.get(), item, "card", card) ||
+          !addString(document.get(), item, "cardProfileName", selection.cardProfileName) ||
+          !addString(document.get(), item, "outputKey", selection.outputKey) ||
+          !yyjson_mut_obj_add_bool(document.get(), item, "allowMissingForRestore", selection.allowMissingForRestore)) return {};
+    }
   }
   return writeDocument(document.get());
 }
@@ -589,6 +670,10 @@ static std::string_view outputActivityName(OutputPathActivity activity) noexcept
 }
 
 static bool outputStatusIsConsistent(const ControlRuntimeStatus &status) {
+  if (status.outputPeaks.size() > 16 ||
+      std::any_of(status.outputPeaks.begin(), status.outputPeaks.end(),
+                  [](float peak) { return !std::isfinite(peak) || peak < 0; }))
+    return false;
   auto serials = std::set<std::uint64_t>{};
   const auto validGain = [](float value) { return std::isfinite(value) && value >= 0; };
   for (const auto &volume : status.outputVolumes) {
@@ -615,6 +700,7 @@ static bool outputStatusIsConsistent(const ControlRuntimeStatus &status) {
   }
   return validateOutputConfiguration(status.outputConfiguration).empty() &&
       status.outputInventoryError.find('\0') == std::string::npos &&
+      status.outputProfileRestorationError.find('\0') == std::string::npos &&
       (status.outputInventoryReady || (status.availableOutputs.empty() && status.outputInventoryError.empty())) &&
       (status.outputInventoryError.empty() || status.availableOutputs.empty());
 }
@@ -730,11 +816,20 @@ static std::string makeControlStatusMessage(
 
   auto *outputConfiguration = makeOutputConfigurationJson(document.get(), status.outputConfiguration);
   auto *outputs = yyjson_mut_obj_add_arr(document.get(), root, "availableOutputs");
-  if (outputConfiguration == nullptr || outputs == nullptr ||
+  auto *profiles = yyjson_mut_obj_add_arr(document.get(), root, "availableOutputProfiles");
+  if (outputConfiguration == nullptr || outputs == nullptr || profiles == nullptr ||
       !yyjson_mut_obj_add_val(document.get(), root, "outputConfiguration", outputConfiguration) ||
+      !yyjson_mut_obj_add_uint(document.get(), root, "outputInventoryRevision", status.outputInventoryRevision) ||
       !yyjson_mut_obj_add_bool(document.get(), root, "outputInventoryReady", status.outputInventoryReady) ||
-      !addNullableString(document.get(), root, "outputInventoryError", status.outputInventoryError))
+      !addNullableString(document.get(), root, "outputInventoryError", status.outputInventoryError) ||
+      !yyjson_mut_obj_add_bool(document.get(), root, "outputProfileRestoring", status.outputProfileRestoring) ||
+      !addNullableString(document.get(), root, "outputProfileRestorationError", status.outputProfileRestorationError))
     return makeControlErrorResponse("cannot encode output status");
+  auto *peaks = yyjson_mut_obj_add_arr(document.get(), root, "outputPeaks");
+  if (peaks == nullptr) return makeControlErrorResponse("cannot encode output peaks");
+  for (const auto peak : status.outputPeaks)
+    if (!yyjson_mut_arr_add_real(document.get(), peaks, peak))
+      return makeControlErrorResponse("cannot encode output peaks");
   for (const auto &output : status.availableOutputs) {
     auto *item = yyjson_mut_arr_add_obj(document.get(), outputs);
     auto *device = makeOutputDeviceJson(document.get(), output.device);
@@ -744,6 +839,25 @@ static std::string makeControlStatusMessage(
         !yyjson_mut_obj_add_uint(document.get(), item, "nodeId", output.nodeId) ||
         !addString(document.get(), item, "nodeSerial", std::to_string(output.nodeSerial)))
       return makeControlErrorResponse("cannot encode available outputs");
+  }
+  for (const auto &profile : status.availableOutputProfiles) {
+    auto *item = yyjson_mut_arr_add_obj(document.get(), profiles);
+    auto *card = makeOutputCard(document.get(), profile.card);
+    auto *observed = item == nullptr ? nullptr : yyjson_mut_obj_add_arr(document.get(), item, "observedOutputs");
+    if (item == nullptr || card == nullptr || observed == nullptr ||
+        !yyjson_mut_obj_add_val(document.get(), item, "card", card) ||
+        !addString(document.get(), item, "cardProfileName", profile.cardProfileName) ||
+        !addString(document.get(), item, "outputKey", profile.outputKey) ||
+        !addString(document.get(), item, "description", profile.description) ||
+        !yyjson_mut_obj_add_bool(document.get(), item, "available", profile.available) ||
+        !yyjson_mut_obj_add_bool(document.get(), item, "active", profile.active) ||
+        !yyjson_mut_obj_add_bool(document.get(), item, "preservesInput", profile.preservesInput))
+      return makeControlErrorResponse("cannot encode output profiles");
+    for (const auto &output : profile.observedOutputs) {
+      auto *device = makeOutputDeviceJson(document.get(), output);
+      if (device == nullptr || !yyjson_mut_arr_add_val(observed, device))
+        return makeControlErrorResponse("cannot encode observed output layouts");
+    }
   }
   auto *volumes = yyjson_mut_obj_add_arr(document.get(), root, "outputVolumes");
   if (volumes == nullptr) return makeControlErrorResponse("cannot encode device volumes");
@@ -1327,10 +1441,23 @@ static bool readOutputTimings(yyjson_val *array, std::vector<OutputTimingState> 
 static bool readOutputStatus(yyjson_val *root, ControlRuntimeStatus &status) {
   auto configuration = parseOutputConfigurationJson(yyjson_obj_get(root, "outputConfiguration"));
   auto *outputs = yyjson_obj_get(root, "availableOutputs");
-  if (!configuration.error.empty() || !yyjson_is_arr(outputs) ||
+  auto *profiles = yyjson_obj_get(root, "availableOutputProfiles");
+  auto *inventoryRevision = yyjson_obj_get(root, "outputInventoryRevision");
+  if (!configuration.error.empty() || !yyjson_is_arr(outputs) || !yyjson_is_arr(profiles) ||
+      !yyjson_is_uint(inventoryRevision) ||
       !readBooleanField(root, "outputInventoryReady", status.outputInventoryReady) ||
-      !readNullableStringField(root, "outputInventoryError", status.outputInventoryError)) return false;
+      !readNullableStringField(root, "outputInventoryError", status.outputInventoryError) ||
+      !readBooleanField(root, "outputProfileRestoring", status.outputProfileRestoring) ||
+      !readNullableStringField(root, "outputProfileRestorationError", status.outputProfileRestorationError)) return false;
   status.outputConfiguration = std::move(configuration.configuration);
+  status.outputInventoryRevision = yyjson_get_uint(inventoryRevision);
+  auto *peaks = yyjson_obj_get(root, "outputPeaks");
+  if (!yyjson_is_arr(peaks) || yyjson_arr_size(peaks) > 16) return false;
+  for (auto index = std::size_t{0}; index < yyjson_arr_size(peaks); ++index) {
+    auto value = 0.0F;
+    if (!readOutputGain(yyjson_arr_get(peaks, index), value)) return false;
+    status.outputPeaks.push_back(value);
+  }
   for (auto index = std::size_t{0}; index < yyjson_arr_size(outputs); ++index) {
     auto *item = yyjson_arr_get(outputs, index);
     auto output = AvailableOutput{};
@@ -1344,6 +1471,28 @@ static bool readOutputStatus(yyjson_val *root, ControlRuntimeStatus &status) {
     const auto parsed = std::from_chars(serial.data(), serial.data() + serial.size(), output.nodeSerial);
     if (parsed.ec != std::errc{} || parsed.ptr != serial.data() + serial.size()) return false;
     status.availableOutputs.push_back(std::move(output));
+  }
+  if (yyjson_arr_size(profiles) > 256) return false;
+  for (auto index = std::size_t{0}; index < yyjson_arr_size(profiles); ++index) {
+    auto *item = yyjson_arr_get(profiles, index);
+    auto profile = AvailableOutputProfile{};
+    auto *observed = yyjson_obj_get(item, "observedOutputs");
+    if (!yyjson_is_obj(item) || yyjson_obj_size(item) != 8 ||
+        !readOutputCard(yyjson_obj_get(item, "card"), profile.card) ||
+        !readRequiredString(item, "cardProfileName", profile.cardProfileName) ||
+        !readRequiredString(item, "outputKey", profile.outputKey) ||
+        !readRequiredString(item, "description", profile.description) ||
+        profile.cardProfileName.empty() ||
+        !readBooleanField(item, "available", profile.available) ||
+        !readBooleanField(item, "active", profile.active) ||
+        !readBooleanField(item, "preservesInput", profile.preservesInput) ||
+        !yyjson_is_arr(observed) || yyjson_arr_size(observed) > 16) return false;
+    for (auto outputIndex = std::size_t{0}; outputIndex < yyjson_arr_size(observed); ++outputIndex) {
+      auto device = OutputDeviceDescription{};
+      if (!parseOutputDeviceJson(yyjson_arr_get(observed, outputIndex), device).empty()) return false;
+      profile.observedOutputs.push_back(std::move(device));
+    }
+    status.availableOutputProfiles.push_back(std::move(profile));
   }
   return readOutputVolumes(yyjson_obj_get(root, "outputVolumes"), status.outputVolumes) &&
       readOutputTimings(yyjson_obj_get(root, "outputTimings"), status.outputTimings) && outputStatusIsConsistent(status);

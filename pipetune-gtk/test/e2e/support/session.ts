@@ -67,6 +67,14 @@ export interface PipeTuneGtkTestOptions {
   readonly staleStatusAfterChange?: boolean;
   /** Make the deterministic per-user setup helper fail. */
   readonly setupFails?: boolean;
+  /** Exposes a physical card with two input-preserving output profiles. */
+  readonly outputProfilesEnabled?: boolean;
+  /** Requires explicit discovery before the digital profile exposes its layout. */
+  readonly unknownOutputProfile?: boolean;
+  /** Accepts the output request while reporting an unchanged OS profile. */
+  readonly unconfirmedOutputProfile?: boolean;
+  /** Suspends the first output request until released or disconnected. */
+  readonly holdOutputChange?: boolean;
 }
 
 /**
@@ -101,6 +109,16 @@ export interface PipeTuneGtkTestSession {
   readonly reconnectDaemon: () => Promise<void>;
   /** Publishes one deterministic status event without changing live settings. */
   readonly publishStatus: () => Promise<void>;
+  /** Allows the held output request to complete. */
+  readonly releaseOutputChange: () => Promise<void>;
+  /** Publishes restoration progress or a diagnostic independently of a draft. */
+  readonly setOutputRestoration: (
+    state: 'ready' | 'restoring' | 'failed'
+  ) => Promise<void>;
+  /** Changes the OS profile externally without incrementing the configuration revision. */
+  readonly setOutputProfile: (
+    profile: 'analog-stereo' | 'iec958-stereo'
+  ) => Promise<void>;
   /** Changes DAC A's live presence without changing persistent assignments. */
   readonly setOutputInventory: (
     state:
@@ -121,6 +139,8 @@ export interface PipeTuneGtkTestSession {
   readonly setOutputTiming: (
     state: 'normal' | 'pending' | 'idle' | 'error' | 'unknown'
   ) => Promise<void>;
+  /** Publishes independent measured channel peaks without changing settings. */
+  readonly setOutputPeaks: (peaks: readonly number[]) => Promise<void>;
   /** Atomically replaces EffeTune's saved-preset JSON file. */
   readonly replaceEffeTuneSavedPresets: (contents: string) => Promise<void>;
   /** Stops all processes and removes the isolated filesystem root. */
@@ -288,6 +308,14 @@ export const launchPipeTuneGtk = async (
       PIPETUNE_GTK_SETUP_HELPER_FAIL:
         options.setupFails === true ? '1' : undefined,
       PIPETUNE_GTK_E2E_PERSISTENCE_GUARD: persistenceGuardPath,
+      PIPETUNE_E2E_OUTPUT_PROFILES:
+        options.outputProfilesEnabled === true ? '1' : undefined,
+      PIPETUNE_E2E_UNKNOWN_OUTPUT_PROFILE:
+        options.unknownOutputProfile === true ? '1' : undefined,
+      PIPETUNE_E2E_UNCONFIRMED_OUTPUT_PROFILE:
+        options.unconfirmedOutputProfile === true ? '1' : undefined,
+      PIPETUNE_E2E_HOLD_OUTPUT_CHANGE:
+        options.holdOutputChange === true ? '1' : undefined,
     },
   });
   let daemon: FakeDaemon | undefined;
@@ -418,6 +446,36 @@ export const launchPipeTuneGtk = async (
     disconnectDaemon,
     reconnectDaemon,
     publishStatus,
+    releaseOutputChange: async () => {
+      if (daemon === undefined) throw new Error('fake daemon is unavailable');
+      await new Promise<void>((resolve, reject) => {
+        daemon?.process.stdin.write('release-output\n', (error) => {
+          if (error !== null && error !== undefined) reject(error);
+          else resolve();
+        });
+      });
+    },
+    setOutputRestoration: async (state) => {
+      if (daemon === undefined) throw new Error('fake daemon is unavailable');
+      await new Promise<void>((resolve, reject) => {
+        daemon?.process.stdin.write(
+          `output-restoration ${state}\n`,
+          (error) => {
+            if (error !== null && error !== undefined) reject(error);
+            else resolve();
+          }
+        );
+      });
+    },
+    setOutputProfile: async (profile) => {
+      if (daemon === undefined) throw new Error('fake daemon is unavailable');
+      await new Promise<void>((resolve, reject) => {
+        daemon?.process.stdin.write(`output-profile ${profile}\n`, (error) => {
+          if (error !== null && error !== undefined) reject(error);
+          else resolve();
+        });
+      });
+    },
     setOutputInventory,
     setOutputVolume: async (state) => {
       if (daemon === undefined) throw new Error('fake daemon is unavailable');
@@ -438,6 +496,18 @@ export const launchPipeTuneGtk = async (
       });
     },
     replaceEffeTuneSavedPresets,
+    setOutputPeaks: async (peaks) => {
+      if (daemon === undefined) throw new Error('fake daemon is unavailable');
+      await new Promise<void>((resolve, reject) => {
+        daemon?.process.stdin.write(
+          `output-peaks ${peaks.join(' ')}\n`,
+          (error) => {
+            if (error !== null && error !== undefined) reject(error);
+            else resolve();
+          }
+        );
+      });
+    },
     release,
   };
 };

@@ -16,9 +16,12 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <sys/eventfd.h>
+#include <unistd.h>
 
 struct FakeDaemonState {
   std::mutex mutex;
@@ -34,6 +37,17 @@ struct FakeDaemonState {
   std::string outputInventoryState = "connected";
   std::string outputVolumeState = "normal";
   std::string outputTimingState = "normal";
+  std::vector<float> outputPeaks = {0.5F, 0.25F};
+  bool outputProfilesEnabled = false;
+  bool unknownOutputProfile = false;
+  bool unconfirmedOutputProfile = false;
+  bool outputProfileDiscovered = false;
+  std::string outputProfileKey = "analog-stereo";
+  std::uint64_t outputInventoryRevision = 1;
+  std::string outputProfileRestoration = "ready";
+  bool holdOutputChange = false;
+  int releaseOutputChange = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+  ~FakeDaemonState() { close(releaseOutputChange); }
 };
 
 static std::string environmentValue(const char *name) {
@@ -169,6 +183,29 @@ static pipetune::ControlRuntimeStatus snapshotStatus(
     stale = true;
   }
   auto status = makeStatus(config, revision);
+  status.outputProfileRestoring = state.outputProfileRestoration == "restoring";
+  status.outputProfileRestorationError = state.outputProfileRestoration == "failed" ? "E2E profile restoration failed" : "";
+  if (state.outputProfilesEnabled) {
+    const auto card = pipetune::OutputCardIdentity{"alsa", "usb:test", "vendor", "product", "serial"};
+    auto &device = status.availableOutputs.front().device;
+    device.identity = {card.api, card.location, "pcm:0:0", card.vendor, card.product, card.serial};
+    device.profile = state.outputProfileKey;
+    if (state.unknownOutputProfile && state.outputProfileKey == "iec958-stereo")
+      device.channelPositions = {"FL", "FR", "RL", "RR"};
+    for (const auto &key : {std::string("analog-stereo"), std::string("iec958-stereo")}) {
+      auto observed = device;
+      observed.profile = key;
+      observed.channelPositions = state.unknownOutputProfile && key == "iec958-stereo" ?
+          std::vector<std::string>{"FL", "FR", "RL", "RR"} : std::vector<std::string>{"FL", "FR"};
+      status.availableOutputProfiles.push_back({
+          .card = card, .cardProfileName = "output:" + key + "+input:analog-stereo",
+          .outputKey = key, .description = key == "analog-stereo" ? "Analog stereo" : "Digital stereo",
+          .available = true, .active = key == state.outputProfileKey, .preservesInput = true,
+          .observedOutputs = state.unknownOutputProfile && key == "iec958-stereo" && !state.outputProfileDiscovered ?
+              std::vector<pipetune::OutputDeviceDescription>{} : std::vector{observed}});
+    }
+    status.outputInventoryRevision = state.outputInventoryRevision;
+  }
   if (state.outputInventoryState == "missing") {
     status.availableOutputs.erase(status.availableOutputs.begin());
   } else if (state.outputInventoryState == "profileChanged") {
@@ -234,6 +271,7 @@ static pipetune::ControlRuntimeStatus snapshotStatus(
   status.dspProcessingNanoseconds +=
       state.dspTelemetrySequence * std::uint64_t{600000000};
   ++state.dspTelemetrySequence;
+  status.outputPeaks = state.outputPeaks;
   return status;
 }
 
@@ -285,10 +323,6 @@ static pipetune::ControlMessageResult closeResponse(std::string response,
 static pipetune::ControlMessageResult handleRequest(
     std::string_view message, void *userData) {
   auto &state = *static_cast<FakeDaemonState *>(userData);
-  {
-    auto lock = std::scoped_lock(state.mutex);
-    appendRequestLog(state, message);
-  }
   const auto parsed = pipetune::parseControlRequest(message);
   if (!parsed.error.empty()) {
     return closeResponse(pipetune::makeControlErrorResponse(parsed.error),
@@ -337,6 +371,30 @@ static pipetune::ControlMessageResult handleRequest(
     case pipetune::ControlCommand::setOutput:
       if (parsed.request.expectedRevision.has_value() && *parsed.request.expectedRevision != state.configurationRevision)
         return closeResponse(pipetune::makeControlErrorResponse("configuration changed"), false);
+      if (parsed.request.expectedOutputInventoryRevision &&
+          *parsed.request.expectedOutputInventoryRevision != state.outputInventoryRevision)
+        return closeResponse(pipetune::makeControlErrorResponse("output inventory changed"), false);
+      for (const auto &profile : parsed.request.outputProfileSelections) {
+        if (!state.outputProfilesEnabled || profile.card.location != "usb:test" ||
+            profile.cardProfileName != "output:" + profile.outputKey + "+input:analog-stereo")
+          return closeResponse(pipetune::makeControlErrorResponse("output profile unavailable"), false);
+        if (state.unknownOutputProfile && profile.outputKey == "iec958-stereo" && !profile.allowMissingForRestore) {
+          const auto &outputs = parsed.request.outputConfiguration.outputs;
+          const auto matching = std::find_if(outputs.begin(), outputs.end(), [](const auto &output) {
+            return output.device.identity.location == "usb:test" && output.device.profile == "iec958-stereo" &&
+                output.device.channelPositions == std::vector<std::string>{"FL", "FR", "RL", "RR"};
+          });
+          if (matching == outputs.end()) {
+            state.outputProfileDiscovered = true;
+            ++state.outputInventoryRevision;
+            return closeResponse(pipetune::makeControlErrorResponse("E2E profile layout differs; review discovered channels"), true);
+          }
+        }
+        if (!state.unconfirmedOutputProfile && state.outputProfileKey != profile.outputKey) {
+          state.outputProfileKey = profile.outputKey;
+          ++state.outputInventoryRevision;
+        }
+      }
       state.liveConfig.outputConfiguration = parsed.request.outputConfiguration;
       if (parsed.request.outputPreset.has_value()) {
         state.liveConfig.presetPath = *parsed.request.outputPreset;
@@ -357,6 +415,27 @@ static pipetune::ControlMessageResult handleRequest(
           snapshotStatus(state, false),
           std::span<const pipetune::ControlWarning>{}),
       true);
+}
+
+static cardio::promise<pipetune::ControlMessageResult> handleAsyncRequest(
+    std::string_view message, void *userData, cardio::cancellation cancellation) {
+  auto &state = *static_cast<FakeDaemonState *>(userData);
+  const auto parsed = pipetune::parseControlRequest(message);
+  auto hold = false;
+  {
+    auto lock = std::scoped_lock(state.mutex);
+    appendRequestLog(state, message);
+    hold = parsed.error.empty() &&
+           parsed.request.command == pipetune::ControlCommand::setOutput &&
+           std::exchange(state.holdOutputChange, false);
+  }
+  if (hold) {
+    // Cancellation closes the suspended request without applying its contents.
+    co_await cardio::from_fd(state.releaseOutputChange, cardio::fd_event::read, cancellation);
+    auto value = eventfd_t{0};
+    static_cast<void>(eventfd_read(state.releaseOutputChange, &value));
+  }
+  co_return handleRequest(message, userData);
 }
 
 static std::string jsonString(std::string_view value) {
@@ -463,12 +542,21 @@ int main(int argc, char **argv) {
           environmentValue("PIPETUNE_E2E_REJECT_COMMAND"),
       .dspTelemetrySequence = 0,
       .manualStatusSequence = 0,
+      .outputProfilesEnabled = environmentValue("PIPETUNE_E2E_OUTPUT_PROFILES") == "1",
+      .unknownOutputProfile = environmentValue("PIPETUNE_E2E_UNKNOWN_OUTPUT_PROFILE") == "1",
+      .unconfirmedOutputProfile = environmentValue("PIPETUNE_E2E_UNCONFIRMED_OUTPUT_PROFILE") == "1",
+      .holdOutputChange = environmentValue("PIPETUNE_E2E_HOLD_OUTPUT_CHANGE") == "1",
   };
+  if (state.outputProfilesEnabled)
+    for (const auto &output : state.liveConfig.outputConfiguration.outputs)
+      if (output.profileIntent && output.profileIntent->card.location == "usb:test")
+        state.outputProfileKey = output.profileIntent->outputKey;
   auto started = pipetune::startControlServer(
       socketPath.path,
-      {.handler = handleRequest,
+      {.handler = nullptr,
        .statusProvider = provideStatus,
-       .userData = &state});
+       .userData = &state,
+       .asyncHandler = handleAsyncRequest});
   if (started.server == nullptr) {
     std::cerr << started.error << '\n';
     return 1;
@@ -477,6 +565,25 @@ int main(int argc, char **argv) {
   std::cout << "READY\n" << std::flush;
   auto input = std::string{};
   while (std::getline(std::cin, input)) {
+    if (input.starts_with("output-restoration ")) {
+      {
+        auto lock = std::scoped_lock(state.mutex);
+        state.outputProfileRestoration = input.substr(19);
+      }
+      pipetune::publishControlStatus(started.server.get());
+    }
+    if (input.starts_with("output-profile ")) {
+      {
+        auto lock = std::scoped_lock(state.mutex);
+        state.outputProfilesEnabled = true;
+        state.outputProfileKey = input.substr(15);
+        ++state.outputInventoryRevision;
+      }
+      pipetune::publishControlStatus(started.server.get());
+    }
+    if (input == "release-output") {
+      static_cast<void>(eventfd_write(state.releaseOutputChange, 1));
+    }
     if (input.starts_with("output-timing ")) {
       {
         auto lock = std::scoped_lock(state.mutex);
@@ -495,6 +602,16 @@ int main(int argc, char **argv) {
       {
         auto lock = std::scoped_lock(state.mutex);
         state.outputInventoryState = input.substr(17);
+      }
+      pipetune::publishControlStatus(started.server.get());
+    }
+    if (input.starts_with("output-peaks ")) {
+      {
+        auto lock = std::scoped_lock(state.mutex);
+        auto values = std::istringstream(input.substr(13));
+        state.outputPeaks.clear();
+        auto value = float{};
+        while (values >> value) state.outputPeaks.push_back(value);
       }
       pipetune::publishControlStatus(started.server.get());
     }

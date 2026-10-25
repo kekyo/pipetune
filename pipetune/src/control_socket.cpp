@@ -220,6 +220,9 @@ static void collectCompletedClients(ControlService &service) {
 
 static cardio::promise<void> publishToSubscribers(ControlService &service) {
   if (service.implementation.statusProvider == nullptr && service.implementation.asyncStatusProvider == nullptr) co_return;
+  if (std::none_of(service.jobs.begin(), service.jobs.end(),
+                   [](const auto &job) { return job.session->subscriber; }))
+    co_return;
   auto message = std::string{};
   try {
     if (service.implementation.asyncStatusProvider)
