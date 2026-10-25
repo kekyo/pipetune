@@ -352,6 +352,9 @@ msgstr ""
 msgid "DSP latency"
 msgstr ""
 
+msgid "DSP output levels (dBFS)"
+msgstr ""
+
 msgid "DSP processing load; graph capped at 100%."
 msgstr ""
 
@@ -450,6 +453,9 @@ msgstr ""
 msgid "Later"
 msgstr ""
 
+msgid "Levels after combining Processed and Direct, before device volume."
+msgstr ""
+
 msgid "Live Configuration"
 msgstr ""
 
@@ -486,6 +492,9 @@ msgstr ""
 msgid "Measured frame rate"
 msgstr ""
 
+msgid "Mixed output levels (dBFS)"
+msgstr ""
+
 msgid "Multiple — outputs selected in PipeTune"
 msgstr ""
 
@@ -514,9 +523,6 @@ msgid "Output"
 msgstr ""
 
 msgid "Output channels"
-msgstr ""
-
-msgid "Output levels (dBFS)"
 msgstr ""
 
 msgid "Output mode"

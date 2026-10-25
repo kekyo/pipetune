@@ -241,6 +241,8 @@ struct ControlRuntimeStatus {
   std::vector<OutputTimingState> outputTimings = {};
   /** Recent final PCM peak per logical output channel, in linear amplitude. */
   std::vector<float> outputPeaks = {};
+  /** Recent PCM peak after combining Processed and Direct, in linear amplitude. */
+  std::vector<float> mixedOutputPeaks = {};
 };
 
 /**

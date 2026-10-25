@@ -356,6 +356,9 @@ msgstr "DSP 条目"
 msgid "DSP latency"
 msgstr "DSP 延迟"
 
+msgid "DSP output levels (dBFS)"
+msgstr "DSP 输出电平 (dBFS)"
+
 msgid "DSP processing load; graph capped at 100%."
 msgstr "DSP 处理负载；图表上限为 100%。"
 
@@ -454,6 +457,9 @@ msgstr "上次输入"
 msgid "Later"
 msgstr "稍后"
 
+msgid "Levels after combining Processed and Direct, before device volume."
+msgstr "Processed 与 Direct 混合后、设备音量调整前的电平。"
+
 msgid "Live Configuration"
 msgstr "实时配置"
 
@@ -490,6 +496,9 @@ msgstr "负载"
 msgid "Measured frame rate"
 msgstr "实测帧率"
 
+msgid "Mixed output levels (dBFS)"
+msgstr "混合输出电平 (dBFS)"
+
 msgid "Multiple — outputs selected in PipeTune"
 msgstr "多设备 — 在 PipeTune 中选择输出"
 
@@ -519,9 +528,6 @@ msgstr "输出"
 
 msgid "Output channels"
 msgstr "输出声道数"
-
-msgid "Output levels (dBFS)"
-msgstr "输出电平（dBFS）"
 
 msgid "Output mode"
 msgstr "输出模式"

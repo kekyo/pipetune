@@ -58,7 +58,10 @@ int main(int argc, char **argv) {
   gtk_widget_destroy(right.root);
 
   auto ui = pipetune_gtk::MainWindowUi{
-      .outputLevelMeters = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)};
+      .outputLevelMeters = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8),
+      .mixedOutputSection = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8),
+      .mixedOutputMeters = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)};
+  gtk_container_add(GTK_CONTAINER(ui.mixedOutputSection), ui.mixedOutputMeters);
   auto configuration = pipetune::OutputConfiguration{};
   configuration.channels.resize(4);
   configuration.channels[2].label = "Bass Left";
@@ -90,6 +93,17 @@ int main(int argc, char **argv) {
   pipetune_gtk::renderOutputLevels(ui, configuration, std::array{0.5F, 0.25F}, true);
   valid = check(ui.outputLevelRows.size() == 2,
       "sixteen device slots must not expand a stereo preset meter") && valid;
+  pipetune_gtk::renderMixedOutputLevels(ui, configuration, std::array{0.0F, 0.5F, 1.25F, 0.25F}, true);
+  valid = check(gtk_widget_get_visible(ui.mixedOutputSection) &&
+      ui.mixedOutputRows.size() == 4 && ui.outputLevelRows.size() == 2 &&
+      gtk_style_context_has_class(gtk_widget_get_style_context(ui.mixedOutputRows[2].levelBar),
+          "output-level-overload"),
+      "mixed levels must display all routed channels and reuse overload colors without changing DSP meters") && valid;
+  pipetune_gtk::renderMixedOutputLevels(ui, configuration, {}, true);
+  valid = check(!gtk_widget_get_visible(ui.mixedOutputSection) && ui.mixedOutputRows.empty() &&
+      ui.outputLevelRows.size() == 2,
+      "missing mixed measurements must hide only the mixed section") && valid;
   gtk_widget_destroy(ui.outputLevelMeters);
+  gtk_widget_destroy(ui.mixedOutputSection);
   return valid ? 0 : 1;
 }

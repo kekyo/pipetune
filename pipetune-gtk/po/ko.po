@@ -356,6 +356,9 @@ msgstr "DSP 항목"
 msgid "DSP latency"
 msgstr "DSP 지연 시간"
 
+msgid "DSP output levels (dBFS)"
+msgstr "DSP 출력 레벨 (dBFS)"
+
 msgid "DSP processing load; graph capped at 100%."
 msgstr "DSP 처리 부하이며 그래프는 100%로 제한됩니다."
 
@@ -454,6 +457,9 @@ msgstr "마지막 입력"
 msgid "Later"
 msgstr "나중에"
 
+msgid "Levels after combining Processed and Direct, before device volume."
+msgstr "Processed와 Direct를 합친 후, 장치 볼륨 적용 전의 레벨입니다."
+
 msgid "Live Configuration"
 msgstr "실시간 구성"
 
@@ -490,6 +496,9 @@ msgstr "부하"
 msgid "Measured frame rate"
 msgstr "측정 프레임 레이트"
 
+msgid "Mixed output levels (dBFS)"
+msgstr "혼합 출력 레벨 (dBFS)"
+
 msgid "Multiple — outputs selected in PipeTune"
 msgstr "다중 — PipeTune에서 출력 선택"
 
@@ -519,9 +528,6 @@ msgstr "출력"
 
 msgid "Output channels"
 msgstr "출력 채널 수"
-
-msgid "Output levels (dBFS)"
-msgstr "출력 레벨(dBFS)"
 
 msgid "Output mode"
 msgstr "출력 모드"

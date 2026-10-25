@@ -361,6 +361,9 @@ msgstr "عنصر DSP"
 msgid "DSP latency"
 msgstr "زمن انتقال DSP"
 
+msgid "DSP output levels (dBFS)"
+msgstr "مستويات خرج DSP (dBFS)"
+
 msgid "DSP processing load; graph capped at 100%."
 msgstr "حمل معالجة DSP؛ الرسم محدود عند 100%."
 
@@ -459,6 +462,9 @@ msgstr "آخر إدخال"
 msgid "Later"
 msgstr "لاحقًا"
 
+msgid "Levels after combining Processed and Direct, before device volume."
+msgstr "المستويات بعد مزج Processed وDirect، وقبل مستوى صوت الجهاز."
+
 msgid "Live Configuration"
 msgstr "الإعدادات المباشرة"
 
@@ -495,6 +501,9 @@ msgstr "الحمل"
 msgid "Measured frame rate"
 msgstr "معدل الإطارات المقاس"
 
+msgid "Mixed output levels (dBFS)"
+msgstr "مستويات الخرج الممزوج (dBFS)"
+
 msgid "Multiple — outputs selected in PipeTune"
 msgstr "متعدد — تُحدّد المخارج في PipeTune"
 
@@ -524,9 +533,6 @@ msgstr "الإخراج"
 
 msgid "Output channels"
 msgstr "قنوات الإخراج"
-
-msgid "Output levels (dBFS)"
-msgstr "مستويات الإخراج (dBFS)"
 
 msgid "Output mode"
 msgstr "وضع الإخراج"

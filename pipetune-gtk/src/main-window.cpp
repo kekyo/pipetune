@@ -22,31 +22,55 @@
 
 namespace pipetune_gtk {
 
-void renderOutputLevels(MainWindowUi &ui,
+static void renderLevelRows(GtkWidget *host,
+    std::vector<OutputLevelMeterWidgets> &rows,
     const pipetune::OutputConfiguration &configuration,
-    std::span<const float> peaks, bool connected) {
+    std::span<const float> peaks, bool connected,
+    std::string_view accessiblePrefix) {
   const auto single = configuration.mode == pipetune::OutputMode::single;
   const auto count = std::min<std::size_t>(16,
-      peaks.empty() ? ui.outputLevelRows.size() : peaks.size());
-  if (ui.outputLevelRows.size() != count) {
-    for (const auto &row : ui.outputLevelRows) gtk_widget_destroy(row.root);
-    ui.outputLevelRows.clear();
+      peaks.empty() ? rows.size() : peaks.size());
+  if (rows.size() != count) {
+    for (const auto &row : rows) gtk_widget_destroy(row.root);
+    rows.clear();
     for (auto index = std::size_t{0}; index < count; ++index) {
       auto row = createOutputLevelMeter();
 #ifdef PIPETUNE_GTK_E2E_ACCESSIBILITY
-      gestament_gtk_assign_accessible_id(row.levelBar, ("output-level-" + std::to_string(index + 1)).c_str());
+      gestament_gtk_assign_accessible_id(row.levelBar,
+          (std::string(accessiblePrefix) + std::to_string(index + 1)).c_str());
 #endif
-      gtk_box_pack_start(GTK_BOX(ui.outputLevelMeters), row.root, FALSE, FALSE, 0);
-      ui.outputLevelRows.push_back(row);
+      gtk_box_pack_start(GTK_BOX(host), row.root, FALSE, FALSE, 0);
+      rows.push_back(row);
     }
-    gtk_widget_show_all(ui.outputLevelMeters);
+    gtk_widget_show_all(host);
   }
   for (auto index = std::size_t{0}; index < count; ++index) {
     const auto purpose = !single && index < configuration.channels.size()
         ? std::string_view(configuration.channels[index].label) : std::string_view{};
-    updateOutputLevelMeter(ui.outputLevelRows[index], "Ch " + std::to_string(index + 1), purpose,
+    updateOutputLevelMeter(rows[index], "Ch " + std::to_string(index + 1), purpose,
         connected && index < peaks.size() ? std::optional<float>{peaks[index]} : std::nullopt);
   }
+}
+
+void renderOutputLevels(MainWindowUi &ui,
+    const pipetune::OutputConfiguration &configuration,
+    std::span<const float> peaks, bool connected) {
+  renderLevelRows(ui.outputLevelMeters, ui.outputLevelRows, configuration,
+      peaks, connected, "output-level-");
+}
+
+void renderMixedOutputLevels(MainWindowUi &ui,
+    const pipetune::OutputConfiguration &configuration,
+    std::span<const float> peaks, bool connected) {
+  if (peaks.empty()) {
+    for (const auto &row : ui.mixedOutputRows) gtk_widget_destroy(row.root);
+    ui.mixedOutputRows.clear();
+    gtk_widget_hide(ui.mixedOutputSection);
+    return;
+  }
+  renderLevelRows(ui.mixedOutputMeters, ui.mixedOutputRows, configuration,
+      peaks, connected, "mixed-output-level-");
+  gtk_widget_show(ui.mixedOutputSection);
 }
 
 static void configureOutputOverview(GtkWidget *widget, bool selectable) {
@@ -271,6 +295,8 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
       .presetEntryView = requiredWidget(
           builder, "presetEntryView", GTK_TYPE_TREE_VIEW),
       .outputLevelMeters = requiredWidget(builder, "outputLevelMeters", GTK_TYPE_BOX),
+      .mixedOutputSection = requiredWidget(builder, "mixedOutputSection", GTK_TYPE_BOX),
+      .mixedOutputMeters = requiredWidget(builder, "mixedOutputMeters", GTK_TYPE_BOX),
       .outputModeCombo = requiredWidget(builder, "outputModeCombo", GTK_TYPE_COMBO_BOX_TEXT),
       .outputModeNotice = requiredWidget(builder, "outputModeNotice", GTK_TYPE_LABEL),
       .outputErrorLabel = requiredWidget(builder, "outputErrorLabel", GTK_TYPE_LABEL),
