@@ -37,7 +37,7 @@ struct FakeDaemonState {
   std::string outputInventoryState = "connected";
   std::string outputVolumeState = "normal";
   std::string outputTimingState = "normal";
-  std::vector<float> outputPeaks = {0.5F, 0.25F, 0.125F, 0.0F};
+  std::vector<float> outputPeaks = {0.5F, 0.25F};
   bool outputProfilesEnabled = false;
   bool unknownOutputProfile = false;
   bool unconfirmedOutputProfile = false;
@@ -271,10 +271,7 @@ static pipetune::ControlRuntimeStatus snapshotStatus(
   status.dspProcessingNanoseconds +=
       state.dspTelemetrySequence * std::uint64_t{600000000};
   ++state.dspTelemetrySequence;
-  status.outputPeaks.resize(config.outputConfiguration.mode == pipetune::OutputMode::single
-      ? 2 : config.outputConfiguration.channels.size(), 0);
-  std::copy_n(state.outputPeaks.begin(), std::min(state.outputPeaks.size(), status.outputPeaks.size()),
-      status.outputPeaks.begin());
+  status.outputPeaks = state.outputPeaks;
   return status;
 }
 

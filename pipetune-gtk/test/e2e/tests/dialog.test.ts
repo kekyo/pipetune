@@ -451,7 +451,7 @@ const hideWithKeyboard = async (method: 'escape' | 'close'): Promise<void> => {
 };
 
 describe('PipeTune GTK dialog', () => {
-  it('shows independent live output peaks in both modes and clears stale levels', async () => {
+  it('uses the preset output width across output modes and clears stale levels', async () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     await selectSettingsPage(3);
@@ -489,30 +489,77 @@ describe('PipeTune GTK dialog', () => {
       );
     });
 
+    await session.setOutputPeaks([0.5, 0.25, 0.125, 0]);
+    await toPass(async () => expect(await meters.getChildCount()).toBe(4));
+    await expectPeak(3, 20 * Math.log10(0.125));
+    await expectPeak(4, -Infinity);
+
     await openMultipleOutputConfiguration();
     await chooseAvailableOutput('DAC A');
     await chooseAvailableOutput('DAC B');
-    expect(await meters.getChildCount()).toBe(2);
-    await applyOutputConfiguration();
-    await expectPeak(3, 20 * Math.log10(0.125));
-    await expectPeak(4, -Infinity);
     expect(await meters.getChildCount()).toBe(4);
+    await applyOutputConfiguration();
+    await toPass(async () => expect(await meters.getChildCount()).toBe(4));
     await session.clearRequests();
     await session.setOutputPeaks([0, 0.5, 0, 0.25]);
     await expectPeak(1, -Infinity);
     await expectPeak(2, 20 * Math.log10(0.5));
     await expectPeak(3, -Infinity);
     await expectPeak(4, 20 * Math.log10(0.25));
-    await session.setOutputPeaks([0, 0, 0, 0]);
-    for (const channel of [1, 2, 3, 4]) await expectPeak(channel, -Infinity);
+    await session.setOutputPeaks([0, 0]);
+    await toPass(async () => expect(await meters.getChildCount()).toBe(2));
+    for (const channel of [1, 2]) await expectPeak(channel, -Infinity);
+    await session.setOutputPeaks([0, 0, 0, 0, 0.5, 0.25]);
+    await toPass(async () => expect(await meters.getChildCount()).toBe(6));
+    await expectPeak(5, 20 * Math.log10(0.5));
+    await expectPeak(6, 20 * Math.log10(0.25));
     expect(
       (await session.readRequests()).filter(
         (request) => request.command !== 'subscribe'
       )
     ).toHaveLength(0);
     await session.disconnectDaemon();
-    for (const channel of [1, 2, 3, 4]) await expectPeak(channel, undefined);
+    for (const channel of [1, 2, 3, 4, 5, 6])
+      await expectPeak(channel, undefined);
   });
+
+  for (const physicalWidth of [6, 16]) {
+    it(`keeps two preset meters with ${String(physicalWidth)} configured output channels`, async () => {
+      session = await launchPipeTuneGtk(
+        physicalWidth === 6
+          ? {
+              rejectedCommand: undefined,
+              outputProfilesEnabled: true,
+              unknownOutputProfile: true,
+            }
+          : { rejectedCommand: undefined }
+      );
+      await waitForConnected();
+      await selectSettingsPage(3);
+      if (physicalWidth === 6) {
+        await session.setOutputProfile('iec958-stereo');
+      } else {
+        await session.setOutputInventory('wide');
+      }
+      await openMultipleOutputConfiguration();
+      await chooseAvailableOutput('DAC A');
+      if (physicalWidth === 6) await chooseAvailableOutput('DAC B');
+      expect(
+        await (await getElement('outputChangeSummaryLabel', 'label')).text()
+      ).toContain(`Output channels: 2 → ${String(physicalWidth)}`);
+      await applyOutputConfiguration();
+      const meters = await getElement('outputLevelMeters', 'container');
+      await toPass(async () => expect(await meters.getChildCount()).toBe(2));
+      await session.setOutputPeaks([0.25, 0.5]);
+      await toPass(async () => {
+        expect(await meters.getChildCount()).toBe(2);
+        expect(
+          (await (await getElement('output-level-2', 'progressBar')).info())
+            .name
+        ).toContain('-6.0 dBFS');
+      });
+    });
+  }
 
   it('records output meter movement and clearing in video', async () => {
     session = await launchPipeTuneGtk();
