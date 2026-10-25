@@ -345,6 +345,8 @@ struct LayoutNode {
   std::uint8_t outputBus;
   std::uint32_t bandCount = 0;
   std::uint32_t bassMask = 0;
+  std::uint32_t spatialInputChannels = 0;
+  std::uint32_t spatialMask = 0;
   std::vector<std::uint8_t> matrixRoutes;
 };
 
@@ -371,6 +373,7 @@ static std::uint32_t bitWidth(std::uint32_t mask) {
 static PresetChannelLayout inferPresetChannelLayout(yyjson_val *pipelineValue) {
   auto nodes = std::vector<LayoutNode>{};
   auto layout = PresetChannelLayout{};
+  auto needsStereoBands = false;
   auto insideSection = false;
   auto sectionEnabled = true;
   const auto count = yyjson_arr_size(pipelineValue);
@@ -399,7 +402,7 @@ static PresetChannelLayout inferPresetChannelLayout(yyjson_val *pipelineValue) {
     if (!packed.error.empty()) continue;
     auto item = LayoutNode{.name = node.name, .channelSpec = channelSpec,
         .inputBus = inputBus, .outputBus = outputBus, .bandCount = 0,
-        .bassMask = 0, .matrixRoutes = {}};
+        .bassMask = 0, .spatialInputChannels = 0, .spatialMask = 0, .matrixRoutes = {}};
     layout.processingChannels = std::max(layout.processingChannels, channelSpecWidth(channelSpec));
     if (node.name == "Matrix") {
       item.matrixRoutes = std::move(packed.bytes);
@@ -409,8 +412,23 @@ static PresetChannelLayout inferPresetChannelLayout(yyjson_val *pipelineValue) {
       }
     } else if (node.name == "Channel Divider" || node.name == "FIR Crossover") {
       item.bandCount = std::clamp(layoutParameter(packed, "bc"), 2u, 4u);
-      if (channelSpec == -2) layout.processingChannels =
-          std::max(layout.processingChannels, item.bandCount * 2u);
+      if (channelSpec == -2) {
+        needsStereoBands = true;
+        layout.processingChannels = std::max(layout.processingChannels, item.bandCount * 2u);
+      }
+    } else if (node.name == "Spatial Mapper") {
+      const auto localWidth = selectedProcessingChannels(channelSpec, 16u);
+      item.spatialInputChannels = std::min(localWidth, std::clamp(layoutParameter(packed, "ic"), 1u, 16u));
+      for (auto parameter = std::size_t{0}; parameter < packed.floats.size(); ++parameter) {
+        const auto &element = packed.definition->elements[parameter];
+        if (element.arrayKey != "dm" && element.arrayKey != "fm" && element.arrayKey != "rm") continue;
+        const auto input = element.containerIndex % 16u;
+        const auto output = element.containerIndex / 16u;
+        if (input < item.spatialInputChannels && output < localWidth && packed.floats[parameter] != 0.0F)
+          item.spatialMask |= 1u << output;
+      }
+      if (channelSpec == -2) layout.processingChannels = std::max(layout.processingChannels,
+          std::max(item.spatialInputChannels, bitWidth(item.spatialMask)));
     } else if (node.name == "Bass Management") {
       item.bassMask = layoutParameter(packed, "su");
       for (auto channel = std::size_t{0}; channel < 16; ++channel) {
@@ -425,6 +443,9 @@ static PresetChannelLayout inferPresetChannelLayout(yyjson_val *pipelineValue) {
     }
     nodes.push_back(std::move(item));
   }
+  // The band splitters require stereo pairs even when a later node addresses
+  // an odd final channel. The padding channel is not itself a preset output.
+  if (needsStereoBands) layout.processingChannels += layout.processingChannels % 2u;
   layout.processingChannels = std::min(layout.processingChannels, 16u);
 
   auto busMasks = std::array<std::uint32_t, 5>{3u, 0u, 0u, 0u, 0u};
@@ -449,6 +470,11 @@ static PresetChannelLayout inferPresetChannelLayout(yyjson_val *pipelineValue) {
             (selection & (1u << input)) != 0)
           result |= 1u << output;
       }
+    } else if (node.spatialInputChannels != 0) {
+      // Spatial Mapper replaces its selected input lanes. Higher lanes without
+      // a matrix destination retain their dry input in the native processor.
+      const auto inputs = ((1u << node.spatialInputChannels) - 1u) << first;
+      result = (source & ~inputs) | (node.spatialMask << first);
     } else if (node.bandCount != 0 && node.channelSpec == -2 && (source & 3u) != 0) {
       result |= (1u << (node.bandCount * 2u)) - 1u;
     } else if (node.name == "Bass Management" && source != 0) {

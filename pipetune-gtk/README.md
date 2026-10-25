@@ -74,8 +74,9 @@ dependency order:
 5. processing mode or preset when no output change is needed.
 
 The Output page begins with peak meters for the preset's output channels in
-Ch order. The count is inferred from Matrix routes, channel selections, and
-other preset settings at load or reload time and remains fixed during playback.
+Ch order. The count is inferred from Matrix and Spatial Mapper routes, crossover
+band counts, channel selections, and other preset settings at load or reload time
+and remains fixed during playback.
 Single and multiple modes show the same count, including channels generated
 and measured without a device assignment. Bypass shows two meters.
 They measure the audio before device volume in dBFS, relative to digital full scale. Silence is `−∞`,

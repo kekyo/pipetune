@@ -1318,6 +1318,30 @@ static bool testInferredPresetChannels(const std::filesystem::path &directory) {
   if (!check(fir.pipeline != nullptr, fir.error) ||
       !check(fir.pipeline->maxChannels() == 6 && fir.pipeline->outputChannelCount() == 6,
              "FIR Crossover bands must determine the output width")) return false;
+  for (const auto effect : {"Channel Divider", "FIR Crossover"}) {
+    const auto json = std::string(R"json({"pipeline":[{"name":")json") + effect +
+        R"json(","channel":"A","parameters":{"bc":2}},
+        {"name":"Volume","channel":"5","parameters":{"vl":0}}]})json";
+    const auto odd = load(std::string("infer-odd-") + effect + ".effetune_preset", json);
+    if (!check(odd.pipeline != nullptr, odd.error) ||
+        !check(odd.pipeline->maxChannels() == 6 && odd.pipeline->outputChannelCount() == 5 &&
+               odd.pipeline->activePluginCount() == 2,
+               "stereo-band splitters need an even processing width with odd output addresses")) return false;
+  }
+  for (const auto matrixKey : {"dm", "fm", "rm"}) {
+    // Route stereo input to Ch 4 without any later node declaring that channel.
+    auto coefficients = std::string{};
+    for (auto index = 0u; index < 50u; ++index) {
+      if (index != 0) coefficients += ',';
+      coefficients += index == 48u ? "-1" : "0";
+    }
+    const auto json = std::string(R"json({"pipeline":[{"name":"Spatial Mapper","channel":"A",
+        "parameters":{"ic":2,")json") + matrixKey + "\":[" + coefficients + "]}}]}";
+    const auto spatial = load(std::string("infer-spatial-") + matrixKey + ".effetune_preset", json);
+    if (!check(spatial.pipeline != nullptr, spatial.error) ||
+        !check(spatial.pipeline->maxChannels() == 4 && spatial.pipeline->outputChannelCount() == 4,
+               "Spatial Mapper component matrices must declare their output channels")) return false;
+  }
   const auto bass = load("infer-bass.effetune_preset",
       R"json({"pipeline":[{"name":"Bass Management","channel":"A",
         "parameters":{"su":8,"ro":[1,0,0,3],"rt":[8]}}]})json");
