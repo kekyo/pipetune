@@ -146,6 +146,9 @@ struct PipeWireRuntime {
   std::atomic<std::uint64_t> processingErrors;
   InputTelemetry inputTelemetry;
   OutputPeakTelemetry outputPeakTelemetry;
+  OutputPeakTelemetry mixedOutputPeakTelemetry;
+  pw_stream *mixedOutputStream = nullptr;
+  spa_hook mixedOutputListener = {};
   std::atomic<bool> rateBridgeReady;
   std::atomic<bool> inputFormatNegotiated;
   std::atomic<std::uint32_t> dspSampleRate;
@@ -252,6 +255,9 @@ struct PipeWireRuntime {
   ProfileRequestAction profileRequestAction = ProfileRequestAction::apply;
   std::string profileRequestError;
   spa_source *profileChangeSource = nullptr;
+  pw_impl_module *directOutput = nullptr;
+  spa_hook directOutputListener = {};
+  std::string directOutputArguments;
   pw_impl_module *outputDistribution = nullptr;
   spa_hook outputDistributionListener = {};
   spa_source *outputGraphSource = nullptr;
@@ -374,6 +380,14 @@ struct PipeWireRuntime {
         spa_hook_remove(&inputListener);
       }
       pw_stream_destroy(inputStream);
+    }
+    if (mixedOutputStream != nullptr) {
+      spa_hook_remove(&mixedOutputListener);
+      pw_stream_destroy(mixedOutputStream);
+    }
+    if (directOutput != nullptr) {
+      spa_hook_remove(&directOutputListener);
+      pw_impl_module_destroy(directOutput);
     }
     if (outputDistribution != nullptr) {
       spa_hook_remove(&outputDistributionListener);
@@ -524,7 +538,9 @@ static void requestControlStatusUpdate(PipeWireRuntime &runtime) {
 
 static void outputPeaksTimedOut(void *data, std::uint64_t) {
   auto &runtime = *static_cast<PipeWireRuntime *>(data);
-  if (publishOutputPeaks(runtime.outputPeakTelemetry))
+  const auto dspChanged = publishOutputPeaks(runtime.outputPeakTelemetry);
+  const auto mixedChanged = publishOutputPeaks(runtime.mixedOutputPeakTelemetry);
+  if (dspChanged || mixedChanged)
     requestControlStatusUpdate(runtime);
 }
 
@@ -1624,6 +1640,10 @@ static void destroyOutputStream(PipeWireRuntime &runtime) {
 }
 
 static void destroyAudioStreams(PipeWireRuntime &runtime) {
+  // Output configuration can replace the slot count. Quiesce the monitor
+  // before publishing that width, independently of the direct audio route.
+  if (runtime.mixedOutputStream != nullptr)
+    static_cast<void>(pw_stream_set_active(runtime.mixedOutputStream, false));
   destroyOutputStream(runtime);
   if (runtime.inputStream != nullptr) {
     if (runtime.inputListenerInstalled) {
@@ -1672,6 +1692,105 @@ static std::string createOutputStream(PipeWireRuntime &runtime,
   return {};
 }
 
+static void destroyMixedOutputMeter(PipeWireRuntime &runtime) {
+  if (runtime.mixedOutputStream != nullptr) {
+    spa_hook_remove(&runtime.mixedOutputListener);
+    pw_stream_destroy(runtime.mixedOutputStream);
+    runtime.mixedOutputStream = nullptr;
+  }
+  clearOutputPeaks(runtime.mixedOutputPeakTelemetry);
+}
+
+static std::string createMixedOutputMeter(PipeWireRuntime &runtime) {
+  runtime.mixedOutputStream = pw_stream_new(runtime.core, "PipeTune mixed output meter",
+      pw_properties_new(PW_KEY_NODE_NAME, (runtime.options.filterName + ".mixed-meter").c_str(),
+          PW_KEY_TARGET_OBJECT, (runtime.options.filterName + ".distribution").c_str(),
+          PW_KEY_STREAM_CAPTURE_SINK, "true", PW_KEY_STREAM_MONITOR, "true", "stream.dont-remix", "true",
+          "node.passive", "true", "node.dont-fallback", "true", "node.dont-move", "true", "node.linger", "true",
+          "node.pipetune.internal", "true", nullptr));
+  if (!runtime.mixedOutputStream) return systemError("cannot create mixed output meter", -errno);
+  static const auto events = [] {
+    auto value = pw_stream_events{};
+    value.version = PW_VERSION_STREAM_EVENTS;
+    value.process = [](void *data) {
+      auto &runtime = *static_cast<PipeWireRuntime *>(data);
+      updateGraphSampleRate(runtime, runtime.mixedOutputStream);
+      auto *queued = pw_stream_dequeue_buffer(runtime.mixedOutputStream);
+      if (!queued) return;
+      auto frames = std::uint32_t{0};
+      if (queued->buffer && inspectPipeWireCaptureBuffer(*queued->buffer, runtime.options.channelCount, frames)) {
+        for (auto channel = 0U; channel < runtime.options.channelCount; ++channel) {
+          const auto &plane = queued->buffer->datas[channel];
+          if ((plane.chunk->flags & SPA_CHUNK_FLAG_EMPTY) == 0 &&
+              plane.chunk->offset <= plane.maxsize && plane.chunk->size <= plane.maxsize - plane.chunk->offset) {
+            const auto *samples = reinterpret_cast<const float *>(
+                static_cast<const char *>(plane.data) + plane.chunk->offset);
+            recordOutputPeak(runtime.mixedOutputPeakTelemetry, channel, {samples, frames});
+          }
+        }
+        retirePipeWireCaptureBuffer(*queued->buffer);
+      }
+      queued->size = frames;
+      pw_stream_queue_buffer(runtime.mixedOutputStream, queued);
+    };
+    return value;
+  }();
+  runtime.mixedOutputListener = {};
+  pw_stream_add_listener(runtime.mixedOutputStream, &runtime.mixedOutputListener, &events, &runtime);
+  auto storage = std::array<std::uint8_t, 1024>{};
+  auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
+  const spa_pod *parameters[] = {buildAutomaticFormatParameter(builder, runtime.options.channelCount,
+      runtime.dspSampleRate.load(std::memory_order_acquire), true)};
+  const auto result = pw_stream_connect(runtime.mixedOutputStream, PW_DIRECTION_INPUT, PW_ID_ANY,
+      static_cast<pw_stream_flags>(PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS),
+      parameters, 1);
+  if (result < 0) { destroyMixedOutputMeter(runtime); return systemError("cannot connect mixed output meter", result); }
+  return {};
+}
+
+static std::string ensureDirectOutput(PipeWireRuntime &runtime) {
+  auto arguments = OutputDistributionArguments{};
+  if (runtime.options.outputConfiguration.mode == OutputMode::multiple) {
+    auto policy = SampleRatePolicy{};
+    { auto lock = std::scoped_lock(runtime.rateStateMutex); policy = runtime.configuredRatePolicy; }
+    arguments = makeDirectOutputArguments(runtime.options.filterName, runtime.options.channelCount, policy);
+    if (!arguments.error.empty()) return arguments.error;
+  }
+  if (arguments.arguments == runtime.directOutputArguments) {
+    if (runtime.mixedOutputStream != nullptr) {
+      const auto result = pw_stream_set_active(runtime.mixedOutputStream, true);
+      if (result < 0) return systemError("cannot resume mixed output meter", result);
+    }
+    return {};
+  }
+  destroyMixedOutputMeter(runtime);
+  if (runtime.directOutput != nullptr) {
+    spa_hook_remove(&runtime.directOutputListener);
+    pw_impl_module_destroy(runtime.directOutput);
+    runtime.directOutput = nullptr;
+  }
+  runtime.directOutputArguments.clear();
+  if (arguments.arguments.empty()) return {};
+  runtime.directOutput = pw_context_load_module(runtime.context,
+      "libpipewire-module-loopback", arguments.arguments.c_str(), nullptr);
+  if (runtime.directOutput == nullptr) return systemError("cannot create direct output", -errno);
+  static const auto events = [] {
+    auto value = pw_impl_module_events{}; value.version = PW_VERSION_IMPL_MODULE_EVENTS;
+    value.destroy = [](void *data) {
+      auto &runtime = *static_cast<PipeWireRuntime *>(data);
+      spa_hook_remove(&runtime.directOutputListener);
+      runtime.directOutput = nullptr;
+      runtime.directOutputArguments.clear();
+      failRuntime(runtime, "PipeWire direct output stopped unexpectedly");
+    };
+    return value;
+  }();
+  runtime.directOutputListener = {};
+  pw_impl_module_add_listener(runtime.directOutput, &runtime.directOutputListener, &events, &runtime);
+  runtime.directOutputArguments = std::move(arguments.arguments);
+  return createMixedOutputMeter(runtime);
+}
+
 static std::string createAudioStreams(PipeWireRuntime &runtime) {
   const auto graph = currentFilterGraphProperties(runtime);
   auto *inputProperties = makePipeWireProperties(graph.input);
@@ -1704,7 +1823,7 @@ static std::string createAudioStreams(PipeWireRuntime &runtime) {
     destroyAudioStreams(runtime);
     return "cannot initialize multiple-output master volume";
   }
-  return {};
+  return ensureDirectOutput(runtime);
 }
 
 static void distributionDestroyed(void *data) {
@@ -2593,11 +2712,14 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
   auto outputProfileRestorationError = std::string{};
   auto outputTimings = std::vector<OutputTimingState>{};
   auto outputPeaks = std::vector<float>{};
+  auto mixedOutputPeaks = std::vector<float>{};
   {
     auto lock = std::scoped_lock(runtime.outputStateMutex);
     outputConfiguration = runtime.options.outputConfiguration;
     outputPeaks = snapshotOutputPeaks(runtime.outputPeakTelemetry,
         runtime.audioBuffers->outputChannels);
+    if (outputConfiguration.mode == OutputMode::multiple)
+      mixedOutputPeaks = snapshotOutputPeaks(runtime.mixedOutputPeakTelemetry, runtime.options.channelCount);
     outputInventory = runtime.availableOutputs;
     outputInventoryReady = runtime.outputInventoryReady;
     outputInventoryRevision = runtime.outputInventoryRevision;
@@ -2652,7 +2774,8 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .outputProfileRestorationError = outputProfileRestorationError,
           .outputVolumes = outputInventory.error.empty() ? std::move(outputInventory.volumes) : std::vector<OutputVolumeState>{},
           .outputTimings = std::move(outputTimings),
-          .outputPeaks = std::move(outputPeaks)};
+          .outputPeaks = std::move(outputPeaks),
+          .mixedOutputPeaks = std::move(mixedOutputPeaks)};
 }
 
 static ControlMessageResult closeControlResponse(std::string response,

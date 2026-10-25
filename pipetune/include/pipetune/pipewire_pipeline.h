@@ -114,12 +114,14 @@ struct PipeWireRunResult {
  * policy additionally requires dspSampleRate to equal ratePolicy.fixedRate.
  * A nonzero inputChannelCount selects a narrower capture stream. Additional
  * DSP channels receive silence on every block, including while bypassed;
- * only the preset can create audio in those output channels.
+ * only the preset can create audio in those processed output channels.
  * Ownership is retained for the complete run so control requests can replace
  * the pipeline. In single mode, WirePlumber owns target selection and volume
  * policy. Multiple mode requires two input channels and channelCount equal to
- * outputDspChannelCount(outputConfiguration). It exposes one public input,
- * applies master gain after DSP, and distributes numbered output channels to
+ * outputDspChannelCount(outputConfiguration). It exposes a stereo processed
+ * input and a direct input covering the configured slots. The processed gain
+ * follows DSP; Direct bypasses that processing and retains its own volume.
+ * Both paths share the rate policy and mix before distributing output channels to
  * uniquely matched devices. Missing or disabled outputs receive no fallback.
  * This function blocks according to mode and does not allocate in PipeWire process
  * callbacks.
