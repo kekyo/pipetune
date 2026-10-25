@@ -112,6 +112,8 @@ static DspBackends resolveRuntimeBackends(
 // A complete channel-width-dependent bridge is prepared off the data loop.
 // Ownership changes only after both streams have stopped their callbacks.
 struct PipeWireAudioBuffers {
+  const std::uint32_t channels;
+  const std::uint32_t outputChannels;
   PlanarAudioRing ring;
   PlanarSampleRateConverter inputRateConverter;
   PlanarSampleRateConverter outputRateConverter;
@@ -120,8 +122,9 @@ struct PipeWireAudioBuffers {
   std::vector<float> convertedScratch;
   std::vector<float> outputScratch;
 
-  PipeWireAudioBuffers(std::uint32_t channels, std::uint32_t capacity, std::uint32_t frames)
-      : ring(channels, capacity), inputRateConverter(channels, frames),
+  PipeWireAudioBuffers(std::uint32_t channels, std::uint32_t outputChannels,
+      std::uint32_t capacity, std::uint32_t frames)
+      : channels(channels), outputChannels(outputChannels), ring(channels, capacity), inputRateConverter(channels, frames),
         outputRateConverter(channels, frames), inputScratch(static_cast<std::size_t>(channels) * frames),
         dspScratch(inputScratch.size()), convertedScratch(inputScratch.size()), outputScratch(inputScratch.size()) {}
 };
@@ -289,7 +292,9 @@ struct PipeWireRuntime {
         singleOutputDescription(runtimeOptions.outputConfiguration.mode == OutputMode::single
             ? runtimeOptions.filterDescription : "PipeTune Processed Audio"),
         mode(runtimeMode),
-        audioBuffers(std::make_unique<PipeWireAudioBuffers>(runtimeOptions.channelCount,
+        audioBuffers(std::make_unique<PipeWireAudioBuffers>(runtimeOptions.inferChannelsFromPreset
+            ? pipeline.maxChannels() : runtimeOptions.channelCount,
+            runtimeOptions.inferChannelsFromPreset ? pipeline.outputChannelCount() : runtimeOptions.channelCount,
             runtimeOptions.ringCapacityFrames, runtimeOptions.maxFrames)),
         bridgeLatency(), latencyState(), outputTransitionSilencer(0),
         processingErrors(0), inputTelemetry(), outputPeakTelemetry(),
@@ -969,7 +974,8 @@ static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
     auto rebuilt = prepareMainLoopReplacement(runtime,
         {.sampleRate = static_cast<float>(bridgeRates.dspSampleRate),
          .maxChannels = runtime.options.channelCount,
-         .maxFrames = runtime.options.maxFrames}, pipelineLock);
+         .maxFrames = runtime.options.maxFrames,
+         .inferChannelsFromPreset = runtime.options.inferChannelsFromPreset}, pipelineLock);
     if (rebuilt.pipeline == nullptr) {
       if (runtime.completed) return false;
       {
@@ -1220,7 +1226,7 @@ static bool convertProcessedDspFrames(
       continue;
     }
     convertedScratch = convertedScratch.first(
-        static_cast<std::size_t>(runtime.options.channelCount) *
+        static_cast<std::size_t>(runtime.audioBuffers->channels) *
         converted.outputFramesGenerated);
     runtime.audioBuffers->ring.write(convertedScratch,
                        converted.outputFramesGenerated, generation);
@@ -1249,7 +1255,7 @@ static bool processStreamInputBlock(PipeWireRuntime &runtime,
       continue;
     }
     dspScratch = dspScratch.first(
-        static_cast<std::size_t>(runtime.options.channelCount) *
+        static_cast<std::size_t>(runtime.audioBuffers->channels) *
         dspFrameCount);
     const auto sampleRate =
         runtime.dspSampleRate.load(std::memory_order_relaxed);
@@ -1257,7 +1263,7 @@ static bool processStreamInputBlock(PipeWireRuntime &runtime,
         static_cast<double>(runtime.processedInputFrames) / sampleRate;
     const auto idleState = runtime.dspIdleState.load();
     const auto processed = runtime.pipeline.processWithIdle(
-        dspScratch, runtime.options.channelCount, dspFrameCount,
+        dspScratch, runtime.audioBuffers->channels, dspFrameCount,
         timeSeconds, idleState.policy);
     static_cast<void>(runtime.dspIdleState.tryReplaceActivity(
         idleState, processed.activity));
@@ -1310,10 +1316,10 @@ static void processAvailableInput(PipeWireRuntime &runtime) {
             std::min(runtime.options.maxFrames, frameCount - sourceFrame);
         auto scratch = std::span<float>(runtime.audioBuffers->inputScratch)
                            .first(static_cast<std::size_t>(
-                                      runtime.options.channelCount) *
+                                      runtime.audioBuffers->channels) *
                                   blockFrames);
         if (!copyPipeWireCaptureBlock(buffer, inputChannels, sourceFrame, blockFrames,
-                                     runtime.options.channelCount, scratch) ||
+                                     runtime.audioBuffers->channels, scratch) ||
             !processStreamInputBlock(runtime, scratch, blockFrames)) {
           runtime.processingErrors.fetch_add(1,
                                              std::memory_order_relaxed);
@@ -1418,7 +1424,7 @@ static void outputProcess(void *data) {
         std::min(runtime.options.maxFrames, suggestedFrames - outputFrame);
     auto scratch = std::span<float>(runtime.audioBuffers->outputScratch)
                        .first(static_cast<std::size_t>(
-                                  runtime.options.channelCount) *
+                                  runtime.audioBuffers->channels) *
                               blockFrames);
     const auto pipelineGeneration = runtime.pipeline.activeGeneration();
     const auto silencePrefixFrames =
@@ -1430,23 +1436,30 @@ static void outputProcess(void *data) {
     const auto outputSampleRate = runtime.outputStreamSampleRate.load(
         std::memory_order_relaxed);
     runtime.outputTransitionSilencer.apply(
-        scratch, runtime.options.channelCount, blockFrames,
+        scratch, runtime.audioBuffers->channels, blockFrames,
         audioRead.availableFrames, pipelineGeneration,
         pipelineTransitionSilenceFrames(outputSampleRate),
         pipelineTransitionFadeFrames(outputSampleRate));
     for (auto channel = std::uint32_t{0};
-         channel < runtime.options.channelCount; ++channel) {
-      const auto source = scratch.subspan(
+         channel < runtime.audioBuffers->channels; ++channel) {
+      auto source = scratch.subspan(
           static_cast<std::size_t>(channel) * blockFrames, blockFrames);
-      auto *destination = static_cast<float *>(buffer.datas[channel].data);
       if (runtime.options.outputConfiguration.mode == OutputMode::multiple) {
         const auto gain = runtime.masterOutputGain.load(std::memory_order_acquire);
-        if (gain == 0) std::fill_n(destination + outputFrame, blockFrames, 0.0F);
-        else std::transform(source.begin(), source.end(), destination + outputFrame, [gain](float sample) { return sample * gain; });
-      } else std::copy(source.begin(), source.end(), destination + outputFrame);
-      recordOutputPeak(runtime.outputPeakTelemetry, channel,
-                       std::span<const float>(destination + outputFrame,
-                                              blockFrames));
+        if (gain == 0) std::fill(source.begin(), source.end(), 0.0F);
+        else for (auto &sample : source) sample *= gain;
+      }
+      if (channel < runtime.audioBuffers->outputChannels)
+        recordOutputPeak(runtime.outputPeakTelemetry, channel, source);
+    }
+    // The preset can generate more or fewer channels than the device routing.
+    // Measure its complete PCM before discarding unassigned outputs, and keep
+    // physical channels beyond the prepared DSP width explicitly silent.
+    for (auto channel = std::uint32_t{0}; channel < runtime.options.channelCount; ++channel) {
+      auto *destination = static_cast<float *>(buffer.datas[channel].data) + outputFrame;
+      if (channel < runtime.audioBuffers->channels)
+        std::copy_n(scratch.data() + static_cast<std::size_t>(channel) * blockFrames, blockFrames, destination);
+      else std::fill_n(destination, blockFrames, 0.0F);
     }
     outputFrame += blockFrames;
   }
@@ -2123,7 +2136,10 @@ static void outputChangeRequested(void *data, std::uint64_t) {
       return completeOutputRequest(runtime, "sample rate changed while preparing outputs; retry the change");
     auto buffers = std::unique_ptr<PipeWireAudioBuffers>{};
     try {
-      buffers = std::make_unique<PipeWireAudioBuffers>(width, runtime.options.ringCapacityFrames, runtime.options.maxFrames);
+      buffers = std::make_unique<PipeWireAudioBuffers>(runtime.options.inferChannelsFromPreset
+          ? prepared->maxChannels() : width,
+          runtime.options.inferChannelsFromPreset ? prepared->outputChannelCount() : width,
+          runtime.options.ringCapacityFrames, runtime.options.maxFrames);
     } catch (const std::exception &exception) {
       return completeOutputRequest(runtime, std::string("cannot prepare output audio buffers: ") + exception.what());
     }
@@ -2530,7 +2546,7 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
     auto lock = std::scoped_lock(runtime.outputStateMutex);
     outputConfiguration = runtime.options.outputConfiguration;
     outputPeaks = snapshotOutputPeaks(runtime.outputPeakTelemetry,
-                                      runtime.options.channelCount);
+        runtime.audioBuffers->outputChannels);
     outputInventory = runtime.availableOutputs;
     outputInventoryReady = runtime.outputInventoryReady;
     outputInventoryRevision = runtime.outputInventoryRevision;
@@ -2601,6 +2617,12 @@ struct PresetActivationResult {
   bool deferred;
 };
 
+static cardio::promise<PresetActivationResult> applyPreparedOutput(
+    PipeWireRuntime &runtime, std::unique_lock<std::mutex> pipelineLock,
+    OutputConfiguration configuration, std::uint64_t expectedRevision,
+    std::optional<std::filesystem::path> preset, std::unique_ptr<DspPipeline> prepared,
+    std::vector<ControlWarning> warnings, bool profileOwned);
+
 static std::shared_ptr<const DspBackend> activeDspBackend(PipeWireRuntime &runtime) {
   auto lock = std::scoped_lock(runtime.dspBackendStateMutex);
   if (runtime.dspBackendState.effectiveVariant.has_value()) {
@@ -2647,7 +2669,8 @@ static cardio::promise<PresetActivationResult> activatePreset(
   const auto build = PipelineBuildOptions{.sampleRate = static_cast<float>(
            runtime.dspSampleRate.load(std::memory_order_acquire)),
        .maxChannels = runtime.options.channelCount,
-       .maxFrames = runtime.options.maxFrames};
+       .maxFrames = runtime.options.maxFrames,
+       .inferChannelsFromPreset = runtime.options.inferChannelsFromPreset};
   pipelineLock.unlock();
   auto loaded = std::move(co_await loadDspPipelineAsync(presetPath, build, std::move(backend),
       defaultPipelineLoadContext(runtime.options.sfzMaxSizeMiB), preparation.ticket.source.get_cancellation()));
@@ -2677,6 +2700,28 @@ static cardio::promise<PresetActivationResult> activatePreset(
     warnings.push_back({.nodeIndex = warning.nodeIndex,
                         .pluginName = std::move(warning.pluginName),
                         .reason = std::move(warning.reason), .state = warning.state});
+  }
+  if (runtime.options.inferChannelsFromPreset &&
+      (loaded.pipeline->maxChannels() != runtime.audioBuffers->channels ||
+       loaded.pipeline->outputChannelCount() != runtime.audioBuffers->outputChannels)) {
+    // A preset-only change can alter the internal bridge width even when no
+    // hardware routing changed. Reuse the rollback-capable stream transaction
+    // so the callback never sees a pipeline with differently sized buffers.
+    auto configuration = runtime.options.outputConfiguration;
+    const auto revision = runtime.configurationRevision.load(std::memory_order_acquire);
+    auto result = std::move(co_await applyPreparedOutput(runtime, std::move(pipelineLock),
+        std::move(configuration), revision, presetPath, std::move(loaded.pipeline),
+        std::move(warnings), false));
+    if (automaticReload) {
+      auto guard = std::scoped_lock(runtime.pipelineMutationMutex);
+      if (!result.error.empty()) runtime.configurationError = "Automatic preset reload failed: " + result.error;
+      else for (const auto &warning : result.warnings) {
+        if (warning.state != PresetEntryState::ignored) continue;
+        if (!runtime.configurationError.empty()) runtime.configurationError += "\n";
+        runtime.configurationError += "Skipped " + warning.pluginName + ": " + warning.reason;
+      }
+    }
+    co_return result;
   }
   runtime.pipeline.replace(std::move(loaded.pipeline));
   refreshPipeWireDspLatency(runtime);
@@ -2799,7 +2844,8 @@ static cardio::promise<PresetActivationResult> requestLiveOutputChange(PipeWireR
   const auto preparation = PreparationScope(runtime.preparationGeneration, cancellation);
   const auto build = PipelineBuildOptions{
       static_cast<float>(runtime.dspSampleRate.load(std::memory_order_acquire)),
-      outputDspChannelCount(configuration), runtime.options.maxFrames};
+      outputDspChannelCount(configuration), runtime.options.maxFrames,
+      runtime.options.inferChannelsFromPreset};
   auto prepared = std::unique_ptr<DspPipeline>{};
   auto warnings = std::vector<ControlWarning>{};
   if (preset && preset->empty()) {
@@ -2825,6 +2871,20 @@ static cardio::promise<PresetActivationResult> requestLiveOutputChange(PipeWireR
   }
   if (*expectedRevision != runtime.configurationRevision.load(std::memory_order_acquire))
     co_return PresetActivationResult{{}, "configuration changed while preparing outputs; retry the change", false};
+  co_return std::move(co_await applyPreparedOutput(runtime, std::move(pipelineLock),
+      std::move(configuration), *expectedRevision, std::move(preset),
+      std::move(prepared), std::move(warnings), profileOwned));
+}
+
+static cardio::promise<PresetActivationResult> applyPreparedOutput(
+    PipeWireRuntime &runtime, std::unique_lock<std::mutex> pipelineLock,
+    OutputConfiguration configuration, std::uint64_t expectedRevision,
+    std::optional<std::filesystem::path> preset, std::unique_ptr<DspPipeline> prepared,
+    std::vector<ControlWarning> warnings, bool profileOwned) {
+  if (expectedRevision != runtime.configurationRevision.load(std::memory_order_acquire))
+    co_return PresetActivationResult{{}, "configuration changed while preparing outputs; retry the change", false};
+  if (!profileOwned && runtime.outputTransitionActive.load(std::memory_order_acquire))
+    co_return PresetActivationResult{{}, "another output change is already pending", false};
   if (!profileOwned) runtime.outputTransitionActive.store(true, std::memory_order_release);
   pipelineLock.unlock();
   auto lock = std::unique_lock(runtime.outputRequestMutex);
@@ -3050,7 +3110,7 @@ static cardio::promise<ControlMessageResult> handleControlRequest(std::string_vi
       if (plan.rebuild && runtime.pipeline.backendKind().has_value()) {
         auto operation = runtime.pipeline.rebuildActiveAsync(
             {static_cast<float>(runtime.dspSampleRate.load(std::memory_order_acquire)),
-             runtime.options.channelCount, runtime.options.maxFrames},
+             runtime.options.channelCount, runtime.options.maxFrames, runtime.options.inferChannelsFromPreset},
             plan.backend, preparation.ticket.source.get_cancellation());
         backendLock.unlock();
         pipelineLock.unlock();
@@ -3104,6 +3164,17 @@ static cardio::promise<ControlMessageResult> handleControlRequest(std::string_vi
   if (request.request.command == ControlCommand::bypass) {
     auto pipelineLock =
         std::unique_lock<std::mutex>(runtime.pipelineMutationMutex);
+    if (runtime.options.inferChannelsFromPreset &&
+        (runtime.audioBuffers->channels != 2 || runtime.audioBuffers->outputChannels != 2)) {
+      auto configuration = runtime.options.outputConfiguration;
+      const auto revision = runtime.configurationRevision.load(std::memory_order_acquire);
+      pipelineLock.unlock();
+      auto result = std::move(co_await requestLiveOutputChange(runtime, std::move(configuration),
+          revision, std::filesystem::path{}, cancellation));
+      if (!result.error.empty())
+        co_return closeControlResponse(makeControlErrorResponse(result.error), false);
+      co_return closeControlResponse(makeControlSuccessResponse(controlStatus(runtime), result.warnings), true);
+    }
     {
       auto rateLock = std::scoped_lock(runtime.rateStateMutex);
       if (runtime.rateTransitioning) {
@@ -3118,7 +3189,8 @@ static cardio::promise<ControlMessageResult> handleControlRequest(std::string_vi
         {.sampleRate = static_cast<float>(
              runtime.dspSampleRate.load(std::memory_order_acquire)),
          .maxChannels = runtime.options.channelCount,
-         .maxFrames = runtime.options.maxFrames});
+         .maxFrames = runtime.options.maxFrames,
+         .inferChannelsFromPreset = runtime.options.inferChannelsFromPreset});
     if (created.pipeline == nullptr) {
       co_return closeControlResponse(makeControlErrorResponse(created.error),
                                   false);
@@ -3209,7 +3281,8 @@ static void rateChangeRequested(void *data, std::uint64_t) {
     auto rebuilt = prepareMainLoopReplacement(runtime,
         {.sampleRate = static_cast<float>(requested.fixedRate),
          .maxChannels = runtime.options.channelCount,
-         .maxFrames = runtime.options.maxFrames}, pipelineLock);
+         .maxFrames = runtime.options.maxFrames,
+         .inferChannelsFromPreset = runtime.options.inferChannelsFromPreset}, pipelineLock);
     if (rebuilt.pipeline == nullptr) {
       {
         auto lock = std::scoped_lock(runtime.rateStateMutex);
@@ -3541,7 +3614,7 @@ static std::string validateOptions(const DspPipeline &pipeline,
   if (options.channelCount == 0 || options.channelCount > 16) {
     return "PipeWire channel count must be between one and sixteen";
   }
-  if (options.inputChannelCount > options.channelCount) {
+  if (streamChannelCount(options, true) > pipeline.maxChannels()) {
     return "PipeWire input channel count must not exceed the DSP width";
   }
   const auto outputError = validateOutputConfiguration(options.outputConfiguration);
@@ -3558,7 +3631,7 @@ static std::string validateOptions(const DspPipeline &pipeline,
     return "PipeWire ring capacity must be at least the maximum frame count";
   }
   if (pipeline.sampleRate() != static_cast<float>(options.dspSampleRate) ||
-      pipeline.maxChannels() < options.channelCount ||
+      (!options.inferChannelsFromPreset && pipeline.maxChannels() < options.channelCount) ||
       pipeline.maxFrames() < options.maxFrames) {
     return "DSP pipeline format does not cover the requested PipeWire format";
   }

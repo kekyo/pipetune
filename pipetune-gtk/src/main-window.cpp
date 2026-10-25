@@ -26,8 +26,8 @@ void renderOutputLevels(MainWindowUi &ui,
     const pipetune::OutputConfiguration &configuration,
     std::span<const float> peaks, bool connected) {
   const auto single = configuration.mode == pipetune::OutputMode::single;
-  const auto count = std::min<std::size_t>(16, peaks.empty()
-      ? (single ? 2 : configuration.channels.size()) : peaks.size());
+  const auto count = std::min<std::size_t>(16,
+      peaks.empty() ? ui.outputLevelRows.size() : peaks.size());
   if (ui.outputLevelRows.size() != count) {
     for (const auto &row : ui.outputLevelRows) gtk_widget_destroy(row.root);
     ui.outputLevelRows.clear();

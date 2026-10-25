@@ -124,7 +124,8 @@ static int runProduct(const char *preset, std::string_view scenario) {
   rejectRestoredWidth = scenario == "product-output-change";
   stallWideOutput = scenario == "product-output-timeout";
   const auto *socket = std::getenv("PIPETUNE_PRODUCT_SOCKET");
-  const auto control = scenario == "product-controls" || scenario.starts_with("product-output-");
+  const auto meterTest = scenario == "product-preset-meters";
+  const auto control = meterTest || scenario == "product-controls" || scenario.starts_with("product-output-");
   if (control && socket == nullptr) return 2;
   auto configuration = pipetune::OutputConfiguration{};
   for (auto index = 0U; index < 2; ++index) {
@@ -138,7 +139,7 @@ static int runProduct(const char *preset, std::string_view scenario) {
     configuration = std::move(appended.configuration);
   }
   configuration.mode = pipetune::OutputMode::multiple;
-  if (scenario == "product-output-status-single") configuration.mode = pipetune::OutputMode::single;
+  if (scenario == "product-output-status-single" || meterTest) configuration.mode = pipetune::OutputMode::single;
   if (scenario == "product-slots") {
     const auto &a = configuration.outputs[0].id;
     const auto &b = configuration.outputs[1].id;
@@ -150,7 +151,8 @@ static int runProduct(const char *preset, std::string_view scenario) {
     configuration.outputs[1].enabled = false;
   }
   const auto width = pipetune::outputDspChannelCount(configuration);
-  const auto build = pipetune::PipelineBuildOptions{.sampleRate = 48000, .maxChannels = width, .maxFrames = 8192};
+  const auto build = pipetune::PipelineBuildOptions{.sampleRate = 48000, .maxChannels = width, .maxFrames = 8192,
+      .inferChannelsFromPreset = meterTest};
   auto pipeline = std::unique_ptr<pipetune::DspPipeline>{};
   if (preset == nullptr) pipeline = std::move(pipetune::createBypassDspPipeline(build).pipeline);
   else {
@@ -174,7 +176,8 @@ static int runProduct(const char *preset, std::string_view scenario) {
           .enforcement = pipetune::SampleRateEnforcement::suggest},
       .channelCount = width, .maxFrames = 8192, .ringCapacityFrames = 16384,
       .readyCallback = runtimeReady, .readyUserData = nullptr,
-      .inputChannelCount = 2, .outputConfiguration = configuration},
+      .inputChannelCount = 2, .outputConfiguration = configuration,
+      .inferChannelsFromPreset = meterTest},
       pipetune::PipeWireRunMode::untilInterrupted);
   if (!result.success) std::cerr << result.error << '\n';
   return result.success && result.processingErrors == 0 ? 0 : 1;
@@ -205,6 +208,7 @@ struct AudioTest {
   std::string inputName = "pipetune_product_input";
   spa_hook sourceListener = {};
   bool matrix = false;
+  bool meters = false;
   bool slots = false;
   bool volume = false;
   bool daemonVolume = false;
@@ -497,7 +501,7 @@ static void capture(void *data) {
       if (test.disconnected && sample != 0) fail(test, "unresolved or disabled output received fallback audio");
       // A Single-to-Multiple change may drain already queued Single audio.
       // The next verified steady window ends that transition allowance.
-      if (output.index == 2 && sample != 0 &&
+      if (!test.meters && output.index == 2 && sample != 0 &&
           !(test.recovery && (test.stage == 9 || test.stage == 10)) &&
           !(test.recovery && test.stage == 11 && !test.awaitingControl) &&
           !(test.outputChange && (test.stage >= 7 || test.awaitingControl))) fail(test, "unselected device received audio");
@@ -509,6 +513,10 @@ static void capture(void *data) {
   queued->size = frames;
   pw_stream_queue_buffer(output.stream, queued);
   if (!valid) return fail(test, "invalid stereo capture buffer");
+  if (test.meters) {
+    output.frames += frames;
+    return;
+  }
   if (test.recovery) {
     if (test.awaitingControl) return;
     const auto required = test.stage == 2 ? 0U :
@@ -837,6 +845,7 @@ static int runAudio(std::string_view scenario) {
   auto test = AudioTest{};
   if (const auto *name = std::getenv("PIPETUNE_PRODUCT_INPUT")) test.inputName = name;
   test.matrix = scenario != "product-bypass";
+  test.meters = scenario == "product-preset-meters";
   test.slots = scenario == "product-slots";
   test.daemonVolume = scenario.starts_with("product-daemon-volume");
   test.restoredVolume = test.daemonVolume && !scenario.ends_with("-save");
@@ -872,6 +881,7 @@ static int runAudio(std::string_view scenario) {
   auto *signal = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR1, startSource, &test);
   auto *resume = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR2, [](void *data, int) {
     auto &test = *static_cast<AudioTest *>(data);
+    if (test.meters) return static_cast<void>(pw_main_loop_quit(test.loop));
     if (test.recovery) {
       if (!test.awaitingControl) return fail(test, "unexpected recovery transition");
       if (test.stage == 11) return static_cast<void>(pw_main_loop_quit(test.loop));
@@ -986,7 +996,7 @@ static int runAudio(std::string_view scenario) {
   auto *timer = pw_loop_add_timer(pw_main_loop_get_loop(test.loop), [](void *data, std::uint64_t) {
     fail(*static_cast<AudioTest *>(data), "product PCM test timed out");
   }, &test);
-  auto deadline = timespec{.tv_sec = test.outputChange ? 60 : test.outputTimeout || test.recovery ? 30 : 15,
+  auto deadline = timespec{.tv_sec = test.outputChange || test.meters ? 60 : test.outputTimeout || test.recovery ? 30 : 15,
       .tv_nsec = 0}; auto interval = timespec{};
   if (timer == nullptr || signal == nullptr ||
       pw_loop_update_timer(pw_main_loop_get_loop(test.loop), timer, &deadline, &interval, false) < 0) return 1;

@@ -246,7 +246,75 @@ try {
     await socketReady(join(runtime, "pulse-native"), undefined);
   }
   let manager = start("WirePlumber", "dbus-run-session", ["--", wireplumber]);
-  if (scenario.startsWith("product-output-status")) {
+  if (scenario === "product-preset-meters") {
+    const audio = start("meter PCM fixtures", driver, ["audio", scenario]);
+    await waitForMessage(audio, "product:devices-ready");
+    const preset = join(directory, "meter.effetune_preset");
+    const matrix = (mx) => ({ name: "Matrix", enabled: true, channel: "All", parameters: { mx } });
+    writeFileSync(preset, JSON.stringify({ pipeline: [matrix("001102p13")] }));
+    const product = start("meter runtime", driver, ["runtime", preset, scenario]);
+    await waitForMessage(product, "product:runtime-ready");
+    audio.child.kill("SIGUSR1");
+    const control = async (request, success = true) => {
+      const child = start("meter control", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET, JSON.stringify(request)]);
+      assert.equal((await child.completion).code, 0, child.stderr);
+      const response = JSON.parse(child.stdout);
+      assert.equal(response.ok, success, child.stdout);
+      return response;
+    };
+    const expectPeaks = async (expected) => {
+      const client = createConnection(environment.PIPETUNE_PRODUCT_SOCKET);
+      const timer = setTimeout(() => client.destroy(new Error("preset output peaks did not arrive")), 15000);
+      let lines;
+      try {
+        await once(client, "connect");
+        lines = createInterface({ input: client, crlfDelay: Infinity });
+        client.write(`${JSON.stringify({ command: "subscribe" })}\n`);
+        for await (const line of lines) {
+          const response = JSON.parse(line);
+          assert.equal(response.ok, true);
+          if (response.outputPeaks.length === expected.length && response.outputPeaks.every(
+            (peak, channel) => Math.abs(peak - expected[channel]) < 0.00001)) return response;
+        }
+        assert.fail("status subscription ended before the expected preset peaks");
+      } finally {
+        clearTimeout(timer);
+        lines?.close();
+        client.destroy();
+      }
+    };
+    const initial = await expectPeaks([0.25, 0.5, 0.25, 0.5]);
+    assert.equal(initial.outputConfiguration.mode, "single", "four generated channels must be measured with stereo hardware");
+    const stereo = join(directory, "stereo.effetune_preset");
+    writeFileSync(stereo, JSON.stringify({ pipeline: [{ name: "Volume", channel: "All", parameters: { vl: 0 } }] }));
+    await control({ command: "load", preset: stereo });
+    await expectPeaks([0.25, 0.5]);
+    await control({ command: "set-output", configuration: { ...initial.outputConfiguration, mode: "multiple" } });
+    await expectPeaks([0.25, 0.5]);
+    writeFileSync(preset, JSON.stringify({ pipeline: [matrix("001102p1304p15")] }));
+    await control({ command: "load", preset });
+    await expectPeaks([0.25, 0.5, 0.25, 0.5, 0.25, 0.5]);
+    await control({ command: "set-rate", rateMode: "fixed", sampleRate: 96000, enforcement: "suggest" });
+    await control({ command: "set-dsp-backend", backend: "simd", simdVariant: "auto" });
+    await expectPeaks([0.25, 0.5, 0.25, 0.5, 0.25, 0.5]);
+    writeFileSync(`${preset}.new`, JSON.stringify({ pipeline: [matrix("001102p1304p15"), matrix("0011")] }));
+    renameSync(`${preset}.new`, preset);
+    await expectPeaks([0.25, 0.5]);
+    writeFileSync(`${preset}.new`, JSON.stringify({ pipeline: [matrix("001102p1304p15")] }));
+    renameSync(`${preset}.new`, preset);
+    await expectPeaks([0.25, 0.5, 0.25, 0.5, 0.25, 0.5]);
+    const invalid = join(directory, "invalid.effetune_preset");
+    writeFileSync(invalid, "{invalid");
+    await control({ command: "load", preset: invalid }, false);
+    await expectPeaks([0.25, 0.5, 0.25, 0.5, 0.25, 0.5]);
+    await control({ command: "bypass" });
+    const final = await expectPeaks([0.25, 0.5]);
+    assert.equal(final.processingErrors, 0);
+    audio.child.kill("SIGUSR2");
+    assert.equal((await audio.completion).code, 0, audio.stderr);
+    terminate(product, "SIGTERM");
+    assert.equal((await product.completion).code, 0, product.stderr);
+  } else if (scenario.startsWith("product-output-status")) {
     const audio = start("inventory fixtures", driver, ["audio", scenario]);
     await waitForMessage(audio, "product:devices-ready");
     const product = start("product runtime", driver, ["runtime", "bypass", scenario]);

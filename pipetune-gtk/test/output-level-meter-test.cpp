@@ -78,9 +78,18 @@ int main(int argc, char **argv) {
         "a lost connection must clear every channel while keeping its identity") && valid;
   configuration.mode = pipetune::OutputMode::single;
   pipetune_gtk::renderOutputLevels(ui, configuration, {}, true);
-  valid = check(ui.outputLevelRows.size() == 2 &&
+  valid = check(ui.outputLevelRows.size() == 4 &&
       std::string_view(gtk_label_get_text(GTK_LABEL(ui.outputLevelRows[0].valueLabel))) == "—",
-      "stereo without a measurement must remain distinguishable from silence") && valid;
+      "missing measurements must retain the last preset width rather than infer stereo from the device mode") && valid;
+  pipetune_gtk::renderOutputLevels(ui, configuration, peaks, true);
+  valid = check(ui.outputLevelRows.size() == 4 &&
+      gtk_level_bar_get_value(GTK_LEVEL_BAR(ui.outputLevelRows[2].levelBar)) > 0,
+      "single mode must display generated channels that have no device assignment") && valid;
+  configuration.mode = pipetune::OutputMode::multiple;
+  configuration.channels.resize(16);
+  pipetune_gtk::renderOutputLevels(ui, configuration, std::array{0.5F, 0.25F}, true);
+  valid = check(ui.outputLevelRows.size() == 2,
+      "sixteen device slots must not expand a stereo preset meter") && valid;
   gtk_widget_destroy(ui.outputLevelMeters);
   return valid ? 0 : 1;
 }
