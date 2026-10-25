@@ -258,10 +258,11 @@ try {
     audio.child.kill("SIGUSR1");
     const mixed = [[0.125, 0.25, 0.5, 1.25], [0.375, 0.75, 0.75, 0.75],
       [0.25, 0.5, 0.25, 0.5], [0.125, 0.25, 0.5, 0.75],
-      [0.125, 0.25, 0.5, 0.75], [0.375, 0.75, 0.5, 0.75]];
+      [0.125, 0.25, 0.5, 0.75], [0.375, 0.75, 0.5, 0.75],
+      [0.3125, 0.625, 0.25, 0.375], [0.25, 0.5, 0, 0], [0.375, 0.75, 0.5, 0.75]];
     const dsp = [[0, 0, 0, 0], [0.25, 0.5, 0.25, 0.5], [0.25, 0.5, 0.25, 0.5],
-      [0, 0], [0, 0], [0.25, 0.5]];
-    for (let stage = 0; stage <= 5; ++stage) {
+      [0, 0], [0, 0], [0.25, 0.5], [0.25, 0.5], [0.25, 0.5], [0.25, 0.5]];
+    for (let stage = 0; stage <= 8; ++stage) {
       await waitForMessage(audio, `product:direct-stage-${stage}`);
       const client = createConnection(environment.PIPETUNE_PRODUCT_SOCKET);
       const deadline = setTimeout(() => client.destroy(), 10000);

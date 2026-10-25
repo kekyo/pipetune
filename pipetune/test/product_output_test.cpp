@@ -257,6 +257,7 @@ struct AudioTest {
   std::array<std::int64_t, 3> compensation = {};
   spa_source *graphEvent = nullptr;
   std::uint32_t publicInputId = PW_ID_ANY;
+  std::uint32_t directInputId = PW_ID_ANY;
   unsigned stage = 0;
   std::array<std::array<std::uint64_t, 2>, 12> stageFrames = {};
   std::array<std::array<std::uint64_t, 2>, 12> recoverySilence = {};
@@ -265,6 +266,7 @@ struct AudioTest {
   pw_registry *registry = nullptr;
   spa_hook registryListener = {};
   pw_node *control = nullptr;
+  pw_node *directControl = nullptr;
   spa_hook controlListener = {};
   float visibleGain = -1.0F;
   bool visibleMute = false;
@@ -450,6 +452,20 @@ static void setMasterVolume(AudioTest &test) {
   if (pw_node_set_param(test.control, SPA_PARAM_Props, 0, parameter) < 0) fail(test, "cannot change master volume");
 }
 
+static void setDirectVolume(AudioTest &test) {
+  if (test.directControl == nullptr) return fail(test, "Direct sink is unavailable for volume control");
+  auto storage = std::array<std::uint8_t, 256>{};
+  auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
+  const auto gain = test.stage == 6 ? 0.5F : 1.0F;
+  const auto volumes = std::array<float, 4>{gain, gain, gain, gain};
+  const auto *parameter = static_cast<const spa_pod *>(spa_pod_builder_add_object(
+      &builder, SPA_TYPE_OBJECT_Props, SPA_PARAM_Props,
+      SPA_PROP_volume, SPA_POD_Float(1.0F), SPA_PROP_mute, SPA_POD_Bool(test.stage == 7),
+      SPA_PROP_channelVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, volumes.size(), volumes.data())));
+  if (pw_node_set_param(test.directControl, SPA_PARAM_Props, 0, parameter) < 0)
+    fail(test, "cannot change Direct sink volume");
+}
+
 static void capture(void *data) {
   auto &output = *static_cast<TestOutput *>(data);
   auto &test = *output.test;
@@ -473,10 +489,11 @@ static void capture(void *data) {
         output.index == 1 && test.matrix ? (channel == 0 ? 0.25F : -0.5F) : 0.0F;
     if (test.direct) {
       const auto directLevel = std::array<float, 4>{0.125F, 0.25F, 0.5F, test.stage >= 3 ? 0.75F : 1.25F};
-      expected = output.index < 2 && test.stage != 2 ? directLevel[output.index * 2 + channel] : 0.0F;
-      if (output.index < 2 && (test.stage == 1 || test.stage == 2 || test.stage == 5))
+      const auto directGain = test.stage == 6 ? 0.5F : test.stage == 7 ? 0.0F : 1.0F;
+      expected = output.index < 2 && test.stage != 2 ? directLevel[output.index * 2 + channel] * directGain : 0.0F;
+      if (output.index < 2 && (test.stage == 1 || test.stage == 2 || test.stage >= 5))
         expected += output.index == 0 ? (channel == 0 ? 0.25F : 0.5F) :
-            test.stage == 5 ? 0.0F : (channel == 0 ? 0.25F : -0.5F);
+            test.stage >= 5 ? 0.0F : (channel == 0 ? 0.25F : -0.5F);
     }
     if (test.slots && output.index < 2) expected = output.index == 0 ?
         (channel == 0 ? 0.25F : -0.5F) : (channel == 0 ? 0.5F : 0.25F);
@@ -985,7 +1002,7 @@ static int runAudio(std::string_view scenario) {
     auto &test = *static_cast<AudioTest *>(data);
     if (test.direct) {
       if (!test.awaitingControl) return fail(test, "unexpected direct stage");
-      if (test.stage == 5) return static_cast<void>(pw_main_loop_quit(test.loop));
+      if (test.stage == 8) return static_cast<void>(pw_main_loop_quit(test.loop));
       ++test.stage; test.awaitingControl = false;
       for (auto &output : test.outputs) output.frames = 0;
       if (test.stage == 1 || test.stage == 5) startSource(&test, 0);
@@ -994,6 +1011,7 @@ static int runAudio(std::string_view scenario) {
         spa_hook_remove(&test.sourceListener); pw_stream_destroy(test.source); test.source = nullptr;
         startDirectSource(test);
       }
+      if (test.stage >= 6) setDirectVolume(test);
       return;
     }
     if (test.meters) return static_cast<void>(pw_main_loop_quit(test.loop));
@@ -1074,9 +1092,16 @@ static int runAudio(std::string_view scenario) {
     value.version = PW_VERSION_REGISTRY_EVENTS;
     value.global = [](void *data, std::uint32_t id, std::uint32_t, const char *type, std::uint32_t version, const spa_dict *props) {
       auto &test = *static_cast<AudioTest *>(data);
-      if (std::strcmp(type, PW_TYPE_INTERFACE_Node) != 0 || props == nullptr || test.control != nullptr) return;
+      if (std::strcmp(type, PW_TYPE_INTERFACE_Node) != 0 || props == nullptr) return;
       const auto *name = spa_dict_lookup(props, PW_KEY_NODE_NAME);
-      if (name != nullptr && std::string_view(name) == test.inputName) {
+      if (test.direct && test.directControl == nullptr && name != nullptr &&
+          std::string_view(name) == test.inputName + ".direct") {
+        test.directInputId = id;
+        test.directControl = static_cast<pw_node *>(pw_registry_bind(test.registry, id, type,
+            std::min<std::uint32_t>(version, PW_VERSION_NODE), 0));
+        if (test.directControl == nullptr) return fail(test, "cannot bind Direct sink controls");
+      }
+      if (test.control == nullptr && name != nullptr && std::string_view(name) == test.inputName) {
         test.publicInputId = id;
         test.control = static_cast<pw_node *>(pw_registry_bind(test.registry, id, type, std::min<std::uint32_t>(version, PW_VERSION_NODE), 0));
         if (test.control == nullptr) return fail(test, "cannot observe master controls");
@@ -1103,6 +1128,12 @@ static int runAudio(std::string_view scenario) {
     };
     value.global_remove = [](void *data, std::uint32_t id) {
       auto &test = *static_cast<AudioTest *>(data);
+      if (id == test.directInputId) {
+        if (test.directControl != nullptr)
+          pw_proxy_destroy(reinterpret_cast<pw_proxy *>(test.directControl));
+        test.directControl = nullptr;
+        test.directInputId = PW_ID_ANY;
+      }
       if (id == test.publicInputId) {
         if ((test.reconnect && !test.restart) || (test.recovery && test.stage < 9))
           fail(test, "public input disappeared during device reconnection");
@@ -1140,6 +1171,8 @@ static int runAudio(std::string_view scenario) {
     spa_hook_remove(&test.controlListener);
     pw_proxy_destroy(reinterpret_cast<pw_proxy *>(test.control));
   }
+  if (test.directControl != nullptr)
+    pw_proxy_destroy(reinterpret_cast<pw_proxy *>(test.directControl));
   spa_hook_remove(&test.registryListener);
   pw_proxy_destroy(reinterpret_cast<pw_proxy *>(test.registry));
   pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), test.graphEvent);
