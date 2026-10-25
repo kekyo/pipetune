@@ -1501,6 +1501,9 @@ static void render(GtkRuntime *runtime) {
   renderOutputLevels(runtime->ui, runtime->state.runtime.outputConfiguration,
       runtime->state.runtime.outputPeaks,
       runtime->state.connection == ControlConnectionState::connected);
+  renderMixedOutputLevels(runtime->ui, runtime->state.runtime.outputConfiguration,
+      runtime->state.runtime.mixedOutputPeaks,
+      runtime->state.connection == ControlConnectionState::connected);
   renderSettingsControls(runtime);
   renderActionLog(runtime);
 }

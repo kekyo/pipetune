@@ -175,16 +175,34 @@ function findRole(role, tmc)
 end
 
 function findTargetEndpoint (node, media_class, role)
-  if media_class == "Stream/Output/Audio" then
-    for input in public_inputs_om:iterate() do
-      -- A multi-output public input must be the stream's actual peer, so
-      -- PulseAudio can complete playback without exposing internal sinks.
-      return input
-    end
-    -- The distribution outlives a public-input rate rebuild. Wait for that
-    -- input instead of briefly routing application audio around the DSP.
-    if aggregates_om:get_n_objects() > 0 then return nil end
+  if media_class == "Stream/Input/Audio" and
+      node.properties["stream.capture.sink"] == "true" then
     local requested = node.properties["target.object"]
+    if requested then
+      for target in meter_targets_om:iterate() do
+        local target_node = target:get_associated_proxy("node")
+        local props = target_node and target_node.properties
+        if props and (props["node.name"] == requested or
+            props["object.serial"] == requested) then return target end
+      end
+    end
+    -- The private monitor must never fall back to the default microphone.
+    return nil
+  end
+  if media_class == "Stream/Output/Audio" then
+    local requested = node.properties["target.object"]
+    for direct in public_directs_om:iterate() do
+      local target_node = direct:get_associated_proxy("node")
+      local props = target_node and target_node.properties
+      if props and requested and (props["node.name"] == requested or
+          props["object.serial"] == requested) then return direct end
+    end
+    for input in public_inputs_om:iterate() do
+      local target_node = input:get_associated_proxy("node")
+      local props = target_node and target_node.properties
+      if props and requested and (props["node.name"] == requested or
+          props["object.serial"] == requested) then return input end
+    end
     if requested and node.properties["node.dont-fallback"] == "true" then
       local available = false
       for target in target_nodes_om:iterate() do
@@ -194,10 +212,23 @@ function findTargetEndpoint (node, media_class, role)
           break
         end
       end
-      -- The daemon's control socket can be ready before its audio nodes.
-      -- A pinned application must wait for that target, not use the endpoint.
+      -- A pinned application must wait for its target instead of briefly
+      -- routing around the processing graph.
       if not available then return nil end
     end
+    local default_id = default_nodes:call("get-default-node", "Audio/Sink")
+    for direct in public_directs_om:iterate() do
+      local target_node = direct:get_associated_proxy("node")
+      if target_node and target_node["bound-id"] == default_id then return direct end
+    end
+    for input in public_inputs_om:iterate() do
+      -- A multi-output public input must be the stream's actual peer, so
+      -- PulseAudio can complete playback without exposing internal sinks.
+      return input
+    end
+    -- The distribution outlives a public-input rate rebuild. Wait for that
+    -- input instead of briefly routing application audio around the DSP.
+    if aggregates_om:get_n_objects() > 0 then return nil end
   end
   local target_class_assoc = {
     ["Stream/Input/Audio"] = "Audio/Source",
@@ -382,6 +413,7 @@ function unhandleLinkable (si)
   end
 end
 
+default_nodes = Plugin.find("default-nodes-api")
 endpoints_om = ObjectManager { Interest { type = "SiEndpoint" }}
 target_nodes_om = ObjectManager { Interest { type = "node" } }
 aggregates_om = ObjectManager { Interest {
@@ -391,6 +423,17 @@ aggregates_om = ObjectManager { Interest {
 public_inputs_om = ObjectManager { Interest {
   type = "SiLinkable",
   Constraint { "node.pipetune.public-input", "=", "true", type = "pw-global" },
+  Constraint { "active-features", "!", 0, type = "gobject" },
+} }
+public_directs_om = ObjectManager { Interest {
+  type = "SiLinkable",
+  Constraint { "node.pipetune.direct", "=", "true", type = "pw-global" },
+  Constraint { "active-features", "!", 0, type = "gobject" },
+} }
+meter_targets_om = ObjectManager { Interest {
+  type = "SiLinkable",
+  Constraint { "node.pipetune.aggregate", "=", "true", type = "pw-global" },
+  Constraint { "node.pipetune.internal", "=", "true", type = "pw-global" },
   Constraint { "active-features", "!", 0, type = "gobject" },
 } }
 linkables_om = ObjectManager { Interest { type = "SiLinkable",
@@ -420,6 +463,18 @@ public_inputs_om:connect("objects-changed", function ()
   scheduleSynchronizedRescan ()
 end)
 
+public_directs_om:connect("objects-changed", function ()
+  scheduleSynchronizedRescan ()
+end)
+
+meter_targets_om:connect("objects-changed", function ()
+  scheduleSynchronizedRescan ()
+end)
+
+default_nodes:connect("changed", function ()
+  scheduleSynchronizedRescan ()
+end)
+
 aggregates_om:connect("objects-changed", function ()
   scheduleSynchronizedRescan ()
 end)
@@ -436,6 +491,8 @@ endpoints_om:activate()
 target_nodes_om:activate()
 aggregates_om:activate()
 public_inputs_om:activate()
+public_directs_om:activate()
+meter_targets_om:activate()
 linkables_om:activate()
 links_om:activate()
 scheduleSynchronizedRescan ()

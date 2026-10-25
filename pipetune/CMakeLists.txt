@@ -1004,7 +1004,7 @@ if(BUILD_TESTING)
   target_include_directories(pipetune_product_output_tests PRIVATE src)
   target_link_options(pipetune_product_output_tests PRIVATE -Wl,--wrap=pw_stream_connect)
   target_compile_options(pipetune_product_output_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  foreach(scenario product-bypass product-matrix product-slots product-sixteen product-volume product-disconnected product-reconnect product-profile product-restart product-restart-mute product-latency product-latency-units product-latency-reconnect product-time-alignment product-sfz-classic product-sfz-event product-controls product-output-clock product-output-clock-alt product-output-clock-unavailable product-output-change product-output-profile-unknown product-output-profile-shutdown product-output-profile-restore-failure product-output-profile-unavailable product-output-profile-settle-input product-output-timeout product-output-status product-output-status-single product-output-recovery product-preset-meters)
+  foreach(scenario product-direct product-bypass product-matrix product-slots product-sixteen product-volume product-disconnected product-reconnect product-profile product-restart product-restart-mute product-latency product-latency-units product-latency-reconnect product-time-alignment product-sfz-classic product-sfz-event product-controls product-output-clock product-output-clock-alt product-output-clock-unavailable product-output-change product-output-profile-unknown product-output-profile-shutdown product-output-profile-restore-failure product-output-profile-unavailable product-output-profile-settle-input product-output-timeout product-output-status product-output-status-single product-output-recovery product-preset-meters product-source-resume product-source-resume-single)
     add_test(NAME pipetune_${scenario}
       COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
         ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
@@ -1088,7 +1088,7 @@ if(BUILD_TESTING)
     pipetune_wireplumber_policy_fixture PRIVATE src)
   target_link_libraries(
     pipetune_wireplumber_policy_fixture PRIVATE pipetune_pipewire)
-  foreach(scenario policy policy-volume policy-reconnect policy-visibility policy-recovery
+  foreach(scenario policy policy-volume policy-reconnect policy-visibility policy-dual-sink policy-recovery
       policy-defaults policy-defaults-empty policy-defaults-external policy-defaults-equivalent policy-defaults-recovery
       policy-restart policy-restart-volume policy-restart-mute)
     add_test(

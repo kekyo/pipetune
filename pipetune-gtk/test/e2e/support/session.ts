@@ -141,6 +141,11 @@ export interface PipeTuneGtkTestSession {
   ) => Promise<void>;
   /** Publishes independent measured channel peaks without changing settings. */
   readonly setOutputPeaks: (peaks: readonly number[]) => Promise<void>;
+  readonly setMixedOutputPeaks: (peaks: readonly number[]) => Promise<void>;
+  /** Holds DSP counters steady across status publications. */
+  readonly freezeDspTelemetry: () => Promise<void>;
+  /** Advances frozen DSP counters by one second at the configured load. */
+  readonly advanceDspTelemetry: () => Promise<void>;
   /** Atomically replaces EffeTune's saved-preset JSON file. */
   readonly replaceEffeTuneSavedPresets: (contents: string) => Promise<void>;
   /** Stops all processes and removes the isolated filesystem root. */
@@ -506,6 +511,36 @@ export const launchPipeTuneGtk = async (
             else resolve();
           }
         );
+      });
+    },
+    setMixedOutputPeaks: async (peaks) => {
+      if (daemon === undefined) throw new Error('fake daemon is unavailable');
+      await new Promise<void>((resolve, reject) => {
+        daemon?.process.stdin.write(
+          `mixed-output-peaks ${peaks.join(' ')}\n`,
+          (error) => {
+            if (error !== null && error !== undefined) reject(error);
+            else resolve();
+          }
+        );
+      });
+    },
+    freezeDspTelemetry: async () => {
+      if (daemon === undefined) throw new Error('fake daemon is unavailable');
+      await new Promise<void>((resolve, reject) => {
+        daemon?.process.stdin.write('dsp-telemetry freeze\n', (error) => {
+          if (error !== null && error !== undefined) reject(error);
+          else resolve();
+        });
+      });
+    },
+    advanceDspTelemetry: async () => {
+      if (daemon === undefined) throw new Error('fake daemon is unavailable');
+      await new Promise<void>((resolve, reject) => {
+        daemon?.process.stdin.write('dsp-telemetry advance\n', (error) => {
+          if (error !== null && error !== undefined) reject(error);
+          else resolve();
+        });
       });
     },
     release,

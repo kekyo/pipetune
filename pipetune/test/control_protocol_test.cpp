@@ -1008,11 +1008,35 @@ static bool testOutputPeaks() {
   return true;
 }
 
+static bool testMixedOutputPeaks() {
+  auto status = pipetune::ControlRuntimeStatus{};
+  status.outputPeaks = {0.5F, 0.25F};
+  status.mixedOutputPeaks = {0.25F, 1.25F, 0.0F};
+  const auto encoded = pipetune::makeControlStatusEvent(status);
+  const auto parsed = pipetune::parseControlResponse(encoded);
+  if (!check(parsed.valid && parsed.success &&
+          parsed.status.outputPeaks == status.outputPeaks &&
+          parsed.status.mixedOutputPeaks == status.mixedOutputPeaks,
+          "mixed output peaks must round-trip separately from DSP output peaks")) return false;
+  for (const auto &[from, to] : std::array<std::pair<std::string_view, std::string_view>, 4>{
+           {{R"("mixedOutputPeaks":[0.25,1.25,0.0])", R"("mixedOutputPeaks":[0.25,-0.5,0.0])"},
+            {R"("mixedOutputPeaks":[0.25,1.25,0.0])", R"("mixedOutputPeaks":[0.25,true,0.0])"},
+            {R"("mixedOutputPeaks":[0.25,1.25,0.0])", R"("mixedOutputPeaks":null)"},
+            {R"(,"mixedOutputPeaks":[0.25,1.25,0.0])", ""}}}) {
+    auto malformed = encoded;
+    if (!check(replaceOnce(malformed, from, to) &&
+            !pipetune::parseControlResponse(malformed).valid,
+            "malformed or missing mixed output peaks must be rejected")) return false;
+  }
+  return true;
+}
+
 int main() {
   if (!testPresetEntries()) return 1;
   if (!testOutputStatus()) return 1;
   return testRequests() && testRejectedRequests() && testSuccessResponse() &&
                  testOutputPeaks() &&
+                 testMixedOutputPeaks() &&
                  testStatusEvent() && testBypassStatus() &&
                  testDspBackendFallbackStatus() &&
                  testFixedDspAndGraphRatesCanDiffer() &&

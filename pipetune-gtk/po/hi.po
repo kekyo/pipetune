@@ -357,6 +357,9 @@ msgstr "DSP प्रविष्टि"
 msgid "DSP latency"
 msgstr "DSP विलंबता"
 
+msgid "DSP output levels (dBFS)"
+msgstr "DSP आउटपुट स्तर (dBFS)"
+
 msgid "DSP processing load; graph capped at 100%."
 msgstr "DSP प्रोसेसिंग लोड; ग्राफ़ 100% पर सीमित है।"
 
@@ -455,6 +458,9 @@ msgstr "अंतिम इनपुट"
 msgid "Later"
 msgstr "बाद में"
 
+msgid "Levels after combining Processed and Direct, before device volume."
+msgstr "Processed और Direct को मिलाने के बाद, डिवाइस वॉल्यूम से पहले के स्तर।"
+
 msgid "Live Configuration"
 msgstr "लाइव कॉन्फ़िगरेशन"
 
@@ -491,6 +497,9 @@ msgstr "लोड"
 msgid "Measured frame rate"
 msgstr "मापी गई फ़्रेम दर"
 
+msgid "Mixed output levels (dBFS)"
+msgstr "मिश्रित आउटपुट स्तर (dBFS)"
+
 msgid "Multiple — outputs selected in PipeTune"
 msgstr "एकाधिक — PipeTune में चुने गए आउटपुट"
 
@@ -520,9 +529,6 @@ msgstr "आउटपुट"
 
 msgid "Output channels"
 msgstr "आउटपुट चैनल"
-
-msgid "Output levels (dBFS)"
-msgstr "आउटपुट स्तर (dBFS)"
 
 msgid "Output mode"
 msgstr "आउटपुट मोड"

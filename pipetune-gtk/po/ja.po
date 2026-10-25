@@ -356,6 +356,9 @@ msgstr "DSPエントリ"
 msgid "DSP latency"
 msgstr "DSPレイテンシー"
 
+msgid "DSP output levels (dBFS)"
+msgstr "DSP出力レベル（dBFS）"
+
 msgid "DSP processing load; graph capped at 100%."
 msgstr "DSP処理負荷（グラフの上限は100%）。"
 
@@ -454,6 +457,9 @@ msgstr "最終入力"
 msgid "Later"
 msgstr "後で"
 
+msgid "Levels after combining Processed and Direct, before device volume."
+msgstr "ProcessedとDirectの混合後、デバイス音量適用前のレベルです。"
+
 msgid "Live Configuration"
 msgstr "ライブ設定"
 
@@ -490,6 +496,9 @@ msgstr "負荷"
 msgid "Measured frame rate"
 msgstr "実測フレームレート"
 
+msgid "Mixed output levels (dBFS)"
+msgstr "混合後の出力レベル（dBFS）"
+
 msgid "Multiple — outputs selected in PipeTune"
 msgstr "複数 — PipeTuneで出力先を選択"
 
@@ -519,9 +528,6 @@ msgstr "出力"
 
 msgid "Output channels"
 msgstr "出力チャンネル数"
-
-msgid "Output levels (dBFS)"
-msgstr "出力レベル（dBFS）"
 
 msgid "Output mode"
 msgstr "出力モード"

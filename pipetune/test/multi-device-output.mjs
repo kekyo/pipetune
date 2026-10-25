@@ -246,7 +246,100 @@ try {
     await socketReady(join(runtime, "pulse-native"), undefined);
   }
   let manager = start("WirePlumber", "dbus-run-session", ["--", wireplumber]);
-  if (scenario === "product-preset-meters") {
+  if (scenario === "product-direct") {
+    const audio = start("dual input PCM fixtures", driver, ["audio", scenario]);
+    await waitForMessage(audio, "product:devices-ready");
+    const preset = join(directory, "direct.effetune_preset");
+    writeFileSync(preset, JSON.stringify({ pipeline: [
+      { name: "Matrix", enabled: true, channel: "All", parameters: { mx: "001102p13" } },
+    ] }));
+    const product = start("dual input runtime", driver, ["runtime", preset, scenario]);
+    await waitForMessage(product, "product:runtime-ready");
+    audio.child.kill("SIGUSR1");
+    const mixed = [[0.125, 0.25, 0.5, 1.25], [0.375, 0.75, 0.75, 0.75],
+      [0.25, 0.5, 0.25, 0.5], [0.125, 0.25, 0.5, 0.75],
+      [0.125, 0.25, 0.5, 0.75], [0.375, 0.75, 0.5, 0.75],
+      [0.3125, 0.625, 0.25, 0.375], [0.25, 0.5, 0, 0], [0.375, 0.75, 0.5, 0.75]];
+    const dsp = [[0, 0, 0, 0], [0.25, 0.5, 0.25, 0.5], [0.25, 0.5, 0.25, 0.5],
+      [0, 0], [0, 0], [0.25, 0.5], [0.25, 0.5], [0.25, 0.5], [0.25, 0.5]];
+    for (let stage = 0; stage <= 8; ++stage) {
+      await waitForMessage(audio, `product:direct-stage-${stage}`);
+      const client = createConnection(environment.PIPETUNE_PRODUCT_SOCKET);
+      const deadline = setTimeout(() => client.destroy(), 10000);
+      let lines;
+      let matched = false;
+      try {
+        await once(client, "connect");
+        lines = createInterface({ input: client, crlfDelay: Infinity });
+        client.write(JSON.stringify({ command: "subscribe" }) + "\n");
+        for await (const line of lines) {
+          const status = JSON.parse(line);
+          const equal = (actual, expected) => actual?.length === expected.length &&
+            actual.every((peak, channel) => Math.abs(peak - expected[channel]) < 0.00001);
+          if (equal(status.mixedOutputPeaks, mixed[stage]) && equal(status.outputPeaks, dsp[stage]) &&
+              (stage < 4 || status.graphSampleRate === 96000)) { matched = true; break; }
+        }
+        assert.ok(matched, `stage ${stage}: mixed and preset meters must report their own PCM, with the requested graph rate`);
+      } finally {
+        clearTimeout(deadline); lines?.close(); client.destroy();
+      }
+      if (stage === 2 || stage === 3) {
+        const request = stage === 2 ? { command: "bypass" } :
+          { command: "set-rate", rateMode: "fixed", sampleRate: 96000, enforcement: "force" };
+        const client = start("dual input control", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET, JSON.stringify(request)]);
+        assert.equal((await client.completion).code, 0, client.stderr);
+        assert.equal(JSON.parse(client.stdout).ok, true, client.stdout);
+      }
+      audio.child.kill("SIGUSR2");
+    }
+    assert.equal((await audio.completion).code, 0, audio.stderr);
+    terminate(product, "SIGTERM");
+    assert.equal((await product.completion).code, 0, product.stderr);
+  } else if (scenario.startsWith("product-source-resume")) {
+    const audio = start("source switching fixtures", driver, ["audio", scenario]);
+    await waitForMessage(audio, "product:devices-ready");
+    const preset = join(directory, "source-resume.effetune_preset");
+    const identity = Array.from({ length: 256 }, (_, index) => index === 0 || index === 17 ? 1 : 0);
+    writeFileSync(preset, JSON.stringify({ pipeline: [
+      { name: "Spatial Mapper", enabled: true, channel: "All",
+        parameters: { ic: 2, ep: false, dm: identity, fm: identity, rm: identity } },
+      { name: "Matrix", enabled: true, channel: "All", parameters: { mx: "001102p13" } },
+    ] }));
+    const product = start("source switching runtime", driver, ["runtime", preset, scenario]);
+    await waitForMessage(product, "product:runtime-ready");
+    audio.child.kill("SIGUSR1");
+    await waitForMessage(audio, "product:source-a-heard");
+    audio.child.kill("SIGUSR2");
+    await waitForMessage(audio, "product:source-stopped");
+    const client = createConnection(environment.PIPETUNE_PRODUCT_SOCKET);
+    const deadline = setTimeout(() => client.destroy(), 15000);
+    let lines;
+    let transportError;
+    client.on("error", (error) => { transportError = error; });
+    client.on("close", () => lines?.close());
+    try {
+      await once(client, "connect");
+      lines = createInterface({ input: client, crlfDelay: Infinity });
+      client.write(`${JSON.stringify({ command: "subscribe" })}\n`);
+      let stopped = false;
+      for await (const line of lines) {
+        const status = JSON.parse(line);
+        assert.equal(status.ok, true);
+        if (status.inputSampleRate === 0) { stopped = true; break; }
+      }
+      assert.ok(stopped, transportError?.message ?? "the input graph never stopped after source A closed");
+    } finally {
+      clearTimeout(deadline);
+      lines?.close();
+      client.destroy();
+    }
+    audio.child.kill("SIGUSR2");
+    await waitForMessage(audio, "product:source-b-clean");
+    audio.child.kill("SIGUSR2");
+    assert.equal((await audio.completion).code, 0, audio.stderr);
+    terminate(product, "SIGTERM");
+    assert.equal((await product.completion).code, 0, product.stderr);
+  } else if (scenario === "product-preset-meters") {
     const audio = start("meter PCM fixtures", driver, ["audio", scenario]);
     await waitForMessage(audio, "product:devices-ready");
     const preset = join(directory, "meter.effetune_preset");
@@ -453,7 +546,9 @@ try {
       const report = JSON.parse(audio.stdout);
       // The control socket precedes asynchronous graph publication at startup.
       // Successful PCM is the readiness barrier for a fresh desktop query.
-      assertPublicOutput();
+      if (volumeRestore)
+        assert.equal(report.processedOutputNamed, true, "the PCM fixture must observe the public Processed output name");
+      else assertPublicOutput();
       assert.ok(report.receivedFrames.every((frames) => frames >= 32768));
       if (volumeRestore) {
         assert.equal(report.stages.length, attempt === 0 ? 3 : 4);
@@ -1329,14 +1424,14 @@ try {
     assert.equal(report.captureFeedsPlayback, false,
       "a capture endpoint must never feed a playback device");
   }
-  if (["policy-visibility", "policy-recovery", "policy-pulse", "policy-pulse-volume"].includes(scenario) ||
+  if (["policy-visibility", "policy-dual-sink", "policy-recovery", "policy-pulse", "policy-pulse-volume"].includes(scenario) ||
       scenario.startsWith("policy-restart") || scenario.startsWith("policy-defaults")) {
     assert.equal(report.outputsHiddenDuringPlayback, true,
       "physical outputs must be hidden from selectors and playback clients during multi-device playback");
     assert.equal(report.outputsRestored, true,
       "physical outputs must become visible again when the combined output closes");
   }
-  if (scenario.startsWith("policy-defaults")) {
+  if (scenario.startsWith("policy-defaults") || scenario === "policy-dual-sink") {
     assert.equal(report.configuredDefaultRestored, true,
       "the exact configured default must survive even when that device is unavailable");
   }

@@ -643,7 +643,7 @@
                             <property name="margin">14</property>
                             <child>
                               <object class="GtkLabel">
-                                <property name="label" translatable="yes">Output levels (dBFS)</property>
+                                <property name="label" translatable="yes">DSP output levels (dBFS)</property>
                                 <property name="xalign">0</property>
                               </object>
                             </child>
@@ -667,6 +667,41 @@
                                 <property name="wrap">True</property>
                                 <property name="max-width-chars">45</property>
                                 <style><class name="device-name"/></style>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkBox" id="mixedOutputSection">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">8</property>
+                                <property name="no-show-all">True</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label" translatable="yes">Mixed output levels (dBFS)</property>
+                                    <property name="xalign">0</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkScrolledWindow">
+                                    <property name="hscrollbar-policy">automatic</property>
+                                    <property name="vscrollbar-policy">never</property>
+                                    <property name="propagate-natural-height">True</property>
+                                    <child>
+                                      <object class="GtkBox" id="mixedOutputMeters">
+                                        <property name="spacing">8</property>
+                                        <property name="margin-bottom">4</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label" translatable="yes">Levels after combining Processed and Direct, before device volume.</property>
+                                    <property name="xalign">0</property>
+                                    <property name="wrap">True</property>
+                                    <property name="max-width-chars">45</property>
+                                    <style><class name="device-name"/></style>
+                                  </object>
+                                </child>
                               </object>
                             </child>
                             <child>

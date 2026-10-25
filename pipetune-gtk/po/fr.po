@@ -357,6 +357,9 @@ msgstr "Entrée DSP"
 msgid "DSP latency"
 msgstr "Latence DSP"
 
+msgid "DSP output levels (dBFS)"
+msgstr "Niveaux de sortie DSP (dBFS)"
+
 msgid "DSP processing load; graph capped at 100%."
 msgstr "Charge de traitement DSP ; graphique limité à 100 %."
 
@@ -455,6 +458,9 @@ msgstr "Dernière entrée"
 msgid "Later"
 msgstr "Plus tard"
 
+msgid "Levels after combining Processed and Direct, before device volume."
+msgstr "Niveaux après le mélange de Processed et Direct, avant le volume de l’appareil."
+
 msgid "Live Configuration"
 msgstr "Configuration en direct"
 
@@ -491,6 +497,9 @@ msgstr "Charge"
 msgid "Measured frame rate"
 msgstr "Cadence d'images mesurée"
 
+msgid "Mixed output levels (dBFS)"
+msgstr "Niveaux de sortie mixée (dBFS)"
+
 msgid "Multiple — outputs selected in PipeTune"
 msgstr "Multiple — sorties choisies dans PipeTune"
 
@@ -520,9 +529,6 @@ msgstr "Sortie"
 
 msgid "Output channels"
 msgstr "Canaux de sortie"
-
-msgid "Output levels (dBFS)"
-msgstr "Niveaux de sortie (dBFS)"
 
 msgid "Output mode"
 msgstr "Mode de sortie"

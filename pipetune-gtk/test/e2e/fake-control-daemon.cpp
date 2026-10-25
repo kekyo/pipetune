@@ -33,11 +33,13 @@ struct FakeDaemonState {
   std::filesystem::path requestLogPath;
   std::string rejectedCommand;
   std::uint64_t dspTelemetrySequence;
+  bool freezeDspTelemetry = false;
   std::uint64_t manualStatusSequence;
   std::string outputInventoryState = "connected";
   std::string outputVolumeState = "normal";
   std::string outputTimingState = "normal";
   std::vector<float> outputPeaks = {0.5F, 0.25F};
+  std::vector<float> mixedOutputPeaks = {};
   bool outputProfilesEnabled = false;
   bool unknownOutputProfile = false;
   bool unconfirmedOutputProfile = false;
@@ -270,8 +272,9 @@ static pipetune::ControlRuntimeStatus snapshotStatus(
       state.dspTelemetrySequence * status.inputSampleRate;
   status.dspProcessingNanoseconds +=
       state.dspTelemetrySequence * std::uint64_t{600000000};
-  ++state.dspTelemetrySequence;
+  if (!state.freezeDspTelemetry) ++state.dspTelemetrySequence;
   status.outputPeaks = state.outputPeaks;
+  status.mixedOutputPeaks = state.mixedOutputPeaks;
   return status;
 }
 
@@ -612,6 +615,30 @@ int main(int argc, char **argv) {
         state.outputPeaks.clear();
         auto value = float{};
         while (values >> value) state.outputPeaks.push_back(value);
+      }
+      pipetune::publishControlStatus(started.server.get());
+    }
+    if (input.starts_with("mixed-output-peaks ")) {
+      {
+        auto lock = std::scoped_lock(state.mutex);
+        auto values = std::istringstream(input.substr(19));
+        state.mixedOutputPeaks.clear();
+        auto value = float{};
+        while (values >> value) state.mixedOutputPeaks.push_back(value);
+      }
+      pipetune::publishControlStatus(started.server.get());
+    }
+    if (input == "dsp-telemetry freeze") {
+      {
+        auto lock = std::scoped_lock(state.mutex);
+        state.freezeDspTelemetry = true;
+      }
+      pipetune::publishControlStatus(started.server.get());
+    }
+    if (input == "dsp-telemetry advance") {
+      {
+        auto lock = std::scoped_lock(state.mutex);
+        ++state.dspTelemetrySequence;
       }
       pipetune::publishControlStatus(started.server.get());
     }

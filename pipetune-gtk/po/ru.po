@@ -358,6 +358,9 @@ msgstr "Элемент DSP"
 msgid "DSP latency"
 msgstr "Задержка DSP"
 
+msgid "DSP output levels (dBFS)"
+msgstr "Уровни выхода DSP (dBFS)"
+
 msgid "DSP processing load; graph capped at 100%."
 msgstr "Нагрузка обработки DSP; график ограничен 100%."
 
@@ -456,6 +459,9 @@ msgstr "Последний вход"
 msgid "Later"
 msgstr "Позже"
 
+msgid "Levels after combining Processed and Direct, before device volume."
+msgstr "Уровни после смешивания Processed и Direct, до регулировки громкости устройства."
+
 msgid "Live Configuration"
 msgstr "Текущая конфигурация"
 
@@ -492,6 +498,9 @@ msgstr "Нагрузка"
 msgid "Measured frame rate"
 msgstr "Измеренная частота кадров"
 
+msgid "Mixed output levels (dBFS)"
+msgstr "Уровни смешанного выхода (dBFS)"
+
 msgid "Multiple — outputs selected in PipeTune"
 msgstr "Несколько — выходы выбираются в PipeTune"
 
@@ -521,9 +530,6 @@ msgstr "Выход"
 
 msgid "Output channels"
 msgstr "Каналы вывода"
-
-msgid "Output levels (dBFS)"
-msgstr "Уровни выхода (dBFS)"
 
 msgid "Output mode"
 msgstr "Режим вывода"

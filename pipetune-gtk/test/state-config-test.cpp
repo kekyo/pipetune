@@ -12,6 +12,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 
 static bool check(bool condition, std::string_view message) {
   if (!condition) {
@@ -342,6 +343,100 @@ static bool testPeriodicRuntimeMeasurements() {
                "bypass must clear the DSP timing measurement");
 }
 
+static bool testDspTimingUsesOneSecondWindows() {
+  auto state = pipetune_gtk::initialApplicationState();
+  const auto publish = [&](std::uint64_t frames, std::uint64_t nanoseconds,
+                           std::uint32_t sampleRate, std::int64_t receivedAt,
+                           std::vector<float> peaks) {
+    auto event = dspStatusEvent(frames, nanoseconds, 0, 0, 0);
+    event.status.dspSampleRate = sampleRate;
+    event.status.outputPeaks = std::move(peaks);
+    pipetune_gtk::applyControlResponse(state, event, receivedAt);
+  };
+
+  publish(0, 0, 96000, 1000, {0.1F, 0.2F});
+  publish(96000, 96000000, 96000, 2000, {0.1F, 0.2F});
+  if (!check(state.dspTiming.hasAverage &&
+                 state.dspTiming.nanosecondsPerFrame == 1000.0,
+             "a complete one-second DSP window must establish the average")) return false;
+
+  publish(105600, 115200000, 96000, 2100, {0.4F, 0.5F});
+  if (!check(state.dspTiming.hasAverage &&
+                 state.dspTiming.nanosecondsPerFrame == 1000.0,
+             "a peak update before one second must retain the displayed DSP average") ||
+      !check(state.runtime.outputPeaks == std::vector<float>({0.4F, 0.5F}),
+             "output peaks must update immediately with each status")) return false;
+
+  publish(144000, 211200000, 96000, 2200, {0.2F, 0.3F});
+  publish(144000, 211200000, 96000, 2900, {0.1F, 0.2F});
+  if (!check(state.dspTiming.hasAverage &&
+                 state.dspTiming.nanosecondsPerFrame == 1000.0,
+             "duplicate counters before the deadline must retain the previous DSP average")) return false;
+
+  publish(192000, 307200000, 96000, 3000, {0.3F, 0.4F});
+  if (!check(state.dspTiming.hasAverage &&
+                 state.dspTiming.nanosecondsPerFrame == 2200.0,
+             "a complete DSP window must divide cumulative time by cumulative frames")) return false;
+
+  publish(192000, 307200000, 96000, 3100, {0.0F, 0.0F});
+  if (!check(state.dspTiming.hasAverage &&
+                 state.dspTiming.nanosecondsPerFrame == 2200.0,
+             "a repeated status must not erase the last DSP average")) return false;
+  publish(192000, 307200000, 96000, 4000, {0.0F, 0.0F});
+  return check(!state.dspTiming.hasAverage,
+               "a full one-second window without DSP frames must clear the average");
+}
+
+static bool testDspTimingRestartsAfterDiscontinuity() {
+  auto state = pipetune_gtk::initialApplicationState();
+  const auto publish = [&](std::uint64_t frames, std::uint64_t nanoseconds,
+                           std::uint32_t sampleRate, std::int64_t receivedAt) {
+    auto event = dspStatusEvent(frames, nanoseconds, 0, 0, 0);
+    event.status.dspSampleRate = sampleRate;
+    pipetune_gtk::applyControlResponse(state, event, receivedAt);
+  };
+
+  publish(0, 0, 96000, 1000);
+  publish(96000, 96000000, 96000, 2000);
+  if (!check(state.dspTiming.hasAverage, "initial DSP window must be measured")) return false;
+
+  publish(1000, 1000, 96000, 2100);
+  if (!check(state.dspTiming.hasBaseline && !state.dspTiming.hasAverage &&
+                 state.dspTiming.baselineFrames == 1000,
+             "a decreased DSP frame counter must restart the measurement")) return false;
+  publish(97000, 96001000, 96000, 3100);
+  if (!check(state.dspTiming.hasAverage &&
+                 state.dspTiming.nanosecondsPerFrame == 1000.0,
+             "DSP measurement must resume one second after a counter reset")) return false;
+
+  publish(98000, 97001000, 96000, 3000);
+  if (!check(state.dspTiming.hasBaseline && !state.dspTiming.hasAverage &&
+                 state.dspTiming.baselineFrames == 98000,
+             "a monotonic clock rollback must restart the measurement")) return false;
+  publish(194000, 193001000, 96000, 4000);
+  if (!check(state.dspTiming.hasAverage &&
+                 state.dspTiming.nanosecondsPerFrame == 1000.0,
+             "DSP measurement must resume after monotonic time recovers")) return false;
+
+  publish(200000, 199001000, 48000, 4100);
+  if (!check(state.dspTiming.hasBaseline && !state.dspTiming.hasAverage &&
+                 state.dspTiming.baselineFrames == 200000,
+             "a DSP sample-rate change must restart the measurement")) return false;
+  publish(248000, 247001000, 48000, 5100);
+  if (!check(state.dspTiming.hasAverage &&
+                 state.dspTiming.nanosecondsPerFrame == 1000.0,
+             "DSP measurement must resume after one second at the new sample rate")) return false;
+
+  publish(249000, 100, 48000, 5200);
+  if (!check(state.dspTiming.hasBaseline && !state.dspTiming.hasAverage &&
+                 state.dspTiming.baselineNanoseconds == 100,
+             "a decreased DSP time counter must restart the measurement")) return false;
+  publish(297000, 48000100, 48000, 6200);
+  return check(state.dspTiming.hasAverage &&
+                   state.dspTiming.nanosecondsPerFrame == 1000.0,
+               "DSP measurement must resume one second after its time counter resets");
+}
+
 static bool testPresetConfiguration() {
   auto state = pipetune_gtk::initialApplicationState();
   pipetune_gtk::applyControlResponse(state, bypassStatusResponse(), 1000);
@@ -396,7 +491,9 @@ int main() {
              "preparation diagnostics must remain visible after reconnecting to status publications")) return 1;
   if (!testPresetConfiguration()) return 1;
   return testApplicationState() && testInputRateState() &&
-                 testPeriodicRuntimeMeasurements()
+                 testPeriodicRuntimeMeasurements() &&
+                 testDspTimingUsesOneSecondWindows() &&
+                 testDspTimingRestartsAfterDiscontinuity()
              ? 0
              : 1;
 }

@@ -670,8 +670,10 @@ static std::string_view outputActivityName(OutputPathActivity activity) noexcept
 }
 
 static bool outputStatusIsConsistent(const ControlRuntimeStatus &status) {
-  if (status.outputPeaks.size() > 16 ||
+  if (status.outputPeaks.size() > 16 || status.mixedOutputPeaks.size() > 16 ||
       std::any_of(status.outputPeaks.begin(), status.outputPeaks.end(),
+                  [](float peak) { return !std::isfinite(peak) || peak < 0; }) ||
+      std::any_of(status.mixedOutputPeaks.begin(), status.mixedOutputPeaks.end(),
                   [](float peak) { return !std::isfinite(peak) || peak < 0; }))
     return false;
   auto serials = std::set<std::uint64_t>{};
@@ -830,6 +832,11 @@ static std::string makeControlStatusMessage(
   for (const auto peak : status.outputPeaks)
     if (!yyjson_mut_arr_add_real(document.get(), peaks, peak))
       return makeControlErrorResponse("cannot encode output peaks");
+  auto *mixedPeaks = yyjson_mut_obj_add_arr(document.get(), root, "mixedOutputPeaks");
+  if (mixedPeaks == nullptr) return makeControlErrorResponse("cannot encode mixed output peaks");
+  for (const auto peak : status.mixedOutputPeaks)
+    if (!yyjson_mut_arr_add_real(document.get(), mixedPeaks, peak))
+      return makeControlErrorResponse("cannot encode mixed output peaks");
   for (const auto &output : status.availableOutputs) {
     auto *item = yyjson_mut_arr_add_obj(document.get(), outputs);
     auto *device = makeOutputDeviceJson(document.get(), output.device);
@@ -1457,6 +1464,13 @@ static bool readOutputStatus(yyjson_val *root, ControlRuntimeStatus &status) {
     auto value = 0.0F;
     if (!readOutputGain(yyjson_arr_get(peaks, index), value)) return false;
     status.outputPeaks.push_back(value);
+  }
+  auto *mixedPeaks = yyjson_obj_get(root, "mixedOutputPeaks");
+  if (!yyjson_is_arr(mixedPeaks) || yyjson_arr_size(mixedPeaks) > 16) return false;
+  for (auto index = std::size_t{0}; index < yyjson_arr_size(mixedPeaks); ++index) {
+    auto value = 0.0F;
+    if (!readOutputGain(yyjson_arr_get(mixedPeaks, index), value)) return false;
+    status.mixedOutputPeaks.push_back(value);
   }
   for (auto index = std::size_t{0}; index < yyjson_arr_size(outputs); ++index) {
     auto *item = yyjson_arr_get(outputs, index);

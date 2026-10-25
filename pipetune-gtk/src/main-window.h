@@ -79,6 +79,12 @@ struct MainWindowUi {
   GtkWidget *outputLevelMeters = nullptr;
   /** Retained channel widgets, replaced only when the live width changes. */
   std::vector<OutputLevelMeterWidgets> outputLevelRows = {};
+  /** Mixed Processed and Direct meter section, hidden until measurements arrive. */
+  GtkWidget *mixedOutputSection = nullptr;
+  /** Host for PCM peaks after the two public sinks are combined. */
+  GtkWidget *mixedOutputMeters = nullptr;
+  /** Retained widgets for the combined output channels. */
+  std::vector<OutputLevelMeterWidgets> mixedOutputRows = {};
   /** OS-managed or explicitly selected physical output mode. */
   GtkWidget *outputModeCombo = nullptr;
   /** Explains which output choices are active in the selected mode. */
@@ -211,6 +217,17 @@ struct MainWindowViewState {
  * @param connected Whether measurements belong to the current daemon connection.
  */
 void renderOutputLevels(MainWindowUi &ui,
+    const pipetune::OutputConfiguration &configuration,
+    std::span<const float> peaks, bool connected);
+
+/**
+ * Displays peaks after Processed and Direct are combined.
+ * @param ui Output page and retained meter widgets.
+ * @param configuration Confirmed live configuration used for channel labels.
+ * @param peaks Linear peaks in combined output order; empty hides the section.
+ * @param connected Whether measurements belong to the current daemon connection.
+ */
+void renderMixedOutputLevels(MainWindowUi &ui,
     const pipetune::OutputConfiguration &configuration,
     std::span<const float> peaks, bool connected);
 

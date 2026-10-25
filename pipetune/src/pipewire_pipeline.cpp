@@ -94,6 +94,10 @@ struct StreamCallbackContext {
   bool input;
 };
 
+static constexpr std::uint32_t kStartOutputTransition = 1U;
+static constexpr std::uint32_t kResetOutputTransition = 2U;
+static constexpr std::uint32_t kResetSourceHistory = 4U;
+
 static bool backendDiscoveryWasSupplied(
     const DspBackendLoadResult &result) {
   return result.backend != nullptr || !result.attemptedPath.empty() ||
@@ -138,9 +142,13 @@ struct PipeWireRuntime {
   AudioBridgeLatencyController bridgeLatency;
   PipeWireLatencyState latencyState;
   AudioTransitionSilencer outputTransitionSilencer;
+  std::atomic<std::uint32_t> pendingAudioTransition{0};
   std::atomic<std::uint64_t> processingErrors;
   InputTelemetry inputTelemetry;
   OutputPeakTelemetry outputPeakTelemetry;
+  OutputPeakTelemetry mixedOutputPeakTelemetry;
+  pw_stream *mixedOutputStream = nullptr;
+  spa_hook mixedOutputListener = {};
   std::atomic<bool> rateBridgeReady;
   std::atomic<bool> inputFormatNegotiated;
   std::atomic<std::uint32_t> dspSampleRate;
@@ -247,6 +255,9 @@ struct PipeWireRuntime {
   ProfileRequestAction profileRequestAction = ProfileRequestAction::apply;
   std::string profileRequestError;
   spa_source *profileChangeSource = nullptr;
+  pw_impl_module *directOutput = nullptr;
+  spa_hook directOutputListener = {};
+  std::string directOutputArguments;
   pw_impl_module *outputDistribution = nullptr;
   spa_hook outputDistributionListener = {};
   spa_source *outputGraphSource = nullptr;
@@ -370,6 +381,14 @@ struct PipeWireRuntime {
       }
       pw_stream_destroy(inputStream);
     }
+    if (mixedOutputStream != nullptr) {
+      spa_hook_remove(&mixedOutputListener);
+      pw_stream_destroy(mixedOutputStream);
+    }
+    if (directOutput != nullptr) {
+      spa_hook_remove(&directOutputListener);
+      pw_impl_module_destroy(directOutput);
+    }
     if (outputDistribution != nullptr) {
       spa_hook_remove(&outputDistributionListener);
       pw_impl_module_destroy(outputDistribution);
@@ -418,29 +437,68 @@ static std::uint32_t transitionSampleRate(
   }
   const auto inputRate =
       runtime.inputStreamSampleRate.load(std::memory_order_acquire);
-  return inputRate == 0 ? runtime.rateBridgeStreamRate : inputRate;
+  return inputRate == 0
+      ? runtime.dspSampleRate.load(std::memory_order_acquire) : inputRate;
 }
 
-static void startOutputTransition(PipeWireRuntime &runtime,
-                                  std::uint32_t sampleRate) noexcept {
-  // Both stream callbacks run on this runtime's pw_main_loop, so the ring
-  // consumer cannot run concurrently with this intentional discard.
-  static_cast<void>(runtime.audioBuffers->ring.discardQueuedFrames());
-  runtime.bridgeLatency.reset();
-  runtime.outputTransitionSilencer.start(
-      pipelineTransitionSilenceFrames(sampleRate),
-      pipelineTransitionFadeFrames(sampleRate));
+static void startOutputTransition(PipeWireRuntime &runtime) noexcept {
+  // State and format notifications run on the main loop, whereas RT_PROCESS
+  // callbacks own the audio history. Defer its mutation to the data loop.
+  runtime.pendingAudioTransition.fetch_or(kStartOutputTransition,
+                                          std::memory_order_release);
 }
 
-static void resetOutputTransition(PipeWireRuntime &runtime,
-                                  std::uint32_t sampleRate) noexcept {
-  // Output callbacks share the pw_main_loop with format callbacks, so the
-  // consumer cannot run while its disconnected queue is discarded.
+static void resetOutputTransition(PipeWireRuntime &runtime) noexcept {
+  // A disconnected output must forget its last sample rather than fading
+  // audio from a previous activation into the next source.
+  runtime.pendingAudioTransition.fetch_or(kResetOutputTransition,
+                                          std::memory_order_release);
+}
+
+static void resetSourceHistory(PipeWireRuntime &runtime) noexcept {
+  runtime.pendingAudioTransition.fetch_or(
+      kResetOutputTransition | kResetSourceHistory, std::memory_order_release);
+}
+
+static bool applyPendingAudioTransition(PipeWireRuntime &runtime) noexcept {
+  const auto pending = runtime.pendingAudioTransition.exchange(
+      0, std::memory_order_acq_rel);
+  if (pending == 0) return true;
+
   static_cast<void>(runtime.audioBuffers->ring.discardQueuedFrames());
   runtime.bridgeLatency.reset();
-  runtime.outputTransitionSilencer.reset(
-      pipelineTransitionSilenceFrames(sampleRate),
-      pipelineTransitionFadeFrames(sampleRate));
+  const auto sampleRate = transitionSampleRate(runtime);
+  if ((pending & kResetOutputTransition) != 0) {
+    runtime.outputTransitionSilencer.reset(
+        pipelineTransitionSilenceFrames(sampleRate),
+        pipelineTransitionFadeFrames(sampleRate));
+  } else {
+    runtime.outputTransitionSilencer.start(
+        pipelineTransitionSilenceFrames(sampleRate),
+        pipelineTransitionFadeFrames(sampleRate));
+  }
+  if ((pending & kResetSourceHistory) == 0) return true;
+
+  // No silence frames arrive while the graph is stopped, so DSP idle timeout
+  // cannot drain delay lines. Reset them before processing a new activation,
+  // together with converter history even when its rates have not changed.
+  const auto streamRate = runtime.inputStreamSampleRate.load(std::memory_order_acquire);
+  const auto dspRate = runtime.dspSampleRate.load(std::memory_order_acquire);
+  if (!runtime.rateBridgeReady.load(std::memory_order_acquire) ||
+      streamRate == 0 || dspRate == 0) {
+    runtime.pendingAudioTransition.fetch_or(pending, std::memory_order_release);
+    return false;
+  }
+  const auto resetStatus = runtime.pipeline.resetProcessingState();
+  const auto inputError = runtime.audioBuffers->inputRateConverter.configure(streamRate, dspRate);
+  const auto outputError = runtime.audioBuffers->outputRateConverter.configure(dspRate, streamRate);
+  if (resetStatus != ProcessStatus::ok || inputError != 0 || outputError != 0) {
+    runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
+    runtime.pendingAudioTransition.fetch_or(pending, std::memory_order_release);
+    return false;
+  }
+  clearOutputPeaks(runtime.outputPeakTelemetry);
+  return true;
 }
 
 struct PipeWireLibraryScope {
@@ -480,7 +538,9 @@ static void requestControlStatusUpdate(PipeWireRuntime &runtime) {
 
 static void outputPeaksTimedOut(void *data, std::uint64_t) {
   auto &runtime = *static_cast<PipeWireRuntime *>(data);
-  if (publishOutputPeaks(runtime.outputPeakTelemetry))
+  const auto dspChanged = publishOutputPeaks(runtime.outputPeakTelemetry);
+  const auto mixedChanged = publishOutputPeaks(runtime.mixedOutputPeakTelemetry);
+  if (dspChanged || mixedChanged)
     requestControlStatusUpdate(runtime);
 }
 
@@ -743,7 +803,13 @@ static void streamStateChanged(void *data, pw_stream_state previousState,
     if (stream != nullptr && pw_stream_flush(stream, false) < 0) {
       runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
     }
-    resetOutputTransition(runtime, transitionSampleRate(runtime));
+    if (context.input) {
+      if (runtime.outputStream != nullptr && pw_stream_flush(runtime.outputStream, false) < 0)
+        runtime.processingErrors.fetch_add(1, std::memory_order_relaxed);
+      resetSourceHistory(runtime);
+    } else {
+      resetOutputTransition(runtime);
+    }
   }
   if (context.input) {
     runtime.inputReady = isReadyState(state);
@@ -1024,7 +1090,7 @@ static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
         (runtime.rateBridgeStreamRate != bridgeRates.streamSampleRate ||
          runtime.rateBridgeDspRate != bridgeRates.dspSampleRate);
     if (bridgeChanged || runtime.silenceNextRateBridge) {
-      startOutputTransition(runtime, bridgeRates.streamSampleRate);
+      startOutputTransition(runtime);
     }
     runtime.rateBridgeStreamRate = bridgeRates.streamSampleRate;
     runtime.rateBridgeDspRate = bridgeRates.dspSampleRate;
@@ -1119,11 +1185,10 @@ static void streamParameterChanged(void *data, std::uint32_t id,
     return;
   }
   if (parameter == nullptr) {
-    const auto sampleRate = transitionSampleRate(runtime);
     if (context.input) {
-      startOutputTransition(runtime, sampleRate);
+      resetSourceHistory(runtime);
     } else {
-      resetOutputTransition(runtime, sampleRate);
+      resetOutputTransition(runtime);
     }
     runtime.silenceNextRateBridge = true;
     runtime.rateBridgeReady.store(false, std::memory_order_release);
@@ -1396,7 +1461,9 @@ static void clearOutputChunks(spa_buffer &buffer,
 static void outputProcess(void *data) {
   auto &runtime =
       *static_cast<StreamCallbackContext *>(data)->runtime;
-  processAvailableInput(runtime);
+  const auto historyReady = applyPendingAudioTransition(runtime);
+  if (historyReady) processAvailableInput(runtime);
+  else discardAvailableInput(runtime);
   updateGraphSampleRate(runtime, runtime.outputStream);
   auto *pipeWireBuffer = pw_stream_dequeue_buffer(runtime.outputStream);
   if (pipeWireBuffer == nullptr || pipeWireBuffer->buffer == nullptr) {
@@ -1428,7 +1495,7 @@ static void outputProcess(void *data) {
                               blockFrames);
     const auto pipelineGeneration = runtime.pipeline.activeGeneration();
     const auto silencePrefixFrames =
-        runtime.rateBridgeReady.load(std::memory_order_acquire)
+        historyReady && runtime.rateBridgeReady.load(std::memory_order_acquire)
             ? runtime.bridgeLatency.consumePrefixFrames(blockFrames)
             : blockFrames;
     const auto audioRead = runtime.audioBuffers->ring.readWithSilencePrefix(
@@ -1565,7 +1632,7 @@ static void destroyOutputStream(PipeWireRuntime &runtime) {
   // The old data-loop callback is quiescent before a new channel layout or
   // routing configuration can reuse its logical channel numbers.
   clearOutputPeaks(runtime.outputPeakTelemetry);
-  resetOutputTransition(runtime, transitionSampleRate(runtime));
+  resetOutputTransition(runtime);
   runtime.rateBridgeReady.store(false, std::memory_order_release);
   runtime.outputReady = false;
   runtime.outputFormatReady = false;
@@ -1573,6 +1640,10 @@ static void destroyOutputStream(PipeWireRuntime &runtime) {
 }
 
 static void destroyAudioStreams(PipeWireRuntime &runtime) {
+  // Output configuration can replace the slot count. Quiesce the monitor
+  // before publishing that width, independently of the direct audio route.
+  if (runtime.mixedOutputStream != nullptr)
+    static_cast<void>(pw_stream_set_active(runtime.mixedOutputStream, false));
   destroyOutputStream(runtime);
   if (runtime.inputStream != nullptr) {
     if (runtime.inputListenerInstalled) {
@@ -1621,6 +1692,105 @@ static std::string createOutputStream(PipeWireRuntime &runtime,
   return {};
 }
 
+static void destroyMixedOutputMeter(PipeWireRuntime &runtime) {
+  if (runtime.mixedOutputStream != nullptr) {
+    spa_hook_remove(&runtime.mixedOutputListener);
+    pw_stream_destroy(runtime.mixedOutputStream);
+    runtime.mixedOutputStream = nullptr;
+  }
+  clearOutputPeaks(runtime.mixedOutputPeakTelemetry);
+}
+
+static std::string createMixedOutputMeter(PipeWireRuntime &runtime) {
+  runtime.mixedOutputStream = pw_stream_new(runtime.core, "PipeTune mixed output meter",
+      pw_properties_new(PW_KEY_NODE_NAME, (runtime.options.filterName + ".mixed-meter").c_str(),
+          PW_KEY_TARGET_OBJECT, (runtime.options.filterName + ".distribution").c_str(),
+          PW_KEY_STREAM_CAPTURE_SINK, "true", PW_KEY_STREAM_MONITOR, "true", "stream.dont-remix", "true",
+          "node.passive", "true", "node.dont-fallback", "true", "node.dont-move", "true", "node.linger", "true",
+          "node.pipetune.internal", "true", nullptr));
+  if (!runtime.mixedOutputStream) return systemError("cannot create mixed output meter", -errno);
+  static const auto events = [] {
+    auto value = pw_stream_events{};
+    value.version = PW_VERSION_STREAM_EVENTS;
+    value.process = [](void *data) {
+      auto &runtime = *static_cast<PipeWireRuntime *>(data);
+      updateGraphSampleRate(runtime, runtime.mixedOutputStream);
+      auto *queued = pw_stream_dequeue_buffer(runtime.mixedOutputStream);
+      if (!queued) return;
+      auto frames = std::uint32_t{0};
+      if (queued->buffer && inspectPipeWireCaptureBuffer(*queued->buffer, runtime.options.channelCount, frames)) {
+        for (auto channel = 0U; channel < runtime.options.channelCount; ++channel) {
+          const auto &plane = queued->buffer->datas[channel];
+          if ((plane.chunk->flags & SPA_CHUNK_FLAG_EMPTY) == 0 &&
+              plane.chunk->offset <= plane.maxsize && plane.chunk->size <= plane.maxsize - plane.chunk->offset) {
+            const auto *samples = reinterpret_cast<const float *>(
+                static_cast<const char *>(plane.data) + plane.chunk->offset);
+            recordOutputPeak(runtime.mixedOutputPeakTelemetry, channel, {samples, frames});
+          }
+        }
+        retirePipeWireCaptureBuffer(*queued->buffer);
+      }
+      queued->size = frames;
+      pw_stream_queue_buffer(runtime.mixedOutputStream, queued);
+    };
+    return value;
+  }();
+  runtime.mixedOutputListener = {};
+  pw_stream_add_listener(runtime.mixedOutputStream, &runtime.mixedOutputListener, &events, &runtime);
+  auto storage = std::array<std::uint8_t, 1024>{};
+  auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
+  const spa_pod *parameters[] = {buildAutomaticFormatParameter(builder, runtime.options.channelCount,
+      runtime.dspSampleRate.load(std::memory_order_acquire), true)};
+  const auto result = pw_stream_connect(runtime.mixedOutputStream, PW_DIRECTION_INPUT, PW_ID_ANY,
+      static_cast<pw_stream_flags>(PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS),
+      parameters, 1);
+  if (result < 0) { destroyMixedOutputMeter(runtime); return systemError("cannot connect mixed output meter", result); }
+  return {};
+}
+
+static std::string ensureDirectOutput(PipeWireRuntime &runtime) {
+  auto arguments = OutputDistributionArguments{};
+  if (runtime.options.outputConfiguration.mode == OutputMode::multiple) {
+    auto policy = SampleRatePolicy{};
+    { auto lock = std::scoped_lock(runtime.rateStateMutex); policy = runtime.configuredRatePolicy; }
+    arguments = makeDirectOutputArguments(runtime.options.filterName, runtime.options.channelCount, policy);
+    if (!arguments.error.empty()) return arguments.error;
+  }
+  if (arguments.arguments == runtime.directOutputArguments) {
+    if (runtime.mixedOutputStream != nullptr) {
+      const auto result = pw_stream_set_active(runtime.mixedOutputStream, true);
+      if (result < 0) return systemError("cannot resume mixed output meter", result);
+    }
+    return {};
+  }
+  destroyMixedOutputMeter(runtime);
+  if (runtime.directOutput != nullptr) {
+    spa_hook_remove(&runtime.directOutputListener);
+    pw_impl_module_destroy(runtime.directOutput);
+    runtime.directOutput = nullptr;
+  }
+  runtime.directOutputArguments.clear();
+  if (arguments.arguments.empty()) return {};
+  runtime.directOutput = pw_context_load_module(runtime.context,
+      "libpipewire-module-loopback", arguments.arguments.c_str(), nullptr);
+  if (runtime.directOutput == nullptr) return systemError("cannot create direct output", -errno);
+  static const auto events = [] {
+    auto value = pw_impl_module_events{}; value.version = PW_VERSION_IMPL_MODULE_EVENTS;
+    value.destroy = [](void *data) {
+      auto &runtime = *static_cast<PipeWireRuntime *>(data);
+      spa_hook_remove(&runtime.directOutputListener);
+      runtime.directOutput = nullptr;
+      runtime.directOutputArguments.clear();
+      failRuntime(runtime, "PipeWire direct output stopped unexpectedly");
+    };
+    return value;
+  }();
+  runtime.directOutputListener = {};
+  pw_impl_module_add_listener(runtime.directOutput, &runtime.directOutputListener, &events, &runtime);
+  runtime.directOutputArguments = std::move(arguments.arguments);
+  return createMixedOutputMeter(runtime);
+}
+
 static std::string createAudioStreams(PipeWireRuntime &runtime) {
   const auto graph = currentFilterGraphProperties(runtime);
   auto *inputProperties = makePipeWireProperties(graph.input);
@@ -1653,7 +1823,7 @@ static std::string createAudioStreams(PipeWireRuntime &runtime) {
     destroyAudioStreams(runtime);
     return "cannot initialize multiple-output master volume";
   }
-  return {};
+  return ensureDirectOutput(runtime);
 }
 
 static void distributionDestroyed(void *data) {
@@ -2542,11 +2712,14 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
   auto outputProfileRestorationError = std::string{};
   auto outputTimings = std::vector<OutputTimingState>{};
   auto outputPeaks = std::vector<float>{};
+  auto mixedOutputPeaks = std::vector<float>{};
   {
     auto lock = std::scoped_lock(runtime.outputStateMutex);
     outputConfiguration = runtime.options.outputConfiguration;
     outputPeaks = snapshotOutputPeaks(runtime.outputPeakTelemetry,
         runtime.audioBuffers->outputChannels);
+    if (outputConfiguration.mode == OutputMode::multiple)
+      mixedOutputPeaks = snapshotOutputPeaks(runtime.mixedOutputPeakTelemetry, runtime.options.channelCount);
     outputInventory = runtime.availableOutputs;
     outputInventoryReady = runtime.outputInventoryReady;
     outputInventoryRevision = runtime.outputInventoryRevision;
@@ -2601,7 +2774,8 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .outputProfileRestorationError = outputProfileRestorationError,
           .outputVolumes = outputInventory.error.empty() ? std::move(outputInventory.volumes) : std::vector<OutputVolumeState>{},
           .outputTimings = std::move(outputTimings),
-          .outputPeaks = std::move(outputPeaks)};
+          .outputPeaks = std::move(outputPeaks),
+          .mixedOutputPeaks = std::move(mixedOutputPeaks)};
 }
 
 static ControlMessageResult closeControlResponse(std::string response,

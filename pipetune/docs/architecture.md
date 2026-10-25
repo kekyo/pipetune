@@ -5,17 +5,20 @@
 PipeTune is a normal per-user PipeWire client process. It is not a PipeWire
 daemon plugin or a PulseAudio loadable module. Single mode publishes a linked
 stream pair that WirePlumber inserts as a transparent playback filter. Multiple
-mode exposes a stereo input sink, runs one DSP pipeline, and distributes its
-numbered outputs to explicitly selected devices. Native PipeWire applications
-and applications served by `pipewire-pulse` use the same DSP path.
+mode exposes a stereo Processed sink and an N-channel Direct sink. Processed
+runs one DSP pipeline; Direct bypasses it. PipeWire mixes both paths into the
+private distribution sink, which maps numbered channels to explicitly selected
+devices. Native PipeWire applications and applications served by
+`pipewire-pulse` can use either public sink.
 
 The daemon owns output configuration, observes device identities and controls,
 and creates its streams. PipeWire's standard combine-stream module handles
 per-device timing and resampling. PipeTune's WirePlumber policy manages the
-visibility, default-selection restoration, and master-volume persistence needed
+visibility, default-selection restoration, and Processed-volume persistence needed
 by multiple mode. Physical profiles and physical device controls are observed,
 not rewritten by the daemon. Single mode retains OS output selection; multiple
-mode keeps OS master volume and mute while selecting devices in PipeTune.
+mode exposes separate Processed and Direct volume and mute controls while
+selecting physical devices in PipeTune.
 
 The minimum PipeWire version is 1.0.5. WirePlumber 0.4 and 0.5 use the same
 configuration model, with different session-policy integration where needed.
@@ -146,24 +149,24 @@ necessary.
 ### Multiple-output routing and channel identity
 
 ```text
-applications --> public stereo input (Ch 1, Ch 2)
-                           |
-                    one EffeTune pipeline (Ch 1 ... Ch N)
-                           |
-                    post-DSP master gain and mute
-                           |
-                    private combine-stream distribution
-                           |
-                 +---------+---------+
-                 |                   |
-          selected device A   selected device B
+applications --> Processed stereo sink --> DSP or bypass --> Processed gain --+
+                                                                           |
+applications --> Direct N-channel sink --> Direct soft volume --------------+--> private distribution
+                                                                                       |
+                                                                           +-----------+-----------+
+                                                                           |                       |
+                                                                    selected device A       selected device B
 ```
 
-The public input is marked `node.pipetune.public-input` and
-`node.pipetune.aggregate`; it does not request smart-filter insertion into a
-second playback path. The output targets `<input-name>.distribution` and is
-marked `node.pipetune.managed-output`. Distribution uses numbered AUX channels
-with explicit `combine.audio.position` mappings into each physical device's
+The Processed sink is marked `node.pipetune.public-input`,
+`node.pipetune.public-sink`, and `node.pipetune.aggregate`; it does not request
+smart-filter insertion into a second playback path. Its output targets
+`<input-name>.distribution` and is marked `node.pipetune.managed-output`.
+The Direct sink is marked `node.pipetune.public-sink` and
+`node.pipetune.direct`; a PipeWire loopback maps standard multichannel positions
+by index to the private AUX bus, with the same `N` as the saved output slot
+count (at least two). Distribution uses numbered AUX channels with explicit
+`combine.audio.position` mappings into each physical device's
 ordered channel positions. `stream.dont-remix`, `node.dont-fallback`, and
 `node.dont-move` prevent implicit channel mixing and routing to another device.
 The module runs in the client context and is owned by the daemon. See the
@@ -178,11 +181,13 @@ device reassignment change an existing assignment. New devices append all
 channels from their current output profile. Profiles are read-only; a changed
 profile or channel layout requires reassignment.
 
-The normal desktop input remains stereo. Multiple-mode DSP width is the
+The Processed input remains stereo. Multiple-mode DSP width is the
 larger of two and the saved slot count. Additional channels start silent;
 Matrix or other preset processing must generate their output. Bypass preserves
-this routing and leaves additional channels silent. Temporary device loss does
-not shrink the DSP width or repurpose its channels.
+this routing and leaves additional Processed channels silent. Direct supplies
+its numbered channels without DSP. Both sources can play at once and are
+summed without automatic gain control. Temporary device loss does not shrink
+the DSP width or repurpose its channels.
 
 Device resolution uses persistent API, location, device-port, vendor, product,
 and available serial information, followed by the saved profile and ordered
@@ -191,14 +196,16 @@ identity with a changed layout is distinct from an absent or ambiguous device.
 Only a unique complete match can receive its assigned audio. Observed object
 serials associate live controls and timing with the current connection.
 
-While the public multiple-output node exists, the shared policy hides physical
+While the public multiple-output sinks exist, the shared policy hides physical
 outputs from ordinary selectors and playback clients, preserving the access
 needed by node owners, the daemon, and WirePlumber. It saves the configured
-default sink's value, type, and absence before selecting the public node.
-External default changes become the eventual restoration preference. Returning
-to single mode or removing the daemon restores permissions and the configured
-default, including after an abnormal exit. Recovery records are scoped to the
-server and connection generations; they cannot restore permissions to reused
+default sink's value, type, and absence before selecting Processed initially.
+An explicit OS selection of Direct remains the preferred managed default
+across mode changes and daemon restarts. External selections become the
+eventual restoration preference. Returning to single mode or removing the
+daemon restores permissions and the prior physical default while the managed
+selection is absent, including after an abnormal exit. Recovery records are
+scoped to the server and connection generations; they cannot restore permissions to reused
 object IDs. The policy uses the public
 [Metadata and Client APIs](https://pipewire.pages.freedesktop.org/wireplumber/scripting/lua_api/lua_proxies_api.html)
 and persists restoration state before changing the defaults.
@@ -216,14 +223,18 @@ distribution graph.
 
 ### Multiple-output master controls
 
-The multiple-output path exposes one stereo input sink and applies its master
-gain and mute after DSP, before distributing the numbered DSP channels. The
-input's software gain remains unity. The daemon keeps these controls outside
-the lifetime of its PipeWire nodes, so rate changes and policy recovery retain
+The multiple-output path exposes a stereo Processed sink and an N-channel
+Direct sink. Processed gain and mute apply after DSP, before distribution.
+The Processed sink's software gain remains unity. Direct uses standard
+PipeWire soft volume and mute independently before the two paths mix. The
+distribution sink stays at unity and does not expose a common master control.
+The daemon keeps the Processed controls outside the lifetime of its PipeWire
+nodes, so rate changes and policy recovery retain
 the current values.
 
-The shared WirePlumber policy persists normalized gain and mute per public
-node name in the `pipetune-master-output` State file. Changes are coalesced for
+The shared WirePlumber policy persists normalized Processed gain and mute per
+public node name in the `pipetune-master-output` State file. Direct uses
+standard PipeWire property restoration. Processed changes are coalesced for
 one second in the policy process; no audio callback performs file I/O. A new
 daemon publishes `node.pipetune.master-state=restore` and keeps its output
 silent until it receives the initial controls. After accepting them it
@@ -231,7 +242,7 @@ publishes `retained`, including on replacement nodes. Policy restarts observe
 and save those live controls instead of applying older disk state. This also
 avoids sharing the generic `DSP` role's standard volume restore key.
 
-`state.restore-props=false` remains in effect for the standard restore policy.
+`state.restore-props=false` remains in effect on Processed for the standard restore policy.
 Simply enabling it restores saved controls again when WirePlumber rediscovers
 a surviving daemon, which can overwrite newer values that have not yet been
 written. The dedicated policy uses the public
@@ -334,7 +345,8 @@ PipeTune supports two rate modes:
   rate.
 - Fixed requests one of 44.1, 48, 96, 192, or 384 kHz for both filter nodes.
   EffeTune remains at that selected rate. If PipeWire negotiates another PCM
-  rate, PipeTune converts immediately before and after the DSP boundary.
+  rate, PipeTune converts immediately before and after the DSP boundary. In
+  multiple mode, the Direct loopback requests the same selected rate.
 
 Both filter nodes must negotiate the same PCM rate. A disagreement is an error.
 The graph's actual time-domain rate is reported independently from
@@ -576,6 +588,7 @@ asynchronous subscription connection and uses separate asynchronous requests
 for preset, bypass, rate-policy, DSP-backend, DSP-idle, and output changes.
 The Output page provides device selection, a final-channel mapping table,
 purpose editing, and before/after reviews for channel moves and reassignment.
+It displays separate Processed DSP peaks and post-mix distribution peaks.
 Volume and timing observations update individual labels without replacing an
 editor or sending configuration requests.
 
@@ -620,8 +633,9 @@ later explicit activation presents the existing singleton window.
 
 ## Known limits
 
-- Desktop input is stereo; multiple mode supports up to sixteen final DSP
-  slots. Direct runs also accept one through sixteen channels. PipeTune does
+- Processed desktop input is stereo; multiple mode supports up to sixteen final
+  DSP slots and presents the same slot width on Direct. Direct runs also accept
+  one through sixteen channels. PipeTune does
   not import EffeTune's separate custom audio-device configuration.
 - WirePlumber 0.4.17 can leave existing application streams suspended after a
   policy restart, including `stream.dont-remix=true` streams. Reopening the
