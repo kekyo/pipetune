@@ -1373,14 +1373,14 @@ try {
     assert.equal(report.captureFeedsPlayback, false,
       "a capture endpoint must never feed a playback device");
   }
-  if (["policy-visibility", "policy-recovery", "policy-pulse", "policy-pulse-volume"].includes(scenario) ||
+  if (["policy-visibility", "policy-dual-sink", "policy-recovery", "policy-pulse", "policy-pulse-volume"].includes(scenario) ||
       scenario.startsWith("policy-restart") || scenario.startsWith("policy-defaults")) {
     assert.equal(report.outputsHiddenDuringPlayback, true,
       "physical outputs must be hidden from selectors and playback clients during multi-device playback");
     assert.equal(report.outputsRestored, true,
       "physical outputs must become visible again when the combined output closes");
   }
-  if (scenario.startsWith("policy-defaults")) {
+  if (scenario.startsWith("policy-defaults") || scenario === "policy-dual-sink") {
     assert.equal(report.configuredDefaultRestored, true,
       "the exact configured default must survive even when that device is unavailable");
   }

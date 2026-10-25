@@ -40,9 +40,11 @@ local clients_installed = false
 local default_state = State("pipetune-default-output")
 local saved_default = default_state:load()
 local managed_defaults = {}
+local public_sinks = {}
 local default_metadata = nil
 local default_restoring = false
 local default_update_pending = false
+local setting_default = false
 local configured_key = "default.configured.audio.sink"
 
 -- Restore a newly started daemon once. A surviving daemon owns its current
@@ -147,10 +149,18 @@ local function update_default_output()
         return
       end
     end
-    if output_name(current) ~= name then default_metadata:set(0, configured_key, "Spa:String:JSON", value) end
+    local selected = saved_default["selected-value"] or value
+    if output_name(current) ~= output_name(selected) then
+      setting_default = true
+      default_metadata:set(0, configured_key, "Spa:String:JSON", selected)
+      setting_default = false
+    end
   elseif saved_default["aggregate"] ~= nil then
+    if next(public_sinks) ~= nil then return end
     default_restoring = true
-    if output_name(current) == output_name(saved_default["aggregate"]) then
+    if output_name(current) == output_name(saved_default["aggregate"]) or
+        (saved_default["selected-managed"] == "true" and
+         output_name(current) == output_name(saved_default["selected-value"])) then
       local previous = saved_default["previous-present"] == "true" and
           saved_default["previous-value"] or nil
       default_metadata:set(0, configured_key, saved_default["previous-type"], previous)
@@ -159,7 +169,10 @@ local function update_default_output()
     Core.sync(function(error)
       default_restoring = false
       if error == nil and next(managed_defaults) == nil then
-        saved_default = {}
+        saved_default = {
+          ["selected-value"] = saved_default["selected-value"],
+          ["selected-managed"] = saved_default["selected-managed"],
+        }
         save_default()
       end
     end)
@@ -350,6 +363,9 @@ pipetune_clients_om = ObjectManager {
 pipetune_nodes_om:connect("object-added", function(om, node)
   local node_id = node["bound-id"]
   local owner_id = tonumber(proxy_property(node, "client.id"))
+  if proxy_property(node, "node.pipetune.public-sink") == "true" then
+    public_sinks[node_id] = proxy_property(node, "node.name")
+  end
   local aggregate = proxy_property(node, "node.pipetune.aggregate")
   if aggregate == "true" or aggregate == true then
     monitor_master(node)
@@ -364,6 +380,7 @@ pipetune_nodes_om:connect("object-added", function(om, node)
     update_all_client_permissions()
     if not is_internal_node(node) then return end
   end
+  if proxy_property(node, "node.pipetune.public-sink") == "true" then return end
   if proxy_property(node, "media.class") == "Audio/Sink" and
       not is_internal_node(node) then
     pipetune_other_outputs[node_id] = {
@@ -400,6 +417,10 @@ end)
 
 pipetune_nodes_om:connect("object-removed", function(om, node)
   local node_id = node["bound-id"]
+  if public_sinks[node_id] then
+    public_sinks[node_id] = nil
+    update_default_output()
+  end
   pipetune_hidden_nodes[node_id] = nil
   local output = pipetune_other_outputs[node_id]
   if output ~= nil and output.serial ~= nil then
@@ -476,14 +497,22 @@ defaults_om:connect("object-added", function(om, metadata)
   default_metadata = metadata
   metadata:connect("changed", function(m, subject, key, value_type, value)
     if subject ~= 0 then return end
-    if key == configured_key and not default_restoring and next(managed_defaults) ~= nil and
-        saved_default["aggregate"] ~= nil and output_name(value) ~= output_name(saved_default["aggregate"]) then
-      -- An external change becomes the preference restored on exit, while
-      -- multi-device mode continues to use its logical sink.
+    if key == configured_key and not default_restoring and not setting_default and
+        (saved_default["aggregate"] ~= nil or saved_default["selected-value"] ~= nil) then
+      -- An OS choice takes precedence over PipeTune's initial selection.
+      -- Retain it across mode changes and daemon restarts. A choice made
+      -- after all PipeTune outputs have closed supersedes the saved choice.
       local previous = default_state:load()
-      saved_default["previous-present"] = value ~= nil and "true" or "false"
-      saved_default["previous-value"] = value
-      saved_default["previous-type"] = value_type
+      if saved_default["aggregate"] == nil and next(public_sinks) == nil then
+        saved_default["selected-value"] = nil
+        saved_default["selected-managed"] = nil
+      else
+        saved_default["selected-value"] = value
+        saved_default["selected-managed"] = nil
+        for _, public_name in pairs(public_sinks) do
+          if public_name == output_name(value) then saved_default["selected-managed"] = "true" end
+        end
+      end
       if not save_default() then saved_default = previous; return end
     end
     if (key == configured_key or key == "default.audio.sink") and not default_update_pending then

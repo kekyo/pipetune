@@ -1088,7 +1088,7 @@ if(BUILD_TESTING)
     pipetune_wireplumber_policy_fixture PRIVATE src)
   target_link_libraries(
     pipetune_wireplumber_policy_fixture PRIVATE pipetune_pipewire)
-  foreach(scenario policy policy-volume policy-reconnect policy-visibility policy-recovery
+  foreach(scenario policy policy-volume policy-reconnect policy-visibility policy-dual-sink policy-recovery
       policy-defaults policy-defaults-empty policy-defaults-external policy-defaults-equivalent policy-defaults-recovery
       policy-restart policy-restart-volume policy-restart-mute)
     add_test(
