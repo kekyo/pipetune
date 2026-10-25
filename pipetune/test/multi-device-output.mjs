@@ -546,7 +546,9 @@ try {
       const report = JSON.parse(audio.stdout);
       // The control socket precedes asynchronous graph publication at startup.
       // Successful PCM is the readiness barrier for a fresh desktop query.
-      assertPublicOutput();
+      if (volumeRestore)
+        assert.equal(report.processedOutputNamed, true, "the PCM fixture must observe the public Processed output name");
+      else assertPublicOutput();
       assert.ok(report.receivedFrames.every((frames) => frames >= 32768));
       if (volumeRestore) {
         assert.equal(report.stages.length, attempt === 0 ? 3 : 4);

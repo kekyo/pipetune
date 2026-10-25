@@ -257,6 +257,7 @@ struct AudioTest {
   std::array<std::int64_t, 3> compensation = {};
   spa_source *graphEvent = nullptr;
   std::uint32_t publicInputId = PW_ID_ANY;
+  bool processedOutputNamed = false;
   std::uint32_t directInputId = PW_ID_ANY;
   unsigned stage = 0;
   std::array<std::array<std::uint64_t, 2>, 12> stageFrames = {};
@@ -1102,6 +1103,9 @@ static int runAudio(std::string_view scenario) {
         if (test.directControl == nullptr) return fail(test, "cannot bind Direct sink controls");
       }
       if (test.control == nullptr && name != nullptr && std::string_view(name) == test.inputName) {
+        const auto *description = spa_dict_lookup(props, PW_KEY_NODE_DESCRIPTION);
+        test.processedOutputNamed = description != nullptr &&
+            std::string_view(description) == "PipeTune Processed Audio";
         test.publicInputId = id;
         test.control = static_cast<pw_node *>(pw_registry_bind(test.registry, id, type, std::min<std::uint32_t>(version, PW_VERSION_NODE), 0));
         if (test.control == nullptr) return fail(test, "cannot observe master controls");
@@ -1189,7 +1193,8 @@ static int runAudio(std::string_view scenario) {
     if (stage != 0) std::cout << ',';
     std::cout << '[' << test.stageFrames[stage][0] << ',' << test.stageFrames[stage][1] << ']';
   }
-  std::cout << "],\"singleModeFrames\":" << test.singleModeFrames << ",\"compensationFrames\":[" << test.compensation[0] << ',' << test.compensation[1] << ',' << test.compensation[2] << ']';
+  std::cout << "],\"singleModeFrames\":" << test.singleModeFrames << ",\"compensationFrames\":[" << test.compensation[0] << ',' << test.compensation[1] << ',' << test.compensation[2] << ']'
+            << ",\"processedOutputNamed\":" << (test.processedOutputNamed ? "true" : "false");
   if (test.graphClock) {
     std::cout << ",\"graphRates\":[";
     for (auto stage = 0U; stage < test.observedGraphRates.size(); ++stage) {
