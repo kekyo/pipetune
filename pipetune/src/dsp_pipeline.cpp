@@ -440,6 +440,9 @@ static PresetChannelLayout inferPresetChannelLayout(yyjson_val *pipelineValue) {
     if (node.name == "Matrix") {
       result = source & ~selection;
       for (auto offset = std::size_t{4}; offset + 2 < node.matrixRoutes.size(); offset += 3) {
+        const auto localWidth = selectedProcessingChannels(node.channelSpec, layout.processingChannels);
+        if (node.matrixRoutes[offset] >= localWidth || node.matrixRoutes[offset + 1] >= localWidth)
+          continue;
         const auto input = first + node.matrixRoutes[offset];
         const auto output = first + node.matrixRoutes[offset + 1];
         if (input < layout.processingChannels && output < layout.processingChannels &&
@@ -450,9 +453,10 @@ static PresetChannelLayout inferPresetChannelLayout(yyjson_val *pipelineValue) {
       result |= (1u << (node.bandCount * 2u)) - 1u;
     } else if (node.name == "Bass Management" && source != 0) {
       result |= node.bassMask;
-    } else if ((node.name == "Oscillator" || node.name == "Hum Generator" ||
-                node.name == "SFZ Note Player") && source == 0) {
+    } else if (node.name == "DC Offset" || node.name == "Hum Generator") {
       result |= selection;
+    } else if (node.name == "Oscillator" || node.name == "SFZ Note Player") {
+      result |= node.channelSpec == -2 ? 3u : selection;
     } else if (node.channelSpec >= 0) {
       // An explicit channel address declares a bus lane even when its input is silent.
       result |= selection;

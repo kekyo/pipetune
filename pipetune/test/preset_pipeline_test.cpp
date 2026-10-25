@@ -1334,6 +1334,21 @@ static bool testInferredPresetChannels(const std::filesystem::path &directory) {
   if (!check(ignored.pipeline != nullptr, ignored.error) ||
       !check(ignored.pipeline->maxChannels() == 4 && ignored.pipeline->outputChannelCount() == 4,
              "only enabled and supported channel selections may declare the final bus width")) return false;
+  const auto invalidPairRoute = load("infer-pair-scope.effetune_preset",
+      R"json({"pipeline":[{"name":"Volume","channel":"6","inputBus":1,"outputBus":1},
+         {"name":"Matrix","channel":"34","parameters":{"mx":"02"}}]})json");
+  if (!check(invalidPairRoute.pipeline != nullptr, invalidPairRoute.error) ||
+      !check(invalidPairRoute.pipeline->maxChannels() == 6 &&
+             invalidPairRoute.pipeline->outputChannelCount() == 2,
+             "Matrix routes outside a selected pair must not declare extra output channels")) return false;
+  for (const auto effect : {"DC Offset", "Hum Generator"}) {
+    const auto json = std::string(R"json({"pipeline":[{"name":"Volume","channel":"6","inputBus":1,"outputBus":1},
+        {"name":")json") + effect + R"json(","channel":"A","parameters":{"of":0.25}}]})json";
+    const auto generated = load(std::string("infer-generator-") + effect + ".effetune_preset", json);
+    if (!check(generated.pipeline != nullptr, generated.error) ||
+        !check(generated.pipeline->maxChannels() == 6 && generated.pipeline->outputChannelCount() == 6,
+               "All-channel additive sources must declare every prepared output channel")) return false;
+  }
   const auto rebuilt = pipetune::rebuildDspPipeline(*folded.pipeline,
       {.sampleRate = 96000.0F, .maxChannels = 2, .maxFrames = 64,
        .inferChannelsFromPreset = true});
