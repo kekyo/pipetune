@@ -141,6 +141,7 @@ export interface PipeTuneGtkTestSession {
   ) => Promise<void>;
   /** Publishes independent measured channel peaks without changing settings. */
   readonly setOutputPeaks: (peaks: readonly number[]) => Promise<void>;
+  readonly setMixedOutputPeaks: (peaks: readonly number[]) => Promise<void>;
   /** Holds DSP counters steady across status publications. */
   readonly freezeDspTelemetry: () => Promise<void>;
   /** Advances frozen DSP counters by one second at the configured load. */
@@ -505,6 +506,18 @@ export const launchPipeTuneGtk = async (
       await new Promise<void>((resolve, reject) => {
         daemon?.process.stdin.write(
           `output-peaks ${peaks.join(' ')}\n`,
+          (error) => {
+            if (error !== null && error !== undefined) reject(error);
+            else resolve();
+          }
+        );
+      });
+    },
+    setMixedOutputPeaks: async (peaks) => {
+      if (daemon === undefined) throw new Error('fake daemon is unavailable');
+      await new Promise<void>((resolve, reject) => {
+        daemon?.process.stdin.write(
+          `mixed-output-peaks ${peaks.join(' ')}\n`,
           (error) => {
             if (error !== null && error !== undefined) reject(error);
             else resolve();

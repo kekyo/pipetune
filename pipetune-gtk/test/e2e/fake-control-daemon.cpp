@@ -39,6 +39,7 @@ struct FakeDaemonState {
   std::string outputVolumeState = "normal";
   std::string outputTimingState = "normal";
   std::vector<float> outputPeaks = {0.5F, 0.25F};
+  std::vector<float> mixedOutputPeaks = {};
   bool outputProfilesEnabled = false;
   bool unknownOutputProfile = false;
   bool unconfirmedOutputProfile = false;
@@ -273,6 +274,7 @@ static pipetune::ControlRuntimeStatus snapshotStatus(
       state.dspTelemetrySequence * std::uint64_t{600000000};
   if (!state.freezeDspTelemetry) ++state.dspTelemetrySequence;
   status.outputPeaks = state.outputPeaks;
+  status.mixedOutputPeaks = state.mixedOutputPeaks;
   return status;
 }
 
@@ -613,6 +615,16 @@ int main(int argc, char **argv) {
         state.outputPeaks.clear();
         auto value = float{};
         while (values >> value) state.outputPeaks.push_back(value);
+      }
+      pipetune::publishControlStatus(started.server.get());
+    }
+    if (input.starts_with("mixed-output-peaks ")) {
+      {
+        auto lock = std::scoped_lock(state.mutex);
+        auto values = std::istringstream(input.substr(19));
+        state.mixedOutputPeaks.clear();
+        auto value = float{};
+        while (values >> value) state.mixedOutputPeaks.push_back(value);
       }
       pipetune::publishControlStatus(started.server.get());
     }

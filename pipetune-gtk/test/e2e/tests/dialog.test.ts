@@ -578,12 +578,17 @@ describe('PipeTune GTK dialog', () => {
     session = await launchPipeTuneGtk();
     await waitForConnected();
     await selectSettingsPage(3);
+    await session.setMixedOutputPeaks([0, 0]);
     const window = await getElement('mainWindow', 'window');
+    await window.resizeTo(1200, 930);
     await window.activate();
     const bars = await Promise.all(
-      [1, 2].map(async (channel) =>
-        getElement(`output-level-${String(channel)}`, 'progressBar')
-      )
+      [
+        'output-level-1',
+        'output-level-2',
+        'mixed-output-level-1',
+        'mixed-output-level-2',
+      ].map(async (id) => getElement(id, 'progressBar'))
     );
     const captures = await waitForResult(async () => {
       const captured = await Promise.all(
@@ -594,11 +599,13 @@ describe('PipeTune GTK dialog', () => {
       return captured;
     });
     const first = captures[0]?.bounds;
-    const last = captures[1]?.bounds;
+    const last = captures[3]?.bounds;
     if (first === undefined || last === undefined)
       throw new Error('Meter bounds unavailable');
-    const width = last.x + last.width - first.x;
-    const height = first.height;
+    const width =
+      Math.max(...captures.map((item) => item.bounds.x + item.bounds.width)) -
+      first.x;
+    const height = last.y + last.height - first.y;
     const directory = resolve('test-results');
     await mkdir(directory, { recursive: true });
     const path = resolve(directory, 'output-levels.mkv');
@@ -645,11 +652,12 @@ describe('PipeTune GTK dialog', () => {
       // Wait for encoded frames of each confirmed state, rather than sleeping
       // for an assumed draw interval on fast or emulated test environments.
       for (const peaks of [
-        [0.5, 0],
-        [0, 0.25],
-        [0, 0],
+        [0.5, 0, 0, 0.25],
+        [0, 0.25, 0.5, 0],
+        [0, 0, 0, 0],
       ]) {
-        await session.setOutputPeaks(peaks);
+        await session.setOutputPeaks(peaks.slice(0, 2));
+        await session.setMixedOutputPeaks(peaks.slice(2));
         await toPass(async () => {
           for (let channel = 0; channel < bars.length; channel += 1) {
             const peak = peaks[channel] ?? 0;
@@ -702,9 +710,9 @@ describe('PipeTune GTK dialog', () => {
     const pixels = Buffer.concat(chunks);
     const frameBytes = width * height * 3;
     const expected = [
-      [true, false],
-      [false, true],
-      [false, false],
+      [true, false, false, true],
+      [false, true, true, false],
+      [false, false, false, false],
     ];
     let matched = 0;
     for (
@@ -714,7 +722,11 @@ describe('PipeTune GTK dialog', () => {
     ) {
       const active = captures.map((capture) => {
         let green = 0;
-        for (let y = 0; y < height; y += 1) {
+        for (
+          let y = capture.bounds.y - first.y;
+          y < capture.bounds.y - first.y + capture.bounds.height;
+          y += 1
+        ) {
           for (
             let x = capture.bounds.x - first.x;
             x < capture.bounds.x - first.x + capture.bounds.width;
@@ -736,8 +748,22 @@ describe('PipeTune GTK dialog', () => {
     }
     expect(
       matched,
-      'Video must show left signal, right signal, then both bars empty in order'
+      'Video must show independent DSP and mixed peaks, then all bars empty in order'
     ).toBe(3);
+    await window.resizeTo(900, 560);
+    const dspBounds = (await bars[0]?.capture())?.bounds;
+    if (dspBounds === undefined)
+      throw new Error('DSP meter bounds unavailable');
+    await session.app.input.moveMouseTo(
+      dspBounds.x + Math.floor(dspBounds.width / 2),
+      dspBounds.y + Math.floor(dspBounds.height / 2)
+    );
+    for (let step = 0; step < 10; step += 1) {
+      if ((await bars[2]?.info())?.states.includes('showing')) break;
+      await session.app.input.scrollWheel(0, 1);
+    }
+    expect((await bars[2]?.info())?.states).toContain('showing');
+    expect((await bars[2]?.capture())?.clipped).toBe(false);
   });
 
   it('records steady DSP load while duplicate statuses move output meters', async () => {

@@ -26,7 +26,7 @@ static void renderLevelRows(GtkWidget *host,
     std::vector<OutputLevelMeterWidgets> &rows,
     const pipetune::OutputConfiguration &configuration,
     std::span<const float> peaks, bool connected,
-    std::string_view accessiblePrefix) {
+    [[maybe_unused]] std::string_view accessiblePrefix) {
   const auto single = configuration.mode == pipetune::OutputMode::single;
   const auto count = std::min<std::size_t>(16,
       peaks.empty() ? rows.size() : peaks.size());
@@ -70,7 +70,11 @@ void renderMixedOutputLevels(MainWindowUi &ui,
   }
   renderLevelRows(ui.mixedOutputMeters, ui.mixedOutputRows, configuration,
       peaks, connected, "mixed-output-level-");
-  gtk_widget_show(ui.mixedOutputSection);
+  if (!gtk_widget_get_visible(ui.mixedOutputSection)) {
+    gtk_widget_set_no_show_all(ui.mixedOutputSection, FALSE);
+    gtk_widget_show_all(ui.mixedOutputSection);
+    gtk_widget_set_no_show_all(ui.mixedOutputSection, TRUE);
+  }
 }
 
 static void configureOutputOverview(GtkWidget *widget, bool selectable) {
