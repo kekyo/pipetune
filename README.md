@@ -230,7 +230,9 @@ In this case, the output device is determined based on the OS’s sound device a
 Selecting “Multiple Mode” lets you use multiple output devices together.
 In this case, the OS’s sound device assignment feature cannot be used, and you must configure the settings in PipeTune.
 
-The meters at the top of the `Output` page show whether each channel has an audio signal. They work in single mode, multiple mode, and bypass, following the confirmed Ch order. Values are peaks before device volume, in dBFS relative to digital full scale. Silence is `−∞`, unavailable or disconnected measurements are `—`, and peaks at or above 0 dBFS turn red. Device mute and connection state are not part of these measurements, so an active meter does not guarantee audible output from the device.
+The meters at the top of the `Output` page show whether each preset output channel has an audio signal. The channel count is inferred from Matrix routes, channel selections, and other preset settings when the preset loads. Reloading updates the count; signal activity during playback does not. Meters follow Ch order and show the same count in single and multiple modes. For example, a four-channel preset generates and measures all four channels in single mode, including unassigned Ch 3 and 4. Bypass shows two meters.
+
+Values are peaks before device volume, in dBFS relative to digital full scale. Silence is `−∞`, unavailable or disconnected measurements are `—`, and peaks at or above 0 dBFS turn red. Device mute and connection state are not part of these measurements. Unassigned channels are also displayed, so an active meter does not guarantee audible output from the device.
 
 Switch modes on the `Output` page and open `Device configuration…` to edit the devices in a separate dialog. The main window lists the applied configuration in three columns: `Device name`, `State`, and `Channels`. Devices appear in ascending order of their lowest assigned Ch number, and each device's numbers are also listed in ascending order. This display order does not change the assignments. Switching from single to multiple mode opens this dialog first; canceling it keeps single mode active.
 
