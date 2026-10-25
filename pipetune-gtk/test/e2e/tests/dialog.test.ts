@@ -536,14 +536,27 @@ describe('PipeTune GTK dialog', () => {
       );
       await waitForConnected();
       await selectSettingsPage(3);
-      if (physicalWidth === 6) {
-        await session.setOutputProfile('iec958-stereo');
-      } else {
+      if (physicalWidth === 16) {
         await session.setOutputInventory('wide');
       }
       await openMultipleOutputConfiguration();
-      await chooseAvailableOutput('DAC A');
-      if (physicalWidth === 6) await chooseAvailableOutput('DAC B');
+      if (physicalWidth === 6) {
+        await toggleOutputDevice(0);
+        await selectComboItem('output-profile-0', 1);
+        await (
+          await getElement('outputConfigurationApplyButton', 'button')
+        ).click();
+        await toPass(async () =>
+          expect(
+            await (await getElement('outputErrorLabel', 'label')).text()
+          ).toContain('review discovered channels')
+        );
+        await replaceOutputWith('DAC A · iec958-stereo');
+        await waitForLabel('output-physical-0-3', '4 (RR)');
+        await chooseAvailableOutput('DAC B');
+      } else {
+        await chooseAvailableOutput('DAC A');
+      }
       expect(
         await (await getElement('outputChangeSummaryLabel', 'label')).text()
       ).toContain(`Output channels: 2 → ${String(physicalWidth)}`);
