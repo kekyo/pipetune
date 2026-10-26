@@ -69,6 +69,16 @@ static std::filesystem::path writeTubeSimulatorPreset(
   return path;
 }
 
+static std::filesystem::path writeMatrixPreset(
+    const std::filesystem::path &directory, std::string_view name,
+    std::string_view routes) {
+  const auto path = directory / name;
+  auto stream = std::ofstream(path, std::ios::binary);
+  stream << R"json({"pipeline":[{"name":"Matrix","enabled":true,"channel":"All","parameters":{"mx":")json"
+         << routes << R"json("}}]})json";
+  return path;
+}
+
 static std::unique_ptr<pipetune::DspPipeline> loadPipeline(
     const std::filesystem::path &path) {
   auto loaded = pipetune::loadDspPipeline(
@@ -81,6 +91,102 @@ static std::unique_ptr<pipetune::DspPipeline> loadPipeline(
 
 static bool approximately(float actual, float expected) {
   return std::abs(actual - expected) <= 1.0e-6F;
+}
+
+static bool allApproximately(std::span<const float> samples, float expected);
+
+static bool testMatrixResetRoutes(const std::filesystem::path &directory) {
+  struct Scenario {
+    std::string_view name;
+    std::string_view routes;
+    std::vector<float> expected;
+  };
+  auto wide = std::vector<float>(16, 0.0F);
+  wide[0] = 16.0F / 64.0F;
+  wide[15] = 1.0F / 64.0F;
+  const auto scenarios = std::vector<Scenario>{
+      {"swap.effetune_preset", "0110", {2.0F / 64.0F, 1.0F / 64.0F}},
+      {"empty.effetune_preset", "", {0.0F, 0.0F}},
+      {"sum.effetune_preset", "001000", {4.0F / 64.0F, 0.0F}},
+      {"phase.effetune_preset", "p0011", {-1.0F / 64.0F, 2.0F / 64.0F}},
+      {"sixteen.effetune_preset", "0ff0", wide},
+  };
+  for (const auto &scenario : scenarios) {
+    const auto path = writeMatrixPreset(directory, scenario.name, scenario.routes);
+    const auto channels = static_cast<std::uint32_t>(scenario.expected.size());
+    auto loaded = pipetune::loadDspPipeline(path,
+        {.sampleRate = 48000.0F, .maxChannels = channels, .maxFrames = 128});
+    if (!check(loaded.pipeline != nullptr, loaded.error) ||
+        !check(loaded.warnings.empty() && loaded.pipeline->activePluginCount() == 1,
+            "Matrix route scenario must prepare one active plugin")) return false;
+    const auto render = [&](std::uint32_t frames, double time) {
+      auto samples = std::vector<float>(channels * frames);
+      for (auto channel = 0u; channel < channels; ++channel)
+        std::fill_n(samples.begin() + channel * frames, frames,
+            (channel + 1.0F) / 64.0F);
+      if (!check(loaded.pipeline->process(samples, channels, frames, time) ==
+              pipetune::ProcessStatus::ok, "Matrix processing failed")) return false;
+      for (auto channel = 0u; channel < channels; ++channel)
+        for (auto frame = 0u; frame < frames; ++frame)
+          if (!check(approximately(samples[channel * frames + frame],
+                  scenario.expected[channel]), "Matrix routing PCM differs")) return false;
+      return true;
+    };
+    if (!check(loaded.pipeline->reset() == pipetune::ProcessStatus::ok,
+            "Matrix reset before processing failed")) return false;
+    for (const auto frames : {32u, 64u, 128u})
+      if (!render(frames, 0.0) ||
+          !check(loaded.pipeline->reset() == pipetune::ProcessStatus::ok,
+              "Matrix reset after processing failed") ||
+          !render(frames, frames / 48000.0)) return false;
+  }
+  return true;
+}
+
+static bool testMatrixIdleResume(const std::filesystem::path &directory) {
+  const auto path = writeMatrixPreset(directory, "matrix-idle.effetune_preset", "0110");
+  auto pipeline = loadPipeline(path);
+  if (pipeline == nullptr) return false;
+  auto slot = pipetune::DspPipelineSlot(std::move(pipeline));
+  constexpr auto frames = 32u;
+  constexpr auto policy = pipetune::DspIdlePolicy{.timeoutMilliseconds = 100};
+  auto at = std::uint32_t{0};
+  const auto process = [&](bool active) {
+    auto samples = std::vector<float>(2 * frames, 0.0F);
+    if (active) {
+      std::fill_n(samples.begin(), frames, 0.25F);
+      std::fill_n(samples.begin() + frames, frames, 0.5F);
+    }
+    const auto result = slot.processWithIdle(samples, 2, frames,
+        at / 48000.0, policy);
+    at += frames;
+    if (!check(result.status == pipetune::ProcessStatus::ok,
+            "Matrix slot processing failed")) return pipetune::DspActivity::bypassed;
+    if (active && !check(allApproximately(std::span(samples).first(frames), 0.5F) &&
+            allApproximately(std::span(samples).subspan(frames), 0.25F),
+            "Matrix route changed after idle reset")) return pipetune::DspActivity::bypassed;
+    return result.activity;
+  };
+  if (!check(process(true) == pipetune::DspActivity::active,
+          "Matrix must start active")) return false;
+  if (!check(slot.resetProcessingState() == pipetune::ProcessStatus::ok &&
+             process(true) == pipetune::DspActivity::active,
+             "a stream boundary must preserve Matrix routing")) return false;
+  auto sleeping = false;
+  for (auto block = 0u; block < 300u; ++block)
+    if (process(false) == pipetune::DspActivity::sleeping) {
+      sleeping = true;
+      break;
+    }
+  if (!check(sleeping, "Matrix did not suspend after the frame-based idle timeout"))
+    return false;
+  const auto stopped = slot.performanceCounters().processedFrames;
+  if (!check(process(false) == pipetune::DspActivity::sleeping &&
+          slot.performanceCounters().processedFrames == stopped,
+          "sleeping Matrix must skip native processing")) return false;
+  return check(process(true) == pipetune::DspActivity::active &&
+          slot.performanceCounters().processedFrames > stopped,
+          "Matrix route must resume after idle reset");
 }
 
 static bool testReplacementChangesPcm(
@@ -542,6 +648,71 @@ static bool testBackendReplacementPreservesCounters(
                "backend switch must preserve cumulative DSP time");
 }
 
+static bool testStoppedSpatialMapperResumesWithoutPreviousAudio(
+    const std::filesystem::path &directory) {
+  const auto path = directory / "source-resume-spatial.effetune_preset";
+  {
+    auto file = std::ofstream(path, std::ios::binary);
+    file << R"json({"pipeline":[{"name":"Spatial Mapper","channel":"All","parameters":{"ic":2}}]})json";
+  }
+  const auto options = pipetune::PipelineBuildOptions{
+      .sampleRate = 96000.0F, .maxChannels = 2, .maxFrames = 256};
+  auto loaded = pipetune::loadDspPipeline(path, options);
+  auto fresh = pipetune::loadDspPipeline(path, options);
+  if (!check(loaded.pipeline != nullptr && fresh.pipeline != nullptr,
+             loaded.error + fresh.error)) return false;
+  auto slot = pipetune::DspPipelineSlot(std::move(loaded.pipeline));
+  constexpr auto frames = 256u;
+  constexpr auto policy = pipetune::DspIdlePolicy{.timeoutMilliseconds = 3000};
+  for (auto start = 0u; start < 8192u; start += frames) {
+    auto previousAudio = std::vector<float>(2u * frames, 0.25F);
+    if (!check(slot.processWithIdle(previousAudio, 2, frames,
+                start / 96000.0, policy).status == pipetune::ProcessStatus::ok,
+               "Spatial Mapper failed while playing the previous source")) return false;
+  }
+
+  // A paused capture stream delivers no silent blocks, so the idle policy
+  // cannot drain the previous source or reset the native delay history.
+  auto stale = std::vector<float>(2u * frames, 0.10F);
+  if (!check(slot.processWithIdle(stale, 2, frames, 10.0, policy).status ==
+                 pipetune::ProcessStatus::ok,
+             "Spatial Mapper failed when the new source resumed") ||
+      !check(std::any_of(stale.begin(), stale.end(),
+                         [](float value) { return value > 0.05F; }),
+             "the paused source must leave an audible DSP history")) return false;
+
+  const auto counters = slot.performanceCounters();
+  const auto generation = slot.activeGeneration();
+  if (!check(slot.resetProcessingState() == pipetune::ProcessStatus::ok,
+             "resuming a source must reset DSP delay history") ||
+      !check(slot.activeGeneration() == generation &&
+             slot.performanceCounters().processedFrames == counters.processedFrames &&
+             slot.activePluginCount() == 1,
+             "resetting DSP history must retain the preset and cumulative counters")) return false;
+
+  auto audibleNewAudio = 0.0;
+  for (auto start = 0u; start < slot.activeLatencyFrames() + 1024u;
+       start += frames) {
+    auto audio = std::vector<float>(2u * frames, 0.10F);
+    auto expected = audio;
+    const auto processed = slot.processWithIdle(audio, 2, frames,
+        start / 96000.0, policy);
+    if (!check(processed.status == pipetune::ProcessStatus::ok &&
+               processed.activity == pipetune::DspActivity::active &&
+               fresh.pipeline->process(expected, 2, frames,
+                   start / 96000.0) == pipetune::ProcessStatus::ok,
+               "Spatial Mapper failed after the source boundary")) return false;
+    for (auto index = std::size_t{0}; index < audio.size(); ++index) {
+      if (!check(std::abs(audio[index] - expected[index]) <= 3.0e-5F,
+                 "the resumed source must match a fresh Spatial Mapper"))
+        return false;
+      audibleNewAudio += static_cast<double>(audio[index]) * audio[index];
+    }
+  }
+  return check(audibleNewAudio > 0.01,
+               "the new source must remain audible after resetting DSP history");
+}
+
 static bool testAttackBassIdlePolicy(const std::filesystem::path &directory) {
   const auto backends = pipetune::discoverDspBackends();
   for (const auto name : {"Attack Tonal Balance", "Bass Extender"}) {
@@ -640,6 +811,8 @@ static bool testBassManagementIdlePolicy(const std::filesystem::path &directory)
       if (!check(slot.processWithIdle(silence, 2, 128, 7.0, {.timeoutMilliseconds = 100}).activity ==
                      pipetune::DspActivity::sleeping && slot.performanceCounters().processedFrames == before.processedFrames,
                  "sleep must stop Bass Management DSP calls") ||
+          !check(slot.resetProcessingState() == pipetune::ProcessStatus::ok,
+                 "a stream boundary must retain the prepared Bass Management asset") ||
           !check(reference.pipeline->reset() == pipetune::ProcessStatus::ok, "reference FIR reset failed")) return false;
       auto subEnergy = 0.0;
       for (auto start = 0u; start < latency + 8192u; start += 128u) {
@@ -819,7 +992,8 @@ int main() {
   const auto dcOffset = writeDcOffsetPreset(directory);
   const auto delay = writeDelayPreset(directory);
   const auto tubeSimulator = writeTubeSimulatorPreset(directory);
-  const auto passed = testMeasurementIdlePolicy(directory) && testBassManagementIdlePolicy(directory) && testAttackBassIdlePolicy(directory) && testTvIdlePolicy(directory) && testReplacementChangesPcm(positive, negative) &&
+  const auto passed = testMatrixResetRoutes(directory) && testMatrixIdleResume(directory) &&
+                      testMeasurementIdlePolicy(directory) && testBassManagementIdlePolicy(directory) && testAttackBassIdlePolicy(directory) && testTvIdlePolicy(directory) && testReplacementChangesPcm(positive, negative) &&
                       testBypassDoesNotReportDspWork() &&
                       testActivePipelineLatencyTracksReplacement(
                           tubeSimulator, positive) &&
@@ -833,7 +1007,8 @@ int main() {
                           positive, negative) &&
                       testStagedReplacementCanCommitAndRollback(
                           positive, negative) &&
-                      testBackendReplacementPreservesCounters(positive);
+                      testBackendReplacementPreservesCounters(positive) &&
+                      testStoppedSpatialMapperResumesWithoutPreviousAudio(directory);
   std::filesystem::remove_all(directory);
   return passed ? 0 : 1;
 }

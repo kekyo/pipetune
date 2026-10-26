@@ -61,9 +61,10 @@ component later without changing status acquisition.
 ## Live preview and persistence
 
 The window treats all settings as one transaction. Opening it captures the
-saved startup configuration and the daemon's live configuration. Changing any
-control immediately previews that choice in PipeTune; no per-setting apply
-button remains. When several fields differ, requests are serialized in this
+saved startup configuration and the daemon's live configuration. Processing,
+rate, and DSP controls preview changes immediately. Device configuration stays
+in a separate draft until its dialog is confirmed. When several fields differ,
+requests are serialized in this
 dependency order:
 
 1. sample-rate policy;
@@ -72,20 +73,35 @@ dependency order:
 4. output configuration, together with a changed processing mode or preset; and
 5. processing mode or preset when no output change is needed.
 
+The Output page begins with peak meters for the preset's output channels in
+Ch order. The count is inferred from Matrix and Spatial Mapper routes, crossover
+band counts, channel selections, and other preset settings at load or reload time
+and remains fixed during playback.
+Single and multiple modes show the same count, including channels generated
+and measured without a device assignment. Bypass shows two meters.
+They measure the audio before device volume in dBFS, relative to digital full scale. Silence is `−∞`,
+unavailable or disconnected measurements are `—`, and peaks at or above
+0 dBFS turn red. Device mute, connection state, and channel assignment are not included, so an
+active meter does not guarantee audible output from the device.
+
 The Output page selects either the existing OS-managed single mode or multiple
-devices managed by PipeTune. It lists saved and available devices with profile,
-channel count, fixed EffeTune Ch numbers, and presence. Missing devices remain
-visible, and clearing a check box reserves its numbers. The device tree uses
-the remaining panel height and scrolls as one list. Selecting a device expands
-its physical channels. Each child has an `EffeTune output` number selector and
-an optional purpose field; press Enter or leave the field to preview the label.
-The arrow beside the device folds its channel controls without changing any
-assignments. Presence and any selection problem remain visible on the parent.
+devices managed by PipeTune. Its applied configuration has `Device name`,
+`State`, and `Channels` columns. Devices appear in ascending order of their
+lowest assigned Ch number, with each channel list also sorted numerically.
+Display sorting does not change the saved assignments. Open
+`Device configuration…` to edit the configuration. Select a registered device
+in the upper table to display its profile and physical channels below.
+Each channel has an `EffeTune output` number selector and an optional purpose
+field; press Enter or leave the field to update the draft. The details scroll
+when needed. `Add device…` chooses a connected output to register, while
+`Use this device` controls enablement independently of registration.
+Missing and disabled devices remain in the table, and disabled devices keep
+their numbers. The state column also reports whether a disabled device is connected.
 The stereo desktop input uses Ch 1 and Ch 2; additional outputs must be
 created by the EffeTune preset. Single mode keeps the saved multiple-output
 mapping visible but inactive.
 
-Each device row shows its reported mute, scalar gain, and effective channel
+The selected device's details show its reported mute, scalar gain, and effective channel
 gains in dB, independently of the OS master volume. Unequal channel gains appear
 as a minimum–maximum range. Zero gain is `-∞ dB`; missing controls are `Unknown`.
 Hover over the values for an explanation. The values are read-only and do not
@@ -102,27 +118,51 @@ acoustic arrival time. Disconnects and unavailable inventory clear stale
 reports. These updates preserve in-progress purpose edits and never save settings.
 
 Choose a different `EffeTune output` number to move the physical channel and its
-purpose label to that position. Intervening assignments move as shown in the
-review. Use `Reassign device…` on the parent row to replace that device, including
-when its channels are collapsed or its profile has changed. An available
-device's `Use existing channels…` action selects a saved device to replace and
-enables the new output. This also works with disabled assignments at the
-16-channel limit. Channel moves and device replacements
-open a before/after review. `Preview mapping` sends the proposed configuration;
-Cancel or Escape in the review leaves it unchanged. The main window's Apply
-still performs the save, and its Cancel restores the confirmed baseline.
-`Reassign device…` retains the device's enabled state and all other devices'
-numbers. Removed physical channels appear in the `Reserved EffeTune channels`
-branch with their labels;
+purpose label to that position. Intervening assignments move within the draft.
+Use `Replace with another device…` to exchange the selected device, including
+when it is disconnected or its profile has changed. Replacement retains its
+enabled state, Ch numbers, purpose labels, and other devices' assignments.
+This also works with disabled assignments at the 16-channel limit.
+Device additions, removals, replacements, profiles, channel moves, and labels stay
+local to this dialog until `Apply configuration` sends the completed configuration
+once. Cancel, Escape, and closing discard the draft. An unchanged confirmation
+sends no request. The main window's Apply saves without rebuilding outputs,
+and its Cancel restores the output configuration and OS profiles captured when
+the window opened or last saved.
+Physical channels removed by replacement appear under `Unassigned channels`
+with their labels;
 new channels append after the existing slots. Replacements exceeding sixteen
-slots or duplicating another output fail. If the selected profile disappears
-while reviewing, reopen the review and select a current output.
+slots or duplicating another output fail. If the selected output disappears
+while editing, review its presence and select a current output.
+
+`Remove from configuration` forgets the selected device even when it is
+disconnected. Other devices retain their numbers. Its channels become unassigned
+with their purpose labels intact, except for consecutively trailing channels
+belonging to the removed device, which are trimmed. Existing unassigned slots
+are retained. `Remove unused channels` explicitly deletes all unassigned slots
+and their labels, then renumbers the remaining assignments in their existing
+order. Disabled devices' channels remain assigned. Review the displayed channel
+count and number changes, and check the preset's assignments before confirming.
+
+An output profile determines how the OS exposes the device's outputs and is
+separate from an EffeTune preset. Supported cards offer profiles that preserve
+the input settings. Selecting one does not change the OS until confirmation.
+An unknown layout is discovered on confirmation; a mismatch restores the previous
+configuration and retains the draft. Select the discovered output through
+`Replace with another device…`, review its channels, and confirm again. Failed requests and
+external setting changes keep the draft and diagnostic visible. A connection
+loss never queues an unconfirmed draft for automatic resubmission.
+
+If the current preset cannot handle the proposed channel count, cancel the
+device dialog and select a compatible preset or Bypass in the main window
+before changing the configuration. Entering multiple mode also waits for the
+device dialog's confirmation; canceling it preserves single mode.
 
 Presence distinguishes missing hardware, changed profiles, ambiguous matches,
 pending enumeration, and enumeration errors. It describes device matching, not
 audio activity or measured delay compensation. Live presence changes never
 renumber saved channels. A multiple-mode draft without an enabled device waits
-for a selection before previewing and cannot be applied.
+for a selection before confirmation and cannot be applied.
 
 The global **Apply** button becomes available only after the daemon has
 confirmed every requested live change. It atomically writes the complete

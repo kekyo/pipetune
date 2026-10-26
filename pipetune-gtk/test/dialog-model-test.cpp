@@ -602,6 +602,38 @@ static bool testActionLogHistory() {
   return check(log.entries.empty(), "Clear must remove visible log history");
 }
 
+static bool testActionLogViewRefresh() {
+  auto log = pipetune_gtk::createActionLog(4);
+  auto view = pipetune_gtk::ActionLogRenderState{};
+  using pipetune_gtk::ActionLogFilter;
+  if (!check(pipetune_gtk::updateActionLogRenderState(view, log, ActionLogFilter::all),
+             "a new log view must render its initial contents") ||
+      !check(!pipetune_gtk::updateActionLogRenderState(view, log, ActionLogFilter::all),
+             "repeated telemetry must preserve the existing log rows")) return false;
+  const auto pending = pipetune_gtk::appendPendingAction(log, 1000,
+      pipetune_gtk::ActionLogCategory::settings,
+      pipetune_gtk::localizedMessage("Changing audio outputs", {}),
+      pipetune_gtk::technicalMessage({}));
+  if (!check(pipetune_gtk::updateActionLogRenderState(view, log, ActionLogFilter::all),
+             "a pending action must appear in the view")) return false;
+  pipetune_gtk::completePendingAction(log, pending, 1010, true,
+      pipetune_gtk::ActionLogSeverity::info,
+      pipetune_gtk::localizedMessage("Audio outputs changed", {}),
+      pipetune_gtk::technicalMessage({}));
+  if (!check(pipetune_gtk::updateActionLogRenderState(view, log, ActionLogFilter::all),
+             "completion must replace the pending row") ||
+      !check(pipetune_gtk::updateActionLogRenderState(view, log, ActionLogFilter::errors),
+             "changing the filter must update the visible rows") ||
+      !check(!pipetune_gtk::updateActionLogRenderState(view, log, ActionLogFilter::errors),
+             "unchanged filtered rows must be retained")) return false;
+  pipetune_gtk::clearActionLog(log);
+  if (!check(pipetune_gtk::updateActionLogRenderState(view, log, ActionLogFilter::errors),
+             "clearing history must empty a filtered view")) return false;
+  auto rebuilt = pipetune_gtk::ActionLogRenderState{};
+  return check(pipetune_gtk::updateActionLogRenderState(rebuilt, log, ActionLogFilter::errors),
+               "a rebuilt localized window must render its own empty log view");
+}
+
 static bool testOutputSnapshotPreservation() {
   auto status = pipetune::ControlRuntimeStatus{};
   status.outputConfiguration = {
@@ -678,6 +710,90 @@ static bool testOutputPreviewAndJointCancel() {
                "failed output application must retain confirmed choices and block Apply");
 }
 
+static bool testOutputProfileCheckpoint() {
+  const auto configuration = baseConfig();
+  const auto card = pipetune::OutputCardIdentity{"alsa", "usb:test", "vendor", "product", "serial"};
+  const auto analog = std::vector{pipetune::OutputProfileSelection{card, "output:analog-stereo+input:analog-stereo", "analog-stereo", false}};
+  const auto digital = std::vector{pipetune::OutputProfileSelection{card, "output:iec958-stereo+input:analog-stereo", "iec958-stereo", false}};
+  auto transaction = pipetune_gtk::beginSettingsTransaction(configuration, configuration, 1, true, analog);
+  if (!check(transaction.baselineOutputProfiles == analog && transaction.confirmedOutputProfiles == analog,
+             "opening the parent must capture the original OS profiles before any edits")) return false;
+  transaction.desiredOutputProfiles = digital;
+  if (!check(pipetune_gtk::nextSettingsOperation(transaction) == pipetune_gtk::SettingsOperation::output,
+             "OS profile changes must use one output operation even with unchanged single-mode assignments")) return false;
+  if (!pipetune_gtk::beginSettingsOperation(transaction, pipetune_gtk::SettingsOperation::output)) return false;
+  if (!check(transaction.inFlightOutputProfiles == digital,
+             "an output operation must freeze its complete profile choices")) return false;
+  pipetune_gtk::completeSettingsOperation(transaction, true, configuration, 2, {});
+  if (!check(transaction.confirmedOutputProfiles == digital && pipetune_gtk::settingsTransactionCanApply(transaction),
+             "successful live profiles must remain unsaved until parent Apply")) return false;
+  pipetune_gtk::requestSettingsCancel(transaction);
+  if (!check(transaction.desiredOutputProfiles == analog &&
+             pipetune_gtk::nextSettingsOperation(transaction) == pipetune_gtk::SettingsOperation::output &&
+             !pipetune_gtk::settingsTransactionShouldClose(transaction),
+             "Cancel must restore the original OS profiles even when single mode has no saved outputs")) return false;
+  pipetune_gtk::beginSettingsOperation(transaction, pipetune_gtk::SettingsOperation::output);
+  pipetune_gtk::completeSettingsOperation(transaction, true, configuration, 3, {});
+  if (!check(transaction.confirmedOutputProfiles == analog && pipetune_gtk::settingsTransactionShouldClose(transaction),
+             "Cancel closes only after the original OS profiles are confirmed")) return false;
+
+  transaction = pipetune_gtk::beginSettingsTransaction(configuration, configuration, 3, true, analog);
+  transaction.desiredOutputProfiles = digital;
+  pipetune_gtk::beginSettingsOperation(transaction, pipetune_gtk::SettingsOperation::output);
+  pipetune_gtk::completeSettingsOperation(transaction, true, configuration, 4, {});
+  pipetune_gtk::completeSettingsPersistence(transaction, false, "save failed");
+  if (!check(transaction.baselineOutputProfiles == analog,
+             "a failed save must retain the old OS profile rollback checkpoint")) return false;
+  pipetune_gtk::completeSettingsPersistence(transaction, true, {});
+  if (!check(transaction.baselineOutputProfiles == digital &&
+             !pipetune_gtk::settingsTransactionIsDirty(transaction) &&
+             pipetune_gtk::nextSettingsOperation(transaction) == pipetune_gtk::SettingsOperation::none,
+             "Apply must advance the OS profile checkpoint without reapplying outputs")) return false;
+  transaction.desiredOutputProfiles = analog;
+  pipetune_gtk::beginSettingsOperation(transaction, pipetune_gtk::SettingsOperation::output);
+  pipetune_gtk::completeSettingsOperation(transaction, false, configuration, 4, "profile change failed");
+  return check(transaction.confirmedOutputProfiles == digital &&
+               !pipetune_gtk::settingsTransactionCanApply(transaction),
+               "a failed profile operation must retain the confirmed profiles and block saving");
+}
+
+static bool testOutputProfileObservation() {
+  const auto configuration = baseConfig();
+  const auto card = pipetune::OutputCardIdentity{"alsa", "usb:test", "vendor", "product", "serial"};
+  const auto analog = std::vector{pipetune::OutputProfileSelection{card, "output:analog-stereo+input:analog-stereo", "analog-stereo", false}};
+  const auto digital = std::vector{pipetune::OutputProfileSelection{card, "output:iec958-stereo+input:analog-stereo", "iec958-stereo", false}};
+  auto transaction = pipetune_gtk::beginSettingsTransaction(configuration, configuration, 1, true);
+  pipetune_gtk::observeSettingsRuntime(transaction, configuration, 1, analog);
+  if (!check(transaction.baselineOutputProfiles == analog &&
+             transaction.desiredOutputProfiles == analog && transaction.confirmedOutputProfiles == analog &&
+             !transaction.conflict,
+             "a newly connected card must establish its rollback checkpoint before editing")) return false;
+  pipetune_gtk::observeSettingsRuntime(transaction, configuration, 1, digital);
+  if (!check(transaction.conflict && transaction.confirmedOutputProfiles == digital &&
+             transaction.desiredOutputProfiles == analog &&
+             pipetune_gtk::nextSettingsOperation(transaction) == pipetune_gtk::SettingsOperation::none,
+             "an external OS profile change must block stale edits without replaying them")) return false;
+  pipetune_gtk::requestSettingsCancel(transaction);
+  if (!check(transaction.desiredOutputProfiles == analog &&
+             pipetune_gtk::nextSettingsOperation(transaction) == pipetune_gtk::SettingsOperation::output,
+             "Cancel must restore a card connected after the parent opened")) return false;
+  transaction = pipetune_gtk::beginSettingsTransaction(configuration, configuration, 1, true, analog);
+  transaction.desiredOutputProfiles = digital;
+  pipetune_gtk::beginSettingsOperation(transaction, pipetune_gtk::SettingsOperation::output);
+  pipetune_gtk::observeSettingsRuntime(transaction, configuration, 1, digital);
+  if (!check(!transaction.conflict && transaction.confirmedOutputProfiles == analog,
+             "an output transition must await its explicit reply before confirming profiles")) return false;
+  pipetune_gtk::completeSettingsOperation(transaction, true, configuration, 2, {});
+  pipetune_gtk::markSettingsDisconnected(transaction, "disconnected");
+  pipetune_gtk::reconnectSettingsTransaction(transaction, configuration, 1, analog);
+  if (!check(transaction.confirmedOutputProfiles == analog && transaction.desiredOutputProfiles == digital &&
+             pipetune_gtk::nextSettingsOperation(transaction) == pipetune_gtk::SettingsOperation::output,
+             "reconnection must compare actual profiles against confirmed live edits")) return false;
+  pipetune_gtk::observeSettingsRuntime(transaction, configuration, 1, {});
+  return check(transaction.baselineOutputProfiles == analog && transaction.desiredOutputProfiles == digital,
+               "missing cards must retain restoration checkpoints and selected profiles");
+}
+
 static bool testSfzStartupBudget() {
   auto saved = baseConfig();
   saved.sfzMaxSizeMiB = 512;
@@ -718,6 +834,8 @@ static bool testSfzStartupBudget() {
 }
 
 int main() {
+  if (!testOutputProfileObservation()) return 1;
+  if (!testOutputProfileCheckpoint()) return 1;
   if (!testSfzStartupBudget()) return 1;
   if (!testOutputPreviewAndJointCancel()) return 1;
   if (!testOutputSnapshotPreservation()) return 1;
@@ -726,7 +844,8 @@ int main() {
                  testFailuresDisconnectAndConflict() &&
                  testStaleStatusAndRestoreRecovery() &&
                  testStructuredStatusModel() &&
-                 testStatusLevelPresentation() && testActionLogHistory()
+                 testStatusLevelPresentation() && testActionLogHistory() &&
+                 testActionLogViewRefresh()
              ? 0
              : 1;
 }

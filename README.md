@@ -30,10 +30,12 @@ you can then immediately apply them in PipeTune to apply effects to all Linux so
 - You can load EffeTune preset files to apply a DSP pipeline to the audio output of the entire Linux system.
 - Loads standard and legacy EffeTune preset files with the `.effetune_preset` extension
   and applies the DSP pipeline to desktop audio.
-- Implements the EffeTune 2.14.0 DSP engine.
-- SFZ Note Player loads EffeTune 2.14.0 instruments with ARIA bank definitions
+- Implements the EffeTune 2.15.0 DSP engine.
+- SFZ Note Player loads instruments registered in EffeTune with ARIA bank definitions
   for variables and sample locations, generated waveforms, and semitone sample
   selection.
+- SFZ Note Player uses the `Classic` or `Event` note detection mode saved in EffeTune.
+  Presets without a mode use `Classic`. `Event` adds about 140 ms of latency.
 - Automatically negotiates the sampling rate with the PipeWire graph, or computes the DSP at specified rates of 44.1, 48, 96, 192, or 384 kHz.
 - The DSP performs computations entirely in native code.
   You can choose between Scalar (for compatibility), automatic SIMD selection, or CPU-verified implementations for specific instruction sets.
@@ -131,7 +133,9 @@ are shown on the right.
 
 ![PipeTune UI Window](./images/pipetune-ui-window.png)
 
-Changing a setting previews it immediately in the running daemon. The `Apply`
+Processing and rate settings take effect immediately in the running daemon.
+Device configuration changes are edited together in a separate dialog and
+applied on confirmation. The `Apply`
 button confirms and saves the current state. The `Cancel` button, Escape, or
 the title-bar close button restores the previous live state before hiding the
 window.
@@ -153,34 +157,26 @@ normal operation resumes after reconnection.
 ## Audio streams and PipeTune
 
 PipeTune uses PipeWire and WirePlumber on Linux to insert DSP processing into
-the audio stream as a filter, as shown below:
+the audio stream. Multiple mode provides a stereo input through the DSP and a
+multichannel input that bypasses it:
 
 ```mermaid
 flowchart LR
-    apps1["Application (1)"]
-    apps2["Application (2)"]
-    apps3["Application (3)"]
+    processed["PipeTune Processed Audio<br/>stereo input"]
+    dsp["EffeTune DSP or bypass"]
+    direct["PipeTune Direct Output<br/>multichannel input"]
     mix["PipeWire mix"]
-    tune["PipeTune filter<br/>EffeTune DSP or bypass"]
-    output["PipeWire output<br/>master volume and default route"]
-    device["Selected audio device"]
-    device2["Audio device (2)"]
-    device3["Audio device (3)"]
+    mapping["PipeTune channel mapping"]
+    devices["Selected audio devices"]
 
-    apps1 --> mix
-    apps2 --> mix
-    apps3 --> mix
-    mix --> tune
-    tune --> output
-    output --> device2
-    output --> device
-    output --> device3
+    processed --> dsp --> mix
+    direct --> mix
+    mix --> mapping --> devices
 ```
 
-Per-application volume is applied before mixing. In bypass mode, the mixed PCM
-is passed downstream without invoking EffeTune. After the DSP filter, desktop
-master-volume and output-device selection work exactly as they do without
-PipeTune.
+Each input has its own volume and mute before mixing. Bypass skips DSP
+processing for the Processed input only; it does not affect Direct. Single
+mode continues to use the OS sound settings to select a physical output.
 
 ## Selecting an EffeTune DSP preset
 
@@ -223,21 +219,36 @@ PipeTune also allows you to map multichannel output to any channel on any audio 
 To simplify configuration for standard 2-channel stereo, the default setting is “Single Mode.”
 In this case, the output device is determined based on the OS’s sound device assignment feature.
 
-On the other hand, selecting “Multiple Mode” allows you to handle any number of output devices.
-In this case, the OS’s sound device assignment feature cannot be used, and you must configure the settings in PipeTune.
+Selecting “Multiple Mode” lets you use multiple output devices together.
+Configure the channel mapping to physical devices in PipeTune. The OS sound
+settings show two inputs: `PipeTune Processed Audio` for DSP playback and
+`PipeTune Direct Output` for playback without PipeTune DSP.
 
-You can switch between these modes on the `Output` page of the settings window.
+The `DSP output levels` meters at the top of the `Output` page show whether each preset output channel has an audio signal. The channel count is inferred from Matrix and Spatial Mapper routes, crossover band counts, channel selections, and other preset settings when the preset loads. Reloading updates the count; signal activity during playback does not. Meters follow Ch order and show the same count in single and multiple modes. For example, a four-channel preset generates and measures all four channels in single mode, including unassigned Ch 3 and 4. Bypass shows two meters.
 
-In Multiple Mode, check the boxes next to the devices you want to use. You can view each device’s profile, number of channels, assigned channel numbers, and connection status.
-When you select a device, its internal channels will expand within the same list. Under `EffeTune Output` for each channel, you can select a channel number and enter a custom label in the “Purpose” field.
+Multiple mode also shows `Mixed output levels`. These measure each channel
+after Processed and Direct audio have been combined, so they show activity
+when only Direct is playing.
 
-You can enter a purpose name to help identify the device’s intended use.
-You can select a replacement destination from `Reassign Device...` in the device row. There is no need to expand the channels.
+Values are peaks before device volume, in dBFS relative to digital full scale. Silence is `−∞`, unavailable or disconnected measurements are `—`, and peaks at or above 0 dBFS turn red. Device mute and connection state are not part of these measurements. Unassigned channels are also displayed, so an active meter does not guarantee audible output from the device.
 
-Changes are previewed in real time; click `Apply` to save or `Cancel` to revert to the previous configuration.
-If you switch to multi-mode without selecting a device, the system enters edit mode, but the actual output remains unchanged.
+Switch modes on the `Output` page and open `Device configuration…` to edit the devices in a separate dialog. The main window lists the applied configuration in three columns: `Device name`, `State`, and `Channels`. Devices appear in ascending order of their lowest assigned Ch number, and each device's numbers are also listed in ascending order. This display order does not change the assignments. Switching from single to multiple mode opens this dialog first; canceling it keeps single mode active.
 
-The device column displays the mute and gain levels reported by the device, separate from the OS’s overall volume.
+Select a device in the dialog's upper list to display its settings below. Use `Add device…` to choose a connected device, then `Add` to register it. Clearing `Use this device` disables it while retaining its registration and Ch numbers. Choose each physical channel's `EffeTune output` number and enter an optional purpose label. Moving a number also moves the intervening assignments.
+
+To exchange hardware, select the existing device and choose `Replace with another device…`. Choose its replacement and click `Replace` to retain the original Ch numbers, purpose labels, and enabled state. If the replacement has fewer physical channels, the removed channels' numbers and labels remain under `Unassigned channels`. Additional channels append after the existing numbers.
+
+Use `Remove from configuration` to forget a device, whether connected or disconnected. Other devices keep their Ch numbers. Removed channels in the middle retain their numbers and purpose labels as unassigned slots. Consecutive removed channels at the end are trimmed, while previously unassigned channels remain.
+
+Use `Remove unused channels` to remove all unassigned channels and their labels, closing the numbering gaps while preserving the order of the remaining assignments. Channels assigned to disabled devices remain. Review the displayed changes to the output channel count and Ch numbers, and check the preset's assignments before applying the configuration. The limit is sixteen channels, including unassigned slots.
+
+`Output profile` selects how the OS exposes a device's outputs; it is separate from an EffeTune processing preset. Supported devices offer profiles that preserve the input settings. If a profile's channel layout has not been observed yet, confirming the configuration discovers its actual outputs. A mismatch restores the previous configuration and displays an error. Choose the discovered output through `Replace with another device…`, review its channels, and confirm again.
+
+Editing the dialog does not change playback or OS profiles. `Apply configuration` applies the completed configuration once, without saving it. The dialog's Cancel, Escape, and close action discard its edits. Confirming an unchanged configuration does not rebuild the outputs.
+
+The main window's `Apply` saves the confirmed settings without applying the outputs again. Its `Cancel` restores the output configuration and profiles captured when the main window opened or last saved. Failed changes keep the draft and diagnostic visible. If a preset cannot handle the new channel count, cancel the device dialog, select a compatible preset or Bypass in the main window, and try the configuration again. Reconnecting never submits a pending device draft automatically. If another application changes the settings, cancel the device dialog and reopen the main window to review the current state.
+
+The selected device's details display its reported mute and gain levels, separate from the OS’s overall volume.
 If the gain varies by channel, the minimum and maximum values are shown.
 These are read-only; unreported control values or unconnected devices are displayed as “Unknown.”
 Hover your mouse over a value to view its description.
@@ -262,7 +273,11 @@ The JSON includes device identity separately from the temporary
 PipeWire node ID, plus a diagnostic for layouts that cannot be selected, such as outputs exceeding the sixteen-channel DSP limit.
 
 Single mode keeps physical output selection in the OS sound settings and hides PipeTune's internal outputs.
-Multiple mode shows only `PipeTune Processed Audio` as the selected OS output; choose its devices in PipeTune's Output panel or with the commands below.
+Multiple mode shows both `PipeTune Processed Audio` and `PipeTune Direct
+Output` as OS outputs. Processed is the initial default. If you later select
+Direct in the OS, that choice is respected across mode switches and PipeTune
+restarts. Both inputs can play simultaneously. Choose their physical output
+devices in PipeTune's `Output` page or with the commands below.
 
 Input device selection and controls remain available in both
 modes. To use multiple devices, select their node names from `output list`:
@@ -281,9 +296,11 @@ Later selections preserve those numbers and labels: deselected outputs keep
 their slots, and new outputs are appended. The sixteen-channel limit includes
 reserved slots. Switching to single mode retains the multiple-output choices.
 
-In multiple mode, the OS master volume and mute apply after DSP to all selected
-outputs. Their settings are remembered across PipeTune restarts. A WirePlumber
-restart retains the running daemon's current volume and mute.
+In multiple mode, the OS exposes separate volume and mute controls for
+Processed and Direct. Processed volume affects only the DSP path; Direct volume
+affects only Direct. The settings UI does not provide a shared volume control
+after mixing. Simultaneous playback adds the two signals without automatic
+gain control.
 
 `get` shows the live mode and a table linking each final EffeTune channel to its
 device, device channel, profile, presence, and optional purpose label. A missing
@@ -310,9 +327,16 @@ unavailable, for example during reconnection or when the server does not expose
 its graph clock. JSON clients receive these observations in `outputTimings`;
 latency and compensation values are nanoseconds, with `null` for unavailable values.
 
-Desktop input remains stereo on Ch 1 and Ch 2. Use the EffeTune preset to create
-the additional outputs, for example with Matrix; Bypass leaves extra channels
-silent. PipeTune does not automatically copy stereo audio to every device.
+Processed input remains stereo on Ch 1 and Ch 2. Use the EffeTune preset to
+create additional outputs, for example with Matrix. Bypass leaves its extra
+channels silent. PipeTune does not automatically copy stereo audio to every
+device.
+
+Direct input exposes the number of output channels configured in multiple
+mode. It sends each Direct Ch to the corresponding output Ch without PipeTune
+DSP, so you can play multichannel audio prepared in an app such as EffeTune.
+Unassigned channels and disabled outputs remain inaudible. When both inputs
+play, the summed peak can exceed 0 dBFS.
 
 For explicit reassignment, slot ordering, or labels, `output set` accepts a
 complete routing JSON object as one argument, for example
@@ -333,14 +357,18 @@ startup settings.
 Configure the rate using `DSP sampling frequency` and `PipeWire enforcement`
 in the PipeTune settings window. `Automatic` follows the rate negotiated by the
 PipeWire graph. A fixed setting requests `44.1`, `48`, `96`, `192`, or `384`
-kHz for both filter nodes and the EffeTune engine. The status display shows the
-actual DSP and graph rates.
+kHz for both the Processed and Direct paths and the EffeTune engine. The rate
+setting is shared in multiple mode. The status display shows the actual DSP
+and graph rates.
 
 - `Suggest` proposes the graph rate to PipeWire. PipeWire may accept it or
   choose a different graph rate to accommodate the audio streams.
 - `Force` additionally asks PipeWire to maintain that rate.
 
 Neither mode changes PipeWire's global clock configuration.
+There is no setting to force bit depth. PipeTune processes audio internally as
+32-bit floating point; the format used by an output device is negotiated when
+it connects.
 
 If the requested value cannot be applied, PipeTune remains connected and
 continues DSP processing at the graph rate that was actually negotiated. An

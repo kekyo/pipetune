@@ -5,9 +5,16 @@
  */
 #include "settings-transaction.h"
 
+#include <algorithm>
 #include <string>
 
 namespace pipetune_gtk {
+
+static bool outputProfilesMatch(
+    const std::vector<pipetune::OutputProfileSelection> &left,
+    const std::vector<pipetune::OutputProfileSelection> &right) {
+  return std::is_permutation(left.begin(), left.end(), right.begin(), right.end());
+}
 
 static bool configMatches(const pipetune::StartupConfig &left,
                           const pipetune::StartupConfig &right) {
@@ -66,7 +73,7 @@ static std::string confirmationDiagnostic(SettingsOperation operation) {
 SettingsTransaction beginSettingsTransaction(
     const pipetune::StartupConfig &saved,
     const pipetune::StartupConfig &live, std::uint64_t liveRevision,
-    bool connected) {
+    bool connected, std::span<const pipetune::OutputProfileSelection> outputProfiles) {
   auto desired = live;
   desired.sfzMaxSizeMiB = saved.sfzMaxSizeMiB;
   return {
@@ -82,6 +89,9 @@ SettingsTransaction beginSettingsTransaction(
       .conflict = false,
       .liveChangeFailed = false,
       .diagnostic = {},
+      .baselineOutputProfiles = {outputProfiles.begin(), outputProfiles.end()},
+      .desiredOutputProfiles = {outputProfiles.begin(), outputProfiles.end()},
+      .confirmedOutputProfiles = {outputProfiles.begin(), outputProfiles.end()},
   };
 }
 
@@ -136,7 +146,8 @@ nextSettingsOperation(const SettingsTransaction &transaction) {
                         transaction.desiredLive)) {
     return SettingsOperation::dspIdle;
   }
-  if (transaction.confirmedLive.outputConfiguration != transaction.desiredLive.outputConfiguration) {
+  if (transaction.confirmedLive.outputConfiguration != transaction.desiredLive.outputConfiguration ||
+      !outputProfilesMatch(transaction.confirmedOutputProfiles, transaction.desiredOutputProfiles)) {
     // Output width and preset may be mutually incompatible with the current
     // configuration. Restore them together instead of ordering partial edits.
     return SettingsOperation::output;
@@ -157,6 +168,7 @@ bool beginSettingsOperation(SettingsTransaction &transaction,
   }
   transaction.inFlight = operation;
   transaction.inFlightTarget = transaction.desiredLive;
+  transaction.inFlightOutputProfiles = transaction.desiredOutputProfiles;
   return true;
 }
 
@@ -185,6 +197,8 @@ void completeSettingsOperation(
   }
   transaction.confirmedLive = confirmed;
   transaction.confirmedRevision = confirmedRevision;
+  if (operation == SettingsOperation::output)
+    transaction.confirmedOutputProfiles = transaction.inFlightOutputProfiles;
   transaction.liveChangeFailed = false;
   transaction.diagnostic.clear();
 }
@@ -197,10 +211,32 @@ void markSettingsDisconnected(SettingsTransaction &transaction,
   transaction.diagnostic = diagnostic;
 }
 
+static bool observeOutputProfiles(SettingsTransaction &transaction,
+    std::span<const pipetune::OutputProfileSelection> profiles) {
+  auto changed = false;
+  for (const auto &profile : profiles) {
+    const auto known = std::find_if(transaction.confirmedOutputProfiles.begin(),
+        transaction.confirmedOutputProfiles.end(),
+        [&profile](const auto &entry) { return entry.card == profile.card; });
+    if (known == transaction.confirmedOutputProfiles.end()) {
+      // A card first seen after opening the dialog still needs a checkpoint.
+      transaction.baselineOutputProfiles.push_back(profile);
+      transaction.desiredOutputProfiles.push_back(profile);
+      transaction.confirmedOutputProfiles.push_back(profile);
+    } else if (*known != profile) {
+      *known = profile;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 void reconnectSettingsTransaction(
     SettingsTransaction &transaction,
     const pipetune::StartupConfig &live,
-    std::uint64_t liveRevision) {
+    std::uint64_t liveRevision,
+    std::span<const pipetune::OutputProfileSelection> outputProfiles) {
+  observeOutputProfiles(transaction, outputProfiles);
   transaction.connected = true;
   transaction.confirmedLive = live;
   transaction.confirmedRevision = liveRevision;
@@ -214,16 +250,18 @@ void reconnectSettingsTransaction(
 void observeSettingsRuntime(
     SettingsTransaction &transaction,
     const pipetune::StartupConfig &live,
-    std::uint64_t liveRevision) {
+    std::uint64_t liveRevision,
+    std::span<const pipetune::OutputProfileSelection> outputProfiles) {
   if (!transaction.connected) {
-    reconnectSettingsTransaction(transaction, live, liveRevision);
+    reconnectSettingsTransaction(transaction, live, liveRevision, outputProfiles);
     return;
   }
   if (transaction.inFlight != SettingsOperation::none ||
       liveRevision < transaction.confirmedRevision) {
     return;
   }
-  if (configMatches(transaction.confirmedLive, live)) {
+  const auto profilesChanged = observeOutputProfiles(transaction, outputProfiles);
+  if (!profilesChanged && configMatches(transaction.confirmedLive, live)) {
     transaction.confirmedRevision = liveRevision;
     return;
   }
@@ -238,6 +276,7 @@ void observeSettingsRuntime(
 
 void requestSettingsCancel(SettingsTransaction &transaction) {
   transaction.desiredLive = transaction.baselineLive;
+  transaction.desiredOutputProfiles = transaction.baselineOutputProfiles;
   transaction.cancelRequested = true;
   transaction.conflict = false;
   transaction.liveChangeFailed = false;
@@ -251,12 +290,15 @@ bool settingsTransactionCanApply(
          transaction.inFlight == SettingsOperation::none &&
          configMatches(transaction.desiredLive,
                        transaction.confirmedLive) &&
+         outputProfilesMatch(transaction.desiredOutputProfiles,
+                             transaction.confirmedOutputProfiles) &&
          settingsTransactionIsDirty(transaction);
 }
 
 bool settingsTransactionIsDirty(
     const SettingsTransaction &transaction) {
   return !configMatches(transaction.desiredLive, transaction.saved) ||
+         !outputProfilesMatch(transaction.desiredOutputProfiles, transaction.baselineOutputProfiles) ||
          transaction.desiredLive.sfzMaxSizeMiB != transaction.saved.sfzMaxSizeMiB;
 }
 
@@ -271,6 +313,7 @@ void completeSettingsPersistence(
   }
   transaction.saved = transaction.desiredLive;
   transaction.baselineLive = transaction.confirmedLive;
+  transaction.baselineOutputProfiles = transaction.confirmedOutputProfiles;
   transaction.conflict = false;
   transaction.diagnostic.clear();
 }
@@ -281,7 +324,9 @@ bool settingsTransactionShouldClose(
          !transaction.conflict && !transaction.liveChangeFailed &&
          transaction.inFlight == SettingsOperation::none &&
          configMatches(transaction.confirmedLive,
-                       transaction.baselineLive);
+                       transaction.baselineLive) &&
+         outputProfilesMatch(transaction.confirmedOutputProfiles,
+                             transaction.baselineOutputProfiles);
 }
 
 pipetune::StartupConfig startupConfigFromRuntime(

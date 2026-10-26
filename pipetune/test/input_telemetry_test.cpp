@@ -4,10 +4,14 @@
  * https://github.com/kekyo/pipetune/
  */
 #include "input_telemetry.h"
+#include "output_peak_telemetry.h"
 
+#include <array>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <string_view>
+#include <vector>
 
 static bool check(bool condition, std::string_view message) {
   if (!condition) {
@@ -45,6 +49,48 @@ static bool testInputTelemetry() {
                "negative monotonic age must clamp to zero");
 }
 
+static bool testOutputPeaks() {
+  auto telemetry = pipetune::OutputPeakTelemetry{};
+  const auto first = std::array<float, 4>{0.25F, -1.25F,
+      std::numeric_limits<float>::quiet_NaN(), 0.5F};
+  const auto second = std::array<float, 2>{0.4F, -0.8F};
+  pipetune::recordOutputPeak(telemetry, 0, first);
+  pipetune::recordOutputPeak(telemetry, 1, second);
+  pipetune::publishOutputPeaks(telemetry);
+  if (!check(pipetune::snapshotOutputPeaks(telemetry, 2) ==
+                 std::vector<float>{1.25F, 0.8F},
+             "output peaks must retain independent channel maxima above full scale")) return false;
+
+  pipetune::recordOutputPeak(telemetry, 0, std::array<float, 1>{0.2F});
+  pipetune::publishOutputPeaks(telemetry);
+  if (!check(pipetune::snapshotOutputPeaks(telemetry, 2) ==
+                 std::vector<float>{0.2F, 0.0F},
+             "a silent channel must clear on the next publication")) return false;
+  pipetune::publishOutputPeaks(telemetry);
+  if (!check(pipetune::snapshotOutputPeaks(telemetry, 2) ==
+                 std::vector<float>{0.0F, 0.0F},
+             "stopped audio must clear stale peaks")) return false;
+
+  // A new route can reuse the same channel numbers or expand their width.
+  // Old published and pending peaks must not be attributed to that route.
+  pipetune::recordOutputPeak(telemetry, 0, std::array<float, 1>{0.75F});
+  pipetune::publishOutputPeaks(telemetry);
+  pipetune::recordOutputPeak(telemetry, 1, std::array<float, 1>{0.9F});
+  pipetune::clearOutputPeaks(telemetry);
+  if (!check(pipetune::snapshotOutputPeaks(telemetry, 4) ==
+                 std::vector<float>{0.0F, 0.0F, 0.0F, 0.0F},
+             "expanding a route must not reuse old published peaks")) return false;
+  pipetune::publishOutputPeaks(telemetry);
+  if (!check(pipetune::snapshotOutputPeaks(telemetry, 2) ==
+                 std::vector<float>{0.0F, 0.0F},
+             "cleared pending peaks must not return after a same-width route change")) return false;
+  pipetune::recordOutputPeak(telemetry, 2, std::array<float, 1>{0.3F});
+  pipetune::publishOutputPeaks(telemetry);
+  return check(pipetune::snapshotOutputPeaks(telemetry, 4) ==
+                   std::vector<float>{0.0F, 0.0F, 0.3F, 0.0F},
+               "the new route must report only its own channel samples");
+}
+
 int main() {
-  return testInputTelemetry() ? 0 : 1;
+  return testInputTelemetry() && testOutputPeaks() ? 0 : 1;
 }

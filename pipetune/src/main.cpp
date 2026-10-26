@@ -320,7 +320,8 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
        .dspIdlePolicy = prepared.dspIdlePolicy,
        .inputChannelCount = 2,
        .outputConfiguration = std::move(prepared.outputConfiguration),
-       .sfzMaxSizeMiB = prepared.sfzMaxSizeMiB},
+       .sfzMaxSizeMiB = prepared.sfzMaxSizeMiB,
+       .inferChannelsFromPreset = true},
       pipetune::PipeWireRunMode::untilInterrupted);
   if (!result.success) {
     std::cerr << "pipetune: " << result.error << '\n';

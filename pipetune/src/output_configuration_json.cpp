@@ -77,8 +77,10 @@ OutputConfigurationResult parseOutputConfigurationJson(yyjson_val *root) {
     return fail("output and channel arrays must contain at most sixteen entries");
   for (auto index = std::size_t{0}; index < yyjson_arr_size(outputs); ++index) {
     auto *value = yyjson_arr_get(outputs, index);
-    if (!hasFields(value, {"id", "enabled", "device"}))
-      return fail("configured output requires exactly id, enabled, and device");
+    auto *profileIntent = yyjson_obj_get(value, "profileIntent");
+    if (profileIntent == nullptr ? !hasFields(value, {"id", "enabled", "device"}) :
+        !hasFields(value, {"id", "enabled", "device", "profileIntent"}))
+      return fail("configured output requires id, enabled, device, and optional profileIntent");
     auto output = ConfiguredOutput{};
     auto *enabled = yyjson_obj_get(value, "enabled");
     if (!readString(yyjson_obj_get(value, "id"), output.id) || !yyjson_is_bool(enabled))
@@ -86,6 +88,20 @@ OutputConfigurationResult parseOutputConfigurationJson(yyjson_val *root) {
     output.enabled = yyjson_get_bool(enabled);
     const auto error = parseOutputDeviceJson(yyjson_obj_get(value, "device"), output.device);
     if (!error.empty()) return fail(error);
+    if (profileIntent != nullptr) {
+      auto *card = yyjson_obj_get(profileIntent, "card");
+      auto intent = OutputProfileIntent{};
+      if (!hasFields(profileIntent, {"card", "outputKey"}) ||
+          !hasFields(card, {"api", "location", "vendor", "product", "serial"}) ||
+          !readString(yyjson_obj_get(profileIntent, "outputKey"), intent.outputKey) ||
+          !readString(yyjson_obj_get(card, "api"), intent.card.api) ||
+          !readString(yyjson_obj_get(card, "location"), intent.card.location) ||
+          !readString(yyjson_obj_get(card, "vendor"), intent.card.vendor) ||
+          !readString(yyjson_obj_get(card, "product"), intent.card.product) ||
+          !readString(yyjson_obj_get(card, "serial"), intent.card.serial))
+        return fail("output profile intent requires a card and outputKey without NUL");
+      output.profileIntent = std::move(intent);
+    }
     configuration.outputs.push_back(std::move(output));
   }
   for (auto index = std::size_t{0}; index < yyjson_arr_size(channels); ++index) {
@@ -140,6 +156,16 @@ yyjson_mut_val *makeOutputConfigurationJson(yyjson_mut_doc *doc, const OutputCon
     auto *device = makeOutputDeviceJson(doc, output.device);
     if (value == nullptr || device == nullptr || !yyjson_mut_obj_add_val(doc, value, "device", device) ||
         !add(value, "id", output.id) || !yyjson_mut_obj_add_bool(doc, value, "enabled", output.enabled)) return {};
+    if (output.profileIntent) {
+      auto *intent = yyjson_mut_obj_add_obj(doc, value, "profileIntent");
+      auto *card = intent == nullptr ? nullptr : yyjson_mut_obj_add_obj(doc, intent, "card");
+      if (card == nullptr || !add(intent, "outputKey", output.profileIntent->outputKey) ||
+          !add(card, "api", output.profileIntent->card.api) ||
+          !add(card, "location", output.profileIntent->card.location) ||
+          !add(card, "vendor", output.profileIntent->card.vendor) ||
+          !add(card, "product", output.profileIntent->card.product) ||
+          !add(card, "serial", output.profileIntent->card.serial)) return {};
+    }
   }
   for (const auto &slot : configuration.channels) {
     auto *value = yyjson_mut_arr_add_obj(doc, channels);

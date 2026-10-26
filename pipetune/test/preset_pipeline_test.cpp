@@ -1270,6 +1270,124 @@ static bool testRetainedRecipeRebuild(
                "rebuild must retain the preset recipe after file removal");
 }
 
+static bool testInferredPresetChannels(const std::filesystem::path &directory) {
+  const auto load = [&](std::string_view name, std::string_view json) {
+    const auto path = writePreset(directory, name, json);
+    return pipetune::loadDspPipeline(path,
+        {.sampleRate = 48000.0F, .maxChannels = 2, .maxFrames = 64,
+         .inferChannelsFromPreset = true});
+  };
+  const auto bypass = pipetune::createBypassDspPipeline(
+      {.sampleRate = 48000.0F, .maxChannels = 8, .maxFrames = 64,
+       .inferChannelsFromPreset = true});
+  if (!check(bypass.pipeline != nullptr && bypass.pipeline->maxChannels() == 2 &&
+             bypass.pipeline->outputChannelCount() == 2,
+             "inferred bypass must retain the stereo input width")) return false;
+  const auto explicitBypass = pipetune::createBypassDspPipeline(
+      {.sampleRate = 48000.0F, .maxChannels = 8, .maxFrames = 64});
+  if (!check(explicitBypass.pipeline != nullptr && explicitBypass.pipeline->maxChannels() == 8 &&
+             explicitBypass.pipeline->outputChannelCount() == 8,
+             "explicit-format bypass must retain its requested output width")) return false;
+
+  const auto matrix = load("infer-matrix.effetune_preset",
+      R"json({"pipeline":[{"name":"Matrix","channel":"A","parameters":{"mx":"0213"}}]})json");
+  if (!check(matrix.pipeline != nullptr, matrix.error) ||
+      !check(matrix.pipeline->maxChannels() == 4 && matrix.pipeline->outputChannelCount() == 4,
+             "Matrix routes must extend the processing and final bus width")) return false;
+  auto matrixSamples = std::vector<float>{0.4F, 0.2F, -0.3F, -0.1F,
+                                          0.0F, 0.0F, 0.0F, 0.0F};
+  if (!check(matrix.pipeline->process(matrixSamples, 4, 2, 0.0) == pipetune::ProcessStatus::ok,
+             "inferred-width Matrix processing failed") ||
+      !check(approximately(matrixSamples[4], 0.4F) && approximately(matrixSamples[5], 0.2F) &&
+             approximately(matrixSamples[6], -0.3F) && approximately(matrixSamples[7], -0.1F),
+             "inferred channels three and four must contain the routed stereo samples")) return false;
+  const auto folded = load("infer-folded.effetune_preset",
+      R"json({"pipeline":[{"name":"Channel Divider","channel":"A","parameters":{"bc":3}},
+         {"name":"Matrix","channel":"A","parameters":{"mx":"0011"}}]})json");
+  if (!check(folded.pipeline != nullptr, folded.error) ||
+      !check(folded.pipeline->maxChannels() == 6 && folded.pipeline->outputChannelCount() == 2,
+             "a final Matrix must fold a wider intermediate bus to stereo")) return false;
+  const auto routed = load("infer-bus.effetune_preset",
+      R"json({"pipeline":[{"name":"Channel Divider","channel":"A","outputBus":1,"parameters":{"bc":3}},
+         {"name":"Matrix","channel":"A","inputBus":1,"outputBus":0,"parameters":{"mx":"2031"}}]})json");
+  if (!check(routed.pipeline != nullptr, routed.error) ||
+      !check(routed.pipeline->maxChannels() == 6 && routed.pipeline->outputChannelCount() == 2,
+             "an intermediate bus must not extend the final main bus")) return false;
+  const auto fir = load("infer-fir.effetune_preset",
+      R"json({"pipeline":[{"name":"FIR Crossover","channel":"A","parameters":{"bc":3}}]})json");
+  if (!check(fir.pipeline != nullptr, fir.error) ||
+      !check(fir.pipeline->maxChannels() == 6 && fir.pipeline->outputChannelCount() == 6,
+             "FIR Crossover bands must determine the output width")) return false;
+  for (const auto effect : {"Channel Divider", "FIR Crossover"}) {
+    const auto narrowedJson = std::string(R"json({"pipeline":[
+        {"name":"Matrix","channel":"A","parameters":{"mx":"001102p1304p1506p17"}},
+        {"name":")json") + effect + R"json(","channel":"A","parameters":{"bc":2}}]})json";
+    const auto narrowed = load(std::string("infer-narrowed-") + effect + ".effetune_preset", narrowedJson);
+    if (!check(narrowed.pipeline != nullptr, narrowed.error) ||
+        !check(narrowed.pipeline->maxChannels() == 8 && narrowed.pipeline->outputChannelCount() == 4,
+               "a final band splitter must discard lanes outside its configured stereo bands")) return false;
+    const auto json = std::string(R"json({"pipeline":[{"name":")json") + effect +
+        R"json(","channel":"A","parameters":{"bc":2}},
+        {"name":"Volume","channel":"5","parameters":{"vl":0}}]})json";
+    const auto odd = load(std::string("infer-odd-") + effect + ".effetune_preset", json);
+    if (!check(odd.pipeline != nullptr, odd.error) ||
+        !check(odd.pipeline->maxChannels() == 6 && odd.pipeline->outputChannelCount() == 5 &&
+               odd.pipeline->activePluginCount() == 2,
+               "stereo-band splitters need an even processing width with odd output addresses")) return false;
+  }
+  for (const auto matrixKey : {"dm", "fm", "rm"}) {
+    // Route stereo input to Ch 4 without any later node declaring that channel.
+    auto coefficients = std::string{};
+    for (auto index = 0u; index < 50u; ++index) {
+      if (index != 0) coefficients += ',';
+      coefficients += index == 48u ? "-1" : "0";
+    }
+    const auto json = std::string(R"json({"pipeline":[{"name":"Spatial Mapper","channel":"A",
+        "parameters":{"ic":2,")json") + matrixKey + "\":[" + coefficients + "]}}]}";
+    const auto spatial = load(std::string("infer-spatial-") + matrixKey + ".effetune_preset", json);
+    if (!check(spatial.pipeline != nullptr, spatial.error) ||
+        !check(spatial.pipeline->maxChannels() == 4 && spatial.pipeline->outputChannelCount() == 4,
+               "Spatial Mapper component matrices must declare their output channels")) return false;
+  }
+  const auto bass = load("infer-bass.effetune_preset",
+      R"json({"pipeline":[{"name":"Bass Management","channel":"A",
+        "parameters":{"su":8,"ro":[1,0,0,3],"rt":[8]}}]})json");
+  if (!check(bass.pipeline != nullptr, bass.error) ||
+      !check(bass.pipeline->maxChannels() == 4 && bass.pipeline->outputChannelCount() == 4,
+             "Bass Management sub masks must extend the processing and output width")) return false;
+  const auto ignored = load("infer-ignored.effetune_preset",
+      R"json({"pipeline":[{"name":"Section","enabled":false},
+         {"name":"Volume","channel":"16"},
+         {"name":"Section","enabled":true},
+         {"name":"Unknown","channel":"16"},
+         {"name":"Volume","enabled":false,"channel":"16"},
+         {"name":"Volume","channel":"34"}]})json");
+  if (!check(ignored.pipeline != nullptr, ignored.error) ||
+      !check(ignored.pipeline->maxChannels() == 4 && ignored.pipeline->outputChannelCount() == 4,
+             "only enabled and supported channel selections may declare the final bus width")) return false;
+  const auto invalidPairRoute = load("infer-pair-scope.effetune_preset",
+      R"json({"pipeline":[{"name":"Volume","channel":"6","inputBus":1,"outputBus":1},
+         {"name":"Matrix","channel":"34","parameters":{"mx":"02"}}]})json");
+  if (!check(invalidPairRoute.pipeline != nullptr, invalidPairRoute.error) ||
+      !check(invalidPairRoute.pipeline->maxChannels() == 6 &&
+             invalidPairRoute.pipeline->outputChannelCount() == 2,
+             "Matrix routes outside a selected pair must not declare extra output channels")) return false;
+  for (const auto effect : {"DC Offset", "Hum Generator"}) {
+    const auto json = std::string(R"json({"pipeline":[{"name":"Volume","channel":"6","inputBus":1,"outputBus":1},
+        {"name":")json") + effect + R"json(","channel":"A","parameters":{"of":0.25}}]})json";
+    const auto generated = load(std::string("infer-generator-") + effect + ".effetune_preset", json);
+    if (!check(generated.pipeline != nullptr, generated.error) ||
+        !check(generated.pipeline->maxChannels() == 6 && generated.pipeline->outputChannelCount() == 6,
+               "All-channel additive sources must declare every prepared output channel")) return false;
+  }
+  const auto rebuilt = pipetune::rebuildDspPipeline(*folded.pipeline,
+      {.sampleRate = 96000.0F, .maxChannels = 2, .maxFrames = 64,
+       .inferChannelsFromPreset = true});
+  return check(rebuilt.pipeline != nullptr, rebuilt.error) &&
+         check(rebuilt.pipeline->maxChannels() == 6 && rebuilt.pipeline->outputChannelCount() == 2,
+               "retained preset rebuild must infer the same channel layout");
+}
+
 int main() {
   const auto directory =
       std::filesystem::temp_directory_path() /
@@ -1294,7 +1412,7 @@ int main() {
       testBalanceChannelPairs(directory) &&
       testRawLegacyPipeline(directory) && testRejectedInputs(directory) &&
       testRuntimeBounds(directory) && testEffeTune27Multichannel(directory) &&
-      testRetainedRecipeRebuild(directory);
+      testRetainedRecipeRebuild(directory) && testInferredPresetChannels(directory);
   std::filesystem::remove_all(directory);
   return passed ? 0 : 1;
 }

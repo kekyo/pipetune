@@ -51,6 +51,7 @@ FilterGraphProperties makeFilterGraphProperties(
   result.input.emplace_back("node.virtual", "true");
   result.input.emplace_back("node.always-process", "true");
   if (options.multipleOutputs) {
+    result.input.emplace_back("node.pipetune.public-sink", "true");
     result.input.emplace_back("node.pipetune.aggregate", "true");
     result.input.emplace_back("node.pipetune.public-input", "true");
     result.input.emplace_back("node.pipetune.manage-default", "true");

@@ -187,11 +187,15 @@ void setControlDspIdleAsync(ControlClient *client,
  * @param expectedRevision Live revision that must still be current.
  * @param callback Non-null completion callback.
  * @param userData Opaque callback argument.
+ * @param profileSelections OS profiles to change in the same operation.
+ * @param expectedInventoryRevision Optional guard against stale profile choices.
  */
 void setControlOutputAsync(ControlClient *client,
     const pipetune::OutputConfiguration &configuration,
     const std::optional<std::filesystem::path> &preset, std::uint64_t expectedRevision,
-    ControlClientReplyCallback callback, void *userData);
+    ControlClientReplyCallback callback, void *userData,
+    std::span<const pipetune::OutputProfileSelection> profileSelections = {},
+    std::optional<std::uint64_t> expectedInventoryRevision = {});
 
 } // namespace pipetune_gtk
 

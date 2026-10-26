@@ -118,6 +118,18 @@ public:
                   std::uint32_t channelCount, std::uint32_t frameCount,
                   double timeSeconds, const DspIdlePolicy &policy) noexcept;
 
+  /**
+   * Clears the active DSP's audio history after an input discontinuity.
+   *
+   * Call from the single audio processing thread while no process call is
+   * running. The active preset, its generation, idle policy, and cumulative
+   * performance counters remain unchanged. The next block starts a new idle
+   * observation, even if the previous source had entered idle sleep.
+   *
+   * @return Status from resetting the selected DSP pipeline.
+   */
+  ProcessStatus resetProcessingState() noexcept;
+
   /** Returns the currently active DSP pipeline generation. */
   std::uint64_t activeGeneration() const noexcept;
 
@@ -205,6 +217,12 @@ public:
 
   /** Returns the active pipeline's aggregate latency in DSP frames. */
   std::uint32_t activeLatencyFrames() const noexcept;
+
+  /** Returns the prepared processing width. Call only on the replacement thread. */
+  std::uint32_t maxChannels() const noexcept;
+
+  /** Returns the final preset output width. Call only on the replacement thread. */
+  std::uint32_t outputChannelCount() const noexcept;
 
   /** Returns the active native backend, or no value for bypass. */
   std::optional<DspBackendKind> backendKind() const noexcept;

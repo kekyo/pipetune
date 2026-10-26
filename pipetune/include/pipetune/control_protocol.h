@@ -67,6 +67,10 @@ struct ControlRequest {
   DspIdlePolicy dspIdlePolicy = {};
   /** Complete replacement for setOutput; persistence is a separate operation. */
   OutputConfiguration outputConfiguration = {};
+  /** Complete card profile choices for this operation; empty leaves OS profiles alone. */
+  std::vector<OutputProfileSelection> outputProfileSelections = {};
+  /** Optional guard against card/profile inventory changes during editing. */
+  std::optional<std::uint64_t> expectedOutputInventoryRevision = std::nullopt;
   /** Optional revision guard for setOutput; a mismatch leaves live state intact. */
   std::optional<std::uint64_t> expectedRevision = std::nullopt;
   /** Optional processing choice for setOutput: empty path means bypass;
@@ -219,14 +223,26 @@ struct ControlRuntimeStatus {
   OutputConfiguration outputConfiguration = {};
   /** Current selectable and unsupported devices; never inferred from settings. */
   std::vector<AvailableOutput> availableOutputs = {};
+  /** Selectable card profiles, including layouts observed during this session. */
+  std::vector<AvailableOutputProfile> availableOutputProfiles = {};
+  /** Monotonic revision of physical output and profile inventory. */
+  std::uint64_t outputInventoryRevision = 0;
   /** True after the first complete inventory snapshot has arrived. */
   bool outputInventoryReady = false;
   /** Enumeration diagnostic, or empty for a successful or pending inventory. */
   std::string outputInventoryError = {};
+  /** True while a saved profile is being restored after its card reconnects. */
+  bool outputProfileRestoring = false;
+  /** Last reconnect profile restoration failure, or empty after success. */
+  std::string outputProfileRestorationError = {};
   /** Physical output controls, independent of saved routing and master gain. */
   std::vector<OutputVolumeState> outputVolumes = {};
   /** Current resolved output paths and explicitly estimated delay compensation. */
   std::vector<OutputTimingState> outputTimings = {};
+  /** Recent final PCM peak per logical output channel, in linear amplitude. */
+  std::vector<float> outputPeaks = {};
+  /** Recent PCM peak after combining Processed and Direct, in linear amplitude. */
+  std::vector<float> mixedOutputPeaks = {};
 };
 
 /**
@@ -345,7 +361,9 @@ std::string makeSetDspIdleControlRequest(const DspIdlePolicy &policy);
  */
 std::string makeSetOutputControlRequest(const OutputConfiguration &configuration,
     std::optional<std::uint64_t> expectedRevision = std::nullopt,
-    const std::optional<std::filesystem::path> &preset = std::nullopt);
+    const std::optional<std::filesystem::path> &preset = std::nullopt,
+    std::span<const OutputProfileSelection> profileSelections = {},
+    std::optional<std::uint64_t> expectedOutputInventoryRevision = std::nullopt);
 
 /**
  * Returns a JSON live-preset request without framing newline.

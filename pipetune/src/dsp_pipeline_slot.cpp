@@ -282,6 +282,16 @@ DspIdleProcessResult DspPipelineSlot::processWithIdle(
           .activity = activity};
 }
 
+ProcessStatus DspPipelineSlot::resetProcessingState() noexcept {
+  const auto selected = protectActive();
+  const auto status = selected.pipeline->reset();
+  silentInputFrames_ = 0;
+  idleConfigured_ = false;
+  idleSleeping_ = false;
+  releaseActive();
+  return status;
+}
+
 std::uint64_t DspPipelineSlot::activeGeneration() const noexcept {
   while (true) {
     const auto sequence =
@@ -376,6 +386,14 @@ std::span<const PresetEntry> DspPipelineSlot::presetEntries() const noexcept {
 
 std::uint32_t DspPipelineSlot::activeLatencyFrames() const noexcept {
   return active_.load(std::memory_order_acquire)->latencyFrames();
+}
+
+std::uint32_t DspPipelineSlot::maxChannels() const noexcept {
+  return current_->maxChannels();
+}
+
+std::uint32_t DspPipelineSlot::outputChannelCount() const noexcept {
+  return current_->outputChannelCount();
 }
 
 std::optional<DspBackendKind>

@@ -27,7 +27,7 @@ This separation preserves one known compatibility path while allowing
 PipeTune to select the highest usable optimized implementation or a
 user-pinned tier. One pipeline always uses exactly one implementation.
 
-The private backend source set follows the EffeTune application tag v2.14.0,
+The private backend source set follows the EffeTune application tag v2.15.0,
 including the graph core, `spectrum_tap.cpp`, and generated graph-capacity
 contract required by its engine.
 PipeTune's loader surface remains the routed pipeline API and now includes
@@ -164,7 +164,10 @@ and validates:
 - each kernel's parameter-byte capacity; and
 - every external-asset capacity.
 
-The pinned EffeTune 2.14.0 contract contains 112 kernels. A backend from an
+The pinned EffeTune 2.15.0 contract contains 112 kernels. SFZ Note Player has
+20 float parameters, including the saved `Classic` or `Event` detection mode;
+an omitted mode selects `Classic`. `Event` adds seven 20 ms analysis hops to
+the reported latency, or about 140 ms. A backend from an
 earlier release is rejected even though the numeric ABI version remains one,
 because its required symbols and complete catalog do not match.
 
@@ -197,8 +200,9 @@ beyond initial measurement. They check actual correction/clicks, routing and
 reset, and compare silence suspension with uninterrupted processing. Official tolerances are
 retained for every case.
 
-EffeTune 2.13.0 adds coverage of all 17 Adaptive Prediction and 11 SFZ Note
+The existing references cover all 17 Adaptive Prediction and 11 Classic SFZ Note
 Player goldens, alongside the 18 Cassette Artifacts and 13 IR Reverb goldens.
+Two EffeTune 2.15.0 Event references bring SFZ Note Player to 13 golden cases.
 SFZ banks and convolution assets use the same copy ABI as the product loader.
 Independent asset-preparation tests compare C++ values and rendered PCM with
 the pinned upstream JavaScript preparation, including Room EQ's three phase

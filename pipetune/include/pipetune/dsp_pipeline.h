@@ -31,10 +31,12 @@ struct PipelineBuildOptions {
    * Individual DSPs may support only a subset and reject preparation.
    */
   float sampleRate;
-  /** Maximum planar channel count, from one through sixteen. */
+  /** Maximum planar channel count from one through sixteen; ignored for an inferred preset. */
   std::uint32_t maxChannels;
   /** Maximum frame count accepted by one process call; must be at least 32. */
   std::uint32_t maxFrames;
+  /** Infer prepared and final output widths from a stereo-input preset at load time. */
+  bool inferChannelsFromPreset = false;
 };
 
 /**
@@ -146,8 +148,10 @@ public:
 
   /** Returns the sample rate supplied at construction. */
   float sampleRate() const noexcept;
-  /** Returns the maximum channel count supplied at construction. */
+  /** Returns the prepared channel count, inferred from the preset when requested. */
   std::uint32_t maxChannels() const noexcept;
+  /** Returns the declared output width of the final main bus. */
+  std::uint32_t outputChannelCount() const noexcept;
   /** Returns the maximum frame count supplied at construction. */
   std::uint32_t maxFrames() const noexcept;
   /** Returns the effective latency of output bus zero in frames. */
@@ -249,12 +253,13 @@ struct PipelineLoadResult {
  * This includes Pitch Meter and Chroma Spiral. Bass Extender requires one or
  * two selected channels. Bass Management requires explicit All selection and
  * valid subwoofer routes; its Linear filters are generated from the preset.
- * The selected processing width is preserved for
- * Spatial Mapper; presets do not enlarge the prepared stream's channel count.
+ * The selected processing width is preserved for Spatial Mapper. When channel
+ * inference is enabled, the preset determines the prepared processing width
+ * and final main-bus width from its declared topology at load time.
  *
  * @param context Measurement storage used during preparation and rebuilds.
  * @param presetPath Preset path with the exact `.effetune_preset` extension.
- * @param options Maximum processing format for the prepared native engine.
+ * @param options Processing format and optional preset channel inference.
  * @return A pipeline or a fatal diagnostic, plus any non-fatal warnings.
  */
 PipelineLoadResult loadDspPipeline(const std::filesystem::path &presetPath,

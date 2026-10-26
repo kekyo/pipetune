@@ -94,11 +94,17 @@ msgstr "सक्रिय"
 msgid "Active plugins"
 msgstr "सक्रिय प्लगइन"
 
+msgid "Add"
+msgstr "जोड़ें"
+
+msgid "Add an output device to start configuring channels."
+msgstr "चैनल कॉन्फ़िगर करने के लिए आउटपुट डिवाइस जोड़ें।"
+
+msgid "Add device…"
+msgstr "डिवाइस जोड़ें…"
+
 msgid "Advanced"
 msgstr "उन्नत"
-
-msgid "After"
-msgstr "बाद में"
 
 msgid "All"
 msgstr "सभी"
@@ -109,11 +115,11 @@ msgstr "सभी सेटिंग सहेजी गईं"
 msgid "Ambiguous device"
 msgstr "डिवाइस की पहचान अस्पष्ट है"
 
-msgid "Ambiguous device. Reassign device to choose the output."
-msgstr "डिवाइस की पहचान अस्पष्ट है। आउटपुट चुनने के लिए डिवाइस फिर से असाइन करें।"
-
 msgid "Apply"
 msgstr "लागू करें"
+
+msgid "Apply configuration"
+msgstr "कॉन्फ़िगरेशन लागू करें"
 
 msgid "Audio outputs changed"
 msgstr "ऑडियो आउटपुट बदल दिए गए"
@@ -139,14 +145,8 @@ msgstr "स्वचालित"
 msgid "Automatic — follow PipeWire graph sampling frequency"
 msgstr "स्वचालित — PipeWire ग्राफ़ की नमूनाकरण आवृत्ति का अनुसरण करें"
 
-msgid "Available"
-msgstr "उपलब्ध"
-
 msgid "Baseline"
 msgstr "आधार स्थिति"
-
-msgid "Before"
-msgstr "पहले"
 
 msgid "Bypass"
 msgstr "बाइपास"
@@ -202,9 +202,18 @@ msgstr "मौन पर निलंबन बदला जा रहा है
 msgid "Changing silence suspension failed"
 msgstr "मौन पर निलंबन बदलना विफल रहा"
 
+msgid "Channel changes"
+msgstr "चैनल बदलाव"
+
 #, brace-format
 msgid "Channel gains: {0}"
 msgstr "चैनल गेन: {0}"
+
+msgid "Channels"
+msgstr "चैनल"
+
+msgid "Choose a device to add to this configuration."
+msgstr "इस कॉन्फ़िगरेशन में जोड़ने के लिए डिवाइस चुनें।"
 
 msgid "Choose a preset before enabling DSP processing"
 msgstr "DSP प्रोसेसिंग चालू करने से पहले प्रीसेट चुनें"
@@ -214,6 +223,9 @@ msgstr "कोई मानक या सहेजा गया EffeTune प्�
 
 msgid "Choose an EffeTune preset"
 msgstr "EffeTune प्रीसेट चुनें"
+
+msgid "Choose an output profile or replace the device to review its channels."
+msgstr "चैनल जाँचने के लिए आउटपुट प्रोफ़ाइल चुनें या डिवाइस बदलें।"
 
 msgid "Choose bypass, Automatic + Suggest, and Scalar + Auto SIMD."
 msgstr "बाइपास, स्वचालित + सुझाव और Scalar + स्वचालित SIMD चुनें।"
@@ -288,11 +300,20 @@ msgstr "डिफ़ॉल्ट चुने गए"
 msgid "Device channel"
 msgstr "डिवाइस चैनल"
 
+msgid "Device configuration"
+msgstr "डिवाइस कॉन्फ़िगरेशन"
+
+msgid "Device configuration…"
+msgstr "डिवाइस कॉन्फ़िगरेशन…"
+
 msgid "Device mute unknown"
 msgstr "डिवाइस की म्यूट स्थिति अज्ञात"
 
 msgid "Device muted"
 msgstr "डिवाइस म्यूट है"
+
+msgid "Device name"
+msgstr "डिवाइस का नाम"
 
 msgid "Device unmuted"
 msgstr "डिवाइस म्यूट नहीं है"
@@ -336,6 +357,9 @@ msgstr "DSP प्रविष्टि"
 msgid "DSP latency"
 msgstr "DSP विलंबता"
 
+msgid "DSP output levels (dBFS)"
+msgstr "DSP आउटपुट स्तर (dBFS)"
+
 msgid "DSP processing load; graph capped at 100%."
 msgstr "DSP प्रोसेसिंग लोड; ग्राफ़ 100% पर सीमित है।"
 
@@ -345,6 +369,9 @@ msgstr "DSP नमूनाकरण आवृत्ति"
 #, brace-format
 msgid "DSP sampling frequency {0}  •  PipeWire graph sampling frequency {1}"
 msgstr "DSP नमूनाकरण आवृत्ति {0}  •  PipeWire ग्राफ़ नमूनाकरण आवृत्ति {1}"
+
+msgid "Edit the complete output configuration, then apply it once. Use Apply in the main window to save it."
+msgstr "पूरा आउटपुट कॉन्फ़िगरेशन संपादित करें, फिर उसे एक साथ लागू करें। सहेजने के लिए मुख्य विंडो में लागू करें दबाएँ।"
 
 msgid "Effective backend"
 msgstr "प्रभावी बैकएंड"
@@ -395,6 +422,9 @@ msgstr "बलपूर्वक"
 msgid "Force — request the fixed graph sampling frequency"
 msgstr "बलपूर्वक — निश्चित ग्राफ़ नमूनाकरण आवृत्ति का अनुरोध करें"
 
+msgid "If the preset does not support these channels, cancel and select a compatible preset or Bypass in the main window."
+msgstr "यदि प्रीसेट इन चैनलों का समर्थन नहीं करता, तो रद्द करें और मुख्य विंडो में संगत प्रीसेट या बायपास चुनें।"
+
 msgid "Ignore"
 msgstr "अनदेखा करें"
 
@@ -427,6 +457,9 @@ msgstr "अंतिम इनपुट"
 
 msgid "Later"
 msgstr "बाद में"
+
+msgid "Levels after combining Processed and Direct, before device volume."
+msgstr "Processed और Direct को मिलाने के बाद, डिवाइस वॉल्यूम से पहले के स्तर।"
 
 msgid "Live Configuration"
 msgstr "लाइव कॉन्फ़िगरेशन"
@@ -464,6 +497,9 @@ msgstr "लोड"
 msgid "Measured frame rate"
 msgstr "मापी गई फ़्रेम दर"
 
+msgid "Mixed output levels (dBFS)"
+msgstr "मिश्रित आउटपुट स्तर (dBFS)"
+
 msgid "Multiple — outputs selected in PipeTune"
 msgstr "एकाधिक — PipeTune में चुने गए आउटपुट"
 
@@ -473,14 +509,14 @@ msgstr "मूल बैकएंड"
 msgid "Never"
 msgstr "कभी नहीं"
 
+msgid "No unconfigured output devices are available."
+msgstr "कोई उपलब्ध आउटपुट डिवाइस कॉन्फ़िगरेशन से बाहर नहीं है।"
+
 msgid "None"
 msgstr "कोई नहीं"
 
 msgid "Not connected"
 msgstr "कनेक्ट नहीं है"
-
-msgid "Not connected. Reconnect it or reassign this device."
-msgstr "कनेक्ट नहीं है। इसे दोबारा कनेक्ट करें या इस डिवाइस को फिर से असाइन करें।"
 
 msgid "Off"
 msgstr "बंद"
@@ -491,14 +527,17 @@ msgstr "PipeTune खोलें"
 msgid "Output"
 msgstr "आउटपुट"
 
-msgid "Output devices"
-msgstr "आउटपुट डिवाइस"
+msgid "Output channels"
+msgstr "आउटपुट चैनल"
 
 msgid "Output mode"
 msgstr "आउटपुट मोड"
 
-msgid "Output settings changed. Reopen the mapping review."
-msgstr "आउटपुट सेटिंग बदल गई हैं। चैनल असाइनमेंट की समीक्षा फिर से खोलें।"
+msgid "Output profile"
+msgstr "आउटपुट प्रोफ़ाइल"
+
+msgid "Output settings changed. Cancel and reopen the configuration dialog."
+msgstr "आउटपुट सेटिंग बदल गई हैं। रद्द करें और कॉन्फ़िगरेशन संवाद फिर खोलें।"
 
 #, brace-format
 msgid "Overrun {0}  •  Underrun {1}  •  Processing {2}"
@@ -509,6 +548,12 @@ msgstr "ओवररन फ़्रेम"
 
 msgid "PCM data rate"
 msgstr "PCM डेटा दर"
+
+msgid "Peak levels before device volume."
+msgstr "डिवाइस की वॉल्यूम सेटिंग से पहले के पीक स्तर।"
+
+msgid "Peak output level before device volume. Silence is −∞ dBFS; 0 dBFS is full scale."
+msgstr "डिवाइस की वॉल्यूम सेटिंग से पहले का आउटपुट पीक स्तर। मौन −∞ dBFS है; 0 dBFS पूर्ण स्केल है।"
 
 msgid "Pending dialog settings will be reapplied"
 msgstr "लंबित डायलॉग सेटिंग फिर लागू की जाएँगी"
@@ -565,12 +610,6 @@ msgstr "प्रीसेट आवश्यक"
 msgid "Preset warnings"
 msgstr "प्रीसेट चेतावनियाँ"
 
-msgid "Press Enter or leave the field to preview the purpose label."
-msgstr "उद्देश्य का लेबल प्रीव्यू करने के लिए Enter दबाएँ या फ़ील्ड से बाहर जाएँ।"
-
-msgid "Preview mapping"
-msgstr "असाइनमेंट का पूर्वावलोकन"
-
 msgid "Processing"
 msgstr "प्रोसेसिंग"
 
@@ -586,26 +625,41 @@ msgstr "प्रोसेसिंग समय"
 msgid "Profile changed"
 msgstr "प्रोफ़ाइल बदल गई"
 
-msgid "Profile changed. Reassign device to update these channels."
-msgstr "प्रोफ़ाइल बदल गई है। इन चैनलों को अपडेट करने के लिए डिवाइस फिर से असाइन करें।"
-
 msgid "Purpose"
 msgstr "उपयोग"
+
+msgid "Purpose label for this output channel."
+msgstr "इस आउटपुट चैनल के उपयोग का लेबल।"
 
 msgid "Quit"
 msgstr "बाहर निकलें"
 
-msgid "Reassign device…"
-msgstr "डिवाइस फिर से असाइन करें…"
+msgid "Reconnect this device, replace it, or remove it from the configuration."
+msgstr "इस डिवाइस को फिर से जोड़ें, बदलें या कॉन्फ़िगरेशन से हटाएँ।"
+
+msgid "Remove from configuration"
+msgstr "कॉन्फ़िगरेशन से हटाएँ"
+
+msgid "Remove this device while keeping other devices' channel numbers."
+msgstr "अन्य डिवाइस के चैनल नंबर बनाए रखते हुए इस डिवाइस को हटाएँ।"
+
+msgid "Remove unassigned channels and renumber the remaining channels."
+msgstr "असाइन नहीं किए गए चैनल हटाएँ और बाकी चैनलों को नए नंबर दें।"
+
+msgid "Remove unused channels"
+msgstr "अप्रयुक्त चैनल हटाएँ"
+
+msgid "Removed devices"
+msgstr "हटाए गए डिवाइस"
+
+msgid "Replace"
+msgstr "बदलें"
+
+msgid "Replace with another device…"
+msgstr "अन्य डिवाइस से बदलें…"
 
 msgid "Reported device controls, separate from the OS master volume. Channel gains show the minimum and maximum across the device."
 msgstr "डिवाइस द्वारा बताए गए नियंत्रण मान, जो OS के मुख्य वॉल्यूम से अलग हैं। चैनल गेन डिवाइस के सभी चैनलों का न्यूनतम और अधिकतम मान दिखाते हैं।"
-
-msgid "Reserved"
-msgstr "आरक्षित"
-
-msgid "Reserved EffeTune channels"
-msgstr "आरक्षित EffeTune चैनल"
 
 msgid "Restart now"
 msgstr "अभी पुनः आरंभ करें"
@@ -628,11 +682,8 @@ msgstr "डायलॉग खुलने पर कैप्चर की ग�
 msgid "Restoring the previous live settings…"
 msgstr "पिछली लाइव सेटिंग पुनर्स्थापित हो रही हैं…"
 
-msgid "Review channel mapping"
-msgstr "चैनल असाइनमेंट की समीक्षा"
-
-msgid "Review where each final EffeTune channel will play. Your preset is unchanged. Preview this mapping, then use Apply in the main window to save it."
-msgstr "समीक्षा करें कि EffeTune का हर अंतिम चैनल कहाँ बजेगा। आपका प्रीसेट नहीं बदलेगा। इस असाइनमेंट का पूर्वावलोकन करें, फिर इसे सहेजने के लिए मुख्य विंडो में लागू करें का उपयोग करें।"
+msgid "Review the preset's channel assignments before applying these changes."
+msgstr "इन बदलावों को लागू करने से पहले प्रीसेट के चैनल असाइनमेंट की जाँच करें।"
 
 msgid "Rollback requested"
 msgstr "रोलबैक का अनुरोध किया गया"
@@ -675,14 +726,8 @@ msgstr "समग्र गेन: {0}"
 msgid "seconds"
 msgstr "सेकंड"
 
-msgid "Select a replacement output device."
-msgstr "बदलने के लिए नया आउटपुट डिवाइस चुनें।"
-
 msgid "Select at least one output device."
 msgstr "कम से कम एक आउटपुट डिवाइस चुनें।"
-
-msgid "Select the saved device whose channels this output will use."
-msgstr "वह सहेजा गया डिवाइस चुनें जिसके चैनल यह आउटपुट इस्तेमाल करेगा।"
 
 msgid "Setting up PipeTune for this user…"
 msgstr "इस उपयोगकर्ता के लिए PipeTune सेट अप किया जा रहा है…"
@@ -746,26 +791,29 @@ msgstr "सिस्टम"
 msgid "System default"
 msgstr "सिस्टम डिफ़ॉल्ट"
 
-msgid "The 16-channel limit includes disabled and reserved channels. Use existing channels to replace a saved device."
-msgstr "16 चैनलों की सीमा में अक्षम और आरक्षित चैनल भी शामिल हैं। सहेजे गए डिवाइस को बदलने के लिए मौजूदा चैनलों का उपयोग करें।"
+msgid "The OS selects the output. Saved device assignments are inactive."
+msgstr "ऑपरेटिंग सिस्टम आउटपुट चुनता है। सहेजे गए डिवाइस आवंटन निष्क्रिय हैं।"
 
-msgid "The OS selects the output. Saved multiple-output assignments below are inactive."
-msgstr "OS आउटपुट चुनता है। नीचे सहेजे गए एकाधिक आउटपुट के असाइनमेंट निष्क्रिय हैं।"
+msgid "The replacement keeps the existing channel numbers and purpose labels."
+msgstr "बदलने पर मौजूदा चैनल नंबर और उपयोग के लेबल बने रहते हैं।"
 
-msgid "The selected device cannot be identified uniquely."
-msgstr "चुने गए डिवाइस की विशिष्ट पहचान नहीं की जा सकती।"
-
-msgid "The selected output is no longer available with this profile. Reopen the mapping review."
-msgstr "चुना गया आउटपुट अब इस प्रोफ़ाइल के साथ उपलब्ध नहीं है। असाइनमेंट की समीक्षा फिर से खोलें।"
+msgid "The selected output is no longer available with this profile. Review the configuration."
+msgstr "चुना गया आउटपुट अब इस प्रोफ़ाइल के साथ उपलब्ध नहीं है। कॉन्फ़िगरेशन की समीक्षा करें।"
 
 msgid "The UI language change will take effect after PipeTune GTK restarts."
 msgstr "PipeTune GTK पुनः आरंभ होने के बाद UI भाषा बदलाव प्रभावी होगा।"
+
+msgid "This device cannot be identified uniquely. Choose a replacement."
+msgstr "इस डिवाइस की विशिष्ट पहचान नहीं हो सकी। बदलने के लिए डिवाइस चुनें।"
 
 msgid "Turn off to pass audio through without an EffeTune preset."
 msgstr "EffeTune प्रीसेट के बिना ऑडियो पास करने के लिए बंद करें।"
 
 msgid "Unassigned"
 msgstr "असाइन नहीं किया गया"
+
+msgid "Unassigned channels"
+msgstr "असाइन नहीं किए गए चैनल"
 
 msgid "unavailable"
 msgstr "अनुपलब्ध"
@@ -785,17 +833,14 @@ msgstr "अज्ञात"
 msgid "Unknown sample format"
 msgstr "अज्ञात सैंपल फ़ॉर्मेट"
 
-msgid "Unsupported channel count"
-msgstr "चैनलों की संख्या समर्थित नहीं है"
-
 msgid "Updating settings"
 msgstr "सेटिंग अपडेट हो रही हैं"
 
 msgid "Updating settings failed"
 msgstr "सेटिंग अपडेट करना विफल रहा"
 
-msgid "Use existing channels…"
-msgstr "मौजूदा चैनलों का उपयोग करें…"
+msgid "Use this device"
+msgstr "इस डिवाइस का उपयोग करें"
 
 msgid "Versions"
 msgstr "संस्करण"

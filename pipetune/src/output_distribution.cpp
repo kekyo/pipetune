@@ -95,4 +95,85 @@ OutputDistributionArguments makeOutputDistributionArguments(
   return {std::move(arguments), {}};
 }
 
+// Match the public layouts used by desktop applications; the loopback maps
+// these channels by index to the private AUX bus without surround remixing.
+static std::vector<std::string> directInputPositions(std::uint32_t channels) {
+  switch (channels) {
+  case 2: return {"FL", "FR"};
+  case 3: return {"FL", "FR", "FC"};
+  case 4: return {"FL", "FR", "RL", "RR"};
+  case 5: return {"FL", "FR", "FC", "RL", "RR"};
+  case 6: return {"FL", "FR", "FC", "LFE", "RL", "RR"};
+  case 7: return {"FL", "FR", "FC", "LFE", "RC", "SL", "SR"};
+  case 8: return {"FL", "FR", "FC", "LFE", "RL", "RR", "SL", "SR"};
+  default: {
+    auto positions = std::vector<std::string>{};
+    for (auto channel = 0U; channel < channels; ++channel) positions.push_back("AUX" + std::to_string(channel));
+    return positions;
+  }
+  }
+}
+
+OutputDistributionArguments makeDirectOutputArguments(
+    const std::string &publicInputName, std::uint32_t channels,
+    const SampleRatePolicy &policy) {
+  if (publicInputName.empty() || publicInputName.find('\0') != std::string::npos ||
+      channels < 2 || channels > 16 || !sampleRatePolicyIsValid(policy))
+    return {{}, "invalid direct output configuration"};
+  auto document = std::unique_ptr<yyjson_mut_doc, decltype(&yyjson_mut_doc_free)>(
+      yyjson_mut_doc_new(nullptr), yyjson_mut_doc_free);
+  const auto error = OutputDistributionArguments{{}, "cannot encode direct output"};
+  if (!document) return error;
+  auto *root = yyjson_mut_obj(document.get());
+  if (!root) return error;
+  yyjson_mut_doc_set_root(document.get(), root);
+  auto *capture = yyjson_mut_obj_add_obj(document.get(), root, "capture.props");
+  auto *playback = yyjson_mut_obj_add_obj(document.get(), root, "playback.props");
+  if (!capture || !playback) return error;
+  const auto add = [&](yyjson_mut_val *object, const char *key, const std::string &value) {
+    return yyjson_mut_obj_add_strcpy(document.get(), object, key, value.c_str());
+  };
+  if (!add(root, "node.description", "PipeTune Direct Output") ||
+      !add(capture, "node.name", publicInputName + ".direct") ||
+      !add(capture, "media.class", "Audio/Sink") ||
+      !yyjson_mut_obj_add_bool(document.get(), capture, "node.virtual", true) ||
+      !yyjson_mut_obj_add_bool(document.get(), capture, "node.pipetune.public-sink", true) ||
+      !yyjson_mut_obj_add_bool(document.get(), capture, "node.pipetune.direct", true) ||
+      !yyjson_mut_obj_add_bool(document.get(), capture, "channelmix.upmix", false) ||
+      !add(playback, "node.name", publicInputName + ".direct.output") ||
+      !add(playback, "target.object", publicInputName + ".distribution") ||
+      !add(playback, "media.role", "PipeTune-Filter-Output") ||
+      !yyjson_mut_obj_add_bool(document.get(), playback, "node.passive", true) ||
+      !yyjson_mut_obj_add_bool(document.get(), playback, "node.pipetune.internal", true) ||
+      !yyjson_mut_obj_add_bool(document.get(), playback, "node.pipetune.managed-output", true) ||
+      !yyjson_mut_obj_add_bool(document.get(), playback, "node.dont-fallback", true) ||
+      !yyjson_mut_obj_add_bool(document.get(), playback, "node.dont-move", true) ||
+      !yyjson_mut_obj_add_bool(document.get(), playback, "node.linger", true) ||
+      !yyjson_mut_obj_add_bool(document.get(), playback, "stream.dont-remix", true)) return error;
+  const auto inputPositions = directInputPositions(channels);
+  for (auto *properties : {capture, playback}) {
+    if (!add(properties, "audio.format", "F32P") ||
+        !yyjson_mut_obj_add_uint(document.get(), properties, "audio.channels", channels)) return error;
+    auto *positions = yyjson_mut_obj_add_arr(document.get(), properties, "audio.position");
+    if (!positions) return error;
+    for (auto channel = 0U; channel < channels; ++channel) {
+      const auto position = properties == capture ? inputPositions[channel] : "AUX" + std::to_string(channel);
+      if (!yyjson_mut_arr_add_strcpy(document.get(), positions, position.c_str())) return error;
+    }
+    if (policy.mode == SampleRateMode::fixed &&
+        (!add(properties, "node.rate", "1/" + std::to_string(policy.fixedRate)) ||
+         !yyjson_mut_obj_add_uint(document.get(), properties, "audio.rate", policy.fixedRate))) return error;
+  }
+  // Direct playback must keep the shared clock request alive when the DSP
+  // input is idle. Both branches request the same rate, so they cannot compete.
+  if (policy.mode == SampleRateMode::fixed && policy.enforcement == SampleRateEnforcement::force &&
+      !add(playback, "node.force-rate", "0")) return error;
+  auto length = std::size_t{0};
+  auto *encoded = yyjson_mut_write(document.get(), YYJSON_WRITE_ESCAPE_UNICODE, &length);
+  if (!encoded) return error;
+  auto arguments = std::string(encoded, length);
+  std::free(encoded);
+  return {std::move(arguments), {}};
+}
+
 } // namespace pipetune

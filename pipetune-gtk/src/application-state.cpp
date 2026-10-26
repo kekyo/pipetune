@@ -9,6 +9,7 @@
 namespace pipetune_gtk {
 
 constexpr auto kMinimumInputRateIntervalMilliseconds = std::int64_t{500};
+constexpr auto kMinimumDspTimingIntervalMilliseconds = std::int64_t{1000};
 
 static InputRateState initialInputRateState() {
   return {
@@ -28,6 +29,8 @@ static DspTimingState initialDspTimingState() {
       .hasBaseline = false,
       .baselineFrames = 0,
       .baselineNanoseconds = 0,
+      .baselineMonotonicMilliseconds = 0,
+      .baselineSampleRate = 0,
       .hasAverage = false,
       .nanosecondsPerFrame = 0.0,
   };
@@ -93,25 +96,39 @@ static void updateInputRate(
 
 static void establishDspTimingBaseline(
     DspTimingState &timing,
-    const pipetune::ControlRuntimeStatus &status) {
+    const pipetune::ControlRuntimeStatus &status,
+    std::int64_t receivedAtMonotonicMilliseconds) {
   timing.hasBaseline = true;
   timing.baselineFrames = status.dspProcessedFrames;
   timing.baselineNanoseconds = status.dspProcessingNanoseconds;
+  timing.baselineMonotonicMilliseconds = receivedAtMonotonicMilliseconds;
+  timing.baselineSampleRate = status.dspSampleRate;
   timing.hasAverage = false;
   timing.nanosecondsPerFrame = 0.0;
 }
 
 static void updateDspTiming(
     DspTimingState &timing,
-    const pipetune::ControlRuntimeStatus &status) {
+    const pipetune::ControlRuntimeStatus &status,
+    std::int64_t receivedAtMonotonicMilliseconds) {
   if (status.processingMode != pipetune::ProcessingMode::preset) {
     timing = initialDspTimingState();
     return;
   }
   if (!timing.hasBaseline ||
       status.dspProcessedFrames < timing.baselineFrames ||
-      status.dspProcessingNanoseconds < timing.baselineNanoseconds) {
-    establishDspTimingBaseline(timing, status);
+      status.dspProcessingNanoseconds < timing.baselineNanoseconds ||
+      status.dspSampleRate != timing.baselineSampleRate ||
+      receivedAtMonotonicMilliseconds < timing.baselineMonotonicMilliseconds) {
+    establishDspTimingBaseline(timing, status, receivedAtMonotonicMilliseconds);
+    return;
+  }
+
+  // Peak meters and control changes can publish many times per second. Keep
+  // the load's measurement window independent of those notifications, using
+  // cumulative work so differently sized audio blocks retain their weight.
+  if (receivedAtMonotonicMilliseconds - timing.baselineMonotonicMilliseconds <
+      kMinimumDspTimingIntervalMilliseconds) {
     return;
   }
 
@@ -130,6 +147,7 @@ static void updateDspTiming(
   }
   timing.baselineFrames = status.dspProcessedFrames;
   timing.baselineNanoseconds = status.dspProcessingNanoseconds;
+  timing.baselineMonotonicMilliseconds = receivedAtMonotonicMilliseconds;
 }
 
 ApplicationState initialApplicationState() {
@@ -197,7 +215,8 @@ void applyControlResponse(
   }
   updateInputRate(state.inputRate, response.status,
                   receivedAtMonotonicMilliseconds);
-  updateDspTiming(state.dspTiming, response.status);
+  updateDspTiming(state.dspTiming, response.status,
+                  receivedAtMonotonicMilliseconds);
   if (response.kind == pipetune::ControlResponseKind::response) {
     state.warnings = response.warnings;
     state.diagnostic.clear();

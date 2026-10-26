@@ -197,6 +197,7 @@ add_library(
   src/gtk-resources.cpp
   src/launch-options.cpp
   src/main-window.cpp
+  src/output-level-meter.cpp
   src/status-level-meter.cpp
   src/status-icon.cpp
   src/tray-backend.cpp)
@@ -807,6 +808,12 @@ if(BUILD_TESTING)
     COMMAND
       ${PIPETUNE_GTK_XVFB_RUN} -a
       $<TARGET_FILE:pipetune_gtk_status_level_meter_tests>)
+
+  add_executable(pipetune_gtk_output_level_meter_tests test/output-level-meter-test.cpp)
+  target_link_libraries(pipetune_gtk_output_level_meter_tests PRIVATE pipetune_gtk_ui_core)
+  target_compile_options(pipetune_gtk_output_level_meter_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_gtk_output_level_meter_tests COMMAND
+    ${PIPETUNE_GTK_XVFB_RUN} -a $<TARGET_FILE:pipetune_gtk_output_level_meter_tests>)
 
   add_executable(
     pipetune_gtk_status_icon_tests

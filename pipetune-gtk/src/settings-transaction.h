@@ -10,8 +10,10 @@
 #include "pipetune/startup_config.h"
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace pipetune_gtk {
 
@@ -61,6 +63,14 @@ struct SettingsTransaction {
   bool liveChangeFailed;
   /** Most recent transaction diagnostic. */
   std::string diagnostic;
+  /** OS profiles captured when the dialog opened or Apply succeeded. */
+  std::vector<pipetune::OutputProfileSelection> baselineOutputProfiles = {};
+  /** Complete OS profile choices to reach with the next output operation. */
+  std::vector<pipetune::OutputProfileSelection> desiredOutputProfiles = {};
+  /** Latest confirmed OS profiles, independent of saved device assignments. */
+  std::vector<pipetune::OutputProfileSelection> confirmedOutputProfiles = {};
+  /** OS profile choices included in the current output operation. */
+  std::vector<pipetune::OutputProfileSelection> inFlightOutputProfiles = {};
 };
 
 /**
@@ -70,12 +80,13 @@ struct SettingsTransaction {
  * @param live Complete live state reported by the daemon.
  * @param liveRevision Monotonic configuration revision reported by the daemon.
  * @param connected True when live requests may be issued immediately.
+ * @param outputProfiles Active OS card profiles captured for later rollback.
  * @return Initialized transaction with no operation in flight.
  */
 SettingsTransaction beginSettingsTransaction(
     const pipetune::StartupConfig &saved,
     const pipetune::StartupConfig &live, std::uint64_t liveRevision,
-    bool connected);
+    bool connected, std::span<const pipetune::OutputProfileSelection> outputProfiles = {});
 
 /**
  * Replaces the desired settings and permits a failed operation to retry.
@@ -149,11 +160,13 @@ void markSettingsDisconnected(SettingsTransaction &transaction,
  * @param transaction Transaction to update.
  * @param live Complete state received after reconnection.
  * @param liveRevision Revision associated with live.
+ * @param outputProfiles Active profiles observed after reconnection; missing cards retain their checkpoint.
  */
 void reconnectSettingsTransaction(
     SettingsTransaction &transaction,
     const pipetune::StartupConfig &live,
-    std::uint64_t liveRevision);
+    std::uint64_t liveRevision,
+    std::span<const pipetune::OutputProfileSelection> outputProfiles = {});
 
 /**
  * Observes a subscribed live state change outside an explicit operation.
@@ -163,11 +176,13 @@ void reconnectSettingsTransaction(
  * @param transaction Transaction to update.
  * @param live Complete subscribed live state.
  * @param liveRevision Revision associated with live.
+ * @param outputProfiles Active profiles; newly connected cards establish their own checkpoint.
  */
 void observeSettingsRuntime(
     SettingsTransaction &transaction,
     const pipetune::StartupConfig &live,
-    std::uint64_t liveRevision);
+    std::uint64_t liveRevision,
+    std::span<const pipetune::OutputProfileSelection> outputProfiles = {});
 
 /**
  * Requests restoration of the baseline captured when the dialog opened.

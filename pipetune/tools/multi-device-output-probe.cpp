@@ -32,6 +32,7 @@ constexpr auto kRestartFirstTag = std::uint32_t{262144};
 constexpr auto kPreviousConfiguredOutput = "{\"name\":\"pipetune_probe_previous_missing\"}";
 constexpr auto kChangedConfiguredOutput = "{\"name\":\"pipetune_probe_changed_missing\"}";
 constexpr auto kEquivalentConfiguredOutput = "{ \"name\" : \"pipetune_probe_combined\" }";
+constexpr auto kDirectConfiguredOutput = "{\"name\":\"pipetune_probe_direct\"}";
 
 enum class Phase {
   initial, disconnected, reconnected, attenuated, muted, restored,
@@ -119,6 +120,8 @@ struct Probe {
   spa_hook sourceListener = {};
   pw_stream *processorInput = nullptr;
   pw_stream *processorOutput = nullptr;
+  pw_stream *directSink = nullptr;
+  pw_stream *directSource = nullptr;
   pw_stream_events processorInputEvents = {};
   pw_stream_events processorOutputEvents = {};
   spa_hook processorInputListener = {};
@@ -178,6 +181,7 @@ struct Probe {
   bool configuredDefaultRestored = false;
   bool defaultInitiallyEmpty = false;
   bool externalDefault = false;
+  bool dualSinks = false;
   bool equivalentDefault = false;
   bool externalDefaultRequested = false;
   bool externalDefaultObserved = false;
@@ -194,6 +198,7 @@ struct Probe {
 
 static bool createEndpoint(Probe &probe, std::uint32_t index);
 static bool createSource(Probe &probe);
+static bool createDirectSource(Probe &probe);
 static bool createCombinedOutput(Probe &probe);
 static void selectDefaultOutput(Probe &probe);
 static void finishVisibilityCheck(Probe &probe);
@@ -601,6 +606,29 @@ static bool visibleCombinedOutput(const Selector &selector) {
       [](const auto &entry) { return entry.second == "pipetune_probe_combined"; });
 }
 
+static bool visibleDirectOutput(const Selector &selector) {
+  return std::any_of(selector.nodes.begin(), selector.nodes.end(),
+      [](const auto &entry) { return entry.second == "pipetune_probe_direct"; });
+}
+
+static void finishDualSinkCheck(Probe &probe) {
+  if (!probe.dualSinks || probe.directSource == nullptr || probe.success ||
+      probe.metadataValues["default.configured.audio.sink"] != kDirectConfiguredOutput ||
+      probe.metadataValues["default.audio.sink"].find("pipetune_probe_direct") == std::string::npos)
+    return;
+  for (const auto &selector : probe.selectors)
+    if (selector.nodes.size() != 2 || !visibleCombinedOutput(selector) || !visibleDirectOutput(selector)) return;
+  for (const auto &[id, edge] : probe.links) {
+    static_cast<void>(id);
+    if (probe.nodeNames[edge.first] == "pipetune_probe_direct_signal" &&
+        probe.nodeNames[edge.second] == "pipetune_probe_direct") {
+      probe.outputsHiddenDuringPlayback = true;
+      closeProcessingOutputs(probe);
+      return;
+    }
+  }
+}
+
 static void desktopControlsChanged(void *data, int, std::uint32_t id,
                                     std::uint32_t, std::uint32_t, const spa_pod *parameter) {
   auto &probe = *static_cast<Probe *>(data);
@@ -677,6 +705,7 @@ static bool observeOutputs(Probe &probe, Selector &selector, pw_core *core) {
       }
     }
     finishVisibilityCheck(*view.probe);
+    finishDualSinkCheck(*view.probe);
   };
   selector.events.global_remove = [](void *data, std::uint32_t id) {
     auto &view = *static_cast<Selector *>(data);
@@ -689,12 +718,26 @@ static bool observeOutputs(Probe &probe, Selector &selector, pw_core *core) {
     }
     view.nodes.erase(id);
     finishVisibilityCheck(*view.probe);
+    finishDualSinkCheck(*view.probe);
   };
   pw_registry_add_listener(selector.registry, &selector.listener, &selector.events, &selector);
   return true;
 }
 
 static void restoreVisibleOutputs(Probe &probe) {
+  if (probe.dualSinks) {
+    if (!probe.externalDefaultRequested) {
+      if (probe.metadataValues["default.configured.audio.sink"].find("pipetune_probe_combined") == std::string::npos)
+        return;
+      probe.externalDefaultRequested = true;
+      if (pw_metadata_set_property(probe.metadata, 0, "default.configured.audio.sink",
+          "Spa:String:JSON", kDirectConfiguredOutput) < 0)
+        fail(probe, "cannot select the public Direct output");
+      return;
+    }
+    finishDualSinkCheck(probe);
+    return;
+  }
   if (probe.externalDefault && !probe.externalDefaultRequested) {
     probe.externalDefaultRequested = true;
     if (pw_metadata_set_property(probe.metadata, 0, "default.configured.audio.sink",
@@ -703,9 +746,10 @@ static void restoreVisibleOutputs(Probe &probe) {
     return;
   }
   if (probe.externalDefault && (!probe.externalDefaultObserved ||
-      probe.metadataValues["default.configured.audio.sink"].find("pipetune_probe_combined") == std::string::npos))
+      probe.metadataValues["default.configured.audio.sink"] !=
+          (probe.equivalentDefault ? kEquivalentConfiguredOutput : kChangedConfiguredOutput)))
     return;
-  if (probe.manageDefaults && probe.metadataValues["default.configured.audio.sink"].find(
+  if (probe.manageDefaults && !probe.externalDefault && probe.metadataValues["default.configured.audio.sink"].find(
       "pipetune_probe_combined") == std::string::npos) {
     fail(probe, "the logical output was not configured as the managed default");
     return;
@@ -734,6 +778,10 @@ static void closeProcessingOutputs(Probe &probe) {
   probe.phase = Phase::restoringOutputs;
   if (probe.source != nullptr) pw_stream_destroy(probe.source);
   probe.source = nullptr;
+  if (probe.directSource != nullptr) pw_stream_destroy(probe.directSource);
+  probe.directSource = nullptr;
+  if (probe.directSink != nullptr) pw_stream_destroy(probe.directSink);
+  probe.directSink = nullptr;
   pw_stream_destroy(probe.processorInput);
   probe.processorInput = nullptr;
   pw_stream_destroy(probe.processorOutput);
@@ -1032,6 +1080,8 @@ static bool createProcessor(Probe &probe) {
     pw_properties_set(inputProperties, "node.pipetune.internal", nullptr);
     pw_properties_set(inputProperties, "node.pipetune.aggregate", "true");
     pw_properties_set(inputProperties, "node.pipetune.public-input", "true");
+    if (probe.dualSinks)
+      pw_properties_set(inputProperties, "node.pipetune.public-sink", "true");
     if (probe.manageDefaults)
       pw_properties_set(inputProperties, "node.pipetune.manage-default", "true");
     pw_properties_set(inputProperties, "filter.smart", nullptr);
@@ -1058,6 +1108,18 @@ static bool createProcessor(Probe &probe) {
       &probe.processorInputEvents, &probe);
   pw_stream_add_listener(probe.processorOutput, &probe.processorOutputListener,
       &probe.processorOutputEvents, &probe);
+  if (probe.dualSinks) {
+    auto *properties = pw_properties_new(
+        PW_KEY_NODE_NAME, "pipetune_probe_direct",
+        PW_KEY_NODE_DESCRIPTION, "PipeTune probe Direct",
+        PW_KEY_MEDIA_CLASS, "Audio/Sink",
+        "node.virtual", "true",
+        "node.pipetune.public-sink", "true",
+        "node.pipetune.direct", "true", nullptr);
+    probe.directSink = pw_stream_new(probe.core, "PipeTune probe Direct", properties);
+    if (probe.directSink == nullptr || !connectStream(probe.directSink, true, 4, PW_STREAM_FLAG_ASYNC))
+      return false;
+  }
   return connectStream(probe.processorInput, true, 2, PW_STREAM_FLAG_ASYNC) &&
       connectStream(probe.processorOutput, false, 4,
           PW_STREAM_FLAG_TRIGGER | PW_STREAM_FLAG_AUTOCONNECT) &&
@@ -1142,6 +1204,10 @@ static int metadataChanged(void *data, std::uint32_t subject, const char *key,
     // for changes to default.configured.audio.sink.
     probe.defaultsReady = true;
     selectDefaultOutput(probe);
+    if (probe.dualSinks && std::string_view{value}.find("pipetune_probe_direct") != std::string_view::npos &&
+        probe.directSource == nullptr && !createDirectSource(probe))
+      fail(probe, "cannot open application stream on the default Direct output");
+    finishDualSinkCheck(probe);
     if (probe.restart && probe.metadataInstances == 2 &&
         probe.phase == Phase::awaitingPolicyStop &&
         std::string_view{value}.find("pipetune_probe_combined") != std::string_view::npos) {
@@ -1253,6 +1319,7 @@ static void globalAdded(void *data, std::uint32_t id, std::uint32_t,
     const auto *input = spa_dict_lookup(properties, PW_KEY_LINK_INPUT_NODE);
     if (output != nullptr && input != nullptr) {
       probe.links[std::to_string(id)] = {output, input};
+      finishDualSinkCheck(probe);
       if (probe.nodeNames[output] == "control.endpoint.pipetune.capture" &&
           probe.nodeNames[input].starts_with("pipetune_probe_device_"))
         probe.captureFeedsPlayback = true;
@@ -1389,7 +1456,8 @@ static bool createSource(Probe &probe) {
       PW_KEY_MEDIA_ROLE, probe.policy ? "Music" : "PipeTune-Probe",
       "node.dont-fallback", "true", "node.dont-move", "true",
       "stream.dont-remix", probe.policy ? "false" : "true", nullptr);
-  if (!probe.policy) pw_properties_set(properties, PW_KEY_TARGET_OBJECT, "pipetune_probe_combined");
+  if (!probe.policy || probe.dualSinks)
+    pw_properties_set(properties, PW_KEY_TARGET_OBJECT, "pipetune_probe_combined");
   probe.source = pw_stream_new(sourceCore, "PipeTune probe signal", properties);
   if (probe.source == nullptr) return false;
   probe.sourceEvents.version = PW_VERSION_STREAM_EVENTS;
@@ -1397,6 +1465,17 @@ static bool createSource(Probe &probe) {
   probe.sourceEvents.process = produce;
   pw_stream_add_listener(probe.source, &probe.sourceListener, &probe.sourceEvents, &probe);
   return connectStream(probe.source, false, probe.policy ? 2u : 4u, PW_STREAM_FLAG_AUTOCONNECT);
+}
+
+static bool createDirectSource(Probe &probe) {
+  if (probe.applicationCore == nullptr) return false;
+  auto *properties = pw_properties_new(
+      PW_KEY_NODE_NAME, "pipetune_probe_direct_signal",
+      PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Playback",
+      PW_KEY_MEDIA_ROLE, "Music", "node.dont-move", "true", nullptr);
+  probe.directSource = pw_stream_new(probe.applicationCore, "PipeTune probe Direct signal", properties);
+  return probe.directSource != nullptr &&
+      connectStream(probe.directSource, false, 4, PW_STREAM_FLAG_AUTOCONNECT);
 }
 
 static bool createCombinedOutput(Probe &probe) {
@@ -1510,6 +1589,8 @@ static void destroy(Probe &probe) {
   if (probe.source != nullptr) pw_stream_destroy(probe.source);
   if (probe.processorInput != nullptr) pw_stream_destroy(probe.processorInput);
   if (probe.processorOutput != nullptr) pw_stream_destroy(probe.processorOutput);
+  if (probe.directSink != nullptr) pw_stream_destroy(probe.directSink);
+  if (probe.directSource != nullptr) pw_stream_destroy(probe.directSource);
   if (probe.metadata != nullptr) pw_proxy_destroy(reinterpret_cast<pw_proxy *>(probe.metadata));
   if (probe.controlNode != nullptr) pw_proxy_destroy(reinterpret_cast<pw_proxy *>(probe.controlNode));
   for (auto &[id, link] : probe.outputLinks) {
@@ -1551,6 +1632,12 @@ int main(int argc, char **argv) {
   else if (argc == 2 && std::string(argv[1]) == "policy-visibility") {
     probe.policy = true;
     probe.visibility = true;
+  }
+  else if (argc == 2 && std::string(argv[1]) == "policy-dual-sink") {
+    probe.policy = true;
+    probe.visibility = true;
+    probe.manageDefaults = true;
+    probe.dualSinks = true;
   }
   else if (argc == 2 && std::string(argv[1]) == "policy-recovery") {
     probe.policy = true;

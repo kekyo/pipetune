@@ -8,15 +8,30 @@
 
 #include "pipetune/preset_entry.h"
 #include "pipetune/output_configuration.h"
+#include "output-level-meter.h"
 
 #include <gtk/gtk.h>
 
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace pipetune_gtk {
+
+/**
+ * Renders configured outputs in ascending channel order without changing routing.
+ * @param view Three-column output overview.
+ * @param configuration Confirmed or locally edited output assignments.
+ * @param inventory Current physical output descriptions.
+ * @param inventoryReady Whether device enumeration has completed.
+ * @param inventoryError Device enumeration diagnostic, empty on success.
+ */
+void renderOutputOverview(GtkWidget *view,
+    const pipetune::OutputConfiguration &configuration,
+    std::span<const pipetune::AvailableOutput> inventory,
+    bool inventoryReady, std::string_view inventoryError);
 
 /**
  * Holds the GtkBuilder and widgets required by the main window controller.
@@ -60,32 +75,70 @@ struct MainWindowUi {
   GtkWidget *presetEntryView = nullptr;
   /** Last rendered entries, avoiding model replacement on telemetry updates. */
   std::optional<std::vector<pipetune::PresetEntry>> displayedPresetEntries = {};
+  /** Live channel peaks displayed independently of editable output settings. */
+  GtkWidget *outputLevelMeters = nullptr;
+  /** Retained channel widgets, replaced only when the live width changes. */
+  std::vector<OutputLevelMeterWidgets> outputLevelRows = {};
+  /** Mixed Processed and Direct meter section, hidden until measurements arrive. */
+  GtkWidget *mixedOutputSection = nullptr;
+  /** Host for PCM peaks after the two public sinks are combined. */
+  GtkWidget *mixedOutputMeters = nullptr;
+  /** Retained widgets for the combined output channels. */
+  std::vector<OutputLevelMeterWidgets> mixedOutputRows = {};
   /** OS-managed or explicitly selected physical output mode. */
   GtkWidget *outputModeCombo = nullptr;
   /** Explains which output choices are active in the selected mode. */
   GtkWidget *outputModeNotice = nullptr;
   /** Pending selection, enumeration, or selection-validation diagnostic. */
   GtkWidget *outputErrorLabel = nullptr;
-  /** Device parents with expandable channel controls in one scrolling tree. */
-  GtkWidget *outputDeviceList = nullptr;
+  /** Registered outputs, selected independently from their enabled state. */
+  GtkWidget *outputDeviceView = nullptr;
+  /** Retained device editors, showing only the selected device. */
+  GtkWidget *outputDeviceDetails = nullptr;
+  /** Full name of the selected registered device. */
+  GtkWidget *outputSelectedDeviceLabel = nullptr;
+  /** Guidance when no device is registered in the draft. */
+  GtkWidget *outputEmptyLabel = nullptr;
+  /** Opens the unregistered device picker. */
+  GtkWidget *outputAddButton = nullptr;
+  /** Removes the selected device from the local draft. */
+  GtkWidget *outputDeleteButton = nullptr;
+  /** Explicitly removes unassigned channels and closes numbering gaps. */
+  GtkWidget *outputCompactButton = nullptr;
+  /** Opens the picker to retain channel assignments with another device. */
+  GtkWidget *outputReplaceButton = nullptr;
+  /** Inline picker shared by device addition and replacement. */
+  GtkWidget *outputPickerBox = nullptr;
+  /** Explains the pending addition or replacement. */
+  GtkWidget *outputPickerNotice = nullptr;
+  /** Available, nonduplicated physical output choices. */
+  GtkWidget *outputAvailableCombo = nullptr;
+  /** Accepts the chosen device into the local draft. */
+  GtkWidget *outputChooseButton = nullptr;
+  /** Closes the picker without changing the local draft. */
+  GtkWidget *outputChooseCancelButton = nullptr;
+  /** Preview of removals and channel renumbering before confirmation. */
+  GtkWidget *outputChangeSummaryLabel = nullptr;
   /** Tree branch retaining slots left without a physical output. */
   GtkWidget *outputReservedExpander = nullptr;
   /** Channel editors within the reserved branch. */
   GtkWidget *outputReservedGrid = nullptr;
-  /** Modal before/after review, retained and hidden between uses. */
-  GtkWidget *outputMappingDialog = nullptr;
-  /** Current replacement-device choices; hidden for channel moves. */
-  GtkWidget *outputReplacementCombo = nullptr;
-  /** Invalid or stale candidate diagnostic. */
-  GtkWidget *outputMappingErrorLabel = nullptr;
-  /** Read-only before/after channel mapping table. */
-  GtkWidget *outputMappingPreview = nullptr;
-  /** Starts a live preview after the mapping review is accepted. */
-  GtkWidget *outputMappingUseButton = nullptr;
+  /** Opens the output configuration editor without changing live settings. */
+  GtkWidget *outputConfigureButton = nullptr;
+  /** Device, connection state, and channel columns for the confirmed outputs. */
+  GtkWidget *outputSummaryView = nullptr;
+  /** Modal editor whose changes remain local until confirmation. */
+  GtkWidget *outputConfigurationDialog = nullptr;
+  /** Applies the complete output draft in one live operation. */
+  GtkWidget *outputConfigurationApplyButton = nullptr;
+  /** Discards a draft without changing the parent transaction. */
+  GtkWidget *outputConfigurationCancelButton = nullptr;
   /** Last rendered settings; avoids replacing rows on telemetry updates. */
   std::optional<pipetune::OutputConfiguration> displayedOutputConfiguration = {};
   /** Last rendered inventory, also used to resolve a user's row selection. */
   std::vector<pipetune::AvailableOutput> displayedOutputs = {};
+  /** Last rendered profile candidates, including layouts discovered on confirmation. */
+  std::vector<pipetune::AvailableOutputProfile> displayedOutputProfiles = {};
   /** Last rendered inventory-completion flag. */
   bool displayedOutputInventoryReady = false;
   /** Last rendered enumeration diagnostic. */
@@ -155,6 +208,28 @@ struct MainWindowViewState {
   /** Whether the window is maximized. */
   bool maximized;
 };
+
+/**
+ * Displays current output peaks, keeping unconfirmed drafts out of the meters.
+ * @param ui Output page and retained meter widgets.
+ * @param configuration Confirmed live configuration used for channel labels.
+ * @param peaks Linear peaks in actual logical output order; empty if unavailable.
+ * @param connected Whether measurements belong to the current daemon connection.
+ */
+void renderOutputLevels(MainWindowUi &ui,
+    const pipetune::OutputConfiguration &configuration,
+    std::span<const float> peaks, bool connected);
+
+/**
+ * Displays peaks after Processed and Direct are combined.
+ * @param ui Output page and retained meter widgets.
+ * @param configuration Confirmed live configuration used for channel labels.
+ * @param peaks Linear peaks in combined output order; empty hides the section.
+ * @param connected Whether measurements belong to the current daemon connection.
+ */
+void renderMixedOutputLevels(MainWindowUi &ui,
+    const pipetune::OutputConfiguration &configuration,
+    std::span<const float> peaks, bool connected);
 
 /**
  * Builds the main window from the embedded GtkBuilder UI definition.

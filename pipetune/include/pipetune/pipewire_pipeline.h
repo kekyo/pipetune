@@ -46,7 +46,7 @@ struct PipeWirePipelineOptions {
   std::uint32_t dspSampleRate;
   /** Initial automatic/fixed graph-rate policy. */
   SampleRatePolicy ratePolicy;
-  /** DSP and output planar channel count, from one through sixteen. */
+  /** Device-facing output planar channel count, from one through sixteen. */
   std::uint32_t channelCount;
   /** Largest DSP block processed in one call; must be at least 32. */
   std::uint32_t maxFrames;
@@ -70,12 +70,14 @@ struct PipeWirePipelineOptions {
       DspSimdVariant::automatic;
   /** Initial persisted automatic DSP suspension policy. */
   DspIdlePolicy dspIdlePolicy = {};
-  /** Input width, at most channelCount; zero uses channelCount for both streams. */
+  /** Input width, at most the prepared DSP width; zero uses channelCount. */
   std::uint32_t inputChannelCount = 0;
   /** Fixed multiple-output routing; single mode retains OS-managed selection. */
   OutputConfiguration outputConfiguration = {};
   /** Startup SFZ budget in MiB, retained for live preset loads and rebuilds. */
   std::uint32_t sfzMaxSizeMiB = kDefaultSfzMaxSizeMiB;
+  /** Infer DSP and meter widths from loaded presets, independently of device routing. */
+  bool inferChannelsFromPreset = false;
 };
 
 /**
@@ -112,12 +114,14 @@ struct PipeWireRunResult {
  * policy additionally requires dspSampleRate to equal ratePolicy.fixedRate.
  * A nonzero inputChannelCount selects a narrower capture stream. Additional
  * DSP channels receive silence on every block, including while bypassed;
- * only the preset can create audio in those output channels.
+ * only the preset can create audio in those processed output channels.
  * Ownership is retained for the complete run so control requests can replace
  * the pipeline. In single mode, WirePlumber owns target selection and volume
  * policy. Multiple mode requires two input channels and channelCount equal to
- * outputDspChannelCount(outputConfiguration). It exposes one public input,
- * applies master gain after DSP, and distributes numbered output channels to
+ * outputDspChannelCount(outputConfiguration). It exposes a stereo processed
+ * input and a direct input covering the configured slots. The processed gain
+ * follows DSP; Direct bypasses that processing and retains its own volume.
+ * Both paths share the rate policy and mix before distributing output channels to
  * uniquely matched devices. Missing or disabled outputs receive no fallback.
  * This function blocks according to mode and does not allocate in PipeWire process
  * callbacks.

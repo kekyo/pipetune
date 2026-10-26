@@ -9,6 +9,11 @@
 #include "pipetune/output_inventory.h"
 
 #include <memory>
+#include <optional>
+#include <cstdint>
+#include <vector>
+#include <span>
+#include <string>
 
 struct pw_core;
 
@@ -50,6 +55,34 @@ PipeWireOutputInventoryPtr observePipeWireOutputs(
  * configuration even when the physical output inventory has not changed.
  */
 std::uint64_t pipeWireOutputPolicyGeneration(const PipeWireOutputInventory &inventory) noexcept;
+
+/** Requests a card profile on the PipeWire loop without asking WirePlumber to save it. */
+std::string setPipeWireOutputProfile(
+    PipeWireOutputInventory &inventory, const OutputProfileSelection &selection);
+
+/** Returns the advertised sink Node count for a card profile, if known. */
+std::optional<std::uint32_t> pipeWireOutputProfileNodeCount(
+    const PipeWireOutputInventory &inventory, const OutputProfileSelection &selection);
+
+/** Active input route and its complete Props object before a card profile change. */
+struct PipeWireInputRouteSnapshot {
+  /** Route index within the card. */
+  std::int32_t index = -1;
+  /** Logical input device index within the card. */
+  std::int32_t device = -1;
+  /** Serialized SPA Props POD, or empty when no properties are reported. */
+  std::vector<std::uint8_t> props;
+  /** Compares input settings independently of the active card profile. */
+  bool operator==(const PipeWireInputRouteSnapshot &) const = default;
+};
+
+/** Captures the current input settings of one physical card. */
+std::vector<PipeWireInputRouteSnapshot> pipeWireInputRoutes(
+    const PipeWireOutputInventory &inventory, const OutputCardIdentity &card);
+
+/** Restores input route and Props with save=false after a card profile change. */
+std::string restorePipeWireInputRoutes(PipeWireOutputInventory &inventory,
+    const OutputCardIdentity &card, std::span<const PipeWireInputRouteSnapshot> routes);
 
 } // namespace pipetune
 
