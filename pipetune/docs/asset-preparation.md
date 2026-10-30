@@ -2,8 +2,8 @@
 
 ## Boundary and replacement policy
 
-PipeTune's native DSP engine follows the EffeTune application tag v2.15.0, commit
-`45d2f69b63483c4a2e98758bd8a5715cb13e3266`. The C++20 libraries in
+PipeTune's native DSP engine follows the EffeTune application tag v2.16.0, commit
+`3769b9aefebf2dce2de3169690d4a95e1716da4c`. The C++20 libraries in
 `asset-preparation/` adapt the JavaScript preparation needed before the upstream
 native kernels can run. The SFZ preparation source remains EffeTune v2.14.0,
 commit `01c96f00f8e93595aefab96de4bc4d210e61c53b`; its source identity remains
@@ -72,6 +72,13 @@ Kaiser resampler above; it must not silently inherit the playback algorithm.
 desktop registrations and supply the pure modules. `measurement_store.cpp`
 shares measurement parsing and validation with Crosstalk Cancellation, while
 Crosstalk-specific topology validation remains separate.
+
+EffeTune 2.16.0 backups may include optional `harmonicAnalysis` beside the linear
+IR, following the [upstream storage format](https://github.com/Frieve-A/effetune/blob/v2.16.0/features/measurement/dataStorage.js).
+Room EQ and Crosstalk use the same linear data with or without that metadata.
+The shared reader retains its 64 MiB limit for the complete backup. An oversized
+replacement fails preparation and leaves the current Room EQ or Crosstalk pipeline active;
+repairing the watched file allows automatic reload to recover.
 
 `asset_file.cpp` uses cardio/GIO asynchronous reads, bounded prefix reads, and
 streaming SHA-256 snapshots. SFZ includes and samples stay within the registered

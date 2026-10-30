@@ -30,7 +30,7 @@ you can then immediately apply them in PipeTune to apply effects to all Linux so
 - You can load EffeTune preset files to apply a DSP pipeline to the audio output of the entire Linux system.
 - Loads standard and legacy EffeTune preset files with the `.effetune_preset` extension
   and applies the DSP pipeline to desktop audio.
-- Implements the EffeTune 2.15.0 DSP engine.
+- Implements the EffeTune 2.16.0 DSP engine.
 - SFZ Note Player loads instruments registered in EffeTune with ARIA bank definitions
   for variables and sample locations, generated waveforms, and semitone sample
   selection.
