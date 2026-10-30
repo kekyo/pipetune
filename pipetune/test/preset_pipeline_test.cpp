@@ -856,7 +856,7 @@ static bool testVisualizationPresets(const std::filesystem::path &directory) {
     const auto name = std::string_view(visualizers[index % visualizers.size()]);
     const auto parameters = name == "Analog Meter" ?
         R"({"md":"Custom","de":"True Peak","nr":3000,"os":25})" :
-        name == "Note Spectrogram" ? R"({"te":true})" :
+        name == "Note Spectrogram" ? R"({"te":true,"ck":true})" :
         name == "Oscilloscope" ? R"({"dt":10})" :
         R"({"mn":{},"cl":"Normal","hq":true})";
     nodes += "{\"name\":\"" + std::string(name) + "\",\"parameters\":" + parameters +

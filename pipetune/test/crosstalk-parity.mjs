@@ -15,6 +15,7 @@ const encode = samples => {
 try {
   for (const rate of [44100, 48000, 96000]) {
     const sources = {};
+    const backups = new Map();
     for (const [ear, keys] of [['left-ear', ['ll', 'rl']], ['right-ear', ['lr', 'rr']]]) {
       const records = keys.map((slot, index) => {
         const direct = slot === 'll' || slot === 'rr';
@@ -36,6 +37,7 @@ try {
         points: [{ pointId: 0, channels: records.map(record => ({ channel: record.channel, irId: record.pointId, ir: { stored: true } })) }],
         impulseResponses: records.map(record => ({ ...record, data: encode(record.data).toString('base64') })) };
       writeFileSync(join(directory, `${ear}.json`), JSON.stringify(measurement));
+      backups.set(ear, measurement);
     }
     for (const taps of [1024, 4096]) {
       const config = { sampleRate: rate, taps, regularization: taps === 1024 ? 25 : 75,
@@ -51,6 +53,33 @@ try {
         writeFileSync(preset, JSON.stringify({ pipeline: [{ name: 'Crosstalk Cancellation', enabled: true, parameters }] }));
         const result = spawnSync(runner, [preset, directory, expected, String(rate), String(taps), String(latency), String(strength), String(gain)], { encoding: 'utf8' });
         if (result.status !== 0) throw new Error(`Crosstalk ${rate}/${taps}/${latency}/${strength}:\n${result.stdout}\n${result.stderr}`);
+        if (rate === 48000 && taps === 1024 && latency === 128) {
+          // Optional 2.16 harmonic analysis must not replace the calibrated linear IR.
+          // https://github.com/Frieve-A/effetune/blob/v2.16.0/features/measurement/dataStorage.js
+          const harmonicAnalysis = {
+            version: 2, method: 'ess', sampleRate: 48000,
+            excitation: { startFrequency: 20, endFrequency: 20000,
+              durationSeconds: 2, levelDb: -12, sweepSamples: 96000 },
+            reference: 'unit-input', calibration: 'uncorrected-system',
+            quality: { valid: true, reasons: [] },
+            orders: [1, 2, 3].map(order => ({ order,
+              data: encode([0, 1 / order, 0]).toString('base64'),
+              referenceData: encode([0, 1, 0]).toString('base64'),
+              ...(order > 1 ? { harmonicReferenceData: encode([0, 1, 0]).toString('base64') } : {}),
+              onsetIndex: 1, validMinFrequency: 20, validMaxFrequency: 20000 / order,
+            })),
+          };
+          for (const [ear, backup] of backups)
+            writeFileSync(join(directory, `${ear}.json`), JSON.stringify({ ...backup,
+              impulseResponses: backup.impulseResponses.map(record => ({ ...record, harmonicAnalysis })),
+            }));
+          const enriched = spawnSync(runner,
+            [preset, directory, expected, String(rate), String(taps), String(latency), String(strength), String(gain)],
+            { encoding: 'utf8' });
+          if (enriched.status !== 0) throw new Error(`Crosstalk harmonic metadata:\n${enriched.stdout}\n${enriched.stderr}`);
+          for (const [ear, backup] of backups)
+            writeFileSync(join(directory, `${ear}.json`), JSON.stringify(backup));
+        }
       }
       const valid = { ll: sources.ll.id, lr: sources.lr.id, rl: sources.rl.id, rr: sources.rr.id, tp: taps };
       for (const [parameters, enabled, channel, section, mode] of [
