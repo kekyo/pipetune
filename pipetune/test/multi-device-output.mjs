@@ -1313,7 +1313,7 @@ try {
       clearTimeout(shutdownDeadline);
       assert.equal(stopped.code, 0, runtime.stderr);
     };
-    if (scenario.startsWith("product-sfz-")) {
+    if (scenario.startsWith("product-sfz-") || scenario === "product-matrix-freewheel") {
       // Freewheel keeps advancing while the runtime is connected. Finish its
       // shutdown before asking the capture loop to destroy its streams.
       await waitForMessage(audio, "product:sfz-capture-finished");
@@ -1323,6 +1323,9 @@ try {
     const result = await audio.completion;
     assert.equal(result.code, 0, `${audio.stdout}\n${audio.stderr}`);
     const report = JSON.parse(audio.stdout);
+    if (scenario === "product-matrix-freewheel")
+      assert.ok(report.compensationFrames[0] >= 62 && report.compensationFrames[0] <= 63,
+        "Matrix-only freewheel must verify tagged PCM and the declared output delay");
     assert.ok(report.receivedFrames.every((frames) => scenario === "product-disconnected" ? frames === 0 : frames >= 32768));
     assert.ok(report.producedFrames >= 32768);
     assert.equal(report.stages.length, scenario === "product-output-recovery" ? 12 : graphClockTest || ["product-controls", "product-output-change"].includes(scenario) ? 9 : scenario === "product-profile" ? 5 : ["product-restart", "product-latency", "product-latency-units", "product-latency-reconnect", "product-time-alignment", "product-output-timeout"].includes(scenario) ? 3 :

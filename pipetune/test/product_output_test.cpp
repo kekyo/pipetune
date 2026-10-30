@@ -7,6 +7,7 @@
 #include "pipetune/control_socket.h"
 #include "pipewire_graph_clock.h"
 #include "pipewire_output_paths.h"
+#include "product_pcm_trace.h"
 
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
@@ -169,6 +170,8 @@ static int runProduct(const char *preset, std::string_view scenario) {
         return 1;
       }
     }
+    if (scenario == "product-matrix-freewheel" &&
+        (loaded.pipeline->activePluginCount() != 1 || loaded.pipeline->latencyFrames() != 0)) return 1;
     pipeline = std::move(loaded.pipeline);
   }
   const auto result = pipetune::runPipeWirePipeline(std::move(pipeline), {
@@ -182,6 +185,8 @@ static int runProduct(const char *preset, std::string_view scenario) {
       .inputChannelCount = 2, .outputConfiguration = configuration,
       .inferChannelsFromPreset = directTest || meterTest || sourceResume},
       pipetune::PipeWireRunMode::untilInterrupted);
+  std::cerr << "product:runtime-result overruns=" << result.overrunFrames
+            << " underruns=" << result.underrunFrames << " errors=" << result.processingErrors << '\n';
   if (!result.success) std::cerr << result.error << '\n';
   return result.success && result.processingErrors == 0 ? 0 : 1;
 }
@@ -991,7 +996,7 @@ static int runAudio(std::string_view scenario) {
   test.intentionalDelay = scenario == "product-time-alignment";
   test.latencyReconnect = scenario == "product-latency-reconnect";
   test.latencyUnits = scenario == "product-latency-units";
-  test.fixedLatency = scenario.starts_with("product-sfz-");
+  test.fixedLatency = scenario.starts_with("product-sfz-") || scenario == "product-matrix-freewheel";
   test.latency = scenario == "product-latency" || test.latencyUnits || test.intentionalDelay || test.latencyReconnect || test.fixedLatency;
   test.graphClock = scenario == "product-output-clock" || scenario == "product-output-clock-alt";
   test.clockUnavailable = scenario == "product-output-clock-unavailable";
@@ -1245,14 +1250,18 @@ int main(int argc, char **argv) {
   const auto signals = pipetune::blockPipeWireTerminationSignals();
   if (!signals.empty()) { std::cerr << signals << '\n'; return 1; }
   if (argc < 3) return 2;
+  if (std::string_view(argv[1]) == "trace") return verifyProductPcmTrace();
   if (std::string_view(argv[1]) == "control" && argc == 4) {
     const auto result = pipetune::exchangeControlMessage(argv[2], argv[3]);
     if (!result.error.empty()) { std::cerr << result.error << '\n'; return 1; }
     std::cout << result.response << '\n';
     return 0;
   }
-  if (std::string_view(argv[1]) == "audio") return runAudio(argv[2]);
+  prepareProductPcmTrace();
+  auto result = 2;
+  if (std::string_view(argv[1]) == "audio") result = runAudio(argv[2]);
   if (std::string_view(argv[1]) == "runtime" && argc == 4)
-    return runProduct(std::string_view(argv[2]) == "bypass" ? nullptr : argv[2], argv[3]);
-  return 2;
+    result = runProduct(std::string_view(argv[2]) == "bypass" ? nullptr : argv[2], argv[3]);
+  finishProductPcmTrace();
+  return result;
 }

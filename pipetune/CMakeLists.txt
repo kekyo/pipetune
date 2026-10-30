@@ -999,12 +999,13 @@ if(BUILD_TESTING)
   target_compile_options(
     pipetune_multi_device_output_probe PRIVATE
     -Wall -Wextra -Wpedantic -Werror)
-  add_executable(pipetune_product_output_tests test/product_output_test.cpp)
-  target_link_libraries(pipetune_product_output_tests PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE)
+  add_executable(pipetune_product_output_tests test/product_output_test.cpp test/product_pcm_trace.cpp)
+  target_link_libraries(pipetune_product_output_tests PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE ${CMAKE_DL_LIBS})
   target_include_directories(pipetune_product_output_tests PRIVATE src)
-  target_link_options(pipetune_product_output_tests PRIVATE -Wl,--wrap=pw_stream_connect)
+  target_link_options(pipetune_product_output_tests PRIVATE -Wl,--wrap=pw_stream_connect -Wl,--export-dynamic)
   target_compile_options(pipetune_product_output_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  foreach(scenario product-direct product-bypass product-matrix product-slots product-sixteen product-volume product-disconnected product-reconnect product-profile product-restart product-restart-mute product-latency product-latency-units product-latency-reconnect product-time-alignment product-sfz-classic product-sfz-event product-controls product-output-clock product-output-clock-alt product-output-clock-unavailable product-output-change product-output-profile-unknown product-output-profile-shutdown product-output-profile-restore-failure product-output-profile-unavailable product-output-profile-settle-input product-output-timeout product-output-status product-output-status-single product-output-recovery product-preset-meters product-source-resume product-source-resume-single)
+  add_test(NAME pipetune_product-pcm-trace COMMAND pipetune_product_output_tests trace verify)
+  foreach(scenario product-matrix-freewheel product-direct product-bypass product-matrix product-slots product-sixteen product-volume product-disconnected product-reconnect product-profile product-restart product-restart-mute product-latency product-latency-units product-latency-reconnect product-time-alignment product-sfz-classic product-sfz-event product-controls product-output-clock product-output-clock-alt product-output-clock-unavailable product-output-change product-output-profile-unknown product-output-profile-shutdown product-output-profile-restore-failure product-output-profile-unavailable product-output-profile-settle-input product-output-timeout product-output-status product-output-status-single product-output-recovery product-preset-meters product-source-resume product-source-resume-single)
     add_test(NAME pipetune_${scenario}
       COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
         ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
