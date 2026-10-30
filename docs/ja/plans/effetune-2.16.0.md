@@ -1,0 +1,313 @@
+# EffeTune 2.16.0対応計画
+
+## 目的と基準
+
+PipeTuneのEffeTune参照を2.15.0から2.16.0へ更新する。今回の実装対象はDSP対応と、その検証・配布・文書更新とする。従来と同じく、生成カタログ、実共有バックエンド、製品の音声経路、配布物の順に検証する。
+
+ネットワークプレーヤーは、課題と実現案を本書へ記録するに留める。PipeTuneを再生端末として使うための実装は、次のステップへ残す。ネットワーク機能の実装・接続設定・相互運用試験は、今回のDSP更新の工程と完了条件に含めない。
+
+後続の検討では、EffeTuneなどから選曲し、PipeTune側で音源取得、デコード、DSP、音声出力を行う構成を対象とする。後述する案A〜Dは比較資料として残す。案Dは処理済み音声を別端末へ送る候補であり、PipeTuneを再生端末にする機能とは用途が異なる。採用する構成と対応クライアントは、次のステップで確定する。
+
+調査日は2026-10-30。PipeTuneの基準は`develop`の`da84d375d11245f19dbc94b31a4355f6aee06b69`で、調査開始時の作業ツリーはクリーンだった。
+
+| 項目 | 現行 | 更新先 |
+| --- | --- | --- |
+| 公式アプリタグ | `v2.15.0` | `v2.16.0` |
+| コミット | `45d2f69b63483c4a2e98758bd8a5715cb13e3266` | `3769b9aefebf2dce2de3169690d4a95e1716da4c` |
+| DSPのCMakeプロジェクト版 | 1.0.0 | 1.16.0 |
+| DSPのJSバインディング版 | 0.15.0 | 0.16.0 |
+| 登録カーネル数 | 112 | 112 |
+
+公式リモートのタグと取得したタグは同じコミットを指している。PipeTuneの表示対象はアプリ版の2.16.0とし、DSPライブラリやバインディングの版と混同しない。計画作成ではサブモジュールのチェックアウトと製品コードを変更していない。[公式リリース](https://github.com/Frieve-A/effetune/releases/tag/v2.16.0)、[タグ間差分](https://github.com/Frieve-A/effetune/compare/v2.15.0...v2.16.0)
+
+## DSPの変更と対応方針
+
+### パラメータと解析処理
+
+カーネルの追加・削除はなく、生成メタデータのパラメータ契約が変わるのはRhythm AnalyzerとNote Spectrogramである。共有解析の影響を受けるSFZ Note Playerも合わせて示す。
+
+| DSP | 2.15.0 | 2.16.0 | PipeTuneでの扱い |
+| --- | --- | --- | --- |
+| Rhythm Analyzer | 3 float、`0xbae05865` | 4 float、`0xf854c585`。表示方式`dm`を追加。`band`が既定、`drums`でドラム表示 | 従来どおり実行する。表示の有無とクリック音の有無を別々に検証する |
+| Note Spectrogram | 3 float、`0xafc5ff07` | 4 float、`0xb8518943`。コード・調の検出を指定する`ck`を追加。既定はfalse | カタログを更新し、表示専用DSPとしての除外を維持する |
+| SFZ Note Player | 20 float、`0xdfb4bbc5`、slot 0は1 GiB | パラメータ、アセット容量とも同じ | Classic/Event、初回発音と休止再開を回帰検証する |
+
+`ck`はDSPごとに意味が異なる。Rhythm Analyzerでは既存のメトロノームクリックを表し、Note Spectrogramでは今回追加されたコード・調の検出を表す。[Rhythmのパラメータ](https://github.com/Frieve-A/effetune/blob/v2.16.0/dsp/plugins/analyzer/rhythm_analyzer/params.json)、[Note Spectrogramのパラメータ](https://github.com/Frieve-A/effetune/blob/v2.16.0/dsp/plugins/analyzer/note_spectrogram/params.json)、[生成された契約](https://github.com/Frieve-A/effetune/blob/v2.16.0/dsp/bindings/generated/effects-v1.private.json)
+
+Rhythm Analyzerは音声から拍を検出し、設定によってクリック音を加えるDSPである。PipeTuneは現在もクリック無効時にこのDSPを実行している。2.16.0のカーネルは`dm=band`でもドラム解析器を準備し、入力を渡すため、表示を追加しない場合もCPUとメモリの比較が必要になる。`dm`の値を強制変更したり、クリック無効時にDSPを除外したりして負荷を隠さない。[Rhythmカーネル](https://github.com/Frieve-A/effetune/blob/v2.16.0/dsp/plugins/analyzer/rhythm_analyzer/kernel.cpp)
+
+Note Spectrogramにはコード・調の検出モデルが追加される。SFZ Note Playerも同じ音符解析処理を使うが、コード・調の検出はfalseで構成する。SFZの音声仕様が変わったとは扱わず、共有解析の変更による音声・初期化時間・メモリへの影響を検証する。2.15.0対応で追加したEvent用の無音初期化は維持する。[共用解析](https://github.com/Frieve-A/effetune/blob/v2.16.0/dsp/plugins/analyzer/note_spectrogram/spectral_analysis.h)、[SFZカーネル](https://github.com/Frieve-A/effetune/blob/v2.16.0/dsp/plugins/others/sfz_note_player/kernel.cpp)
+
+### ABI、参照PCM、アセット
+
+上流には`et_instance_stream_boundary`が追加される。ただし公開ヘッダーのコメントは`App-internal`としているため、PipeTuneから新たに呼び出したり、独自バックエンドAPIへ追加したりしない。通常のresetと既存の休止再開経路で検証する。Rhythmの解析結果を受け渡すテレメトリはversion 4の1496 bytesからversion 5の2024 bytesへ変わるが、PipeTuneに解析表示機能は追加しない。上流nativeテストで新形式と境界処理を検証する。[ABI宣言とコメント](https://github.com/Frieve-A/effetune/blob/v2.16.0/dsp/include/effetune/abi.h)、[テレメトリ仕様](https://github.com/Frieve-A/effetune/blob/v2.16.0/dsp/README.md)
+
+既存のABIパッチは2.16.0の一時コピーに対して`patch --dry-run --fuzz=0`で適用できた。実装時には通常ビルドで確認する。外部ソースを直接編集せず、公式タグへの参照更新とPipeTune側の生成・ビルド設定で対応する。
+
+上流のgoldenディレクトリで変わった171ファイルは全てJSONで、PCMファイルに差分はない。Note Spectrogramの5件には`ck`、Rhythmの6件には`dm`と対応する参照ハッシュの更新がある。他の160件は`jsEngineHash`の更新である。SFZの13件はJSON・PCMとも変更がない。PCMの再生成や許容誤差の緩和を更新手順に含めない。[上流DSPテスト資材](https://github.com/Frieve-A/effetune/tree/v2.16.0/dsp/plugins)
+
+`js/sfz/`、DSP vendor、既存の木モデル埋込み処理には差分がない。IRライブラリには遠隔操作の取消・確定に関する変更があるが、DSP更新だけでPipeTuneにライブラリへの書込機能を追加する必要はない。IR・SFZ・Room EQの準備結果、保存形式、出典情報を確認し、出典版やキャッシュ識別子をアプリ版に合わせて機械的に変更しない。[SFZ準備処理](https://github.com/Frieve-A/effetune/tree/v2.16.0/js/sfz)、[IRライブラリの変更](https://github.com/Frieve-A/effetune/blob/v2.16.0/js/ir-library/ir-library-store.js)
+
+音響測定には歪み・共振の解析が追加され、測定バックアップのIRレコードに任意の`harmonicAnalysis`が保存される。Room EQの設計処理と、PipeTuneが移植しているFFT・平滑化・再標本化処理には差分がない。測定画面やVisualizerの新表示は移植対象に含めず、追加情報を持つ2.16.0のバックアップからRoom EQとCrosstalk Cancellationが既存の線形IRを利用できることを検証する。現行`measurement_store.cpp`にはファイル全体で64 MiBの上限があるため、追加データによる容量増加も確認する。[測定データの保存形式](https://github.com/Frieve-A/effetune/blob/v2.16.0/features/measurement/dataStorage.js)、[Room EQ設計](https://github.com/Frieve-A/effetune/blob/v2.16.0/js/room-eq/design-core.js)
+
+## ネットワークプレイの調査記録
+
+### EffeTuneの機能が提供するもの
+
+2.16.0は音楽共有と遠隔エフェクト編集に加え、AirPlayとUPnP AV/DLNAの受信を追加している。OpenHomeも含め、機器の発見、曲の選択・再生、音声データの取得、エフェクト編集は別の役割を持つ。[公式リリース](https://github.com/Frieve-A/effetune/releases/tag/v2.16.0)
+
+UPnP AV/DLNAはLAN上の音楽サーバーや再生機器を操作する方式である。OpenHomeでは再生機器側が曲のキューを保持するため、操作アプリを切断しても曲順を維持できる。AirPlay受信では送信端末から音声を受け取り、再生の開始・停止を送信側で操作する。[上流のネットワーク機能ガイド](https://github.com/Frieve-A/effetune/blob/v2.16.0/docs/i18n/ja/openhome.md)
+
+音楽共有では元の音声を配信し、EffeTuneを再生先に選ぶと再生先のDSPを適用する。送信側のDSP処理済み音声を配信する方式ではない。遠隔編集用の`remote-v1`はWebSocketで操作と状態を送るAPIであり、音声そのものは運ばない。したがって「EffeTuneから選曲してPipeTuneで鳴らす」「PipeTuneのDSPを遠隔編集する」「PipeTuneの処理済み音を別室へ送る」は、それぞれ別の対応になる。[音楽共有の仕様](https://github.com/Frieve-A/effetune/blob/v2.16.0/docs/i18n/ja/openhome.md)、[remote-v1仕様](https://github.com/Frieve-A/effetune/blob/v2.16.0/docs/remote-v1.md)
+
+音源サーバー、再生端末、操作端末は別々に配置できる。音源のあるPCを再生先にも選ぶ場合、操作端末は選曲や設定を送るリモコンとして動作し、そのPCでDSPと音声出力まで行う。音源サーバーと再生端末が別の場合は、再生端末がHTTP/HTTPSで音声を取得する。PCM WAVはWAVのまま、FLACやMP3は圧縮されたまま転送し、再生端末でデコードする。配信にはHTTPのRange要求による部分取得も使える。[配信実装](https://github.com/Frieve-A/effetune/blob/v2.16.0/electron/network-music-server.cjs)、[端末の役割とHTTPS設定](https://github.com/Frieve-A/effetune/blob/v2.16.0/docs/i18n/ja/openhome.md)
+
+EffeTuneのAirPlay受信はUxPlayを別プロセスで起動し、内部のループバックへRTP/UDPでPCMを渡す。形式はL16、44.1 kHz・16 bit・ステレオ・ビッグエンディアンであり、この経路は同じPC内の通信である。上流の配布手順でLinux向けに対応するのはx64であり、PipeTuneの9配布構成へそのまま使えるとは扱わない。AirPlay 2や複数室の同期も、この上流実装の対応範囲に含まれない。[AirPlay実装の説明](https://github.com/Frieve-A/effetune/blob/v2.16.0/native/airplay-receiver/README.md)、[ループバック送信の実装](https://github.com/Frieve-A/effetune/blob/v2.16.0/electron/airplay-receiver.cjs)、[POSIXビルド対象](https://github.com/Frieve-A/effetune/blob/v2.16.0/native/airplay-receiver/BUILD-POSIX.md)、[利用上の制約](https://github.com/Frieve-A/effetune/blob/v2.16.0/docs/i18n/ja/openhome.md)
+
+### 現在のPipeTuneで再利用できる部分
+
+| 現在の構成 | 実現案への影響 | コード |
+| --- | --- | --- |
+| PipeWireの`Audio/Sink`として音声を受ける | ネットワーク受信アプリを普通の音声入力元として接続できる | `pipetune/src/filter_graph_properties.cpp`、`pipewire_pipeline.cpp` |
+| 複数出力モードにProcessedとDirectがある | DSPを通す受信音声はProcessedへ接続する。DirectではDSPを通らない | `pipetune/include/pipetune/pipewire_pipeline.h` |
+| ローカル制御は同一ユーザーのUnixソケット | LAN公開には認証と操作範囲を管理する別の入口が必要 | `pipetune/src/control_socket.cpp`、`include/pipetune/control_protocol.h` |
+| 制御はプリセットファイル読込、bypass、レート、出力設定など | 曲のキュー、URL再生、シーク、DSPパラメータの遠隔編集APIは追加が必要 | `pipetune/include/pipetune/control_protocol.h` |
+| 同梱FFmpegはネットワーク無効。デコーダーは完全なアセットファイルを入力に取る | URLを渡すだけではネットワーク再生できない。連続読込や取消、シークを別に設計する必要がある | `pipetune/cmake/ConfigureFFmpeg.cmake`、`src/asset_audio_decoder.h` |
+| 出力一覧はALSAに限定せず`Audio/Sink`を列挙する | PipeWireが公開するネットワークsinkを出力候補にできる可能性がある | `pipetune/src/pipewire_output_inventory.cpp` |
+
+ネットワーク音声を既存入力へ接続する方式では、DSP計算、レート変換、休止再開、チャンネル割当を共用できる。通常のデスクトップ音声との混合も既存のPipeWire経路で行える。ただし、上流EffeTuneの「新しい再生元へ排他的に切り替える」動作と同じにはならない。最初の受信対応では通常のアプリと同じ混合を基本とし、排他再生が必要なら別途仕様を決める。
+
+### 再生端末として次のステップに残す課題
+
+PipeTuneを再生端末にする場合、音声データを取得する経路と、操作を受け付ける経路の両方が必要になる。既存のEffeTuneと接続するために必要なプロトコルを、接続方法ごとに整理する。
+
+| 用途・接続方法 | PipeTune側で必要になる対応 |
+| --- | --- |
+| 音源サーバーから音声を取得 | HTTP/HTTPSクライアント。対応形式、部分取得、読込取消、通信エラーの扱いを決める |
+| EffeTuneデスクトップ版から再生先を発見し、選曲・再生 | OpenHomeまたはUPnP AVの再生機器として動作する。機器発見のSSDPと、HTTP上でXMLの操作要求を受けるSOAPを含む |
+| EffeTuneからDSPを遠隔編集 | `remote-v1`のWebSocketサーバー。認証、対応機能の通知、操作と状態の同期を実装する |
+| EffeTune PWAへ直接登録して再生操作 | `/pwa/v1/...`のHTTP APIとの互換を検討する。DSP編集のWebSocket接続も別に確認する |
+
+EffeTuneデスクトップ版は、OpenHomeのPlaylistサービスまたはUPnP AVのAVTransportサービスへ音源URLと操作を渡す。HTTPクライアントと`remote-v1`リスナーだけでは、この再生先としての動作を満たさない。再生制御に使うサービスの対応範囲を決め、実クライアントで機器発見、音源指定、状態取得を検証する必要がある。[OpenHome操作の実装](https://github.com/Frieve-A/effetune/blob/v2.16.0/electron/network-music-host.cjs)、[UPnP AV操作の実装](https://github.com/Frieve-A/effetune/blob/v2.16.0/electron/network-music-av-player.cjs)、[機器発見とSOAPの実装](https://github.com/Frieve-A/effetune/blob/v2.16.0/electron/network-music-upnp.cjs)
+
+`remote-v1`には音楽操作用の`music1`拡張もある。ただし、`playMusic`は音声URLを直接受け取らず、`serverId`と`trackId`で曲を指定する。PipeTuneがこのAPIを受け付けるなら、音源サーバーの識別と曲IDからURLへの解決も必要になる。キュー、シーク、再生用音量、操作完了後の状態取得も含めて検討する。[music1仕様](https://github.com/Frieve-A/effetune/blob/v2.16.0/docs/remote-v1.md#network-music-music1)、[音楽操作の実装](https://github.com/Frieve-A/effetune/blob/v2.16.0/electron/remote-music-dispatcher.cjs)
+
+既存PWAの直接接続では、`/pwa/v1/info`で接続先の情報を取得し、`resolve`で音源を解決し、`player`で再生を操作する。エフェクト編集は`/pwa/v1/effects`へのWebSocket接続を使う。`music1`への対応だけでPWAとの互換が成立するとは扱わず、これらのHTTP API、認証、対応機能の通知も確認する。EffeTuneを仲介してOpenHome/UPnP AVの再生先を操作する構成は、PWAからPipeTuneへ直接登録する構成と分けて検討する。[PWAの通信実装](https://github.com/Frieve-A/effetune/blob/v2.16.0/js/network-music/pwa-transport.js)、[PWAの接続方法](https://github.com/Frieve-A/effetune/blob/v2.16.0/docs/i18n/ja/openhome.md#pwa)
+
+再生エンジンも次のステップの課題とする。現在の`decodeAssetAudio()`はメモリ上の完全なファイルを入力に取り、同梱FFmpegのネットワーク機能は無効である。HTTP取得に加えて連続デコード、上限を設けたバッファ、再生・停止・シーク、キュー、切断と取消、既存DSP入力へのPCM供給が必要になる。既存プレーヤーへ任せる案と内製する案を比較し、通信やバッファ待機を音声コールバックから分離する。根拠は`pipetune/src/asset_audio_decoder.h`、`pipetune/cmake/ConfigureFFmpeg.cmake`、`pipetune/include/pipetune/control_protocol.h`とする。
+
+## ネットワークプレイの4案（次のステップの比較資料）
+
+以下はコードと公開仕様に基づく設計案であり、今回の実装対象には含めない。PipeTuneとの接続・実機相互運用は、次のステップで採用する構成を決めてから検証する。規模は相対比較であり、日数の見積りではない。
+
+| 案 | 利用者ができること | 主な追加作業 | 規模 |
+| --- | --- | --- | --- |
+| A 既存の受信アプリを接続 | AirPlayやOpenHome/DLNAの音声をPipeTuneのDSPで聴く | 接続設定、同一ユーザーでの起動、PCM検証、導入手順 | 小 |
+| B 受信サービスをPipeTuneへ統合 | PipeTuneの設定画面から受信を有効化し、状態を確認する | 専用サービス、設定・CLI・GTK、起動停止と障害復旧、配布 | 中 |
+| C EffeTuneの遠隔操作に対応 | EffeTuneのデスクトップ/PWAからPipeTuneのDSPを操作する。音楽操作も段階的に追加する | `remote-v1`、ペアリング、状態同期、プリセット/アセット対応。音楽操作には接続方法に応じたAPIと再生機能 | 大 |
+| D PipeWireのネットワーク出力を利用 | PipeTuneのDSP処理後のデスクトップ音声を別端末へ送る | RTP/RAOP sinkの設定・識別・再接続・遅延検証 | 小〜中。厳密な同期は別計画 |
+
+### 案A 既存の受信アプリを接続する
+
+AirPlayはUxPlay、OpenHome/UPnP AVはupmpdcliとMPDを候補とする。受信アプリの出力を同じユーザーのPipeWireセッションに接続し、単一出力モードではPipeTuneの処理入力、複数出力モードではProcessedを明示的に選ぶ。
+
+音声経路は「スマートフォンまたは音楽サーバー → 受信アプリ → PipeTune入力 → DSP → 設定済み出力」となる。upmpdcliはUPnP/OpenHomeの操作を受け、MPDが曲を取得・再生する。MPDには接続先を指定できるPipeWire出力があり、UxPlayもGStreamerの音声出力先を指定できる。[UxPlayの出力指定](https://github.com/FDH2/UxPlay#usage)、[upmpdcli](https://www.lesbonscomptes.com/upmpdcli/)、[MPDのPipeWire出力](https://mpd.readthedocs.io/en/stable/plugins.html#pipewire)
+
+最初に1種類の受信で音が出る構成を作り、既知のゲインやMatrixを含むプリセットでDSP適用をPCMから確認する。その後、もう1種類の受信と単一・複数出力を検証する。既定出力への追従だけに頼らず、再起動時にも処理入力へ戻る設定にする。
+
+製品本体への変更が少なく、プロトコルやデコードの保守を既存アプリへ任せられる。反面、初期設定と曲の操作は外部アプリで行い、PipeTune GTKに統一された再生表示は出ない。UPnP/OpenHomeの再生先として選べることと、EffeTuneのエフェクト編集先として選べることも別である。後者は案Cの対象となる。
+
+外部アプリはユーザーセッションへ接続できる形で起動する。ディストリビューション既定のシステムサービスを使う場合、実行ユーザーが異なるため接続方法を確認する。採用する版と配布環境を固定し、必要なパッケージとライセンスの扱いを記録する。例えばMPD 0.24.4にはネットワークMP3のシークに既知の問題があるため、対応版または当該機能の検証結果を採用条件に含める。[upmpdcliによる問題と修正版の案内](https://www.lesbonscomptes.com/upmpdcli/)
+
+### 案B 受信サービスをPipeTuneへ統合する
+
+ネットワーク受信と曲の管理を担う別プロセスを設け、音声は案Aと同じPipeWire入力へ渡す。名前を付ける場合は`pipetune-network`などとし、既存デーモンの音声コールバックへ通信処理を入れない。受信サービスが終了しても、ローカル音声のDSP処理は継続できる構成とする。
+
+初期実装は案Aで検証したUxPlay、upmpdcli、MPDを外部プロセスとして管理する方式を推奨する。受信名、方式ごとの有効・無効、起動失敗、接続状態をCLIとGTKへ公開する。曲情報や再生操作は、採用したプログラムの公開インターフェイスで取得できる範囲から追加する。独自パッチやEffeTuneのElectron内IPCを前提にしない。
+
+受信処理をさらに内製する場合は、UPnP/OpenHomeにohNetなどの公開APIを使い、曲のキューと再生エンジンを新設する。EffeTuneのsidecarは構成の参考にはなるが、そのままPipeTuneの安定APIとは扱わない。この方式ではHTTP/HTTPS取得、連続デコード、バッファ上限、シーク、取消、再接続までが追加範囲となる。既存の`decodeAssetAudio()`を曲全体の読込に流用しない。[ohNet](https://github.com/openhome/ohNet)、[EffeTuneの受信構成](https://github.com/Frieve-A/effetune/tree/v2.16.0/native/openhome-sidecar)
+
+PipeTune自身が行うI/Oは既存のcardioを使う。`from_fd()`はfdの準備完了を非同期に待つ機能であり、HTTPやTLSの実装そのものではない。採用する通信・再生ライブラリは公式文書とAPIコメントを確認してから決める。fdの所有者と取消後の解放を明確にし、待機のためだけのワーカースレッドやポーリングを追加しない。[cardioの説明](https://github.com/kekyo/cardio/blob/31e8149ce52cdfdaaa48838ca9de39288074885c/README_ja.md)、[APIコメント](https://github.com/kekyo/cardio/blob/31e8149ce52cdfdaaa48838ca9de39288074885c/include/cardio.h)
+
+受信の初期値は無効とする。音量操作は受信ストリームに適用し、デスクトップ全体やDirectの音量を変更しない。最初はステレオ受信を対象とし、DSP後のチャンネル展開には既存のプリセットと出力設定を使う。この案では設定と障害表示を統一できるが、追加プロセスの配布・更新・終了処理をPipeTune側で保守する必要がある。
+
+### 案C EffeTuneの遠隔操作に対応する
+
+PipeTune用のゲートウェイが、公開された`remote-v1`を受け付ける。WebSocketで受け取った操作をPipeTuneのプリセット構築・状態通知へ変換する。DSPは現在のネイティブバックエンドで実行する。EffeTuneアプリ全体やElectronの内部モジュールを組み込む前提にはしない。
+
+現在の制御ソケットはプリセットのローカルパスを受けるため、遠隔クライアントから届くパイプラインJSONを直接渡せない。ゲートウェイが管理する領域へプリセットを保存して既存ローダーへ渡すか、検証済みのプリセット内容を受け取る入口を追加する。初期段階はアセット不要のエフェクトとbypassで、読込失敗時に以前のパイプラインを保つことまで確認する。
+
+プリセット切替を中心にする場合は、既存の非同期準備とパイプライン差替えを再利用できる。一方、EffeTuneの画面で値を連続編集する場合は、変更規模が増える。現在の状態通知には編集用の全パラメータがなく、`DspPipeline`にも個別パラメータを更新する公開APIがない。バックエンドの`instanceSetParams`だけでは、編集中の状態管理や音声処理との同期は成立しない。変更のたびに全体を再構築する方式では、DSPの内部状態や残響、アセットの再準備への影響を検証する必要がある。根拠は`pipetune/include/pipetune/control_protocol.h`、`pipetune/include/pipetune/dsp_pipeline.h`、`pipetune/src/dsp_pipeline.cpp`、`pipetune/src/dsp_backend_loader.h`とする。
+
+マスターバイパスの意味も合わせる必要がある。現在のPipeTuneはbypassへの切替時にパイプラインを差し替え、選択中のプリセットを解除する。EffeTuneの遠隔編集では編集対象のチェーンを保持するため、保持と復帰の設計が必要になる。GTK、プリセットの再読込、複数クライアントからの変更と再接続も、同じ状態へ反映できるようにする。CLI・GTK・サービス設定と配布への追加を含め、連続編集は独立した段階で扱う。根拠は`pipetune/src/pipewire_pipeline.cpp`と[remote-v1の状態・バイパス仕様](https://github.com/Frieve-A/effetune/blob/v2.16.0/docs/remote-v1.md)とする。
+
+EffeTuneのエディターとの相互運用には、接続の認証、`hello/state`、操作完了の応答、対応する同期方式、エフェクトの説明情報が必要になる。`sync1`や`describe1`などは実装した機能だけを通知する。既存UnixソケットをLANへ単純に公開せず、許可した操作へ変換する。切断時に操作の適用結果が不明になる場合は、再接続後に状態を取得してから再試行する。[接続・同期・エフェクト説明の仕様](https://github.com/Frieve-A/effetune/blob/v2.16.0/docs/remote-v1.md)
+
+ゲートウェイは初期状態で無効にし、接続用トークンの発行・取消を実装する。TLSと証明書の設定も公開仕様に合わせ、PWAから接続する場合は対象ブラウザでLAN接続条件を確認する。トークンを取り消した操作が、遅れて完了したアセット準備によって適用されないことも検証する。
+
+IR・SFZ・Room EQを含む編集では、参照先のアセットがPipeTune側に存在する必要がある。最初は登録済みアセットに限定し、転送を追加する段階で容量、取消、登録完了前のプリセット適用を検証する。遠隔編集は音声伝送を追加しないため、再生機能には案AまたはBを併用する。
+
+音楽一覧と選曲も統合する場合は、前述した接続方法ごとに追加範囲を決める。`music1`対応クライアントを対象とする場合は、音源を示す`serverId`と再生先を示す`playerId`、曲IDの解決、キュー、シーク、再生用音量を扱う。音楽ライブラリや再生機能がない段階では`music1`を通知しない。PWAの直接接続に必要なHTTP APIと、デスクトップ版からのOpenHome/UPnP AV操作も別々に検証する。EffeTuneから一体的に操作できる利点がある一方、他案より状態同期と相互運用の保守範囲が広い。[music1仕様](https://github.com/Frieve-A/effetune/blob/v2.16.0/docs/remote-v1.md#network-music-music1)、[PWAの通信実装](https://github.com/Frieve-A/effetune/blob/v2.16.0/js/network-music/pwa-transport.js)
+
+### 案D PipeWireのネットワーク出力を利用する
+
+PipeTuneの出力先として、PipeWireのRTP sinkまたはRAOP/AirPlay sinkを使う。音声経路は「デスクトップ音声 → PipeTuneのDSP → ネットワークsink → 別端末」となる。元ファイルを共有するEffeTuneの音楽共有とは用途が異なり、アプリが出す音声全体に適用できる。[PipeWire RTP sink](https://docs.pipewire.org/page_module_rtp_sink.html)、[RAOP Discover](https://docs.pipewire.org/page_module_raop_discover.html)
+
+現在の出力列挙は非ALSAのsinkにも対応している。ただし実際のネットワークsinkで、チャンネル情報、永続的な識別、再発見後の接続が成立するかは未検証である。まず1台のネットワーク出力を検証し、その後にローカル出力との併用を検証する。RAOP sinkはAirPlay受信機へ送る機能であり、スマートフォンからPipeTuneへの受信には案AまたはBが必要となる。
+
+ネットワークの揺らぎと受信機の時計差は、現在の出力遅延補償だけで解決するとは限らない。受信側の実PCMで遅延、継続再生中のずれ、切断・再接続後の欠落を測る。複数室での厳密な同期を求める場合は、専用の同期方式を含む別計画とする。PipeWireの公式ページは調査時点の版を示すため、PipeTuneが対象とする各ディストリビューションの版・モジュールでも成立を確認する。
+
+## DSP更新の段階的な実施計画
+
+実装開始時の`develop`を基準に作業ブランチを作る。各工程でビルドと対象テストを実行し、CLI、GTK、既存の音声ドライバーで成果を観測できる状態をコミットする。mainへのマージは行わない。
+
+コードの変更は挙動を示すテストでREDを確認し、変更後のGREENを確認する。機能を削除する必要が生じた場合は、削除を確認する一時テストでRED/GREENを記録して削除をコミットする。その後、一時テストを除去して別コミットにする。仕様とテストが矛盾する場合は、どちらを直すか確認する。
+
+### 0 現行版の基準を記録する
+
+2.15.0のDebug全体テストを実行する。実行可能なSIMD、ビルド依存、Podman環境、メモリ・ディスクを確認する。管理者権限が必要な不足パッケージは、名前と導入方法を案内する。
+
+ReleaseでRhythm AnalyzerとSFZ Classic/Eventの初期化時間、処理時間、最大RSS、報告遅延を記録する。Rhythmはクリック有効・無効、SFZは同じ登録音源を使い、48/96/384 kHzを基本条件とする。ブロックサイズ、PCM、処理フレーム数、CPU条件を揃え、性能測定を他のビルド・試験と重ねない。共有バックエンドのサイズと、更新後に読み直す準備済みキャッシュも保存する。
+
+完了条件は、更新前の失敗を識別でき、同じ入力と環境で音声・負荷・メモリ・キャッシュを比較できること。基準の記録は次の実装コミットに含める。
+
+### 1 2.16.0の最小実行を成立させる
+
+現行版スモークを`effetune_216_test.cpp`へ移し、2.16.0の版と2種類の4 float契約を要求する。実共有バックエンドへ新しいハッシュ・配列を渡すテストを追加し、2.15.0でREDを確認する。上流の公式コミットへ参照を更新し、生成カタログとCMakeの登録を揃える。
+
+`parameter-packer-parity.mjs`で、Rhythmの`dm`省略・`band`・`drums`・無効値と、Note Spectrogramの`ck`省略・true/false・無効値を上流JSと比較する。生成処理がそのまま対応できる場合、手書きの専用パッカーは追加しない。既存のMatrix resetとSFZ Eventの検証は残す。
+
+CLI・GTKの版表示、Rhythmを含むプリセット、登録SFZの再生を確認する。Scalarとホストで実行可能なSIMDを使い、Rhythmの6件、SFZの13件を含む既存の参照PCMを検証する。上流のRhythm、Note Spectrogram、SFZ、モデルfixture、木モデル埋込みテストも実行する。i686・armv7lのビルドと共有ライブラリのロードはこの段階で先行確認する。
+
+完了条件は、2.16.0を表示し、112カーネルと新しいパラメータ契約が一致して、既存の音声ドライバーで有限PCMを出力できること。既存ABIパッチ、`-ffp-contract=off`、ARM向けモデル変換、32 bit向け設定が成立し、新しい警告に対処していることも確認する。
+
+コミットは`feat: update EffeTune integration to 2.16.0`とする。
+
+### 2 新しいプリセットと製品の音声動作を検証する
+
+Rhythmの`dm=band/drums`とクリック有効・無効を組み合わせる。クリック無効時は入力PCMを保ち、有効時は選択チャンネルにクリックを出すことを検証する。既存の対応レート、1/2/16チャンネル、末尾の選択ペア、部分ブロック、reset、無音からの復帰を含める。全条件の直積は作らず、通常条件と境界条件を分ける。表示方式だけでクリックの意味や製品の報告遅延が変わらないことを確かめる。
+
+Note Spectrogramの`ck=true`を含む2.16.0プリセットを読み込み、表示専用DSPを従来どおり除外し、同じプリセットの音声処理DSPを実行できることを確認する。新しい解析モデルの推論結果は上流nativeテストで検証する。
+
+SFZはClassic/Eventの発音、初回入力、reset、休止再開、プレビュー、dry/wetの遅延、再構築を既存の製品テストで回帰確認する。Matrixのルート保持、Processed/Directの音量、入力再開時に古い音声を出さないこと、複数出力の整列も確認する。IR・SFZ・Room EQの空キャッシュと準備済みキャッシュ、監視・取消・読込失敗時の以前の状態保持を検証する。
+
+2.16.0の測定バックアップを使い、`harmonicAnalysis`の有無で同じ線形IRから同じ補正音声を得られることを確認する。単一・複数チャンネルの参照とファイル容量の境界も検証し、上限超過時は以前のパイプラインを保つ。容量上限の変更が必要なら、実データとメモリ予算を根拠にこの工程の方針を更新する。
+
+同じRelease条件でRhythmとSFZの更新前後を比較する。Rhythmのドラム解析追加と、Note/SFZの共有解析変更による増加を分けて説明する。必要な処理周期を超える、または既存の音声に退行がある場合は根本原因を調べ、対応方針を計画へ反映してから修正する。外部コードの改変やDSPの無断除外では解消しない。
+
+完了条件は、新しいパラメータを持つプリセットを受け入れ、音声・遅延・休止再開・出力経路に退行がなく、負荷とメモリの差を説明できること。
+
+コミットは`feat: validate EffeTune 2.16 presets and runtime behavior`とする。独立した不具合があれば、この工程内で再現テストとともに`fix:`へ分ける。
+
+### 3 全体回帰と配布を完了する
+
+最終コードでDebug/Releaseの全体テスト、コア単独ビルド、独立アセット準備、GTK E2E、インストールを検証する。個別テストの成功を全体成功として扱わない。参照PCMと全体テストに失敗がある場合、許容誤差や時間待ちを緩める前に原因を調べる。
+
+既存の9配布構成をビルドする。対象はDebian trixieのx86_64・i686・arm64・armv7l・riscv64と、Ubuntu 24.04/26.04のx86_64・arm64である。導入済みの実共有ライブラリで版表示、ロード、Rhythmの新パラメータ、SFZの両方式、MatrixのPCMを確認する。CPU非対応で実行できないSIMDは、ビルド成功と実行未確認を分けて記録する。
+
+READMEと利用者向け文書は日本語原本から更新し、英語へ反映する。対応DSP版とプリセットの扱いを説明し、未採用のネットワーク案を実装済みの機能として記載しない。日本語は`nanaism/yomiyasu`で確認し、一般文書から本計画へリンクしない。
+
+完了条件は、DSP更新の最終完了条件を満たし、最終ソースの検証ログ、性能比較、配布物のハッシュ、警告への対処が揃うこと。最後のコード変更後に全体テストを実行する。
+
+コミットは`doc: describe EffeTune 2.16 support and verification`とする。
+
+## 次のステップで検討するネットワーク実装の工程候補
+
+以下は次のステップの検討材料として保存する工程候補であり、今回のDSP更新では実施しない。着手時に、再生端末として対応するクライアントとプロトコル、遠隔編集の範囲、外部プレーヤーの利用または内製を確定する。案Dによる音声送信は別の用途として扱う。決定した構成に応じて工程と完了条件を見直し、実行可能な成果物ごとに実装を進める。
+
+### AからBへ進む場合
+
+最初の工程ではAirPlayまたはOpenHome/DLNAの片方を接続し、CLIで起動できる構成とPCM検証を作る。ネットワークからの音声に既知のDSPを適用し、単一出力で期待したPCMが得られることを完了条件とする。接続設定と検証は`feat: verify network receiver routing through PipeTune`でコミットする。
+
+次の工程では同じ受信方式の起動停止と設定を専用サービスへまとめ、CLIから有効・無効と状態を確認できるようにする。状態遷移とプロセス終了をテストで先に示す。再起動後も処理入力へ接続し、受信サービスの停止・異常終了がローカル音声を止めないことを完了条件とする。コミットは`feat: manage network reception as a user service`とする。
+
+その後、もう片方の受信方式とGTK設定を追加する。音量は受信ストリームだけに作用し、Processedへ接続され、Directと物理出力の音量を変えないことを検証する。GTKを閉じても受信が続き、無効化すると接続と広告が終了することを完了条件とする。コミットは`feat: configure network receivers from GTK`とする。
+
+最後に実機の送信端末とコントローラーで、選曲、停止、シーク、切断、再接続、スリープ復帰を検証する。デスクトップ音声との混合、レート変更、プリセット切替、長時間再生中のバッファとメモリも確認する。端末・版・音声形式を記録し、全体テスト、配布、導入手順を完成させる。対応を表明する配布構成で導入後の受信が成立することを完了条件とする。
+
+### Cを採用する場合
+
+最初の工程ではペアリングと状態取得、bypass、アセット不要のパイプライン適用を実行可能にする。上流2.16.0の実クライアントから操作し、PCMの変化と失敗時の以前の状態保持を確認してコミットする。
+
+次の工程では実クライアントが必要とする同期・エフェクト説明を実装し、複数クライアントの競合と切断後の状態回復を検証する。その後、全体再構築の影響を確認して連続編集を扱い、登録済みアセットの編集、必要ならアセット転送へ進む。音楽操作は、採用する接続方法に応じて`music1`またはPWAのHTTP APIなどを別段階で追加する。各工程の完了条件は、通知した対応機能が実クライアントと製品PCMの両方で成立することとする。
+
+この案の音声受信にはAまたはBを用いる。新しいブラウザUIを作る場合はTypeScript・Vite・Vitest・React/MUIと既定のnpm開発設定を使い、ブラウザでの試行とE2EはPlaywright MCPで行う。通信アダプターを追加するだけの段階では、新しいWeb UIを必須にしない。各工程を`feat:`でコミットし、最後に全体テストと利用者向け文書を完成させる。
+
+### Dを採用する場合
+
+最初の工程ではRTPなど1方式・1台のネットワークsinkを出力へ設定する。受信側PCMでDSP適用、チャンネル順、有限性を確認し、切断時に意図しない別出力へ切り替わらないことを完了条件とする。構成と検証を`feat: validate PipeWire network output`でコミットする。
+
+次にローカル出力との併用、機器の再発見、レート切替、ネットワークの遅延・欠落を検証する。現行の識別や出力設定で不足があれば、挙動を再現するテストのREDから必要な修正だけを行う。受信側で測った遅延と時間経過によるずれを記録し、実証できた範囲で利用者へ説明できることを完了条件とする。最後のコード変更後に全体テストを実行する。
+
+### 次のステップで採用した場合の完了条件
+
+以下はネットワーク実装に着手する際に見直す条件であり、今回のDSP更新の完了判定には使わない。
+
+- [ ] 再生端末、音声送信、遠隔編集の対象と対応クライアントを確定し、採用した工程を完了した。
+- [ ] 実送信元または実クライアントから操作し、最終出力PCMでDSP適用を確認した。
+- [ ] 切断・取消・再接続・再起動でもローカル音声と設定を保ち、音量の操作範囲が仕様どおりである。
+- [ ] 通信とバッファ待機が音声コールバックを妨げず、長時間再生で資源使用量が増え続けない。
+- [ ] 対応する配布構成の依存パッケージ、導入、全体テスト、相互運用結果と利用上の制約を記録した。
+
+## 主な変更・検証箇所
+
+| 箇所 | DSP更新での作業 |
+| --- | --- |
+| `deps/effetune` | 公式2.16.0コミットへ参照更新 |
+| `pipetune/CMakeLists.txt`、`pipetune/cmake/EffeTuneNativeBackends.cmake` | 版取得、テスト登録、モデル・ABIパッチ・全バックエンドを確認 |
+| `pipetune/tools/generate-dsp-catalog.mjs` | 生成経路が新しいパラメータを取り込むことを確認。必要な変更のみ行う |
+| `pipetune/test/effetune_215_test.cpp` | `effetune_216_test.cpp`へ移し、契約を更新 |
+| `pipetune/test/effetune_backend_artifact_test.cpp` | RhythmとNote Spectrogramの契約を更新し、実共有バックエンドで検証 |
+| `pipetune/test/parameter-packer-parity.mjs`、`rhythm_analyzer_test.cpp`、`preset_pipeline_test.cpp` | 新パラメータの変換と製品PCM、表示専用DSPの除外を検証 |
+| `pipetune/test/sfz_runtime_test.cpp`、出力・キャッシュ・ライフサイクル系テスト | 共有解析変更と既存製品経路の回帰確認 |
+| `pipetune/src/measurement_store.cpp`、Room EQ・Crosstalk Cancellation関連テスト | 2.16.0の測定バックアップと容量増加を検証 |
+| `README_ja.md`、`README.md`、`docs/ja/details.md`、`docs/en/details.md`、`pipetune/`内の関連文書 | 対応版と利用者への説明を更新 |
+
+次のステップでネットワーク案を採用する場合、Aは起動・接続設定と結合テスト、Bは専用サービスと`startup_config`・CLI・GTK、Cはゲートウェイとプリセット適用・状態同期、Dは出力列挙・設定・PCM検証が主な対象となる。必要性を確認する前に既存の音声経路を抽象化し直さない。
+
+## 検証コマンドと記録
+
+実装時の全体検証は既存のMakefileとCMake/CTest経路を使う。GTKは従来の検証と同じく`GDK_BACKEND=x11`を指定する。
+
+```sh
+GDK_BACKEND=x11 make test TEST_BUILD_DIR=build/effetune-216-debug
+cmake -S . -B build/effetune-216-release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build/effetune-216-release --parallel
+GDK_BACKEND=x11 ctest --test-dir build/effetune-216-release --output-on-failure
+make -C pipetune/asset-preparation test BUILD_DIR=../../build/effetune-216-assets
+DESTDIR="$PWD/artifacts/verification/effetune-2.16/final-install" cmake --install build/effetune-216-release --prefix /usr
+./build_package_all.sh
+```
+
+個別検証の登録名は`ctest --test-dir build/effetune-216-debug -N`で確認する。サブモジュール更新後とコミット後にはCMakeを再構成し、版情報を取り直す。新たなスクリプトはNode.js、ビルド時のテキスト処理はfuncityを使う。
+
+コマンド、コミット、RED/GREEN、PCM誤差、性能・メモリ、配布物の結果を`artifacts/verification/effetune-2.16/`へ保存する。次のステップでネットワークを検証する際は、送信側・受信側・操作アプリの版、音声形式、開始・停止条件、実際のPCMも記録する。単なる時間待ちを成功条件にせず、処理フレーム数、接続完了、プロセス終了など観測可能な条件を使う。
+
+## 今回の最終完了条件
+
+### DSP更新
+
+- [ ] 指定の公式2.16.0コミットを参照し、外部ソース・vendorへの直接変更がない。
+- [ ] CLI・GTKの版、112カーネル、RhythmとNote Spectrogramの新契約が一致する。
+- [ ] 新しいプリセットと公式参照PCMがScalarと実行可能なSIMDで成功する。
+- [ ] 表示専用DSPの除外、Rhythmのクリック、SFZ両方式、Matrix reset、休止再開、Processed/Direct、複数出力に退行がない。
+- [ ] アセット準備、キャッシュ、2.16.0の測定バックアップ読込に退行がなく、RhythmとSFZの性能・メモリ差を説明できる。
+- [ ] 最終コードでDebug/Release全体テスト、単独ビルド、GTK E2E、インストール、9配布構成を検証した。
+- [ ] 日本語原本と英語文書、警告への対処、工程ごとのコミット、検証記録が揃っている。
+
+### ネットワーク課題の記録
+
+- [x] PipeTuneを再生端末にする目的と、音源サーバー・再生端末・操作端末の役割を記録した。
+- [x] HTTP/HTTPS、OpenHome/UPnP AV、`remote-v1`・`music1`、PWAのHTTP APIの用途と不足する対応を記録した。
+- [x] 再生エンジン、連続デコード、バッファ、シーク、状態管理と、DSP遠隔編集の追加範囲を記録した。
+- [x] 案A〜Dと工程候補を後続の比較資料として残し、ネットワーク実装と相互運用試験を今回の対象から外した。
+
+## 計画作成時の確認結果
+
+計画作成の完了条件は、現行コードと公式タグ差分を照合し、DSPの変更点、複数のネットワーク案、それぞれの段階的な成果物と完了条件を記載することとした。本書でこれらを満たしている。
+
+公式タグ、2種類のパラメータ契約、112カーネル、参照PCMの差分、アセット関連の差分、ABIパッチの適用を確認した。ネットワーク案は現在のPipeWire入力、出力列挙、Unixソケット、FFmpeg構成を根拠に整理した。接続や相互運用の成功はまだ実証していない。
+
+追加の議論を反映し、ネットワークプレーヤーは課題の記録までとし、実装を次のステップへ残した。HTTP配信、再生制御、DSP遠隔編集、PWAの直接接続を上流2.16.0の文書とコードで区別し、現在のPipeTuneで不足する機能も記載した。今回のネットワーク課題の記録条件は満たしている。
+
+今回の変更は計画書のみで、ビルドには影響しない。製品ビルド・全体テストは実施しておらず、DSPの実装完了条件は今後の作業で判定する。ネットワーク実装の完了条件は、次のステップで採用する計画に引き継ぐ。
