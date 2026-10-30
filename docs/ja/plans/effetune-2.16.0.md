@@ -311,3 +311,44 @@ DESTDIR="$PWD/artifacts/verification/effetune-2.16/final-install" cmake --instal
 追加の議論を反映し、ネットワークプレーヤーは課題の記録までとし、実装を次のステップへ残した。HTTP配信、再生制御、DSP遠隔編集、PWAの直接接続を上流2.16.0の文書とコードで区別し、現在のPipeTuneで不足する機能も記載した。今回のネットワーク課題の記録条件は満たしている。
 
 今回の変更は計画書のみで、ビルドには影響しない。製品ビルド・全体テストは実施しておらず、DSPの実装完了条件は今後の作業で判定する。ネットワーク実装の完了条件は、次のステップで採用する計画に引き継ぐ。
+
+## 実施記録
+
+### 工程0の基準と既存の失敗
+
+作業ブランチは`feature/effetune-2.16.0`。更新前のEffeTune 2.15.0でDebug全252テストを実行し、251件が成功した。所要時間は1826.74秒で、コア単独ビルドとGTK E2Eも成功している。以下の記録は`artifacts/verification/effetune-2.16/`を基準とする。
+
+失敗した`pipetune_pipewire_pipeline_tests`は、入力のない状態で`graphSampleRate == 0`を待っていた。専用のPipeWireとWirePlumberでも同じ失敗を再現した。現行の入力ノードには`node.always-process=true`が設定され、DSPの休止とグラフの停止は別の状態になる。工程2では、この既存テストをDSP休止中の設定変更という目的に合わせる。休止ポリシーを明示し、公開状態の`dspActivity`を観測する。製品の常時動作設定や待機時間は変更しない。REDの記録は`baseline/tests-debug.log`と`baseline/pipewire-isolated.log`に残した。
+
+ホストはIntel Core i9-12900KS、論理24 CPU、メモリ62 GiB、GCC 13.3、CMake 3.28.3。Scalar、baseline SIMD、x86-64-v3を実行でき、x86-64-v4はCPU非対応だった。9配布構成のPodmanイメージと必要なビルド依存は利用できた。詳細は`baseline/environment.json`に記録した。
+
+Releaseの測定はCPU 8に固定し、他のビルド・試験と重ねずに行った。ブロックは256フレームで、2秒分の入力を処理してから1024ブロックを測定した。Rhythmには120 BPMの合成音、SFZには8倍音を含むMIDI 83相当の入力と、48 kHz・4800フレームの登録音源を使った。各条件を3回測定した。Scalarの温キャッシュの中央値を示す。RSSはプロセス全体の最大値である。
+
+| レート | DSP | 準備 ms | 処理 ns/frame | 最大RSS KiB | 遅延 frames |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 48 kHz | Rhythm、クリック無効 | 3.095 | 374.797 | 23396 | 0 |
+| 48 kHz | Rhythm、クリック有効 | 3.000 | 373.501 | 23552 | 0 |
+| 48 kHz | SFZ Classic | 13.775 | 888.929 | 31328 | 4320 |
+| 48 kHz | SFZ Event | 13.918 | 891.151 | 31336 | 11040 |
+| 96 kHz | Rhythm、クリック無効 | 2.970 | 214.383 | 23660 | 0 |
+| 96 kHz | Rhythm、クリック有効 | 2.950 | 215.705 | 23452 | 0 |
+| 96 kHz | SFZ Classic | 20.941 | 530.046 | 32580 | 8640 |
+| 96 kHz | SFZ Event | 21.222 | 531.126 | 32652 | 22080 |
+| 384 kHz | Rhythm、クリック無効 | 2.995 | 74.773 | 24612 | 0 |
+| 384 kHz | Rhythm、クリック有効 | 2.943 | 74.783 | 24460 | 0 |
+| 384 kHz | SFZ Classic | 64.206 | 254.589 | 38816 | 34560 |
+| 384 kHz | SFZ Event | 64.575 | 256.178 | 38856 | 88320 |
+
+3バックエンドの全162測定で、PCMは有限かつ非無音だった。SFZの冷キャッシュはヒット数0、温キャッシュは1で、更新後に再読込するため保存した。生データは`baseline/performance.json`、共有バックエンドのサイズは`baseline/backend-sizes.json`、測定用ドライバーと実行条件は`dsp-profile.cpp`と`profile.mjs`に保存した。
+
+ビルドにコンパイラ警告はなかった。npmは既存の開発用依存について、アセット試験で3件、GTK試験で5件の監査指摘を報告した。Vite、Vitestとその関連依存が対象で、結果は`baseline/npm-audit-assets.json`と`baseline/npm-audit-gtk.json`に保存した。今回の更新で追加した依存ではなく、製品の実行時依存にも含まれない。ローカルの一回限りの試験として実行し、依存更新は本DSP更新へ混在させない。esbuildとtesseractのインストールスクリプトに関する通知も確認し、ビルドと該当試験が成功した。
+
+### 工程1の最小更新
+
+2.16.0を要求するスモークとパッカー試験を先に追加した。2.15.0で、版表示、カタログの新契約、実共有ライブラリへの4 float設定が失敗することを確認した。Scalar、baseline SIMD、x86-64-v3で新ハッシュの拒否を観測した。記録は`baseline/contracts-red.log`と`baseline/packer-red.log`。
+
+公式コミット`3769b9aefebf2dce2de3169690d4a95e1716da4c`へ参照を更新した。生成カタログとパッカーは既存の生成処理で対応でき、専用処理や外部コードの変更は不要だった。ホストの12対象試験が成功した（179.61秒）。新契約、Matrix reset、Rhythmの6参照PCM、SFZの13参照PCMと製品再生、Note Spectrogram、解析モデル、木モデル埋込みを含む。CLI・GTKは`EffeTune DSP 2.16.0`を表示した。記録は`step1/tests.log`、`step1/tests.xml`、`step1/versions.log`。
+
+Debian trixieのi686とarmv7lを先行ビルドし、パッケージをコンテナーへ導入して確認した。i686はScalar・baseline・x86-64-v3、armv7lはScalar・baselineの計5バックエンドで成功した。読込先が`/usr/lib/pipetune`であること、新しいRhythmとNoteの設定、MatrixのPCM、登録SFZのClassic/Event発音を確認した。48 kHzの報告遅延はClassicが4320、Eventが11040フレームだった。
+
+先行配布物のPipeTune版は既存の生成規則による2.15.2である。ビルド・導入ログは`step1/early32-build.log`、音声試験は`step1/i686-pcm/result.json`と`step1/armv7l-pcm/result.json`、配布物の控えは`step1/packages/`に保存した。コンパイラ警告はなく、ARMで表示されたGCC 7.1以降の引数ABI変更の注記は、同じコンパイラで構成したライブラリ間の不整合を示すものではなかった。既存ABIパッチと32 bit設定が成立し、工程1の完了条件を満たした。
