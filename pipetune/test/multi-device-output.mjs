@@ -13,7 +13,8 @@ assert.ok(pipewire && wireplumber && driver, "PipeWire, WirePlumber and probe pa
 const version = spawnSync(wireplumber, ["--version"], { encoding: "utf8" });
 assert.equal(version.status, 0, version.stderr);
 const wirePlumber04 = /libwireplumber 0\.4\./u.test(version.stdout);
-const fixedPcmTest = scenario.startsWith("product-sfz-") || scenario.startsWith("product-matrix-freewheel");
+const fixedPcmTest = scenario.startsWith("product-sfz-") || scenario.startsWith("product-matrix-freewheel") || scenario === "product-matrix-realtime";
+const onePcmOutput = scenario === "product-matrix-freewheel-one-output";
 const audioFailurePoint = scenario.startsWith("product-matrix-freewheel-fail-")
   ? scenario.slice("product-matrix-freewheel-fail-".length) : "";
 const expectedAudioFailure = {
@@ -628,7 +629,7 @@ try {
     }
     const preset = join(directory, "matrix.effetune_preset");
     const pipeline = [
-      { name: "Matrix", enabled: true, channel: "All", parameters: { mx: scenario === "product-slots" ? "001102p1304" : "001102p13" } },
+      { name: "Matrix", enabled: true, channel: "All", parameters: { mx: scenario === "product-slots" ? "001102p1304" : onePcmOutput ? "0011" : "001102p13" } },
     ];
     if (["product-volume", "product-reconnect", "product-profile", "product-restart", "product-restart-mute"].includes(scenario)) pipeline.push({ name: "DC Offset", enabled: true, channel: "All", parameters: { of: 0.125 } });
     if (scenario === "product-time-alignment") pipeline.push({ name: "Time Alignment", enabled: true, channel: "34", parameters: { dl: 1 } });
@@ -641,7 +642,7 @@ try {
       }]));
       environment.XDG_CACHE_HOME = join(directory, "cache");
       pipeline.push({ name: "SFZ Note Player", enabled: true, channel: "34", parameters: {
-        sf: "0123456789abcdef01234567", dt: scenario === "product-sfz-event" ? "Event" : "Classic",
+        sf: "0123456789abcdef01234567", dt: scenario.startsWith("product-sfz-event") ? "Event" : "Classic",
         mn: 83, mx: 83, dm: 100, wm: 0,
       } });
     }
@@ -1340,15 +1341,18 @@ try {
       assert.ok(audio.stderr.includes(expectedAudioFailure), audio.stderr);
       assert.equal(report.shutdownAcknowledged, true, "failed capture must wait for the producer to stop");
     } else {
-      if (scenario === "product-matrix-freewheel")
+      if (scenario === "product-matrix-freewheel-delayed-observer")
+        assert.ok(report.deferredFrames >= 2048, "the observer must fall behind by eight graph quanta without losing PCM");
+      if (onePcmOutput) assert.equal(report.compensationFrames[0], -1);
+      else if (fixedPcmTest)
         assert.ok(report.compensationFrames[0] >= 62 && report.compensationFrames[0] <= 63,
           "Matrix-only freewheel must verify tagged PCM and the declared output delay");
-      assert.ok(report.receivedFrames.every((frames) => scenario === "product-disconnected" ? frames === 0 : frames >= 32768));
+      assert.ok(report.receivedFrames.every((frames, device) => scenario === "product-disconnected" || (onePcmOutput && device === 1) ? frames === 0 : frames >= 32768));
       assert.ok(report.producedFrames >= 32768);
       assert.equal(report.stages.length, scenario === "product-output-recovery" ? 12 : graphClockTest || ["product-controls", "product-output-change"].includes(scenario) ? 9 : scenario === "product-profile" ? 5 : ["product-restart", "product-latency", "product-latency-units", "product-latency-reconnect", "product-time-alignment", "product-output-timeout"].includes(scenario) ? 3 :
         ["product-volume", "product-reconnect", "product-restart-mute"].includes(scenario) ? 4 : 1);
       assert.ok(report.stages.every((stage, index) => stage.every((frames, device) =>
-        scenario === "product-disconnected" || (scenario === "product-output-change" && index === 7) || (scenario === "product-latency-reconnect" && index === 1 && device === 1) ||
+        scenario === "product-disconnected" || (onePcmOutput && device === 1) || (scenario === "product-output-change" && index === 7) || (scenario === "product-latency-reconnect" && index === 1 && device === 1) ||
         (scenario === "product-output-recovery" && ([2,9,10].includes(index) || ([1,3,7].includes(index) && device === 0))) ||
         ((["product-reconnect", "product-profile"].includes(scenario) && index === 2 || scenario === "product-profile" && index === 3) && device === 0) ? frames === 0 : frames >= 32768)));
       if (scenario === "product-latency-reconnect") {
