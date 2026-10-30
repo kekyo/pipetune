@@ -1107,6 +1107,9 @@ try {
         assert.equal(saved.configurationRevision, ++revision);
         terminate(profileFixture, "SIGTERM");
         await profileFixture.completion;
+        // Observe removal before reusing the card identity; the previous
+        // optical profile must not satisfy the new device's restoration check.
+        await waitForCardStatus((status) => !status.availableOutputProfiles.some((item) => item.card.api === "pipetune-fixture"));
         profileFixture = start("reconnected product profile fixture", pulseServer, [], {
           ...environment, PIPETUNE_PROFILE_FIXTURE: "1", PIPETUNE_PROFILE_RECREATE: "1",
         });

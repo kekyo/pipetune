@@ -496,7 +496,17 @@ static bool testCrosstalkReload(const std::filesystem::path &socketPath,
     auto input = std::ifstream(source);
     const auto original = std::string(std::istreambuf_iterator<char>(input), {});
     const auto oversized = original + std::string(64u * 1024u * 1024u + 1u - original.size(), ' ');
-    if (!replacePresetContents(source, oversized)) return false;
+    const auto staged = std::filesystem::path(source.string() + ".replacement");
+    if (!writePresetContents(staged, oversized)) return false;
+    // Creation notifications can finish another valid reload while the large
+    // replacement is written. Complete an explicit load before the atomic swap
+    // so the retention check starts from that acknowledged pipeline revision.
+    const auto prepared = pipetune::parseControlResponse(pipetune::exchangeControlMessage(
+        socketPath, pipetune::makeLoadPresetControlRequest(presetPath)).response);
+    if (!check(prepared.success && prepared.status.activePluginCount == 2,
+               "Crosstalk must be active before replacing its backup")) return false;
+    active = prepared.status;
+    std::filesystem::rename(staged, source);
     const auto rejected = waitForStatus(socketPath, [](const auto &status) {
       return status.configurationError.find("byte budget") != std::string::npos;
     });
