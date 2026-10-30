@@ -75,8 +75,15 @@ static cardio::promise<AssetFileInspection> readSource(
       offset += count;
     }
     auto extra = std::array<std::byte, 1>{};
-    if ((co_await cardio::gio::read(G_INPUT_STREAM(stream.get()), std::span(extra))) != 0)
+    if ((co_await cardio::gio::read(G_INPUT_STREAM(stream.get()), std::span(extra))) != 0) {
+      if (size == maximumBytes) throw AssetFileSizeError{};
+      // Check the opened file: its path may already name a smaller replacement.
+      // A resource-limit rejection must not become an omitted measurement.
+      const auto grown = GioObject<GFileInfo>(co_await cardio::gio::query_info(
+          stream.get(), snapshotAttributes), g_object_unref);
+      validateFileInfo(grown.get(), maximumBytes);
       throw std::runtime_error("asset grew while reading");
+    }
     const auto after = GioObject<GFileInfo>(co_await cardio::gio::query_info(
         file.get(), snapshotAttributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS), g_object_unref);
     if (validateFileInfo(after.get(), maximumBytes) != size ||

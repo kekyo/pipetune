@@ -4,15 +4,76 @@
  * https://github.com/kekyo/pipetune/
  */
 #include "asset_file.h"
+#include "measurement_store.h"
 #include "preparation_dispatcher.h"
 #include <algorithm>
 #include <array>
 #include <fstream>
+#include <functional>
 #include <iostream>
+#include <utility>
 #include <unistd.h>
+
+// Mutate only after the path and opened stream metadata have been checked.
+// The wrapper is linked into this test, without changing GIO or production I/O.
+static std::function<void()> beforeRead;
+extern "C" void __real_g_input_stream_read_async(GInputStream *, void *, gsize,
+    int, GCancellable *, GAsyncReadyCallback, gpointer);
+extern "C" void __wrap_g_input_stream_read_async(GInputStream *stream, void *buffer,
+    gsize count, int priority, GCancellable *cancellable, GAsyncReadyCallback callback, gpointer data) {
+  if (beforeRead) std::exchange(beforeRead, {})();
+  __real_g_input_stream_read_async(stream, buffer, count, priority, cancellable, callback, data);
+}
 
 static void require(bool condition, const char *message) {
   if (!condition) throw std::runtime_error(message);
+}
+
+static cardio::promise<void> testReadChanges(const std::filesystem::path &directory) {
+  using namespace pipetune;
+  const auto path = directory / "changing.bin";
+  const auto replacement = directory / "replacement.bin";
+  // Grow past the limit, grow within it, replace the path, grow the opened file
+  // and replace its path, cancel during I/O, and grow from the exact limit.
+  for (auto scenario = 0; scenario < 6; ++scenario) {
+    std::ofstream(path, std::ios::binary) << std::string(scenario == 5 ? 16 : 8, 'a');
+    auto cancellation = cardio::cancellation_source{};
+    beforeRead = [&] {
+      if (scenario == 4) { cancellation.cancel(); return; }
+      if (scenario != 2) std::filesystem::resize_file(path, scenario == 1 ? 9 : 17);
+      if (scenario == 2 || scenario == 3) {
+        std::ofstream(replacement, std::ios::binary) << std::string(scenario == 2 ? 9 : 4, 'b');
+        std::filesystem::rename(replacement, path);
+      }
+    };
+    auto oversized = false, changed = false, canceled = false;
+    try { static_cast<void>(co_await readAssetFile(path, 16, cancellation.get_cancellation())); }
+    catch (const AssetFileSizeError &) { oversized = true; }
+    catch (const cardio::canceled_exception &) { canceled = true; }
+    catch (const std::runtime_error &) { changed = true; }
+    require(!beforeRead, "the mutation must run at the first read boundary");
+    require(oversized == (scenario == 0 || scenario == 3 || scenario == 5),
+        "growth beyond the limit must retain its size-error classification, including a replaced path");
+    require(changed == (scenario == 1 || scenario == 2), "in-budget growth and replacement must reject the candidate as changed");
+    require(canceled == (scenario == 4), "cancellation at the read boundary must reject the candidate as canceled");
+    const auto recovered = std::move(co_await readAssetFile(path, 64, {}));
+    require(recovered.size() == std::filesystem::file_size(path) &&
+        recovered.front() == (scenario == 2 || scenario == 3 ? 'b' : 'a'),
+        "a fresh read must recover from the current valid file after rejection");
+  }
+  std::ofstream(path, std::ios::binary) << std::string(16, 'x');
+  require((co_await readAssetFile(path, 16, {})).size() == 16, "the exact byte limit must be accepted");
+
+  const auto left = directory / "ear-l.json";
+  std::ofstream(left) << "{}";
+  auto store = MeasurementStore{directory, {}};
+  const auto ids = std::array<std::string, 4>{"ear-l::ch=left", "ear-r::ch=left", "ear-l::ch=right", "ear-r::ch=right"};
+  beforeRead = [&] { std::filesystem::resize_file(left, 64u * 1024u * 1024u + 1u); };
+  const auto measurements = std::move(co_await loadCrosstalkMeasurementsAsync(store, ids, {}));
+  require(!beforeRead && measurements.exceedsByteBudget && !measurements.error.empty(),
+      "growth during Crosstalk loading must reject preparation rather than omit the processor");
+  require(measurements.files.size() == 2 && store.documents.empty() && store.snapshots.empty(),
+      "a rejected measurement must retain dependencies without publishing partial cache entries");
 }
 
 static cardio::promise<bool> testSources(const std::filesystem::path &directory) {
@@ -73,6 +134,7 @@ static cardio::promise<bool> testSources(const std::filesystem::path &directory)
   try { static_cast<void>(co_await inspectAssetFile(original, bytes.size(), 64, cancellation.get_cancellation())); }
   catch (const cardio::canceled_exception &) { canceled = true; }
   require(canceled, "cancellation must be observed before touching a source path");
+  co_await testReadChanges(directory);
   co_return true;
 }
 
