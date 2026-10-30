@@ -68,6 +68,21 @@ int main() {
   const auto originalFile = root / "ear-l.json";
   auto input = std::ifstream(originalFile);
   const auto original = std::string(std::istreambuf_iterator<char>(input), {});
+  // The bound applies to the complete backup, including optional analysis data.
+  constexpr auto maximumBytes = std::size_t{64} * 1024u * 1024u;
+  {
+    auto output = std::ofstream(originalFile);
+    output << original << std::string(maximumBytes - original.size(), ' ');
+  }
+  store = {root, {}};
+  const auto atLimit = pipetune::loadCrosstalkMeasurements(store, ids);
+  check(atLimit.error.empty() && atLimit.sources[0].samples == valid.sources[0].samples,
+        "a complete backup at 64 MiB must retain the linear impulse");
+  std::ofstream(originalFile, std::ios::app) << ' ';
+  store = {root, {}};
+  const auto oversized = pipetune::loadCrosstalkMeasurements(store, ids);
+  check(oversized.error.find("byte budget") != std::string::npos && oversized.files.size() == 2,
+        "a backup above 64 MiB must fail and retain watched dependencies");
   for (const auto &[before, after] : std::array<std::pair<std::string, std::string>, 5>{
            {{"\"sampleRate\":48000", "\"sampleRate\":44100"},
             {"\"onsetIndex\":0", "\"onsetIndex\":99"},

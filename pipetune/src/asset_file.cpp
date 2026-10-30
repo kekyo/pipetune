@@ -28,9 +28,9 @@ static std::size_t validateFileInfo(GFileInfo *info, std::size_t maximumBytes) {
   const auto size = g_file_info_get_size(info);
   // NOFOLLOW path queries report symlinks as a distinct file type. Stream
   // queries omit is-symlink, so checking that optional attribute is invalid.
-  if (g_file_info_get_file_type(info) != G_FILE_TYPE_REGULAR || size < 0 ||
-      static_cast<std::uint64_t>(size) > maximumBytes)
-    throw std::runtime_error("asset must be a regular file within its byte budget");
+  if (g_file_info_get_file_type(info) != G_FILE_TYPE_REGULAR || size < 0)
+    throw std::runtime_error("asset must be a regular file");
+  if (static_cast<std::uint64_t>(size) > maximumBytes) throw AssetFileSizeError{};
   return static_cast<std::size_t>(size);
 }
 

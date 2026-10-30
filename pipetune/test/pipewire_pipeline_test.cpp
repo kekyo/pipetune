@@ -395,6 +395,26 @@ static bool testRoomReload(const std::filesystem::path &socketPath,
       loaded.status.presetEntries.front().state == pipetune::PresetEntryState::enabled,
       "per-channel Room EQ must load on the live control path")) return false;
   auto revision = loaded.status.configurationRevision;
+  {
+    // A valid JSON backup can exceed the shared reader's budget as optional
+    // analysis grows. Reject the new file without replacing the active filter.
+    const auto oversized = original + std::string(64u * 1024u * 1024u + 1u - original.size(), ' ');
+    if (!replacePresetContents(left, oversized)) return false;
+    const auto rejected = waitForStatus(socketPath, [](const auto &status) {
+      return status.configurationError.find("byte budget") != std::string::npos;
+    });
+    if (!check(rejected && rejected->configurationRevision == revision &&
+                   rejected->activePreset == path.string() && rejected->activePluginCount == 1 &&
+                   rejected->dspLatencyFrames == 4224,
+               "an oversized backup must retain the active Room EQ and its latency")) return false;
+    if (!replacePresetContents(left, original)) return false;
+    const auto recovered = waitForStatus(socketPath, [revision](const auto &status) {
+      return status.configurationError.empty() && status.configurationRevision > revision;
+    });
+    if (!check(recovered && recovered->activePluginCount == 1 && recovered->dspLatencyFrames == 4224,
+               "repairing an oversized backup must recover automatic Room EQ reload")) return false;
+    revision = recovered->configurationRevision;
+  }
   for (const auto &source : {left, right}) {
     const auto saved = std::filesystem::path(source.string() + ".saved");
     std::filesystem::rename(source, saved);
@@ -466,12 +486,33 @@ static bool testCrosstalkReload(const std::filesystem::path &socketPath,
         "\"sampleRate\":48000,\"trimStartSamples\":0,\"onsetIndex\":0,\"outputTimeReference\":\"file\"}]}";
     if (!replacePresetContents(root / (id + ".json"), json)) return false;
   }
-  const auto active = waitForStatus(socketPath, [&omitted](const auto &status) {
+  auto active = waitForStatus(socketPath, [&omitted](const auto &status) {
     return status.activePluginCount == 2 && status.configurationError.empty() &&
         status.configurationRevision > omitted->configurationRevision;
   });
   if (!check(active.has_value(), "measurement creation must activate Crosstalk without GTK")) return false;
   const auto source = root / "ear-l.json";
+  {
+    auto input = std::ifstream(source);
+    const auto original = std::string(std::istreambuf_iterator<char>(input), {});
+    const auto oversized = original + std::string(64u * 1024u * 1024u + 1u - original.size(), ' ');
+    if (!replacePresetContents(source, oversized)) return false;
+    const auto rejected = waitForStatus(socketPath, [](const auto &status) {
+      return status.configurationError.find("byte budget") != std::string::npos;
+    });
+    if (!check(rejected && rejected->configurationRevision == active->configurationRevision &&
+                   rejected->activePreset == presetPath.string() && rejected->activePluginCount == 2 &&
+                   rejected->dspLatencyFrames == active->dspLatencyFrames,
+               "an oversized Crosstalk backup must retain the previous pipeline")) return false;
+    if (!replacePresetContents(source, original)) return false;
+    const auto recoveredSize = waitForStatus(socketPath, [&active](const auto &status) {
+      return status.configurationError.empty() && status.configurationRevision > active->configurationRevision;
+    });
+    if (!check(recoveredSize && recoveredSize->activePluginCount == 2 &&
+                   recoveredSize->dspLatencyFrames == active->dspLatencyFrames,
+               "repairing an oversized Crosstalk backup must recover automatic reload")) return false;
+    active = recoveredSize;
+  }
   const auto backup = root / "ear-l.saved";
   std::filesystem::rename(source, backup);
   const auto removed = waitForStatus(socketPath, [&active](const auto &status) {

@@ -791,6 +791,8 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
         if (std::ranges::find(implementation->dependencyFiles, file) == implementation->dependencyFiles.end()) implementation->dependencyFiles.push_back(file);
       }
       if (!measured.error.empty()) {
+        if (measured.exceedsByteBudget)
+          co_return fail(nodeError(index, measured.error), std::move(warnings));
         warnings.push_back({.nodeIndex = index, .pluginName = std::string(node.name), .reason = measured.error});
         continue;
       }
