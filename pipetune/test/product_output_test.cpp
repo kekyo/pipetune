@@ -170,7 +170,7 @@ static int runProduct(const char *preset, std::string_view scenario) {
         return 1;
       }
     }
-    if (scenario == "product-matrix-freewheel" &&
+    if (scenario.starts_with("product-matrix-freewheel") &&
         (loaded.pipeline->activePluginCount() != 1 || loaded.pipeline->latencyFrames() != 0)) return 1;
     pipeline = std::move(loaded.pipeline);
   }
@@ -236,6 +236,11 @@ struct AudioTest {
   bool latency = false;
   bool latencyUnits = false;
   bool fixedLatency = false;
+  std::string_view failurePoint;
+  bool injectionReady = false;
+  bool waitingForFailure = false;
+  spa_source *deadline = nullptr;
+  bool shutdownAcknowledged = false;
   bool latencyReconnect = false;
   bool intentionalDelay = false;
   bool controls = false;
@@ -282,7 +287,15 @@ struct AudioTest {
 };
 
 static void fail(AudioTest &test, std::string error) {
+  if (!test.error.empty()) return;
   test.error = std::move(error);
+  if (test.fixedLatency && !test.shutdownAcknowledged) {
+    // Failure still owns live freewheel streams. Keep servicing them until
+    // the coordinator has stopped the producer, just as on successful capture.
+    test.awaitingControl = true;
+    std::cerr << "product:audio-failed\nproduct:pcm-finished\nproduct:control-needed\n" << std::flush;
+    return;
+  }
   pw_main_loop_quit(test.loop);
 }
 
@@ -329,7 +342,7 @@ static void captureLatency(TestOutput &output, pw_buffer &buffer) {
       return fail(test, "invalid latency capture plane");
     frames = std::min(frames, static_cast<std::uint32_t>(plane.chunk->size / sizeof(float)));
   }
-  if (test.fixedLatency && test.awaitingControl) {
+  if (test.fixedLatency && (test.awaitingControl || test.waitingForFailure)) {
     // Keep returning freewheel buffers until the producer has stopped. Quitting
     // this loop first can strand its data thread while stream destruction waits.
     buffer.size = frames;
@@ -412,6 +425,23 @@ static void captureLatency(TestOutput &output, pw_buffer &buffer) {
   if (single && output.index != 0) return;
   a.frames += a.blockFrames;
   if (!single) b.frames += b.blockFrames;
+  if (test.fixedLatency && !test.failurePoint.empty() && !test.injectionReady && a.frames >= 2048) {
+    test.injectionReady = true;
+    test.waitingForFailure = true;
+    if (test.failurePoint == "pcm") return fail(test, "injected PCM verification failure");
+    if (test.failurePoint == "disconnect") {
+      pw_stream_set_error(output.stream, -EIO, "injected device disconnect");
+      return;
+    }
+    if (test.failurePoint == "timeout") {
+      auto due = timespec{.tv_sec = 0, .tv_nsec = 1};
+      auto interval = timespec{};
+      pw_loop_update_timer(pw_main_loop_get_loop(test.loop), test.deadline, &due, &interval, false);
+      return;
+    }
+    std::cerr << "product:injection-ready\nproduct:control-needed\n" << std::flush;
+    return;
+  }
   if (a.frames < 32768 || (!single && b.frames < 32768)) return;
   auto latencies = std::array<double, 2>{};
   for (auto index = 0U; index < 2; ++index) {
@@ -438,7 +468,7 @@ static void captureLatency(TestOutput &output, pw_buffer &buffer) {
   test.compensation[test.stage] = compensation;
   if (test.fixedLatency) {
     test.awaitingControl = true;
-    std::cerr << "product:sfz-capture-finished\n" << std::flush;
+    std::cerr << "product:sfz-capture-finished\nproduct:pcm-finished\n" << std::flush;
     return;
   }
   if (test.stage == 2) return static_cast<void>(pw_main_loop_quit(test.loop));
@@ -828,6 +858,7 @@ static void startDirectSource(AudioTest &test) {
 static void startSource(void *data, int) {
   auto &test = *static_cast<AudioTest *>(data);
   if (test.direct && test.stage == 0) return startDirectSource(test);
+  if (test.failurePoint == "before-source") return fail(test, "injected failure before source start");
   if (test.source != nullptr) return fail(test, "source started twice");
   test.source = pw_stream_new(test.core, "Product test signal", pw_properties_new(
       PW_KEY_NODE_NAME, "pipetune_product_signal", PW_KEY_TARGET_OBJECT, test.inputName.c_str(),
@@ -996,7 +1027,9 @@ static int runAudio(std::string_view scenario) {
   test.intentionalDelay = scenario == "product-time-alignment";
   test.latencyReconnect = scenario == "product-latency-reconnect";
   test.latencyUnits = scenario == "product-latency-units";
-  test.fixedLatency = scenario.starts_with("product-sfz-") || scenario == "product-matrix-freewheel";
+  test.fixedLatency = scenario.starts_with("product-sfz-") || scenario.starts_with("product-matrix-freewheel");
+  if (scenario.starts_with("product-matrix-freewheel-fail-"))
+    test.failurePoint = scenario.substr(std::string_view("product-matrix-freewheel-fail-").size());
   test.latency = scenario == "product-latency" || test.latencyUnits || test.intentionalDelay || test.latencyReconnect || test.fixedLatency;
   test.graphClock = scenario == "product-output-clock" || scenario == "product-output-clock-alt";
   test.clockUnavailable = scenario == "product-output-clock-unavailable";
@@ -1015,10 +1048,14 @@ static int runAudio(std::string_view scenario) {
   if (test.loop == nullptr) return 1;
   // Block and register the control signal before PipeWire creates data threads.
   auto *signal = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR1, startSource, &test);
+  auto *cancel = test.fixedLatency ? pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGTERM, [](void *data, int) {
+    fail(*static_cast<AudioTest *>(data), "audio fixture canceled");
+  }, &test) : nullptr;
   auto *resume = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR2, [](void *data, int) {
     auto &test = *static_cast<AudioTest *>(data);
     if (test.fixedLatency) {
-      if (!test.awaitingControl) return fail(test, "SFZ shutdown preceded PCM verification");
+      test.shutdownAcknowledged = true;
+      if (!test.awaitingControl) return fail(test, "producer stopped before PCM verification");
       return static_cast<void>(pw_main_loop_quit(test.loop));
     }
     if (test.direct) {
@@ -1183,6 +1220,7 @@ static int runAudio(std::string_view scenario) {
   auto *timer = pw_loop_add_timer(pw_main_loop_get_loop(test.loop), [](void *data, std::uint64_t) {
     fail(*static_cast<AudioTest *>(data), "product PCM test timed out");
   }, &test);
+  test.deadline = timer;
   auto deadline = timespec{.tv_sec = test.outputChange || test.meters || test.sourceResume || test.direct ? 60 : test.outputTimeout || test.recovery ? 30 : 15,
       .tv_nsec = 0}; auto interval = timespec{};
   if (timer == nullptr || signal == nullptr ||
@@ -1203,6 +1241,7 @@ static int runAudio(std::string_view scenario) {
   pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), timer);
   pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), signal);
   pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), resume);
+  if (cancel != nullptr) pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), cancel);
   clockObserver.reset();
   pathObserver.reset();
   pw_core_disconnect(test.core); pw_context_destroy(test.context); pw_main_loop_destroy(test.loop); pw_deinit();
@@ -1213,7 +1252,8 @@ static int runAudio(std::string_view scenario) {
     if (stage != 0) std::cout << ',';
     std::cout << '[' << test.stageFrames[stage][0] << ',' << test.stageFrames[stage][1] << ']';
   }
-  std::cout << "],\"singleModeFrames\":" << test.singleModeFrames << ",\"compensationFrames\":[" << test.compensation[0] << ',' << test.compensation[1] << ',' << test.compensation[2] << ']'
+  std::cout << "],\"shutdownAcknowledged\":" << (test.shutdownAcknowledged ? "true" : "false")
+            << ",\"singleModeFrames\":" << test.singleModeFrames << ",\"compensationFrames\":[" << test.compensation[0] << ',' << test.compensation[1] << ',' << test.compensation[2] << ']'
             << ",\"processedOutputNamed\":" << (test.processedOutputNamed ? "true" : "false");
   if (test.graphClock) {
     std::cout << ",\"graphRates\":[";

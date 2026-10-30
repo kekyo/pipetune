@@ -13,6 +13,14 @@ assert.ok(pipewire && wireplumber && driver, "PipeWire, WirePlumber and probe pa
 const version = spawnSync(wireplumber, ["--version"], { encoding: "utf8" });
 assert.equal(version.status, 0, version.stderr);
 const wirePlumber04 = /libwireplumber 0\.4\./u.test(version.stdout);
+const fixedPcmTest = scenario.startsWith("product-sfz-") || scenario.startsWith("product-matrix-freewheel");
+const audioFailurePoint = scenario.startsWith("product-matrix-freewheel-fail-")
+  ? scenario.slice("product-matrix-freewheel-fail-".length) : "";
+const expectedAudioFailure = {
+  "before-source": "injected failure before source start", pcm: "injected PCM verification failure",
+  disconnect: "injected device disconnect", timeout: "product PCM test timed out",
+  cancel: "audio fixture canceled", "runtime-exit": "producer stopped before PCM verification",
+}[audioFailurePoint];
 const graphClockTest = ["product-output-clock", "product-output-clock-alt"].includes(scenario);
 const graphRate = scenario === "product-output-clock-alt" ? 44100 : 48000;
 const graphQuantum = scenario === "product-output-clock-alt" ? 512 : 256;
@@ -246,6 +254,7 @@ const waitForNextMessage = async (record, message, previousCount) => {
   });
 };
 
+let testFailure;
 try {
   start("PipeWire", pipewire, []);
   await socketReady(join(runtime, remote), undefined);
@@ -1313,45 +1322,54 @@ try {
       clearTimeout(shutdownDeadline);
       assert.equal(stopped.code, 0, runtime.stderr);
     };
-    if (scenario.startsWith("product-sfz-") || scenario === "product-matrix-freewheel") {
+    if (fixedPcmTest) {
       // Freewheel keeps advancing while the runtime is connected. Finish its
       // shutdown before asking the capture loop to destroy its streams.
-      await waitForMessage(audio, "product:sfz-capture-finished");
+      if (["cancel", "runtime-exit"].includes(audioFailurePoint)) {
+        await waitForMessage(audio, "product:control-needed");
+        if (audioFailurePoint === "cancel" && !audio.stderr.includes("product:audio-failed")) audio.child.kill("SIGTERM");
+      }
+      if (audioFailurePoint !== "runtime-exit") await waitForMessage(audio, "product:pcm-finished");
       await stopRuntime();
       audio.child.kill("SIGUSR2");
     }
     const result = await audio.completion;
-    assert.equal(result.code, 0, `${audio.stdout}\n${audio.stderr}`);
+    assert.equal(result.code, expectedAudioFailure ? 1 : 0, `${audio.stdout}\n${audio.stderr}`);
     const report = JSON.parse(audio.stdout);
-    if (scenario === "product-matrix-freewheel")
-      assert.ok(report.compensationFrames[0] >= 62 && report.compensationFrames[0] <= 63,
-        "Matrix-only freewheel must verify tagged PCM and the declared output delay");
-    assert.ok(report.receivedFrames.every((frames) => scenario === "product-disconnected" ? frames === 0 : frames >= 32768));
-    assert.ok(report.producedFrames >= 32768);
-    assert.equal(report.stages.length, scenario === "product-output-recovery" ? 12 : graphClockTest || ["product-controls", "product-output-change"].includes(scenario) ? 9 : scenario === "product-profile" ? 5 : ["product-restart", "product-latency", "product-latency-units", "product-latency-reconnect", "product-time-alignment", "product-output-timeout"].includes(scenario) ? 3 :
-      ["product-volume", "product-reconnect", "product-restart-mute"].includes(scenario) ? 4 : 1);
-    assert.ok(report.stages.every((stage, index) => stage.every((frames, device) =>
-      scenario === "product-disconnected" || (scenario === "product-output-change" && index === 7) || (scenario === "product-latency-reconnect" && index === 1 && device === 1) ||
-      (scenario === "product-output-recovery" && ([2,9,10].includes(index) || ([1,3,7].includes(index) && device === 0))) ||
-      ((["product-reconnect", "product-profile"].includes(scenario) && index === 2 || scenario === "product-profile" && index === 3) && device === 0) ? frames === 0 : frames >= 32768)));
-    if (scenario === "product-latency-reconnect") {
-      assert.equal(report.compensationFrames[1], -1, "a missing output has no measured relative delay");
-      for (const index of [0, 2]) assert.ok(report.compensationFrames[index] >= 62 && report.compensationFrames[index] <= 63);
-    }
-    if (scenario === "product-output-change") assert.ok(report.singleModeFrames >= 32768);
-    if (scenario === "product-output-recovery") assert.ok(report.singleModeFrames >= 32768);
-    if (graphClockTest) {
-      assert.deepEqual(report.graphRates, [graphRate, ...Array(7).fill(96000), 48000]);
-      assert.deepEqual(report.graphQuanta, [graphQuantum, ...Array(7).fill(graphQuantum * 2), graphQuantum]);
-    }
-    if (scenario === "product-reconnect") {
-      assert.ok(report.clockGenerations.every((serial) => serial > 0));
-      assert.notEqual(report.clockGenerations[0], report.clockGenerations[1]);
-    }
-    if (["product-latency", "product-latency-units", "product-time-alignment", "product-sfz-classic", "product-sfz-event"].includes(scenario)) {
-      for (const [index, declared] of (scenario.startsWith("product-sfz-") ? [63] : [63, 127, 31]).entries())
-        assert.ok(report.compensationFrames[index] <= declared && declared - report.compensationFrames[index] <= 1,
-          "automatic output compensation must preserve the preset's intentional channel delay");
+    if (expectedAudioFailure) {
+      assert.ok(audio.stderr.includes(expectedAudioFailure), audio.stderr);
+      assert.equal(report.shutdownAcknowledged, true, "failed capture must wait for the producer to stop");
+    } else {
+      if (scenario === "product-matrix-freewheel")
+        assert.ok(report.compensationFrames[0] >= 62 && report.compensationFrames[0] <= 63,
+          "Matrix-only freewheel must verify tagged PCM and the declared output delay");
+      assert.ok(report.receivedFrames.every((frames) => scenario === "product-disconnected" ? frames === 0 : frames >= 32768));
+      assert.ok(report.producedFrames >= 32768);
+      assert.equal(report.stages.length, scenario === "product-output-recovery" ? 12 : graphClockTest || ["product-controls", "product-output-change"].includes(scenario) ? 9 : scenario === "product-profile" ? 5 : ["product-restart", "product-latency", "product-latency-units", "product-latency-reconnect", "product-time-alignment", "product-output-timeout"].includes(scenario) ? 3 :
+        ["product-volume", "product-reconnect", "product-restart-mute"].includes(scenario) ? 4 : 1);
+      assert.ok(report.stages.every((stage, index) => stage.every((frames, device) =>
+        scenario === "product-disconnected" || (scenario === "product-output-change" && index === 7) || (scenario === "product-latency-reconnect" && index === 1 && device === 1) ||
+        (scenario === "product-output-recovery" && ([2,9,10].includes(index) || ([1,3,7].includes(index) && device === 0))) ||
+        ((["product-reconnect", "product-profile"].includes(scenario) && index === 2 || scenario === "product-profile" && index === 3) && device === 0) ? frames === 0 : frames >= 32768)));
+      if (scenario === "product-latency-reconnect") {
+        assert.equal(report.compensationFrames[1], -1, "a missing output has no measured relative delay");
+        for (const index of [0, 2]) assert.ok(report.compensationFrames[index] >= 62 && report.compensationFrames[index] <= 63);
+      }
+      if (scenario === "product-output-change") assert.ok(report.singleModeFrames >= 32768);
+      if (scenario === "product-output-recovery") assert.ok(report.singleModeFrames >= 32768);
+      if (graphClockTest) {
+        assert.deepEqual(report.graphRates, [graphRate, ...Array(7).fill(96000), 48000]);
+        assert.deepEqual(report.graphQuanta, [graphQuantum, ...Array(7).fill(graphQuantum * 2), graphQuantum]);
+      }
+      if (scenario === "product-reconnect") {
+        assert.ok(report.clockGenerations.every((serial) => serial > 0));
+        assert.notEqual(report.clockGenerations[0], report.clockGenerations[1]);
+      }
+      if (["product-latency", "product-latency-units", "product-time-alignment", "product-sfz-classic", "product-sfz-event"].includes(scenario)) {
+        for (const [index, declared] of (scenario.startsWith("product-sfz-") ? [63] : [63, 127, 31]).entries())
+          assert.ok(report.compensationFrames[index] <= declared && declared - report.compensationFrames[index] <= 1,
+            "automatic output compensation must preserve the preset's intentional channel delay");
+      }
     }
     let shutdownControl;
     if (scenario === "product-output-profile-shutdown") {
@@ -1386,7 +1404,7 @@ try {
       await observedFixtureMessage("output-node-held=1");
       assert.equal(shutdownControl.result, undefined);
     }
-    if (!scenario.startsWith("product-sfz-")) await stopRuntime();
+    if (!fixedPcmTest) await stopRuntime();
     if (shutdownControl) {
       await shutdownControl.completion;
       if (shutdownControl.stdout.trim()) assert.equal(JSON.parse(shutdownControl.stdout).ok, false);
@@ -1533,14 +1551,24 @@ try {
   process.stdout.write(`${version.stdout.trim()}\n${JSON.stringify(report)}\n`);
   }
 } catch (error) {
+  testFailure = error;
   for (const child of children) process.stderr.write(`${child.name} (${JSON.stringify(child.result)}):\n${child.stdout}${child.stderr}\n`);
   throw error;
 } finally {
+  const forced = [];
   for (const record of [...children].reverse()) {
-    if (record.result === undefined) terminate(record, "SIGTERM");
-    const timeout = setTimeout(() => terminate(record, "SIGKILL"), 5000);
+    if (record.result === undefined) {
+      if (fixedPcmTest && record.name === "product audio fixture") record.child.kill("SIGUSR2");
+      else terminate(record, "SIGTERM");
+    }
+    const timeout = setTimeout(() => {
+      forced.push(new Error(`${record.name} required SIGKILL during cleanup`));
+      terminate(record, "SIGKILL");
+    }, 5000);
     await record.completion;
     clearTimeout(timeout);
   }
   rmSync(directory, { recursive: true, force: true });
+  if (forced.length !== 0) throw new AggregateError(testFailure ? [testFailure, ...forced] : forced,
+    "isolated audio cleanup did not finish normally");
 }
