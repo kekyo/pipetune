@@ -1306,6 +1306,20 @@ try {
       start("restarted WirePlumber", "dbus-run-session", ["--", wireplumber]);
       audio.child.kill("SIGUSR2");
     }
+    const stopRuntime = async () => {
+      runtime.child.kill("SIGTERM");
+      const shutdownDeadline = setTimeout(() => terminate(runtime, "SIGKILL"), 5000);
+      const stopped = await runtime.completion;
+      clearTimeout(shutdownDeadline);
+      assert.equal(stopped.code, 0, runtime.stderr);
+    };
+    if (scenario.startsWith("product-sfz-")) {
+      // Freewheel keeps advancing while the runtime is connected. Finish its
+      // shutdown before asking the capture loop to destroy its streams.
+      await waitForMessage(audio, "product:sfz-capture-finished");
+      await stopRuntime();
+      audio.child.kill("SIGUSR2");
+    }
     const result = await audio.completion;
     assert.equal(result.code, 0, `${audio.stdout}\n${audio.stderr}`);
     const report = JSON.parse(audio.stdout);
@@ -1369,11 +1383,7 @@ try {
       await observedFixtureMessage("output-node-held=1");
       assert.equal(shutdownControl.result, undefined);
     }
-    runtime.child.kill("SIGTERM");
-    const shutdownDeadline = setTimeout(() => terminate(runtime, "SIGKILL"), 5000);
-    const stopped = await runtime.completion;
-    clearTimeout(shutdownDeadline);
-    assert.equal(stopped.code, 0, runtime.stderr);
+    if (!scenario.startsWith("product-sfz-")) await stopRuntime();
     if (shutdownControl) {
       await shutdownControl.completion;
       if (shutdownControl.stdout.trim()) assert.equal(JSON.parse(shutdownControl.stdout).ok, false);

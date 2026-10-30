@@ -324,6 +324,12 @@ static void captureLatency(TestOutput &output, pw_buffer &buffer) {
       return fail(test, "invalid latency capture plane");
     frames = std::min(frames, static_cast<std::uint32_t>(plane.chunk->size / sizeof(float)));
   }
+  if (test.fixedLatency && test.awaitingControl) {
+    // Keep returning freewheel buffers until the producer has stopped. Quitting
+    // this loop first can strand its data thread while stream destruction waits.
+    buffer.size = frames;
+    return;
+  }
   auto validBlock = frames != 0;
   for (auto frame = 0U; frame < frames; ++frame) {
     auto tags = std::array<std::int64_t, 2>{};
@@ -425,7 +431,12 @@ static void captureLatency(TestOutput &output, pw_buffer &buffer) {
       std::abs(latencies[1] - latencies[0] - test.declaredLatency * 1000000000.0 / 48000) > 1.0) return;
   test.stageFrames[test.stage] = {a.frames, b.frames};
   test.compensation[test.stage] = compensation;
-  if (test.stage == 2 || test.fixedLatency) return static_cast<void>(pw_main_loop_quit(test.loop));
+  if (test.fixedLatency) {
+    test.awaitingControl = true;
+    std::cerr << "product:sfz-capture-finished\n" << std::flush;
+    return;
+  }
+  if (test.stage == 2) return static_cast<void>(pw_main_loop_quit(test.loop));
   ++test.stage;
   test.declaredLatency = test.latencyReconnect ? (test.stage == 1 ? 0 : 63) : test.stage == 1 ? 127 : 31;
   test.latencySettled = false;
@@ -1001,6 +1012,10 @@ static int runAudio(std::string_view scenario) {
   auto *signal = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR1, startSource, &test);
   auto *resume = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR2, [](void *data, int) {
     auto &test = *static_cast<AudioTest *>(data);
+    if (test.fixedLatency) {
+      if (!test.awaitingControl) return fail(test, "SFZ shutdown preceded PCM verification");
+      return static_cast<void>(pw_main_loop_quit(test.loop));
+    }
     if (test.direct) {
       if (!test.awaitingControl) return fail(test, "unexpected direct stage");
       if (test.stage == 8) return static_cast<void>(pw_main_loop_quit(test.loop));
