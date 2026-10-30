@@ -43,6 +43,7 @@ struct fixture {
     bool input_props_override_active;
     bool defer_input_notification;
     bool input_notification_pending;
+    bool input_adjustment_announced;
     bool initial_input_only_profile;
     bool optical_profile_requested;
     bool omit_optical_profile;
@@ -214,13 +215,19 @@ static struct spa_pod *profile(struct fixture *self, struct spa_pod_builder *bui
     const bool input_restored = self->override_input_props_on_signal && !self->input_notification_pending && index == 1 &&
         self->active_profile == 1 && !self->mute[1] &&
         self->volumes[1][0] == 1.0f && self->volumes[1][1] == 1.0f;
+    const bool input_adjusted = index == 0 && self->active_profile == 0 && self->mute[1] &&
+        self->volumes[1][0] == 0.37f && self->volumes[1][1] == 0.37f;
     const char *description = input_restored ? "Alternative stereo duplex (input restored)" :
+        input_adjusted ? "Stereo duplex (saved input)" :
         index == 0 ? "Stereo duplex" : "Alternative stereo duplex";
     spa_pod_builder_add(builder,
         SPA_PARAM_PROFILE_index, SPA_POD_Int(index),
         SPA_PARAM_PROFILE_name, SPA_POD_String(name),
         SPA_PARAM_PROFILE_description, SPA_POD_String(description),
-        SPA_PARAM_PROFILE_priority, SPA_POD_Int(index == 0 ? 100 : 90),
+        /* The rollback fixture starts in its preferred input-only profile;
+         * a late session-manager discovery must not select a different default. */
+        SPA_PARAM_PROFILE_priority, SPA_POD_Int(self->initial_input_only_profile && self->override_profile_on_signal &&
+            index == 3 ? 110 : index == 0 ? 100 : 90),
         SPA_PARAM_PROFILE_save, SPA_POD_Bool(self->save_profile),
         SPA_PARAM_PROFILE_available, SPA_POD_Id(SPA_PARAM_AVAILABILITY_yes), 0);
     if (!self->omit_profile_classes) {
@@ -328,9 +335,15 @@ static int set_param(void *object, uint32_t id, uint32_t flags, const struct spa
             self->active_profile = index;
             self->save_profile = save;
             if (index == 3) self->input_props_override_active = false;
-            if (self->output_profile_variant && index == 3) self->active_routes[1] = 2;
-            if (self->output_profile_variant && index == 1) {
+            if (self->output_profile_variant && profile_changed && index == 3) {
+                self->active_routes[1] = 2;
+                self->save[1] = false;
+            }
+            if (self->output_profile_variant && profile_changed && index == 1) {
                 self->active_routes[1] = self->override_profile_on_signal || self->override_input_props_on_signal ? 2 : 3;
+                /* An automatic route change must not inherit the previous
+                 * route's explicit save request and persist transient Props. */
+                self->save[1] = false;
                 self->volumes[1][0] = 0.4f;
                 self->volumes[1][1] = 0.4f;
                 self->mute[1] = true;
@@ -409,10 +422,13 @@ static int set_param(void *object, uint32_t id, uint32_t flags, const struct spa
         fflush(stdout);
         return 0;
     }
-    printf("route-set device=%d index=%d mute=%d volume=%f,%f changed=%d\n", device, index, self->mute[device], self->volumes[device][0], self->volumes[device][1], changed);
+    printf("route-set device=%d index=%d mute=%d volume=%f,%f changed=%d save=%d\n", device, index, self->mute[device], self->volumes[device][0], self->volumes[device][1], changed, save);
     fflush(stdout);
     if (changed) {
-        if (self->override_input_props_on_signal && device == 1)
+        const bool adjusted = device == 1 && self->active_profile == 0 && !self->input_adjustment_announced &&
+            self->mute[1] && self->volumes[1][0] == 0.37f && self->volumes[1][1] == 0.37f;
+        if (adjusted) self->input_adjustment_announced = true;
+        if (device == 1 && (self->override_input_props_on_signal || adjusted))
             self->params[0].flags ^= SPA_PARAM_INFO_SERIAL;
         self->params[3].flags ^= SPA_PARAM_INFO_SERIAL;
         emit_info(self);
@@ -464,6 +480,13 @@ static void on_signal(void *data, int number) {
         return;
     }
     if (number == SIGUSR2 && self->override_profile_on_signal) {
+        /* The policy may already have replaced the observed target while the
+         * signal was in flight. Do not turn that into an operation after rollback. */
+        if (self->active_profile != 1) {
+            printf("profile-override-skipped profile=%d\n", self->active_profile);
+            fflush(stdout);
+            return;
+        }
         self->active_profile = 0;
         self->active_routes[1] = 3;
         self->volumes[1][0] = 0.173f;
@@ -529,6 +552,10 @@ int main(int argc, char **argv) {
     self.defer_input_notification = getenv("PIPETUNE_PROFILE_DEFER_INPUT_NOTIFICATION") != NULL;
     self.initial_input_only_profile = getenv("PIPETUNE_PROFILE_INITIAL_INPUT_ONLY") != NULL;
     self.omit_optical_profile = getenv("PIPETUNE_PROFILE_OMIT_OPTICAL") != NULL;
+    if (getenv("PIPETUNE_PROFILE_INITIAL_SAVED_INPUT") != NULL) {
+        self.volumes[1][0] = self.volumes[1][1] = 0.37f;
+        self.mute[1] = self.save[1] = true;
+    }
     if (self.initial_input_only_profile) self.active_profile = 3;
     self.device.iface = SPA_INTERFACE_INIT(SPA_TYPE_INTERFACE_Device, SPA_VERSION_DEVICE, &methods, &self);
     spa_hook_list_init(&self.listeners);

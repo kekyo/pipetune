@@ -219,7 +219,7 @@ struct PipeWireRuntime {
   std::mutex outputStateMutex;
   bool outputInventoryReady = false;
   std::uint64_t outputInventoryRevision = 0;
-  enum class ProfilePhase { idle, applying, prepared, restoring };
+  enum class ProfilePhase { idle, applying, settling, prepared, restoring };
   struct ProfileInputState {
     OutputCardIdentity card;
     std::vector<PipeWireInputRouteSnapshot> routes;
@@ -233,6 +233,7 @@ struct PipeWireRuntime {
     std::vector<std::pair<OutputCardIdentity, std::vector<std::uint64_t>>> replacedNodeSerials;
     std::string failure;
     std::vector<OutputCardIdentity> routeRestorationRequested;
+    unsigned inputSettleAttempts = 0;
   } profileTransition;
   std::vector<OutputProfileSelection> pendingProfileRestorations;
   std::vector<std::pair<OutputCardIdentity, std::string>> requestedProfileRestorations;
@@ -1888,7 +1889,7 @@ static bool cardIsPresent(const PipeWireRuntime &runtime, const OutputCardIdenti
 
 static bool outputBelongsToCard(const AvailableOutput &output, const OutputCardIdentity &card);
 
-static std::string verifyAppliedProfiles(const PipeWireRuntime &runtime) {
+static std::string verifyAppliedProfileOutputs(const PipeWireRuntime &runtime) {
   for (const auto &selection : runtime.profileTransition.requested) {
     const auto *active = activeCardProfile(runtime, selection.card);
     if (active == nullptr) {
@@ -1915,6 +1916,12 @@ static std::string verifyAppliedProfiles(const PipeWireRuntime &runtime) {
       if (fresh < *expected) return "the selected output profile has not settled on new output Nodes";
     }
   }
+  return {};
+}
+
+static std::string verifyAppliedProfiles(const PipeWireRuntime &runtime) {
+  const auto outputError = verifyAppliedProfileOutputs(runtime);
+  if (!outputError.empty()) return outputError;
   for (const auto &input : runtime.profileTransition.previousInputs) {
     if (cardIsPresent(runtime, input.card) &&
         pipeWireInputRoutes(*runtime.outputInventory, input.card) != input.routes)
@@ -2081,10 +2088,25 @@ static void advanceProfileTransition(PipeWireRuntime &runtime) {
     return;
   }
   if (restoring) return finishProfileRestoration(runtime);
-  transition.phase = PipeWireRuntime::ProfilePhase::prepared;
-  stopProfileDeadline(runtime);
-  completeProfileRequest(runtime, {});
-  requestControlStatusUpdate(runtime);
+  if (transition.replacedNodeSerials.empty()) {
+    transition.phase = PipeWireRuntime::ProfilePhase::prepared;
+    stopProfileDeadline(runtime);
+    completeProfileRequest(runtime, {});
+    requestControlStatusUpdate(runtime);
+    return;
+  }
+  // The session manager also reacts to Profile and Route notifications. Its
+  // first cached route can arrive after our restoration ack. Confirm the same
+  // input state across that policy round, before exposing a prepared change.
+  transition.phase = PipeWireRuntime::ProfilePhase::settling;
+  auto settle = timespec{.tv_sec = 0, .tv_nsec = 300000000};
+  auto interval = timespec{};
+  const auto armed = pw_loop_update_timer(pw_main_loop_get_loop(runtime.mainLoop), runtime.outputChangeTimer,
+      &settle, &interval, false);
+  if (armed < 0) {
+    beginProfileRestoration(runtime, systemError("cannot arm input-settle check", armed));
+    advanceProfileTransition(runtime);
+  }
 }
 
 static void profileChangeRequested(void *data, std::uint64_t) {
@@ -3559,7 +3581,40 @@ static bool createMainLoop(PipeWireRuntime &runtime) {
   runtime.profileChangeSource = pw_loop_add_event(pw_main_loop_get_loop(runtime.mainLoop), profileChangeRequested, &runtime);
   runtime.outputChangeTimer = pw_loop_add_timer(pw_main_loop_get_loop(runtime.mainLoop), [](void *data, std::uint64_t) {
     auto &runtime = *static_cast<PipeWireRuntime *>(data);
-    if (runtime.profileTransition.phase == PipeWireRuntime::ProfilePhase::applying) {
+    if (runtime.profileTransition.phase == PipeWireRuntime::ProfilePhase::settling) {
+      auto &transition = runtime.profileTransition;
+      auto error = verifyAppliedProfiles(runtime);
+      if (error.empty()) {
+        transition.phase = PipeWireRuntime::ProfilePhase::prepared;
+        stopProfileDeadline(runtime);
+        completeProfileRequest(runtime, {});
+        requestControlStatusUpdate(runtime);
+      } else if (verifyAppliedProfileOutputs(runtime).empty() &&
+          transition.inputSettleAttempts < 2) {
+        ++transition.inputSettleAttempts;
+        for (const auto &input : transition.previousInputs) {
+          if (!cardIsPresent(runtime, input.card)) continue;
+          error = restorePipeWireInputRoutes(*runtime.outputInventory, input.card, input.routes);
+          if (!error.empty()) break;
+        }
+        if (error.empty()) {
+          auto settle = timespec{.tv_sec = 0, .tv_nsec = 300000000};
+          auto interval = timespec{};
+          const auto armed = pw_loop_update_timer(pw_main_loop_get_loop(runtime.mainLoop), runtime.outputChangeTimer,
+              &settle, &interval, false);
+          if (armed < 0) {
+            beginProfileRestoration(runtime, systemError("cannot arm input-settle check", armed));
+            advanceProfileTransition(runtime);
+          }
+        } else {
+          beginProfileRestoration(runtime, "cannot preserve input settings while settling: " + error);
+          advanceProfileTransition(runtime);
+        }
+      } else {
+        beginProfileRestoration(runtime, std::move(error));
+        advanceProfileTransition(runtime);
+      }
+    } else if (runtime.profileTransition.phase == PipeWireRuntime::ProfilePhase::applying) {
       beginProfileRestoration(runtime, "timed out while applying output profiles");
       advanceProfileTransition(runtime);
     } else if (runtime.profileTransition.phase == PipeWireRuntime::ProfilePhase::restoring) {
