@@ -41,6 +41,8 @@ struct fixture {
     bool override_profile_on_signal;
     bool override_input_props_on_signal;
     bool input_props_override_active;
+    bool defer_input_notification;
+    bool input_notification_pending;
     bool initial_input_only_profile;
     bool optical_profile_requested;
     bool omit_optical_profile;
@@ -209,7 +211,7 @@ static struct spa_pod *profile(struct fixture *self, struct spa_pod_builder *bui
         (index == 0 ? "duplex" : "duplex-alternative");
     /* Publish restoration through the product's inventory snapshot so a late
      * input mutation cannot race its asynchronous Route enumeration. */
-    const bool input_restored = self->override_input_props_on_signal && index == 1 &&
+    const bool input_restored = self->override_input_props_on_signal && !self->input_notification_pending && index == 1 &&
         self->active_profile == 1 && !self->mute[1] &&
         self->volumes[1][0] == 1.0f && self->volumes[1][1] == 1.0f;
     const char *description = input_restored ? "Alternative stereo duplex (input restored)" :
@@ -400,6 +402,13 @@ static int set_param(void *object, uint32_t id, uint32_t flags, const struct spa
             SPA_PROP_channelVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, 2, self->volumes[device]));
         pw_node_set_param(self->nodes[device], SPA_PARAM_Props, 0, p);
     }
+    if (changed && self->defer_input_notification && device == 1 && self->active_profile == 1 &&
+            !self->mute[1] && self->volumes[1][0] == 1.0f && self->volumes[1][1] == 1.0f) {
+        self->input_notification_pending = true;
+        printf("input-notification-pending\n");
+        fflush(stdout);
+        return 0;
+    }
     printf("route-set device=%d index=%d mute=%d volume=%f,%f changed=%d\n", device, index, self->mute[device], self->volumes[device][0], self->volumes[device][1], changed);
     fflush(stdout);
     if (changed) {
@@ -418,6 +427,14 @@ static const struct spa_device_methods methods = {
 
 static void on_signal(void *data, int number) {
     struct fixture *self = data;
+    if (number == SIGCONT && self->input_notification_pending) {
+        self->input_notification_pending = false;
+        self->defer_input_notification = false;
+        self->params[0].flags ^= SPA_PARAM_INFO_SERIAL;
+        self->params[3].flags ^= SPA_PARAM_INFO_SERIAL;
+        emit_info(self);
+        return;
+    }
     if (number == SIGURG && self->override_input_props_on_signal) {
         self->input_props_override_active = true;
         self->volumes[1][0] = 0.173f;
@@ -509,6 +526,7 @@ int main(int argc, char **argv) {
     self.monitor_optical_pcm = getenv("PIPETUNE_PROFILE_MONITOR") != NULL;
     self.override_profile_on_signal = getenv("PIPETUNE_PROFILE_OVERRIDE_SIGNAL") != NULL;
     self.override_input_props_on_signal = getenv("PIPETUNE_PROFILE_OVERRIDE_INPUT_SIGNAL") != NULL;
+    self.defer_input_notification = getenv("PIPETUNE_PROFILE_DEFER_INPUT_NOTIFICATION") != NULL;
     self.initial_input_only_profile = getenv("PIPETUNE_PROFILE_INITIAL_INPUT_ONLY") != NULL;
     self.omit_optical_profile = getenv("PIPETUNE_PROFILE_OMIT_OPTICAL") != NULL;
     if (self.initial_input_only_profile) self.active_profile = 3;
@@ -523,6 +541,7 @@ int main(int argc, char **argv) {
         pw_loop_add_signal(loop, SIGUSR2, on_signal, &self),
         pw_loop_add_signal(loop, SIGWINCH, on_signal, &self),
         pw_loop_add_signal(loop, SIGURG, on_signal, &self),
+        pw_loop_add_signal(loop, SIGCONT, on_signal, &self),
     };
     struct pw_context *context = pw_context_new(loop, NULL, 0);
     /* Real hardware belongs to WirePlumber, which can see the internal capture

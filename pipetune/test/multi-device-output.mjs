@@ -852,6 +852,7 @@ try {
             PIPETUNE_PROFILE_OVERRIDE_SIGNAL: "1", PIPETUNE_PROFILE_INITIAL_INPUT_ONLY: "1",
           } : scenario === "product-output-profile-settle-input" ? {
             PIPETUNE_PROFILE_OVERRIDE_INPUT_SIGNAL: "1", PIPETUNE_PROFILE_INITIAL_INPUT_ONLY: "1",
+            PIPETUNE_PROFILE_DEFER_INPUT_NOTIFICATION: "1",
           } : { PIPETUNE_PROFILE_OMIT_OPTICAL: "1" }),
         });
         if (scenario === "product-output-profile-unavailable") {
@@ -911,6 +912,24 @@ try {
           assert.deepEqual(retained.outputConfiguration, corrected);
           assert.doesNotMatch(profileFixture.stdout, /profile-set index=1 save=0/u);
         } else if (scenario === "product-output-profile-settle-input") {
+          // Hold the Route notification until a public status round trip has
+          // observed the old snapshot. A fixture write alone is not an ack.
+          await new Promise((resolve, reject) => {
+            const changed = () => { if (profileFixture.stdout.includes("input-notification-pending")) finish(); };
+            const timeout = setTimeout(() => finish(new Error("input notification was not deferred")), 5000);
+            const finish = (error) => {
+              clearTimeout(timeout);
+              profileFixture.child.stdout.off("data", changed);
+              error ? reject(error) : resolve();
+            };
+            profileFixture.child.stdout.on("data", changed);
+            changed();
+          });
+          const beforeNotification = await control({ command: "status" });
+          assert.equal(beforeNotification.outputProfileRestoring, true);
+          assert.ok(!beforeNotification.availableOutputProfiles.some((item) =>
+            item.description === "Alternative stereo duplex (input restored)"));
+          profileFixture.child.kill("SIGCONT");
           const subscription = createConnection(environment.PIPETUNE_PRODUCT_SOCKET);
           const deadline = setTimeout(() => subscription.destroy(new Error("input settling diagnosis did not arrive")), 10000);
           const lines = createInterface({ input: subscription });
@@ -1135,6 +1154,12 @@ try {
             item.active && item.cardProfileName === opticalProfile.cardProfileName) &&
           status.availableOutputs.some((output) => output.nodeName === "fixture.output.iec958"));
         assert.deepEqual(restored.outputConfiguration, singleSaved);
+        assert.notEqual(restored.availableOutputs.find((output) => output.nodeName === "fixture.output.iec958").nodeSerial,
+          opticalOutput.nodeSerial, "a reconnected card must have a new output generation");
+        const staleInventory = await control({ command: "set-output", configuration: singleSaved,
+          profileSelections: [opticalSelection], expectedOutputInventoryRevision: saved.outputInventoryRevision }, false);
+        assert.match(staleInventory.error, /inventory.*changed/iu);
+        assert.deepEqual((await control({ command: "status" })).outputConfiguration, singleSaved);
         assert.match(profileFixture.stdout, /profile-set index=1 save=0/u);
         const resumed = await control({ command: "set-output", configuration: original, preset });
         assert.equal(resumed.configurationRevision, ++revision);
