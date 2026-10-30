@@ -83,6 +83,14 @@ libcamera_monitor.enabled = false
   writeConfiguration("wireplumber/bluetooth.lua.d/60-pipetune-test.lua", `bluez_monitor.enabled = false
 bluez_midi_monitor.enabled = false
 `);
+  if (scenario === "product-output-change" || scenario.startsWith("product-output-profile-")) {
+    // The synthetic card deliberately resets input routes during profile changes.
+    // Keep its scripted mutations as the external actor under test: WirePlumber
+    // 0.4 otherwise restores each intermediate route and competes indefinitely
+    // with PipeTune's input restoration. Stream routing still uses the real policy.
+    writeConfiguration("wireplumber/scripts/policy-device-routes.lua",
+      "-- Synthetic profile fixtures control input-route mutations explicitly.\n");
+  }
 } else {
   writeConfiguration("wireplumber/wireplumber.conf.d/99-pipetune-test.conf", `wireplumber.profiles = {
   main = {
@@ -901,17 +909,17 @@ try {
           let finished;
           const changeInputAfterRestoration = () => {
             if (overridden || !latestStatus?.outputProfileRestoring) return;
-            const active = latestStatus.availableOutputProfiles.some((item) => item.card.api === "pipetune-fixture" &&
+            const active = latestStatus.availableOutputProfiles.find((item) => item.card.api === "pipetune-fixture" &&
               item.active && item.cardProfileName === optical.cardProfileName);
             const ready = latestStatus.availableOutputs.some((item) => item.nodeName === "fixture.output.iec958");
-            const restoredInput = /route-set device=1 index=2 mute=0 volume=1\.000000,1\.000000 changed=1/u
-              .test(profileFixture.stdout);
+            // This description is published with the restored Route parameters.
+            // Wait for the product's inventory, rather than the fixture's write.
+            const restoredInput = active?.description === "Alternative stereo duplex (input restored)";
             if (active && ready && restoredInput) {
               profileFixture.child.kill("SIGURG");
               overridden = true;
             }
           };
-          profileFixture.child.stdout.on("data", changeInputAfterRestoration);
           try {
             await once(subscription, "connect");
             subscription.write(`${JSON.stringify({ command: "subscribe" })}\n`);
@@ -922,7 +930,6 @@ try {
               if (overridden && !status.outputProfileRestoring) { finished = status; break; }
             }
           } finally {
-            profileFixture.child.stdout.off("data", changeInputAfterRestoration);
             clearTimeout(deadline);
             lines.close();
             subscription.destroy();

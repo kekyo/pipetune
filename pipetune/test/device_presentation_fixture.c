@@ -207,10 +207,17 @@ static struct spa_pod *profile(struct fixture *self, struct spa_pod_builder *bui
          index == 3 ? "input:analog-stereo" :
          "output:analog-stereo+input:other") :
         (index == 0 ? "duplex" : "duplex-alternative");
+    /* Publish restoration through the product's inventory snapshot so a late
+     * input mutation cannot race its asynchronous Route enumeration. */
+    const bool input_restored = self->override_input_props_on_signal && index == 1 &&
+        self->active_profile == 1 && !self->mute[1] &&
+        self->volumes[1][0] == 1.0f && self->volumes[1][1] == 1.0f;
+    const char *description = input_restored ? "Alternative stereo duplex (input restored)" :
+        index == 0 ? "Stereo duplex" : "Alternative stereo duplex";
     spa_pod_builder_add(builder,
         SPA_PARAM_PROFILE_index, SPA_POD_Int(index),
         SPA_PARAM_PROFILE_name, SPA_POD_String(name),
-        SPA_PARAM_PROFILE_description, SPA_POD_String(index == 0 ? "Stereo duplex" : "Alternative stereo duplex"),
+        SPA_PARAM_PROFILE_description, SPA_POD_String(description),
         SPA_PARAM_PROFILE_priority, SPA_POD_Int(index == 0 ? 100 : 90),
         SPA_PARAM_PROFILE_save, SPA_POD_Bool(self->save_profile),
         SPA_PARAM_PROFILE_available, SPA_POD_Id(SPA_PARAM_AVAILABILITY_yes), 0);
@@ -395,7 +402,12 @@ static int set_param(void *object, uint32_t id, uint32_t flags, const struct spa
     }
     printf("route-set device=%d index=%d mute=%d volume=%f,%f changed=%d\n", device, index, self->mute[device], self->volumes[device][0], self->volumes[device][1], changed);
     fflush(stdout);
-    if (changed) { self->params[3].flags ^= SPA_PARAM_INFO_SERIAL; emit_info(self); }
+    if (changed) {
+        if (self->override_input_props_on_signal && device == 1)
+            self->params[0].flags ^= SPA_PARAM_INFO_SERIAL;
+        self->params[3].flags ^= SPA_PARAM_INFO_SERIAL;
+        emit_info(self);
+    }
     return 0;
 }
 
@@ -411,6 +423,7 @@ static void on_signal(void *data, int number) {
         self->volumes[1][0] = 0.173f;
         self->volumes[1][1] = 0.173f;
         self->mute[1] = true;
+        self->params[0].flags ^= SPA_PARAM_INFO_SERIAL;
         self->params[3].flags ^= SPA_PARAM_INFO_SERIAL;
         emit_info(self);
         if (self->nodes[1]) {
