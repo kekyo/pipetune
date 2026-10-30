@@ -198,23 +198,6 @@ static bool testIndependentInputWidth(bool connect) {
   return true;
 }
 
-static std::optional<pipetune::ControlRuntimeStatus>
-waitForInactiveGraph(const std::filesystem::path &socketPath) {
-  const auto deadline = std::chrono::steady_clock::now() +
-                        std::chrono::seconds(8);
-  while (std::chrono::steady_clock::now() < deadline) {
-    const auto exchange = pipetune::exchangeControlMessage(
-        socketPath, pipetune::makeStatusControlRequest());
-    const auto parsed = pipetune::parseControlResponse(exchange.response);
-    if (exchange.error.empty() && parsed.valid && parsed.success &&
-        parsed.status.graphSampleRate == 0) {
-      return parsed.status;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-  }
-  return std::nullopt;
-}
-
 static std::optional<pipetune::ControlRuntimeStatus> waitForStatus(
     const std::filesystem::path &socketPath,
     const std::function<bool(const pipetune::ControlRuntimeStatus &)> &matches) {
@@ -945,11 +928,17 @@ static bool testOrderlySignalShutdown(
     return false;
   }
 
-  const auto inactive = waitForInactiveGraph(socketPath);
-  if (!check(inactive.has_value(),
-             "PipeWire filter graph did not become idle") ||
-      !check(!inactive->rateTransitioning,
-             "an idle graph must not remain in a sample-rate transition")) {
+  // The always-processing input node keeps its graph clock while DSP sleeps.
+  // Observe DSP suspension itself instead of waiting for graph deactivation.
+  const auto enableIdle = pipetune::exchangeControlMessage(
+      socketPath, pipetune::makeSetDspIdleControlRequest({.timeoutMilliseconds = 100}));
+  const auto idlePolicy = pipetune::parseControlResponse(enableIdle.response);
+  const auto inactive = waitForStatus(socketPath, [](const auto &status) {
+    return status.dspActivity == pipetune::DspActivity::sleeping && !status.rateTransitioning;
+  });
+  if (!check(enableIdle.error.empty() && idlePolicy.valid && idlePolicy.success,
+             "automatic DSP suspension must be enabled") ||
+      !check(inactive.has_value(), "silent input must suspend DSP after rate transitions settle")) {
     kill(child, SIGTERM);
     auto childStatus = 0;
     waitpid(child, &childStatus, 0);
@@ -964,7 +953,7 @@ static bool testOrderlySignalShutdown(
              backendChangeWhileIdle.error) ||
       !check(parsedIdleBackend.valid, parsedIdleBackend.error) ||
       !check(parsedIdleBackend.success,
-             "an idle graph must still accept DSP setting changes")) {
+             "suspended DSP must still accept setting changes")) {
     kill(child, SIGTERM);
     auto childStatus = 0;
     waitpid(child, &childStatus, 0);
