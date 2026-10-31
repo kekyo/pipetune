@@ -529,6 +529,10 @@ journalctl --user -u pipetune.service
 
 ---
 
+## Limitations
+
+- Network player functionality is not supported.
+
 ## More information
 
 - [Detail information](docs/en/details.md)

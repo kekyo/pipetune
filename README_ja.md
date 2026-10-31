@@ -440,6 +440,10 @@ journalctl --user -u pipetune.service
 
 ---
 
+## 制約
+
+- ネットワークプレーヤー機能には対応していません。
+
 ## 関連情報
 
 - [詳細情報](docs/ja/details.md)
