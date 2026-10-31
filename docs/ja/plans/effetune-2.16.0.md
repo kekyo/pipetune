@@ -689,3 +689,13 @@ Rhythmの処理時間比は直接入力で1.47〜1.82、製品経路で1.37〜1.
 上流は表示方式とクリック設定にかかわらず`drums_->push`を呼ぶ。追加されたドラムモデルは16 bit重み566,669個、配列として1,133,338 bytesである。ヘッダーのテキストサイズ5,327,350 bytesとは区別する。既存の3つのRhythmバイナリとTCN重みのサイズは変わらない。Release共有ライブラリはScalarが4,189,056 → 5,547,840、baselineが4,189,600 → 5,552,480、v3が4,143,872 → 5,502,688 bytesになった。ソース上の追加処理と直接入力でも発生する増分から、主な原因を上流のドラム解析追加と判断する。ただし、計測だけで全増分を個別の内部関数へ帰属させてはいない。[Rhythmの処理](https://github.com/Frieve-A/effetune/blob/v2.16.0/dsp/plugins/analyzer/rhythm_analyzer/kernel.cpp)、[ドラム重み](https://github.com/Frieve-A/effetune/blob/v2.16.0/dsp/plugins/analyzer/rhythm_analyzer/drum_weights.h)
 
 測定全条件の平均負荷は処理周期の最大9.95%、観測した最長ブロックは58.20%だった。この実機条件では処理周期を超えず、PipeTune側に不要な処理を削る根拠もないため、性能を理由とした製品変更は行わない。`dm`やクリック設定の意味も維持する。32 bit・ARM・RISC-Vの実機速度、低速CPU、多数のDSPを組み合わせたプリセットは未確認であり、QEMUの配布試験を速度保証には使わない。配布物全体のサイズとハッシュは工程11の9構成で記録する。条件・ドライバー・再構築記録は`follow-up/performance/`にまとめ、工程10の完了条件を満たした。
+
+### 工程11で判明した対照条件の不足
+
+最初の全体試験ではDebugの269件が成功した。その後、Releaseの`product-output-profile-restore-failure`で、期待した反復競合の診断が復元タイムアウトになった。製品は要求回数の上限でロールバックしていたが、試験が3回目の対象プロファイルを観測できていなかった。REDと操作記録は`follow-up/before-profile-control/tests-release.log`に保存する。
+
+工程8の対照条件は経路の自動復元を止めていたが、別に動く既定プロファイルの選択を残していた。この選択が試験の操作に割り込み、通常ポリシー試験と同じ競合を起こしていた。経路ポリシーの分離だけで操作元を限定できるという計画上の前提が不足していた。[0.4.17のプロファイル選択](https://github.com/PipeWire/wireplumber/blob/0.4.17/src/scripts/policy-device-profile.lua)、[0.5.8のプロファイル選択](https://github.com/PipeWire/wireplumber/blob/0.5.8/src/scripts/device/select-profile.lua)
+
+この対照試験の専用セッションに限り、既定プロファイルの選択も無効にした。WirePlumberの版ごとに対応するスクリプトを試験用設定で置き換える。通常ポリシー試験では経路とプロファイルの両方を有効なまま残した。製品コードや利用者の設定は変更せず、対照試験が反復競合の診断を要求する条件も維持する。工程8の世代確認と、遅れた操作がロールバック後に状態を変えないための修正は、通常ポリシー試験でも必要なため残した。
+
+修正後はWirePlumber 0.4.17のRelease対照試験が12回、Debugの対照・通常ポリシーが各3回成功した。0.5.8でも両条件が各5回成功した。GREENは`profile-control-green.log`、`profile-control-debug.log`、`profile-control-058.log`にある。この修正を含む最終コードで全体試験を再実行し、配布検証の対象とは製品ソースが一致することを確認する。

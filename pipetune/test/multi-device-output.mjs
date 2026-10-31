@@ -103,6 +103,12 @@ bluez_midi_monitor.enabled = false
     writeConfiguration("wireplumber/scripts/policy-device-routes.lua",
       "-- Synthetic profile fixtures control input-route mutations explicitly.\n");
   }
+  if (!regularRoutePolicy && scenario === "product-output-profile-restore-failure") {
+    // This control diagnoses three explicitly observed profile overrides.
+    // Default-profile selection is another actor, covered by the policy variant.
+    writeConfiguration("wireplumber/scripts/policy-device-profile.lua",
+      "-- The control fixture supplies every external profile selection.\n");
+  }
 } else {
   writeConfiguration("wireplumber/wireplumber.conf.d/99-pipetune-test.conf", `wireplumber.profiles = {
   main = {
@@ -114,6 +120,10 @@ bluez_midi_monitor.enabled = false
   }
 }
 `);
+  if (!regularRoutePolicy && scenario === "product-output-profile-restore-failure") {
+    writeConfiguration("wireplumber/scripts/device/select-profile.lua",
+      "-- The control fixture supplies every external profile selection.\n");
+  }
 }
 
 if (scenario.startsWith("policy") || scenario.startsWith("product")) {
