@@ -343,7 +343,7 @@ Releaseの測定はCPU 8に固定し、他のビルド・試験と重ねずに�
 
 3バックエンドの全162測定で、PCMは有限かつ非無音だった。SFZの冷キャッシュはヒット数0、温キャッシュは1で、更新後に再読込するため保存した。生データは`baseline/performance.json`、共有バックエンドのサイズは`baseline/backend-sizes.json`、測定用ドライバーと実行条件は`dsp-profile.cpp`と`profile.mjs`に保存した。
 
-ビルドにコンパイラ警告はなかった。npmは既存の開発用依存について、アセット試験で3件、GTK試験で5件の監査指摘を報告した。Vite、Vitestとその関連依存が対象で、結果は`baseline/npm-audit-assets.json`と`baseline/npm-audit-gtk.json`に保存した。指摘は更新前からある開発用依存に限られ、製品の実行時依存には含まれない。ローカルの一回限りの試験として実行し、依存更新は本DSP更新へ混在させない。esbuildとtesseractのインストールスクリプトに関する通知も確認し、ビルドと該当試験が成功した。
+製品側のビルドログにコンパイラ警告はなかった。外部FFmpegの別ログについては工程11で再確認した。npmは既存の開発用依存について、アセット試験で3件、GTK試験で5件の監査指摘を報告した。Vite、Vitestとその関連依存が対象で、結果は`baseline/npm-audit-assets.json`と`baseline/npm-audit-gtk.json`に保存した。指摘は更新前からある開発用依存に限られ、製品の実行時依存には含まれない。ローカルの一回限りの試験として実行し、依存更新は本DSP更新へ混在させない。esbuildとtesseractのインストールスクリプトに関する通知も確認し、ビルドと該当試験が成功した。
 
 ### 工程1の最小更新
 
@@ -353,7 +353,7 @@ Releaseの測定はCPU 8に固定し、他のビルド・試験と重ねずに�
 
 Debian trixieのi686とarmv7lを先行ビルドし、パッケージをコンテナーへ導入して確認した。i686はScalar・baseline・x86-64-v3、armv7lはScalar・baselineの計5バックエンドで成功した。読込先が`/usr/lib/pipetune`であること、新しいRhythmとNoteの設定、MatrixのPCM、登録SFZのClassic/Event発音を確認した。48 kHzの報告遅延はClassicが4320、Eventが11040フレームだった。
 
-先行配布物のPipeTune版は既存の生成規則による2.15.2である。ビルド・導入ログは`step1/early32-build.log`、音声試験は`step1/i686-pcm/result.json`と`step1/armv7l-pcm/result.json`、配布物の控えは`step1/packages/`に保存した。コンパイラ警告はなく、ARMで表示されたGCC 7.1以降の引数ABI変更の注記は、同じコンパイラで構成したライブラリ間の不整合を示すものではなかった。既存ABIパッチと32 bit設定が成立し、工程1の完了条件を満たした。
+先行配布物のPipeTune版は既存の生成規則による2.15.2である。ビルド・導入ログは`step1/early32-build.log`、音声試験は`step1/i686-pcm/result.json`と`step1/armv7l-pcm/result.json`、配布物の控えは`step1/packages/`に保存した。製品側のログにコンパイラ警告はなく、ARMで表示されたGCC 7.1以降の引数ABI変更の注記は、同じコンパイラで構成したライブラリ間の不整合を示すものではなかった。既存ABIパッチと32 bit設定が成立し、工程1の完了条件を満たした。
 
 ### 工程2で判明した容量超過の扱い
 
@@ -394,11 +394,13 @@ Rhythmはドラム解析の追加により、Scalarで処理が約1.4〜1.7倍�
 
 ### 工程3の実行方法
 
-最終配布確認では、各構成の既存CMake・FFmpegビルドキャッシュを再利用する。9構成すべてで既存の`scripts/build_linux_dist_container.sh`による最終版の再構成・ビルドを実施し、ステージ領域と導入用コンテナーは作り直す。配布物生成、標準の導入検証、導入済みバックエンドでのPCM確認までを`package-matrix.mjs`と`package-check.mjs`で記録する。検証対象や配布内容は通常の9構成と同じであり、未変更のコンパイル結果を再利用して検証時間を短縮する。
+9構成すべてで既存の`scripts/build_linux_dist_container.sh`による最終版の再構成・ビルドを実施する。配布物生成、標準の導入検証、導入済みバックエンドでのPCM確認までを`package-matrix.mjs`と`package-check.mjs`で記録する。検証対象や配布内容は通常の9構成と同じである。
+
+当初は既存のCMake・FFmpegキャッシュを再利用する手順と記述していたが、工程11で標準スクリプトが作業ディレクトリを削除することを確認した。工程3も実際にはキャッシュを再利用せず、ビルドとステージ領域を作り直していた。導入用コンテナーも毎回新しく起動している。実行方法の記録をこの事実に合わせて訂正した。
 
 ### 工程3の初回全体試験と再確認
 
-初回検証のコードは`2d1b502c990babbc0ebc9ec69a4cb4ec775c40f8`。DebugとReleaseを再構成して全ターゲットをビルドした。コンパイラ警告はなく、CLI・GTKの埋込みDSP版は2.16.0だった。
+初回検証のコードは`2d1b502c990babbc0ebc9ec69a4cb4ec775c40f8`。DebugとReleaseを再構成して全ターゲットをビルドした。製品側のログにコンパイラ警告はなく、CLI・GTKの埋込みDSP版は2.16.0だった。
 
 初回のDebug全体試験は4並列で249/252件が成功した（773.42秒）。失敗は出力切替の`pipetune_product-output-change`、入力状態確定の`pipetune_product-output-profile-settle-input`、再接続の`pipetune_multi_device_reconnect`だった。順に、新しい機器fixtureの操作記録が空、出力変更中に入力状態が変化、再接続時の連続PCMタグが不一致という結果である。DSP参照PCM、コア単独ビルド、GTK E2Eは成功した。
 
@@ -432,7 +434,7 @@ Debugの逐次再実行でも、Crosstalkの容量超過と出力切替が失敗
 
 ### 工程3の最終検証条件
 
-最終検証のコードは`509cac335aa5748f3c4f76e88d52642331ade131`。既存の版生成規則によるPipeTune版は2.15.8、埋込みEffeTune DSP版は2.16.0である。Debug/Releaseを再構成し、コンパイラ警告なしでビルドした。Releaseを検証用の`final-install/usr`へ導入し、CLIとGTKの両方で版表示の一致を確認した。文書の最終更新は、検証結果の記録と合わせて別のコミットにする。
+最終検証のコードは`509cac335aa5748f3c4f76e88d52642331ade131`。既存の版生成規則によるPipeTune版は2.15.8、埋込みEffeTune DSP版は2.16.0である。Debug/Releaseを再構成し、製品側のログにコンパイラ警告がないことを確認した。Releaseを検証用の`final-install/usr`へ導入し、CLIとGTKの両方で版表示の一致を確認した。文書の最終更新は、検証結果の記録と合わせて別のコミットにする。
 
 全体試験は専用PipeWireセッションで逐次実行する。実時間で音声を流す試験とバックエンド比較の間は、同時進行している配布用コンテナーのコンパイルを一時停止し、終了後に再開する。試験の時間制限やPCM判定は変更しない。実行記録は`final/tests-debug.*`、`final/tests-release.*`、コンテナーの停止・再開時刻は`final/quiet-audio-tests.log`へ保存する。
 
@@ -454,7 +456,7 @@ SFZの2ケースは、32768フレームの連続性と遅延差の検証が完�
 
 ホストの試験修正後のコードは`6765c09`、PipeTune版は2.15.9である。配布物の`509cac3`との差分は試験fixtureと本計画書だけだった。ホストの導入確認では`DESTDIR`を指定して専用ディレクトリへ配置し、CLI・GTKともにPipeTune 2.15.9、EffeTune DSP 2.16.0の表示を確認した。配布物のPipeTune版2.15.8と区別し、製品ソースの一致を`final/after-package-changes.json`へ記録した。
 
-ホストと9配布構成にコンパイラ警告はなかった。Ubuntu 24.04/26.04のARM64では、`dpkg-shlibdeps`がローダーの移設について各2件の警告を出した。`/lib/ld-linux-aarch64.so.1`にはlibc6のdiversionがあり、実体の`/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1`もlibc6の所有だった。生成された依存欄には、24.04で`libc6 (>= 2.38)`、26.04で`libc6 (>= 2.43)`が含まれる。通常の導入時依存検査、CLI・GTKの起動、共有ライブラリの音声試験はいずれも成功した。警告は抑制せず、調査結果を`final/ubuntu-arm64-diversions.json`、警告一覧を`final/build-diagnostics.json`へ残した。[dpkg-shlibdepsの依存解析](https://manpages.debian.org/trixie/dpkg-dev/dpkg-shlibdeps.1.en.html)
+ホストと9配布構成の製品側ログにはコンパイラ警告がなかった。FFmpegの別ログを含む調査範囲は工程11で訂正した。Ubuntu 24.04/26.04のARM64では、`dpkg-shlibdeps`がローダーの移設について各2件の警告を出した。`/lib/ld-linux-aarch64.so.1`にはlibc6のdiversionがあり、実体の`/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1`もlibc6の所有だった。生成された依存欄には、24.04で`libc6 (>= 2.38)`、26.04で`libc6 (>= 2.43)`が含まれる。通常の導入時依存検査、CLI・GTKの起動、共有ライブラリの音声試験はいずれも成功した。警告は抑制せず、調査結果を`final/ubuntu-arm64-diversions.json`、警告一覧を`final/build-diagnostics.json`へ残した。[dpkg-shlibdepsの依存解析](https://manpages.debian.org/trixie/dpkg-dev/dpkg-shlibdeps.1.en.html)
 
 ### 最終全体試験と完了判定
 
@@ -596,7 +598,7 @@ PipeTune側の不要なコピーや再初期化が見つかった場合は、そ
 - [x] 通常のWirePlumber経路ポリシーで入力保持と出力切替が成立し、外部操作との競合が有限の手順で完結する。
 - [x] 容量超過と読込中の変更・取消で候補適用の境界を確認し、必要な修正と有効な更新への回復を検証した。
 - [x] Rhythmの負荷増加を測定条件とともに説明し、対策の要否と実機未確認の範囲を記録した。
-- [ ] 最終コードの全体試験、必要な配布検証、警告への対処、工程ごとのコミットが揃い、未確認事項と解決済み事項を区別した。
+- [x] 最終コードの全体試験、必要な配布検証、警告への対処、工程ごとのコミットが揃い、未確認事項と解決済み事項を区別した。
 
 追加計画の作成時点では、上記の条件は全て未完了だった。実施結果に応じてチェックを更新し、根拠を以下へ記録する。
 
@@ -608,7 +610,7 @@ PipeTune側の不要なコピーや再初期化が見つかった場合は、そ
 
 `PIPETUNE_PCM_TRACE_DIRECTORY`へ保存先を指定すると、試験実行ファイルだけがPipeWireの公開ストリームAPIを観測する。プロセスIDごとのJSONには、接続ごとの名前・フラグ、フレーム数、タグの先頭・末尾、ブロック内の不連続、無効PCM、バッファ取得失敗と返却エラーを記録する。記録領域は起動前に確保し、停止後にファイルへ出力する。上限超過も明示する。動的ロードする分配モジュールも同じ公開APIで観測し、外部ソースは変更していない。[ストリームAPI](https://pipewire.pages.freedesktop.org/pipewire/group__pw__stream.html)、[dlsymによる関数の観測](https://man7.org/linux/man-pages/man3/dlsym.3.html)
 
-観測自体の試験は、実際のPCM配列を入力し、連続した512フレーム、途中の256フレーム欠落、不正な浮動小数点、記録領域の不足を区別する。未実装時のREDと実装後のGREENを確認した。結果は`follow-up/trace-test-red.log`と`follow-up/trace-test-green.log`に保存した。Releaseの対象ビルドにコンパイラ警告はなかった。
+観測自体の試験は、実際のPCM配列を入力し、連続した512フレーム、途中の256フレーム欠落、不正な浮動小数点、記録領域の不足を区別する。未実装時のREDと実装後のGREENを確認した。結果は`follow-up/trace-test-red.log`と`follow-up/trace-test-green.log`に保存した。Releaseの対象ビルドの製品側ログにコンパイラ警告はなかった。
 
 初回の観測では、送信元と製品出力は連続していたが、両方の受信側で同じ256フレームを失った。分配モジュールまで観測を広げると、別の失敗では送信元が連続したタグを供給しているのに、製品入力へ256フレームの無効PCMが入り、その後の境界へ伝わった。後者は出力0で2240の後に無効PCMを検出した回である。記録は`follow-up/trace-first/`、`follow-up/trace-module/`と各`matrix-trace-*.log`に残した。記録領域の不足やバッファ返却エラーはなかった。
 
@@ -692,10 +694,87 @@ Rhythmの処理時間比は直接入力で1.47〜1.82、製品経路で1.37〜1.
 
 ### 工程11で判明した対照条件の不足
 
-最初の全体試験ではDebugの269件が成功した。その後、Releaseの`product-output-profile-restore-failure`で、期待した反復競合の診断が復元タイムアウトになった。製品は要求回数の上限でロールバックしていたが、試験が3回目の対象プロファイルを観測できていなかった。REDと操作記録は`follow-up/before-profile-control/tests-release.log`に保存する。
+最初の全体試験ではDebugの269件が成功した。その後、Releaseの`product-output-profile-restore-failure`で、期待した反復競合の診断が復元タイムアウトになった。製品は要求回数の上限でロールバックしていたが、試験が3回目の対象プロファイルを観測できていなかった。REDと操作記録は`follow-up/before-profile-control/tests-release.log`に保存した。
 
 工程8の対照条件は経路の自動復元を止めていたが、別に動く既定プロファイルの選択を残していた。この選択が試験の操作に割り込み、通常ポリシー試験と同じ競合を起こしていた。経路ポリシーの分離だけで操作元を限定できるという計画上の前提が不足していた。[0.4.17のプロファイル選択](https://github.com/PipeWire/wireplumber/blob/0.4.17/src/scripts/policy-device-profile.lua)、[0.5.8のプロファイル選択](https://github.com/PipeWire/wireplumber/blob/0.5.8/src/scripts/device/select-profile.lua)
 
 この対照試験の専用セッションに限り、既定プロファイルの選択も無効にした。WirePlumberの版ごとに対応するスクリプトを試験用設定で置き換える。通常ポリシー試験では経路とプロファイルの両方を有効なまま残した。製品コードや利用者の設定は変更せず、対照試験が反復競合の診断を要求する条件も維持する。工程8の世代確認と、遅れた操作がロールバック後に状態を変えないための修正は、通常ポリシー試験でも必要なため残した。
 
-修正後はWirePlumber 0.4.17のRelease対照試験が12回、Debugの対照・通常ポリシーが各3回成功した。0.5.8でも両条件が各5回成功した。GREENは`profile-control-green.log`、`profile-control-debug.log`、`profile-control-058.log`にある。この修正を含む最終コードで全体試験を再実行し、配布検証の対象とは製品ソースが一致することを確認する。
+修正後はWirePlumber 0.4.17のRelease対照試験が12回、Debugの対照・通常ポリシーが各3回成功した。0.5.8でも両条件が各5回成功した。GREENは`profile-control-green.log`、`profile-control-debug.log`、`profile-control-058.log`にある。この修正を含む最終コードで全体試験を再実行した。
+
+### 工程11の全体検証
+
+初回Releaseでは、コア単独ビルド試験の版表示確認も失敗し、最終結果は266/268件成功だった。検証中に試験コードを修正・コミットしたことでGitの状態が変わり、自動採番がビルド時の2.15.17と一致しなくなった。未コミットの変更も採番に影響する。これは検証手順の不備であり、DSPや単独ビルドの障害とは区別する。初回結果は`before-profile-control/`、版表示を揃える前に中止した再実行は`version-mismatch-restart/`へ保存した。
+
+最終コードを`9642cc5`へ固定し、作業ツリーに変更がない状態でDebug・Releaseを再構成してビルドした。CLIとGTKの版表示は2.15.18、EffeTune DSPは2.16.0となった。全体試験の終了まではコードと文書を変更せず、各ビルドの試験を2並列で実行した。音声接続先には専用のPipeWireとWirePlumberを使い、CPUは0〜7へ限定した。初回の逐次実行と所要時間を性能比較には使わない。
+
+| 検証 | 成功件数 | 失敗・スキップ | 所要時間（秒） |
+| --- | ---: | ---: | ---: |
+| Debug全体 | 269/269 | 0・0 | 1082.35 |
+| Release全体 | 268/268 | 0・0 | 593.95 |
+| アセット準備の独立構成 | 3/3 | 0・0 | 0.04 |
+
+両方の全体試験で、コア単独ビルド、GTK E2E、導入レイアウト、追加したPCM・終了処理・状態同期・容量境界の試験が成功した。RhythmとSFZの公式参照PCMは各ビルド57比較で、全て最大絶対誤差0だった。Debugだけに含まれる上流のメモリ確保ガードも成功した。Releaseとの件数差はこの1件である。記録は`tests-debug.*`、`tests-release.*`、`standalone-assets.*`と`test-exits.json`にある。
+
+配布検証は`de69f53`の製品コードと採番2.15.17を使う。`9642cc5`までの変更は対照試験と本書だけであり、製品ソースとEffeTuneの参照は一致する。Gitの状態が異なるため、ホスト検証物とは自動生成したPipeTuneの版表示が異なる。この対応を`product-source-match.json`に保存した。ステージ領域への導入確認は`follow-up/install/usr`で実施し、CLI・GTKの両方がEffeTune DSP 2.16.0を表示した。
+
+追加工程の対応コミットは次のとおり。
+
+| 工程 | コミット | 成果物 |
+| --- | --- | --- |
+| 4 | `8480c3a` | PCMの境界観測と再現ドライバー |
+| 5 | `b56525f` | 失敗時もバッファを返して終了するfixture |
+| 6 | `aa4606f` | 音声処理スレッドでの送受信と通知処理の分離 |
+| 7 | `e23a718` | 入力復元の観測状態と接続世代による試験の進行 |
+| 8 | `6c19005` | 通常ポリシーとの競合を確認してから出力設定を確定 |
+| 9 | `a7189f6` | 読込中の容量超過も候補全体を拒否 |
+| 10 | `de69f53` | バックエンドと製品経路の性能比較 |
+| 11 | `9642cc5` | 対照試験で既定プロファイルの選択を分離 |
+
+### 工程11の外部ビルド警告
+
+FFmpegのコンパイルはCMakeが別ログへ保存するため、製品側のログだけでは警告を集計できていなかった。工程0〜3の「警告なし」という記述の範囲を訂正し、外部ビルドの標準エラーも収集対象へ追加した。`external-build-diagnostics.json`へ分類を保存し、元のメッセージと前後の注記を`ffmpeg-build-logs/`へ複写した。警告を抑制するフラグや外部コードの修正は追加していない。
+
+固定依存のFFmpegは`n6.1.6`で、参照コミットとビルド設定はEffeTune更新前から変わっていない。工程10で再構築した2.15.0側のFFmpegログにも、未使用関数、配列境界、書式の切詰めなどの警告があった。上流の該当ソース9ファイルを取得し、ローカルの固定依存と内容が一致することを確認した。出自とハッシュは`ffmpeg-warning-sources.json`にある。
+
+| 警告 | コードから確認した背景と扱い |
+| --- | --- |
+| 未使用関数・到達不能なswitch内の文 | 音声デコードだけを選んだ構成でも、動画・エンコード用の共用ソースがコンパイルされる。MOVの動画用caseは条件付きで除かれ、本文だけが残る。選択した機能を増やして警告を消す変更は行わない。[MOVの条件付き処理](https://github.com/FFmpeg/FFmpeg/blob/n6.1.6/libavformat/mov.c#L4767) |
+| C90の宣言位置 | ビルドはC11だが、上流の`-Wdeclaration-after-statement`が途中の変数宣言を報告する。使用言語規格への違反ではない。[該当箇所](https://github.com/FFmpeg/FFmpeg/blob/n6.1.6/libavutil/eval.c#L522) |
+| DCT引数の配列長 | 宣言はポインター、定義は64要素配列の型別名になっている。Cの関数引数としては同じポインター型へ変換される記述の差であり、今回のABI変更ではない。[DCT定義](https://github.com/FFmpeg/FFmpeg/blob/n6.1.6/libavcodec/jrevdct.c#L215) |
+| 書式の切詰め | Vorbisの章番号・時刻は書込み側で、今回のデコード構成では使わない。フレームスレッドの名前も`snprintf`の容量内へ収める処理である。警告はバッファ超過の実行結果ではなく、表示文字列の切詰め可能性を示す。[Vorbisの書込み](https://github.com/FFmpeg/FFmpeg/blob/n6.1.6/libavformat/vorbiscomment.c#L92)、[スレッド名](https://github.com/FFmpeg/FFmpeg/blob/n6.1.6/libavcodec/pthread_frame.c#L170) |
+| AAC SBRの負添字 | 直前に2 bitで読んだ2値の和に1を足し、5を超えれば戻る。警告対象のループでは書込み添字が1〜4、読込み添字が2〜5の範囲で、8要素配列に対する負添字へ到達しない。この警告箇所の範囲解析と、AAC全体の安全性保証は区別する。[SBRの上限検査とループ](https://github.com/FFmpeg/FFmpeg/blob/n6.1.6/libavcodec/aacsbr_template.c#L718) |
+| VLCテーブルの配列境界 | 16 bitの値を詰める場合は再帰の上限が3要素となり、深さは0〜2、6 byteの値配列へ書き込む最大添字は5である。警告が示すオフセット8・10には、この再帰条件では到達しない。[再帰の条件](https://github.com/FFmpeg/FFmpeg/blob/n6.1.6/libavcodec/vlc.c#L353) |
+| `memset`の長さ | リセット時は有効な子変換の数を0にし、関数配列の先頭1要素だけを消す。残りは次の初期化時に上書きする旨のコメントがあり、実際の初期化も有効数の位置へ関数を設定する。[リセットと再初期化](https://github.com/FFmpeg/FFmpeg/blob/n6.1.6/libavutil/tx.c#L279) |
+
+GNU Makeの並列実行枠を管理するjobserverについても警告が出た。外部ビルドへ明示した`-j4`で枠を作り直す通知と、枠を引き継げない子処理が1並列へ戻る通知である。ビルドの速度・並列数に関する結果として記録し、音声処理の不具合とは扱わない。比較用の旧版ログにも同じ種類の通知がある。外部ビルドを含む並列数の管理を変更する場合は、別のビルド改善として検証する。[GNU Makeの並列実行枠](https://www.gnu.org/software/make/manual/html_node/Job-Slots.html)
+
+i386では上流x86アセンブリ由来のTEXTRELが残る。TEXTRELは、ロード時に実行コード領域へアドレスを書き込む再配置を表す。更新前の2.15.0パッケージと今回の配布物を`readelf`で調べ、`libavcodec`・`libavutil`・`libswresample`の3ライブラリに同じ属性を確認した。両版の比較は`ffmpeg-i386-textrel.json`に保存した。今回の導入・PCM検証は成功したが、この属性を禁止する実行環境への対応を確認した結果ではない。解消にはFFmpeg側のアセンブリ構成や依存版の検討が必要なため、EffeTune更新へ混在させず、既存の配布制約として残す。[上流のx86アセンブリ](https://github.com/FFmpeg/FFmpeg/blob/n6.1.6/libavutil/x86/float_dsp.asm)
+
+### 工程11の配布検証と完了判定
+
+標準の配布スクリプトで9構成をクリーンビルドし、新しいコンテナーへの導入と、導入済みバックエンドのPCM検証まで全て成功した。配布物のPipeTune版は2.15.17、CLI・GTKが示すEffeTune DSP版は2.16.0である。配布物は`artifacts/deb/`、構成別の結果・所要時間・SHA-256は`follow-up/packages.json`に保存した。最後に9ファイルのハッシュを再計算し、記録と一致した。
+
+| 配布構成 | 更新前の配布物（bytes） | 今回の配布物（bytes） | 導入後SFZの検証数 |
+| --- | ---: | ---: | ---: |
+| Debian trixie / i386 | 17,220,354 | 18,543,678 | 6 |
+| Debian trixie / amd64 | 17,785,172 | 19,252,732 | 6 |
+| Debian trixie / armhf | 15,186,580 | 16,427,862 | 4 |
+| Debian trixie / arm64 | 15,292,328 | 16,792,422 | 6 |
+| Debian trixie / riscv64 | 15,773,456 | 17,017,302 | 4 |
+| Ubuntu 24.04 / amd64 | 17,799,884 | 19,234,854 | 6 |
+| Ubuntu 24.04 / arm64 | 15,310,160 | 16,872,904 | 6 |
+| Ubuntu 26.04 / amd64 | 17,943,322 | 19,470,218 | 6 |
+| Ubuntu 26.04 / arm64 | 15,436,176 | 16,989,510 | 6 |
+
+更新前はEffeTune 2.15.0を使う配布物であり、圧縮済みの配布物全体では7.7〜10.2%増えた。モデル配列や非圧縮の共有ライブラリ単体の増分とは区別する。旧・新のサイズとハッシュ、今回生成した依存欄は`package-comparison.json`にある。
+
+x86ではScalar・baseline・v3、ARM64ではScalar・baseline・SVE、armhfとRISC-VではScalar・baselineを確認した。導入後SFZの50条件は全て有限かつ非無音で、48 kHzでの遅延はClassicが4320、Eventが11040フレームだった。読込先は`/usr/lib/pipetune/`配下であることを確認した。amd64の3構成に含まれるv4はホストCPU非対応のため実行せず、成功件数に含めていない。ARM・RISC-VはQEMUによる機能検証であり、実機性能の測定ではない。
+
+製品側のビルドログにコンパイラ警告はなかった。ARMでの引数ABI変更の注記はGCC 7.1の変更に由来し、同一のコンパイラで構成したライブラリと導入後のPCMを確認した。FFmpegの別ログの警告は前節のとおり分類し、既存の制約として扱う。[GCC 7のARM ABI変更](https://gcc.gnu.org/gcc-7/changes.html)
+
+Ubuntu ARM64では`dpkg-shlibdeps`の移設警告が各2件、計4件あった。ローダーの移設元・移設先がともにlibc6に属することを再確認した。依存欄には24.04で`libc6 (>= 2.38)`、26.04で`libc6 (>= 2.43)`が含まれ、通常の導入検査と実行も成功した。警告は抑制せず、`build-diagnostics.json`と`ubuntu-arm64-diversions.json`に残した。[依存解析の仕様](https://manpages.debian.org/trixie/dpkg-dev/dpkg-shlibdeps.1.en.html)
+
+全体試験・独立構成・9配布物・参照PCM・導入後PCMをまとめた検証は、`summarize-final.mjs --complete`で成功した。集計は`verification-summary.json`にあり、全体試験の後に試験用音声プロセスと専用セッションの一時ディレクトリが残っていないことも`host-test-cleanup.json`へ記録した。以上で追加工程4〜11の完了条件を満たした。
+
+実機音声カードでの相互運用、低速CPU・ARM・RISC-Vの実機性能、多数のDSPを組み合わせた負荷は未確認として残す。今回修正した問題と、FFmpegの既存制約は区別する。ネットワークプレーヤーは合意どおり検討事項の記録に留め、実装は次の工程とする。
