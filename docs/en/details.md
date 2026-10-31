@@ -98,6 +98,10 @@ counts as an active DSP. With the click enabled, a steady beat produces
 clicks after detection settles. Set Min BPM / Max BPM in EffeTune when the
 detected beat is at half or twice the intended tempo.
 
+Presets can include EffeTune 2.16.0's `dm` display setting, either `band` or
+`drums`. Both preserve the same click behavior and reported latency; an omitted
+setting selects `band`, following the [upstream parameters](https://github.com/Frieve-A/effetune/blob/v2.16.0/dsp/plugins/analyzer/rhythm_analyzer/params.json).
+
 The same click is added to the first two selected channels, or one channel
 for mono. With Ch = All on a wider stream, channels 3 onward stay unchanged;
 choose a different pair to put the click there. Processing adds no reported
@@ -212,6 +216,12 @@ PipeTune reads these originals without modifying EffeTune's library. Initial
 preparation, playback, and cache regeneration use native code; neither Node.js,
 the ffmpeg command, nor a running EffeTune/Electron process is required.
 
+When an EffeTune 2.16.0 measurement backup includes optional distortion analysis
+in `harmonicAnalysis`, Room EQ and Crosstalk Cancellation still derive correction
+from the saved linear IRs. See the [upstream measurement format](https://github.com/Frieve-A/effetune/blob/v2.16.0/features/measurement/dataStorage.js).
+Each backup can be at most 64 MiB, including optional data. If an updated file
+exceeds that limit, reloading fails and the active preset stays in use.
+
 SFZ follows [EffeTune 2.14.0 preparation](https://github.com/Frieve-A/effetune/blob/v2.14.0/js/sfz/service.js),
 including includes, inherited regions, loops, and envelopes. WAV, AIFF, and FLAC
 mono/stereo samples are supported. When the registered instrument library has
@@ -221,13 +231,13 @@ fall back to Windows-1252 for invalid bytes. `*sine`, `*saw`, `*square`,
 `*triangle`, `*tri`, `*noise`, and `*silence`
 generate samples without an external audio file. Sample Shift (`ss`) selects a
 sample up to six semitones away while preserving the output pitch.
-Select `Classic` or `Event` with Detection Mode in EffeTune 2.15.0's SFZ Note
+Select `Classic` or `Event` with Detection Mode in EffeTune 2.16.0's SFZ Note
 Player settings, then save the preset. PipeTune uses the saved mode; a preset
 without one uses `Classic`. `Event` uses confirmed note starts and ends to
 control playback and adds about 140 ms of latency compared with `Classic`.
 PipeTune includes that latency in automatic alignment with other audio paths.
 Changing only the detection mode reuses the prepared instrument.
-See [EffeTune 2.15.0's SFZ Note Player settings](https://github.com/Frieve-A/effetune/blob/v2.15.0/plugins/others/sfz_note_player.js).
+See [EffeTune 2.16.0's SFZ Note Player settings](https://github.com/Frieve-A/effetune/blob/v2.16.0/plugins/others/sfz_note_player.js).
 The bank budget defaults to 256 MiB; select
 64, 128, 256, 512, or 1024 MiB in settings, with `--sfz-max-size MIB` for direct
 runs or `PIPETUNE_SFZ_MAX_SIZE_MIB` in the daemon configuration. When necessary,
@@ -292,3 +302,4 @@ Stereo Meter, Chroma Spiral, and Analog Meter are ignored without warnings. Thes
 analyzers add no processing nodes,
 latency, or transfers between buses. Effects that also change the sound remain
 active even when they include a visualizer.
+This also applies to Note Spectrogram presets with chord/key detection (`ck`) enabled.

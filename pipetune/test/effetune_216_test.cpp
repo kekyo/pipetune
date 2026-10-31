@@ -24,6 +24,34 @@ static bool check(bool condition, std::string_view message) {
   return condition;
 }
 
+static void testAnalyzerParameters(const pipetune::DspBackendApi &api) {
+  for (const auto rhythm : {true, false}) {
+    const auto engine = api.engineCreate();
+    if (!check(engine != 0, "analyzer engine must be created")) continue;
+    if (check(api.enginePrepare(engine, 48000, 2, 64, 0) == ET_OK,
+              "analyzer engine must prepare")) {
+      const auto instance = api.instanceCreate(engine,
+          rhythm ? "RhythmAnalyzerPlugin" : "NoteSpectrogramPlugin");
+      if (check(instance != 0, "analyzer instance must be created")) {
+        for (const auto enabled : {0.0F, 1.0F}) {
+          const auto parameters = rhythm ? std::array{40.0F, 240.0F, 0.0F, enabled} :
+              std::array{28.0F, 91.0F, 0.0F, enabled};
+          check(api.instanceSetParams(engine, instance, parameters.data(), parameters.size(),
+                                      rhythm ? 0xf854c585u : 0xb8518943u, 0) == ET_OK,
+                "the shared backend must accept the 2.16 four-float analyzer parameters");
+          auto audio = std::array<float, 128>{};
+          audio.fill(0.125F);
+          check(api.instanceProcess(engine, instance, audio.data(), 2, 64, 0) == ET_OK,
+                "the shared backend must process the staged analyzer parameters");
+          for (const auto sample : audio)
+            check(sample == 0.125F, "analyzers without metronome clicks must preserve PCM");
+        }
+      }
+    }
+    api.engineDestroy(engine);
+  }
+}
+
 static void testMatrixReset(const pipetune::DspBackendApi &api) {
   const auto *definition = pipetune::findDspByTypeName("MatrixPlugin");
   if (!check(definition != nullptr, "Matrix must be available")) return;
@@ -74,7 +102,7 @@ static void testMatrixReset(const pipetune::DspBackendApi &api) {
 
 int main(int argc, char **argv) {
   if (argc != 2) return 2;
-  check(pipetune::effetuneVersion() == "2.15.0", "the embedded app version must be 2.15.0");
+  check(pipetune::effetuneVersion() == "2.16.0", "the embedded app version must be 2.16.0");
   check(pipetune::generatedDspCatalog().size() == 112, "the app catalog must contain 112 DSPs");
   struct Contract {
     const char *type;
@@ -83,11 +111,12 @@ int main(int argc, char **argv) {
     std::uint32_t assetBytes;
   };
   for (const auto &contract : std::array{
+           Contract{"RhythmAnalyzerPlugin", 0xf854c585u, 4u, 0u},
            Contract{"AnalogMeterPlugin", 0xad3d461cu, 7u, 0u},
            Contract{"AdaptivePredictionEffectPlugin", 0xebd8a6f0u, 10u, 0u},
            Contract{"SFZNotePlayerPlugin", 0xdfb4bbc5u, 20u, 1073741824u},
            Contract{"CassetteArtifactsPlugin", 0x328491aeu, 13u, 0u},
-           Contract{"NoteSpectrogramPlugin", 0xafc5ff07u, 3u, 0u}}) {
+           Contract{"NoteSpectrogramPlugin", 0xb8518943u, 4u, 0u}}) {
     const auto *definition = pipetune::findDspByTypeName(contract.type);
     if (!check(definition != nullptr, contract.type)) continue;
     check(definition->hash == contract.hash && definition->floatCount == contract.floats &&
@@ -103,6 +132,7 @@ int main(int argc, char **argv) {
   for (const auto &backend : backends) {
     if (!check(backend != nullptr, "the scalar backend must be available")) continue;
     const auto &api = pipetune::dspBackendApi(*backend);
+    testAnalyzerParameters(api);
     testMatrixReset(api);
     const auto engine = api.engineCreate();
     if (check(engine != 0, "the backend must create an engine")) {
@@ -114,7 +144,7 @@ int main(int argc, char **argv) {
               0.1F, -60, 0, 21, 108, 64, 100, 0, 0, 0, 1, 1, 1, 0, 40, 50, 0, -1, 100, 1};
           check(api.instanceSetParams(engine, instance, parameters.data(), parameters.size(),
                                       0xdfb4bbc5u, 0u) == ET_OK,
-                "the backend must accept the 2.15 SFZ Event detection parameters");
+                "the backend must accept the 2.16 SFZ Event detection parameters");
         }
       }
       api.engineDestroy(engine);
@@ -133,7 +163,7 @@ int main(int argc, char **argv) {
       }
       check(loaded.pipeline->process(audio, 2u, 64u, block * 64.0 / 48000.0) ==
                 pipetune::ProcessStatus::ok,
-            "the minimal 2.15 preset must process PCM");
+            "the minimal 2.16 preset must process PCM");
     }
     for (auto frame = 0u; frame < 64u; ++frame)
       check(std::abs(audio[frame] - 0.0625F) < 1e-6F &&

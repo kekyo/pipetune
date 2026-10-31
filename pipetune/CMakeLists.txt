@@ -618,6 +618,7 @@ if(BUILD_TESTING)
   add_test(NAME pipetune_asset_cache_tests COMMAND pipetune_asset_cache_tests)
   add_executable(pipetune_asset_source_tests test/asset_source_test.cpp)
   target_link_libraries(pipetune_asset_source_tests PRIVATE pipetune_core)
+  target_link_options(pipetune_asset_source_tests PRIVATE -Wl,--wrap=g_input_stream_read_async)
   target_include_directories(pipetune_asset_source_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
   target_compile_options(pipetune_asset_source_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME pipetune_asset_source_tests COMMAND pipetune_asset_source_tests)
@@ -679,12 +680,12 @@ if(BUILD_TESTING)
   set_tests_properties(pipetune_asset_preparation_contracts PROPERTIES
     WORKING_DIRECTORY "${PIPETUNE_ASSET_TEST_DIR}" TIMEOUT 300)
 
-  add_executable(pipetune_effetune_215_tests test/effetune_215_test.cpp)
-  target_include_directories(pipetune_effetune_215_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
-  target_link_libraries(pipetune_effetune_215_tests PRIVATE pipetune_core)
-  target_compile_options(pipetune_effetune_215_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  add_dependencies(pipetune_effetune_215_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
-  add_test(NAME pipetune_effetune_215_tests COMMAND pipetune_effetune_215_tests
+  add_executable(pipetune_effetune_216_tests test/effetune_216_test.cpp)
+  target_include_directories(pipetune_effetune_216_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_link_libraries(pipetune_effetune_216_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_effetune_216_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_effetune_216_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
+  add_test(NAME pipetune_effetune_216_tests COMMAND pipetune_effetune_216_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test/presets/effetune-2.13/adaptive-original.effetune_preset)
 
   add_executable(pipetune_adaptive_prediction_tests test/adaptive_prediction_test.cpp)
@@ -999,12 +1000,13 @@ if(BUILD_TESTING)
   target_compile_options(
     pipetune_multi_device_output_probe PRIVATE
     -Wall -Wextra -Wpedantic -Werror)
-  add_executable(pipetune_product_output_tests test/product_output_test.cpp)
-  target_link_libraries(pipetune_product_output_tests PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE)
+  add_executable(pipetune_product_output_tests test/product_output_test.cpp test/product_pcm_trace.cpp)
+  target_link_libraries(pipetune_product_output_tests PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE ${CMAKE_DL_LIBS})
   target_include_directories(pipetune_product_output_tests PRIVATE src)
-  target_link_options(pipetune_product_output_tests PRIVATE -Wl,--wrap=pw_stream_connect)
+  target_link_options(pipetune_product_output_tests PRIVATE -Wl,--wrap=pw_stream_connect -Wl,--export-dynamic)
   target_compile_options(pipetune_product_output_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  foreach(scenario product-direct product-bypass product-matrix product-slots product-sixteen product-volume product-disconnected product-reconnect product-profile product-restart product-restart-mute product-latency product-latency-units product-latency-reconnect product-time-alignment product-sfz-classic product-sfz-event product-controls product-output-clock product-output-clock-alt product-output-clock-unavailable product-output-change product-output-profile-unknown product-output-profile-shutdown product-output-profile-restore-failure product-output-profile-unavailable product-output-profile-settle-input product-output-timeout product-output-status product-output-status-single product-output-recovery product-preset-meters product-source-resume product-source-resume-single)
+  add_test(NAME pipetune_product-pcm-trace COMMAND pipetune_product_output_tests trace verify)
+  foreach(scenario product-output-change-route-policy product-output-profile-restore-failure-route-policy product-output-profile-settle-input-route-policy product-output-profile-unavailable-route-policy product-matrix-realtime product-matrix-freewheel-one-output product-sfz-classic-realtime product-sfz-event-realtime product-matrix-freewheel-delayed-observer product-matrix-freewheel-fail-pcm product-matrix-freewheel-fail-disconnect product-matrix-freewheel-fail-timeout product-matrix-freewheel-fail-cancel product-matrix-freewheel-fail-runtime-exit product-matrix-freewheel-fail-before-source product-matrix-freewheel product-direct product-bypass product-matrix product-slots product-sixteen product-volume product-disconnected product-reconnect product-profile product-restart product-restart-mute product-latency product-latency-units product-latency-reconnect product-time-alignment product-sfz-classic product-sfz-event product-controls product-output-clock product-output-clock-alt product-output-clock-unavailable product-output-change product-output-profile-unknown product-output-profile-shutdown product-output-profile-restore-failure product-output-profile-unavailable product-output-profile-settle-input product-output-timeout product-output-status product-output-status-single product-output-recovery product-preset-meters product-source-resume product-source-resume-single)
     add_test(NAME pipetune_${scenario}
       COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
         ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
@@ -1014,7 +1016,7 @@ if(BUILD_TESTING)
     set_tests_properties(pipetune_${scenario} PROPERTIES TIMEOUT 45)
   endforeach()
   # This case includes two reconnect restorations and mapped PCM.
-  set_tests_properties(pipetune_product-output-change PROPERTIES TIMEOUT 90)
+  set_tests_properties(pipetune_product-output-change pipetune_product-output-change-route-policy PROPERTIES TIMEOUT 90)
   foreach(scenario product-daemon product-daemon-volume product-daemon-volume-zero)
     add_test(
       NAME pipetune_${scenario}

@@ -115,6 +115,70 @@ test.each(['min', 'lin'])(
           expect(audio[frame]).toBe(0);
         }
         expect(error).toBeLessThan(0.0002);
+        if (complete) {
+          // EffeTune 2.16 stores optional ESS harmonic IRs beside the linear IR.
+          // https://github.com/Frieve-A/effetune/blob/v2.16.0/features/measurement/dataStorage.js
+          const harmonicAnalysis = {
+            version: 2,
+            method: 'ess',
+            sampleRate: 44100,
+            excitation: {
+              startFrequency: 20,
+              endFrequency: 20000,
+              durationSeconds: 2,
+              levelDb: -12,
+              sweepSamples: 88200,
+            },
+            reference: 'unit-input',
+            calibration: 'uncorrected-system',
+            quality: { valid: true, reasons: [] },
+            orders: [1, 2, 3].map((order) => ({
+              order,
+              data: Buffer.from(
+                new Float32Array([0, 1 / order, 0]).buffer
+              ).toString('base64'),
+              referenceData: Buffer.from(
+                new Float32Array([0, 1, 0]).buffer
+              ).toString('base64'),
+              ...(order > 1
+                ? {
+                    harmonicReferenceData: Buffer.from(
+                      new Float32Array([0, 1, 0]).buffer
+                    ).toString('base64'),
+                  }
+                : {}),
+              onsetIndex: 1,
+              validMinFrequency: 20,
+              validMaxFrequency: 20000 / order,
+            })),
+          };
+          await writeFile(
+            file,
+            JSON.stringify({
+              ...measurement,
+              impulseResponses: records.map((record) => ({
+                ...record,
+                harmonicAnalysis,
+              })),
+            })
+          );
+          const enriched = spawnSync(
+            process.env.PIPETUNE_ASSET_DRIVER!,
+            [preset, '48000', '2', String(frames), '1'],
+            {
+              encoding: 'utf8',
+              maxBuffer: 4 * 1024 * 1024,
+              env: {
+                ...process.env,
+                PATH: '/nonexistent',
+                XDG_CONFIG_HOME: directory,
+                XDG_CACHE_HOME: join(directory, 'harmonic-cache'),
+              },
+            }
+          );
+          expect(enriched.status, enriched.stderr).toBe(0);
+          expect(enriched.stdout).toBe(result.stdout);
+        }
       }
       for (const invalid of [
         'broken',

@@ -127,6 +127,11 @@ for (const mn of [0, 40, 100, 192, 300]) {
     }
   }
 }
+for (const dm of ['band', 'drums', 'invalid', null, 0, 1, false]) {
+  for (const ck of [false, true]) {
+    cases.push({type: 'RhythmAnalyzerPlugin', parameters: {dm, ck}});
+  }
+}
 for (const md of ['VU', 'PPM', 'RMS', 'Sample Peak', 'True Peak', 'Loudness', 'Custom']) {
   cases.push({type: 'AnalogMeterPlugin', parameters: {md}});
 }
@@ -159,8 +164,15 @@ for (const mn of [0, 21, 28, 108, 128]) {
   }
 }
 const noteDefaults = [...DSP_PARAM_PACKERS.get('NoteSpectrogramPlugin').pack({})];
-if (JSON.stringify(noteDefaults) !== '[28,91,0]') {
-  throw new Error('Note Spectrogram must use the app 2.14 HarmNet default range and disabled timbre analysis');
+if (JSON.stringify(noteDefaults) !== '[28,91,0,0]') {
+  throw new Error('Note Spectrogram must use the app 2.16 default range with timbre and chord/key analysis disabled');
+}
+const rhythmDefaults = [...DSP_PARAM_PACKERS.get('RhythmAnalyzerPlugin').pack({})];
+if (JSON.stringify(rhythmDefaults) !== '[40,240,0,0]') {
+  throw new Error('Rhythm Analyzer must default to band display with metronome clicks disabled');
+}
+for (const ck of [false, true, 0, 1, 2, null, 'invalid']) {
+  cases.push({type: 'NoteSpectrogramPlugin', parameters: {ck}});
 }
 cases.push({type: 'OscilloscopePlugin', parameters: {tm: 'Off'}});
 for (const dt of [0, 0.001, 0.1, 1, 10, 11, null, 'invalid']) {

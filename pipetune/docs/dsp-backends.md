@@ -27,7 +27,7 @@ This separation preserves one known compatibility path while allowing
 PipeTune to select the highest usable optimized implementation or a
 user-pinned tier. One pipeline always uses exactly one implementation.
 
-The private backend source set follows the EffeTune application tag v2.15.0,
+The private backend source set follows the EffeTune application tag v2.16.0,
 including the graph core, `spectrum_tap.cpp`, and generated graph-capacity
 contract required by its engine.
 PipeTune's loader surface remains the routed pipeline API and now includes
@@ -58,6 +58,11 @@ and [Timbre](https://github.com/Frieve-A/effetune/blob/v2.14.0/dsp/plugins/analy
 headers. The analyzer still has no preset processing node in PipeTune. When a
 pipeline uses SFZ Note Player, the upstream engine allocates its analysis state
 during initialization.
+EffeTune 2.16.0 also compiles the
+[drum model](https://github.com/Frieve-A/effetune/blob/v2.16.0/dsp/plugins/analyzer/rhythm_analyzer/drum_weights.h)
+and [chord/key model](https://github.com/Frieve-A/effetune/blob/v2.16.0/dsp/plugins/analyzer/note_spectrogram/chord_key_weights.h)
+into the backends. Rhythm performs drum analysis even with `dm=band` and clicks
+disabled. SFZ uses the shared note analyzer with chord/key detection disabled.
 The
 [upstream model build](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/plugins/analyzer/tree_models/models.cmake)
 requires Python 3.10 or later to validate the data and generate the embedding.
@@ -164,12 +169,21 @@ and validates:
 - each kernel's parameter-byte capacity; and
 - every external-asset capacity.
 
-The pinned EffeTune 2.15.0 contract contains 112 kernels. SFZ Note Player has
+The pinned EffeTune 2.16.0 contract contains 112 kernels. SFZ Note Player has
 20 float parameters, including the saved `Classic` or `Event` detection mode;
 an omitted mode selects `Classic`. `Event` adds seven 20 ms analysis hops to
 the reported latency, or about 140 ms. A backend from an
 earlier release is rejected even though the numeric ABI version remains one,
 because its required symbols and complete catalog do not match.
+
+Rhythm Analyzer accepts four floats with hash `0xf854c585`, including `dm`
+(`band` by default or `drums`). Note Spectrogram accepts four floats with hash
+`0xb8518943`, including chord/key detection `ck` (false by default). The generated
+packers follow upstream coercion for omitted, valid, and invalid values.
+Note Spectrogram remains excluded from preset execution even with `ck=true`.
+`et_instance_stream_boundary` is marked app-internal upstream and is not part of
+PipeTune's loader API. These contracts follow the [upstream metadata](https://github.com/Frieve-A/effetune/blob/v2.16.0/dsp/bindings/generated/effects-v1.private.json)
+and [ABI declarations](https://github.com/Frieve-A/effetune/blob/v2.16.0/dsp/include/effetune/abi.h).
 
 This count includes nine visualization-only analyzers excluded from preset
 execution and does not mean every registered effect is available without

@@ -51,7 +51,7 @@ not supported by this MVP.
 
 - Loads canonical and legacy EffeTune preset JSON from files whose extension is
   exactly `.effetune_preset`.
-- Builds every enabled DSP in the pinned EffeTune 2.15.0 native registry,
+- Builds every enabled DSP in the pinned EffeTune 2.16.0 native registry,
   containing 112 kernels, including bus and channel routing through 16 planar channels.
 - Runs Spatial Mapper and TV Audio Simulator presets; see the
   [supported settings and channel conditions](../docs/en/details.md#spatial-mapper-and-tv-audio-simulator).
@@ -138,7 +138,7 @@ cd PipeTune
 git submodule update --init --recursive
 ```
 
-`deps/effetune` follows the official application tag v2.15.0.
+`deps/effetune` follows the official application tag v2.16.0.
 `deps/yyjson` is pinned to yyjson 0.12.0.
 `deps/cardio` supplies asynchronous native file operations.
 

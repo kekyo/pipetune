@@ -90,6 +90,8 @@ struct CrosstalkMeasurements {
   std::array<MeasuredImpulse, 4> sources;
   std::vector<std::filesystem::path> files;
   std::string error;
+  /** A size rejection must fail preparation instead of omitting this processor. */
+  bool exceedsByteBudget = false;
 };
 
 CrosstalkMeasurements loadCrosstalkMeasurements(
