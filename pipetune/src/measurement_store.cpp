@@ -280,6 +280,10 @@ cardio::promise<CrosstalkMeasurements> loadCrosstalkMeasurementsAsync(
       auto *document = co_await readMeasurementSessionAsync(store, baseIds[i], 64u * 1024u * 1024u, cancellation);
       result.error = extractImpulse(yyjson_doc_get_root(document), baseIds[i], channels[i], result.sources[i]);
     } catch (const cardio::canceled_exception &) { throw; }
+    catch (const AssetFileSizeError &error) {
+      result.exceedsByteBudget = true;
+      result.error = error.what();
+    }
     catch (const std::exception &error) { result.error = error.what(); }
     if (!result.error.empty()) { result.error = ids[i] + ": " + result.error; co_return result; }
     if (i != 0 && result.sources[i].sampleRate != result.sources[0].sampleRate) {

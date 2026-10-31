@@ -51,15 +51,17 @@ static bool testClicks(const std::filesystem::path &path) {
     std::string_view selection;
     std::uint32_t first;
     std::uint32_t width;
+    std::string_view mode;
   };
   const auto cases = std::array{
-      Case{48000, 4, "All", 0, 2}, Case{32000, 1, "All", 0, 1},
-      Case{44100, 2, "All", 0, 2}, Case{88200, 4, "34", 2, 2},
-      Case{96000, 16, "15", 14, 1}, Case{176400, 16, "1516", 14, 2},
-      Case{192000, 1, "1", 0, 1}, Case{384000, 2, "All", 0, 2},
-      Case{64000, 6, "All", 0, 2}};
+      Case{48000, 4, "All", 0, 2, "band"}, Case{48000, 4, "All", 0, 2, "drums"},
+      Case{32000, 1, "All", 0, 1, "drums"}, Case{44100, 2, "All", 0, 2, "band"},
+      Case{88200, 4, "34", 2, 2, "drums"}, Case{96000, 16, "15", 14, 1, "band"},
+      Case{176400, 16, "1516", 14, 2, "drums"}, Case{192000, 1, "1", 0, 1, "band"},
+      Case{384000, 2, "All", 0, 2, "drums"}, Case{64000, 6, "All", 0, 2, "drums"}};
   const auto backends = pipetune::discoverDspBackends();
   for (const auto &backend : {backends.scalar.backend, backends.simd.backend}) {
+    auto bandClicks = std::vector<float>{};
     for (const auto &c : cases) {
       const auto table = groove(c.rate);
       auto reference = std::vector<float>{};
@@ -68,7 +70,8 @@ static bool testClicks(const std::filesystem::path &path) {
           auto file = std::ofstream(path);
           file << "{\"pipeline\":[{\"name\":\"Rhythm Analyzer\",\"channel\":\"" << c.selection
                << "\",\"parameters\":{\"mn\":100,\"mx\":140,\"ck\":" << (click ? "true" : "false")
-               << ",\"sp\":16,\"vt\":false,\"vm\":false,\"ve\":false,\"vl\":false}}]}";
+               << ",\"dm\":\"" << c.mode
+               << "\",\"sp\":16,\"vt\":false,\"vm\":false,\"ve\":false,\"vl\":false}}]}";
         }
         auto loaded = pipetune::loadDspPipeline(path,
             {static_cast<float>(c.rate), c.channels, 257}, backend);
@@ -105,6 +108,12 @@ static bool testClicks(const std::filesystem::path &path) {
                            "clicks must match on selected channels and leave all other PCM unchanged")) return false;
               }
               if (click && c.rate == 48000) {
+                if (repeat == 0) {
+                  if (c.mode == "band") bandClicks.push_back(added);
+                  else if (!check(start + i < bandClicks.size() &&
+                                      std::abs(bandClicks[start + i] - added) < 1e-6F,
+                                  "display mode must not change metronome PCM")) return false;
+                }
                 if (repeat == 0) reference.push_back(added);
                 else if (!check(std::abs(reference[start + i] - added) < 1e-6F,
                                  "reset must reproduce detection and clicks across block boundaries")) return false;
@@ -119,7 +128,7 @@ static bool testClicks(const std::filesystem::path &path) {
           }
           if (click && c.rate != 64000) {
             std::cout << "Rhythm rate=" << c.rate << " channels=" << c.channels << " route=" << c.selection
-                      << " reset=" << repeat << " clicks=" << onsets.size() << std::endl;
+                      << " mode=" << c.mode << " reset=" << repeat << " clicks=" << onsets.size() << std::endl;
             if (!check(onsets.size() >= 20, "a steady groove must produce detected-beat clicks")) return false;
             for (auto i = std::size_t{1}; i < onsets.size(); ++i)
               if (onsets[i - 1] >= 8.0 &&
@@ -137,18 +146,20 @@ static bool testSilenceRecovery(const std::filesystem::path &path) {
   constexpr auto rate = 48000u;
   constexpr auto blockFrames = 257u;
   const auto table = groove(rate);
-  {
-    auto file = std::ofstream(path);
-    file << R"({"pipeline":[{"name":"Rhythm Analyzer","channel":"","parameters":{"mn":100,"mx":140,"ck":true}}]})";
-  }
-  struct Gap { const char *name; std::uint32_t frames; float sample; };
+  struct Gap { const char *name; std::uint32_t frames; float sample; const char *mode; };
   const auto gaps = std::array{
-      Gap{"short digital silence", 9600, 0.0F},
-      Gap{"long digital silence", 96000, 0.0F},
-      Gap{"quiet nonzero signal", 96000, 1e-10F}};
+      Gap{"short digital silence", 9600, 0.0F, "band"},
+      Gap{"short digital silence", 9600, 0.0F, "drums"},
+      Gap{"long digital silence", 96000, 0.0F, "drums"},
+      Gap{"quiet nonzero signal", 96000, 1e-10F, "band"}};
   const auto backends = pipetune::discoverDspBackends();
   for (const auto &backend : {backends.scalar.backend, backends.simd.backend}) {
     for (const auto &gap : gaps) {
+      {
+        auto file = std::ofstream(path);
+        file << "{\"pipeline\":[{\"name\":\"Rhythm Analyzer\",\"parameters\":{"
+             << "\"mn\":100,\"mx\":140,\"ck\":true,\"dm\":\"" << gap.mode << "\"}}]}";
+      }
       auto loaded = pipetune::loadDspPipeline(path, {rate, 2, blockFrames}, backend);
       if (!check(loaded.pipeline != nullptr && loaded.warnings.empty(), loaded.error)) return false;
       auto position = 0u;
@@ -186,7 +197,7 @@ static bool testSilenceRecovery(const std::filesystem::path &path) {
             if (onsets[i - 1u] >= 8.0 &&
                 !check(std::abs(onsets[i] - onsets[i - 1u] - 0.5) < 0.03,
                        "recovered clicks must follow the input's 120 BPM")) return false;
-          std::cout << "Rhythm " << gap.name << " phase=" << phase
+          std::cout << "Rhythm " << gap.name << " mode=" << gap.mode << " phase=" << phase
                     << " firstClick=" << onsets.front() << " clicks=" << onsets.size() << '\n';
         }
       }

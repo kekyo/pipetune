@@ -7,6 +7,7 @@
 #include "pipetune/control_socket.h"
 #include "pipewire_graph_clock.h"
 #include "pipewire_output_paths.h"
+#include "product_pcm_trace.h"
 
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
@@ -15,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
@@ -140,6 +142,10 @@ static int runProduct(const char *preset, std::string_view scenario) {
     if (!appended.error.empty()) return 1;
     configuration = std::move(appended.configuration);
   }
+  if (scenario == "product-matrix-freewheel-one-output") {
+    configuration.outputs.resize(1);
+    configuration.channels.resize(2);
+  }
   configuration.mode = pipetune::OutputMode::multiple;
   if (scenario == "product-output-status-single" || meterTest || scenario == "product-source-resume-single")
     configuration.mode = pipetune::OutputMode::single;
@@ -162,13 +168,15 @@ static int runProduct(const char *preset, std::string_view scenario) {
     auto loaded = pipetune::loadDspPipeline(preset, build);
     if (loaded.pipeline == nullptr) { std::cerr << loaded.error << '\n'; return 1; }
     if (scenario.starts_with("product-sfz-")) {
-      const auto expectedLatency = scenario == "product-sfz-event" ? 11040u : 4320u;
+      const auto expectedLatency = scenario.starts_with("product-sfz-event") ? 11040u : 4320u;
       if (!loaded.warnings.empty() || loaded.pipeline->activePluginCount() != 2u ||
           loaded.pipeline->latencyFrames() != expectedLatency) {
         std::cerr << "SFZ multi-output preset must apply its selected detection latency\n";
         return 1;
       }
     }
+    if ((scenario.starts_with("product-matrix-freewheel") || scenario == "product-matrix-realtime") &&
+        (loaded.pipeline->activePluginCount() != 1 || loaded.pipeline->latencyFrames() != 0)) return 1;
     pipeline = std::move(loaded.pipeline);
   }
   const auto result = pipetune::runPipeWirePipeline(std::move(pipeline), {
@@ -182,11 +190,26 @@ static int runProduct(const char *preset, std::string_view scenario) {
       .inputChannelCount = 2, .outputConfiguration = configuration,
       .inferChannelsFromPreset = directTest || meterTest || sourceResume},
       pipetune::PipeWireRunMode::untilInterrupted);
+  std::cerr << "product:runtime-result overruns=" << result.overrunFrames
+            << " underruns=" << result.underrunFrames << " errors=" << result.processingErrors << '\n';
   if (!result.success) std::cerr << result.error << '\n';
   return result.success && result.processingErrors == 0 ? 0 : 1;
 }
 
 struct AudioTest;
+static_assert(std::atomic<std::uint32_t>::is_always_lock_free);
+static_assert(std::atomic<const char *>::is_always_lock_free);
+
+struct LatencyBlock {
+  std::uint64_t time = 0;
+  std::uint32_t frames = 0;
+  std::int64_t firstTag = -1;
+  std::int64_t lastTag = -1;
+  bool valid = true;
+  bool ordered = true;
+  const char *error = nullptr;
+};
+
 struct TestOutput {
   AudioTest *test = nullptr;
   pw_stream *stream = nullptr;
@@ -200,6 +223,11 @@ struct TestOutput {
   std::int64_t previousTag = -1;
   std::int64_t blockTime = 0;
   std::uint32_t blockFrames = 0;
+  // One data-loop writer and one main-loop reader. Only metadata crosses the
+  // boundary; PipeWire buffers are always returned inside the process callback.
+  std::array<LatencyBlock, 512> pendingBlocks;
+  std::atomic<std::uint32_t> pendingWrite = 0;
+  std::atomic<std::uint32_t> pendingRead = 0;
 };
 
 struct AudioTest {
@@ -231,6 +259,20 @@ struct AudioTest {
   bool latency = false;
   bool latencyUnits = false;
   bool fixedLatency = false;
+  bool freewheel = false;
+  bool oneOutput = false;
+  bool delayObserver = false;
+  bool observationDeferred = false;
+  std::uint32_t deferredAt = 0;
+  std::uint32_t deferredFrames = 0;
+  std::atomic<std::uint32_t> sourceFrames = 0;
+  std::atomic<const char *> callbackError = nullptr;
+  spa_source *captureEvent = nullptr;
+  std::string_view failurePoint;
+  bool injectionReady = false;
+  bool waitingForFailure = false;
+  spa_source *deadline = nullptr;
+  bool shutdownAcknowledged = false;
   bool latencyReconnect = false;
   bool intentionalDelay = false;
   bool controls = false;
@@ -277,7 +319,15 @@ struct AudioTest {
 };
 
 static void fail(AudioTest &test, std::string error) {
+  if (!test.error.empty()) return;
   test.error = std::move(error);
+  if (test.fixedLatency && !test.shutdownAcknowledged) {
+    // Failure still owns live freewheel streams. Keep servicing them until
+    // the coordinator has stopped the producer, just as on successful capture.
+    test.awaitingControl = true;
+    std::cerr << "product:audio-failed\nproduct:pcm-finished\nproduct:control-needed\n" << std::flush;
+    return;
+  }
   pw_main_loop_quit(test.loop);
 }
 
@@ -313,62 +363,76 @@ static constexpr auto tagPeriod = std::int64_t{524287};
 static constexpr auto channelOffset = std::int64_t{524288};
 static constexpr auto sampleScale = 268435456.0F;
 
-static void captureLatency(TestOutput &output, pw_buffer &buffer) {
-  auto &test = *output.test;
-  auto frames = std::uint32_t{UINT32_MAX};
-  if (buffer.buffer == nullptr || buffer.buffer->n_datas != 2)
-    return fail(test, "invalid latency capture buffer");
+static LatencyBlock inspectLatencyBlock(unsigned index, const pw_buffer &buffer) {
+  auto block = LatencyBlock{.time = buffer.time, .frames = UINT32_MAX};
+  if (buffer.buffer == nullptr || buffer.buffer->n_datas != 2 || buffer.buffer->datas == nullptr) {
+    block.error = "invalid latency capture buffer";
+    block.frames = 0;
+    return block;
+  }
   for (const auto &plane : std::span(buffer.buffer->datas, 2)) {
     if (plane.data == nullptr || plane.chunk == nullptr || plane.chunk->offset > plane.maxsize ||
-        plane.chunk->size > plane.maxsize - plane.chunk->offset || plane.chunk->stride != sizeof(float))
-      return fail(test, "invalid latency capture plane");
-    frames = std::min(frames, static_cast<std::uint32_t>(plane.chunk->size / sizeof(float)));
+        plane.chunk->size > plane.maxsize - plane.chunk->offset || plane.chunk->stride != sizeof(float)) {
+      block.error = "invalid latency capture plane";
+      block.frames = 0;
+      return block;
+    }
+    block.frames = std::min(block.frames, static_cast<std::uint32_t>(plane.chunk->size / sizeof(float)));
   }
-  auto validBlock = frames != 0;
-  for (auto frame = 0U; frame < frames; ++frame) {
+  auto previous = std::int64_t{-1};
+  for (auto frame = 0U; frame < block.frames; ++frame) {
     auto tags = std::array<std::int64_t, 2>{};
-    auto validFrame = true;
+    auto valid = true;
     for (auto channel = 0U; channel < 2; ++channel) {
       const auto &plane = buffer.buffer->datas[channel];
       auto sample = 0.0F;
       std::memcpy(&sample, static_cast<const char *>(plane.data) + plane.chunk->offset + frame * sizeof(float), sizeof(float));
-      if (output.index == 2) {
-        if (sample != 0.0F) return fail(test, "unselected device received latency signal");
+      if (index == 2) {
+        if (sample != 0.0F) block.error = "unselected device received latency signal";
         continue;
       }
-      if (output.index == 1 && channel == 1) sample = -sample;
+      if (index == 1 && channel == 1) sample = -sample;
       const auto scaled = sample * sampleScale;
       if (!std::isfinite(scaled) || scaled < (channel + 1) * channelOffset ||
-          scaled >= (channel + 1) * channelOffset + tagPeriod || std::floor(scaled) != scaled) {
-        validFrame = false;
-      } else tags[channel] = static_cast<std::int64_t>(scaled) - (channel + 1) * channelOffset;
+          scaled >= (channel + 1) * channelOffset + tagPeriod || std::floor(scaled) != scaled) valid = false;
+      else tags[channel] = static_cast<std::int64_t>(scaled) - (channel + 1) * channelOffset;
     }
-    if (output.index == 2) continue;
-    validFrame = validFrame && tags[0] == tags[1];
-    const auto consecutive = output.previousTag < 0 || tags[0] == (output.previousTag + 1) % tagPeriod;
-    if (test.latencySettled && (!validFrame || !consecutive)) {
-      if (!test.latencyReconnect || test.stage == 0) {
-        std::cerr << "latency PCM mismatch: output=" << output.index << " frame=" << frame
-                  << " previous=" << output.previousTag << " tags=" << tags[0] << ',' << tags[1]
-                  << " valid=" << validFrame << " time=" << buffer.time << '\n';
-        return fail(test, "steady latency PCM lost channel identity or frame order");
-      }
-      // Rebuilding the distribution intentionally fades and discards queued
-      // audio. Start the consecutive measurement window after that boundary.
-      test.latencySettled = false;
-      for (auto &item : test.outputs) item.frames = 0;
-    }
-    validBlock = validBlock && validFrame && consecutive;
-    output.previousTag = validFrame ? tags[0] : -1;
+    valid = valid && tags[0] == tags[1];
+    if (frame == 0) block.firstTag = valid ? tags[0] : -1;
+    block.valid = block.valid && valid;
+    block.ordered = block.ordered && (previous < 0 || !valid || tags[0] == (previous + 1) % tagPeriod);
+    previous = valid ? tags[0] : -1;
   }
-  buffer.size = frames;
-  if (output.index == 2) return;
-  output.matched = validBlock;
-  output.blockTime = static_cast<std::int64_t>(buffer.time);
-  output.blockFrames = frames;
+  block.lastTag = previous;
+  return block;
+}
+
+static void consumeLatencyBlock(TestOutput &output, const LatencyBlock &block) {
+  auto &test = *output.test;
+  if (test.fixedLatency && (test.awaitingControl || test.waitingForFailure)) return;
+  if (block.error != nullptr) return fail(test, block.error);
+  if (output.index == 2 || block.frames == 0) return;
+  const auto consecutive = block.ordered &&
+      (output.previousTag < 0 || block.firstTag == (output.previousTag + 1) % tagPeriod);
+  if (test.latencySettled && (!block.valid || !consecutive)) {
+    if (!test.latencyReconnect || test.stage == 0) {
+      std::cerr << "latency PCM mismatch: output=" << output.index << " previous=" << output.previousTag
+                << " first=" << block.firstTag << " last=" << block.lastTag
+                << " valid=" << block.valid << " time=" << block.time << '\n';
+      return fail(test, "steady latency PCM lost channel identity or frame order");
+    }
+    // Rebuilding the distribution intentionally fades and discards queued
+    // audio. Start the consecutive measurement window after that boundary.
+    test.latencySettled = false;
+    for (auto &item : test.outputs) item.frames = 0;
+  }
+  output.previousTag = block.lastTag;
+  output.matched = block.valid && consecutive;
+  output.blockTime = static_cast<std::int64_t>(block.time);
+  output.blockFrames = block.frames;
   auto &a = test.outputs[0];
   auto &b = test.outputs[1];
-  const auto single = test.latencyReconnect && test.stage == 1;
+  const auto single = test.oneOutput || (test.latencyReconnect && test.stage == 1);
   if (!a.matched || (!single && !b.matched) || a.blockTime == 0 || (!single && b.blockTime == 0)) return;
   // Compare buffers from the same graph cycle. Scheduling gaps can advance
   // cycle time without inserting PCM, so elapsed nanoseconds cannot stand in
@@ -401,6 +465,23 @@ static void captureLatency(TestOutput &output, pw_buffer &buffer) {
   if (single && output.index != 0) return;
   a.frames += a.blockFrames;
   if (!single) b.frames += b.blockFrames;
+  if (test.fixedLatency && !test.failurePoint.empty() && !test.injectionReady && a.frames >= 2048) {
+    test.injectionReady = true;
+    test.waitingForFailure = true;
+    if (test.failurePoint == "pcm") return fail(test, "injected PCM verification failure");
+    if (test.failurePoint == "disconnect") {
+      pw_stream_set_error(output.stream, -EIO, "injected device disconnect");
+      return;
+    }
+    if (test.failurePoint == "timeout") {
+      auto due = timespec{.tv_sec = 0, .tv_nsec = 1};
+      auto interval = timespec{};
+      pw_loop_update_timer(pw_main_loop_get_loop(test.loop), test.deadline, &due, &interval, false);
+      return;
+    }
+    std::cerr << "product:injection-ready\nproduct:control-needed\n" << std::flush;
+    return;
+  }
   if (a.frames < 32768 || (!single && b.frames < 32768)) return;
   auto latencies = std::array<double, 2>{};
   for (auto index = 0U; index < 2; ++index) {
@@ -425,7 +506,12 @@ static void captureLatency(TestOutput &output, pw_buffer &buffer) {
       std::abs(latencies[1] - latencies[0] - test.declaredLatency * 1000000000.0 / 48000) > 1.0) return;
   test.stageFrames[test.stage] = {a.frames, b.frames};
   test.compensation[test.stage] = compensation;
-  if (test.stage == 2 || test.fixedLatency) return static_cast<void>(pw_main_loop_quit(test.loop));
+  if (test.fixedLatency) {
+    test.awaitingControl = true;
+    std::cerr << "product:sfz-capture-finished\nproduct:pcm-finished\n" << std::flush;
+    return;
+  }
+  if (test.stage == 2) return static_cast<void>(pw_main_loop_quit(test.loop));
   ++test.stage;
   test.declaredLatency = test.latencyReconnect ? (test.stage == 1 ? 0 : 63) : test.stage == 1 ? 127 : 31;
   test.latencySettled = false;
@@ -467,13 +553,75 @@ static void setDirectVolume(AudioTest &test) {
     fail(test, "cannot change Direct sink volume");
 }
 
+static bool deferObservation(AudioTest &test) {
+  if (!test.delayObserver || !test.latencySettled || test.awaitingControl) return false;
+  const auto frames = test.sourceFrames.load(std::memory_order_acquire);
+  if (!test.observationDeferred) {
+    test.observationDeferred = true;
+    test.deferredAt = frames;
+    std::cerr << "product:observer-deferred\n" << std::flush;
+  }
+  if (frames - test.deferredAt < 2048) return true;
+  if (test.deferredFrames == 0) test.deferredFrames = frames - test.deferredAt;
+  return false;
+}
+
+static void callbackFailure(AudioTest &test, const char *error) {
+  if (!test.fixedLatency) return fail(test, error);
+  auto *expected = static_cast<const char *>(nullptr);
+  test.callbackError.compare_exchange_strong(expected, error, std::memory_order_release, std::memory_order_relaxed);
+  pw_loop_signal_event(pw_main_loop_get_loop(test.loop), test.captureEvent);
+}
+
+static void captureFixedLatency(TestOutput &output) {
+  auto &test = *output.test;
+  while (auto *buffer = pw_stream_dequeue_buffer(output.stream)) {
+    const auto block = inspectLatencyBlock(output.index, *buffer);
+    buffer->size = block.frames;
+    if (pw_stream_queue_buffer(output.stream, buffer) < 0)
+      callbackFailure(test, "cannot return capture buffer");
+    const auto write = output.pendingWrite.load(std::memory_order_relaxed);
+    const auto read = output.pendingRead.load(std::memory_order_acquire);
+    if (write - read == output.pendingBlocks.size()) {
+      callbackFailure(test, "PCM observation queue overflow");
+      continue;
+    }
+    output.pendingBlocks[write % output.pendingBlocks.size()] = block;
+    output.pendingWrite.store(write + 1, std::memory_order_release);
+    pw_loop_signal_event(pw_main_loop_get_loop(test.loop), test.captureEvent);
+  }
+}
+
+static void consumeFixedLatency(void *data, std::uint64_t) {
+  auto &test = *static_cast<AudioTest *>(data);
+  if (const auto *error = test.callbackError.load(std::memory_order_acquire)) fail(test, error);
+  while (!deferObservation(test)) {
+    TestOutput *next = nullptr;
+    auto time = std::uint64_t{UINT64_MAX};
+    for (auto &output : test.outputs) {
+      const auto read = output.pendingRead.load(std::memory_order_relaxed);
+      if (read == output.pendingWrite.load(std::memory_order_acquire)) continue;
+      const auto candidate = output.pendingBlocks[read % output.pendingBlocks.size()].time;
+      if (candidate < time) { next = &output; time = candidate; }
+    }
+    if (next == nullptr) return;
+    const auto read = next->pendingRead.load(std::memory_order_relaxed);
+    const auto block = next->pendingBlocks[read % next->pendingBlocks.size()];
+    next->pendingRead.store(read + 1, std::memory_order_release);
+    consumeLatencyBlock(*next, block);
+  }
+}
+
 static void capture(void *data) {
   auto &output = *static_cast<TestOutput *>(data);
   auto &test = *output.test;
+  if (test.fixedLatency) return captureFixedLatency(output);
   auto *queued = pw_stream_dequeue_buffer(output.stream);
   if (queued == nullptr) return;
   if (test.latency) {
-    captureLatency(output, *queued);
+    const auto block = inspectLatencyBlock(output.index, *queued);
+    queued->size = block.frames;
+    consumeLatencyBlock(output, block);
     pw_stream_queue_buffer(output.stream, queued);
     return;
   }
@@ -728,11 +876,11 @@ static void produce(void *data) {
   auto &test = *static_cast<AudioTest *>(data);
   auto *queued = pw_stream_dequeue_buffer(test.source);
   if (queued == nullptr) return;
-  if (queued->buffer == nullptr || queued->buffer->n_datas != 2) return fail(test, "invalid source buffer");
+  if (queued->buffer == nullptr || queued->buffer->n_datas != 2) return callbackFailure(test, "invalid source buffer");
   auto frames = static_cast<std::uint32_t>(queued->requested == 0 ? 256 : queued->requested);
   for (auto channel = 0U; channel < 2; ++channel) {
     const auto &plane = queued->buffer->datas[channel];
-    if (plane.data == nullptr || plane.chunk == nullptr) return fail(test, "unmapped source plane");
+    if (plane.data == nullptr || plane.chunk == nullptr) return callbackFailure(test, "unmapped source plane");
     frames = std::min(frames, static_cast<std::uint32_t>(plane.maxsize / sizeof(float)));
   }
   for (auto channel = 0U; channel < 2; ++channel) {
@@ -750,8 +898,9 @@ static void produce(void *data) {
     plane.chunk->stride = sizeof(float);
   }
   queued->size = frames;
-  pw_stream_queue_buffer(test.source, queued);
+  if (pw_stream_queue_buffer(test.source, queued) < 0) return callbackFailure(test, "cannot queue source buffer");
   test.produced += frames;
+  test.sourceFrames.store(static_cast<std::uint32_t>(test.produced), std::memory_order_release);
   if (test.disconnected && test.produced >= 65536) pw_main_loop_quit(test.loop);
 }
 
@@ -812,6 +961,7 @@ static void startDirectSource(AudioTest &test) {
 static void startSource(void *data, int) {
   auto &test = *static_cast<AudioTest *>(data);
   if (test.direct && test.stage == 0) return startDirectSource(test);
+  if (test.failurePoint == "before-source") return fail(test, "injected failure before source start");
   if (test.source != nullptr) return fail(test, "source started twice");
   test.source = pw_stream_new(test.core, "Product test signal", pw_properties_new(
       PW_KEY_NODE_NAME, "pipetune_product_signal", PW_KEY_TARGET_OBJECT, test.inputName.c_str(),
@@ -824,7 +974,8 @@ static void startSource(void *data, int) {
   if (test.source == nullptr) return fail(test, "cannot create source");
   pw_stream_add_listener(test.source, &test.sourceListener, &events, &test);
   if (!connectStereo(test.source, PW_DIRECTION_OUTPUT,
-      static_cast<pw_stream_flags>(PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_AUTOCONNECT))) fail(test, "cannot connect source");
+      static_cast<pw_stream_flags>(PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_AUTOCONNECT |
+          (test.fixedLatency ? PW_STREAM_FLAG_RT_PROCESS : PW_STREAM_FLAG_NONE)))) fail(test, "cannot connect source");
 }
 
 static void outputParameterChanged(void *data, std::uint32_t id, const spa_pod *parameter) {
@@ -872,9 +1023,9 @@ static bool createTestOutput(TestOutput &output) {
     value.param_changed = outputParameterChanged; return value;
   }();
   const auto name = "pipetune_product_device_" + std::to_string(output.index);
-  // SFZ PCM checks run without real-time deadlines, including Debug builds.
-  // Their progress and completion are determined by the processed frame tags.
-  const auto *group = output.test->fixedLatency ? "pipewire.freewheel" : "pipewire.dummy";
+  // Fixed-latency checks include freewheel and real-time controls. Both use
+  // data-loop callbacks so delayed observation cannot exhaust stream buffers.
+  const auto *group = output.test->freewheel ? "pipewire.freewheel" : "pipewire.dummy";
   output.stream = pw_stream_new(output.test->core, name.c_str(), pw_properties_new(
       PW_KEY_NODE_NAME, name.c_str(), PW_KEY_NODE_DESCRIPTION, name.c_str(), PW_KEY_MEDIA_CLASS, "Audio/Sink",
       PW_KEY_NODE_GROUP, group, PW_KEY_NODE_VIRTUAL, "false",
@@ -887,7 +1038,8 @@ static bool createTestOutput(TestOutput &output) {
   if (output.stream == nullptr) return false;
   output.listener = {};
   pw_stream_add_listener(output.stream, &output.listener, &events, &output);
-  return connectStereo(output.stream, PW_DIRECTION_INPUT, PW_STREAM_FLAG_MAP_BUFFERS);
+  return connectStereo(output.stream, PW_DIRECTION_INPUT, static_cast<pw_stream_flags>(PW_STREAM_FLAG_MAP_BUFFERS |
+      (output.test->fixedLatency ? PW_STREAM_FLAG_RT_PROCESS : PW_STREAM_FLAG_NONE)));
 }
 
 static void changeOutputGraph(void *data, std::uint64_t) {
@@ -980,7 +1132,12 @@ static int runAudio(std::string_view scenario) {
   test.intentionalDelay = scenario == "product-time-alignment";
   test.latencyReconnect = scenario == "product-latency-reconnect";
   test.latencyUnits = scenario == "product-latency-units";
-  test.fixedLatency = scenario.starts_with("product-sfz-");
+  test.fixedLatency = scenario.starts_with("product-sfz-") || scenario.starts_with("product-matrix-freewheel") || scenario == "product-matrix-realtime";
+  test.freewheel = test.fixedLatency && !scenario.ends_with("-realtime");
+  test.oneOutput = scenario == "product-matrix-freewheel-one-output";
+  test.delayObserver = scenario == "product-matrix-freewheel-delayed-observer";
+  if (scenario.starts_with("product-matrix-freewheel-fail-"))
+    test.failurePoint = scenario.substr(std::string_view("product-matrix-freewheel-fail-").size());
   test.latency = scenario == "product-latency" || test.latencyUnits || test.intentionalDelay || test.latencyReconnect || test.fixedLatency;
   test.graphClock = scenario == "product-output-clock" || scenario == "product-output-clock-alt";
   test.clockUnavailable = scenario == "product-output-clock-unavailable";
@@ -997,10 +1154,22 @@ static int runAudio(std::string_view scenario) {
   test.inventory = scenario.starts_with("product-output-status");
   test.loop = pw_main_loop_new(nullptr);
   if (test.loop == nullptr) return 1;
+  if (test.fixedLatency) {
+    test.captureEvent = pw_loop_add_event(pw_main_loop_get_loop(test.loop), consumeFixedLatency, &test);
+    if (test.captureEvent == nullptr) return 1;
+  }
   // Block and register the control signal before PipeWire creates data threads.
   auto *signal = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR1, startSource, &test);
+  auto *cancel = test.fixedLatency ? pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGTERM, [](void *data, int) {
+    fail(*static_cast<AudioTest *>(data), "audio fixture canceled");
+  }, &test) : nullptr;
   auto *resume = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR2, [](void *data, int) {
     auto &test = *static_cast<AudioTest *>(data);
+    if (test.fixedLatency) {
+      test.shutdownAcknowledged = true;
+      if (!test.awaitingControl) return fail(test, "producer stopped before PCM verification");
+      return static_cast<void>(pw_main_loop_quit(test.loop));
+    }
     if (test.direct) {
       if (!test.awaitingControl) return fail(test, "unexpected direct stage");
       if (test.stage == 8) return static_cast<void>(pw_main_loop_quit(test.loop));
@@ -1163,6 +1332,7 @@ static int runAudio(std::string_view scenario) {
   auto *timer = pw_loop_add_timer(pw_main_loop_get_loop(test.loop), [](void *data, std::uint64_t) {
     fail(*static_cast<AudioTest *>(data), "product PCM test timed out");
   }, &test);
+  test.deadline = timer;
   auto deadline = timespec{.tv_sec = test.outputChange || test.meters || test.sourceResume || test.direct ? 60 : test.outputTimeout || test.recovery ? 30 : 15,
       .tv_nsec = 0}; auto interval = timespec{};
   if (timer == nullptr || signal == nullptr ||
@@ -1180,9 +1350,11 @@ static int runAudio(std::string_view scenario) {
   spa_hook_remove(&test.registryListener);
   pw_proxy_destroy(reinterpret_cast<pw_proxy *>(test.registry));
   pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), test.graphEvent);
+  if (test.captureEvent != nullptr) pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), test.captureEvent);
   pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), timer);
   pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), signal);
   pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), resume);
+  if (cancel != nullptr) pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), cancel);
   clockObserver.reset();
   pathObserver.reset();
   pw_core_disconnect(test.core); pw_context_destroy(test.context); pw_main_loop_destroy(test.loop); pw_deinit();
@@ -1193,7 +1365,9 @@ static int runAudio(std::string_view scenario) {
     if (stage != 0) std::cout << ',';
     std::cout << '[' << test.stageFrames[stage][0] << ',' << test.stageFrames[stage][1] << ']';
   }
-  std::cout << "],\"singleModeFrames\":" << test.singleModeFrames << ",\"compensationFrames\":[" << test.compensation[0] << ',' << test.compensation[1] << ',' << test.compensation[2] << ']'
+  std::cout << "],\"shutdownAcknowledged\":" << (test.shutdownAcknowledged ? "true" : "false")
+            << ",\"deferredFrames\":" << test.deferredFrames
+            << ",\"singleModeFrames\":" << test.singleModeFrames << ",\"compensationFrames\":[" << test.compensation[0] << ',' << test.compensation[1] << ',' << test.compensation[2] << ']'
             << ",\"processedOutputNamed\":" << (test.processedOutputNamed ? "true" : "false");
   if (test.graphClock) {
     std::cout << ",\"graphRates\":[";
@@ -1230,14 +1404,18 @@ int main(int argc, char **argv) {
   const auto signals = pipetune::blockPipeWireTerminationSignals();
   if (!signals.empty()) { std::cerr << signals << '\n'; return 1; }
   if (argc < 3) return 2;
+  if (std::string_view(argv[1]) == "trace") return verifyProductPcmTrace();
   if (std::string_view(argv[1]) == "control" && argc == 4) {
     const auto result = pipetune::exchangeControlMessage(argv[2], argv[3]);
     if (!result.error.empty()) { std::cerr << result.error << '\n'; return 1; }
     std::cout << result.response << '\n';
     return 0;
   }
-  if (std::string_view(argv[1]) == "audio") return runAudio(argv[2]);
+  prepareProductPcmTrace();
+  auto result = 2;
+  if (std::string_view(argv[1]) == "audio") result = runAudio(argv[2]);
   if (std::string_view(argv[1]) == "runtime" && argc == 4)
-    return runProduct(std::string_view(argv[2]) == "bypass" ? nullptr : argv[2], argv[3]);
-  return 2;
+    result = runProduct(std::string_view(argv[2]) == "bypass" ? nullptr : argv[2], argv[3]);
+  finishProductPcmTrace();
+  return result;
 }

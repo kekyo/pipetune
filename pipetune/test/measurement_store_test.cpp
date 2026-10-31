@@ -4,7 +4,9 @@
  * https://github.com/kekyo/pipetune/
  */
 #include "measurement_store.h"
+#include <pipetune/dsp_pipeline.h>
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -68,6 +70,59 @@ int main() {
   const auto originalFile = root / "ear-l.json";
   auto input = std::ifstream(originalFile);
   const auto original = std::string(std::istreambuf_iterator<char>(input), {});
+  const auto preset = root / "correction.effetune_preset";
+  std::ofstream(preset) << R"({"pipeline":[{"name":"Crosstalk Cancellation","parameters":{
+    "ll":"ear-l::ch=left","lr":"ear-r::ch=left","rl":"ear-l::ch=right","rr":"ear-r::ch=right","tp":1024,"lt":"128"}}]})";
+  const auto context = pipetune::PipelineLoadContext{root, {}};
+  auto active = pipetune::loadDspPipeline(preset, {48000, 2, 128}, context);
+  if (!active.pipeline) { std::cerr << active.error << '\n'; std::filesystem::remove_all(root); return 1; }
+  const auto render = [&] {
+    check(active.pipeline->reset() == pipetune::ProcessStatus::ok, "the retained correction must reset");
+    auto result = std::vector<float>{};
+    for (auto block = 0; block < 64; ++block) {
+      auto audio = std::vector<float>(256);
+      if (block == 0) audio[0] = 1;
+      check(active.pipeline->process(audio, 2, 128, block * 128.0 / 48000) == pipetune::ProcessStatus::ok,
+          "the retained correction must process PCM");
+      result.insert(result.end(), audio.begin(), audio.end());
+    }
+    return result;
+  };
+  // Finish the initial coefficient activation before comparing reset renders.
+  static_cast<void>(render());
+  const auto corrected = render();
+  auto energy = 0.0;
+  for (const auto sample : corrected) { check(std::isfinite(sample), "corrected PCM must be finite"); energy += sample * sample; }
+  check(energy > 0 && corrected.front() == 0, "the reference must contain delayed correction, not bypassed PCM");
+  const auto latency = active.pipeline->latencyFrames();
+  // The bound applies to the complete backup, including optional analysis data.
+  constexpr auto maximumBytes = std::size_t{64} * 1024u * 1024u;
+  {
+    auto output = std::ofstream(originalFile);
+    output << original << std::string(maximumBytes - original.size(), ' ');
+  }
+  store = {root, {}};
+  const auto atLimit = pipetune::loadCrosstalkMeasurements(store, ids);
+  check(atLimit.error.empty() && atLimit.sources[0].samples == valid.sources[0].samples,
+        "a complete backup at 64 MiB must retain the linear impulse");
+  std::ofstream(originalFile, std::ios::app) << ' ';
+  store = {root, {}};
+  const auto oversized = pipetune::loadCrosstalkMeasurements(store, ids);
+  check(oversized.error.find("byte budget") != std::string::npos && oversized.files.size() == 2,
+        "a backup above 64 MiB must fail and retain watched dependencies");
+  const auto rejected = pipetune::loadDspPipeline(preset, {48000, 2, 128}, context);
+  check(!rejected.pipeline && rejected.error.find("byte budget") != std::string::npos,
+      "an oversized source must reject the whole correction candidate");
+  check(active.pipeline->activePluginCount() == 1 && active.pipeline->latencyFrames() == latency && render() == corrected,
+      "rejecting an oversized candidate must preserve the active correction PCM and latency");
+  std::ofstream(originalFile) << original;
+  auto recovered = pipetune::loadDspPipeline(preset, {48000, 2, 128}, context);
+  check(recovered.pipeline && recovered.warnings.empty(), "a repaired backup must prepare a new correction");
+  if (recovered.pipeline) {
+    active = std::move(recovered);
+    static_cast<void>(render());
+    check(render() == corrected, "the repaired correction must recover the same PCM");
+  }
   for (const auto &[before, after] : std::array<std::pair<std::string, std::string>, 5>{
            {{"\"sampleRate\":48000", "\"sampleRate\":44100"},
             {"\"onsetIndex\":0", "\"onsetIndex\":99"},

@@ -198,23 +198,6 @@ static bool testIndependentInputWidth(bool connect) {
   return true;
 }
 
-static std::optional<pipetune::ControlRuntimeStatus>
-waitForInactiveGraph(const std::filesystem::path &socketPath) {
-  const auto deadline = std::chrono::steady_clock::now() +
-                        std::chrono::seconds(8);
-  while (std::chrono::steady_clock::now() < deadline) {
-    const auto exchange = pipetune::exchangeControlMessage(
-        socketPath, pipetune::makeStatusControlRequest());
-    const auto parsed = pipetune::parseControlResponse(exchange.response);
-    if (exchange.error.empty() && parsed.valid && parsed.success &&
-        parsed.status.graphSampleRate == 0) {
-      return parsed.status;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-  }
-  return std::nullopt;
-}
-
 static std::optional<pipetune::ControlRuntimeStatus> waitForStatus(
     const std::filesystem::path &socketPath,
     const std::function<bool(const pipetune::ControlRuntimeStatus &)> &matches) {
@@ -412,6 +395,26 @@ static bool testRoomReload(const std::filesystem::path &socketPath,
       loaded.status.presetEntries.front().state == pipetune::PresetEntryState::enabled,
       "per-channel Room EQ must load on the live control path")) return false;
   auto revision = loaded.status.configurationRevision;
+  {
+    // A valid JSON backup can exceed the shared reader's budget as optional
+    // analysis grows. Reject the new file without replacing the active filter.
+    const auto oversized = original + std::string(64u * 1024u * 1024u + 1u - original.size(), ' ');
+    if (!replacePresetContents(left, oversized)) return false;
+    const auto rejected = waitForStatus(socketPath, [](const auto &status) {
+      return status.configurationError.find("byte budget") != std::string::npos;
+    });
+    if (!check(rejected && rejected->configurationRevision == revision &&
+                   rejected->activePreset == path.string() && rejected->activePluginCount == 1 &&
+                   rejected->dspLatencyFrames == 4224,
+               "an oversized backup must retain the active Room EQ and its latency")) return false;
+    if (!replacePresetContents(left, original)) return false;
+    const auto recovered = waitForStatus(socketPath, [revision](const auto &status) {
+      return status.configurationError.empty() && status.configurationRevision > revision;
+    });
+    if (!check(recovered && recovered->activePluginCount == 1 && recovered->dspLatencyFrames == 4224,
+               "repairing an oversized backup must recover automatic Room EQ reload")) return false;
+    revision = recovered->configurationRevision;
+  }
   for (const auto &source : {left, right}) {
     const auto saved = std::filesystem::path(source.string() + ".saved");
     std::filesystem::rename(source, saved);
@@ -483,12 +486,43 @@ static bool testCrosstalkReload(const std::filesystem::path &socketPath,
         "\"sampleRate\":48000,\"trimStartSamples\":0,\"onsetIndex\":0,\"outputTimeReference\":\"file\"}]}";
     if (!replacePresetContents(root / (id + ".json"), json)) return false;
   }
-  const auto active = waitForStatus(socketPath, [&omitted](const auto &status) {
+  auto active = waitForStatus(socketPath, [&omitted](const auto &status) {
     return status.activePluginCount == 2 && status.configurationError.empty() &&
         status.configurationRevision > omitted->configurationRevision;
   });
   if (!check(active.has_value(), "measurement creation must activate Crosstalk without GTK")) return false;
   const auto source = root / "ear-l.json";
+  {
+    auto input = std::ifstream(source);
+    const auto original = std::string(std::istreambuf_iterator<char>(input), {});
+    const auto oversized = original + std::string(64u * 1024u * 1024u + 1u - original.size(), ' ');
+    const auto staged = std::filesystem::path(source.string() + ".replacement");
+    if (!writePresetContents(staged, oversized)) return false;
+    // Creation notifications can finish another valid reload while the large
+    // replacement is written. Complete an explicit load before the atomic swap
+    // so the retention check starts from that acknowledged pipeline revision.
+    const auto prepared = pipetune::parseControlResponse(pipetune::exchangeControlMessage(
+        socketPath, pipetune::makeLoadPresetControlRequest(presetPath)).response);
+    if (!check(prepared.success && prepared.status.activePluginCount == 2,
+               "Crosstalk must be active before replacing its backup")) return false;
+    active = prepared.status;
+    std::filesystem::rename(staged, source);
+    const auto rejected = waitForStatus(socketPath, [](const auto &status) {
+      return status.configurationError.find("byte budget") != std::string::npos;
+    });
+    if (!check(rejected && rejected->configurationRevision == active->configurationRevision &&
+                   rejected->activePreset == presetPath.string() && rejected->activePluginCount == 2 &&
+                   rejected->dspLatencyFrames == active->dspLatencyFrames,
+               "an oversized Crosstalk backup must retain the previous pipeline")) return false;
+    if (!replacePresetContents(source, original)) return false;
+    const auto recoveredSize = waitForStatus(socketPath, [&active](const auto &status) {
+      return status.configurationError.empty() && status.configurationRevision > active->configurationRevision;
+    });
+    if (!check(recoveredSize && recoveredSize->activePluginCount == 2 &&
+                   recoveredSize->dspLatencyFrames == active->dspLatencyFrames,
+               "repairing an oversized Crosstalk backup must recover automatic reload")) return false;
+    active = recoveredSize;
+  }
   const auto backup = root / "ear-l.saved";
   std::filesystem::rename(source, backup);
   const auto removed = waitForStatus(socketPath, [&active](const auto &status) {
@@ -945,11 +979,17 @@ static bool testOrderlySignalShutdown(
     return false;
   }
 
-  const auto inactive = waitForInactiveGraph(socketPath);
-  if (!check(inactive.has_value(),
-             "PipeWire filter graph did not become idle") ||
-      !check(!inactive->rateTransitioning,
-             "an idle graph must not remain in a sample-rate transition")) {
+  // The always-processing input node keeps its graph clock while DSP sleeps.
+  // Observe DSP suspension itself instead of waiting for graph deactivation.
+  const auto enableIdle = pipetune::exchangeControlMessage(
+      socketPath, pipetune::makeSetDspIdleControlRequest({.timeoutMilliseconds = 100}));
+  const auto idlePolicy = pipetune::parseControlResponse(enableIdle.response);
+  const auto inactive = waitForStatus(socketPath, [](const auto &status) {
+    return status.dspActivity == pipetune::DspActivity::sleeping && !status.rateTransitioning;
+  });
+  if (!check(enableIdle.error.empty() && idlePolicy.valid && idlePolicy.success,
+             "automatic DSP suspension must be enabled") ||
+      !check(inactive.has_value(), "silent input must suspend DSP after rate transitions settle")) {
     kill(child, SIGTERM);
     auto childStatus = 0;
     waitpid(child, &childStatus, 0);
@@ -964,7 +1004,7 @@ static bool testOrderlySignalShutdown(
              backendChangeWhileIdle.error) ||
       !check(parsedIdleBackend.valid, parsedIdleBackend.error) ||
       !check(parsedIdleBackend.success,
-             "an idle graph must still accept DSP setting changes")) {
+             "suspended DSP must still accept setting changes")) {
     kill(child, SIGTERM);
     auto childStatus = 0;
     waitpid(child, &childStatus, 0);

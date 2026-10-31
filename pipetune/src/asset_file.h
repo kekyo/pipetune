@@ -11,10 +11,18 @@
 #include <filesystem>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace pipetune {
+
+/** Rejects a source whose complete file size exceeds the admitted byte budget. */
+class AssetFileSizeError final : public std::runtime_error {
+public:
+  /** Constructs the source-size diagnostic without reading or allocating file contents. */
+  AssetFileSizeError() : std::runtime_error("asset exceeds its byte budget") {}
+};
 
 /** A source identity retained until the complete candidate is ready for publication. */
 struct AssetFileSnapshot {
@@ -39,7 +47,8 @@ struct AssetFileInspection {
  * @param prefixBytes Maximum initial bytes retained in memory.
  * @param cancellation Superseded preparation or shutdown notification.
  * @return Stable source identity and bounded prefix.
- * @throws std::runtime_error Invalid, changed, or oversized source.
+ * @throws std::runtime_error Invalid or changed source.
+ * @throws AssetFileSizeError Source exceeds maximumBytes.
  */
 cardio::promise<AssetFileInspection> inspectAssetFile(const std::filesystem::path &path,
     std::size_t maximumBytes, std::size_t prefixBytes, cardio::cancellation cancellation);
@@ -74,7 +83,8 @@ cardio::promise<void> verifyAssetSnapshots(std::span<const AssetFileSnapshot> sn
  * @param maximumBytes Limit checked before allocation and after reading.
  * @param cancellation Superseded preparation or shutdown notification.
  * @return Owned, stable contents; rejects files changed during the read.
- * @throws std::runtime_error Invalid, missing, changed, or oversized input.
+ * @throws std::runtime_error Invalid, missing, or changed input.
+ * @throws AssetFileSizeError Input exceeds maximumBytes.
  */
 cardio::promise<std::vector<std::uint8_t>> readAssetFile(
     const std::filesystem::path &path, std::size_t maximumBytes,

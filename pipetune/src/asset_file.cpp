@@ -28,9 +28,9 @@ static std::size_t validateFileInfo(GFileInfo *info, std::size_t maximumBytes) {
   const auto size = g_file_info_get_size(info);
   // NOFOLLOW path queries report symlinks as a distinct file type. Stream
   // queries omit is-symlink, so checking that optional attribute is invalid.
-  if (g_file_info_get_file_type(info) != G_FILE_TYPE_REGULAR || size < 0 ||
-      static_cast<std::uint64_t>(size) > maximumBytes)
-    throw std::runtime_error("asset must be a regular file within its byte budget");
+  if (g_file_info_get_file_type(info) != G_FILE_TYPE_REGULAR || size < 0)
+    throw std::runtime_error("asset must be a regular file");
+  if (static_cast<std::uint64_t>(size) > maximumBytes) throw AssetFileSizeError{};
   return static_cast<std::size_t>(size);
 }
 
@@ -75,8 +75,15 @@ static cardio::promise<AssetFileInspection> readSource(
       offset += count;
     }
     auto extra = std::array<std::byte, 1>{};
-    if ((co_await cardio::gio::read(G_INPUT_STREAM(stream.get()), std::span(extra))) != 0)
+    if ((co_await cardio::gio::read(G_INPUT_STREAM(stream.get()), std::span(extra))) != 0) {
+      if (size == maximumBytes) throw AssetFileSizeError{};
+      // Check the opened file: its path may already name a smaller replacement.
+      // A resource-limit rejection must not become an omitted measurement.
+      const auto grown = GioObject<GFileInfo>(co_await cardio::gio::query_info(
+          stream.get(), snapshotAttributes), g_object_unref);
+      validateFileInfo(grown.get(), maximumBytes);
       throw std::runtime_error("asset grew while reading");
+    }
     const auto after = GioObject<GFileInfo>(co_await cardio::gio::query_info(
         file.get(), snapshotAttributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS), g_object_unref);
     if (validateFileInfo(after.get(), maximumBytes) != size ||
