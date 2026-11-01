@@ -11,8 +11,18 @@ const config = join(directory, "config");
 const remote = `pipeline-${process.pid}`;
 const environment = { ...process.env, XDG_RUNTIME_DIR: runtime, PIPEWIRE_RUNTIME_DIR: runtime,
   PIPEWIRE_CORE: remote, PIPEWIRE_REMOTE: remote, XDG_CONFIG_HOME: config,
+  PIPETUNE_TEST_SILENCE_WAV: join(directory, "silence.wav"),
   XDG_STATE_HOME: join(directory, "state"), XDG_DATA_HOME: join(directory, "data"), GIO_USE_VFS: "local" };
 mkdirSync(runtime, { mode: 0o700 });
+// A WAV fixture works with both old and new pw-cat stdin-format conventions.
+const silence = Buffer.alloc(44 + 96000 * 2 * 2 * 10);
+silence.write("RIFF", 0); silence.writeUInt32LE(silence.length - 8, 4);
+silence.write("WAVEfmt ", 8); silence.writeUInt32LE(16, 16);
+silence.writeUInt16LE(1, 20); silence.writeUInt16LE(2, 22);
+silence.writeUInt32LE(96000, 24); silence.writeUInt32LE(96000 * 4, 28);
+silence.writeUInt16LE(4, 32); silence.writeUInt16LE(16, 34);
+silence.write("data", 36); silence.writeUInt32LE(silence.length - 44, 40);
+writeFileSync(environment.PIPETUNE_TEST_SILENCE_WAV, silence);
 const configure = (path, text) => {
   const components = path.split("/");
   components.pop();

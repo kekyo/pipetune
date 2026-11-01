@@ -20,7 +20,6 @@
 #include <csignal>
 #include <cstdlib>
 #include <filesystem>
-#include <fcntl.h>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -984,14 +983,12 @@ static bool testOrderlySignalShutdown(
   // application connected so this verifies DSP suspension during processing,
   // independently of whether another desktop application is playing audio.
   const auto inputName = "pipetune_signal_test_" + std::string(processId);
+  const auto *silencePath = std::getenv("PIPETUNE_TEST_SILENCE_WAV");
   const auto silence = fork();
   if (silence == 0) {
-    const auto zero = open("/dev/zero", O_RDONLY);
-    if (zero < 0 || dup2(zero, STDIN_FILENO) < 0) _exit(126);
-    close(zero);
-    execlp("pw-cat", "pw-cat", "--playback", "--format", "f32",
-        "--rate", "96000", "--channels", "2", "--target", inputName.c_str(),
-        "-", static_cast<char *>(nullptr));
+    if (silencePath == nullptr) _exit(126);
+    execlp("pw-cat", "pw-cat", "--playback", "--target", inputName.c_str(),
+        silencePath, static_cast<char *>(nullptr));
     _exit(127);
   }
   struct SilenceSource {
