@@ -10,6 +10,7 @@
 #include "product_pcm_trace.h"
 
 #include <pipewire/pipewire.h>
+#include <pipewire/extensions/metadata.h>
 #include <spa/param/audio/format-utils.h>
 #include <spa/param/latency-utils.h>
 #include <spa/param/props.h>
@@ -128,7 +129,7 @@ static int runProduct(const char *preset, std::string_view scenario) {
   const auto *socket = std::getenv("PIPETUNE_PRODUCT_SOCKET");
   const auto meterTest = scenario == "product-preset-meters";
   const auto sourceResume = scenario.starts_with("product-source-resume");
-  const auto directTest = scenario == "product-direct";
+  const auto directTest = scenario.starts_with("product-direct");
   const auto control = directTest || meterTest || sourceResume || scenario == "product-controls" || scenario.starts_with("product-output-");
   if (control && socket == nullptr) return 2;
   auto configuration = pipetune::OutputConfiguration{};
@@ -216,6 +217,9 @@ struct TestOutput {
   spa_hook listener = {};
   unsigned index = 0;
   bool ready = false;
+  std::array<float, 2> gain = {1.0F, 1.0F};
+  bool muted = false;
+  bool rejectingVolume = false;
   bool matched = false;
   std::uint64_t frames = 0;
   std::uint64_t zeroFrames = 0;
@@ -239,6 +243,11 @@ struct AudioTest {
   std::string inputName = "pipetune_product_input";
   spa_hook sourceListener = {};
   bool direct = false;
+  bool physicalVolume = false;
+  bool rejectPhysicalVolume = false;
+  bool physicalDefaultReady = false;
+  pw_metadata *metadata = nullptr;
+  spa_hook metadataListener = {};
   pw_stream *directSource = nullptr;
   spa_hook directListener = {};
   bool matrix = false;
@@ -302,7 +311,7 @@ struct AudioTest {
   bool processedOutputNamed = false;
   std::uint32_t directInputId = PW_ID_ANY;
   unsigned stage = 0;
-  std::array<std::array<std::uint64_t, 2>, 12> stageFrames = {};
+  std::array<std::array<std::uint64_t, 2>, 13> stageFrames = {};
   std::array<std::array<std::uint64_t, 2>, 12> recoverySilence = {};
   std::array<double, 12> recoveryMilliseconds = {};
   std::chrono::steady_clock::time_point recoveryStarted = std::chrono::steady_clock::now();
@@ -352,7 +361,8 @@ static void outputState(void *data, pw_stream_state, pw_stream_state state, cons
   if (state == PW_STREAM_STATE_ERROR) return fail(*output.test, error == nullptr ? "output failed" : error);
   if (state == PW_STREAM_STATE_PAUSED || state == PW_STREAM_STATE_STREAMING) output.ready = true;
   auto &test = *output.test;
-  if (!test.announced && std::all_of(test.outputs.begin(), test.outputs.end(), [](const auto &item) { return item.ready; })) {
+  if (!test.announced && (!test.physicalVolume || test.physicalDefaultReady) &&
+      std::all_of(test.outputs.begin(), test.outputs.end(), [](const auto &item) { return item.ready; })) {
     test.announced = true;
     std::cerr << "product:devices-ready\n" << std::flush;
   }
@@ -657,7 +667,7 @@ static void capture(void *data) {
         expected += output.index == 0 ? (channel == 0 ? 0.25F : 0.5F) :
             test.stage >= 5 ? 0.0F : (channel == 0 ? 0.25F : -0.5F);
       expected *= test.stage == 7 || test.stage == 10 ? 0.0F :
-          test.stage >= 6 && test.stage <= 8 ? 0.5F : test.stage == 9 ? 0.25F : 1.0F;
+          test.stage >= 6 && test.stage <= 8 ? 0.5F : test.stage == 9 || (test.physicalVolume && test.stage < 6) ? 0.25F : 1.0F;
     }
     if (test.slots && output.index < 2) expected = output.index == 0 ?
         (channel == 0 ? 0.25F : -0.5F) : (channel == 0 ? 0.5F : 0.25F);
@@ -722,7 +732,7 @@ static void capture(void *data) {
     output.frames = matches ? output.frames + frames : 0;
     if (test.outputs[0].frames < 8192 || test.outputs[1].frames < 8192) return;
     const auto gain = test.stage >= 6 && test.stage <= 8 ? 0.5F :
-        test.stage == 9 || test.stage == 10 ? 0.25F : 1.0F;
+        test.stage == 9 || test.stage == 10 || (test.physicalVolume && test.stage < 6) ? 0.25F : 1.0F;
     const auto muted = test.stage == 7 || test.stage == 10;
     if (test.visibleGain != gain || test.directVisibleGain != gain ||
         test.visibleMute != muted || test.directVisibleMute != muted) return;
@@ -998,8 +1008,44 @@ static void startSource(void *data, int) {
           (test.fixedLatency ? PW_STREAM_FLAG_RT_PROCESS : PW_STREAM_FLAG_NONE)))) fail(test, "cannot connect source");
 }
 
+static void verifyPhysicalRestoration(AudioTest &test) {
+  if (!test.physicalVolume || test.stage != 12) return;
+  const auto expected = std::array<std::array<float, 2>, 3>{{{0.125F, 0.25F}, {0.0625F, 0.125F}, {0.25F, 0.25F}}};
+  for (auto index = 0U; index < test.outputs.size(); ++index)
+    if (test.outputs[index].gain != expected[index] || test.outputs[index].muted != (index == 1)) return;
+  std::cerr << "product:physical-volumes-restored\n" << std::flush;
+  pw_main_loop_quit(test.loop);
+}
+
 static void outputParameterChanged(void *data, std::uint32_t id, const spa_pod *parameter) {
   auto &output = *static_cast<TestOutput *>(data);
+  if (output.test->physicalVolume && id == SPA_PARAM_Props && parameter) {
+    if (output.test->rejectPhysicalVolume && output.index == 0 && !output.rejectingVolume &&
+        pw_stream_get_node_id(output.stream) != PW_ID_ANY) {
+      const auto *prop = spa_pod_find_prop(parameter, nullptr, SPA_PROP_channelVolumes);
+      auto volumes = std::array<float, 2>{};
+      if (prop && spa_pod_copy_array(&prop->value, SPA_TYPE_Float, volumes.data(), volumes.size()) == 2 &&
+          volumes[0] == 1.0F && volumes[1] == 1.0F) {
+        auto storage = std::array<std::uint8_t, 256>{};
+        auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
+        const auto previous = std::array<float, 2>{0.125F, 0.25F};
+        const auto *retained = static_cast<const spa_pod *>(spa_pod_builder_add_object(&builder,
+            SPA_TYPE_OBJECT_Props, SPA_PARAM_Props, SPA_PROP_mute, SPA_POD_Bool(false),
+            SPA_PROP_channelVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, 2, previous.data())));
+        output.rejectingVolume = true;
+        pw_stream_set_param(output.stream, SPA_PARAM_Props, retained);
+        output.rejectingVolume = false;
+        return;
+      }
+    }
+    if (const auto *prop = spa_pod_find_prop(parameter, nullptr, SPA_PROP_channelVolumes))
+      spa_pod_copy_array(&prop->value, SPA_TYPE_Float, output.gain.data(), output.gain.size());
+    if (const auto *prop = spa_pod_find_prop(parameter, nullptr, SPA_PROP_mute))
+      spa_pod_get_bool(&prop->value, &output.muted);
+    std::cerr << "product:physical-volume " << output.index << " " << output.gain[0] << "," << output.gain[1]
+              << " mute=" << output.muted << '\n' << std::flush;
+    verifyPhysicalRestoration(*output.test);
+  }
   if ((!output.test->latency && !output.test->graphClock) || (id != SPA_PARAM_Format && id != SPA_PARAM_Latency)) return;
   auto storage = std::array<std::uint8_t, 512>{};
   auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
@@ -1052,6 +1098,11 @@ static bool createTestOutput(TestOutput &output) {
       PW_KEY_PRIORITY_SESSION, output.index == 2 ? "2000" : "1000",
       "node.want-driver", "true", "node.pause-on-idle", "false",
       "audio.channels", "2", "audio.position", "[ FL FR ]",
+      "state.restore-props", "false",
+      "node.param.Props", output.test->physicalVolume ? (output.index == 0 ?
+          "{ volume = 1.0 mute = false channelVolumes = [ 0.125 0.25 ] }" : output.index == 1 ?
+          "{ volume = 1.0 mute = true channelVolumes = [ 0.0625 0.125 ] }" :
+          "{ volume = 1.0 mute = false channelVolumes = [ 0.25 0.25 ] }") : "{}",
       "node.device.profile.name", ((output.test->profile && output.test->stage == 3) ||
           (output.test->recovery && output.test->stage == 7) ||
           (output.test->inventory && output.test->stage == 2)) && output.index == 0 ? "changed" : "", nullptr));
@@ -1133,7 +1184,9 @@ static int runAudio(std::string_view scenario) {
   pw_init(nullptr, nullptr);
   auto test = AudioTest{};
   if (const auto *name = std::getenv("PIPETUNE_PRODUCT_INPUT")) test.inputName = name;
-  test.direct = scenario == "product-direct";
+  test.direct = scenario.starts_with("product-direct");
+  test.physicalVolume = scenario.starts_with("product-direct-device-volume");
+  test.rejectPhysicalVolume = scenario == "product-direct-device-volume-reject";
   test.matrix = scenario != "product-bypass";
   test.meters = scenario == "product-preset-meters";
   test.sourceResume = scenario.starts_with("product-source-resume");
@@ -1192,7 +1245,15 @@ static int runAudio(std::string_view scenario) {
     }
     if (test.direct) {
       if (!test.awaitingControl) return fail(test, "unexpected direct stage");
-      if (test.stage == 11) return static_cast<void>(pw_main_loop_quit(test.loop));
+      if (test.stage == 11) {
+        if (!test.physicalVolume) return static_cast<void>(pw_main_loop_quit(test.loop));
+        test.stage = 12;
+        spa_hook_remove(&test.sourceListener); pw_stream_destroy(test.source); test.source = nullptr;
+        spa_hook_remove(&test.directListener); pw_stream_destroy(test.directSource); test.directSource = nullptr;
+        std::cerr << "product:physical-playback-stopped\n" << std::flush;
+        verifyPhysicalRestoration(test);
+        return;
+      }
       ++test.stage; test.awaitingControl = false;
       for (auto &output : test.outputs) output.frames = 0;
       if (test.stage == 1 || test.stage == 5) startSource(&test, 0);
@@ -1282,6 +1343,27 @@ static int runAudio(std::string_view scenario) {
     value.version = PW_VERSION_REGISTRY_EVENTS;
     value.global = [](void *data, std::uint32_t id, std::uint32_t, const char *type, std::uint32_t version, const spa_dict *props) {
       auto &test = *static_cast<AudioTest *>(data);
+      if (test.physicalVolume && !test.metadata && std::strcmp(type, PW_TYPE_INTERFACE_Metadata) == 0 && props) {
+        const auto *name = spa_dict_lookup(props, PW_KEY_METADATA_NAME);
+        if (name && std::string_view(name) == "default") {
+          test.metadata = static_cast<pw_metadata *>(pw_registry_bind(test.registry, id, type, PW_VERSION_METADATA, 0));
+          static const auto events = [] {
+            auto value = pw_metadata_events{}; value.version = PW_VERSION_METADATA_EVENTS;
+            value.property = [](void *data, std::uint32_t subject, const char *key, const char *, const char *text) {
+              auto &test = *static_cast<AudioTest *>(data);
+              if (subject == 0 && key && std::string_view(key) == "default.audio.sink" && text &&
+                  std::string_view(text).find("pipetune_product_device_2") != std::string_view::npos) {
+                test.physicalDefaultReady = true;
+                outputState(&test.outputs[0], PW_STREAM_STATE_PAUSED, PW_STREAM_STATE_PAUSED, nullptr);
+              }
+              return 0;
+            };
+            return value;
+          }();
+          if (!test.metadata) return fail(test, "cannot observe initial OS output");
+          pw_metadata_add_listener(test.metadata, &test.metadataListener, &events, &test);
+        }
+      }
       if (std::strcmp(type, PW_TYPE_INTERFACE_Node) != 0 || props == nullptr) return;
       const auto *name = spa_dict_lookup(props, PW_KEY_NODE_NAME);
       if (test.direct && test.directControl == nullptr && name != nullptr &&
@@ -1331,6 +1413,7 @@ static int runAudio(std::string_view scenario) {
             }
             if (const auto *prop = spa_pod_find_prop(param, nullptr, SPA_PROP_mute))
               spa_pod_get_bool(&prop->value, &test.visibleMute);
+            if (test.physicalVolume) std::cerr << "product:master-volume " << test.visibleGain << " mute=" << test.visibleMute << '\n' << std::flush;
           };
           return value;
         }();
@@ -1393,6 +1476,10 @@ static int runAudio(std::string_view scenario) {
     pw_proxy_destroy(reinterpret_cast<pw_proxy *>(test.directControl));
   }
   spa_hook_remove(&test.registryListener);
+  if (test.metadata) {
+    spa_hook_remove(&test.metadataListener);
+    pw_proxy_destroy(reinterpret_cast<pw_proxy *>(test.metadata));
+  }
   pw_proxy_destroy(reinterpret_cast<pw_proxy *>(test.registry));
   pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), test.graphEvent);
   if (test.captureEvent != nullptr) pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), test.captureEvent);

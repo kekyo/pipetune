@@ -21,6 +21,12 @@ table.insert(stream_defaults.rules, {
     {
       { "node.pipetune.direct", "equals", "true" },
     },
+    {
+      { "node.pipetune.managed-output", "equals", "true" },
+    },
+    {
+      { "node.pipetune.aggregate", "equals", "true" },
+    },
   },
   apply_properties = {
     ["state.restore-props"] = false,

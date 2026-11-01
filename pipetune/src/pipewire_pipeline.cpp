@@ -260,6 +260,7 @@ struct PipeWireRuntime {
   spa_source *profileChangeSource = nullptr;
   PipeWireDirectOutputPtr directOutput;
   PipeWireOutputVolumePtr outputVolume;
+  std::atomic<bool> physicalVolumeReady{true};
   std::string directOutputArguments;
   pw_impl_module *outputDistribution = nullptr;
   spa_hook outputDistributionListener = {};
@@ -732,7 +733,30 @@ static bool setInputAlwaysProcess(PipeWireRuntime &runtime, bool enabled) {
 
 static void finishOutputChange(PipeWireRuntime &runtime);
 
+static bool outputVolumeIsReady(const PipeWireRuntime &runtime) {
+  if (!runtime.outputVolume) return true;
+  const auto multiple = runtime.options.outputConfiguration.mode == OutputMode::multiple;
+  if (!pipeWireOutputVolumeReady(*runtime.outputVolume, multiple)) return false;
+  if (!multiple) return true;
+  if (!runtime.masterControlsInitialized) return false;
+  const auto resolved = resolveConfiguredOutputs(runtime.options.outputConfiguration, runtime.availableOutputs.outputs);
+  for (const auto &output : resolved) {
+    if (!output.inventoryIndex) continue;
+    const auto serial = runtime.availableOutputs.outputs[*output.inventoryIndex].nodeSerial;
+    const auto volume = std::find_if(runtime.availableOutputs.volumes.begin(), runtime.availableOutputs.volumes.end(),
+        [&](const auto &item) { return item.nodeSerial == serial; });
+    if (volume == runtime.availableOutputs.volumes.end() || !volume->muted || *volume->muted ||
+        volume->channelVolumes.empty()) return false;
+    for (const auto gain : volume->channelVolumes)
+      if (std::abs(gain * volume->volume.value_or(1.0F) - 1.0F) > 0.00001F) return false;
+  }
+  return true;
+}
+
 static void finishReadinessCheck(PipeWireRuntime &runtime) {
+  const auto volumeReady = outputVolumeIsReady(runtime);
+  runtime.physicalVolumeReady.store(volumeReady, std::memory_order_release);
+  if (!volumeReady || runtime.completed || !runtime.error.empty()) return;
   if (!runtime.inputReady || !runtime.outputReady ||
       !runtime.inputFormatReady || !runtime.outputFormatReady ||
       !runtime.inputFormatNegotiated.load(std::memory_order_acquire) ||
@@ -1164,6 +1188,7 @@ static void updateMasterVolume(PipeWireRuntime &runtime, const spa_pod *paramete
     if (pw_stream_update_properties(runtime.inputStream, &properties) < 0)
       return failRuntime(runtime, "cannot acknowledge master control initialization");
   }
+  finishReadinessCheck(runtime);
 }
 
 static void streamParameterChanged(void *data, std::uint32_t id,
@@ -1528,7 +1553,7 @@ static void outputProcess(void *data) {
     // physical channels beyond the prepared DSP width explicitly silent.
     for (auto channel = std::uint32_t{0}; channel < runtime.options.channelCount; ++channel) {
       auto *destination = static_cast<float *>(buffer.datas[channel].data) + outputFrame;
-      if (channel < runtime.audioBuffers->channels)
+      if (runtime.physicalVolumeReady.load(std::memory_order_acquire) && channel < runtime.audioBuffers->channels)
         std::copy_n(scratch.data() + static_cast<std::size_t>(channel) * blockFrames, blockFrames, destination);
       else std::fill_n(destination, blockFrames, 0.0F);
     }
@@ -1644,6 +1669,7 @@ static void destroyOutputStream(PipeWireRuntime &runtime) {
 }
 
 static void destroyAudioStreams(PipeWireRuntime &runtime) {
+  if (runtime.outputVolume) runtime.physicalVolumeReady.store(false, std::memory_order_release);
   // Output configuration can replace the slot count. Quiesce the monitor
   // before publishing that width, independently of the direct audio route.
   if (runtime.mixedOutputStream != nullptr)
@@ -1835,12 +1861,17 @@ static void outputPathsChanged(const std::vector<PipeWireOutputPath> &paths, voi
 static std::string replaceOutputDistribution(PipeWireRuntime &runtime, const std::string &arguments) {
   if (!arguments.empty() && !runtime.outputVolume) {
     runtime.outputVolume = createPipeWireOutputVolume(runtime.core, runtime.options.filterName + ".distribution",
-        [](const std::string &error, void *data) { failRuntime(*static_cast<PipeWireRuntime *>(data), error); }, &runtime);
+        [](const std::string &error, void *data) { failRuntime(*static_cast<PipeWireRuntime *>(data), error); },
+        [](void *data) { finishReadinessCheck(*static_cast<PipeWireRuntime *>(data)); }, &runtime);
     if (!runtime.outputVolume) return "cannot observe mixed-output volume";
   }
   if (runtime.outputVolume && !setPipeWireOutputVolume(*runtime.outputVolume, runtime.options.channelCount,
       runtime.masterVolume, !runtime.masterControlsInitialized || runtime.masterMute))
     return "cannot initialize mixed-output volume";
+  if (runtime.outputVolume) {
+    preparePipeWireOutputVolume(*runtime.outputVolume);
+    runtime.physicalVolumeReady.store(false, std::memory_order_release);
+  }
   // Retain the previous default-output lease until a replacement module has
   // been constructed. Explicitly removed modules must not report a failure.
   auto *replacement = arguments.empty() ? nullptr : pw_context_load_module(runtime.context,
@@ -2608,6 +2639,7 @@ static void outputInventoryChanged(const OutputInventoryResult &snapshot, void *
   }
   runtime.profileRestoreDecisionPending.store(false, std::memory_order_release);
   requestControlStatusUpdate(runtime);
+  finishReadinessCheck(runtime);
   if (runtime.options.outputConfiguration.mode != OutputMode::multiple) return;
   const auto generation = pipeWireOutputPolicyGeneration(*runtime.outputInventory);
   if (generation != runtime.outputPolicyGeneration) {

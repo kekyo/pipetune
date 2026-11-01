@@ -25,17 +25,26 @@ struct PipeWireOutputVolumeDeleter {
 using PipeWireOutputVolumePtr = std::unique_ptr<PipeWireOutputVolume, PipeWireOutputVolumeDeleter>;
 /** Reports asynchronous write failures on the main loop; must not destroy the controller inline. */
 using PipeWireVolumeError = void (*)(const std::string &error, void *data);
+/** Notifies policy acknowledgments on the main loop; must not destroy the controller inline. */
+using PipeWireVolumeChanged = void (*)(void *data);
 
 /**
  * Observes the named distribution bus, initially muted until controls are restored.
  * @param core Borrowed connection, outliving the controller.
  * @param name Exact private distribution node name.
  * @param error Required error handler.
+ * @param changed Required readiness notification handler.
  * @param data Borrowed callback context, outliving the controller.
  * @return Controller, or null if registry creation fails.
  */
 PipeWireOutputVolumePtr createPipeWireOutputVolume(pw_core *core, const std::string &name,
-    PipeWireVolumeError error, void *data);
+    PipeWireVolumeError error, PipeWireVolumeChanged changed, void *data);
+
+/** Invalidates acknowledgments before replacing or removing the distribution bus. */
+void preparePipeWireOutputVolume(PipeWireOutputVolume &volume);
+
+/** Checks physical-gain acquisition for the new bus, or completed restoration in single mode. */
+bool pipeWireOutputVolumeReady(const PipeWireOutputVolume &volume, bool multiple);
 
 /**
  * Applies a uniform linear gain after mixing, also retained for bus recreation.
