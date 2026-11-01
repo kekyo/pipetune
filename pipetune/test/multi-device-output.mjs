@@ -296,7 +296,7 @@ try {
       { name: "Matrix", enabled: true, channel: "All", parameters: { mx: "001102p13" } },
     ] }));
     const product = start("dual input runtime", driver, ["runtime", preset, scenario]);
-    if (scenario.endsWith("-reject")) {
+    if (scenario === "product-direct-device-volume-reject") {
       let timer;
       try {
         const result = await Promise.race([product.completion, new Promise((resolve, reject) => {
@@ -346,11 +346,38 @@ try {
         assert.equal((await client.completion).code, 0, client.stderr);
         assert.equal(JSON.parse(client.stdout).ok, true, client.stdout);
       }
+      if (stage === 6 && (scenario.endsWith("-restart") || scenario.endsWith("-reconnect"))) {
+        if (scenario.endsWith("-restart")) {
+          terminate(manager, "SIGTERM");
+          await manager.completion;
+          manager = start("restarted volume policy", "dbus-run-session", ["--", wireplumber]);
+        }
+        audio.child.kill("SIGWINCH");
+        await waitForMessage(audio, "product:physical-recovery-verified");
+      }
       audio.child.kill("SIGUSR2");
     }
     if (physicalVolume) await waitForMessage(audio, "product:physical-playback-stopped");
     else assert.equal((await audio.completion).code, 0, audio.stderr);
-    if (scenario.endsWith("-single")) {
+    if (scenario.endsWith("-restore-reject")) {
+      const status = start("failed restoration status", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET,
+        JSON.stringify({ command: "status" })]);
+      assert.equal((await status.completion).code, 0, status.stderr);
+      const current = JSON.parse(status.stdout);
+      const single = start("rejected volume restoration", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET,
+        JSON.stringify({ command: "set-output", configuration: { ...current.outputConfiguration, mode: "single" } })]);
+      assert.equal((await single.completion).code, 0, single.stderr);
+      const response = JSON.parse(single.stdout);
+      assert.equal(response.ok, false, single.stdout);
+      assert.match(response.error, /restored gain.*pipetune_product_device_0/u);
+      const rollback = start("restoration rollback status", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET,
+        JSON.stringify({ command: "status" })]);
+      assert.equal((await rollback.completion).code, 0, rollback.stderr);
+      assert.deepEqual(JSON.parse(rollback.stdout).outputConfiguration, current.outputConfiguration,
+        "failed restoration must roll back the output configuration");
+      audio.child.kill("SIGWINCH");
+      await waitForMessage(audio, "product:restore-rejection-released");
+    } else if (scenario.endsWith("-single")) {
       const status = start("volume mode status", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET,
         JSON.stringify({ command: "status" })]);
       assert.equal((await status.completion).code, 0, status.stderr);
@@ -371,8 +398,16 @@ try {
       assert.equal((await single.completion).code, 0, single.stderr);
       assert.equal(JSON.parse(single.stdout).ok, true, single.stdout);
     }
-    terminate(product, "SIGTERM");
-    assert.equal((await product.completion).code, 0, product.stderr);
+    if (scenario.endsWith("-offline-crash")) {
+      terminate(manager, "SIGTERM");
+      await manager.completion;
+    }
+    terminate(product, scenario.endsWith("-crash") ? "SIGKILL" : "SIGTERM");
+    const terminated = await product.completion;
+    if (scenario.endsWith("-crash")) assert.equal(terminated.signal, "SIGKILL", product.stderr);
+    else assert.equal(terminated.code, 0, product.stderr);
+    if (scenario.endsWith("-offline-crash"))
+      manager = start("recovered volume policy", "dbus-run-session", ["--", wireplumber]);
     if (physicalVolume) {
       await waitForMessage(audio, "product:physical-volumes-restored");
       assert.equal((await audio.completion).code, 0, audio.stderr);

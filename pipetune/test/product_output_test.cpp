@@ -245,6 +245,10 @@ struct AudioTest {
   bool direct = false;
   bool physicalVolume = false;
   bool rejectPhysicalVolume = false;
+  bool rejectPhysicalRestore = false;
+  bool reconnectPhysical = false;
+  bool recoveringPhysical = false;
+  bool recreatedPhysical = false;
   bool physicalDefaultReady = false;
   pw_metadata *metadata = nullptr;
   spa_hook metadataListener = {};
@@ -696,6 +700,8 @@ static void capture(void *data) {
     for (auto frame = 0U; frame < frames; ++frame) {
       auto sample = 0.0F;
       std::memcpy(&sample, static_cast<const char *>(plane.data) + plane.chunk->offset + frame * sizeof(float), sizeof(float));
+      if (test.physicalVolume && test.stage == 0 && output.index < 2 && std::abs(sample) > std::abs(expected) + 0.00001F)
+        fail(test, "physical output exceeded inherited OS volume during startup");
       if (test.recovery && channel == 0 && !test.awaitingControl) {
         output.zeroFrames = sample == 0.0F ? output.zeroFrames + 1 : 0;
         output.longestSilence = std::max(output.longestSilence, output.zeroFrames);
@@ -736,6 +742,10 @@ static void capture(void *data) {
     const auto muted = test.stage == 7 || test.stage == 10;
     if (test.visibleGain != gain || test.directVisibleGain != gain ||
         test.visibleMute != muted || test.directVisibleMute != muted) return;
+    if (test.recoveringPhysical) {
+      test.recoveringPhysical = false;
+      std::cerr << "product:physical-recovery-verified\n" << std::flush;
+    }
     test.awaitingControl = true;
     std::cerr << "product:direct-stage-" << test.stage << '\n' << std::flush;
     return;
@@ -1020,15 +1030,18 @@ static void verifyPhysicalRestoration(AudioTest &test) {
 static void outputParameterChanged(void *data, std::uint32_t id, const spa_pod *parameter) {
   auto &output = *static_cast<TestOutput *>(data);
   if (output.test->physicalVolume && id == SPA_PARAM_Props && parameter) {
-    if (output.test->rejectPhysicalVolume && output.index == 0 && !output.rejectingVolume &&
+    if ((output.test->rejectPhysicalVolume || (output.test->rejectPhysicalRestore && output.test->stage == 12)) &&
+        output.index == 0 && !output.rejectingVolume &&
         pw_stream_get_node_id(output.stream) != PW_ID_ANY) {
       const auto *prop = spa_pod_find_prop(parameter, nullptr, SPA_PROP_channelVolumes);
       auto volumes = std::array<float, 2>{};
       if (prop && spa_pod_copy_array(&prop->value, SPA_TYPE_Float, volumes.data(), volumes.size()) == 2 &&
-          volumes[0] == 1.0F && volumes[1] == 1.0F) {
+          ((output.test->rejectPhysicalVolume && volumes[0] == 1.0F && volumes[1] == 1.0F) ||
+           (output.test->rejectPhysicalRestore && volumes[0] == 0.125F && volumes[1] == 0.25F))) {
         auto storage = std::array<std::uint8_t, 256>{};
         auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
-        const auto previous = std::array<float, 2>{0.125F, 0.25F};
+        const auto previous = output.test->rejectPhysicalVolume ? std::array<float, 2>{0.125F, 0.25F} :
+            std::array<float, 2>{1.0F, 1.0F};
         const auto *retained = static_cast<const spa_pod *>(spa_pod_builder_add_object(&builder,
             SPA_TYPE_OBJECT_Props, SPA_PARAM_Props, SPA_PROP_mute, SPA_POD_Bool(false),
             SPA_PROP_channelVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, 2, previous.data())));
@@ -1099,7 +1112,8 @@ static bool createTestOutput(TestOutput &output) {
       "node.want-driver", "true", "node.pause-on-idle", "false",
       "audio.channels", "2", "audio.position", "[ FL FR ]",
       "state.restore-props", "false",
-      "node.param.Props", output.test->physicalVolume ? (output.index == 0 ?
+      "node.param.Props", output.test->recreatedPhysical && output.index == 0 ?
+          "{ volume = 1.0 mute = false channelVolumes = [ 0.75 0.875 ] }" : output.test->physicalVolume ? (output.index == 0 ?
           "{ volume = 1.0 mute = false channelVolumes = [ 0.125 0.25 ] }" : output.index == 1 ?
           "{ volume = 1.0 mute = true channelVolumes = [ 0.0625 0.125 ] }" :
           "{ volume = 1.0 mute = false channelVolumes = [ 0.25 0.25 ] }") : "{}",
@@ -1187,6 +1201,8 @@ static int runAudio(std::string_view scenario) {
   test.direct = scenario.starts_with("product-direct");
   test.physicalVolume = scenario.starts_with("product-direct-device-volume");
   test.rejectPhysicalVolume = scenario == "product-direct-device-volume-reject";
+  test.rejectPhysicalRestore = scenario == "product-direct-device-volume-restore-reject";
+  test.reconnectPhysical = scenario == "product-direct-device-volume-reconnect";
   test.matrix = scenario != "product-bypass";
   test.meters = scenario == "product-preset-meters";
   test.sourceResume = scenario.starts_with("product-source-resume");
@@ -1233,6 +1249,22 @@ static int runAudio(std::string_view scenario) {
   }
   // Block and register the control signal before PipeWire creates data threads.
   auto *signal = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR1, startSource, &test);
+  auto *recover = test.physicalVolume ? pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGWINCH, [](void *data, int) {
+    auto &test = *static_cast<AudioTest *>(data);
+    if (test.rejectPhysicalRestore && test.stage == 12) {
+      test.rejectPhysicalRestore = false;
+      std::cerr << "product:restore-rejection-released\n" << std::flush;
+      return;
+    }
+    if (!test.awaitingControl || test.stage != 6) return fail(test, "unexpected physical recovery stage");
+    test.awaitingControl = false;
+    test.recoveringPhysical = true;
+    for (auto &output : test.outputs) output.frames = 0;
+    if (test.reconnectPhysical) {
+      test.recreatedPhysical = true;
+      pw_loop_signal_event(pw_main_loop_get_loop(test.loop), test.graphEvent);
+    }
+  }, &test) : nullptr;
   auto *cancel = test.fixedLatency ? pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGTERM, [](void *data, int) {
     fail(*static_cast<AudioTest *>(data), "audio fixture canceled");
   }, &test) : nullptr;
@@ -1485,6 +1517,7 @@ static int runAudio(std::string_view scenario) {
   if (test.captureEvent != nullptr) pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), test.captureEvent);
   pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), timer);
   pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), signal);
+  if (recover) pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), recover);
   pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), resume);
   if (cancel != nullptr) pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), cancel);
   clockObserver.reset();
