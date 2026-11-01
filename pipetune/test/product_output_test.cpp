@@ -244,6 +244,8 @@ struct AudioTest {
   spa_hook sourceListener = {};
   bool direct = false;
   bool physicalVolume = false;
+  bool pulseVolume = false;
+  bool singleVolume = false;
   bool rejectPhysicalVolume = false;
   bool rejectPhysicalRestore = false;
   bool reconnectPhysical = false;
@@ -315,7 +317,7 @@ struct AudioTest {
   bool processedOutputNamed = false;
   std::uint32_t directInputId = PW_ID_ANY;
   unsigned stage = 0;
-  std::array<std::array<std::uint64_t, 2>, 13> stageFrames = {};
+  std::array<std::array<std::uint64_t, 2>, 14> stageFrames = {};
   std::array<std::array<std::uint64_t, 2>, 12> recoverySilence = {};
   std::array<double, 12> recoveryMilliseconds = {};
   std::chrono::steady_clock::time_point recoveryStarted = std::chrono::steady_clock::now();
@@ -671,7 +673,12 @@ static void capture(void *data) {
         expected += output.index == 0 ? (channel == 0 ? 0.25F : 0.5F) :
             test.stage >= 5 ? 0.0F : (channel == 0 ? 0.25F : -0.5F);
       expected *= test.stage == 7 || test.stage == 10 ? 0.0F :
-          test.stage >= 6 && test.stage <= 8 ? 0.5F : test.stage == 9 || (test.physicalVolume && test.stage < 6) ? 0.25F : 1.0F;
+          test.stage >= 6 && test.stage <= 8 ? (test.pulseVolume ? 0.125F : 0.5F) :
+          test.stage == 9 ? (test.pulseVolume ? 0.015625F : 0.25F) : (test.physicalVolume && test.stage < 6) ? 0.25F : 1.0F;
+      // The same stereo source at physical gain 0.25 must match Multiple's
+      // Processed-only stage, without applying the retained shared gain again.
+      if (test.singleVolume && test.stage == 13)
+        expected = output.index == 2 ? (channel == 0 ? 0.0625F : 0.125F) : 0.0F;
     }
     if (test.slots && output.index < 2) expected = output.index == 0 ?
         (channel == 0 ? 0.25F : -0.5F) : (channel == 0 ? 0.5F : 0.25F);
@@ -713,7 +720,7 @@ static void capture(void *data) {
       if (test.disconnected && sample != 0) fail(test, "unresolved or disabled output received fallback audio");
       // A Single-to-Multiple change may drain already queued Single audio.
       // The next verified steady window ends that transition allowance.
-      if (!test.meters && !test.sourceResume && output.index == 2 && sample != 0 &&
+      if (!test.meters && !test.sourceResume && !(test.singleVolume && test.stage == 13) && output.index == 2 && sample != 0 &&
           !(test.recovery && (test.stage == 9 || test.stage == 10)) &&
           !(test.recovery && test.stage == 11 && !test.awaitingControl) &&
           !(test.outputChange && (test.stage >= 7 || test.awaitingControl))) fail(test, "unselected device received audio");
@@ -734,11 +741,21 @@ static void capture(void *data) {
   pw_stream_queue_buffer(output.stream, queued);
   if (!valid) return fail(test, "invalid stereo capture buffer");
   if (test.direct) {
+    if (test.singleVolume && test.stage == 13) {
+      if (output.index != 2) return;
+      output.frames = matches ? output.frames + frames : 0;
+      if (output.frames >= 8192) {
+        std::cerr << "product:single-volume-pcm-verified\n" << std::flush;
+        pw_main_loop_quit(test.loop);
+      }
+      return;
+    }
     if (test.awaitingControl || output.index >= 2) return;
     output.frames = matches ? output.frames + frames : 0;
     if (test.outputs[0].frames < 8192 || test.outputs[1].frames < 8192) return;
-    const auto gain = test.stage >= 6 && test.stage <= 8 ? 0.5F :
-        test.stage == 9 || test.stage == 10 || (test.physicalVolume && test.stage < 6) ? 0.25F : 1.0F;
+    const auto gain = test.stage >= 6 && test.stage <= 8 ? (test.pulseVolume ? 0.125F : 0.5F) :
+        test.stage == 9 || test.stage == 10 ? (test.pulseVolume ? 0.015625F : 0.25F) :
+        (test.physicalVolume && test.stage < 6) ? 0.25F : 1.0F;
     const auto muted = test.stage == 7 || test.stage == 10;
     if (test.visibleGain != gain || test.directVisibleGain != gain ||
         test.visibleMute != muted || test.directVisibleMute != muted) return;
@@ -1024,6 +1041,13 @@ static void verifyPhysicalRestoration(AudioTest &test) {
   for (auto index = 0U; index < test.outputs.size(); ++index)
     if (test.outputs[index].gain != expected[index] || test.outputs[index].muted != (index == 1)) return;
   std::cerr << "product:physical-volumes-restored\n" << std::flush;
+  if (test.singleVolume) {
+    test.stage = 13;
+    test.awaitingControl = false;
+    for (auto &output : test.outputs) output.frames = 0;
+    startSource(&test, 0);
+    return;
+  }
   pw_main_loop_quit(test.loop);
 }
 
@@ -1200,6 +1224,8 @@ static int runAudio(std::string_view scenario) {
   if (const auto *name = std::getenv("PIPETUNE_PRODUCT_INPUT")) test.inputName = name;
   test.direct = scenario.starts_with("product-direct");
   test.physicalVolume = scenario.starts_with("product-direct-device-volume");
+  test.pulseVolume = scenario == "product-direct-device-volume-pulse";
+  test.singleVolume = scenario == "product-direct-device-volume-single";
   test.rejectPhysicalVolume = scenario == "product-direct-device-volume-reject";
   test.rejectPhysicalRestore = scenario == "product-direct-device-volume-restore-reject";
   test.reconnectPhysical = scenario == "product-direct-device-volume-reconnect";
@@ -1294,7 +1320,7 @@ static int runAudio(std::string_view scenario) {
         spa_hook_remove(&test.sourceListener); pw_stream_destroy(test.source); test.source = nullptr;
         startDirectSource(test);
       }
-      if (test.stage >= 6) setDirectVolume(test);
+      if (test.stage >= 6 && !test.pulseVolume) setDirectVolume(test);
       return;
     }
     if (test.meters) return static_cast<void>(pw_main_loop_quit(test.loop));

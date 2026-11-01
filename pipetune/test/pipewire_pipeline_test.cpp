@@ -20,6 +20,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <filesystem>
+#include <fcntl.h>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -979,8 +980,33 @@ static bool testOrderlySignalShutdown(
     return false;
   }
 
-  // The always-processing input node keeps its graph clock while DSP sleeps.
-  // Observe DSP suspension itself instead of waiting for graph deactivation.
+  // A disconnected graph does not deliver silence frames. Keep a silent
+  // application connected so this verifies DSP suspension during processing,
+  // independently of whether another desktop application is playing audio.
+  const auto inputName = "pipetune_signal_test_" + std::string(processId);
+  const auto silence = fork();
+  if (silence == 0) {
+    const auto zero = open("/dev/zero", O_RDONLY);
+    if (zero < 0 || dup2(zero, STDIN_FILENO) < 0) _exit(126);
+    close(zero);
+    execlp("pw-cat", "pw-cat", "--playback", "--format", "f32",
+        "--rate", "96000", "--channels", "2", "--target", inputName.c_str(),
+        "-", static_cast<char *>(nullptr));
+    _exit(127);
+  }
+  struct SilenceSource {
+    pid_t process;
+    ~SilenceSource() {
+      if (process <= 0) return;
+      kill(process, SIGTERM);
+      while (waitpid(process, nullptr, 0) < 0 && errno == EINTR) {}
+    }
+  } source{silence};
+  if (!check(silence > 0, "cannot start the silent application")) {
+    kill(child, SIGTERM);
+    waitpid(child, nullptr, 0);
+    return false;
+  }
   const auto enableIdle = pipetune::exchangeControlMessage(
       socketPath, pipetune::makeSetDspIdleControlRequest({.timeoutMilliseconds = 100}));
   const auto idlePolicy = pipetune::parseControlResponse(enableIdle.response);
