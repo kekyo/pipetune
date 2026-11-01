@@ -44,11 +44,15 @@ OutputDistributionArguments makeOutputDistributionArguments(
       !yyjson_mut_obj_add_bool(document.get(), combined, "node.pipetune.internal", true) ||
       !yyjson_mut_obj_add_bool(document.get(), combined, "node.pipetune.aggregate", true) ||
       !yyjson_mut_obj_add_bool(document.get(), combined, "node.pipetune.manage-default", true) ||
+      !add(combined, "node.param.Props", "{ volume = 1.0 mute = true }") ||
+      !yyjson_mut_obj_add_bool(document.get(), combined, "monitor.channel-volumes", true) ||
+      !yyjson_mut_obj_add_bool(document.get(), combined, "state.restore-props", false) ||
       !add(combined, "node.pipetune.public-target", publicInputName) ||
       !yyjson_mut_obj_add_bool(document.get(), stream, "stream.dont-remix", true) ||
       !yyjson_mut_obj_add_bool(document.get(), stream, "node.dont-fallback", true) ||
       !yyjson_mut_obj_add_bool(document.get(), stream, "node.dont-move", true) ||
       !yyjson_mut_obj_add_bool(document.get(), stream, "node.pipetune.managed-output", true) ||
+      !yyjson_mut_obj_add_bool(document.get(), stream, "channelmix.lock-volumes", true) ||
       !add(stream, "node.pipetune.public-target", publicInputName) ||
       !add(stream, "media.role", "PipeTune-Filter-Output")) return allocationError;
   for (auto slot = 0U; slot < outputDspChannelCount(configuration); ++slot) {
@@ -95,7 +99,7 @@ OutputDistributionArguments makeOutputDistributionArguments(
   return {std::move(arguments), {}};
 }
 
-// Match the public layouts used by desktop applications; the loopback maps
+// Match the public layouts used by desktop applications; direct playback maps
 // these channels by index to the private AUX bus without surround remixing.
 static std::vector<std::string> directInputPositions(std::uint32_t channels) {
   switch (channels) {
@@ -139,6 +143,9 @@ OutputDistributionArguments makeDirectOutputArguments(
       !yyjson_mut_obj_add_bool(document.get(), capture, "node.virtual", true) ||
       !yyjson_mut_obj_add_bool(document.get(), capture, "node.pipetune.public-sink", true) ||
       !yyjson_mut_obj_add_bool(document.get(), capture, "node.pipetune.direct", true) ||
+      !yyjson_mut_obj_add_bool(document.get(), capture, "state.restore-props", false) ||
+      !add(capture, "channelmix.min-volume", "1.0") ||
+      !add(capture, "channelmix.max-volume", "1.0") ||
       !yyjson_mut_obj_add_bool(document.get(), capture, "channelmix.upmix", false) ||
       !add(playback, "node.name", publicInputName + ".direct.output") ||
       !add(playback, "target.object", publicInputName + ".distribution") ||

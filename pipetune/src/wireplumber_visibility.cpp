@@ -52,9 +52,51 @@ local configured_key = "default.configured.audio.sink"
 local master_state = State("pipetune-master-output")
 local saved_master = master_state:load()
 local master_save = nil
+local pending_masters = {}
 
 local function finite_gain(value)
   return type(value) == "number" and value >= 0 and value <= 3.4028234663852886e38
+end
+
+local function output_name(value)
+  if value == nil then return nil end
+  local json = Json.Raw(value)
+  if json == nil or not json:is_object() then return nil end
+  local ok, parsed = pcall(function() return json:parse() end)
+  if ok and type(parsed) == "table" and type(parsed.name) == "string" then return parsed.name end
+  return nil
+end
+
+local function output_volume(name)
+  if name == nil then return nil end
+  for node in pipetune_nodes_om:iterate() do
+    if node.properties["node.name"] == name then
+      for param in node:iterate_params("Props") do
+        local props = param:parse().properties
+        if props then
+          local gain = props.volume or 1.0
+          if type(props.channelVolumes) == "table" and #props.channelVolumes > 0 then
+            local channel = 0.0
+            for _, value in ipairs(props.channelVolumes) do
+              if not finite_gain(value) then return nil end
+              channel = math.max(channel, value)
+            end
+            gain = gain * channel
+          end
+          if finite_gain(gain) then return gain, props.mute == true end
+        end
+      end
+    end
+  end
+  return nil
+end
+
+local function restore_pending_masters()
+  if default_metadata == nil or default_metadata:find(0, "default.audio.sink") == nil then return end
+  for node, restore in pairs(pending_masters) do
+    restore()
+    pending_masters[node] = nil
+  end
 end
 
 local function store_master(name, gain, muted)
@@ -78,10 +120,6 @@ local function monitor_master(node)
   if name == nil or (mode ~= "restore" and mode ~= "retained") then return end
   local restoring = mode == "restore"
   local gain = tonumber(saved_master[name .. ":gain"])
-  if not finite_gain(gain) then gain = 1.0 end
-  -- Lua preserves integers when parsing "0" or "1" from the state file.
-  -- Pod.Array requires floating-point values for its Spa:Float elements.
-  gain = gain + 0.0
   local muted = saved_master[name .. ":mute"] == "true"
   local function changed(node, id)
     if id ~= "Props" then return end
@@ -95,7 +133,7 @@ local function monitor_master(node)
             finite_gain(channels[1]) and channels[1] == channels[2] then
           -- Ignore the initial cached defaults until the requested controls
           -- have made a complete round trip through PipeTune's normalization.
-          if restoring and (props.mute ~= muted or
+          if restoring and (gain == nil or props.mute ~= muted or
               math.abs(channels[1] - gain) > math.max(1, gain) * 0.000001) then return end
           restoring = false
           store_master(name, channels[1], props.mute)
@@ -105,23 +143,28 @@ local function monitor_master(node)
   end
   node:connect("params-changed", changed)
   if restoring then
-    node:set_param("Props", Pod.Object {
-      "Spa:Pod:Object:Param:Props", "Props",
-      volume = 1.0, mute = muted,
-      channelVolumes = Pod.Array { "Spa:Float", gain, gain },
-    })
+    pending_masters[node] = function()
+      if not finite_gain(gain) then
+        gain = tonumber(saved_default["inherited-gain"])
+        muted = saved_default["inherited-mute"] == "true"
+        if not finite_gain(gain) then
+          gain, muted = output_volume(output_name(default_metadata:find(0, "default.audio.sink")))
+        end
+      end
+      -- With no previous output there is no OS volume to inherit.
+      if not finite_gain(gain) then gain, muted = 1.0, false end
+      -- State values may parse as integers; Float arrays need Lua floats.
+      gain = gain + 0.0
+      node:set_param("Props", Pod.Object {
+        "Spa:Pod:Object:Param:Props", "Props",
+        volume = 1.0, mute = muted,
+        channelVolumes = Pod.Array { "Spa:Float", gain, gain },
+      })
+    end
+    Core.sync(function(error) if error == nil then restore_pending_masters() end end)
   else
     changed(node, "Props")
   end
-end
-
-local function output_name(value)
-  if value == nil then return nil end
-  local json = Json.Raw(value)
-  if json == nil or not json:is_object() then return nil end
-  local ok, parsed = pcall(function() return json:parse() end)
-  if ok and type(parsed) == "table" and type(parsed.name) == "string" then return parsed.name end
-  return nil
 end
 
 local function save_default()
@@ -140,6 +183,9 @@ local function update_default_output()
   if name ~= nil then
     local value = Json.Object { name = name }:get_data()
     if saved_default["aggregate"] == nil then
+      local gain, muted = output_volume(output_name(default_metadata:find(0, "default.audio.sink")))
+      saved_default["inherited-gain"] = gain and string.format("%.17g", gain) or nil
+      saved_default["inherited-mute"] = muted and "true" or "false"
       saved_default["aggregate"] = value
       saved_default["previous-present"] = current ~= nil and "true" or "false"
       saved_default["previous-value"] = current
@@ -177,6 +223,7 @@ local function update_default_output()
       end
     end)
   end
+  restore_pending_masters()
 end
 
 local function save_permissions()
@@ -416,6 +463,7 @@ pipetune_nodes_om:connect("object-added", function(om, node)
 end)
 
 pipetune_nodes_om:connect("object-removed", function(om, node)
+  pending_masters[node] = nil
   local node_id = node["bound-id"]
   if public_sinks[node_id] then
     public_sinks[node_id] = nil

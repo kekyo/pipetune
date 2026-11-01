@@ -18,6 +18,9 @@ table.insert(stream_defaults.rules, {
     {
       { "node.pipetune.public-input", "equals", "true" },
     },
+    {
+      { "node.pipetune.direct", "equals", "true" },
+    },
   },
   apply_properties = {
     ["state.restore-props"] = false,

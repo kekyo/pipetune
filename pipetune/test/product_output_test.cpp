@@ -310,6 +310,9 @@ struct AudioTest {
   spa_hook registryListener = {};
   pw_node *control = nullptr;
   pw_node *directControl = nullptr;
+  spa_hook directControlListener = {};
+  float directVisibleGain = -1.0F;
+  bool directVisibleMute = false;
   spa_hook controlListener = {};
   float visibleGain = -1.0F;
   bool visibleMute = false;
@@ -543,13 +546,24 @@ static void setDirectVolume(AudioTest &test) {
   if (test.directControl == nullptr) return fail(test, "Direct sink is unavailable for volume control");
   auto storage = std::array<std::uint8_t, 256>{};
   auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
-  const auto gain = test.stage == 6 ? 0.5F : 1.0F;
-  const auto volumes = std::array<float, 4>{gain, gain, gain, gain};
+  if (test.stage == 7 || test.stage == 8 || test.stage == 10) {
+    const auto *parameter = static_cast<const spa_pod *>(spa_pod_builder_add_object(
+        &builder, SPA_TYPE_OBJECT_Props, SPA_PARAM_Props,
+        SPA_PROP_mute, SPA_POD_Bool(test.stage != 8)));
+    auto *control = test.stage == 10 ? test.control : test.directControl;
+    if (pw_node_set_param(control,
+        SPA_PARAM_Props, 0, parameter) < 0) fail(test, "cannot change shared mute");
+    return;
+  }
+  const auto gain = test.stage == 6 ? 0.5F : test.stage == 9 ? 0.25F : 1.0F;
+  // A balance request is normalized to its loudest channel on both controls.
+  const auto volumes = std::array<float, 4>{gain / 2, gain, gain / 2, gain};
   const auto *parameter = static_cast<const spa_pod *>(spa_pod_builder_add_object(
       &builder, SPA_TYPE_OBJECT_Props, SPA_PARAM_Props,
-      SPA_PROP_volume, SPA_POD_Float(1.0F), SPA_PROP_mute, SPA_POD_Bool(test.stage == 7),
-      SPA_PROP_channelVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, volumes.size(), volumes.data())));
-  if (pw_node_set_param(test.directControl, SPA_PARAM_Props, 0, parameter) < 0)
+      SPA_PROP_volume, SPA_POD_Float(1.0F), SPA_PROP_mute, SPA_POD_Bool(false),
+      SPA_PROP_channelVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, test.stage >= 9 ? 2 : 4, volumes.data())));
+  auto *control = test.stage >= 9 ? test.control : test.directControl;
+  if (pw_node_set_param(control, SPA_PARAM_Props, 0, parameter) < 0)
     fail(test, "cannot change Direct sink volume");
 }
 
@@ -638,11 +652,12 @@ static void capture(void *data) {
         output.index == 1 && test.matrix ? (channel == 0 ? 0.25F : -0.5F) : 0.0F;
     if (test.direct) {
       const auto directLevel = std::array<float, 4>{0.125F, 0.25F, 0.5F, test.stage >= 3 ? 0.75F : 1.25F};
-      const auto directGain = test.stage == 6 ? 0.5F : test.stage == 7 ? 0.0F : 1.0F;
-      expected = output.index < 2 && test.stage != 2 ? directLevel[output.index * 2 + channel] * directGain : 0.0F;
+      expected = output.index < 2 && test.stage != 2 ? directLevel[output.index * 2 + channel] : 0.0F;
       if (output.index < 2 && (test.stage == 1 || test.stage == 2 || test.stage >= 5))
         expected += output.index == 0 ? (channel == 0 ? 0.25F : 0.5F) :
             test.stage >= 5 ? 0.0F : (channel == 0 ? 0.25F : -0.5F);
+      expected *= test.stage == 7 || test.stage == 10 ? 0.0F :
+          test.stage >= 6 && test.stage <= 8 ? 0.5F : test.stage == 9 ? 0.25F : 1.0F;
     }
     if (test.slots && output.index < 2) expected = output.index == 0 ?
         (channel == 0 ? 0.25F : -0.5F) : (channel == 0 ? 0.5F : 0.25F);
@@ -706,6 +721,11 @@ static void capture(void *data) {
     if (test.awaitingControl || output.index >= 2) return;
     output.frames = matches ? output.frames + frames : 0;
     if (test.outputs[0].frames < 8192 || test.outputs[1].frames < 8192) return;
+    const auto gain = test.stage >= 6 && test.stage <= 8 ? 0.5F :
+        test.stage == 9 || test.stage == 10 ? 0.25F : 1.0F;
+    const auto muted = test.stage == 7 || test.stage == 10;
+    if (test.visibleGain != gain || test.directVisibleGain != gain ||
+        test.visibleMute != muted || test.directVisibleMute != muted) return;
     test.awaitingControl = true;
     std::cerr << "product:direct-stage-" << test.stage << '\n' << std::flush;
     return;
@@ -1172,7 +1192,7 @@ static int runAudio(std::string_view scenario) {
     }
     if (test.direct) {
       if (!test.awaitingControl) return fail(test, "unexpected direct stage");
-      if (test.stage == 8) return static_cast<void>(pw_main_loop_quit(test.loop));
+      if (test.stage == 11) return static_cast<void>(pw_main_loop_quit(test.loop));
       ++test.stage; test.awaitingControl = false;
       for (auto &output : test.outputs) output.frames = 0;
       if (test.stage == 1 || test.stage == 5) startSource(&test, 0);
@@ -1270,6 +1290,27 @@ static int runAudio(std::string_view scenario) {
         test.directControl = static_cast<pw_node *>(pw_registry_bind(test.registry, id, type,
             std::min<std::uint32_t>(version, PW_VERSION_NODE), 0));
         if (test.directControl == nullptr) return fail(test, "cannot bind Direct sink controls");
+        static const auto directEvents = [] {
+          auto value = pw_node_events{}; value.version = PW_VERSION_NODE_EVENTS;
+          value.param = [](void *data, int, std::uint32_t id, std::uint32_t, std::uint32_t, const spa_pod *param) {
+            auto &test = *static_cast<AudioTest *>(data);
+            if (id != SPA_PARAM_Props || param == nullptr) return;
+            if (const auto *prop = spa_pod_find_prop(param, nullptr, SPA_PROP_channelVolumes)) {
+              auto values = std::array<float, 4>{};
+              if (spa_pod_copy_array(&prop->value, SPA_TYPE_Float, values.data(), values.size()) == 4)
+                test.directVisibleGain = std::all_of(values.begin(), values.end(),
+                    [&](float value) { return value == values[0]; }) ? values[0] : -1.0F;
+            }
+            if (const auto *prop = spa_pod_find_prop(param, nullptr, SPA_PROP_mute))
+              spa_pod_get_bool(&prop->value, &test.directVisibleMute);
+          };
+          return value;
+        }();
+        test.directControlListener = {};
+        pw_node_add_listener(test.directControl, &test.directControlListener, &directEvents, &test);
+        auto parameter = std::uint32_t{SPA_PARAM_Props};
+        if (pw_node_subscribe_params(test.directControl, &parameter, 1) < 0)
+          fail(test, "cannot subscribe to Direct controls");
       }
       if (test.control == nullptr && name != nullptr && std::string_view(name) == test.inputName) {
         const auto *description = spa_dict_lookup(props, PW_KEY_NODE_DESCRIPTION);
@@ -1302,8 +1343,10 @@ static int runAudio(std::string_view scenario) {
     value.global_remove = [](void *data, std::uint32_t id) {
       auto &test = *static_cast<AudioTest *>(data);
       if (id == test.directInputId) {
-        if (test.directControl != nullptr)
+        if (test.directControl != nullptr) {
+          spa_hook_remove(&test.directControlListener);
           pw_proxy_destroy(reinterpret_cast<pw_proxy *>(test.directControl));
+        }
         test.directControl = nullptr;
         test.directInputId = PW_ID_ANY;
       }
@@ -1345,8 +1388,10 @@ static int runAudio(std::string_view scenario) {
     spa_hook_remove(&test.controlListener);
     pw_proxy_destroy(reinterpret_cast<pw_proxy *>(test.control));
   }
-  if (test.directControl != nullptr)
+  if (test.directControl != nullptr) {
+    spa_hook_remove(&test.directControlListener);
     pw_proxy_destroy(reinterpret_cast<pw_proxy *>(test.directControl));
+  }
   spa_hook_remove(&test.registryListener);
   pw_proxy_destroy(reinterpret_cast<pw_proxy *>(test.registry));
   pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), test.graphEvent);

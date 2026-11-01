@@ -15,9 +15,11 @@
 #include "output_peak_telemetry.h"
 #include "output_distribution.h"
 #include "pipewire_buffer_io.h"
+#include "pipewire_direct_output.h"
 #include "pipewire_latency.h"
 #include "pipewire_output_inventory.h"
 #include "pipewire_output_paths.h"
+#include "pipewire_output_volume.h"
 #include "pipewire_stream_flags.h"
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
@@ -256,8 +258,8 @@ struct PipeWireRuntime {
   ProfileRequestAction profileRequestAction = ProfileRequestAction::apply;
   std::string profileRequestError;
   spa_source *profileChangeSource = nullptr;
-  pw_impl_module *directOutput = nullptr;
-  spa_hook directOutputListener = {};
+  PipeWireDirectOutputPtr directOutput;
+  PipeWireOutputVolumePtr outputVolume;
   std::string directOutputArguments;
   pw_impl_module *outputDistribution = nullptr;
   spa_hook outputDistributionListener = {};
@@ -269,7 +271,6 @@ struct PipeWireRuntime {
   bool masterMute = false;
   bool masterControlsInitialized = false;
   bool publishingMasterVolume = false;
-  std::atomic<float> masterOutputGain{0.0F};
   std::mutex outputRequestMutex;
   std::optional<cardio::promise_source<void>> outputRequestCompletion;
   std::atomic<bool> outputTransitionActive{false};
@@ -386,10 +387,8 @@ struct PipeWireRuntime {
       spa_hook_remove(&mixedOutputListener);
       pw_stream_destroy(mixedOutputStream);
     }
-    if (directOutput != nullptr) {
-      spa_hook_remove(&directOutputListener);
-      pw_impl_module_destroy(directOutput);
-    }
+    directOutput.reset();
+    outputVolume.reset();
     if (outputDistribution != nullptr) {
       spa_hook_remove(&outputDistributionListener);
       pw_impl_module_destroy(outputDistribution);
@@ -1105,28 +1104,32 @@ static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
   return true;
 }
 
-static bool publishMasterVolume(PipeWireRuntime &runtime) {
-  // Parameter callbacks own the visible controls; the audio callback receives
-  // their effective gain in one lock-free update, including mute transitions.
-  // A new daemon starts silently until the policy has restored its controls.
-  // Recreated nodes keep the already initialized in-process master state.
-  runtime.masterOutputGain.store(!runtime.masterControlsInitialized || runtime.masterMute ? 0.0F : runtime.masterVolume,
-      std::memory_order_release);
-  auto storage = std::array<std::uint8_t, 256>{};
+static bool publishInputVolume(PipeWireRuntime &runtime, pw_stream *stream, std::uint32_t channels) {
+  auto storage = std::array<std::uint8_t, 512>{};
   auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
-  const auto volumes = std::array<float, 2>{runtime.masterVolume, runtime.masterVolume};
-  const auto unity = std::array<float, 2>{1, 1};
+  auto volumes = std::array<float, 16>{}, unity = std::array<float, 16>{};
+  std::fill_n(volumes.begin(), channels, runtime.masterVolume);
+  std::fill_n(unity.begin(), channels, 1.0F);
   const auto *properties = static_cast<const spa_pod *>(spa_pod_builder_add_object(
       &builder, SPA_TYPE_OBJECT_Props, SPA_PARAM_Props,
       SPA_PROP_volume, SPA_POD_Float(1.0F),
       SPA_PROP_mute, SPA_POD_Bool(runtime.masterMute),
-      SPA_PROP_channelVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, volumes.size(), volumes.data()),
+      SPA_PROP_channelVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, channels, volumes.data()),
       SPA_PROP_softMute, SPA_POD_Bool(false),
-      SPA_PROP_softVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, unity.size(), unity.data())));
+      SPA_PROP_softVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, channels, unity.data())));
   runtime.publishingMasterVolume = true;
-  const auto result = pw_stream_set_param(runtime.inputStream, SPA_PARAM_Props, properties);
+  const auto result = pw_stream_set_param(stream, SPA_PARAM_Props, properties);
   runtime.publishingMasterVolume = false;
   return result >= 0;
+}
+
+static bool publishMasterVolume(PipeWireRuntime &runtime) {
+  // Public sinks report one master state but always feed unattenuated PCM.
+  // The mixed bus starts muted, including after recreation, until restoration.
+  if (runtime.inputStream && !publishInputVolume(runtime, runtime.inputStream, 2)) return false;
+  if (runtime.directOutput && !publishInputVolume(runtime, pipeWireDirectInput(*runtime.directOutput), runtime.options.channelCount)) return false;
+  return !runtime.outputVolume || setPipeWireOutputVolume(*runtime.outputVolume, runtime.options.channelCount,
+      runtime.masterVolume, !runtime.masterControlsInitialized || runtime.masterMute);
 }
 
 static void updateMasterVolume(PipeWireRuntime &runtime, const spa_pod *parameter) {
@@ -1134,17 +1137,22 @@ static void updateMasterVolume(PipeWireRuntime &runtime, const spa_pod *paramete
   auto volume = 1.0F;
   if (const auto *property = spa_pod_find_prop(parameter, nullptr, SPA_PROP_volume)) spa_pod_get_float(&property->value, &volume);
   if (!std::isfinite(volume) || volume < 0) return;
-  if (const auto *property = spa_pod_find_prop(parameter, nullptr, SPA_PROP_mute)) spa_pod_get_bool(&property->value, &runtime.masterMute);
+  auto muted = runtime.masterMute;
+  auto gain = runtime.masterVolume;
+  if (const auto *property = spa_pod_find_prop(parameter, nullptr, SPA_PROP_mute)) spa_pod_get_bool(&property->value, &muted);
   if (const auto *property = spa_pod_find_prop(parameter, nullptr, SPA_PROP_channelVolumes)) {
-    auto channels = std::array<float, 2>{runtime.masterVolume, runtime.masterVolume};
+    auto channels = std::array<float, 16>{};
     const auto count = spa_pod_copy_array(&property->value, SPA_TYPE_Float, channels.data(), channels.size());
-    if (count != 0 && std::all_of(channels.begin(), channels.end(), [](float gain) { return std::isfinite(gain) && gain >= 0; })) {
-      // The aggregate exposes one master gain. Normalize any stereo balance
+    if (count != 0 && std::all_of(channels.begin(), channels.begin() + count, [](float gain) { return std::isfinite(gain) && gain >= 0; })) {
+      // Both public inputs expose one master gain. Normalize any balance
       // request to the louder channel instead of inventing per-device balance.
-      runtime.masterVolume = *std::max_element(channels.begin(), channels.end());
-    }
+      gain = *std::max_element(channels.begin(), channels.begin() + count);
+    } else return;
   }
-  runtime.masterVolume *= volume;
+  gain *= volume;
+  if (!std::isfinite(gain)) return;
+  runtime.masterVolume = gain;
+  runtime.masterMute = muted;
   const auto initializing = !runtime.masterControlsInitialized;
   runtime.masterControlsInitialized = true;
   if (!publishMasterVolume(runtime)) return failRuntime(runtime, "cannot publish multiple-output master volume");
@@ -1512,11 +1520,6 @@ static void outputProcess(void *data) {
          channel < runtime.audioBuffers->channels; ++channel) {
       auto source = scratch.subspan(
           static_cast<std::size_t>(channel) * blockFrames, blockFrames);
-      if (runtime.options.outputConfiguration.mode == OutputMode::multiple) {
-        const auto gain = runtime.masterOutputGain.load(std::memory_order_acquire);
-        if (gain == 0) std::fill(source.begin(), source.end(), 0.0F);
-        else for (auto &sample : source) sample *= gain;
-      }
       if (channel < runtime.audioBuffers->outputChannels)
         recordOutputPeak(runtime.outputPeakTelemetry, channel, source);
     }
@@ -1765,30 +1768,16 @@ static std::string ensureDirectOutput(PipeWireRuntime &runtime) {
     return {};
   }
   destroyMixedOutputMeter(runtime);
-  if (runtime.directOutput != nullptr) {
-    spa_hook_remove(&runtime.directOutputListener);
-    pw_impl_module_destroy(runtime.directOutput);
-    runtime.directOutput = nullptr;
-  }
+  runtime.directOutput.reset();
   runtime.directOutputArguments.clear();
   if (arguments.arguments.empty()) return {};
-  runtime.directOutput = pw_context_load_module(runtime.context,
-      "libpipewire-module-loopback", arguments.arguments.c_str(), nullptr);
+  runtime.directOutput = createPipeWireDirectOutput(runtime.core, arguments.arguments,
+      [](pw_stream *, const spa_pod *props, void *data) {
+        updateMasterVolume(*static_cast<PipeWireRuntime *>(data), props);
+      }, [](const std::string &error, void *data) { failRuntime(*static_cast<PipeWireRuntime *>(data), error); }, &runtime);
   if (runtime.directOutput == nullptr) return systemError("cannot create direct output", -errno);
-  static const auto events = [] {
-    auto value = pw_impl_module_events{}; value.version = PW_VERSION_IMPL_MODULE_EVENTS;
-    value.destroy = [](void *data) {
-      auto &runtime = *static_cast<PipeWireRuntime *>(data);
-      spa_hook_remove(&runtime.directOutputListener);
-      runtime.directOutput = nullptr;
-      runtime.directOutputArguments.clear();
-      failRuntime(runtime, "PipeWire direct output stopped unexpectedly");
-    };
-    return value;
-  }();
-  runtime.directOutputListener = {};
-  pw_impl_module_add_listener(runtime.directOutput, &runtime.directOutputListener, &events, &runtime);
   runtime.directOutputArguments = std::move(arguments.arguments);
+  if (!publishMasterVolume(runtime)) return "cannot initialize shared Direct controls";
   return createMixedOutputMeter(runtime);
 }
 
@@ -1844,6 +1833,14 @@ static void outputPathsChanged(const std::vector<PipeWireOutputPath> &paths, voi
 }
 
 static std::string replaceOutputDistribution(PipeWireRuntime &runtime, const std::string &arguments) {
+  if (!arguments.empty() && !runtime.outputVolume) {
+    runtime.outputVolume = createPipeWireOutputVolume(runtime.core, runtime.options.filterName + ".distribution",
+        [](const std::string &error, void *data) { failRuntime(*static_cast<PipeWireRuntime *>(data), error); }, &runtime);
+    if (!runtime.outputVolume) return "cannot observe mixed-output volume";
+  }
+  if (runtime.outputVolume && !setPipeWireOutputVolume(*runtime.outputVolume, runtime.options.channelCount,
+      runtime.masterVolume, !runtime.masterControlsInitialized || runtime.masterMute))
+    return "cannot initialize mixed-output volume";
   // Retain the previous default-output lease until a replacement module has
   // been constructed. Explicitly removed modules must not report a failure.
   auto *replacement = arguments.empty() ? nullptr : pw_context_load_module(runtime.context,

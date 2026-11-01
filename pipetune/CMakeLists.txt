@@ -273,10 +273,12 @@ add_library(
   src/output_command.cpp
   src/output_distribution.cpp
   src/pipewire_buffer_io.cpp
+  src/pipewire_direct_output.cpp
   src/pipewire_graph_clock.cpp
   src/pipewire_latency.cpp
   src/pipewire_output_inventory.cpp
   src/pipewire_output_paths.cpp
+  src/pipewire_output_volume.cpp
   src/pipewire_pipeline.cpp
   src/process_runner.cpp
   src/rate_command.cpp
@@ -1016,6 +1018,14 @@ if(BUILD_TESTING)
     set_tests_properties(pipetune_${scenario} PROPERTIES TIMEOUT 45)
   endforeach()
   # This case includes two reconnect restorations and mapped PCM.
+  # Temporary removal check: both public controls must affect the complete mix.
+  add_test(NAME pipetune_independent_input_volumes_removed
+    COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+      $<TARGET_FILE:pipetune_product_output_tests> product-direct
+      $<TARGET_FILE:pipetune_wireplumber_policy_fixture> $<TARGET_FILE:pipetune_device_presentation_fixture> "" ""
+      $<TARGET_FILE_DIR:pipetune_presentation> ${PIPETUNE_PIPEWIRE_MODULE_DIR})
+  set_tests_properties(pipetune_independent_input_volumes_removed PROPERTIES TIMEOUT 45)
   set_tests_properties(pipetune_product-output-change pipetune_product-output-change-route-policy PROPERTIES TIMEOUT 90)
   foreach(scenario product-daemon product-daemon-volume product-daemon-volume-zero)
     add_test(
