@@ -411,6 +411,8 @@ local volume_streams = {}
 local volume_buses = {}
 local volume_devices = {}
 local volume_devices_installed = false
+local volume_links = {}
+local volume_links_installed = false
 local volume_update_pending = false
 local volume_update
 local volume_owners = {}
@@ -547,8 +549,28 @@ local function save_device_volumes()
   return ok
 end
 
+local function distribution_route_ready(target, selection)
+  local channels = 0
+  for _, stream in ipairs(selection.streams) do channels = math.max(channels, stream.channels) end
+  if channels == 0 then return false end
+  local ports = {}
+  for _, link in pairs(volume_links) do
+    local props = link.properties
+    if tonumber(props["link.input.node"]) == target.node["bound-id"] then
+      local stream = volume_streams[tonumber(props["link.output.node"])]
+      -- Muting distribution streams cannot silence a surviving Single-mode
+      -- or application link. Keep hardware muted until those links are gone.
+      if not stream or stream.serial ~= tostring(target.node.properties["object.serial"]) then return false end
+      ports[props["link.input.port"]] = true
+    end
+  end
+  local count = 0
+  for _ in pairs(ports) do count = count + 1 end
+  return count >= channels
+end
+
 volume_update = function()
-  if not nodes_installed or not clients_installed or not volume_devices_installed then return end
+  if not nodes_installed or not clients_installed or not volume_devices_installed or not volume_links_installed then return end
   local targets, desired, status, failures = {}, {}, {}, {}
   local active_buses = {}
   for _, bus in pairs(volume_buses) do active_buses[bus.owner] = true end
@@ -634,17 +656,27 @@ volume_update = function()
             end
           end
         end
-        local expected = selection and unity_volume(#lease.snapshot.original.channels, false) or lease.snapshot.original
-        if lease.selected ~= (selection ~= nil) then
+        -- Confirm hardware mute at its original gain before removing any
+        -- attenuation. Reopen only after every incoming link is managed.
+        local ready = selection and lease.prepared and distribution_route_ready(target, selection)
+        local phase = selection and (ready and "selected" or "gated") or "restoring"
+        local original = lease.snapshot.original
+        local expected = not selection and original or ready and unity_volume(#original.channels, false) or
+            { volume = original.volume, mute = true, channels = original.channels }
+        if lease.phase ~= phase then
           acknowledge_volume(lease)
           lease.failure = nil
-          lease.selected = selection ~= nil
+          lease.phase = phase
         end
         if volume_equal(current, expected) then
           acknowledge_volume(lease)
           if selection then
+            if not ready then
+              status[owner] = "pending"
+              if not lease.prepared then lease.prepared = true; queue_volume_update() end
+            end
             for _, stream in ipairs(selection.streams) do
-              if not gate_volume_stream(stream, true) then status[owner] = "pending" end
+              if not gate_volume_stream(stream, ready == true) then status[owner] = "pending" end
             end
           else
             saved_device_volumes[target.key] = nil
@@ -665,7 +697,8 @@ volume_update = function()
             if set_physical_volume(target, expected) == false then
               volume_failure(lease, "cannot set output gain: " .. target.name)
             else
-              watch_volume_request(lease, "output did not confirm " .. (selection and "unity gain: " or "restored gain: ") .. target.name)
+              watch_volume_request(lease, "output did not confirm " .. (phase == "gated" and "transition mute: " or
+                  selection and "unity gain: " or "restored gain: ") .. target.name)
             end
           end
         end
@@ -712,6 +745,20 @@ volume_devices_om:connect("object-removed", function(om, device)
 end)
 volume_devices_om:connect("installed", function()
   volume_devices_installed = true
+  queue_volume_update()
+end)
+
+volume_links_om = ObjectManager { Interest { type = "link" } }
+volume_links_om:connect("object-added", function(om, link)
+  volume_links[link["bound-id"]] = link
+  queue_volume_update()
+end)
+volume_links_om:connect("object-removed", function(om, link)
+  volume_links[link["bound-id"]] = nil
+  queue_volume_update()
+end)
+volume_links_om:connect("installed", function()
+  volume_links_installed = true
   queue_volume_update()
 end)
 
@@ -921,6 +968,7 @@ pipetune_nodes_om:activate()
 pipetune_clients_om:activate()
 defaults_om:activate()
 volume_devices_om:activate()
+volume_links_om:activate()
 )wpvis"};
 
 constexpr auto kWirePlumber05NodeVisibilityConfiguration =

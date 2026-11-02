@@ -138,7 +138,7 @@ if (scenario.startsWith("policy") || scenario.startsWith("product")) {
   };
   if (wirePlumber04) {
     writeConfiguration("wireplumber/main.lua.d/60-pipetune-streams.lua", policy("stream-configuration"));
-    if (scenario.startsWith("product-direct-device-volume")) {
+    if (scenario.startsWith("product-direct-device-volume") || scenario === "product-mode-volume") {
       // These stand-in hardware streams supply their own initial hardware gain;
       // disable only the generic application-stream volume restoration for them.
       writeConfiguration("wireplumber/main.lua.d/61-test-device-volumes.lua", `
@@ -778,10 +778,27 @@ try {
       } });
     }
     writeFileSync(preset, JSON.stringify({ pipeline }));
-    const runtime = start("product runtime", driver, ["runtime", scenario === "product-bypass" ? "bypass" : preset, scenario]);
+    const runtime = start("product runtime", driver, ["runtime", ["product-bypass", "product-mode-volume"].includes(scenario) ? "bypass" : preset, scenario]);
     await waitForMessage(runtime, "product:runtime-ready");
     audio.child.kill("SIGUSR1");
-    if (graphClockTest || ["product-controls", "product-output-change", "product-output-profile-unknown",
+    if (scenario === "product-mode-volume") {
+      const status = start("mode volume status", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET,
+        JSON.stringify({ command: "status" })]);
+      assert.equal((await status.completion).code, 0, status.stderr);
+      const configuration = JSON.parse(status.stdout).outputConfiguration;
+      for (let stage = 0; stage <= 6; ++stage) {
+        await waitForMessage(audio, `product:mode-volume-stage-${stage}`);
+        if (stage < 6) {
+          const change = start("mode volume change", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET,
+            JSON.stringify({ command: "set-output", configuration: {
+              ...configuration, mode: stage % 2 === 0 ? "multiple" : "single",
+            } })]);
+          assert.equal((await change.completion).code, 0, change.stderr);
+          assert.equal(JSON.parse(change.stdout).ok, true, change.stdout);
+        }
+        audio.child.kill("SIGUSR2");
+      }
+    } else if (graphClockTest || ["product-controls", "product-output-change", "product-output-profile-unknown",
       "product-output-profile-shutdown", "product-output-profile-restore-failure",
       "product-output-profile-unavailable", "product-output-profile-settle-input", "product-output-timeout",
       "product-output-clock-unavailable", "product-output-recovery"].includes(scenario)) {
@@ -1604,6 +1621,10 @@ try {
     if (expectedAudioFailure) {
       assert.ok(audio.stderr.includes(expectedAudioFailure), audio.stderr);
       assert.equal(report.shutdownAcknowledged, true, "failed capture must wait for the producer to stop");
+    } else if (scenario === "product-mode-volume") {
+      assert.equal(report.stages.length, 7);
+      assert.ok(report.stages.every(([frames]) => frames >= 32768),
+        "playback must recover at the OS volume after every mode change");
     } else {
       if (scenario === "product-matrix-freewheel-delayed-observer")
         assert.ok(report.deferredFrames >= 2048, "the observer must fall behind by eight graph quanta without losing PCM");

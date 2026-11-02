@@ -130,7 +130,8 @@ static int runProduct(const char *preset, std::string_view scenario) {
   const auto meterTest = scenario == "product-preset-meters";
   const auto sourceResume = scenario.starts_with("product-source-resume");
   const auto directTest = scenario.starts_with("product-direct");
-  const auto control = directTest || meterTest || sourceResume || scenario == "product-controls" || scenario.starts_with("product-output-");
+  const auto modeVolume = scenario == "product-mode-volume";
+  const auto control = directTest || meterTest || sourceResume || modeVolume || scenario == "product-controls" || scenario.starts_with("product-output-");
   if (control && socket == nullptr) return 2;
   auto configuration = pipetune::OutputConfiguration{};
   for (auto index = 0U; index < 2; ++index) {
@@ -148,7 +149,7 @@ static int runProduct(const char *preset, std::string_view scenario) {
     configuration.channels.resize(2);
   }
   configuration.mode = pipetune::OutputMode::multiple;
-  if (scenario == "product-output-status-single" || meterTest || scenario == "product-source-resume-single")
+  if (scenario == "product-output-status-single" || meterTest || modeVolume || scenario == "product-source-resume-single")
     configuration.mode = pipetune::OutputMode::single;
   if (scenario == "product-slots") {
     const auto &a = configuration.outputs[0].id;
@@ -246,6 +247,7 @@ struct AudioTest {
   bool physicalVolume = false;
   bool pulseVolume = false;
   bool singleVolume = false;
+  bool modeVolume = false;
   bool rejectPhysicalVolume = false;
   bool rejectPhysicalRestore = false;
   bool reconnectPhysical = false;
@@ -367,7 +369,7 @@ static void outputState(void *data, pw_stream_state, pw_stream_state state, cons
   if (state == PW_STREAM_STATE_ERROR) return fail(*output.test, error == nullptr ? "output failed" : error);
   if (state == PW_STREAM_STATE_PAUSED || state == PW_STREAM_STATE_STREAMING) output.ready = true;
   auto &test = *output.test;
-  if (!test.announced && (!test.physicalVolume || test.physicalDefaultReady) &&
+  if (!test.announced && (!(test.physicalVolume || test.modeVolume) || test.physicalDefaultReady) &&
       std::all_of(test.outputs.begin(), test.outputs.end(), [](const auto &item) { return item.ready; })) {
     test.announced = true;
     std::cerr << "product:devices-ready\n" << std::flush;
@@ -704,9 +706,16 @@ static void capture(void *data) {
     if (test.recovery && test.stage == 7 && output.index == 0) expected = 0.0F;
     if (test.recovery && (test.stage == 9 || test.stage == 10))
       expected = output.index == 2 ? (channel == 0 ? 0.25F : 0.5F) : 0.0F;
+    if (test.modeVolume)
+      expected = output.index == 0 ? (channel == 0 ? 0.03125F : 0.0625F) : 0.0F;
     for (auto frame = 0U; frame < frames; ++frame) {
       auto sample = 0.0F;
       std::memcpy(&sample, static_cast<const char *>(plane.data) + plane.chunk->offset + frame * sizeof(float), sizeof(float));
+      // Keep observing while the control request is in flight. Waiting only
+      // for steady PCM would miss a burst while physical gain is changing.
+      if (test.modeVolume && std::abs(sample) > std::abs(expected) + 0.00001F)
+        fail(test, "mode change exceeded OS volume on device " + std::to_string(output.index) +
+            ": " + std::to_string(sample) + " > " + std::to_string(expected));
       if (test.physicalVolume && test.stage == 0 && output.index < 2 && std::abs(sample) > std::abs(expected) + 0.00001F)
         fail(test, "physical output exceeded inherited OS volume during startup");
       if (test.recovery && channel == 0 && !test.awaitingControl) {
@@ -740,6 +749,16 @@ static void capture(void *data) {
   queued->size = frames;
   pw_stream_queue_buffer(output.stream, queued);
   if (!valid) return fail(test, "invalid stereo capture buffer");
+  if (test.modeVolume) {
+    if (test.awaitingControl || output.index != 0) return;
+    output.frames = matches ? output.frames + frames : 0;
+    if (output.frames >= 32768) {
+      test.awaitingControl = true;
+      test.stageFrames[test.stage] = {output.frames, 0};
+      std::cerr << "product:mode-volume-stage-" << test.stage << '\n' << std::flush;
+    }
+    return;
+  }
   if (test.direct) {
     if (test.singleVolume && test.stage == 13) {
       if (output.index != 2) return;
@@ -1020,13 +1039,16 @@ static void startSource(void *data, int) {
   if (test.direct && test.stage == 0) return startDirectSource(test);
   if (test.failurePoint == "before-source") return fail(test, "injected failure before source start");
   if (test.source != nullptr) return fail(test, "source started twice");
-  test.source = pw_stream_new(test.core, "Product test signal", pw_properties_new(
+  auto *properties = test.modeVolume ? pw_properties_new(
+      PW_KEY_NODE_NAME, "pipetune_product_signal", PW_KEY_MEDIA_CATEGORY, "Playback",
+      PW_KEY_MEDIA_ROLE, "Music", nullptr) : pw_properties_new(
       PW_KEY_NODE_NAME, "pipetune_product_signal", PW_KEY_TARGET_OBJECT, test.inputName.c_str(),
       PW_KEY_MEDIA_CATEGORY, "Playback", PW_KEY_MEDIA_ROLE, "Music",
       // This fixture pins its target and waits across intentional rate
       // rebuilds. Without linger, WirePlumber 0.5 destroys a pinned stream
       // when its target temporarily disappears and fallback is forbidden.
-      "node.dont-fallback", "true", "node.dont-move", "true", "node.linger", "true", nullptr));
+      "node.dont-fallback", "true", "node.dont-move", "true", "node.linger", "true", nullptr);
+  test.source = pw_stream_new(test.core, "Product test signal", properties);
   static const auto events = [] { auto value = pw_stream_events{}; value.version = PW_VERSION_STREAM_EVENTS; value.process = produce; return value; }();
   if (test.source == nullptr) return fail(test, "cannot create source");
   pw_stream_add_listener(test.source, &test.sourceListener, &events, &test);
@@ -1132,11 +1154,12 @@ static bool createTestOutput(TestOutput &output) {
   output.stream = pw_stream_new(output.test->core, name.c_str(), pw_properties_new(
       PW_KEY_NODE_NAME, name.c_str(), PW_KEY_NODE_DESCRIPTION, name.c_str(), PW_KEY_MEDIA_CLASS, "Audio/Sink",
       PW_KEY_NODE_GROUP, group, PW_KEY_NODE_VIRTUAL, "false",
-      PW_KEY_PRIORITY_SESSION, output.index == 2 ? "2000" : "1000",
+      PW_KEY_PRIORITY_SESSION, output.index == (output.test->modeVolume ? 0U : 2U) ? "2000" : "1000",
       "node.want-driver", "true", "node.pause-on-idle", "false",
       "audio.channels", "2", "audio.position", "[ FL FR ]",
       "state.restore-props", "false",
-      "node.param.Props", output.test->recreatedPhysical && output.index == 0 ?
+      "node.param.Props", output.test->modeVolume ?
+          "{ volume = 1.0 mute = false channelVolumes = [ 0.125 0.125 ] }" : output.test->recreatedPhysical && output.index == 0 ?
           "{ volume = 1.0 mute = false channelVolumes = [ 0.75 0.875 ] }" : output.test->physicalVolume ? (output.index == 0 ?
           "{ volume = 1.0 mute = false channelVolumes = [ 0.125 0.25 ] }" : output.index == 1 ?
           "{ volume = 1.0 mute = true channelVolumes = [ 0.0625 0.125 ] }" :
@@ -1226,6 +1249,7 @@ static int runAudio(std::string_view scenario) {
   test.physicalVolume = scenario.starts_with("product-direct-device-volume");
   test.pulseVolume = scenario == "product-direct-device-volume-pulse";
   test.singleVolume = scenario == "product-direct-device-volume-single";
+  test.modeVolume = scenario == "product-mode-volume";
   test.rejectPhysicalVolume = scenario == "product-direct-device-volume-reject";
   test.rejectPhysicalRestore = scenario == "product-direct-device-volume-restore-reject";
   test.reconnectPhysical = scenario == "product-direct-device-volume-reconnect";
@@ -1296,6 +1320,14 @@ static int runAudio(std::string_view scenario) {
   }, &test) : nullptr;
   auto *resume = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR2, [](void *data, int) {
     auto &test = *static_cast<AudioTest *>(data);
+    if (test.modeVolume) {
+      if (!test.awaitingControl) return fail(test, "unexpected mode volume stage");
+      if (test.stage == 6) return static_cast<void>(pw_main_loop_quit(test.loop));
+      ++test.stage;
+      test.awaitingControl = false;
+      test.outputs[0].frames = 0;
+      return;
+    }
     if (test.fixedLatency) {
       test.shutdownAcknowledged = true;
       if (!test.awaitingControl) return fail(test, "producer stopped before PCM verification");
@@ -1401,7 +1433,7 @@ static int runAudio(std::string_view scenario) {
     value.version = PW_VERSION_REGISTRY_EVENTS;
     value.global = [](void *data, std::uint32_t id, std::uint32_t, const char *type, std::uint32_t version, const spa_dict *props) {
       auto &test = *static_cast<AudioTest *>(data);
-      if (test.physicalVolume && !test.metadata && std::strcmp(type, PW_TYPE_INTERFACE_Metadata) == 0 && props) {
+      if ((test.physicalVolume || test.modeVolume) && !test.metadata && std::strcmp(type, PW_TYPE_INTERFACE_Metadata) == 0 && props) {
         const auto *name = spa_dict_lookup(props, PW_KEY_METADATA_NAME);
         if (name && std::string_view(name) == "default") {
           test.metadata = static_cast<pw_metadata *>(pw_registry_bind(test.registry, id, type, PW_VERSION_METADATA, 0));
@@ -1410,7 +1442,8 @@ static int runAudio(std::string_view scenario) {
             value.property = [](void *data, std::uint32_t subject, const char *key, const char *, const char *text) {
               auto &test = *static_cast<AudioTest *>(data);
               if (subject == 0 && key && std::string_view(key) == "default.audio.sink" && text &&
-                  std::string_view(text).find("pipetune_product_device_2") != std::string_view::npos) {
+                  std::string_view(text).find(test.modeVolume ? "pipetune_product_device_0" :
+                      "pipetune_product_device_2") != std::string_view::npos) {
                 test.physicalDefaultReady = true;
                 outputState(&test.outputs[0], PW_STREAM_STATE_PAUSED, PW_STREAM_STATE_PAUSED, nullptr);
               }
