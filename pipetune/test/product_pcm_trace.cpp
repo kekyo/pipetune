@@ -5,11 +5,13 @@
  */
 #include "product_pcm_trace.h"
 #include <pipewire/pipewire.h>
+#include <spa/param/audio/format-utils.h>
 #include <dlfcn.h>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -56,6 +58,11 @@ static bool streamOverflow = false;
 static decltype(&pw_stream_connect) realConnect = nullptr;
 static decltype(&pw_stream_dequeue_buffer) realDequeue = nullptr;
 static decltype(&pw_stream_queue_buffer) realQueue = nullptr;
+static bool injectOldOutputRate = false;
+
+void injectProductOutputRateMismatch() {
+  injectOldOutputRate = true;
+}
 
 void prepareProductPcmTrace() {
   // Resolve once, before the callbacks run. Exported interposition also observes
@@ -141,6 +148,23 @@ static void recordPcm(PcmStreamRecord &stream, pw_buffer *buffer) {
 extern "C" int pw_stream_connect(pw_stream *stream, pw_direction direction, std::uint32_t target,
     pw_stream_flags flags, const spa_pod **parameters, std::uint32_t count) {
   registerProductPcmTrace(stream, direction, flags);
+  if (injectOldOutputRate && direction == PW_DIRECTION_OUTPUT && count == 1 &&
+      pw_properties_get(pw_stream_get_properties(stream), "node.pipetune.output-id") != nullptr) {
+    auto format = spa_audio_info_raw{};
+    if (spa_format_audio_raw_parse(parameters[0], &format) < 0) return -EINVAL;
+    injectOldOutputRate = false;
+    // Reproduce a leaf retaining its old negotiated rate. Subsequent stream
+    // generations use the real negotiation, so recovery must come from PipeTune.
+    format.rate = 48000;
+    const auto item = spa_dict_item{"resample.disable", "false"};
+    const auto properties = SPA_DICT_INIT(&item, 1);
+    const auto updated = pw_stream_update_properties(stream, &properties);
+    if (updated < 0) return updated;
+    auto storage = std::array<std::uint8_t, 512>{};
+    auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
+    const auto *parameter = spa_format_audio_raw_build(&builder, SPA_PARAM_EnumFormat, &format);
+    return realConnect(stream, direction, target, flags, &parameter, 1);
+  }
   return realConnect(stream, direction, target, flags, parameters, count);
 }
 

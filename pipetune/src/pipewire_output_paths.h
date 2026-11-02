@@ -33,6 +33,10 @@ struct PipeWireOutputPath {
   std::uint32_t targetNodeId = UINT32_MAX;
   /** Activity established from node and channel link states. */
   OutputPathActivity activity = OutputPathActivity::pending;
+  /** True when the active distribution input and this output have different
+   * negotiated PCM rates. Unknown formats or graph clocks do not imply a mismatch.
+   */
+  bool sampleRateMismatch = false;
   /** Midpoint of the reported downstream latency range in nanoseconds.
    * Absent without a running path, valid latency parameters, and actual clock.
    * This is neither a private compensation buffer size nor an acoustic measurement.

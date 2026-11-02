@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <numbers>
 #include <string_view>
 
 static bool rejectRestoredWidth = false;
@@ -124,6 +125,7 @@ static void runtimeReady(void *) {
 }
 
 static int runProduct(const char *preset, std::string_view scenario) {
+  if (scenario == "product-output-clock-recovery") injectProductOutputRateMismatch();
   rejectRestoredWidth = scenario == "product-output-change";
   stallWideOutput = scenario == "product-output-timeout";
   const auto *socket = std::getenv("PIPETUNE_PRODUCT_SOCKET");
@@ -228,6 +230,7 @@ struct TestOutput {
   std::int64_t previousTag = -1;
   std::int64_t blockTime = 0;
   std::uint32_t blockFrames = 0;
+  std::array<std::array<double, 2>, 2> previousToneSamples = {};
   // One data-loop writer and one main-loop reader. Only metadata crosses the
   // boundary; PipeWire buffers are always returned inside the process callback.
   std::array<LatencyBlock, 512> pendingBlocks;
@@ -708,6 +711,8 @@ static void capture(void *data) {
       expected = output.index == 2 ? (channel == 0 ? 0.25F : 0.5F) : 0.0F;
     if (test.modeVolume)
       expected = output.index == 0 ? (channel == 0 ? 0.03125F : 0.0625F) : 0.0F;
+    const auto tone = test.graphClock && expected != 0.0F;
+    auto toneEnergy = 0.0;
     for (auto frame = 0U; frame < frames; ++frame) {
       auto sample = 0.0F;
       std::memcpy(&sample, static_cast<const char *>(plane.data) + plane.chunk->offset + frame * sizeof(float), sizeof(float));
@@ -742,9 +747,26 @@ static void capture(void *data) {
         expected = test.stage == 2 ? 0.0F : (channel == 0 ? 0.25F : 0.5F) *
             (test.stage == 3 ? -1.0F : 1.0F) * (output.index == 1 && channel == 1 ? -1.0F : 1.0F);
       }
-      matches = matches && ((test.controls || test.sourceResume || test.direct) && expected != 0.0F ?
-          std::abs(sample - expected) < (test.sourceResume || test.direct ? 0.00001F : 0.000001F) : sample == expected);
+      if (tone) {
+        const auto offset = test.stage >= 4 ? (test.stage == 4 ? 0.125F : 0.25F) : 0.0F;
+        const auto normalized = (sample - offset) / (expected - offset);
+        auto &previous = output.previousToneSamples[channel];
+        // A 997 Hz sine at the fixture's 48 kHz input/output rate must retain
+        // its frequency and remain continuous across every captured buffer,
+        // even when the processing graph switches to 96 kHz or back. Its
+        // period does not divide the quantum, so a dropped buffer changes phase.
+        const auto predicted = 2.0 * std::cos(2.0 * std::numbers::pi * 997.0 / 48000.0) * previous[1] - previous[0];
+        matches = matches && std::isfinite(normalized) && std::abs(normalized - predicted) < 0.0001;
+        previous = {previous[1], normalized};
+        toneEnergy += normalized * normalized;
+      } else {
+        matches = matches && ((test.controls || test.sourceResume || test.direct) && expected != 0.0F ?
+            std::abs(sample - expected) < (test.sourceResume || test.direct ? 0.00001F : 0.000001F) : sample == expected);
+      }
     }
+    // Silence also satisfies the sine recurrence; require the expected signal
+    // level over a block so missing audio cannot pass the continuity check.
+    if (tone) matches = matches && toneEnergy > frames * 0.4 && toneEnergy < frames * 0.6;
   }
   queued->size = frames;
   pw_stream_queue_buffer(output.stream, queued);
@@ -965,6 +987,10 @@ static void produce(void *data) {
       for (auto frame = 0U; frame < frames; ++frame)
         static_cast<float *>(plane.data)[frame] = static_cast<float>((channel + 1) * channelOffset +
             (test.produced + frame) % tagPeriod) / sampleScale;
+    } else if (test.graphClock && test.stage != 6) {
+      for (auto frame = 0U; frame < frames; ++frame)
+        static_cast<float *>(plane.data)[frame] = (channel == 0 ? 0.25F : 0.5F) *
+            std::sin(2.0 * std::numbers::pi * 997.0 * static_cast<double>((test.produced + frame) % 48000) / 48000.0);
     } else if (test.sourceResume) std::fill_n(static_cast<float *>(plane.data), frames,
         test.stage == 2 ? 0.0F : (channel == 0 ? 0.25F : 0.5F) * (test.stage == 3 ? -1.0F : 1.0F));
     else std::fill_n(static_cast<float *>(plane.data), frames,
@@ -1278,7 +1304,7 @@ static int runAudio(std::string_view scenario) {
   if (scenario.starts_with("product-matrix-freewheel-fail-"))
     test.failurePoint = scenario.substr(std::string_view("product-matrix-freewheel-fail-").size());
   test.latency = scenario == "product-latency" || test.latencyUnits || test.intentionalDelay || test.latencyReconnect || test.fixedLatency;
-  test.graphClock = scenario == "product-output-clock" || scenario == "product-output-clock-alt";
+  test.graphClock = scenario == "product-output-clock" || scenario == "product-output-clock-alt" || scenario == "product-output-clock-recovery";
   test.clockUnavailable = scenario == "product-output-clock-unavailable";
   test.clockReconnect = scenario == "product-reconnect";
   test.initialGraphRate = scenario.ends_with("-alt") ? 44100 : 48000;
