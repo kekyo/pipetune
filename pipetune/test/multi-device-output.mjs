@@ -76,6 +76,18 @@ writeConfiguration("pipewire/pipewire.conf.d/99-pipetune-test.conf", `context.pr
   default.clock.max-quantum = ${graphQuantum}
 }
 `);
+if (fixedPcmTest && !scenario.endsWith("-realtime")) {
+  // Use the freewheel driver from stream creation, including before links
+  // exist. Grouping only the fake devices lets the other streams start on
+  // the real-time driver and retain different queued cycles after migration.
+  writeConfiguration("pipewire/client.conf.d/99-freewheel-test.conf", `stream.rules = [
+    {
+      matches = [ { node.name = "~.*" } ]
+      actions = { update-props = { node.group = "pipewire.freewheel" } }
+    }
+  ]
+`);
+}
 if (presentationDirectory) {
   environment.PIPEWIRE_MODULE_DIR = presentationDirectory + ":" + systemModuleDirectory;
   writeConfiguration("pipewire/pipewire.conf.d/60-pipetune-presentation.conf",
