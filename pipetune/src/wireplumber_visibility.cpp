@@ -696,7 +696,9 @@ volume_update = function()
   end
 end
 
-local volume_devices_om = ObjectManager { Interest { type = "device" } }
+-- Core only keeps a weak reference. Keep this manager alive after script
+-- initialization so later cards are resolved through their hardware Routes.
+volume_devices_om = ObjectManager { Interest { type = "device" } }
 volume_devices_om:connect("object-added", function(om, device)
   volume_devices[device["bound-id"]] = device
   device:connect("params-changed", function(node, id)

@@ -1274,9 +1274,36 @@ try {
         const opticalRouted = structuredClone(original);
         opticalRouted.outputs[1].device = opticalOutput.device;
         opticalRouted.outputs[1].profileIntent = { card: cardProfile.card, outputKey: opticalProfile.outputKey };
+        const volumeCard = profileFixture.stdout.match(/card-bound=(\d+)/u)?.[1];
+        assert.ok(volumeCard);
+        // Keep draining WirePlumber's policy log while its async Device
+        // requests complete; synchronous children can fill that log pipe.
+        const beforeVolumeDump = start("read original hardware volume", "pw-cli", ["enum-params", volumeCard, "Route"]);
+        assert.equal((await beforeVolumeDump.completion).code, 0, beforeVolumeDump.stderr);
+        const outputRoute = beforeVolumeDump.stdout.split(/^  Object:/mu)
+          .find((route) => route.includes("Spa:Enum:Direction:Output"));
+        const routeIndex = outputRoute?.match(/Param:Route:index[^\n]*\n\s+Int (\d+)/u)?.[1];
+        assert.ok(routeIndex);
+        const attenuated = start("set original hardware volume", "pw-cli", ["set-param", volumeCard, "Route",
+          `{ index = ${routeIndex} device = 0 save = true props = { mute = true channelVolumes = [ 0.125 0.25 ] } }`]);
+        assert.equal((await attenuated.completion).code, 0, attenuated.stderr);
+        // Match an OS volume operation on the current route and wait for its
+        // observed state before asking the product to take ownership.
+        await waitForCardStatus((status) => status.outputVolumes.some((volume) =>
+          volume.nodeSerial === opticalOutput.nodeSerial && volume.muted &&
+          volume.channelVolumes[0] === 0.125 && volume.channelVolumes[1] === 0.25));
         const routed = await control({ command: "set-output", configuration: opticalRouted });
         assert.deepEqual(routed.outputConfiguration, opticalRouted);
         assert.equal(routed.configurationRevision, ++revision);
+        // Hardware volume belongs to the card Route. A Node-only update can
+        // report unity while leaving the card's attenuation and mute intact.
+        const volumeDump = start("read selected hardware volume", "pw-cli", ["enum-params", volumeCard, "Route"]);
+        assert.equal((await volumeDump.completion).code, 0, volumeDump.stderr);
+        const hardwareVolume = volumeDump.stdout.split(/^  Object:/mu)
+          .find((route) => route.includes("Spa:Enum:Direction:Output"));
+        assert.match(hardwareVolume ?? "", /Props:channelVolumes[^\n]*\n[^\n]*\n\s+Float 1\.000000\n\s+Float 1\.000000/u,
+          "selected hardware route must have unity gain");
+        assert.match(hardwareVolume ?? "", /Props:mute[^\n]*\n\s+Bool false/u, "selected hardware route must be unmuted");
         // This probe observes the selected device directly. The link group
         // excludes it from the desktop's automatic capture-endpoint routing.
         for (const channel of ["FL", "FR"]) {
@@ -1309,6 +1336,13 @@ try {
         });
         const restoredRouted = await control({ command: "set-output", configuration: original });
         assert.equal(restoredRouted.configurationRevision, ++revision);
+        const restoredDump = start("read restored hardware volume", "pw-cli", ["enum-params", volumeCard, "Route"]);
+        assert.equal((await restoredDump.completion).code, 0, restoredDump.stderr);
+        const restoredVolume = restoredDump.stdout.split(/^  Object:/mu)
+          .find((route) => route.includes("Spa:Enum:Direction:Output"));
+        assert.match(restoredVolume ?? "", /Props:channelVolumes[^\n]*\n[^\n]*\n\s+Float 0\.125000\n\s+Float 0\.250000/u,
+          "released hardware route must restore its gain");
+        assert.match(restoredVolume ?? "", /Props:mute[^\n]*\n\s+Bool true/u, "released hardware route must restore its mute");
         const singleSaved = structuredClone(original);
         singleSaved.mode = "single";
         singleSaved.outputs.push({ id: "fixture-output", enabled: true, device: opticalOutput.device,
