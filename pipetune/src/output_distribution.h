@@ -36,7 +36,7 @@ OutputDistributionArguments makeOutputDistributionArguments(
  * @param publicInputName Stable processed-input name; the direct name adds `.direct`.
  * @param channels Fixed output slot count, including disconnected slots.
  * @param policy Common sample-rate preference and graph enforcement.
- * @return Loopback module arguments, or a validation/encoding error.
+ * @return Direct stream pair properties, or a validation/encoding error.
  */
 OutputDistributionArguments makeDirectOutputArguments(
     const std::string &publicInputName, std::uint32_t channels,

@@ -166,17 +166,20 @@ flowchart LR
     dsp["EffeTune DSP or bypass"]
     direct["PipeTune Direct Output<br/>multichannel input"]
     mix["PipeWire mix"]
+    volume["Shared OS volume and mute"]
     mapping["PipeTune channel mapping"]
     devices["Selected audio devices"]
 
     processed --> dsp --> mix
     direct --> mix
-    mix --> mapping --> devices
+    mix --> volume --> mapping --> devices
 ```
 
-Each input has its own volume and mute before mixing. Bypass skips DSP
-processing for the Processed input only; it does not affect Direct. Single
-mode continues to use the OS sound settings to select a physical output.
+OS output volume and mute apply equally to all channels after mixing.
+Processed and Direct show the same controls, without attenuating either input.
+Bypass skips DSP processing for the Processed input only; it does not affect
+Direct. Single mode continues to use the OS sound settings to select a physical
+output and control its volume.
 
 ## Selecting an EffeTune DSP preset
 
@@ -227,8 +230,9 @@ settings show two inputs: `PipeTune Processed Audio` for DSP playback and
 The `DSP output levels` meters at the top of the `Output` page show whether each preset output channel has an audio signal. The channel count is inferred from Matrix and Spatial Mapper routes, crossover band counts, channel selections, and other preset settings when the preset loads. Reloading updates the count; signal activity during playback does not. Meters follow Ch order and show the same count in single and multiple modes. For example, a four-channel preset generates and measures all four channels in single mode, including unassigned Ch 3 and 4. Bypass shows two meters.
 
 Multiple mode also shows `Mixed output levels`. These measure each channel
-after Processed and Direct audio have been combined, so they show activity
-when only Direct is playing.
+after Processed and Direct audio have been combined and the shared OS volume
+and mute have been applied. They also show activity when only Direct is playing.
+The `DSP output levels` meters show the signal before the shared volume.
 
 Values are peaks before device volume, in dBFS relative to digital full scale. Silence is `−∞`, unavailable or disconnected measurements are `—`, and peaks at or above 0 dBFS turn red. Device mute and connection state are not part of these measurements. Unassigned channels are also displayed, so an active meter does not guarantee audible output from the device.
 
@@ -296,11 +300,22 @@ Later selections preserve those numbers and labels: deselected outputs keep
 their slots, and new outputs are appended. The sixteen-channel limit includes
 reserved slots. Switching to single mode retains the multiple-output choices.
 
-In multiple mode, the OS exposes separate volume and mute controls for
-Processed and Direct. Processed volume affects only the DSP path; Direct volume
-affects only Direct. The settings UI does not provide a shared volume control
-after mixing. Simultaneous playback adds the two signals without automatic
-gain control.
+In multiple mode, the OS volume and mute controls for Processed and Direct are
+linked. Either control applies the same volume once, after mixing the two
+signals. Switching between inputs preserves the volume. Application volume,
+per-application volume, and the preset's Volume remain available independently.
+Simultaneous playback adds the signals without automatic gain control.
+
+Selected physical outputs stay unmuted at an effective gain of 1 for controls
+exposed by PipeWire. This removes hidden device attenuation so the shared OS
+volume controls all outputs. Deselecting a device, returning to single mode,
+or stopping the daemon restores each device's original volume and mute.
+If applying or restoring a volume cannot be confirmed, an error identifies
+the affected output.
+
+A new daemon restores the saved shared volume and mute. If no saved value
+exists, it inherits the OS output volume and mute from before the switch.
+Reconnection and WirePlumber restart preserve the running shared volume.
 
 `get` shows the live mode and a table linking each final EffeTune channel to its
 device, device channel, profile, presence, and optional purpose label. A missing

@@ -273,10 +273,12 @@ add_library(
   src/output_command.cpp
   src/output_distribution.cpp
   src/pipewire_buffer_io.cpp
+  src/pipewire_direct_output.cpp
   src/pipewire_graph_clock.cpp
   src/pipewire_latency.cpp
   src/pipewire_output_inventory.cpp
   src/pipewire_output_paths.cpp
+  src/pipewire_output_volume.cpp
   src/pipewire_pipeline.cpp
   src/process_runner.cpp
   src/rate_command.cpp
@@ -813,11 +815,15 @@ if(BUILD_TESTING)
     target_compile_options(
       pipetune_pipewire_pipeline_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   endif()
+  find_program(PIPETUNE_PIPEWIRE_EXECUTABLE pipewire REQUIRED)
+  find_program(PIPETUNE_WIREPLUMBER_EXECUTABLE wireplumber REQUIRED)
+  find_program(PIPETUNE_PW_CAT_EXECUTABLE pw-cat REQUIRED)
   add_test(
     NAME pipetune_pipewire_pipeline_tests
-    COMMAND pipetune_pipewire_pipeline_tests)
+    COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/pipewire-pipeline.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE} $<TARGET_FILE:pipetune_pipewire_pipeline_tests>)
   set_tests_properties(
-    pipetune_pipewire_pipeline_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 20)
+    pipetune_pipewire_pipeline_tests PROPERTIES TIMEOUT 30)
 
   add_executable(
     pipetune_command_line_tests
@@ -922,7 +928,6 @@ if(BUILD_TESTING)
     NAME pipetune_user_setup_tests
     COMMAND pipetune_user_setup_tests)
 
-  find_program(PIPETUNE_PIPEWIRE_EXECUTABLE pipewire REQUIRED)
   add_executable(pipetune_output_inventory_observer_tests test/output_inventory_observer_test.cpp)
   target_include_directories(pipetune_output_inventory_observer_tests PRIVATE src)
   target_link_libraries(pipetune_output_inventory_observer_tests PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE)
@@ -951,10 +956,8 @@ if(BUILD_TESTING)
   target_link_libraries(pipetune_output_timing_tests PRIVATE pipetune_pipewire)
   target_compile_options(pipetune_output_timing_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME pipetune_output_timing_tests COMMAND pipetune_output_timing_tests)
-  find_program(PIPETUNE_WIREPLUMBER_EXECUTABLE wireplumber REQUIRED)
   find_program(PIPETUNE_PW_CLI_EXECUTABLE pw-cli REQUIRED)
   find_program(PIPETUNE_PW_DUMP_EXECUTABLE pw-dump REQUIRED)
-  find_program(PIPETUNE_PW_CAT_EXECUTABLE pw-cat REQUIRED)
   find_program(PIPETUNE_PW_LINK_EXECUTABLE pw-link REQUIRED)
   add_test(NAME pipetune_device_presentation
     COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/device-presentation.mjs
@@ -972,10 +975,20 @@ if(BUILD_TESTING)
       ${PIPETUNE_PIPEWIRE_MODULE_DIR} ${PIPETUNE_PW_DUMP_EXECUTABLE} ${PIPETUNE_PW_CLI_EXECUTABLE}
       $<TARGET_FILE:pipetune_device_route_probe> ${PIPETUNE_PW_CAT_EXECUTABLE} ${PIPETUNE_PW_LINK_EXECUTABLE} --pcm)
   set_tests_properties(pipetune_device_presentation_pcm PROPERTIES TIMEOUT 60)
-  find_program(PIPETUNE_PW_CAT_EXECUTABLE pw-cat REQUIRED)
   find_program(PIPETUNE_PW_DUMP_EXECUTABLE pw-dump REQUIRED)
   find_program(PIPETUNE_PULSE_EXECUTABLE pipewire-pulse REQUIRED)
   pkg_check_modules(PULSE REQUIRED IMPORTED_TARGET libpulse)
+  add_executable(pipetune_pulse_volume_control test/pulse_volume_control.cpp)
+  target_link_libraries(pipetune_pulse_volume_control PRIVATE PkgConfig::PULSE)
+  target_compile_options(pipetune_pulse_volume_control PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_product-direct-device-volume-pulse
+    COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+      $<TARGET_FILE:pipetune_product_output_tests> product-direct-device-volume-pulse
+      $<TARGET_FILE:pipetune_wireplumber_policy_fixture> "" "" ""
+      $<TARGET_FILE_DIR:pipetune_presentation> ${PIPETUNE_PIPEWIRE_MODULE_DIR}
+      ${PIPETUNE_PULSE_EXECUTABLE} $<TARGET_FILE:pipetune_pulse_volume_control>)
+  set_tests_properties(pipetune_product-direct-device-volume-pulse PROPERTIES TIMEOUT 45)
   add_executable(pipetune_desktop_output_probe test/desktop_output_probe.c)
   target_link_libraries(pipetune_desktop_output_probe PRIVATE PkgConfig::PULSE)
   target_compile_options(pipetune_desktop_output_probe PRIVATE -Wall -Wextra -Werror)
@@ -1006,7 +1019,7 @@ if(BUILD_TESTING)
   target_link_options(pipetune_product_output_tests PRIVATE -Wl,--wrap=pw_stream_connect -Wl,--export-dynamic)
   target_compile_options(pipetune_product_output_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME pipetune_product-pcm-trace COMMAND pipetune_product_output_tests trace verify)
-  foreach(scenario product-output-change-route-policy product-output-profile-restore-failure-route-policy product-output-profile-settle-input-route-policy product-output-profile-unavailable-route-policy product-matrix-realtime product-matrix-freewheel-one-output product-sfz-classic-realtime product-sfz-event-realtime product-matrix-freewheel-delayed-observer product-matrix-freewheel-fail-pcm product-matrix-freewheel-fail-disconnect product-matrix-freewheel-fail-timeout product-matrix-freewheel-fail-cancel product-matrix-freewheel-fail-runtime-exit product-matrix-freewheel-fail-before-source product-matrix-freewheel product-direct product-bypass product-matrix product-slots product-sixteen product-volume product-disconnected product-reconnect product-profile product-restart product-restart-mute product-latency product-latency-units product-latency-reconnect product-time-alignment product-sfz-classic product-sfz-event product-controls product-output-clock product-output-clock-alt product-output-clock-unavailable product-output-change product-output-profile-unknown product-output-profile-shutdown product-output-profile-restore-failure product-output-profile-unavailable product-output-profile-settle-input product-output-timeout product-output-status product-output-status-single product-output-recovery product-preset-meters product-source-resume product-source-resume-single)
+  foreach(scenario product-mode-volume product-output-change-route-policy product-output-profile-restore-failure-route-policy product-output-profile-settle-input-route-policy product-output-profile-unavailable-route-policy product-matrix-realtime product-matrix-freewheel-one-output product-sfz-classic-realtime product-sfz-event-realtime product-matrix-freewheel-delayed-observer product-matrix-freewheel-fail-pcm product-matrix-freewheel-fail-disconnect product-matrix-freewheel-fail-timeout product-matrix-freewheel-fail-cancel product-matrix-freewheel-fail-runtime-exit product-matrix-freewheel-fail-before-source product-matrix-freewheel product-direct product-direct-device-volume product-direct-device-volume-single product-direct-device-volume-reject product-direct-device-volume-restore-reject product-direct-device-volume-reconnect product-direct-device-volume-restart product-direct-device-volume-crash product-direct-device-volume-offline-crash product-bypass product-matrix product-slots product-sixteen product-volume product-disconnected product-reconnect product-profile product-restart product-restart-mute product-latency product-latency-units product-latency-reconnect product-time-alignment product-sfz-classic product-sfz-event product-controls product-output-clock product-output-clock-alt product-output-clock-unavailable product-output-change product-output-profile-unknown product-output-profile-shutdown product-output-profile-restore-failure product-output-profile-unavailable product-output-profile-settle-input product-output-timeout product-output-status product-output-status-single product-output-recovery product-preset-meters product-source-resume product-source-resume-single)
     add_test(NAME pipetune_${scenario}
       COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
         ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
