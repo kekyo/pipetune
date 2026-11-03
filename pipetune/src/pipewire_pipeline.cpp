@@ -268,6 +268,8 @@ struct PipeWireRuntime {
   std::string outputDistributionArguments;
   std::uint64_t outputPolicyGeneration = 0;
   bool outputPolicyReset = false;
+  bool outputRateMismatch = false;
+  std::uint64_t retiredOutputRateSerial = 0;
   float masterVolume = 1.0F;
   bool masterMute = false;
   bool masterControlsInitialized = false;
@@ -1855,6 +1857,16 @@ static void outputPathsChanged(const std::vector<PipeWireOutputPath> &paths, voi
     auto lock = std::scoped_lock(runtime.outputStateMutex);
     runtime.outputPathSnapshots = paths;
   }
+  runtime.outputRateMismatch = std::any_of(paths.begin(), paths.end(), [&](const auto &path) {
+    return path.streamSerial > runtime.retiredOutputRateSerial && path.sampleRateMismatch;
+  });
+  // Combine copies raw PCM without converting between its streams' rates.
+  // Recover independent renegotiations through the existing graph replacement.
+  // Forcing resample.disable on PipeWire 1.0.5 would instead break compensation:
+  // its delay buffer size is multiplied by the negotiated (then zero) raw rate.
+  // https://github.com/PipeWire/pipewire/blob/1.0.5/src/modules/module-combine-stream.c
+  if (runtime.outputRateMismatch)
+    pw_loop_signal_event(pw_main_loop_get_loop(runtime.mainLoop), runtime.outputGraphSource);
   requestControlStatusUpdate(runtime);
 }
 
@@ -1872,6 +1884,10 @@ static std::string replaceOutputDistribution(PipeWireRuntime &runtime, const std
     preparePipeWireOutputVolume(*runtime.outputVolume);
     runtime.physicalVolumeReady.store(false, std::memory_order_release);
   }
+  // Ignore late mismatch notifications from every generation being retired.
+  for (const auto &path : runtime.outputPathSnapshots)
+    runtime.retiredOutputRateSerial = std::max(runtime.retiredOutputRateSerial, path.streamSerial);
+  runtime.outputRateMismatch = false;
   // Retain the previous default-output lease until a replacement module has
   // been constructed. Explicitly removed modules must not report a failure.
   auto *replacement = arguments.empty() ? nullptr : pw_context_load_module(runtime.context,
@@ -2408,7 +2424,8 @@ static void applyOutputInventory(void *data, std::uint64_t) {
   const auto arguments = makeOutputDistributionArguments(runtime.options.filterName + ".distribution",
       runtime.options.filterName, runtime.options.outputConfiguration, runtime.availableOutputs.outputs);
   if (!arguments.error.empty()) return failRuntime(runtime, arguments.error);
-  if (!runtime.outputPolicyReset && runtime.outputDistribution != nullptr && arguments.arguments == runtime.outputDistributionArguments) return;
+  if (!runtime.outputPolicyReset && !runtime.outputRateMismatch && runtime.outputDistribution != nullptr &&
+      arguments.arguments == runtime.outputDistributionArguments) return;
   if (runtime.outputPolicyReset) {
     // A restarted session manager cannot reuse the old port configuration.
     // Recreate owned streams, retaining the DSP layout and master controls.
@@ -2417,7 +2434,7 @@ static void applyOutputInventory(void *data, std::uint64_t) {
   } else {
     destroyOutputStream(runtime);
   }
-  // Device changes replace the private distribution and its feeding stream.
+  // Device or negotiated-rate changes replace the private distribution and its feeding stream.
   // Keep the public input alive so application links, the default-output lease
   // and the master controls survive across both WirePlumber versions.
   const auto distributionError = replaceOutputDistribution(runtime, arguments.arguments);

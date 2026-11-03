@@ -26,7 +26,7 @@ const expectedAudioFailure = {
   disconnect: "injected device disconnect", timeout: "product PCM test timed out",
   cancel: "audio fixture canceled", "runtime-exit": "producer stopped before PCM verification",
 }[audioFailurePoint];
-const graphClockTest = ["product-output-clock", "product-output-clock-alt"].includes(scenario);
+const graphClockTest = ["product-output-clock", "product-output-clock-alt", "product-output-clock-recovery"].includes(scenario);
 const graphRate = scenario === "product-output-clock-alt" ? 44100 : 48000;
 const graphQuantum = scenario === "product-output-clock-alt" ? 512 : 256;
 
@@ -59,6 +59,15 @@ const writeConfiguration = (relative, contents) => {
   mkdirSync(join(config, ...components), { recursive: true });
   writeFileSync(join(config, relative), contents);
 };
+if (graphClockTest) {
+  // Observe the private distribution with the same visibility as PipeTune.
+  // Only pw-dump uses this configuration; audio clients retain normal policy.
+  writeConfiguration("pipewire/pipetune-clock-observer.conf", `context.properties = {
+  application.process.binary = pipetune
+}
+context.modules = [ { name = libpipewire-module-protocol-native } ]
+`);
+}
 if (scenario === "product-output-clock-unavailable") {
   const serverConfiguration = readFileSync("/usr/share/pipewire/pipewire.conf", "utf8");
   // Keep newer versions' conditional module options intact. A missing optional
@@ -829,6 +838,25 @@ try {
         const clockUnavailable = scenario === "product-output-clock-unavailable";
         if (!graphClockTest && !clockUnavailable) return;
         const rate = stage === 0 ? graphRate : stage === 8 ? 48000 : 96000;
+        if (graphClockTest) {
+          const dump = spawnSync("pw-dump", ["--no-colors"], { encoding: "utf8",
+            env: { ...environment, PIPEWIRE_CONFIG_NAME: "pipetune-clock-observer.conf" } });
+          assert.equal(dump.status, 0, dump.stderr);
+          const graph = JSON.parse("[" + dump.stdout.replace(/\]\s*\[/gu, "],[") + "]").flat();
+          for (const name of ["pipetune_product_input.distribution",
+            "output.pipetune_product_input.distribution_pipetune_product_device_0",
+            "output.pipetune_product_input.distribution_pipetune_product_device_1"]) {
+            const node = graph.find((item) => item.type === "PipeWire:Interface:Node" && item.info?.props?.["node.name"] === name);
+            assert.ok(node, `stage ${stage} must retain distribution node ${name}`);
+            const formats = node.info.params.Format;
+            assert.equal(formats.length, 1, `${name} must have one negotiated PCM format`);
+            assert.equal(formats[0].mediaType, "audio");
+            assert.equal(formats[0].mediaSubtype, "raw");
+            // Newer combine modules negotiate an unspecified/zero raw rate,
+            // which follows the graph clock without conversion.
+            assert.equal(formats[0].rate || rate, rate, `${name} must match the graph rate at stage ${stage}`);
+          }
+        }
         const quantum = stage === 0 || stage === 8 ? graphQuantum : graphQuantum * 2;
         const expected = (0.5 * quantum + 64) * 1e9 / rate + 1e6;
         const client = createConnection(environment.PIPETUNE_PRODUCT_SOCKET);

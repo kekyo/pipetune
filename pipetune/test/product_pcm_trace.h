@@ -8,6 +8,9 @@
 /** Allocate optional test-only recording before starting PipeWire threads. */
 void prepareProductPcmTrace();
 
+/** Keep one distribution output at 48 kHz when the test graph changes to 96 kHz. */
+void injectProductOutputRateMismatch();
+
 /** Write the recording after all streams and their processing threads have stopped. */
 void finishProductPcmTrace();
 
