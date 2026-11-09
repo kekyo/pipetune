@@ -184,6 +184,8 @@ function(
     PUBLIC "${EFFETUNE_DSP_DIR}/vendor/pffft/include/pffft"
     PRIVATE "${EFFETUNE_DSP_DIR}/vendor/pffft/src")
   target_compile_definitions(${TARGET_NAME} PUBLIC PFFFT_STATIC_DEFINE=1)
+  # Keep FFTs usable in live Debug graphs while retaining debug information.
+  target_compile_options(${TARGET_NAME} PRIVATE $<$<CONFIG:Debug>:-Og>)
   if(VARIANT_NAME STREQUAL "SCALAR")
     target_compile_definitions(${TARGET_NAME} PRIVATE PFFFT_SIMD_DISABLE=1)
   else()
@@ -266,6 +268,9 @@ function(
   target_compile_options(
     ${TARGET_NAME}
     PRIVATE
+      # Unoptimized note analysis can miss a live graph's processing deadline.
+      # -Og retains Debug symbols and the ET_DEBUG_BUILD allocation checks.
+      $<$<CONFIG:Debug>:-Og>
       -Wall
       -Wextra
       -Wpedantic
