@@ -145,10 +145,10 @@ static bool testSharedSfzPreparation(const std::filesystem::path &directory) {
     if (entry.path().extension() == ".wav") original = entry.path();
   if (original.empty()) return false;
   const auto definition = directory / "shared.sfz";
-  const auto unused = directory / "unused.bin";
-  std::ofstream(unused) << std::string(5000, 'x');
+  const auto second = directory / "second.wav";
+  std::filesystem::copy_file(original, second);
   std::ofstream(definition) << "<region> sample=ir-library/" << original.filename().string() <<
-      " key=83 amp_veltrack=0\n<region> sample=unused.bin key=83";
+      " key=83 amp_veltrack=0\n<region> sample=second.wav key=83";
   const auto registry = directory / "sfz-references.json";
   std::ofstream(registry) << "[{\"id\":\"0123456789abcdef01234567\",\"name\":\"Shared\",\"root\":\"" <<
       directory.string() << "\",\"path\":\"" << definition.string() << "\"}]";
@@ -156,19 +156,18 @@ static bool testSharedSfzPreparation(const std::filesystem::path &directory) {
   const auto node = R"({"name":"SoundFont Note Player","parameters":{"sf":"0123456789abcdef01234567"}})";
   std::ofstream(preset) << "{\"pipeline\":[" << node << ',' << node << "]}";
   auto context = pipetune::PipelineLoadContext{directory / "measurements", directory};
-  context.sfzMaximumBytes = 3000;
+  context.sfzMaximumBytes = 256 * 1024;
   auto loaded = pipetune::loadDspPipeline(preset, {48000, 2, 128}, context);
   if (!check(loaded.pipeline != nullptr, loaded.error.c_str())) return false;
   const auto dependencies = loaded.pipeline->dependencyFiles();
   return check(loaded.cachedAssetCount == 1 && loaded.pipeline->activePluginCount() == 2 &&
-      loaded.warnings.size() == 2 && loaded.warnings.front().state == pipetune::PresetEntryState::enabled &&
-      loaded.warnings.front().reason.find("reduced-bank") != std::string::npos,
-      "identical SFZ nodes must share a reduced bank without a persistent cache") &&
-      check(std::ranges::find(dependencies, unused) != dependencies.end() &&
+      loaded.warnings.empty(),
+      "identical SFZ nodes must share a complete bank without a persistent cache") &&
+      check(std::ranges::find(dependencies, second) != dependencies.end() &&
             std::ranges::find(dependencies, definition) != dependencies.end() &&
             std::ranges::find(dependencies, original) != dependencies.end() &&
             std::ranges::find(dependencies, registry) != dependencies.end(),
-            "capacity selection must retain unused samples as watched dependencies");
+            "every SFZ source must remain a watched dependency");
 }
 
 static cardio::promise<bool> testAsyncSfzPreparation(const std::filesystem::path &directory) {
@@ -178,10 +177,10 @@ static cardio::promise<bool> testAsyncSfzPreparation(const std::filesystem::path
   auto *parameters = yyjson_doc_get_root(document.get());
   const auto cache = pipetune::AssetCacheOptions{};
   auto cancel = cardio::cancellation_source{};
-  auto first = pipetune::loadSfzAssetAsync(directory, parameters, 3000, cache, {}, pipetune::kDefaultAssetMemoryBytes);
-  auto waiting = pipetune::loadSfzAssetAsync(directory, parameters, 3000, cache,
+  auto first = pipetune::loadSfzAssetAsync(directory, parameters, 256 * 1024, cache, {}, pipetune::kDefaultAssetMemoryBytes);
+  auto waiting = pipetune::loadSfzAssetAsync(directory, parameters, 256 * 1024, cache,
       cancel.get_cancellation(), pipetune::kDefaultAssetMemoryBytes);
-  auto same = pipetune::loadSfzAssetAsync(directory, parameters, 3000, cache, {}, pipetune::kDefaultAssetMemoryBytes);
+  auto same = pipetune::loadSfzAssetAsync(directory, parameters, 256 * 1024, cache, {}, pipetune::kDefaultAssetMemoryBytes);
   cancel.cancel();
   auto canceled = false;
   try { static_cast<void>(co_await waiting); }
@@ -192,11 +191,11 @@ static cardio::promise<bool> testAsyncSfzPreparation(const std::filesystem::path
       shared.prepared == prepared.prepared && shared.cacheHit,
       "SFZ preparation must survive cancellation of another queued reader")) co_return false;
   co_await pipetune::verifyAssetSnapshots(prepared.snapshots, {});
-  std::ofstream(directory / "unused.bin") << std::string(5000, 'y');
+  std::ofstream(directory / "second.wav", std::ios::binary | std::ios::app) << 'x';
   auto changed = false;
   try { co_await pipetune::verifyAssetSnapshots(prepared.snapshots, {}); }
   catch (const std::runtime_error &) { changed = true; }
-  co_return check(changed, "an omitted source changed after SFZ selection must prevent publication");
+  co_return check(changed, "a source changed after SFZ preparation must prevent publication");
 }
 
 static cardio::promise<bool> testAsyncSfzBankCandidates(const std::filesystem::path &directory) {

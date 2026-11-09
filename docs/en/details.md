@@ -254,12 +254,12 @@ The bank budget defaults to 256 MiB; select
 64, 128, 256, 512, or 1024 MiB in settings, with `--sfz-max-size MIB` for direct
 runs or `PIPETUNE_SFZ_MAX_SIZE_MIB` in the daemon configuration.
 The bank budget includes instrument data and native preparation storage;
-requirements depend on the processing rate and channel count. When necessary,
-the existing selection rule reduces layers while preserving the playable keys.
-Skipped regions, missing samples in a usable partial instrument, reduced
-banks, and adjustments to out-of-range envelope times are reported on the
-active DSP. An instrument that cannot retain all
-playable keys within the budget fails loading. Sample paths must stay within
+requirements depend on the processing rate and channel count. All layers and
+original files must fit; an oversized instrument fails loading. Layers are
+never reduced to fit the budget, following
+[EffeTune 2.17.0's capacity validation](https://github.com/Frieve-A/effetune/blob/v2.17.0/js/sfz/service.js).
+Skipped regions, missing samples in a usable partial instrument, and adjustments
+to out-of-range envelope times are reported on the active DSP. Sample paths must stay within
 the registered root.
 
 IR Reverb supports WAV/IRS, AIFF, FLAC, MP3, Ogg, and M4A originals decoded by the

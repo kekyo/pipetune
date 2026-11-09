@@ -23,9 +23,6 @@
 
 namespace pipetune::assets {
 
-static constexpr auto kHeaderWords = std::size_t{12};
-static constexpr auto kRegionWords = std::size_t{113};
-
 // Default lanes 30 through 110 preserve the existing resident SFZ subset.
 static constexpr auto kExtraDefaults = std::array<double, 81>{
     0, // trigger
@@ -122,7 +119,7 @@ struct SampleInfo {
 
 struct BankRegion {
   const SfzRegion *source;
-  std::array<double, kRegionWords> fields;
+  std::array<double, kSfzRegionWords> fields;
   std::u16string sampleKey;
 };
 
@@ -222,9 +219,9 @@ static Audio generatorCycle(const Audio &source, std::uint32_t start, std::uint3
   return result;
 }
 
-static std::array<double, kRegionWords> regionFields(const SfzRegion &r, const SampleInfo &s) {
+static std::array<double, kSfzRegionWords> regionFields(const SfzRegion &r, const SampleInfo &s) {
   const auto end = r.end.value_or(s.frames - 1);
-  auto fields = std::array<double, kRegionWords>{0, static_cast<double>(s.frames), static_cast<double>(s.channels), static_cast<double>(s.audio->sampleRate),
+  auto fields = std::array<double, kSfzRegionWords>{0, static_cast<double>(s.frames), static_cast<double>(s.channels), static_cast<double>(s.audio->sampleRate),
       r.lokey, r.hikey, r.lovel, r.hivel, r.lorand, r.hirand, r.seq_length, r.seq_position,
       static_cast<double>(r.seqGroup), r.pitch_keycenter, r.pitch_keytrack, r.transpose, r.tune, r.volume, r.pan,
       r.amp_veltrack, r.offset, end, r.loop_mode, r.loop_start, r.loop_end.value_or(end),
@@ -273,7 +270,7 @@ SfzBank packSfzBank(std::span<const SfzRegion> regions, std::span<const SfzSampl
         fields[23] = 0;
         fields[24] = fields[21];
       } else if (invalidLoop) throw SfzError("prepare", "SFZ loop points exceed the sample.");
-      for (auto field = 1u; field < kRegionWords; ++field) {
+      for (auto field = 1u; field < kSfzRegionWords; ++field) {
         const auto value = fields[field];
         if (!std::isfinite(value)) throw SfzError("prepare", "SFZ region has invalid values.");
         if (std::ranges::find(kIndexFields, field) != kIndexFields.end() &&
@@ -326,10 +323,10 @@ SfzBank packSfzBank(std::span<const SfzRegion> regions, std::span<const SfzSampl
   const auto generatorCount = std::ranges::count_if(playable, [](const auto &r) { return isSfzGenerator(r.source->sample); });
   const auto modulationWords = generatorCount ? 14ull + playable.size() * (6ull + 10 + 3 * 6 + 50 * 4) +
       static_cast<std::uint64_t>(generatorCount) * (6 + 9 * 4) : 0;
-  if (32ull + 4ull * (kHeaderWords + kRegionWords * playable.size() + modulationWords + poolLength) > maximumBytes)
+  if (32ull + 4ull * (kSfzTableHeaderWords + kSfzRegionWords * playable.size() + modulationWords + poolLength) > maximumBytes)
     throw SfzError("too-large", "The SFZ samples are too large to load.");
   const auto modulation = generatorModulation(playable);
-  const auto controlOffset = kHeaderWords + kRegionWords * playable.size();
+  const auto controlOffset = kSfzTableHeaderWords + kSfzRegionWords * playable.size();
   const auto poolOffset = controlOffset + modulation.size();
   const auto wordCount = poolOffset + poolLength;
   const auto byteLength = 32 + wordCount * 4;
@@ -344,8 +341,8 @@ SfzBank packSfzBank(std::span<const SfzRegion> regions, std::span<const SfzSampl
     for (auto byte = 0u; byte < 4; ++byte) result.payload[offset + byte] = static_cast<std::uint8_t>(word >> (8 * byte));
   };
   put(0, 0x31415445); put(4, 1); put(8, result.samples); put(12, 1);
-  const auto header = std::array<std::uint32_t, kHeaderWords>{0x53465a, modulation.empty() ? 6u : 7u, static_cast<std::uint32_t>(playable.size()),
-      kRegionWords, static_cast<std::uint32_t>(poolOffset), result.samples, static_cast<std::uint32_t>(groups.size()), 0,
+  const auto header = std::array<std::uint32_t, kSfzTableHeaderWords>{0x53465a, modulation.empty() ? 6u : 7u, static_cast<std::uint32_t>(playable.size()),
+      kSfzRegionWords, static_cast<std::uint32_t>(poolOffset), result.samples, static_cast<std::uint32_t>(groups.size()), 0,
       static_cast<std::uint32_t>(controlOffset), 0, modulation.empty() ? 0u : static_cast<std::uint32_t>(controlOffset),
       static_cast<std::uint32_t>(modulation.size())};
   for (auto index = 0u; index < header.size(); ++index) put(32 + index * 4, header[index]);
@@ -354,10 +351,10 @@ SfzBank packSfzBank(std::span<const SfzRegion> regions, std::span<const SfzSampl
     region.fields[0] = information.at(region.sampleKey).offset;
     region.fields[111] = controlOffset;
     region.fields[12] = std::distance(groups.begin(), groups.find(region.source->seqGroup));
-    for (auto field = 0u; field < kRegionWords; ++field) {
+    for (auto field = 0u; field < kSfzRegionWords; ++field) {
       const auto bits = std::ranges::find(kIndexFields, field) != kIndexFields.end() ?
           static_cast<std::uint32_t>(region.fields[field]) : std::bit_cast<std::uint32_t>(static_cast<float>(region.fields[field]));
-      put(32 + (kHeaderWords + row * kRegionWords + field) * 4, bits);
+      put(32 + (kSfzTableHeaderWords + row * kSfzRegionWords + field) * 4, bits);
     }
   }
   for (auto index = std::size_t{0}; index < modulation.size(); ++index) put(32 + (controlOffset + index) * 4, modulation[index]);

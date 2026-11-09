@@ -10,6 +10,11 @@
 
 namespace pipetune::assets {
 
+/** Four-byte words in the resident v6/v7 table header. */
+inline constexpr auto kSfzTableHeaderWords = std::size_t{12};
+/** Four-byte fields in each resident v6/v7 region. */
+inline constexpr auto kSfzRegionWords = std::size_t{113};
+
 /** Owned ETA1/table-v6 or generator-v7 bank and metadata for the native copy boundary. */
 struct SfzBank {
   std::vector<std::uint8_t> payload; /**< Header, normalized region table, and interleaved PCM pool. */

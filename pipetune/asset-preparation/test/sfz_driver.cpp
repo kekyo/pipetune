@@ -160,13 +160,10 @@ static int selectInput(std::uint64_t maximumBytes, std::uint64_t definitionBytes
     metadata.push_back({std::move(path), size, frames, readWord()});
   }
   auto parsed = parseSfz("main.sfz", documents, std::nullopt, kMaximumSfzBytes);
-  auto selection = selectSfzRegionsForBudget(parsed.regions, metadata, maximumBytes, definitionBytes);
-  parsed.regions = std::move(selection.regions);
+  validateSfzBudget(parsed.regions, metadata, maximumBytes, definitionBytes);
   std::cout << "{\"parsed\":";
   printParsed(parsed);
-  std::cout << ",\"reduced\":" << (selection.reduced ? "true" : "false");
-  if (selection.reduced) std::cout << ",\"velocity\":" << selection.velocity << ",\"keyCount\":" << selection.keyCount;
-  std::cout << "}\n";
+  std::cout << ",\"reduced\":false}\n";
   return 0;
 }
 

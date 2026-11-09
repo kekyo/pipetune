@@ -14,7 +14,6 @@
 #include "sfz/source.h"
 #include "sfz/text.h"
 #include <algorithm>
-#include <array>
 #include <map>
 #include <sstream>
 
@@ -109,7 +108,6 @@ static void describeWarnings(const assets::ParsedSfz &parsed, const assets::SfzB
     const auto explanation = warning.code == "invalid-regions" ? "invalid regions were omitted" :
         warning.code == "missing-samples" ? "missing sample files were omitted" :
         warning.code == "envelope-times-adjusted" ? "envelope times were adjusted to supported values" :
-        warning.code == "reduced-bank" ? "layers were reduced while preserving the complete key range" :
         warning.code == "loop-points-ignored" ? "unused invalid loop points were repaired" :
         "instrument preparation reported a warning";
     diagnostics.push_back("SFZ " + warning.code + ": " + std::to_string(warning.count) + "; " + explanation);
@@ -128,7 +126,7 @@ static void describeWarnings(const assets::ParsedSfz &parsed, const assets::SfzB
 static std::string cacheIdentity(const SfzReference &reference, std::string_view id, std::uint64_t maximumBytes,
     std::span<const AssetFileSnapshot> snapshots) {
   auto identity = std::ostringstream{};
-  identity << "effetune:d026b1664ec9444a66297efd36e251bc8aae3d05/sfz-resident-v4/ETA1-table-v6-generator-v7" << '\0'
+  identity << "effetune:d026b1664ec9444a66297efd36e251bc8aae3d05/sfz-resident-v5/ETA1-table-v6-generator-v7" << '\0'
       << assetDecoderVersion() << '\0' << reference.root.generic_string() << '\0' << reference.selected << '\0'
       << id << '\0' << maximumBytes << '\0';
   identity << "banks:" << reference.bankPaths.size() << '\0';
@@ -282,12 +280,7 @@ static cardio::promise<std::shared_ptr<const SharedPreparedAsset>> prepareRegist
   bankDefines = {};
   if (parsed.regions.empty()) throw assets::SfzError("no-regions", "The SFZ has no playable regions.");
   memory.resize(4 * definitionBytes + 8 * parsedMemory(parsed) + sourceOverhead(loadResult), maximumMemoryBytes);
-  auto selection = assets::selectSfzRegionsForBudget(parsed.regions, metadata, maximumBytes, definitionBytes);
-  parsed.regions = std::move(selection.regions);
-  if (selection.reduced) {
-    const auto warning = std::array{assets::SfzWarning{"reduced-bank", 1}};
-    parsed.warnings = assets::mergeSfzWarnings(parsed.warnings, warning);
-  }
+  assets::validateSfzBudget(parsed.regions, metadata, maximumBytes, definitionBytes);
   std::vector<assets::SfzDocument>().swap(documents);
   const auto key = cacheIdentity(reference, id, maximumBytes, loadResult.snapshots);
   loadResult.snapshots.push_back(std::move(registry.snapshot));

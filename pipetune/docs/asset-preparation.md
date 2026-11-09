@@ -29,7 +29,8 @@ at the boundary must remain useful when the implementation is replaced.
 Source links below identify the application tag from which each module's
 behavior was adapted. SFZ parsing and source handling originated in v2.14.0;
 the parser now rejects the unsupported feature families introduced by 2.17.0.
-Bank and generator preparation follow v2.17.0. The unchanged SFZ helpers, IR,
+Bank and generator preparation and whole-instrument capacity validation follow
+v2.17.0. The unchanged SFZ helpers, IR,
 and Room EQ adaptations retain their v2.13.0 origin. The adapted modules retain the upstream MIT attribution and
 `LICENSE.effetune` files.
 
@@ -40,8 +41,8 @@ and Room EQ adaptations retain their v2.13.0 origin. The adapted modules retain 
 | `sfz/source.cpp` | [source.js](https://github.com/Frieve-A/effetune/blob/v2.14.0/js/sfz/source.js) | UTF-8-first/Windows-1252 decoding, ARIA bank selection, initial definitions, and consulted bank dependencies |
 | `sfz/generators.cpp` | [generators.js](https://github.com/Frieve-A/effetune/blob/v2.17.0/js/sfz/generators.js) | Periodic source PCM and two-frame descriptors for native continuous noise and silence |
 | `sfz/text.cpp` | [parser.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/parser.js), [asset.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/asset.js) | UTF-8/UTF-16 conversion and JavaScript string ordering/length semantics |
-| `sfz/audio_header.cpp` | [bank.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/bank.js), [audio-header-metadata.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/ir-library/audio-header-metadata.js) | Bounded WAV/AIFF/FLAC header estimates for selection; unknown lengths stay unknown |
-| `sfz/selection.cpp` | [service.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/service.js) | Capacity selection preserving key coverage, velocity preference, and warning aggregation |
+| `sfz/audio_header.cpp` | [bank.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/bank.js), [audio-header-metadata.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/ir-library/audio-header-metadata.js) | Bounded WAV/AIFF/FLAC header estimates for capacity validation; unknown lengths stay unknown |
+| `sfz/selection.cpp` | [service.js](https://github.com/Frieve-A/effetune/blob/v2.17.0/js/sfz/service.js) | Complete-instrument capacity validation without layer reduction, and warning aggregation |
 | `sfz/bank.cpp` | [asset.js](https://github.com/Frieve-A/effetune/blob/v2.17.0/js/sfz/asset.js), [modulation.js](https://github.com/Frieve-A/effetune/blob/v2.17.0/js/sfz/modulation.js), [oscillator-source.js](https://github.com/Frieve-A/effetune/blob/v2.17.0/js/sfz/oscillator-source.js) | Resident v6 with 113 region fields; v7 fixed-value envelopes and built-in generators with prepared cycle pyramids; integer lanes, PCM, payload extent, and warmup |
 | `sfz/preparation.cpp` | [service.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/service.js) | Combining normalized regions and supplied PCM, sample-position validation, final warnings, and bank preparation |
 | `ir/preparation.cpp` | [ir-preparation.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/ir-library/ir-preparation.js), [ir-plugin-contract.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/ir-library/ir-plugin-contract.js), [ir-true-stereo-pair.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/ir-library/ir-true-stereo-pair.js) | Original channel layout, true-stereo pairing, trim/direct-cut/decay, and capacity-aware IR preparation |
