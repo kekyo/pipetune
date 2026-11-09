@@ -30,6 +30,10 @@ int main() {
   auto requests = Requests{};
   auto methods = pw_device_methods{};
   methods.version = PW_VERSION_DEVICE_METHODS;
+  methods.set_param = [](void *data, std::uint32_t, std::uint32_t, const spa_pod *) {
+    ++static_cast<Requests *>(data)->sequence;
+    return 0;
+  };
   methods.enum_params = [](void *data, int, std::uint32_t id, std::uint32_t, std::uint32_t, const spa_pod *) {
     auto &requests = *static_cast<Requests *>(data);
     const auto result = SPA_RESULT_RETURN_ASYNC(++requests.sequence);
@@ -40,6 +44,7 @@ int main() {
   auto device = std::make_unique<pipetune::InventoryObject>();
   device->owner = &inventory;
   device->canEnumerate = true;
+  device->canWrite = true;
   device->proxy = reinterpret_cast<pw_proxy *>(&interface);
   device->properties = {{"device.api", "test"}, {"device.name", "generation"}};
   auto *target = device.get();
@@ -85,11 +90,31 @@ int main() {
   const auto active = std::find_if(snapshot.profiles.begin(), snapshot.profiles.end(), [](const auto &p) { return p.active; });
   const auto routes = pipetune::pipeWireInputRoutes(inventory,
       {.api = "test", .location = "generation", .vendor = {}, .product = {}, .serial = {}});
-  target->proxy = nullptr;
   if (snapshot.profiles.size() != 2 || active == snapshot.profiles.end() ||
       active->cardProfileName != "output:optical+input:mic" || routes.size() != 1 || routes[0].index != 2) {
+    target->proxy = nullptr;
     std::cerr << "late enumeration responses changed the current card profiles or input route\n";
     return 1;
+  }
+  const auto card = pipetune::OutputCardIdentity{.api = "test", .location = "generation",
+      .vendor = {}, .product = {}, .serial = {}};
+  pipetune::deviceInfo(target, &info);
+  const auto replacement = requests.parameters;
+  const auto duringRefresh = pipetune::pipeWireInputRoutes(inventory, card);
+  const auto selectionError = pipetune::setPipeWireOutputProfile(inventory,
+      {.card = card, .cardProfileName = "output:analog+input:mic", .outputKey = "analog"});
+  profile(replacement, SPA_PARAM_EnumProfile, 0, "output:analog+input:mic");
+  profile(replacement, SPA_PARAM_EnumProfile, 1, "output:optical+input:mic");
+  profile(replacement, SPA_PARAM_Profile, 0, "output:analog+input:mic");
+  route(replacement, 3);
+  const auto beforeCompletion = pipetune::pipeWireInputRoutes(inventory, card);
+  pipetune::coreDone(&inventory, PW_ID_CORE, inventory.pending);
+  const auto afterCompletion = pipetune::pipeWireInputRoutes(inventory, card);
+  target->proxy = nullptr;
+  if (!selectionError.empty() || duringRefresh != routes || beforeCompletion != routes ||
+      afterCompletion.size() != 1 || afterCompletion[0].index != 3) {
+    std::cerr << "profile operations observed an incomplete refresh: " << selectionError << '\n';
+    return 3;
   }
   auto nodeMethods = pw_node_methods{};
   nodeMethods.version = PW_VERSION_NODE_METHODS;
