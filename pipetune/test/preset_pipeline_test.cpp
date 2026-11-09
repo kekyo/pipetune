@@ -1417,6 +1417,28 @@ static bool testUnsupportedMidiPlayer(const std::filesystem::path &directory) {
   return true;
 }
 
+static bool testSfzFixedPreparationBudget(const std::filesystem::path &directory) {
+  const auto path = writePreset(directory, "sfz-memory.effetune_preset",
+      R"({"pipeline":[{"name":"SoundFont Note Player","parameters":{"dm":100,"wm":0}}]})");
+  auto context = pipetune::PipelineLoadContext{};
+  context.assetMemoryBytes = 1024 * 1024;
+  const auto tiny = pipetune::loadDspPipeline(path, {48000, 2, 128}, context);
+  if (!check(!tiny.pipeline && tiny.error.find("combined asset memory budget") != std::string::npos,
+      "SFZ fixed preparation must be admitted even without an assigned instrument")) return false;
+  context.assetMemoryBytes = 96 * 1024 * 1024;
+  auto active = pipetune::loadDspPipeline(path, {48000, 2, 128}, context);
+  if (!check(active.pipeline != nullptr, active.error)) return false;
+  const auto rejected = pipetune::loadDspPipeline(path, {48000, 2, 128}, context);
+  if (!check(!rejected.pipeline && rejected.error.find("combined asset memory budget") != std::string::npos,
+      "an active SFZ instance and its candidate must share fixed preparation admission")) return false;
+  auto pcm = std::array<float, 256>{};
+  if (!check(active.pipeline->process(pcm, 2, 128, 0) == pipetune::ProcessStatus::ok,
+      "memory rejection must preserve the active SFZ pipeline")) return false;
+  active.pipeline.reset();
+  const auto recovered = pipetune::loadDspPipeline(path, {48000, 2, 128}, context);
+  return check(recovered.pipeline != nullptr, "destroying an SFZ instance must release its preparation reservation");
+}
+
 int main() {
   const auto directory =
       std::filesystem::temp_directory_path() /
@@ -1430,7 +1452,8 @@ int main() {
   const auto bassWidth = testBassExtenderProcessingWidth(directory);
   const auto visualizers = testVisualizationPresets(directory);
   const auto midi = testUnsupportedMidiPlayer(directory);
-  const auto passed = midi && effects212 && analog && testPresetEntries(directory) && attack && bass && bassWidth && visualizers &&
+  const auto memory = testSfzFixedPreparationBudget(directory);
+  const auto passed = memory && midi && effects212 && analog && testPresetEntries(directory) && attack && bass && bassWidth && visualizers &&
       testFirCrossoverRouting(directory) && testFirCrossoverBands(directory) &&
       testEffeTune210Pipeline(directory) && testSpatialMapper(directory) && testTvAudioSimulator(directory) &&
       testBypassPipeline() && testCanonicalPreset(directory) &&

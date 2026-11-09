@@ -937,6 +937,21 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
 
     const auto &generatedAsset = sharedAsset ? sharedAsset->asset : ownedAsset;
     auto assetInfo = generatedAsset.info;
+    auto sfzFixedBytes = std::uint64_t{0};
+    if (sfzPlayer) {
+      // The public asset estimate excludes instance preparation. Across the
+      // supported 32..384 kHz range, 64 MiB bounds resampling tables, analyzer
+      // frontends/models, voices and their preparation scratch. Account for
+      // block planes and rate/channel-dependent delay lines separately.
+      // https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/plugins/others/sfz/engine.h
+      sfzFixedBytes = 64ull * 1024 * 1024 + 32ull * options.maxFrames +
+          8ull * static_cast<std::uint64_t>(std::ceil(options.sampleRate)) * (options.maxChannels + 2u);
+      try {
+        implementation->nativeAssetMemory.emplace_back(sfzFixedBytes, context.assetMemoryBytes);
+      } catch (const std::exception &error) {
+        co_return fail(nodeError(index, error.what()), std::move(warnings));
+      }
+    }
     if (sfzPlayer && !generatedAsset.payload.empty()) {
       const auto &payload = generatedAsset.payload;
       if (payload.size() < 80 || payload.size() > UINT32_MAX)
@@ -963,6 +978,14 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
             " bytes, exceeding the instrument budget"), std::move(warnings));
       // Shared and persistent caches retain only the portable serialized extent.
       assetInfo.footprint_bytes = static_cast<std::uint32_t>(requiredBytes);
+      try {
+        // Retain both the native bank and fixed instance reservation for the
+        // entire engine lifetime, including overlap with a replacement engine.
+        implementation->nativeAssetMemory.back().resize(
+            sfzFixedBytes + requiredBytes + 1024 * 1024, context.assetMemoryBytes);
+      } catch (const std::exception &error) {
+        co_return fail(nodeError(index, error.what()), std::move(warnings));
+      }
     }
 
     const auto instance =
@@ -993,9 +1016,10 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
       try {
         // The footprint includes the native staging payload and convolution
         // buffers. Keep the admission probe's 1 MiB margin through warmup.
-        implementation->nativeAssetMemory.emplace_back(
-            static_cast<std::uint64_t>(assetInfo.footprint_bytes) + 1024 * 1024,
-            context.assetMemoryBytes);
+        if (!sfzPlayer)
+          implementation->nativeAssetMemory.emplace_back(
+              static_cast<std::uint64_t>(assetInfo.footprint_bytes) + 1024 * 1024,
+              context.assetMemoryBytes);
       } catch (const std::exception &error) {
         co_return fail(nodeError(index, error.what()), std::move(warnings));
       }

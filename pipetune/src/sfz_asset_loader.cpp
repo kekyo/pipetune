@@ -128,7 +128,7 @@ static void describeWarnings(const assets::ParsedSfz &parsed, const assets::SfzB
 static std::string cacheIdentity(const SfzReference &reference, std::string_view id, std::uint64_t maximumBytes,
     std::span<const AssetFileSnapshot> snapshots) {
   auto identity = std::ostringstream{};
-  identity << "effetune:01c96f00f8e93595aefab96de4bc4d210e61c53b/sfz-v2/ETA1-table-v2" << '\0'
+  identity << "effetune:d026b1664ec9444a66297efd36e251bc8aae3d05/sfz-resident-v3/ETA1-table-v6" << '\0'
       << assetDecoderVersion() << '\0' << reference.root.generic_string() << '\0' << reference.selected << '\0'
       << id << '\0' << maximumBytes << '\0';
   identity << "banks:" << reference.bankPaths.size() << '\0';
