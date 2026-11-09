@@ -208,9 +208,10 @@ Spectrogram and Spectrum Analyzer include the upstream `hq` parameter in
 their validated layouts even though PipeTune omits their execution.
 
 Tonal Balance EQ, Rhythm Analyzer, Analog Meter, TV Audio Simulator,
-Attack Tonal Balance, Adaptive Prediction, SFZ Note Player, and Note Spectrogram
+Attack Tonal Balance, Adaptive Prediction, SoundFont Note Player, SoundFont Player,
+and Note Spectrogram
 use the same source-specific `-ffp-contract=off` policy
-as the [upstream native build](https://github.com/Frieve-A/effetune/blob/v2.13.0/dsp/CMakeLists.txt).
+as the [upstream native build](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/CMakeLists.txt).
 Artifact tests load every CPU-applicable private backend and compare all seven
 Spatial Mapper and six TV Audio Simulator golden cases, including their input
 stimuli and parameter events. Spatial Mapper's goldens originate from the
@@ -228,9 +229,12 @@ beyond initial measurement. They check actual correction/clicks, routing and
 reset, and compare silence suspension with uninterrupted processing. Official tolerances are
 retained for every case.
 
-The existing references cover all 17 Adaptive Prediction and 11 Classic SFZ Note
-Player goldens, alongside the 18 Cassette Artifacts and 13 IR Reverb goldens.
-Two EffeTune 2.15.0 Event references bring SFZ Note Player to 13 golden cases.
+The existing references cover all 17 Adaptive Prediction and 11 Classic SoundFont
+Note Player goldens, alongside the 18 Cassette Artifacts and 13 IR Reverb goldens.
+Two EffeTune 2.15.0 Event references bring Note Player to 13 golden cases.
+The shared-backend tests also cover ten Chorus and nine FDN Reverb goldens,
+long decays, subnormal inputs, and x86 MXCSR restoration on successful and
+rejected renders.
 SFZ banks and convolution assets use the same copy ABI as the product loader.
 Independent asset-preparation tests compare C++ values and rendered PCM with
 the pinned upstream JavaScript preparation, including Room EQ's three phase
