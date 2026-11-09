@@ -2656,6 +2656,11 @@ static void outputInventoryChanged(const OutputInventoryResult &snapshot, void *
   }
   advanceProfileTransition(runtime);
   if (runtime.profileTransition.phase != PipeWireRuntime::ProfilePhase::idle) {
+    // A stream rebuild or rollback can still be waiting for the physical
+    // volume snapshot after its policy acknowledgement. The final inventory
+    // notification must complete it while the profile transaction is prepared.
+    if (runtime.profileTransition.phase == PipeWireRuntime::ProfilePhase::prepared && runtime.previousOutput)
+      finishReadinessCheck(runtime);
     runtime.profileRestoreDecisionPending.store(false, std::memory_order_release);
     requestControlStatusUpdate(runtime);
     return;
