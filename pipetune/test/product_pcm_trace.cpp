@@ -12,6 +12,7 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -32,8 +33,13 @@ struct PcmChannelRecord {
 };
 
 struct PcmRecord {
+  std::uint64_t observed = 0;
   std::uint64_t time = 0;
   std::uint64_t ticks = 0;
+  std::int64_t delay = 0;
+  std::uint64_t queued = 0;
+  std::uint64_t buffered = 0;
+  std::uint32_t queuedBuffers = 0;
   std::uint32_t frames = 0;
   std::array<PcmChannelRecord, 4> channels;
 };
@@ -117,11 +123,18 @@ static void recordPcm(PcmStreamRecord &stream, pw_buffer *buffer) {
   const auto index = stream.count.fetch_add(1, std::memory_order_relaxed);
   if (index >= stream.records.size()) return;
   auto &record = stream.records[index];
+  record.observed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
   record.time = buffer->time;
   auto time = pw_time{};
   auto *owner = stream.stream.load(std::memory_order_relaxed);
-  if (owner != nullptr && pw_stream_get_time_n(owner, &time, sizeof(time)) >= 0)
+  if (owner != nullptr && pw_stream_get_time_n(owner, &time, sizeof(time)) >= 0) {
     record.ticks = time.ticks;
+    record.delay = time.delay;
+    record.queued = time.queued;
+    record.buffered = time.buffered;
+    record.queuedBuffers = time.queued_buffers;
+  }
   if (buffer->buffer == nullptr || buffer->buffer->datas == nullptr) return;
   const auto count = std::min<std::size_t>(record.channels.size(), buffer->buffer->n_datas);
   for (auto channel = std::size_t{0}; channel < count; ++channel) {
@@ -198,7 +211,9 @@ void finishProductPcmTrace() {
     for (auto index = std::size_t{0}; index < std::min(count, stream.records.size()); ++index) {
       const auto &record = stream.records[index];
       if (index != 0) output << ',';
-      output << "{\"time\":" << record.time << ",\"ticks\":" << record.ticks << ",\"frames\":" << record.frames << ",\"channels\":[";
+      output << "{\"observed\":" << record.observed << ",\"time\":" << record.time << ",\"ticks\":" << record.ticks
+             << ",\"delay\":" << record.delay << ",\"queued\":" << record.queued << ",\"buffered\":" << record.buffered
+             << ",\"queuedBuffers\":" << record.queuedBuffers << ",\"frames\":" << record.frames << ",\"channels\":[";
       for (auto channel = std::size_t{0}; channel < record.channels.size(); ++channel) {
         const auto &values = record.channels[channel];
         if (channel != 0) output << ',';

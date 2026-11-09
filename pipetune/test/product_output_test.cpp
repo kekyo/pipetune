@@ -209,6 +209,9 @@ struct LatencyBlock {
   std::uint32_t frames = 0;
   std::int64_t firstTag = -1;
   std::int64_t lastTag = -1;
+  std::uint32_t mismatchFrame = UINT32_MAX;
+  std::int64_t expectedTag = -1;
+  std::int64_t actualTag = -1;
   bool valid = true;
   bool ordered = true;
   const char *error = nullptr;
@@ -422,6 +425,12 @@ static LatencyBlock inspectLatencyBlock(unsigned index, const pw_buffer &buffer)
       else tags[channel] = static_cast<std::int64_t>(scaled) - (channel + 1) * channelOffset;
     }
     valid = valid && tags[0] == tags[1];
+    if (block.mismatchFrame == UINT32_MAX &&
+        (!valid || (previous >= 0 && tags[0] != (previous + 1) % tagPeriod))) {
+      block.mismatchFrame = frame;
+      block.expectedTag = previous < 0 ? -1 : (previous + 1) % tagPeriod;
+      block.actualTag = tags[0];
+    }
     if (frame == 0) block.firstTag = valid ? tags[0] : -1;
     block.valid = block.valid && valid;
     block.ordered = block.ordered && (previous < 0 || !valid || tags[0] == (previous + 1) % tagPeriod);
@@ -442,7 +451,9 @@ static void consumeLatencyBlock(TestOutput &output, const LatencyBlock &block) {
     if (!test.latencyReconnect || test.stage == 0) {
       std::cerr << "latency PCM mismatch: output=" << output.index << " previous=" << output.previousTag
                 << " first=" << block.firstTag << " last=" << block.lastTag
-                << " valid=" << block.valid << " time=" << block.time << '\n';
+                << " valid=" << block.valid << " time=" << block.time
+                << " frame=" << block.mismatchFrame << " expected=" << block.expectedTag
+                << " actual=" << block.actualTag << '\n';
       return fail(test, "steady latency PCM lost channel identity or frame order");
     }
     // Rebuilding the distribution intentionally fades and discards queued

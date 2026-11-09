@@ -332,6 +332,127 @@ static void checkEffeTune217Catalog(const BackendApi &api) {
   }
 }
 
+static void checkCallerFloatingPointState(const BackendApi &api) {
+#if defined(__i386__) || defined(__x86_64__)
+  // Inspect MXCSR even when this i686 test driver was built without SSE flags.
+  // The loaded native backend requires SSE2 independently of the driver ABI.
+  const auto read = [] {
+    auto value = std::uint32_t{};
+    __asm__ volatile("stmxcsr %0" : "=m"(value));
+    return value;
+  };
+  const auto write = [](std::uint32_t value) {
+    __asm__ volatile("ldmxcsr %0" : : "m"(value));
+  };
+  const auto engine = api.engineCreate();
+  check(engine != 0u && api.enginePrepare(engine, 48000, 2, 128, 4096) == ET_OK,
+        "floating-point state test engine must prepare");
+  const auto instance = api.instanceCreate(engine, "VolumePlugin");
+  if (engine == 0u || instance == 0u) {
+    check(false, "floating-point state test instance must be available");
+    if (engine != 0u) api.engineDestroy(engine);
+    return;
+  }
+  auto descriptor = std::array<std::uint8_t, 20>{1, 0, 0, 0, 1};
+  for (auto byte = 0u; byte < 4u; ++byte)
+    descriptor[8u + byte] = static_cast<std::uint8_t>(instance >> (byte * 8u));
+  descriptor[12] = descriptor[16] = 1;
+  descriptor[15] = 254;
+  check(api.pipelineConfigure(engine, descriptor.data(), descriptor.size()) == ET_OK,
+        "floating-point state test pipeline must configure");
+  auto audio = std::array<float, 256>{};
+  const auto original = read();
+  for (auto rounding = 0u; rounding < 4u; ++rounding) {
+    for (const auto flush : {0u, 0x40u, 0x8000u, 0x8040u}) {
+      // Preserve rounding, both flush controls, and pre-existing sticky flags.
+      // Mask exceptions so setting sticky flags cannot trap the test process.
+      const auto expected = (original & ~0xe07fu) | 0x1f80u | (rounding << 13u) | flush | 0x21u;
+      for (const auto pipeline : {false, true}) {
+        for (const auto frames : {128u, 129u}) {
+          std::fill(audio.begin(), audio.end(), std::bit_cast<float>(std::uint32_t{1}));
+          std::fill_n(api.arenaCombinedPtr(engine), audio.size(), 0.25F);
+          write(expected);
+          const auto status = pipeline
+              ? api.pipelineProcess(engine, 2, frames, 0.0, 0)
+              : api.instanceProcess(engine, instance, audio.data(), 2, frames, 0.0);
+          const auto observed = read();
+          write(original);
+          check(status == (frames == 128u ? ET_OK : ET_ERR_ARGS),
+                "floating-point state check must cover successful and rejected renders");
+          check(observed == expected,
+                "native rendering must restore the caller's complete MXCSR on success and error");
+        }
+      }
+    }
+  }
+  api.engineDestroy(engine);
+#else
+  static_cast<void>(api);
+#endif
+}
+
+static void checkDecayAndQuietInput(const BackendApi &api) {
+  for (const auto *type : {"ChorusPlugin", "FDNReverbPlugin"}) {
+    const auto engine = api.engineCreate();
+    check(engine != 0u && api.enginePrepare(engine, 48000, 2, 257, 0) == ET_OK,
+          "decay test engine must prepare");
+    const auto instance = api.instanceCreate(engine, type);
+    const auto *definition = pipetune::findDspByTypeName(type);
+    if (engine == 0u || instance == 0u || definition == nullptr) {
+      check(false, "decay test instance must be available");
+      if (engine != 0u) api.engineDestroy(engine);
+      continue;
+    }
+    const auto fdn = std::string_view(type) == "FDNReverbPlugin";
+    const auto *text = fdn ? R"({"rt":1.2,"wm":100,"dm":0})" : R"({"fb":75,"mx":100})";
+    auto *document = yyjson_read(text, std::strlen(text), 0);
+    const auto packed = pipetune::packDspParameters(*definition, yyjson_doc_get_root(document));
+    yyjson_doc_free(document);
+    check(api.instanceSetParams(engine, instance, packed.floats.data(), packed.floats.size(),
+                                definition->hash, 0) == ET_OK,
+          "wet decay parameters must apply");
+    check(api.instanceLatency(engine, instance) == 0,
+          "Chorus and FDN must not add algorithmic latency");
+    auto first = std::vector<float>();
+    auto block = std::array<float, 514>{};
+    for (auto repeat = 0u; repeat < 2u; ++repeat) {
+      check(api.instanceReset(engine, instance) == ET_OK, "decay reset must succeed");
+      auto earlyEnergy = 0.0;
+      auto finalPeak = 0.0F;
+      for (auto offset = 0u; offset < 48000u * 12u; offset += 257u) {
+        const auto frames = std::min(257u, 48000u * 12u - offset);
+        // Very small input remains present after the impulse and its long tail.
+        std::fill(block.begin(), block.end(), std::bit_cast<float>(std::uint32_t{1}));
+        if (offset == 0) block[0] = block[frames] = 0.5F;
+        check(api.instanceProcess(engine, instance, block.data(), 2, frames, offset / 48000.0) == ET_OK,
+              "decay and subnormal input must process successfully");
+        for (auto channel = 0u; channel < 2u; ++channel) {
+          for (auto frame = 0u; frame < frames; ++frame) {
+            const auto value = block[channel * frames + frame];
+            check(std::isfinite(value), "long decay and subnormal input must remain finite");
+            if (offset + frame < 48000u) {
+              earlyEnergy += static_cast<double>(value) * value;
+              if (repeat == 0u) first.push_back(value);
+            }
+            if (offset + frame >= 48000u * 11u) finalPeak = std::max(finalPeak, std::abs(value));
+          }
+        }
+        if (repeat != 0u && offset < 48000u) {
+          const auto start = static_cast<std::size_t>(offset) * 2u;
+          const auto count = std::min(frames, 48000u - offset);
+          for (auto channel = 0u; channel < 2u; ++channel)
+            for (auto frame = 0u; frame < count; ++frame)
+              check(std::abs(block[channel * frames + frame] - first[start + channel * count + frame]) < 1e-6F,
+                    "reset must reproduce the audible decay");
+        }
+      }
+      check(earlyEnergy > 1e-4 && finalPeak < 1e-8F,
+            "a wet impulse must sound and decay to silence despite subnormal input");
+    }
+    api.engineDestroy(engine);
+  }
+}
+
 static void checkUnrelatedInstanceDestruction(const BackendApi &api) {
   const auto engine = api.engineCreate();
   check(engine != 0u && api.enginePrepare(engine, 48000, 2, 128, 4096) == ET_OK,
@@ -1119,6 +1240,12 @@ int main(int argc, char **argv) {
       checkAllAbiSymbols(scalar.handle);
       checkEffeTune217Catalog(scalar);
       checkTubeRuntimeContract(scalar);
+      checkCallerFloatingPointState(scalar);
+      checkDecayAndQuietInput(scalar);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                          pluginRoot / "modulation/chorus/golden", 10u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                          pluginRoot / "reverb/fdn_reverb/golden", 9u);
       checkUnrelatedInstanceDestruction(scalar);
       checkSfzPreviewTransitions(scalar);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
@@ -1191,6 +1318,10 @@ int main(int argc, char **argv) {
         checkAllAbiSymbols(simd.handle);
         checkCatalogsMatch(scalar, simd);
         checkTubeRuntimeContract(simd);
+        checkCallerFloatingPointState(simd);
+        checkDecayAndQuietInput(simd);
+        checkMetadataGoldens(simd, expected, pluginRoot / "modulation/chorus/golden", 10u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "reverb/fdn_reverb/golden", 9u);
         checkUnrelatedInstanceDestruction(simd);
         checkSfzPreviewTransitions(simd);
         checkMetadataGoldens(simd, expected, pluginRoot / "analyzer/rhythm_analyzer/golden", 6u);
