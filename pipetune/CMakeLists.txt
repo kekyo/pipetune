@@ -154,6 +154,10 @@ add_custom_command(
   DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate-dsp-catalog.mjs"
     "${PIPETUNE_EFFETUNE_DIR}/scripts/gen-dsp-params.mjs"
+    "${PIPETUNE_EFFETUNE_DIR}/scripts/gen-sfz-schema.mjs"
+    "${PIPETUNE_EFFETUNE_DIR}/scripts/gen-sfz-effects-schema.mjs"
+    "${PIPETUNE_EFFETUNE_DIR}/js/sfz/modulation-schema.js"
+    "${PIPETUNE_EFFETUNE_DIR}/js/sfz/effects.js"
     "${PIPETUNE_EFFETUNE_DIR}/dsp/bindings/common/effects-v1.overlay.json"
     "${PIPETUNE_EFFETUNE_DIR}/plugins/plugins.txt"
     "${PIPETUNE_EFFETUNE_DIR}/dsp/registry.inc"
@@ -172,6 +176,8 @@ add_subdirectory(
   "${PIPETUNE_EFFETUNE_DIR}/dsp"
   "${CMAKE_CURRENT_BINARY_DIR}/effetune-dsp")
 unset(CMAKE_PROJECT_effetune_dsp_INCLUDE)
+pipetune_configure_effetune_native_layout(
+  effetune_dsp_core PUBLIC "${PIPETUNE_NATIVE_PROCESSOR}")
 pipetune_configure_effetune_mxcsr_source(
   "${PIPETUNE_EFFETUNE_DIR}/dsp/core/engine.cpp"
   "${PIPETUNE_NATIVE_PROCESSOR}"
@@ -682,12 +688,18 @@ if(BUILD_TESTING)
   set_tests_properties(pipetune_asset_preparation_contracts PROPERTIES
     WORKING_DIRECTORY "${PIPETUNE_ASSET_TEST_DIR}" TIMEOUT 300)
 
-  add_executable(pipetune_effetune_216_tests test/effetune_216_test.cpp)
-  target_include_directories(pipetune_effetune_216_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
-  target_link_libraries(pipetune_effetune_216_tests PRIVATE pipetune_core)
-  target_compile_options(pipetune_effetune_216_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  add_dependencies(pipetune_effetune_216_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
-  add_test(NAME pipetune_effetune_216_tests COMMAND pipetune_effetune_216_tests
+  add_executable(pipetune_public_asset_bridge_tests
+    test/public_asset_bridge_test.cpp src/effetune_backend_asset_bridge.cpp)
+  target_include_directories(pipetune_public_asset_bridge_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_compile_options(pipetune_public_asset_bridge_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_public_asset_bridge_tests COMMAND pipetune_public_asset_bridge_tests)
+
+  add_executable(pipetune_effetune_217_tests test/effetune_217_test.cpp)
+  target_include_directories(pipetune_effetune_217_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_link_libraries(pipetune_effetune_217_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_effetune_217_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_effetune_217_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
+  add_test(NAME pipetune_effetune_217_tests COMMAND pipetune_effetune_217_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test/presets/effetune-2.13/adaptive-original.effetune_preset)
 
   add_executable(pipetune_adaptive_prediction_tests test/adaptive_prediction_test.cpp)

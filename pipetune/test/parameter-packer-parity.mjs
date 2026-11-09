@@ -146,6 +146,7 @@ for (const [key, values] of [
   ['ss', [-7, -6, -0.5, 0, 0.5, 6, 7, null, 'invalid']],
   ['pm', [-2, -1, 0, 60.5, 127, 128, null, 'invalid']],
   ['pv', [0, 1, 63.5, 100, 127, 128, null, 'invalid']],
+  ['sp0', [-2, -1, 0, 1.5, 8388607, 8388608, null, 'invalid']],
   ['dt', ['Classic', 'Event', 'invalid', null, 0, 1, false]]
 ]) {
   for (const value of values) {
