@@ -236,8 +236,8 @@ struct TestOutput {
   std::uint64_t zeroFrames = 0;
   std::uint64_t longestSilence = 0;
   std::int64_t previousTag = -1;
-  std::int64_t blockTime = 0;
-  std::uint32_t blockFrames = 0;
+  LatencyBlock latestLatencyBlock;
+  LatencyBlock completedLatencyBlock;
   std::array<std::array<double, 2>, 2> previousToneSamples = {};
   // One data-loop writer and one main-loop reader. Only metadata crosses the
   // boundary; PipeWire buffers are always returned inside the process callback.
@@ -467,18 +467,27 @@ static void consumeLatencyBlock(TestOutput &output, const LatencyBlock &block) {
     for (auto &item : test.outputs) item.frames = 0;
   }
   output.previousTag = block.lastTag;
-  output.matched = block.valid && consecutive;
-  output.blockTime = static_cast<std::int64_t>(block.time);
-  output.blockFrames = block.frames;
+  const auto previous = output.latestLatencyBlock;
+  output.latestLatencyBlock = block;
+  output.latestLatencyBlock.valid = block.valid && consecutive;
+  // A delayed PipeWire callback can observe an already advanced graph clock,
+  // giving consecutive buffers the same capture time. Close that time group
+  // before comparing its final block with the other device. PCM continuity is
+  // still checked for every block above, including earlier blocks in a group.
+  // https://github.com/PipeWire/pipewire/blob/1.0.5/src/pipewire/stream.c
+  if (previous.time == 0 || previous.time == block.time) return;
+  output.completedLatencyBlock = previous;
   auto &a = test.outputs[0];
   auto &b = test.outputs[1];
+  const auto &ac = a.completedLatencyBlock;
+  const auto &bc = b.completedLatencyBlock;
   const auto single = test.oneOutput || (test.latencyReconnect && test.stage == 1);
-  if (!a.matched || (!single && !b.matched) || a.blockTime == 0 || (!single && b.blockTime == 0)) return;
+  if (!ac.valid || (!single && !bc.valid) || ac.time == 0 || (!single && bc.time == 0)) return;
   // Compare buffers from the same graph cycle. Scheduling gaps can advance
   // cycle time without inserting PCM, so elapsed nanoseconds cannot stand in
   // for the frame distance between callbacks from different cycles.
-  if (!single && a.blockTime != b.blockTime) return;
-  const auto relative = static_cast<std::int64_t>(a.blockFrames) - b.blockFrames + b.previousTag - a.previousTag +
+  if (!single && ac.time != bc.time) return;
+  const auto relative = static_cast<std::int64_t>(ac.frames) - bc.frames + bc.lastTag - ac.lastTag +
       (test.intentionalDelay ? 48 : 0);
   const auto compensation = single ? -1 : (relative % tagPeriod + tagPeriod) % tagPeriod;
   const auto aligned = single || (compensation <= test.declaredLatency && test.declaredLatency - compensation <= 1);
@@ -493,9 +502,9 @@ static void consumeLatencyBlock(TestOutput &output, const LatencyBlock &block) {
     if (!test.latencyReconnect || test.stage == 0) {
       std::cerr << "latency mismatch: compensation=" << compensation
                 << " declared=" << test.declaredLatency << " stage=" << test.stage
-                << " times=" << a.blockTime << ',' << b.blockTime
-                << " blocks=" << a.blockFrames << ',' << b.blockFrames
-                << " tags=" << a.previousTag << ',' << b.previousTag << '\n';
+                << " times=" << ac.time << ',' << bc.time
+                << " blocks=" << ac.frames << ',' << bc.frames
+                << " tags=" << ac.lastTag << ',' << bc.lastTag << '\n';
       return fail(test, "steady product delay compensation differs from the device latency");
     }
     test.latencySettled = false;
@@ -503,8 +512,8 @@ static void consumeLatencyBlock(TestOutput &output, const LatencyBlock &block) {
     return;
   }
   if (single && output.index != 0) return;
-  a.frames += a.blockFrames;
-  if (!single) b.frames += b.blockFrames;
+  a.frames += ac.frames;
+  if (!single) b.frames += bc.frames;
   if (test.fixedLatency && !test.failurePoint.empty() && !test.injectionReady && a.frames >= 2048) {
     test.injectionReady = true;
     test.waitingForFailure = true;
@@ -555,8 +564,65 @@ static void consumeLatencyBlock(TestOutput &output, const LatencyBlock &block) {
   ++test.stage;
   test.declaredLatency = test.latencyReconnect ? (test.stage == 1 ? 0 : 63) : test.stage == 1 ? 127 : 31;
   test.latencySettled = false;
-  for (auto &item : test.outputs) { item.frames = 0; item.matched = false; item.previousTag = -1; }
+  for (auto &item : test.outputs) {
+    item.frames = 0; item.matched = false; item.previousTag = -1;
+    item.latestLatencyBlock = {}; item.completedLatencyBlock = {};
+  }
   pw_loop_signal_event(pw_main_loop_get_loop(test.loop), test.graphEvent);
+}
+
+static int verifyLatencyObservation() {
+  auto test = AudioTest{};
+  test.fixedLatency = true;
+  test.declaredLatency = 63;
+  for (auto index = 0U; index < test.outputs.size(); ++index) {
+    test.outputs[index].test = &test;
+    test.outputs[index].index = index;
+  }
+  const auto deliver = [&](unsigned device, std::uint64_t time, std::int64_t first) {
+    consumeLatencyBlock(test.outputs[device], LatencyBlock{
+        .time = time, .frames = 256, .firstTag = first, .lastTag = first + 255});
+  };
+  for (auto cycle = 1U; cycle <= 3; ++cycle) {
+    deliver(0, cycle, cycle * 256);
+    deliver(1, cycle, cycle * 256 + 63);
+  }
+  // The delayed device callback observes the next clock tick. Its PCM and
+  // the following callback remain consecutive, but both carry cycle 5.
+  deliver(0, 4, 1024);
+  deliver(1, 5, 1087);
+  deliver(0, 5, 1280);
+  deliver(1, 5, 1343);
+  for (auto cycle = 6U; cycle <= 8; ++cycle) {
+    deliver(0, cycle, cycle * 256);
+    deliver(1, cycle, cycle * 256 + 63);
+  }
+  if (!test.error.empty() || !test.latencySettled || test.outputs[0].frames < 512) {
+    std::cerr << "continuous PCM with a repeated capture time was rejected: " << test.error << '\n';
+    return 1;
+  }
+  deliver(0, 9, 9 * 256 + 1);
+  if (test.error.empty()) {
+    std::cerr << "a one-frame PCM discontinuity was accepted\n";
+    return 2;
+  }
+  auto shifted = AudioTest{};
+  shifted.fixedLatency = true;
+  shifted.declaredLatency = 63;
+  for (auto index = 0U; index < 2; ++index) {
+    shifted.outputs[index].test = &shifted;
+    shifted.outputs[index].index = index;
+  }
+  for (auto cycle = 1U; cycle <= 8; ++cycle) for (auto device = 0U; device < 2; ++device) {
+    const auto first = static_cast<std::int64_t>(cycle) * 256 + (device == 1 ? 63 - 256 : 0);
+    consumeLatencyBlock(shifted.outputs[device], LatencyBlock{
+        .time = cycle, .frames = 256, .firstTag = first, .lastTag = first + 255});
+  }
+  if (shifted.latencySettled || shifted.outputs[0].frames != 0) {
+    std::cerr << "an extra queued output block was accepted as aligned\n";
+    return 3;
+  }
+  return 0;
 }
 
 static void setMasterVolume(AudioTest &test) {
@@ -1671,6 +1737,7 @@ int main(int argc, char **argv) {
   if (!signals.empty()) { std::cerr << signals << '\n'; return 1; }
   if (argc < 3) return 2;
   if (std::string_view(argv[1]) == "trace") return verifyProductPcmTrace();
+  if (std::string_view(argv[1]) == "latency-observer") return verifyLatencyObservation();
   if (std::string_view(argv[1]) == "control" && argc == 4) {
     const auto result = pipetune::exchangeControlMessage(argv[2], argv[3]);
     if (!result.error.empty()) { std::cerr << result.error << '\n'; return 1; }
