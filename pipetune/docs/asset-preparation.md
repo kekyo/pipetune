@@ -117,7 +117,7 @@ gain/delay controls do not invalidate Room's generated FIR. A cache hit still
 requires valid originals; corrupt entries regenerate, and an unwritable cache
 does not discard a successfully prepared payload.
 
-The 2.17.0 SFZ identity is `sfz-resident-v4/ETA1-table-v6-generator-v7` under the
+The 2.17.0 SFZ identity is `sfz-resident-v5/ETA1-table-v6-generator-v7` under the
 pinned upstream commit. Earlier SFZ entries regenerate from originals.
 IR and Room EQ keep their existing identities. Cached SFZ footprint metadata
 contains only the portable payload length; native preparation storage is queried
