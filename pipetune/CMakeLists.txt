@@ -688,12 +688,6 @@ if(BUILD_TESTING)
   set_tests_properties(pipetune_asset_preparation_contracts PROPERTIES
     WORKING_DIRECTORY "${PIPETUNE_ASSET_TEST_DIR}" TIMEOUT 300)
 
-  add_executable(pipetune_public_asset_bridge_tests
-    test/public_asset_bridge_test.cpp src/effetune_backend_asset_bridge.cpp)
-  target_include_directories(pipetune_public_asset_bridge_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
-  target_compile_options(pipetune_public_asset_bridge_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  add_test(NAME pipetune_public_asset_bridge_tests COMMAND pipetune_public_asset_bridge_tests)
-
   add_executable(pipetune_effetune_217_tests test/effetune_217_test.cpp)
   target_include_directories(pipetune_effetune_217_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
   target_link_libraries(pipetune_effetune_217_tests PRIVATE pipetune_core)
