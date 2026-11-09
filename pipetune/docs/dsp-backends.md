@@ -27,24 +27,27 @@ This separation preserves one known compatibility path while allowing
 PipeTune to select the highest usable optimized implementation or a
 user-pinned tier. One pipeline always uses exactly one implementation.
 
-The private backend source set follows the EffeTune application tag v2.16.0,
+The private backend source set follows the EffeTune application tag v2.17.0,
 including the graph core, `spectrum_tap.cpp`, and generated graph-capacity
 contract required by its engine.
 PipeTune's loader surface remains the routed pipeline API and now includes
 `et_pipeline_latency`; PipeTune does not expose Graph v1 as a preset format or
 control API.
 
-Prepared convolution and SFZ assets cross a PipeTune-owned copy ABI instead of
-EffeTune's
-[asset-begin implementation](https://github.com/Frieve-A/effetune/blob/bedc6c662a6edc88c9644b7e00cec9122a250cfb/dsp/core/abi.cpp#L170-L185),
-which narrows its staging pointer to a 32-bit return value. At build time CMake
-copies EffeTune's `core/abi.cpp` into the generated build tree and applies
-`patches/effetune/abi-engine-access.patch` with zero fuzz. The patch only
-includes a PipeTune engine-access definition; coefficient generation and the
-copy-and-commit bridge remain separate PipeTune source files. No source below
-`deps/` is modified, no native pointer is narrowed into an EffeTune integer
-handle, and an incompatible future `abi.cpp` causes the build to fail while
-applying the patch.
+Prepared convolution and SFZ assets cross a PipeTune-owned copy ABI implemented
+with the public `et_instance_asset_begin_ptr`, commit, and abort functions.
+The staging pointer stays inside the shared backend. No source below `deps/`
+is edited, and no generated patch or private Engine access is needed.
+The legacy WASM32 `et_instance_asset_begin` is not exported by PipeTune's loader.
+SFZ admission queries `et_sample_player_preparation_bytes` on the selected
+native backend using the actual rate, channel count, maximum block length,
+and a minimum physical BPM of zero. See the [native host contract](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/README.md#native-midi-sample-player-hosts)
+and [public declarations](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/include/effetune/abi.h).
+
+Debug shared backends and their PFFFT libraries use `-Og` to reduce processing
+overhead while preserving debugging support. Debug symbols, `ET_DEBUG_BUILD` allocation
+checks, `-Werror`, and the existing floating-point policy remain enabled.
+See [GCC's debug optimization policy](https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html).
 
 ## Embedded analysis models
 
@@ -54,13 +57,13 @@ Their input data totals 124,120 bytes; this is not the size of the complete shar
 library. Note Spectrogram's expanded HarmNet weights and new Timbre weights
 are compiled from upstream
 [HarmNet](https://github.com/Frieve-A/effetune/blob/v2.14.0/dsp/plugins/analyzer/note_spectrogram/harmnet_weights.h)
-and [Timbre](https://github.com/Frieve-A/effetune/blob/v2.14.0/dsp/plugins/analyzer/note_spectrogram/timbre_weights.h)
+and [Timbre](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/plugins/analyzer/note_spectrogram/timbre_weights.h)
 headers. The analyzer still has no preset processing node in PipeTune. When a
-pipeline uses SFZ Note Player, the upstream engine allocates its analysis state
+pipeline uses SoundFont Note Player, the upstream engine allocates its analysis state
 during initialization.
-EffeTune 2.16.0 also compiles the
-[drum model](https://github.com/Frieve-A/effetune/blob/v2.16.0/dsp/plugins/analyzer/rhythm_analyzer/drum_weights.h)
-and [chord/key model](https://github.com/Frieve-A/effetune/blob/v2.16.0/dsp/plugins/analyzer/note_spectrogram/chord_key_weights.h)
+EffeTune 2.17.0 also compiles the
+[drum model](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/plugins/analyzer/rhythm_analyzer/drum_weights.h)
+and [chord/key model](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/plugins/analyzer/note_spectrogram/chord_key_weights.h)
 into the backends. Rhythm performs drum analysis even with `dm=band` and clicks
 disabled. SFZ uses the shared note analyzer with chord/key detection disabled.
 The
@@ -103,7 +106,7 @@ The package contents and dispatch tiers are:
 | armhf | `baseline` | NEON PFFFT; `-mfpu=neon` | Linux `HWCAP_NEON` |
 | riscv64 | `baseline` | portable PFFFT; `-march=rv64gcv -mabi=lp64d` for auto-vectorized code | Linux RISC-V V HWCAP |
 
-On i386, SFZ Note Player and Note Spectrogram use `-msse2 -mfpmath=sse`
+On i386, SoundFont Note Player, SoundFont Player, and Note Spectrogram use `-msse2 -mfpmath=sse`
 in every backend. Their shared spectral analysis needs IEEE-width
 intermediate arithmetic to match the official SFZ audio references; x87
 excess precision changes note detection. Scalar PFFFT and the other Scalar
@@ -111,6 +114,11 @@ kernels retain their existing compiler policy. Debian trixie, the current
 i386 package target, already requires SSE2. See the
 [Debian i386 requirements](https://www.debian.org/releases/trixie/release-notes/issues.html#i386-reduced-support)
 and [GCC floating-point precision options](https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html).
+
+Private i386 DSP translation units and upstream native tests also use
+`-malign-double`. The 2.17.0 [sample-cache layout](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/plugins/others/sfz/sample_cache.h)
+requires eight-byte alignment for its 64-bit members. The setting is consistent
+across the private C++ objects; callers keep the ordinary C ABI.
 
 The Tube Simulator's file-local f64x2 helper triggers GCC's
 [psABI diagnostic](https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html)
@@ -169,8 +177,9 @@ and validates:
 - each kernel's parameter-byte capacity; and
 - every external-asset capacity.
 
-The pinned EffeTune 2.16.0 contract contains 112 kernels. SFZ Note Player has
-20 float parameters, including the saved `Classic` or `Event` detection mode;
+The pinned EffeTune 2.17.0 contract contains 113 kernels. SoundFont Note Player has
+21 float parameters with hash `0x3785c6ed`, including the saved `Classic` or `Event` detection mode
+and the new `sp0` preset selector (default -1);
 an omitted mode selects `Classic`. `Event` adds seven 20 ms analysis hops to
 the reported latency, or about 140 ms. A backend from an
 earlier release is rejected even though the numeric ABI version remains one,
@@ -182,8 +191,13 @@ Rhythm Analyzer accepts four floats with hash `0xf854c585`, including `dm`
 packers follow upstream coercion for omitted, valid, and invalid values.
 Note Spectrogram remains excluded from preset execution even with `ck=true`.
 `et_instance_stream_boundary` is marked app-internal upstream and is not part of
-PipeTune's loader API. These contracts follow the [upstream metadata](https://github.com/Frieve-A/effetune/blob/v2.16.0/dsp/bindings/generated/effects-v1.private.json)
-and [ABI declarations](https://github.com/Frieve-A/effetune/blob/v2.16.0/dsp/include/effetune/abi.h).
+PipeTune's loader API. These contracts follow the [upstream metadata](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/bindings/generated/effects-v1.private.json)
+and [ABI declarations](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/include/effetune/abi.h).
+
+The additional SoundFont Player has four floats with hash `0x844a0998`.
+Both players advertise a 1 GiB slot. SoundFont Player requires MIDI events and
+is omitted from PipeTune presets with an unsupported-MIDI warning. The existing
+Note Player supports SFZ only; SF2/SF3 loading remains outside this integration.
 
 This count includes nine visualization-only analyzers excluded from preset
 execution and does not mean every registered effect is available without

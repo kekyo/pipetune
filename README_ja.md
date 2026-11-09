@@ -27,11 +27,11 @@ EffeTune上で、環境音を構成してプリセットとして保存すれば
   DSPパイプラインを適用できます。
 - `.effetune_preset`拡張子の標準形式および旧形式のEffeTuneプリセットファイルを
   読み込み、DSPパイプラインをデスクトップ音声へ適用します。
-- EffeTune 2.16.0 DSPエンジンを実装しています。
-- SFZ Note Playerは、音源の変数とサンプル配置を記すARIAバンク定義、生成波形、
+- EffeTune 2.17.0 DSPエンジンを実装しています。
+- SoundFont Note Player（旧SFZ Note Player）は、音源の変数とサンプル配置を記すARIAバンク定義、生成波形、
   サンプル選択の半音調整を含む
-  EffeTuneで登録した音源を読み込めます。
-- SFZ Note Playerの音符検出方式はEffeTuneで保存した`Classic`または`Event`を使用します。
+  EffeTuneで登録したSFZ音源を読み込めます。SF2/SF3音源とMIDI演奏は未対応です。
+- SoundFont Note Playerの音符検出方式はEffeTuneで保存した`Classic`または`Event`を使用します。
   方式を指定していないプリセットは`Classic`で再生します。`Event`は`Classic`より約140 ms遅延が増えます。
 - PipeWireグラフとのサンプリング周波数の自動交渉、または44.1、48、96、192、384 kHzの指定周波数でDSPを計算します。
 - DSPは完全ネイティブコードで計算を処理します。互換性重視のScalar、SIMD自動選択、CPU検証済みの命令セット別実装を選択出来ます。

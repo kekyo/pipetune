@@ -2,12 +2,13 @@
 
 ## Boundary and replacement policy
 
-PipeTune's native DSP engine follows the EffeTune application tag v2.16.0, commit
-`3769b9aefebf2dce2de3169690d4a95e1716da4c`. The C++20 libraries in
+PipeTune's native DSP engine follows the EffeTune application tag v2.17.0, commit
+`d026b1664ec9444a66297efd36e251bc8aae3d05`. The C++20 libraries in
 `asset-preparation/` adapt the JavaScript preparation needed before the upstream
-native kernels can run. The SFZ preparation source remains EffeTune v2.14.0,
-commit `01c96f00f8e93595aefab96de4bc4d210e61c53b`; its source identity remains
-part of the cache key. The libraries accept values, source text, and decoded PCM in
+native kernels can run. SFZ bank and generator preparation follow 2.17.0,
+while the parser and source adapters retain the existing resident SFZ subset.
+The source identity and preparation contract are part of the cache key.
+The libraries accept values, source text, and decoded PCM in
 memory, and return prepared data, source requests, and diagnostics. They do not
 depend on PipeWire, GTK, JSON storage, XDG paths, a decoder, or the native engine.
 
@@ -26,9 +27,10 @@ at the boundary must remain useful when the implementation is replaced.
 ## Upstream port map
 
 Source links below identify the application tag from which each module's
-behavior was adapted. SFZ parsing, source handling, and generation follow
-v2.14.0; the unchanged SFZ helpers, IR, and Room EQ adaptations retain their
-v2.13.0 origin. The adapted modules retain the upstream MIT attribution and
+behavior was adapted. SFZ parsing and source handling originated in v2.14.0;
+the parser now rejects the unsupported feature families introduced by 2.17.0.
+Bank and generator preparation follow v2.17.0. The unchanged SFZ helpers, IR,
+and Room EQ adaptations retain their v2.13.0 origin. The adapted modules retain the upstream MIT attribution and
 `LICENSE.effetune` files.
 
 | PipeTune module | Upstream contract | Responsibility |
@@ -36,11 +38,11 @@ v2.13.0 origin. The adapted modules retain the upstream MIT attribution and
 | `sfz/parser.cpp`, `sfz/parser.h` | [parser.js](https://github.com/Frieve-A/effetune/blob/v2.14.0/js/sfz/parser.js) | Path normalization, include/define expansion, inheritance, opcode normalization, conditional regions, envelopes, and diagnostics |
 | `sfz/region.h` | [parser.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/parser.js) | Prepared region values and source PCM layout |
 | `sfz/source.cpp` | [source.js](https://github.com/Frieve-A/effetune/blob/v2.14.0/js/sfz/source.js) | UTF-8-first/Windows-1252 decoding, ARIA bank selection, initial definitions, and consulted bank dependencies |
-| `sfz/generators.cpp` | [generators.js](https://github.com/Frieve-A/effetune/blob/v2.14.0/js/sfz/generators.js) | Deterministic generated oscillator, noise, and silence samples |
+| `sfz/generators.cpp` | [generators.js](https://github.com/Frieve-A/effetune/blob/v2.17.0/js/sfz/generators.js) | Periodic source PCM and two-frame descriptors for native continuous noise and silence |
 | `sfz/text.cpp` | [parser.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/parser.js), [asset.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/asset.js) | UTF-8/UTF-16 conversion and JavaScript string ordering/length semantics |
 | `sfz/audio_header.cpp` | [bank.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/bank.js), [audio-header-metadata.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/ir-library/audio-header-metadata.js) | Bounded WAV/AIFF/FLAC header estimates for selection; unknown lengths stay unknown |
 | `sfz/selection.cpp` | [service.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/service.js) | Capacity selection preserving key coverage, velocity preference, and warning aggregation |
-| `sfz/bank.cpp` | [asset.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/asset.js) | ETA1/table-v2 layout, 30 region fields, integer bit lanes, group indices, PCM pool, footprint, and warmup |
+| `sfz/bank.cpp` | [asset.js](https://github.com/Frieve-A/effetune/blob/v2.17.0/js/sfz/asset.js), [modulation.js](https://github.com/Frieve-A/effetune/blob/v2.17.0/js/sfz/modulation.js), [oscillator-source.js](https://github.com/Frieve-A/effetune/blob/v2.17.0/js/sfz/oscillator-source.js) | Resident v6 with 113 region fields; v7 fixed-value envelopes and built-in generators with prepared cycle pyramids; integer lanes, PCM, payload extent, and warmup |
 | `sfz/preparation.cpp` | [service.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/sfz/service.js) | Combining normalized regions and supplied PCM, sample-position validation, final warnings, and bank preparation |
 | `ir/preparation.cpp` | [ir-preparation.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/ir-library/ir-preparation.js), [ir-plugin-contract.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/ir-library/ir-plugin-contract.js), [ir-true-stereo-pair.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/ir-library/ir-true-stereo-pair.js) | Original channel layout, true-stereo pairing, trim/direct-cut/decay, and capacity-aware IR preparation |
 | `common/convolution.cpp` | [ir-asset-payload.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/ir-library/ir-asset-payload.js) | Convolution payload layout and native convolver footprint |
@@ -59,6 +61,13 @@ to match the application's
 The build needs `icu-i18n`, and packaged binaries link the matching system ICU
 library. Node.js is not needed at runtime. Generated SFZ samples need no source
 audio file; file-backed samples still use the decoder described below.
+
+File-only banks use the resident v6 format. Banks containing built-in generators
+use v7 to carry their oscillator kinds and the existing gain, tuning, pan, and
+amplitude envelope. This does not enable authored modulation, scripts, effects,
+embedded samples, streaming, or SF2/SF3. Those recognized declarations are
+rejected explicitly. Selecting SF2/SF3 fails preparation, while unselected valid
+entries remain acceptable in the shared instrument registry.
 
 Browser audio decoding is deliberately outside this map. The host's
 `asset_audio_decoder.cpp` wraps public FFmpeg APIs for bounded memory input and
@@ -107,14 +116,33 @@ gain/delay controls do not invalidate Room's generated FIR. A cache hit still
 requires valid originals; corrupt entries regenerate, and an unwritable cache
 does not discard a successfully prepared payload.
 
+The 2.17.0 SFZ identity is `sfz-resident-v4/ETA1-table-v6-generator-v7` under the
+pinned upstream commit. Earlier SFZ entries regenerate from originals.
+IR and Room EQ keep their existing identities. Cached SFZ footprint metadata
+contains only the portable payload length; native preparation storage is queried
+again on the actual backend at activation.
+
 Memory reservations include bounded preparation work, retained payloads, and
 the native copy until each owner releases it. Old and candidate pipelines share
 the 4 GiB budget on 64-bit hosts or 1 GiB on 32-bit hosts. These are admission
 limits for asset work, not process RSS limits. The disk cache has a separate
 default 2 GiB limit with unused entries reclaimed first.
 
-The native copy ABI stages the complete prepared payload without narrowing a
-pointer to an upstream integer handle. SFZ, IR, and Room kernels complete their
+For SFZ, the host supplies the complete control prefix, full payload size,
+processing rate, maximum frame count, and actual output width to
+`et_sample_player_preparation_bytes`. The instrument budget covers the payload
+plus the returned additional bytes, without adding a second index estimate.
+The query and upload use the same zero minimum physical BPM (the upstream
+standalone fallback). The process-wide budget also reserves fixed instance
+preparation before instance creation, including an unassigned player: 64 MiB
+plus block and rate/channel-dependent storage. The reservation remains live
+through native destruction and includes concurrent old and candidate pipelines.
+See the [native memory contract](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/README.md#native-midi-sample-player-hosts)
+and [instance preparation](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/plugins/others/sfz/engine.h).
+
+The native copy ABI uses the public pointer-returning asset begin function,
+copies the complete payload, and commits it, aborting on failure. No private
+Engine access or ABI patch remains. SFZ, IR, and Room kernels complete their
 bounded activation and reset before the candidate replaces the old pipeline.
 A configured-source failure rejects that replacement. Unassigned nodes and
 partly supported data retain distinct warning states; disabled nodes and
