@@ -313,7 +313,14 @@ try {
     await socketReady(join(runtime, "pulse-native"), undefined);
   }
   let manager = start("WirePlumber", "dbus-run-session", ["--", wireplumber]);
-  if (scenario.startsWith("product-direct")) {
+  if (scenario === "product-audio-cancel") {
+    const audio = start("cancelable audio fixture", driver, ["audio", "product-output-change"]);
+    await waitForMessage(audio, "product:devices-ready");
+    audio.child.kill("SIGTERM");
+    await waitForMessage(audio, "audio fixture canceled");
+    assert.deepEqual(await audio.completion, { code: 1, signal: null });
+    assert.equal(JSON.parse(audio.stdout).producedFrames, 0);
+  } else if (scenario.startsWith("product-direct")) {
     const physicalVolume = scenario.startsWith("product-direct-device-volume");
     const audio = start("dual input PCM fixtures", driver, ["audio", scenario]);
     await waitForMessage(audio, "product:devices-ready");

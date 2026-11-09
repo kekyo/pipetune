@@ -1423,9 +1423,9 @@ static int runAudio(std::string_view scenario) {
       pw_loop_signal_event(pw_main_loop_get_loop(test.loop), test.graphEvent);
     }
   }, &test) : nullptr;
-  auto *cancel = test.fixedLatency ? pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGTERM, [](void *data, int) {
+  auto *cancel = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGTERM, [](void *data, int) {
     fail(*static_cast<AudioTest *>(data), "audio fixture canceled");
-  }, &test) : nullptr;
+  }, &test);
   auto *resume = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR2, [](void *data, int) {
     auto &test = *static_cast<AudioTest *>(data);
     if (test.modeVolume) {
