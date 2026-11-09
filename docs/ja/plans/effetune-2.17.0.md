@@ -361,3 +361,13 @@ Classicの追跡では、片方のデバイスの処理が次の周期へ遅れ�
 各時刻のグループが閉じてから最後のブロック同士を比較するよう、検証側を修正した。各ブロックのチャンネル識別と全フレームの連続性は、そのまま検査する。重複時刻を再現した単体検証は修正前にRED、修正後にGREENだった。1フレームの欠落を拒否し、片方に余分な1ブロックが残るケースも整列成功としないことを同時に確認した。
 
 遅延・再接続・freewheelを含む関連試験が成功し、Classic/Eventの実時間試験は各12回成功した。記録は`stage6-observer-red`、`stage6-observer-green`、`stage6-observer-regression`、`stage6-observer-repeats`にある。製品DSPと許容誤差は変更していない。この検証修正も独立したコミットとする。
+
+### 工程4のデバイス情報取得の競合
+
+出力経路の失敗ログを見直し、`stage4-preflight-debug`で要求回数の上限に達した試験は、`product-output-change-route-policy`だったと特定した。プロファイル上書き後の復元試験とは区別して追跡する。WirePlumber 0.4.17が古い入力経路と新しい入力経路を交互に復元していた。
+
+CPUを1個に制限して通知の重なりを調べると、製品が同じプロファイルを重複して公開する問題も見つかった。情報更新のたびに再取得していたが、先行する取得要求の遅い応答を判別せず、新しい一覧へ追加していた。古い応答を後から渡すテストはREDとなり、公開一覧、選択中のプロファイル、入力経路と音量に古い値が混ざった。
+
+NodeとDeviceの列挙APIが返す要求番号を、パラメーターごとに保持して応答と照合する。最新の要求だけを受け入れる修正後は、再現テストと実セッションの一覧・プロファイル試験が成功した。単一世代の複数Propsを合成する既存動作も維持する。[列挙APIの説明](https://docs.pipewire.org/structpw__device__methods.html)、[応答のコメント](https://github.com/PipeWire/pipewire/blob/1.0.5/src/pipewire/device.h)、[native要求番号の実装](https://github.com/PipeWire/pipewire/blob/1.0.5/src/modules/module-protocol-native/protocol-native.c)
+
+この修正で一覧の重複は消え、通常の4並列条件では出力切替・上書き復元・入力変更・利用不能の4種類が各5回成功した。CPUを1個に制限した条件では、通常ポリシーによるプロファイル変更との競合が残った。情報取得の修正だけで、経路の収束問題まで解消したとは判断しない。証跡は`stage6-inventory-*`、`stage6-change-onecpu-*`、`stage6-change-generation-*`に保存する。

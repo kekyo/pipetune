@@ -1653,9 +1653,9 @@ try {
         .map((child) => ({ name: child.name, events: child.stdout.trim().split("\n") })) };
       for (const fixture of report.routePolicy.fixtures) {
         assert.ok(fixture.events.filter((line) => line.startsWith("profile-set")).length <= 24,
-          "profile requests must remain bounded during external overrides and rollback");
+          `profile requests must remain bounded during external overrides and rollback: ${fixture.name}\n${fixture.events.join("\n")}`);
         assert.ok(fixture.events.filter((line) => line.startsWith("route-set")).length <= 64,
-          "route restoration must converge without repeated policy feedback");
+          `route restoration must converge without repeated policy feedback: ${fixture.name}\n${fixture.events.join("\n")}`);
       }
     }
     if (expectedAudioFailure) {

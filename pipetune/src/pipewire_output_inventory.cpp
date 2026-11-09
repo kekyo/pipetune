@@ -39,6 +39,9 @@ struct InventoryObject {
   InventoryProperties properties;
   // Each parameter family is replaced when the node announces a change.
   std::map<std::uint32_t, std::vector<std::vector<std::string>>> layouts;
+  // Native protocol requests return the sequence echoed by param events.
+  // Replies to an earlier info notification must not enter the new snapshot.
+  std::map<std::uint32_t, int> parameterSequences;
   bool canEnumerate = false;
   bool canWrite = false;
   struct CardProfile {
@@ -267,19 +270,23 @@ static void nodeInfo(void *data, const pw_node_info *info) {
   if ((info->change_mask & PW_NODE_CHANGE_MASK_PARAMS) != 0 && node.canEnumerate) {
     node.layouts.clear();
     node.volume = {};
+    node.parameterSequences.clear();
     for (auto index = std::uint32_t{0}; index < info->n_params; ++index) {
       const auto &parameter = info->params[index];
       if ((parameter.flags & SPA_PARAM_INFO_READ) == 0 ||
           (parameter.id != SPA_PARAM_PortConfig && parameter.id != SPA_PARAM_Format &&
            parameter.id != SPA_PARAM_EnumFormat && parameter.id != SPA_PARAM_Props)) continue;
-      pw_node_enum_params(reinterpret_cast<pw_node *>(node.proxy), 0, parameter.id, 0, UINT32_MAX, nullptr);
+      const auto sequence = pw_node_enum_params(reinterpret_cast<pw_node *>(node.proxy), 0, parameter.id, 0, UINT32_MAX, nullptr);
+      if (sequence >= 0) node.parameterSequences[parameter.id] = sequence;
     }
   }
   scheduleSnapshot(*node.owner);
 }
 
-static void nodeParam(void *data, int, std::uint32_t id, std::uint32_t, std::uint32_t, const spa_pod *param) {
+static void nodeParam(void *data, int sequence, std::uint32_t id, std::uint32_t, std::uint32_t, const spa_pod *param) {
   auto &node = *static_cast<InventoryObject *>(data);
+  const auto expected = node.parameterSequences.find(id);
+  if (expected == node.parameterSequences.end() || expected->second != sequence) return;
   if (id == SPA_PARAM_Props) {
     // A single enumeration can contain separate mixer and device parameter
     // objects. Merge the controls reported by all of them; nodeInfo resets
@@ -330,21 +337,25 @@ static void deviceInfo(void *data, const pw_device_info *info) {
     device.profiles.clear();
     device.activeProfile = -1;
     device.inputRoutes.clear();
+    device.parameterSequences.clear();
     for (auto index = std::uint32_t{0}; index < info->n_params; ++index) {
       const auto &parameter = info->params[index];
       if ((parameter.flags & SPA_PARAM_INFO_READ) == 0 ||
           (parameter.id != SPA_PARAM_EnumProfile && parameter.id != SPA_PARAM_Profile &&
            parameter.id != SPA_PARAM_Route)) continue;
-      pw_device_enum_params(reinterpret_cast<pw_device *>(device.proxy), 0,
+      const auto sequence = pw_device_enum_params(reinterpret_cast<pw_device *>(device.proxy), 0,
           parameter.id, 0, UINT32_MAX, nullptr);
+      if (sequence >= 0) device.parameterSequences[parameter.id] = sequence;
     }
   }
   scheduleSnapshot(*device.owner);
 }
 
-static void deviceParam(void *data, int, std::uint32_t id, std::uint32_t,
+static void deviceParam(void *data, int sequence, std::uint32_t id, std::uint32_t,
                         std::uint32_t, const spa_pod *param) {
   auto &device = *static_cast<InventoryObject *>(data);
+  const auto expected = device.parameterSequences.find(id);
+  if (expected == device.parameterSequences.end() || expected->second != sequence) return;
   if (param == nullptr) return;
   if (id == SPA_PARAM_Route) {
     auto direction = std::uint32_t{SPA_ID_INVALID};
