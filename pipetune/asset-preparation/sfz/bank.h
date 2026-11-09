@@ -10,7 +10,7 @@
 
 namespace pipetune::assets {
 
-/** Owned ETA1/table-v6 bank and the metadata needed by the native copy boundary. */
+/** Owned ETA1/table-v6 or generator-v7 bank and metadata for the native copy boundary. */
 struct SfzBank {
   std::vector<std::uint8_t> payload; /**< Header, normalized region table, and interleaved PCM pool. */
   std::uint64_t footprintBytes = 0; /**< Serialized bank extent; the host queries additional native preparation separately. */
@@ -22,7 +22,7 @@ struct SfzBank {
 };
 
 /**
- * Encodes a bank using original-rate PCM, including integer bit lanes and resident v6 defaults.
+ * Encodes original-rate PCM in resident v6, or v7 with prepared built-in generator cycles.
  * @param regions Normalized regions in definition order.
  * @param samples Decoded sources identified by normalized paths.
  * @param maximumBytes Maximum serialized bank extent, at most 1 GiB.

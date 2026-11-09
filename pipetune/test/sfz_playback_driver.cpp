@@ -28,11 +28,25 @@ int main(int argc, char **argv) {
   if (argc != 2) return 2;
   try {
     const auto original = std::vector<std::uint8_t>(std::istreambuf_iterator<char>(std::cin), {});
-    auto samples = std::vector<pipetune::assets::SfzSample>{};
-    samples.push_back({"instrument.wav", pipetune::decodeAssetAudio(original, 64 * 1024 * 1024)});
-    const auto documents = std::vector<pipetune::assets::SfzDocument>{{"main.sfz", argv[1]}};
-    const auto parsed = pipetune::assets::parseSfz("main.sfz", documents, std::nullopt, 256 * 1024 * 1024);
-    const auto bank = pipetune::assets::packSfzBank(parsed.regions, samples, 256 * 1024 * 1024);
+    const auto word = [](const auto &bytes, std::size_t offset) {
+      require(offset + 4 <= bytes.size(), "truncated SFZ bank");
+      auto value = std::uint32_t{0};
+      for (auto byte = 0u; byte < 4; ++byte) value |= static_cast<std::uint32_t>(bytes[offset + byte]) << (8 * byte);
+      return value;
+    };
+    auto bank = pipetune::assets::SfzBank{};
+    if (std::string_view(argv[1]) == "--bank") {
+      bank.payload = original;
+      bank.samples = word(original, 8);
+      bank.regionCount = word(original, 40);
+      bank.warmupFrames = (2 * bank.regionCount + 2 + (bank.samples + 31) / 32 + 7) / 8;
+    } else {
+      const auto samples = std::vector<pipetune::assets::SfzSample>{{
+          "instrument.wav", pipetune::decodeAssetAudio(original, 64 * 1024 * 1024)}};
+      const auto documents = std::vector<pipetune::assets::SfzDocument>{{"main.sfz", argv[1]}};
+      const auto parsed = pipetune::assets::parseSfz("main.sfz", documents, std::nullopt, 256 * 1024 * 1024);
+      bank = pipetune::assets::packSfzBank(parsed.regions, samples, 256 * 1024 * 1024);
+    }
     const auto backend = pipetune::loadDspBackend(pipetune::DspBackendKind::scalar);
     require(backend.backend != nullptr, backend.error.c_str());
     const auto &api = pipetune::dspBackendApi(*backend.backend);
@@ -50,7 +64,7 @@ int main(int argc, char **argv) {
     require(instance != 0 && api.instanceSetParams(engine.handle, instance, packed.floats.data(),
         packed.floats.size(), definition->hash, 0) == ET_OK, "cannot configure SFZ playback");
     auto additionalBytes = std::uint64_t{0};
-    const auto controlBytes = 32u + 4u * (12u + 113u * bank.regionCount);
+    const auto controlBytes = 32u + 4u * word(bank.payload, 48);
     require(api.samplePlayerPreparationBytes(bank.payload.data(), controlBytes, bank.payload.size(),
         ET_ASSET_F32_MULTICH, 48000, 2, 128, 0, &additionalBytes, ET_SAMPLE_PLAYER_NOTE) == ET_OK,
         "cannot estimate native SFZ preparation");

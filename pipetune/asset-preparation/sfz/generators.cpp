@@ -5,7 +5,8 @@
  */
 
 /*
- * Derived from EffeTune v2.14.0 js/sfz/generators.js.
+ * Derived from EffeTune v2.17.0 js/sfz/generators.js.
+ * https://github.com/Frieve-A/effetune/blob/v2.17.0/js/sfz/generators.js
  * Copyright (c) 2025-2026 Yoshiyuki Kobayashi. See LICENSE.effetune.
  */
 #include "generators.h"
@@ -24,15 +25,13 @@ bool isSfzGenerator(std::string_view sample) noexcept {
 
 SfzSampleMetadata sfzGeneratorMetadata(std::string_view sample) {
   if (!isSfzGenerator(sample)) throw SfzError("prepare", "Unknown SFZ sample generator.");
-  return {std::string(sample), 0, sample == "*noise" ? 8192u : 2048u, 1u};
+  return {std::string(sample), 0, sample == "*noise" || sample == "*silence" ? 2u : 2048u, 1u};
 }
 
 Audio createSfzGeneratorSample(std::string_view sample) {
   const auto metadata = sfzGeneratorMetadata(sample);
-  const auto rate = sample == "*noise" ? 48000u :
-      static_cast<std::uint32_t>(std::round(440 * std::pow(2.0, (60.0 - 69) / 12) * 2048));
+  const auto rate = static_cast<std::uint32_t>(std::round(440 * std::pow(2.0, (60.0 - 69) / 12) * 2048));
   auto audio = Audio{rate, {std::vector<float>(metadata.frames)}};
-  auto noise = std::uint32_t{0x53465a};
   for (auto frame = std::size_t{0}; frame < metadata.frames; ++frame) {
     const auto phase = static_cast<double>(frame) / static_cast<double>(metadata.frames);
     auto value = 0.0;
@@ -40,13 +39,8 @@ Audio createSfzGeneratorSample(std::string_view sample) {
     else if (sample == "*saw") value = 2 * phase - 1;
     else if (sample == "*square") value = phase < .5 ? 1 : -1;
     else if (sample == "*triangle" || sample == "*tri") value = 1 - 4 * (phase < .5 ? .5 - phase : phase - .5);
-    else if (sample == "*noise") {
-      // Unsigned shifts reproduce the application's repeatable xorshift sequence.
-      noise ^= noise << 13;
-      noise ^= noise >> 17;
-      noise ^= noise << 5;
-      value = static_cast<double>(noise) / 2147483648.0 - 1;
-    }
+    // Native per-voice RNG produces continuous noise. Noise and silence only
+    // need two silent storage frames to keep the sample descriptor valid.
     audio.channels[0][frame] = static_cast<float>(value);
   }
   return audio;

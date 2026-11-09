@@ -163,6 +163,9 @@ test('SFZ bank combines generated cycles, noise and files using the app table la
   const parser = await import(/* @vite-ignore */ module('parser'));
   const asset = await import(/* @vite-ignore */ module('asset'));
   const generators = await import(/* @vite-ignore */ module('generators'));
+  const oscillator = await import(
+    /* @vite-ignore */ module('oscillator-source')
+  );
   const names = [
     '*sine',
     '*saw',
@@ -176,9 +179,9 @@ test('SFZ bank combines generated cycles, noise and files using the app table la
     names
       .map(
         (name, index) =>
-          `<region> sample=${name} key=${60 + index} pitch_keycenter=83 loop_mode=no_loop`
+          `<region> sample=${name} key=${60 + index} pitch_keycenter=83 loop_mode=no_loop amp_veltrack=0`
       )
-      .join('\n') + '\n<region> sample=file.wav key=70';
+      .join('\n') + '\n<region> sample=file.wav key=70 amp_veltrack=0';
   const samples: Sample[] = names.map((path) => ({
     path,
     ...generators.createSfzGeneratorSample(path),
@@ -194,9 +197,18 @@ test('SFZ bank combines generated cycles, noise and files using the app table la
     hasSample: (path: string) => path === 'banks/file.wav',
     onDiagnostic: null,
   });
+  const originalSamples = new Map(
+    samples.map((sample) => [sample.path, sample])
+  );
+  const prepared = await oscillator.prepareSfzOscillatorSources(
+    parsed,
+    async (path: string) => originalSamples.get(path),
+    256 * 1024 * 1024
+  );
   const reference = asset.packSfzAsset(
-    parsed.regions,
-    new Map(samples.map((sample) => [sample.path, sample]))
+    prepared.parsed.regions,
+    new Map([...originalSamples, ...prepared.samples]),
+    { modulation: parsed.modulation }
   );
   const native = run('banks/main.sfz', definition, samples, 256 * 1024 * 1024);
   expect(native.status, native.stderr.toString()).toBe(0);
@@ -204,6 +216,84 @@ test('SFZ bank combines generated cycles, noise and files using the app table la
     Buffer.from(reference.payload)
   );
 });
+
+test.each([
+  ['*sine', ''],
+  ['*saw', ''],
+  ['*square', ''],
+  ['*triangle', ''],
+  ['*tri', ''],
+  ['*noise', ''],
+  ['*silence', ''],
+  ['*sine', ' offset=11 end=113'],
+])(
+  'SFZ %s%s renders the official oscillator, envelope, gain and pan',
+  async (sample, interval) => {
+    const module = (name: string) =>
+      pathToFileURL(`${process.env.PIPETUNE_EFFETUNE_SOURCE}/js/sfz/${name}.js`)
+        .href;
+    const parser = await import(/* @vite-ignore */ module('parser'));
+    const asset = await import(/* @vite-ignore */ module('asset'));
+    const generators = await import(/* @vite-ignore */ module('generators'));
+    const oscillator = await import(
+      /* @vite-ignore */ module('oscillator-source')
+    );
+    const definition = `<region> sample=${sample} key=83 amp_veltrack=0 volume=-6 pan=25 tune=5 ampeg_attack=0.01 ampeg_release=0.05${interval}`;
+    const samples: Sample[] = [
+      { path: sample, ...generators.createSfzGeneratorSample(sample) },
+    ];
+    const parsed = await parser.parseSfz({
+      selectedPath: 'main.sfz',
+      readText: async () => definition,
+      hasSample: () => true,
+      onDiagnostic: null,
+    });
+    const prepared = await oscillator.prepareSfzOscillatorSources(
+      parsed,
+      async () => samples[0],
+      256 * 1024 * 1024
+    );
+    const reference = asset.packSfzAsset(
+      prepared.parsed.regions,
+      prepared.samples,
+      { modulation: parsed.modulation }
+    );
+    const native = run('main.sfz', definition, samples, 256 * 1024 * 1024);
+    expect(native.status, native.stderr.toString()).toBe(0);
+    const render = (input: Buffer) => {
+      const result = spawnSync(
+        process.env.PIPETUNE_SFZ_PLAYBACK_DRIVER!,
+        ['--bank'],
+        { input, maxBuffer: 1024 * 1024 }
+      );
+      expect(result.status, result.stderr.toString()).toBe(0);
+      const bytes = result.stdout.subarray(result.stdout.indexOf(10) + 1);
+      return Array.from({ length: bytes.length / 4 }, (_, frame) =>
+        bytes.readFloatLE(frame * 4)
+      );
+    };
+    const expected = render(Buffer.from(reference.payload));
+    const actual = render(
+      native.stdout.subarray(native.stdout.indexOf(10) + 1)
+    );
+    expect(actual.length).toBe(48000);
+    expect(actual.every(Number.isFinite)).toBe(true);
+    expect(
+      Math.max(
+        ...actual.map((value, frame) => Math.abs(value - expected[frame]))
+      )
+    ).toBeLessThanOrEqual(1e-6);
+    const tail = actual.slice(16000, 24000);
+    const energy =
+      tail.reduce((sum, value) => sum + value * value, 0) / tail.length;
+    if (sample === '*silence') expect(energy).toBe(0);
+    else expect(energy).toBeGreaterThan(0.001);
+    if (sample === '*noise') {
+      // A native noise source must not repeat the former 8192-frame recording.
+      expect(actual.slice(4000, 6000)).not.toEqual(actual.slice(12192, 14192));
+    }
+  }
+);
 
 test.each(['empty', 'channels', 'nonfinite', 'offset', 'loop', 'escape'])(
   'invalid SFZ %s input cannot produce a playable bank',
@@ -231,6 +321,28 @@ test.each(['empty', 'channels', 'nonfinite', 'offset', 'loop', 'escape'])(
     expect(native.stdout.length).toBe(0);
   }
 );
+
+test('generator capacity exhaustion rejects the bank instead of omitting a playable key', async () => {
+  const generators = await import(
+    /* @vite-ignore */ pathToFileURL(
+      `${process.env.PIPETUNE_EFFETUNE_SOURCE}/js/sfz/generators.js`
+    ).href
+  );
+  const sample = {
+    path: '*sine',
+    ...generators.createSfzGeneratorSample('*sine'),
+  };
+  const first = '<region> sample=*sine key=60 amp_veltrack=0';
+  expect(run('main.sfz', first, [sample], 20000).status).toBe(0);
+  const overflow = run(
+    'main.sfz',
+    first + '\n<region> sample=*sine key=61 end=2046',
+    [sample],
+    20000
+  );
+  expect(overflow.status).not.toBe(0);
+  expect(overflow.stderr.toString()).toContain('too-large');
+});
 
 test('SFZ partial import preserves playable PCM and combines distinct region omissions', async () => {
   const source = process.env.PIPETUNE_EFFETUNE_SOURCE!;
