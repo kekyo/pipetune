@@ -153,7 +153,7 @@ static bool testSharedSfzPreparation(const std::filesystem::path &directory) {
   std::ofstream(registry) << "[{\"id\":\"0123456789abcdef01234567\",\"name\":\"Shared\",\"root\":\"" <<
       directory.string() << "\",\"path\":\"" << definition.string() << "\"}]";
   const auto preset = directory / "shared-sfz.effetune_preset";
-  const auto node = R"({"name":"SFZ Note Player","parameters":{"sf":"0123456789abcdef01234567"}})";
+  const auto node = R"({"name":"SoundFont Note Player","parameters":{"sf":"0123456789abcdef01234567"}})";
   std::ofstream(preset) << "{\"pipeline\":[" << node << ',' << node << "]}";
   auto context = pipetune::PipelineLoadContext{directory / "measurements", directory};
   context.sfzMaximumBytes = 3000;
@@ -218,7 +218,7 @@ static cardio::promise<bool> testAsyncSfzBankCandidates(const std::filesystem::p
   std::ofstream(registry) << "[{\"id\":\"" << id << "\",\"name\":\"Bank candidate\",\"root\":\"" <<
       root.string() << "\",\"path\":\"" << definition.string() <<
       "\",\"bankPaths\":[\"a.bank.xml\",\"b.bank.xml\",\"z.bank.xml\"]}]";
-  std::ofstream(preset) << "{\"pipeline\":[{\"name\":\"SFZ Note Player\",\"parameters\":{\"sf\":\"" <<
+  std::ofstream(preset) << "{\"pipeline\":[{\"name\":\"SoundFont Note Player\",\"parameters\":{\"sf\":\"" <<
       id << "\"}}]}";
   const auto json = "{\"sf\":\"" + id + "\"}";
   const auto document = std::unique_ptr<yyjson_doc, decltype(&yyjson_doc_free)>(

@@ -140,7 +140,7 @@ int main(int argc, char **argv) {
       if (check(api.enginePrepare(engine, 48000.0F, 2u, 64u, 0u) == ET_OK,
                 "the backend must prepare its engine")) {
         const auto instance = api.instanceCreate(engine, "SFZNotePlayerPlugin");
-        if (check(instance != 0, "the backend must create SFZ Note Player")) {
+        if (check(instance != 0, "the backend must create SoundFont Note Player")) {
           const auto parameters = std::array<float, 21>{
               0.1F, -60, 0, 21, 108, 64, 100, 0, 0, 0, 1, 1, 1, 0, 40, 50, 0, -1, 100, 1, -1};
           check(api.instanceSetParams(engine, instance, parameters.data(), parameters.size(),

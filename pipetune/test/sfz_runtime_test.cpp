@@ -27,7 +27,7 @@ static void require(bool condition, std::string_view message) {
 static std::filesystem::path writePreset(const std::filesystem::path &directory,
     std::string_view channel, std::string_view parameters) {
   const auto path = directory / "test.effetune_preset";
-  std::ofstream(path) << "{\"pipeline\":[{\"name\":\"SFZ Note Player\",\"channel\":\"" << channel <<
+  std::ofstream(path) << "{\"pipeline\":[{\"name\":\"SoundFont Note Player\",\"channel\":\"" << channel <<
       "\",\"parameters\":{\"sf\":\"0123456789abcdef01234567\",\"th\":0.01,\"mn\":83,\"mx\":83," << parameters << "}}]}";
   return path;
 }
@@ -78,7 +78,7 @@ static float detectionInput(std::uint32_t frame, std::uint32_t rate, std::string
 
 static std::uint32_t nativeSfzLatency(const pipetune::DspBackend &backend,
     std::uint32_t rate, std::uint32_t channels, int timing, std::string_view mode) {
-  const auto *definition = pipetune::findDspByDisplayName("SFZ Note Player");
+  const auto *definition = pipetune::findDspByDisplayName("SoundFont Note Player");
   require(definition != nullptr, "SFZ native definition is unavailable");
   const auto json = "{\"tm\":" + std::to_string(timing) +
       ",\"dt\":\"" + std::string(mode) + "\"}";
@@ -216,7 +216,7 @@ static void testSampleShiftAndPreview(const pipetune::PipelineLoadContext &conte
       "a replacement preset with preview MIDI off must stop preview output");
 
   const auto routedPath = context.effetuneDirectory / "routed.effetune_preset";
-  std::ofstream(routedPath) << R"({"pipeline":[{"name":"SFZ Note Player","channel":"All","inputBus":0,"outputBus":1,"parameters":{"sf":"0123456789abcdef01234567","th":0.01,"mn":83,"mx":83,"dm":0,"wm":100,"pm":83,"pv":127}},{"name":"Volume","channel":"All","inputBus":1,"outputBus":0,"parameters":{}}]})";
+  std::ofstream(routedPath) << R"({"pipeline":[{"name":"SoundFont Note Player","channel":"All","inputBus":0,"outputBus":1,"parameters":{"sf":"0123456789abcdef01234567","th":0.01,"mn":83,"mx":83,"dm":0,"wm":100,"pm":83,"pv":127}},{"name":"Volume","channel":"All","inputBus":1,"outputBus":0,"parameters":{}}]})";
   auto routed = pipetune::loadDspPipeline(routedPath, {48000, 2, 257}, backend, context);
   require(routed.pipeline != nullptr, routed.error);
   require(routed.pipeline->latencyFrames() == active.pipeline->latencyFrames(),
@@ -460,7 +460,7 @@ static void testModeChangeAndRouting(const std::filesystem::path &directory,
 
     const auto routedPath = directory / "mode-routed.effetune_preset";
     std::ofstream(routedPath) <<
-        "{\"pipeline\":[{\"name\":\"SFZ Note Player\",\"channel\":\"All\",\"inputBus\":0,\"outputBus\":1,"
+        "{\"pipeline\":[{\"name\":\"SoundFont Note Player\",\"channel\":\"All\",\"inputBus\":0,\"outputBus\":1,"
         "\"parameters\":{\"sf\":\"0123456789abcdef01234567\",\"th\":0.01,\"mn\":83,\"mx\":83,"
         "\"dm\":0,\"wm\":100,\"pm\":83,\"pv\":127,\"dt\":\"" << mode <<
         "\"}},{\"name\":\"Volume\",\"channel\":\"All\",\"inputBus\":1,\"outputBus\":0,\"parameters\":{}}]}";
@@ -517,10 +517,10 @@ static void testTwoEventInstances(const std::filesystem::path &directory,
     const std::shared_ptr<const pipetune::DspBackend> &backend) {
   const auto path = directory / "two-event-instances.effetune_preset";
   std::ofstream(path) << R"json({"pipeline":[
-    {"name":"SFZ Note Player","parameters":{
+    {"name":"SoundFont Note Player","parameters":{
       "sf":"0123456789abcdef01234567","th":0.01,"mn":83,"mx":83,
       "dm":0,"wm":100,"dt":"Event","pm":83,"pv":127}},
-    {"name":"SFZ Note Player","channel":"34","parameters":{
+    {"name":"SoundFont Note Player","channel":"34","parameters":{
       "sf":"0123456789abcdef01234567","th":0.01,"mn":83,"mx":83,
       "dm":0,"wm":100,"dt":"Event"}}]})json";
   auto loaded = pipetune::loadDspPipeline(path, {48000, 4, 257}, backend, context);
@@ -551,9 +551,11 @@ static void testEventNoteHold(const std::filesystem::path &directory,
     const std::shared_ptr<const pipetune::DspBackend> &backend) {
   constexpr auto frames = 96013u;
   auto input = std::vector<float>(2 * frames);
+  // The 2.17 Event detector bridges this signal's 100 ms gap itself. Use a
+  // confirmed 200 ms gap so the independent Note Hold setting can be observed.
   for (auto channel = 0u; channel < 2; ++channel)
     for (auto frame = 0u; frame < frames; ++frame)
-      if (frame < 24000u || (frame >= 28800u && frame < 72000u))
+      if (frame < 24000u || (frame >= 33600u && frame < 72000u))
         input[channel * frames + frame] = detectionInput(frame, 48000, "Event");
   auto outputs = std::array<std::vector<float>, 2>{};
   for (auto index = 0u; index < outputs.size(); ++index) {
@@ -566,7 +568,7 @@ static void testEventNoteHold(const std::filesystem::path &directory,
     const auto first = std::span(outputs[index]).first(frames);
     require(amplitude(first.subspan(16000, 6000), 48000, 700) > 0.035 &&
             amplitude(first.subspan(62000, 6000), 48000, 700) > 0.035,
-        "Event must sound before and after the short same-key gap");
+        "Event must sound before and after the confirmed same-key gap");
     require(loaded.pipeline->reset() == pipetune::ProcessStatus::ok,
         "Event Note Hold reset failed");
     require(render(*loaded.pipeline, input, 2, 257) == outputs[index],

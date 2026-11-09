@@ -23,7 +23,7 @@ test('registered SFZ rejects invalid bank path lists before preparing audio', as
     await writeFile(
       preset,
       JSON.stringify({
-        pipeline: [{ name: 'SFZ Note Player', parameters: { sf: id } }],
+        pipeline: [{ name: 'SoundFont Note Player', parameters: { sf: id } }],
       })
     );
     const run = () =>
@@ -111,7 +111,7 @@ test('Windows-1252 SFZ and include files resolve their decoded sample names and 
       JSON.stringify({
         pipeline: [
           {
-            name: 'SFZ Note Player',
+            name: 'SoundFont Note Player',
             parameters: { sf: id, dm: 0, wm: 100, mn: 83, mx: 83, th: 0.01 },
           },
         ],
@@ -205,7 +205,7 @@ test('SFZ original-byte limit includes the selected bank and excludes rejected c
     await writeFile(
       preset,
       JSON.stringify({
-        pipeline: [{ name: 'SFZ Note Player', parameters: { sf: id } }],
+        pipeline: [{ name: 'SoundFont Note Player', parameters: { sf: id } }],
       })
     );
     const run = () =>
@@ -293,7 +293,7 @@ test('ARIA bank candidates, definitions and registry changes invalidate prepared
       JSON.stringify({
         pipeline: [
           {
-            name: 'SFZ Note Player',
+            name: 'SoundFont Note Player',
             parameters: { sf: id, dm: 0, wm: 100, mn: 83, mx: 83, th: 0.01 },
           },
         ],

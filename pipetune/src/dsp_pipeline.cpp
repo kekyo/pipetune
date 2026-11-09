@@ -340,6 +340,7 @@ struct PresetChannelLayout {
 
 struct LayoutNode {
   std::string_view name;
+  std::string_view typeName;
   std::int8_t channelSpec;
   std::uint8_t inputBus;
   std::uint8_t outputBus;
@@ -390,7 +391,7 @@ static PresetChannelLayout inferPresetChannelLayout(yyjson_val *pipelineValue) {
     if (!node.enabled || (insideSection && !sectionEnabled) || definition == nullptr ||
         definition->visualizationOnly ||
         (definition->requiresExternalAssets &&
-         !(node.name == "IR Reverb" || node.name == "SFZ Note Player" ||
+         !(node.name == "IR Reverb" || definition->typeName == "SFZNotePlayerPlugin" ||
            node.name == "Room EQ" || node.name == "Bass Management" ||
            node.name == "Crosstalk Cancellation" || supportsGeneratedFirAsset(node.name)))) continue;
     auto inputBus = std::uint8_t{0};
@@ -400,7 +401,7 @@ static PresetChannelLayout inferPresetChannelLayout(yyjson_val *pipelineValue) {
         !parseChannel(node.channel, channelSpec)) continue;
     auto packed = packDspParameters(*definition, node.parameters);
     if (!packed.error.empty()) continue;
-    auto item = LayoutNode{.name = node.name, .channelSpec = channelSpec,
+    auto item = LayoutNode{.name = node.name, .typeName = definition->typeName, .channelSpec = channelSpec,
         .inputBus = inputBus, .outputBus = outputBus, .bandCount = 0,
         .bassMask = 0, .spatialInputChannels = 0, .spatialMask = 0, .matrixRoutes = {}};
     layout.processingChannels = std::max(layout.processingChannels, channelSpecWidth(channelSpec));
@@ -482,7 +483,7 @@ static PresetChannelLayout inferPresetChannelLayout(yyjson_val *pipelineValue) {
       result |= node.bassMask;
     } else if (node.name == "DC Offset" || node.name == "Hum Generator") {
       result |= selection;
-    } else if (node.name == "Oscillator" || node.name == "SFZ Note Player") {
+    } else if (node.name == "Oscillator" || node.typeName == "SFZNotePlayerPlugin") {
       result |= node.channelSpec == -2 ? 3u : selection;
     } else if (node.channelSpec >= 0) {
       // An explicit channel address declares a bus lane even when its input is silent.
@@ -800,7 +801,7 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
     }
     const auto bassManagement = node.name == "Bass Management";
     const auto irReverb = node.name == "IR Reverb";
-    const auto sfzPlayer = node.name == "SFZ Note Player";
+    const auto sfzPlayer = definition->typeName == "SFZNotePlayerPlugin";
     const auto roomEq = node.name == "Room EQ";
     const auto generatedAssetDsp = irReverb || sfzPlayer || roomEq || bassManagement || crosstalk || supportsGeneratedFirAsset(node.name);
     if (definition->requiresExternalAssets && !generatedAssetDsp) {
@@ -930,6 +931,34 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
     }
 
     const auto &generatedAsset = sharedAsset ? sharedAsset->asset : ownedAsset;
+    auto assetInfo = generatedAsset.info;
+    if (sfzPlayer && !generatedAsset.payload.empty()) {
+      const auto &payload = generatedAsset.payload;
+      if (payload.size() < 80 || payload.size() > UINT32_MAX)
+        co_return fail(nodeError(index, "invalid SFZ bank extent"), std::move(warnings));
+      // The resident table's pool offset bounds the complete metadata prefix.
+      auto poolOffset = std::uint32_t{0};
+      for (auto byte = 0u; byte < 4u; ++byte)
+        poolOffset |= static_cast<std::uint32_t>(payload[48u + byte]) << (8u * byte);
+      const auto controlBytes = 32ull + 4ull * poolOffset;
+      if (controlBytes > payload.size())
+        co_return fail(nodeError(index, "invalid SFZ control metadata extent"), std::move(warnings));
+      assetInfo.processing_channels = selectedProcessingChannels(channelSpec, options.maxChannels);
+      auto additionalBytes = std::uint64_t{0};
+      const auto status = api.samplePlayerPreparationBytes(payload.data(), static_cast<std::uint32_t>(controlBytes),
+          static_cast<std::uint32_t>(payload.size()), generatedAsset.formatTag, options.sampleRate,
+          assetInfo.processing_channels, options.maxFrames, 0.0, &additionalBytes, ET_SAMPLE_PLAYER_NOTE);
+      if (status != ET_OK)
+        co_return fail(nodeError(index, "cannot determine native SFZ preparation memory"), std::move(warnings));
+      if (additionalBytes > UINT32_MAX - payload.size())
+        co_return fail(nodeError(index, "native SFZ footprint exceeds the transfer size limit"), std::move(warnings));
+      const auto requiredBytes = payload.size() + additionalBytes;
+      if (requiredBytes > std::min<std::uint64_t>(context.sfzMaximumBytes, definition->assetCapacities[0]))
+        co_return fail(nodeError(index, "SFZ bank and native preparation require " + std::to_string(requiredBytes) +
+            " bytes, exceeding the instrument budget"), std::move(warnings));
+      // Shared and persistent caches retain only the portable serialized extent.
+      assetInfo.footprint_bytes = static_cast<std::uint32_t>(requiredBytes);
+    }
 
     const auto instance =
         api.instanceCreate(implementation->engine, definition->typeName.data());
@@ -960,18 +989,19 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
         // The footprint includes the native staging payload and convolution
         // buffers. Keep the admission probe's 1 MiB margin through warmup.
         implementation->nativeAssetMemory.emplace_back(
-            static_cast<std::uint64_t>(generatedAsset.info.footprint_bytes) + 1024 * 1024,
+            static_cast<std::uint64_t>(assetInfo.footprint_bytes) + 1024 * 1024,
             context.assetMemoryBytes);
       } catch (const std::exception &error) {
         co_return fail(nodeError(index, error.what()), std::move(warnings));
       }
       const auto assetStatus = api.instanceAssetCopy(
-          implementation->engine, instance, 0u, &generatedAsset.info,
+          implementation->engine, instance, 0u, &assetInfo,
           generatedAsset.payload.data(), generatedAsset.payload.size(),
           generatedAsset.formatTag);
       if (assetStatus != ET_OK) {
         co_return fail(
-            nodeError(index, bassManagement ? "Bass Management rejected the generated FIR asset" :
+            nodeError(index, sfzPlayer ? "SoundFont Note Player rejected the prepared SFZ bank" :
+                             bassManagement ? "Bass Management rejected the generated FIR asset" :
                                              "native DSP rejected the generated FIR asset"),
             std::move(warnings));
       }

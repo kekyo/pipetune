@@ -31,7 +31,7 @@ test.each(['*sine', '*noise', '*silence'])(
         JSON.stringify({
           pipeline: [
             {
-              name: 'SFZ Note Player',
+              name: 'SoundFont Note Player',
               parameters: { sf: id, dm: 0, wm: 100, th: 0.01, mn: 83, mx: 83 },
             },
           ],

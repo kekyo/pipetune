@@ -39,8 +39,8 @@ int main(int argc, char **argv) {
     const auto engine = NativeEngine{api, api.engineCreate()};
     require(engine.handle != 0 && api.enginePrepare(engine.handle, 48000, 2, 128, 0) == ET_OK,
             "cannot prepare the native SFZ engine");
-    const auto *definition = pipetune::findDspByDisplayName("SFZ Note Player");
-    require(definition != nullptr, "SFZ Note Player is absent from the catalog");
+    const auto *definition = pipetune::findDspByDisplayName("SoundFont Note Player");
+    require(definition != nullptr, "SoundFont Note Player is absent from the catalog");
     const auto parameters = std::string(R"({"th":0.01,"mn":83,"mx":83,"dm":0,"wm":100})");
     const auto document = std::unique_ptr<yyjson_doc, decltype(&yyjson_doc_free)>(
         yyjson_read(parameters.data(), parameters.size(), 0), yyjson_doc_free);
@@ -49,9 +49,15 @@ int main(int argc, char **argv) {
     const auto instance = api.instanceCreate(engine.handle, definition->typeName.data());
     require(instance != 0 && api.instanceSetParams(engine.handle, instance, packed.floats.data(),
         packed.floats.size(), definition->hash, 0) == ET_OK, "cannot configure SFZ playback");
+    auto additionalBytes = std::uint64_t{0};
+    const auto controlBytes = 32u + 4u * (12u + 113u * bank.regionCount);
+    require(api.samplePlayerPreparationBytes(bank.payload.data(), controlBytes, bank.payload.size(),
+        ET_ASSET_F32_MULTICH, 48000, 2, 128, 0, &additionalBytes, ET_SAMPLE_PLAYER_NOTE) == ET_OK,
+        "cannot estimate native SFZ preparation");
+    require(additionalBytes + bank.payload.size() <= UINT32_MAX, "SFZ footprint overflows");
     const auto info = pipetune_effetune_asset_info_v1{.channels = 1, .frames = bank.samples,
         .topology = 0, .head_block = 0, .rate_divider = 1, .path_count = 0, .input_count = 0,
-        .processing_channels = 1, .footprint_bytes = static_cast<std::uint32_t>(bank.footprintBytes),
+        .processing_channels = 2, .footprint_bytes = static_cast<std::uint32_t>(bank.payload.size() + additionalBytes),
         .byte_size = static_cast<std::uint32_t>(bank.payload.size())};
     require(api.instanceAssetCopy(engine.handle, instance, 0, &info, bank.payload.data(),
         bank.payload.size(), ET_ASSET_F32_MULTICH) == ET_OK, "native SFZ rejected the generated bank");

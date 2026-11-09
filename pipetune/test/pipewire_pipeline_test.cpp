@@ -338,7 +338,7 @@ static bool testSfzReload(const std::filesystem::path &socketPath,
       root.string() << "\",\"path\":\"" << selected.string() << "\"}]";
   const auto region = std::string("<region> sample=a.wav key=83 amp_veltrack=0 loop_mode=loop_continuous");
   if (!writePresetContents(selected, "#include \"voice.sfz\"") || !writePresetContents(included, region) ||
-      !writePresetContents(path, R"({"pipeline":[{"name":"SFZ Note Player","parameters":{"sf":"0123456789abcdef01234567","mn":83,"mx":83}}]})")) return false;
+      !writePresetContents(path, R"({"pipeline":[{"name":"SoundFont Note Player","parameters":{"sf":"0123456789abcdef01234567","mn":83,"mx":83}}]})")) return false;
   const auto loaded = pipetune::parseControlResponse(pipetune::exchangeControlMessage(
       socketPath, pipetune::makeLoadPresetControlRequest(path)).response);
   if (!check(loaded.success && loaded.status.activePluginCount == 1 && loaded.status.dspLatencyFrames > 0 &&

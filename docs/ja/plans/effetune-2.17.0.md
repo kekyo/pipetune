@@ -241,6 +241,14 @@ Releaseは`build/release`を使い、ビルド警告なしで比較用バイナ�
 
 i686ではサンプルキャッシュの静的検査が`24 == 20`で失敗した。上流スキーマが要求する8バイト境界に合わせ、GCCの`-malign-double`をDSPの全C++翻訳単位と、それにリンクする上流nativeテストへ適用した。1つのカーネルだけに適用すると共有内部型の配置が食い違うため、翻訳単位間の設定を揃えている。PipeTuneとの境界には、影響する構造体を渡さない。通常のi686設定でコンパイルした呼出し側から、Scalar・SIMD baseline・x86-64-v3の公開API、SFZのPCM、不正な候補の破棄を確認した。[GCCの配置とABIの説明](https://gcc.gnu.org/onlinedocs/gcc/x86-Options.html#index-malign-double)、[上流のサイズ検査](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/plugins/others/sfz/sample_cache.h)
 
-工程1のホストビルドは成功し、CLIとGTKがEffeTune DSP 2.17.0を表示した。契約・公開API・非SFZ DSP・上流Note/SoundFont Playerの13テストと、IR・Room EQの177テストが成功した。i686の3バックエンドでも、通常のABIでコンパイルした呼出し側からPCMを確認した。armv7lの先行ビルドは継続中である。x86-64-v4は生成できたが、このホストのCPUでは実行対象にしていない。
+工程1のホストビルドは成功し、CLIとGTKがEffeTune DSP 2.17.0を表示した。契約・公開API・非SFZ DSP・上流Note/SoundFont Playerの13テストと、IR・Room EQの177テストが成功した。i686の3バックエンドでも、通常のABIでコンパイルした呼出し側からPCMを確認した。armv7lのScalar・SIMDもビルドでき、QEMU上で公開APIとSFZのPCMを確認した。x86-64-v4は生成できたが、このホストのCPUでは実行対象にしていない。
 
 製品側のSFZは工程2へ引き継ぐ。新表示名では音源読込の分岐へ入らず、Classic/Eventとも有効DSP数が0になることを確認した。既存パッカーと再生ドライバーの13テスト中7件も、公式v6形式との差と旧表示名の参照で失敗している。これらのREDを工程2の開始条件として保存した。
+
+### 工程2の検証状況
+
+型名によるNote Playerの判定とv6バンクへの更新を実装した。独立パッカーと再生の13テストが成功し、公式SFZ参照PCM13件もScalar・SIMD baseline・x86-64-v3で一致した。追加メモリは実バックエンドへ問い合わせ、共通キャッシュのfootprintには可搬なpayload長だけを保存する。
+
+EventのNote Hold試験では、従来の100 msの空白を2.17.0の音符検出が同じ音符としてつなぐため、空白の前後に設定差が現れなかった。最後の音符の終了には設定差があり、Note Hold自体は動作していた。空白を200 msにすると、終了・再発音とNote Holdの差を観測できたため、入力条件を修正した。PCMの許容誤差や成功しきい値は変更していない。[上流のEvent検出とNote Hold](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/plugins/others/sfz/engine.h)
+
+製品SFZランタイム試験は100秒で成功した。44.1/48/96/192/384 kHz、1・2・16チャンネル、選択ペア、部分ブロック、Classic/Event、dry/wet、休止再開、reset、再発音、プレビュー、バックエンド再構築を検証した。Eventの初期化処理は維持する。新名称の発音、遅延、resetと公式PCMを確認し、工程2の完了条件を満たした。キャッシュ識別子、固定準備メモリ、旧形式の容量境界テストは工程3で更新する。

@@ -793,7 +793,7 @@ try {
         path: join(root, "main.sfz"),
       }]));
       environment.XDG_CACHE_HOME = join(directory, "cache");
-      pipeline.push({ name: "SFZ Note Player", enabled: true, channel: "34", parameters: {
+      pipeline.push({ name: "SoundFont Note Player", enabled: true, channel: "34", parameters: {
         sf: "0123456789abcdef01234567", dt: scenario.startsWith("product-sfz-event") ? "Event" : "Classic",
         mn: 83, mx: 83, dm: 100, wm: 0,
       } });

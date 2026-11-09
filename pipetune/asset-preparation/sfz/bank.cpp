@@ -5,7 +5,8 @@
  */
 
 /*
- * Derived from EffeTune v2.13.0 js/sfz/asset.js.
+ * Derived from EffeTune v2.17.0 js/sfz/asset.js and js/sfz/schema.js.
+ * https://github.com/Frieve-A/effetune/blob/v2.17.0/js/sfz/asset.js
  * Copyright (c) 2025-2026 Yoshiyuki Kobayashi. See LICENSE.effetune.
  */
 #include "bank.h"
@@ -20,8 +21,94 @@
 
 namespace pipetune::assets {
 
-static constexpr auto kRegionWords = std::size_t{30};
-static constexpr auto kIndexFields = std::array{0u, 1u, 20u, 21u, 23u, 24u};
+static constexpr auto kHeaderWords = std::size_t{12};
+static constexpr auto kRegionWords = std::size_t{113};
+
+// Default lanes 30 through 110 preserve the existing resident SFZ subset.
+static constexpr auto kExtraDefaults = std::array<double, 81>{
+    0, // trigger
+    1, // lochan
+    16, // hichan
+    -8192, // lobend
+    8192, // hibend
+    0, // lochanaft
+    127, // hichanaft
+    0, // lopolyaft
+    127, // hipolyaft
+    0, // loprog
+    127, // hiprog
+    -1, // sw_lokey
+    -1, // sw_hikey
+    -1, // sw_last
+    -1, // sw_lolast
+    -1, // sw_hilast
+    -1, // sw_down
+    -1, // sw_up
+    -1, // sw_previous
+    -1, // sw_default
+    0, // group
+    0, // off_by
+    0, // off_mode
+    0.006, // off_time
+    0, // polyphony
+    0, // note_polyphony
+    200, // bend_up
+    -200, // bend_down
+    20000, // cutoff
+    0, // resonance
+    0, // fil_type
+    0, // ampeg_delay
+    0, // ampeg_start
+    0, // amp_keytrack
+    60, // amp_keycenter
+    0, // amp_random
+    0, // pitch_veltrack
+    0, // pitch_random
+    0, // delay
+    0, // delay_random
+    0, // pitcheg_delay
+    0, // pitcheg_start
+    0, // pitcheg_attack
+    0, // pitcheg_hold
+    0, // pitcheg_decay
+    0, // pitcheg_sustain
+    0, // pitcheg_release
+    0, // pitcheg_depth
+    0, // fileg_delay
+    0, // fileg_start
+    0, // fileg_attack
+    0, // fileg_hold
+    0, // fileg_decay
+    0, // fileg_sustain
+    0, // fileg_release
+    0, // fileg_depth
+    0, // amplfo_delay
+    0, // amplfo_fade
+    0, // amplfo_freq
+    0, // amplfo_depth
+    0, // pitchlfo_delay
+    0, // pitchlfo_fade
+    0, // pitchlfo_freq
+    0, // pitchlfo_depth
+    0, // fillfo_delay
+    0, // fillfo_fade
+    0, // fillfo_freq
+    0, // fillfo_depth
+    0, // direction
+    -1, // loop_count
+    0, // loop_crossfade
+    0, // ampeg_dynamic
+    50, // eq1_freq
+    1, // eq1_bw
+    0, // eq1_gain
+    500, // eq2_freq
+    1, // eq2_bw
+    0, // eq2_gain
+    5000, // eq3_freq
+    1, // eq3_bw
+    0, // eq3_gain
+};
+static constexpr auto kIndexFields = std::array{0u, 1u, 20u, 21u, 23u, 24u, 111u, 112u};
 
 struct SampleInfo {
   const Audio *audio;
@@ -37,11 +124,13 @@ struct BankRegion {
 
 static std::array<double, kRegionWords> regionFields(const SfzRegion &r, const SampleInfo &s) {
   const auto end = r.end.value_or(s.frames - 1);
-  return {0, static_cast<double>(s.frames), static_cast<double>(s.channels), static_cast<double>(s.audio->sampleRate),
+  auto fields = std::array<double, kRegionWords>{0, static_cast<double>(s.frames), static_cast<double>(s.channels), static_cast<double>(s.audio->sampleRate),
       r.lokey, r.hikey, r.lovel, r.hivel, r.lorand, r.hirand, r.seq_length, r.seq_position,
       static_cast<double>(r.seqGroup), r.pitch_keycenter, r.pitch_keytrack, r.transpose, r.tune, r.volume, r.pan,
       r.amp_veltrack, r.offset, end, r.loop_mode, r.loop_start, r.loop_end.value_or(end),
       r.ampeg_attack, r.ampeg_hold, r.ampeg_decay, r.ampeg_sustain, r.ampeg_release};
+  std::ranges::copy(kExtraDefaults, fields.begin() + 30);
+  return fields;
 }
 
 SfzBank packSfzBank(std::span<const SfzRegion> regions, std::span<const SfzSample> samples,
@@ -70,7 +159,6 @@ SfzBank packSfzBank(std::span<const SfzRegion> regions, std::span<const SfzSampl
   auto ignoredLoops = std::uint32_t{0};
   auto usedPaths = std::set<std::u16string>{};
   auto groups = std::set<std::uint32_t>{};
-  auto indexEntries = std::uint64_t{0};
   for (const auto &region : regions) {
     const auto key = sfzUtf16(region.sample);
     const auto &info = information.at(key);
@@ -97,7 +185,6 @@ SfzBank packSfzBank(std::span<const SfzRegion> regions, std::span<const SfzSampl
       playable.push_back({&region, fields});
       usedPaths.insert(key);
       groups.insert(region.seqGroup);
-      indexEntries += static_cast<std::uint32_t>(region.hikey - region.lokey + 1);
     } catch (const SfzError &error) {
       if (firstInvalid.empty()) firstInvalid = error.what();
       result.invalidRegions.push_back(region.sample + ": " + error.what());
@@ -111,32 +198,33 @@ SfzBank packSfzBank(std::span<const SfzRegion> regions, std::span<const SfzSampl
     info.offset = static_cast<std::uint32_t>(poolLength);
     poolLength += static_cast<std::uint64_t>(info.frames) * info.channels;
   }
-  const auto poolOffset = 8ull + kRegionWords * playable.size();
+  const auto poolOffset = kHeaderWords + kRegionWords * playable.size();
   const auto wordCount = poolOffset + poolLength;
   const auto byteLength = 32 + wordCount * 4;
-  const auto footprint = byteLength + 4 * (129 + 2 * groups.size() + indexEntries);
-  if (footprint > maximumBytes || wordCount > UINT32_MAX)
+  if (byteLength > maximumBytes || wordCount > UINT32_MAX)
     throw SfzError("too-large", "The SFZ samples are too large to load.");
   result.payload.resize(static_cast<std::size_t>(byteLength));
-  result.footprintBytes = footprint;
+  result.footprintBytes = byteLength;
   result.samples = static_cast<std::uint32_t>(wordCount);
   result.regionCount = static_cast<std::uint32_t>(playable.size());
-  result.warmupFrames = static_cast<std::uint32_t>((2 * playable.size() + 2 + (poolLength + 31) / 32 + 7) / 8);
+  result.warmupFrames = static_cast<std::uint32_t>((2 * playable.size() + 2 + (wordCount + 31) / 32 + 7) / 8);
   const auto put = [&](std::size_t offset, std::uint32_t word) {
     for (auto byte = 0u; byte < 4; ++byte) result.payload[offset + byte] = static_cast<std::uint8_t>(word >> (8 * byte));
   };
   put(0, 0x31415445); put(4, 1); put(8, result.samples); put(12, 1);
-  const auto header = std::array<std::uint32_t, 8>{0x53465a, 2, static_cast<std::uint32_t>(playable.size()),
-      kRegionWords, static_cast<std::uint32_t>(poolOffset), result.samples, static_cast<std::uint32_t>(groups.size()), 0};
+  const auto header = std::array<std::uint32_t, kHeaderWords>{0x53465a, 6, static_cast<std::uint32_t>(playable.size()),
+      kRegionWords, static_cast<std::uint32_t>(poolOffset), result.samples, static_cast<std::uint32_t>(groups.size()), 0,
+      static_cast<std::uint32_t>(poolOffset), 0, 0, 0};
   for (auto index = 0u; index < header.size(); ++index) put(32 + index * 4, header[index]);
   for (auto row = std::size_t{0}; row < playable.size(); ++row) {
     auto &region = playable[row];
     region.fields[0] = information.at(sfzUtf16(region.source->sample)).offset;
+    region.fields[111] = poolOffset;
     region.fields[12] = std::distance(groups.begin(), groups.find(region.source->seqGroup));
     for (auto field = 0u; field < kRegionWords; ++field) {
       const auto bits = std::ranges::find(kIndexFields, field) != kIndexFields.end() ?
           static_cast<std::uint32_t>(region.fields[field]) : std::bit_cast<std::uint32_t>(static_cast<float>(region.fields[field]));
-      put(32 + (8 + row * kRegionWords + field) * 4, bits);
+      put(32 + (kHeaderWords + row * kRegionWords + field) * 4, bits);
     }
   }
   for (const auto &path : usedPaths) {

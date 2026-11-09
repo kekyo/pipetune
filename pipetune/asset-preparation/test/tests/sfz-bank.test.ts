@@ -103,7 +103,7 @@ test.each([44100, 48000, 96000])(
     const metadata = JSON.parse(native.stdout.subarray(0, end).toString());
     expect(metadata).toEqual({
       regions: reference.regions.length,
-      footprintBytes: packed.footprintBytes,
+      footprintBytes: packed.payload.byteLength,
       warmupFrames: packed.warmupSamples,
       samples: packed.samples,
     });
@@ -111,10 +111,10 @@ test.each([44100, 48000, 96000])(
       Buffer.from(packed.payload)
     );
     expect(
-      run(selected, definition, samples, packed.footprintBytes).status
+      run(selected, definition, samples, packed.payload.byteLength).status
     ).toBe(0);
     expect(
-      run(selected, definition, samples, packed.footprintBytes - 1).status
+      run(selected, definition, samples, packed.payload.byteLength - 1).status
     ).not.toBe(0);
   }
 );
@@ -293,7 +293,7 @@ test('SFZ partial import preserves playable PCM and combines distinct region omi
   const metadata = JSON.parse(native.stdout.subarray(0, end).toString());
   expect(metadata).toEqual({
     regions: 3,
-    footprintBytes: reference.footprintBytes,
+    footprintBytes: reference.payload.byteLength,
     warmupFrames: reference.warmupSamples,
     samples: reference.samples,
     warnings: service.mergeSfzWarnings(parsed.warnings, recovered),

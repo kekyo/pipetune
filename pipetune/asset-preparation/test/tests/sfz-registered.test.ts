@@ -51,7 +51,9 @@ test('registered SFZ instruments prepare, reuse and recover without external com
     const parameters = { sf: id, dm: 0, wm: 100, th: 0.01, mn: 83, mx: 83 };
     await writeFile(
       preset,
-      JSON.stringify({ pipeline: [{ name: 'SFZ Note Player', parameters }] })
+      JSON.stringify({
+        pipeline: [{ name: 'SoundFont Note Player', parameters }],
+      })
     );
     let limits: NodeJS.ProcessEnv = {};
     const run = (rate: number, backend: string) => {

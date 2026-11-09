@@ -30,7 +30,7 @@ test('SFZ registration, confinement and partial banks retain explicit diagnostic
     await writeFile(
       preset,
       JSON.stringify({
-        pipeline: [{ name: 'SFZ Note Player', parameters: { sf: id } }],
+        pipeline: [{ name: 'SoundFont Note Player', parameters: { sf: id } }],
       })
     );
     const run = () =>
@@ -130,7 +130,7 @@ test('SFZ registration, confinement and partial banks retain explicit diagnostic
     await writeFile(
       preset,
       JSON.stringify({
-        pipeline: [{ name: 'SFZ Note Player', parameters: {} }],
+        pipeline: [{ name: 'SoundFont Note Player', parameters: {} }],
       })
     );
     const unassigned = run();
@@ -141,7 +141,7 @@ test('SFZ registration, confinement and partial banks retain explicit diagnostic
       preset,
       JSON.stringify({
         pipeline: [
-          { name: 'SFZ Note Player', enabled: false, parameters: { sf: id } },
+          { name: 'SoundFont Note Player', enabled: false, parameters: { sf: id } },
         ],
       })
     );

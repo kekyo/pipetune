@@ -94,6 +94,7 @@ struct BackendApi {
                                std::uint32_t, double) = nullptr;
   decltype(&pipetune_effetune_instance_asset_copy_v1) instanceAssetCopy = nullptr;
   decltype(&et_instance_asset_state) instanceAssetState = nullptr;
+  decltype(&et_sample_player_preparation_bytes) samplePlayerPreparationBytes = nullptr;
   decltype(&et_instance_reset) instanceReset = nullptr;
   decltype(&et_pipeline_configure) pipelineConfigure = nullptr;
   decltype(&et_pipeline_latency) pipelineLatency = nullptr;
@@ -170,6 +171,8 @@ static BackendApi loadBackend(const std::filesystem::path &path) {
   api.instanceAssetCopy = loadFunction<decltype(api.instanceAssetCopy)>(
       api.handle, "pipetune_effetune_instance_asset_copy_v1");
   api.instanceAssetState = loadFunction<decltype(api.instanceAssetState)>(api.handle, "et_instance_asset_state");
+  api.samplePlayerPreparationBytes = loadFunction<decltype(api.samplePlayerPreparationBytes)>(
+      api.handle, "et_sample_player_preparation_bytes");
   api.instanceReset = loadFunction<decltype(api.instanceReset)>(api.handle, "et_instance_reset");
   return api;
 }
@@ -578,9 +581,16 @@ static bool prepareGoldenAsset(const BackendApi &api, et_engine engine,
     region.loop_end = 4095;
     const auto bank = pipetune::assets::packSfzBank(std::span(&region, 1), std::span(&sample, 1),
         pipetune::assets::kMaximumSfzBytes);
+    auto additionalBytes = std::uint64_t{0};
+    const auto controlBytes = 32u + 4u * (12u + 113u * bank.regionCount);
+    if (api.samplePlayerPreparationBytes(bank.payload.data(), controlBytes, bank.payload.size(),
+        ET_ASSET_F32_MULTICH, testCase.sampleRate, testCase.channelCount,
+        std::max(32u, testCase.blockSize), 0, &additionalBytes, ET_SAMPLE_PLAYER_NOTE) != ET_OK ||
+        additionalBytes + bank.payload.size() > UINT32_MAX) return false;
     const auto info = pipetune_effetune_asset_info_v1{.channels = 1, .frames = bank.samples,
         .topology = 0, .head_block = 0, .rate_divider = 1, .path_count = 0, .input_count = 0,
-        .processing_channels = testCase.channelCount, .footprint_bytes = static_cast<std::uint32_t>(bank.footprintBytes),
+        .processing_channels = testCase.channelCount,
+        .footprint_bytes = static_cast<std::uint32_t>(bank.payload.size() + additionalBytes),
         .byte_size = static_cast<std::uint32_t>(bank.payload.size())};
     return activateGoldenAsset(api, engine, instance, testCase, info, bank.payload, 0, ET_ASSET_F32_MULTICH);
   }
