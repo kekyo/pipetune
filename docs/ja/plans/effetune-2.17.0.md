@@ -1,0 +1,222 @@
+# EffeTune 2.17.0対応計画
+
+## 目的と対象範囲
+
+PipeTuneが使うEffeTuneを2.16.0から2.17.0へ更新する。既存DSPとSFZ音源を新しいエンジンで使えるようにし、製品の音声経路、メモリ使用量、配布物まで検証する。
+
+利用者との確認により、MIDI入力・演奏機能とSF2/SF3音源の読込は別計画とする。今回の音源対応は、現在のPipeTuneが扱うSFZ音源の更新を完了点とする。2.17.0で追加された音源のストリーミングや、SFZスクリプト・内蔵エフェクトなどの全面移植も含めない。現在の全量読込を維持し、対応していない音源機能は診断で区別する。
+
+上流では、入力音から音符を検出する「SFZ Note Player」が「SoundFont Note Player」へ改名された。本書では、この既存DSPを「Note Player」と呼ぶ。一方、新設された「SoundFont Player」はMIDIイベントで演奏する別のDSPである。名前が似ているため、カタログへの登録とPipeTuneでの利用可否を分けて扱う。[公式プラグインガイド](https://github.com/Frieve-A/effetune/blob/v2.17.0/docs/i18n/ja/plugins/others.md)
+
+DSD、MIDIファイル、MusicXMLの再生、Visualizerの新表示、ネットワーク再生は今回の対象に含めない。これらはEffeTuneアプリ側の機能であり、現在のPipeWire音声入力を更新するためには不要である。[公式リリース](https://github.com/Frieve-A/effetune/releases/tag/v2.17.0)
+
+## 調査の基準
+
+調査日は2026-11-09。PipeTuneの基準は`develop`の`f491ddce092a4ee70bdbd7351f43bc1c75a30618`で、調査開始時の作業ツリーはクリーンだった。計画を保存するブランチは`feature/effetune-2.17.0`とする。
+
+| 項目 | 現行 | 更新先 |
+| --- | --- | --- |
+| 公式アプリタグ | `v2.16.0` | `v2.17.0` |
+| 公式コミット | `3769b9aefebf2dce2de3169690d4a95e1716da4c` | `d026b1664ec9444a66297efd36e251bc8aae3d05` |
+| DSPのCMakeプロジェクト版 | 1.16.0 | 1.16.0 |
+| DSPのJSバインディング版 | 0.16.0 | 0.17.0 |
+| DSPの登録カーネル数 | 112 | 113 |
+| `EFFETUNE_DSP_ABI_VERSION` | 1 | 1 |
+
+ローカルタグと公式リモートのコミットが一致することを確認した。製品の版表示は、従来どおりEffeTuneの`package.json`から取得する。DSPのCMake版は今回も1.16.0なので、これを2.17.0の判定に使わない。[タグ間差分](https://github.com/Frieve-A/effetune/compare/v2.16.0...v2.17.0)、[アプリ版](https://github.com/Frieve-A/effetune/blob/v2.17.0/package.json)、[DSPのCMake定義](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/CMakeLists.txt)
+
+## 現行コードへの影響
+
+### 表示名とパラメータ
+
+| DSP | 現行 | 2.17.0と対応方針 |
+| --- | --- | --- |
+| `SFZNotePlayerPlugin` | 表示名はSFZ Note Player。20 float、`0xdfb4bbc5` | SoundFont Note Playerへ改名。21 float、`0x3785c6ed`。音色選択の`sp0`が追加され、既定値は-1 |
+| `SoundFontPlayerPlugin` | 未登録 | 新規登録。4 float、`0x844a0998`。MIDI演奏機能は今回の対象外として診断する |
+| `RhythmAnalyzerPlugin` | 4 float、`0xf854c585` | 契約は同じ。ドラム検出モデルの更新を検証する |
+| `NoteSpectrogramPlugin` | 4 float、`0xb8518943` | 契約は同じ。音色判定モデルと共有解析への影響を検証する |
+
+Note PlayerとSoundFont Playerのアセット容量は、ともにslot 0の1 GiBである。生成カタログには113カーネルを取り込むが、それだけで113種類すべての製品機能に対応したとは扱わない。[公式メタデータ](https://github.com/Frieve-A/effetune/blob/v2.17.0/plugins/dsp/effetune-dsp.meta.json)、[Note Playerのパラメータ](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/plugins/others/sfz_note_player/params.json)、[SoundFont Playerのパラメータ](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/plugins/others/soundfont_player/params.json)
+
+現在の`dsp_pipeline.cpp`は、アセット読込、チャンネル構成、無音時の動作を表示名`SFZ Note Player`で判定している。生成カタログだけ更新すると、この分岐に入らなくなる。Note Playerの判定を安定した型名`SFZNotePlayerPlugin`へ揃え、2.17.0の表示名で保存したプリセットを製品経路へ通す。旧表示名への別名対応は追加しない。現行版を表すテスト入力も新しい表示名へ更新する。[上流の表示名変更](https://github.com/Frieve-A/effetune/blob/v2.17.0/plugins/plugins.txt)
+
+SoundFont Playerを有効にしたプリセットは、MIDI演奏が未対応であることを警告し、そのノードを除外する。同じプリセットの対応済みDSPは処理を続ける。表示専用DSPとして登録したり、音源不足だけが理由であるかのように案内したりしない。無効ノードと無効なSectionは既存の扱いを保つ。
+
+### 共有DSPバックエンドと公開API
+
+PipeTuneは`EffeTuneNativeBackends.cmake`で共有ライブラリのソースを独自に列挙している。上流に追加された`plugins/others/sfz/sfz_effect_cost_bridge.cpp`は`kernel.cpp`の収集では取り込めないため、明示的に追加する。SoundFont Playerにも上流と同じ`-ffp-contract=off`を適用する。i686の浮動小数点設定とARMの木モデル変換も、新しいカーネルとモデルに対して確認する。[上流のビルド定義](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/CMakeLists.txt)
+
+上流のパラメータ生成器は、SFZ変調と内蔵エフェクトのスキーマ生成器を新たにimportする。PipeTuneのカタログ生成に必要な入力とCMakeの依存関係を照合する。生成物はビルドディレクトリへ置き、サブモジュール内の生成済みファイルを書き換えない。[上流の生成器](https://github.com/Frieve-A/effetune/blob/v2.17.0/scripts/gen-dsp-params.mjs)
+
+2.17.0では、64 bit環境でもネイティブポインタを返す`et_instance_asset_begin_ptr`が公開された。現在の`effetune_backend_asset_bridge.cpp`は、パッチで取り出した内部Engineを直接操作している。コピー用のPipeTune APIは維持し、公開APIでbeginとcommitを行う。その間でバイト列をコピーする。失敗時のabortと状態保持も確認する。[公式のネイティブホスト説明](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/README.md#abi-contract)、[API宣言とコメント](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/include/effetune/abi.h)
+
+移行後は`abi-engine-access.patch`、`effetune_backend_engine_access.*`、ABIを加工するビルド工程を削除する。旧`et_instance_asset_begin`はWASM32向けであり、native 64 bitでは失敗する。PipeTune側に不要となるローダー項目やexportも削除する。`App-internal`と明記された解析共有・ストリーム境界APIや、内部用のoffline graph APIは追加利用しない。
+
+ABI番号1は、版をまたぐネイティブバイナリ互換の保証ではない。ヘッダー、共有バックエンド、製品を同じ公式コミットから再ビルドし、既存のカタログ照合も維持する。[上流のABIとメモリ規則](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/README.md)
+
+### SFZバンク形式とメモリ
+
+バンクは、SFZの定義と音声サンプルをDSPへ渡すためにまとめたデータである。現在の`asset-preparation/sfz/bank.cpp`は、ヘッダー8 word、region 30 wordのSFZ table v2を生成する。2.17.0のカーネルはこの形式を受け付けない。
+
+今回の基礎形式には、全量読込に使えるSFZ table v6を採用する。ヘッダーは12 word、regionは113 wordになる。変調付きv7、ストリーム用v8、SF2用v9、保存形式を指定するv10も存在するが、数字だけを最新のv10へ変えない。上流の定義に従ってフィールド、既定値、整数の格納方法、可変領域を構成する。[公式パッカー](https://github.com/Frieve-A/effetune/blob/v2.17.0/js/sfz/asset.js)、[バンク定義](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/plugins/others/sfz_note_player/bank.h)、[受入側の検証](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/plugins/others/sfz/bank.h)
+
+ネイティブ側の追加メモリは、新しい`et_sample_player_preparation_bytes`で取得する。完全な制御メタデータ、payload全体の長さ、処理レート、最大ブロック長、実際の処理チャンネル数を渡す。Note Playerには`ET_SAMPLE_PLAYER_NOTE`を指定する。必要量はpayload長と取得した追加バイト数の和であり、現在のインデックス計算を足して二重計上しない。
+
+MIDIのテンポ情報を持たない今回の構成では、見積もりとアップロードに同じ`minimum_physical_bpm=0`を使う。これは上流が定義した120 BPMの代替値を選ぶ指定である。これらのAPIは音声処理中に呼び出さず、候補パイプラインを準備する側で処理する。APIの戻り値は64 bitで計算し、1 GiB上限と32 bitフィールドへの変換を確認する。[見積もりとアップロードの契約](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/README.md#native-midi-sample-player-hosts)、[APIコメント](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/include/effetune/abi.h)
+
+追加メモリの値は、実際に使うバックエンドと処理条件から求める。アーキテクチャ依存の値を、そのまま共通キャッシュの正解として保存しない。デコード中の一時領域、固定のinstance準備領域、転送時のコピー、稼働中と候補の共存は、このAPIの値だけでは表せない。既存のアセット全体のメモリ予算へ、それぞれを含める。
+
+現在のキャッシュ識別子には`sfz-v2/ETA1-table-v2`と旧出典が入っている。今回は形式が実際に変わるため識別子を更新し、旧キャッシュは再利用せず元音源から再生成する。旧形式の変換器は作らない。新しいキャッシュでも、ロード時に実バックエンドの必要量を再確認する。IRとRoom EQの識別子は、EffeTuneの版が上がったという理由だけでは変えない。
+
+### SFZの読込範囲と登録一覧
+
+今回維持する機能は、現行パーサーとテストが扱うinclude・define、ARIAバンク、鍵域・ベロシティ・ランダム・順番によるサンプル選択、音高・音量・pan、再生位置・loop、音量エンベロープ、生成音源である。受け付ける各機能の既定値と音声への効果を2.17.0と比較する。
+
+新たなSFZ機能を古いパーサーで無視すると、上流と異なる音になる可能性がある。対応範囲外のスクリプト、変調、エフェクト、埋込みサンプル、特殊な保存指定などは、対象機能を診断して読込を拒否する。既存の音源機能の意味が変わった場合は、対応するPCMテストから修正する。参考実装が受け付けたというだけで全面対応とは説明しない。[SFZ対応範囲の公式記録](https://github.com/Frieve-A/effetune/blob/v2.17.0/specifications/sfz/README.md)、[上流パーサー](https://github.com/Frieve-A/effetune/blob/v2.17.0/js/sfz/parser.js)
+
+EffeTuneの`sfz-references.json`には、2.17.0からSFZとSF2/SF3が混在する。現行`referenceFromRegistry()`は、選択していない項目でも拡張子が`.sfz`以外なら一覧全体を拒否する。有効なSF2/SF3登録が混ざっていても、選択したSFZは読み込めるようにする。選択した音源がSF2/SF3なら、未対応形式として候補の適用を拒否し、稼働中の音声を保つ。登録一覧のIDとパスの検証は維持し、EffeTuneの登録情報を書き換えない。[登録一覧の公式実装](https://github.com/Frieve-A/effetune/blob/v2.17.0/electron/sfz-library-ipc.js)
+
+### その他のDSPと参照音声
+
+RhythmのドラムモデルとNote Spectrogramの音色判定モデルが更新されている。SFZ Eventが使う共有解析への影響も含め、上流fixtureと製品PCMを確認する。表示専用DSPの除外は維持し、Rhythmのクリック音は引き続き実行する。[Rhythmモデル](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/plugins/analyzer/rhythm_analyzer/drum_weights.provenance.json)、[音色判定モデル](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/plugins/analyzer/note_spectrogram/timbre_weights.provenance.json)
+
+公式goldenのPCM差分はSFZ Note Playerの`case-002`、`case-007`、`case-008`である。新しい公式PCMを比較基準に使い、他の10件も含む13件を検証する。PipeTuneの結果を正解として参照音声を作り直したり、許容誤差を一括で広げたりしない。[公式SFZ参照音声](https://github.com/Frieve-A/effetune/tree/v2.17.0/dsp/plugins/others/sfz_note_player/golden)
+
+Chorus、FDN Reverb、平滑化、FIR・畳込み処理にも変更がある。長い減衰、極小値、有限PCM、遅延、resetを回帰確認する。x86では、DSP呼出し後に浮動小数点制御レジスタMXCSRを復元するようになった。正常終了とエラー終了の両方で、呼出し元の設定を保持することを実共有バックエンドで確認する。[エンジン変更](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/core/engine.cpp)、[DSP差分](https://github.com/Frieve-A/effetune/compare/v2.16.0...v2.17.0)
+
+Room EQ設計にはタグ間差分がない。測定データ保存の変更は設定保存先の置換が中心である。IRライブラリにはキャッシュ操作の変更があるが、PipeTuneのキャッシュを上流アプリの保存実装へ置き換える必要はない。公開アセットAPIへの移行と畳込み処理の影響を、既存のRoom・IR・Crosstalkの音声試験で確認する。[測定データの実装](https://github.com/Frieve-A/effetune/blob/v2.17.0/features/measurement/dataStorage.js)、[上流IRキャッシュ](https://github.com/Frieve-A/effetune/blob/v2.17.0/js/ir-library/ir-pcm-cache.js)
+
+## 段階的な実施計画
+
+各工程でビルドと対象テストを行い、音声ドライバーまたは製品で結果を観測できる状態を作る。コード変更は問題を再現するテストでREDを確認し、修正後にGREENを確認してコミットする。工程1は非SFZの音声処理、工程2はSFZ再生、工程3は製品の音源読込までを成果物とする。更新全体の完了は工程5で判定する。
+
+削除する機能や統合処理には、削除を確認する一時テストを先に追加する。RED、削除後のGREEN、削除コミットの順に進め、その後で一時テスト自体を削除して別コミットにする。音声などの恒久的な動作テストは残す。
+
+計画にない問題が見つかった場合は、原因と計画への影響を整理してから工程を修正する。試行中の不要な修正は取り除く。仕様とテストの要求が矛盾する場合は、どちらへ合わせるか確認する。依存ソースとvendorは編集せず、mainへのマージも行わない。
+
+### 工程0 現行版の基準を記録する
+
+基準コミットの2.16.0でDebugの全体テストを実行する。Releaseでも比較用バイナリを作り、コンパイラ、実行可能なSIMD、Podman、メモリ・ディスクを記録する。管理者権限が必要な不足パッケージは、名称と導入方法を案内する。
+
+同じSFZ音源を使い、Classic/Eventの発音、遅延、初期化時間、処理時間、最大RSSを保存する。Rhythmの表示方式とクリックの有無、ChorusとFDN Reverbの減衰も比較用に記録する。性能測定はReleaseで48/96/384 kHzを基本とし、CPU、ブロック長、入力、処理フレーム数を固定する。ビルドや他の負荷試験とは重ねない。
+
+既存SFZキャッシュを隔離して保存する。更新後は形式変更を検出し、元音源から再生成できることを確認する。登録情報と元音源のハッシュも記録する。
+
+成果物は基準テスト結果、比較用PCM、性能条件、旧キャッシュである。完了条件は、既存の失敗と更新後の失敗を区別でき、同じ入力と環境で比較を再現できること。記録は次の実装コミットと対応付ける。
+
+### 工程1 2.17.0の共有DSPと公開アセットAPIを使えるようにする
+
+現行スモークを`effetune_217_test.cpp`へ更新し、版、113カーネル、新しいパラメータ契約を要求して2.16.0でREDを確認する。公式コミットへ参照を更新し、生成カタログ、追加ソース、コンパイル設定を揃える。`sp0`の省略、上下限、不正値を上流のパッカーと比較する。
+
+公開アセットAPIだけでIRを転送し、インパルス応答が得られるテストを用意する。コピー用ブリッジを公開APIへ移し、必要な見積もりAPIをローダーへ追加する。旧内部フックへの依存をなくす一時テストでRED/GREENを記録し、パッチ、ヘルパー、ABI加工工程、不要なローダー項目を削除する。削除のコミット後に一時テストを除去する。
+
+CLI・GTKの版表示、Matrix、Rhythm、IR、Room EQなどの対象試験を実行する。Scalarと実行可能なSIMDで共有ライブラリをロードし、i686・armv7lも先行ビルドする。上流のSFZ・SoundFontを含むnativeテストは実行対象に残す。これはDSPライブラリの検証であり、MIDI機能を製品へ追加する工程ではない。
+
+成果物は、非SFZの音声処理と公開APIによるアセット転送を実行できる2.17.0ビルドである。完了条件は、版と契約が一致し、対象PCMが成功し、内部アクセス用パッチが不要となること。新しい警告にも対処する。SFZの旧バンク形式による未完了項目は工程2へ明示して引き継ぐ。
+
+コミットは`feat: integrate EffeTune 2.17 native backends`、削除は`refactor: use public EffeTune asset APIs`、一時テストの除去は`chore: remove temporary asset bridge removal checks`に分ける。
+
+### 工程2 既存SFZ音源を新しいNote Playerで再生する
+
+小さな登録SFZを新しい表示名のプリセットで読み込み、Classic/EventのPCMを検証するテストを先に追加する。旧表示名による分岐と旧バンク形式の問題をREDで確認する。型名での判定、v6のパッキング、実バックエンドでのメモリ見積もりを実装し、同じ音源が再生できるところまで進める。
+
+パッカーはC++の独立アセット準備として維持する。実行時にNode.jsを追加しない。可搬なバンク内容は公式JSと比較し、ネイティブに依存する必要メモリは公開APIで別に確認する。バイト列の比較だけで完了とせず、既存のSFZ再生ドライバーで発音、dry/wet、loop、resetを確認する。
+
+21 floatの新契約、1 GiB上限、実際の処理チャンネル数、見積もりの失敗と整数境界を確認する。2.15対応で導入したEventの初回発音用初期化は、2.17.0での音声テストを根拠に扱う。不要と判断して削除する場合は、前述の削除手順に従う。
+
+成果物は、新名称のプリセットから既存SFZを読み込んで音を出せる製品と独立ドライバーである。完了条件は、Scalarと実行可能なSIMDでClassic/Eventが発音し、遅延とresetが成立すること。公式SFZ参照PCM13件も検証する。
+
+コミットは`feat: adapt SFZ preparation to EffeTune 2.17`とする。
+
+### 工程3 音源読込とキャッシュを製品の契約へ揃える
+
+現行SFZの機能ごとに、音源選択と音声への効果を2.17.0と比較する。未対応宣言を含む音源は診断して拒否する。既存機能の意味が変わった箇所は、再現テストから必要な修正を行う。SFZ全機能の移植へは拡大しない。
+
+SFZ・SF2・SF3が混ざる登録一覧から、選択したSFZだけを読み込むケースを追加する。SF2/SF3を直接選択した場合、未登録ID、欠損・変更された音源、読込取消も検証する。SoundFont Playerは未対応のMIDIノードとして警告し、他のDSPを処理できることを確認する。
+
+キャッシュ識別子を更新し、旧バンクを読まずに再生成する。新形式の冷キャッシュと温キャッシュで同じPCMが得られることを確認する。バックエンド、レート、最大ブロック長、チャンネル数を変更した場合も必要量を再計算する。準備中の一時領域と候補の共存を含め、設定済みのメモリ予算を超えて確保しない。
+
+容量超過、破損、取消で候補の一部を公開しないことを、稼働中のPCMと状態で検証する。有効な音源へ戻した後の回復、依存ファイル監視、キャッシュの破損・書込失敗も既存テストで確認する。元の音源とEffeTuneの登録一覧を変更しない。
+
+成果物は、混在した登録一覧と新形式キャッシュを扱える音源ローダーである。完了条件は、対応SFZが再生でき、未対応形式を区別でき、失敗や取消でも稼働中のパイプラインを保てること。メモリ境界と回復のテストが成功し、実行時にNode.jsやffmpegコマンドを必要としないことも確認する。
+
+コミットは`fix: handle EffeTune 2.17 instrument references`と`fix: account for native SFZ preparation and cache changes`に分ける。
+
+### 工程4 製品の音声動作と性能を検証する
+
+Note Playerは44.1/48/96/192/384 kHz、部分ブロック、選択ペア、16チャンネルを代表条件と境界条件に分けて試験する。初回入力、同音の再発音、プレビュー、無音休止と再開、プリセット再読込、レートとバックエンドの再構築を含める。dry/wetの位置と製品の報告遅延を実PCMで照合する。
+
+Rhythmは`dm=band/drums`とクリック有効・無効を確認する。クリック無効時の入力保持と、有効時の選択チャンネルへの出力を検証する。新しいドラム・音色判定モデルは上流テストで検証し、Note Spectrogramの表示専用としての除外も維持する。
+
+Chorus、FDN Reverb、FIR、Room EQ、IR、Crosstalkの音声と遅延を確認する。MXCSR復元は正常・エラーの両経路で検証する。長い減衰と極小値の処理を含め、有限PCMと処理負荷を確認する。
+
+製品経路では、Matrix reset、Processed/Direct、単一・複数出力、音量、遅延補償を確認する。既存の実時間・freewheel試験、出力再接続、音声レートの不一致からの回復、通常のWirePlumberポリシーとの共存を全体回帰へ残す。時間待ちを成功条件にせず、接続状態、処理済みフレーム、PCMの連続性から判定する。
+
+工程0と同じRelease条件で準備時間、平均・上位分位・最大処理時間、RSS、遅延、共有ライブラリのサイズを比較する。必要な処理周期を超える、音切れが出る、メモリが継続的に増える場合は原因を調べる。上流の音声仕様による差とPipeTune側の退行を区別し、検証の許容誤差やメモリ上限を便宜的に広げない。QEMUの結果を実機の性能保証には使わない。
+
+成果物は、製品の音声動作の回帰テストと更新前後の性能比較である。完了条件は、対象プリセットで音声・遅延・休止再開・出力経路が成立し、観測した負荷とメモリの差を説明できること。問題があれば原因を再現するテストと最小修正を揃える。
+
+コミットは`feat: verify EffeTune 2.17 audio behavior`とし、独立した不具合修正は`fix:`で分ける。
+
+### 工程5 全体回帰と配布を完了する
+
+最終コードでDebug/Releaseの全体テストを実行する。コア単独ビルド、独立アセット準備、GTK E2E、導入レイアウト、公式参照PCMを含める。最後のコード変更後に全体テストを実行し、個別成功で代用しない。タイムアウト時は処理量と進行条件を調べ、単なる待機時間の追加で解消したことにしない。
+
+既存の9配布構成を生成する。対象はDebian trixieのx86_64・i686・arm64・armv7l・riscv64と、Ubuntu 24.04/26.04のx86_64・arm64である。導入先の実共有ライブラリで版、113カーネル、新しい契約、Note PlayerのClassic/Event、IR、MatrixのPCMを検証する。実行できないSIMDはCPUの制約とともに記録し、ビルド成功と実行成功を区別する。
+
+READMEと関連文書を日本語原本から更新し、英語へ反映する。EffeTune 2.17.0、SoundFont Note Playerの名称、今回扱うSFZの範囲、MIDIとSF2/SF3の未対応を利用者の視点で説明する。移植元の版とURLは実際に対応したコードに合わせる。日本語は`nanaism/yomiyasu`で確認し、一般文書から計画書へリンクしない。
+
+成果物は、検証済みの配布物、利用者向け文書、最終検証記録である。完了条件は、次の最終完了条件をすべて満たし、配布物が検証した最終ソースから作られていること。新たな警告は原因と対処を記録する。
+
+コミットは`doc: describe EffeTune 2.17 support`とし、必要な配布設定の変更は`fix:`または`chore:`で分ける。
+
+## 主な変更・検証箇所
+
+| 箇所 | 作業 |
+| --- | --- |
+| `deps/effetune` | 公式2.17.0コミットへ参照更新 |
+| `pipetune/CMakeLists.txt`、`pipetune/cmake/EffeTuneNativeBackends.cmake` | 追加ソース、API、全バックエンド、モデル、生成依存、テスト登録 |
+| `pipetune/src/effetune_backend_asset_bridge.cpp`、`dsp_backend.cpp`、`dsp_backend_loader.h`、`effetune_backend_exports.map` | 公開APIへの移行と必要メモリの取得 |
+| `pipetune/patches/effetune/abi-engine-access.patch`、`pipetune/src/effetune_backend_engine_access.*` | 不要になる内部フックの削除 |
+| `pipetune/src/dsp_pipeline.cpp`、`pipetune/tools/generate-dsp-catalog.mjs` | 新名称、型名による判定、113カーネル、未対応MIDIノードの扱い |
+| `pipetune/asset-preparation/sfz/` | 現行対応範囲のSFZ意味論、v6バンク、独立した準備処理 |
+| `pipetune/src/sfz_asset_loader.cpp`、`asset_cache.cpp`、アセット予算関連 | 登録一覧、キャッシュ無効化、実バックエンドの必要量と候補の共存 |
+| `pipetune/test/effetune_216_test.cpp`、`effetune_backend_artifact_test.cpp`、`parameter-packer-parity.mjs` | 2.17契約、公開API、実共有バックエンドと公式参照音声 |
+| `pipetune/asset-preparation/test/`、SFZ・プリセット・アセット・PipeWire関連テスト | 発音、読込失敗、取消、回復、チャンネルと遅延、製品回帰 |
+| `README_ja.md`、`README.md`、`docs/ja/`、`docs/en/`の該当文書 | 対応版、名称、SFZの範囲、移植元情報 |
+
+## 検証コマンドと記録
+
+以下は実装時に使用する既存の検証経路である。計画作成時には製品ビルドとテストを実行しない。
+
+```sh
+GDK_BACKEND=x11 make test TEST_BUILD_DIR=build/effetune-217-debug
+cmake -S . -B build/effetune-217-release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build/effetune-217-release --parallel
+GDK_BACKEND=x11 ctest --test-dir build/effetune-217-release --output-on-failure
+make -C pipetune/asset-preparation test BUILD_DIR=../../build/effetune-217-assets
+DESTDIR="$PWD/artifacts/verification/effetune-2.17/final-install" cmake --install build/effetune-217-release --prefix /usr
+./build_package_all.sh
+```
+
+個別テスト名は構成後に`ctest --test-dir build/effetune-217-debug -N`で確認する。タグ更新後とコミット後にはCMakeを再構成し、版情報を取り直す。新規の補助スクリプトはNode.js、ビルド時のテキスト処理は既存のfuncityを使う。新たな外部APIは公式文書と宣言コメントの両方を確認する。
+
+コミット、コマンド、RED/GREEN、PCM誤差、性能条件と結果、メモリ、警告への対処、配布物のハッシュを`artifacts/verification/effetune-2.17/`へ記録する。各工程の終了時に完了条件と結果を照合する。エミュレーションと実機の記録、未確認と成功の記録を分ける。
+
+## 最終完了条件
+
+- [ ] 公式2.17.0コミットを参照し、依存ソースとvendorへの直接変更がない。
+- [ ] CLI・GTKの版、113カーネル、Note Playerの21 floatと新ハッシュが一致する。
+- [ ] 公開APIでアセットを転送し、旧内部フックと不要なビルド処理を削除している。
+- [ ] 新名称のNote Playerから、今回の対応範囲のSFZをClassic/Eventで再生できる。
+- [ ] SF2/SF3を含む登録一覧からSFZを選択でき、対象外の形式・機能を診断できる。
+- [ ] 新バンク形式、旧キャッシュの再生成、必要メモリの取得、予算超過と取消後の回復を検証している。
+- [ ] 公式参照PCM、Rhythm、他の既存DSP、休止再開、単一・複数出力、レート変更に退行がない。
+- [ ] 最終コードのDebug/Release全体テスト、単独構成、GTK E2E、インストール、9配布構成を検証している。
+- [ ] 性能・メモリ差と警告への対処を説明でき、文書と配布物が実際の対応範囲に一致する。
+
+## 計画作成時の完了確認
+
+現行コードと公式タグ差分を照合し、単純な参照更新では不足する箇所を特定した。表示名、SFZバンク形式、ネイティブAPI、メモリ、登録一覧、参照音声、各配布構成への影響を工程へ反映した。MIDI演奏とSF2/SF3音源は別計画とする利用者の回答も反映している。
+
+各工程に実行可能な成果物、検証内容、完了条件、コミットの区切りを設けた。これを計画作成の完了条件とし、本書で満たしている。上記の実装完了条件はすべて未実施である。今回の変更は計画書だけでビルドに影響しないため、製品ビルドと全体テストは省略する。
