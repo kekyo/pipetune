@@ -183,8 +183,50 @@ const scenarios: {
   },
 ];
 
-test.each(scenarios)(
-  'SFZ parser matches app: $name',
+const initialSelection = new Map([
+  ['initial key-switch ranges select regions and ignore pedal switches', [60]],
+  [
+    'key-switch ranges without an initial switch omit conditional regions',
+    [62],
+  ],
+  ['late initial CC and key switch conditions', [60, 61, 62]],
+  ['unsupported, ignored, missing and invalid regions', [60, 0]],
+]);
+
+// 2.17 also returns compiled modulation, runtime conditions and UI metadata.
+// Compare the resident subset that PipeTune actually prepares and renders.
+const regionFields = new Set([
+  'sample',
+  'seqGroup',
+  'lokey',
+  'hikey',
+  'lovel',
+  'hivel',
+  'lorand',
+  'hirand',
+  'seq_length',
+  'seq_position',
+  'pitch_keycenter',
+  'pitch_keytrack',
+  'transpose',
+  'tune',
+  'volume',
+  'pan',
+  'amp_veltrack',
+  'offset',
+  'end',
+  'loop_mode',
+  'loop_start',
+  'loop_end',
+  'ampeg_attack',
+  'ampeg_hold',
+  'ampeg_decay',
+  'ampeg_sustain',
+  'ampeg_release',
+]);
+
+test.each(scenarios.filter(({ name }) => !initialSelection.has(name)))(
+  'resident SFZ parser fields match EffeTune 2.17: $name',
   async ({ selected, documents, paths }) => {
     const upstream = await import(
       /* @vite-ignore */ pathToFileURL(
@@ -200,7 +242,18 @@ test.each(scenarios)(
     });
     const native = run(selected, documents, paths, 256 * 1024 * 1024);
     expect(native.status, native.stderr.toString()).toBe(0);
-    expect(JSON.parse(native.stdout.toString())).toEqual(reference);
+    const { unsupportedHeaders, ...diagnostics } = reference.diagnostics;
+    expect(unsupportedHeaders).toEqual([]);
+    expect(JSON.parse(native.stdout.toString())).toEqual({
+      regions: reference.regions.map((region: Record<string, unknown>) =>
+        Object.fromEntries(
+          Object.entries(region).filter(([key]) => regionFields.has(key))
+        )
+      ),
+      dependencies: reference.dependencies,
+      diagnostics,
+      warnings: reference.warnings,
+    });
   }
 );
 
@@ -253,5 +306,75 @@ test.each(['cycle', 'depth', 'visits', 'expanded', 'missing', 'escape'])(
     expect(native.stderr.toString()).toBe(
       `${(expected as { code: string }).code}: ${(expected as Error).message}\n`
     );
+  }
+);
+
+test.each([
+  '<global> script=instrument.js',
+  '<effect> type=delay',
+  '<curve> curve_index=7 v000=0 v127=1',
+  '<sample> name=embedded.wav data=AAAA',
+  '<midi> program=1',
+  '<group> volume_oncc1=6',
+  '<group> lfo1_freq=2',
+  '<group> eg1_time1=0.2',
+  '<group> cutoff=2000',
+  '<group> effect1=25',
+  '<group> output=2',
+  '<group> load_mode=streaming',
+  '<group> load_start=128',
+  '<group> md5=00000000000000000000000000000000',
+  '<control> loop_end_offset=-1',
+])(
+  'unsupported SFZ declaration is rejected before publishing a partial bank: %s',
+  (declaration) => {
+    const native = run(
+      'main.sfz',
+      {
+        'main.sfz': '<region> sample=*sine key=60\n#include "advanced.sfz"',
+        'advanced.sfz': declaration + '\n<region> sample=*sine key=61',
+      },
+      [],
+      256 * 1024 * 1024
+    );
+    expect(native.status).not.toBe(0);
+    expect(native.stdout.length).toBe(0);
+    expect(native.stderr.toString()).toContain('unsupported-feature:');
+  }
+);
+
+// Initial selection remains the resident host's contract; it does not implement
+// the upstream MIDI engine's runtime keyswitch/controller state machine.
+test.each(scenarios.filter(({ name }) => initialSelection.has(name)))(
+  'resident SFZ initial selection: $name',
+  ({ name, selected, documents, paths }) => {
+    const native = run(selected, documents, paths, 256 * 1024 * 1024);
+    expect(native.status, native.stderr.toString()).toBe(0);
+    const parsed = JSON.parse(native.stdout.toString());
+    expect(
+      parsed.regions.map((region: { lokey: number }) => region.lokey)
+    ).toEqual(initialSelection.get(name));
+    if (name.startsWith('initial key-switch'))
+      expect(parsed.warnings).toContainEqual({
+        code: 'invalid-regions',
+        count: 4,
+      });
+    if (name.startsWith('unsupported,')) {
+      expect(parsed.diagnostics.ignoredOpcodes).toContain('unknown_opcode');
+      expect(parsed.diagnostics.excludedOpcodes).toEqual([
+        'lobend',
+        'sw_last',
+        'trigger',
+      ]);
+      expect(parsed.diagnostics.missingSamples).toEqual(['lost.wav']);
+      expect(parsed.warnings).toContainEqual({
+        code: 'invalid-regions',
+        count: 2,
+      });
+      expect(parsed.warnings).toContainEqual({
+        code: 'envelope-times-adjusted',
+        count: 1,
+      });
+    }
   }
 );

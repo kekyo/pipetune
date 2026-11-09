@@ -62,7 +62,7 @@ test('SFZ registration, confinement and partial banks retain explicit diagnostic
       await writeFile(registry, value);
       const rejected = run();
       expect(rejected.status, rejected.stderr).not.toBe(0);
-      expect(rejected.stderr).toContain('SFZ');
+      expect(rejected.stderr).toContain('SoundFont Note Player');
     }
     await writeFile(registry, JSON.stringify([entry]));
     const valid = run();
@@ -141,7 +141,11 @@ test('SFZ registration, confinement and partial banks retain explicit diagnostic
       preset,
       JSON.stringify({
         pipeline: [
-          { name: 'SoundFont Note Player', enabled: false, parameters: { sf: id } },
+          {
+            name: 'SoundFont Note Player',
+            enabled: false,
+            parameters: { sf: id },
+          },
         ],
       })
     );
@@ -149,6 +153,93 @@ test('SFZ registration, confinement and partial banks retain explicit diagnostic
     expect(disabled.status, disabled.stderr).toBe(0);
     expect(disabled.stdout.startsWith('0 ')).toBe(true);
     expect(disabled.stderr).not.toContain('SFZ');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('mixed SFZ, SF2 and SF3 registration preserves SFZ playback and diagnoses a selected unsupported format', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'pipetune-mixed-soundfonts-'));
+  try {
+    const root = join(directory, 'instrument');
+    const data = join(directory, 'effetune');
+    await mkdir(root);
+    await mkdir(data);
+    const id = '0123456789abcdef01234567';
+    const entry = {
+      id,
+      name: 'Generated SFZ',
+      root,
+      path: join(root, 'main.sfz'),
+    };
+    const registry = join(data, 'sfz-references.json');
+    const preset = join(directory, 'test.effetune_preset');
+    await writeFile(entry.path, '<region> sample=*sine key=60 amp_veltrack=0');
+    const entries = [
+      entry,
+      ...['SF2', 'sf3'].map((suffix, index) => ({
+        id: String(index + 1).repeat(24),
+        name: suffix,
+        root,
+        path: join(root, `unopened.${suffix}`),
+      })),
+    ];
+    const run = () =>
+      spawnSync(
+        process.env.PIPETUNE_ASSET_DRIVER!,
+        [preset, '48000', '2', '256', '0'],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            PATH: '/nonexistent',
+            XDG_CONFIG_HOME: directory,
+            XDG_CACHE_HOME: join(directory, 'cache'),
+          },
+        }
+      );
+    for (const selected of [entry, entries[1], entries[2], entry]) {
+      await writeFile(registry, JSON.stringify(entries));
+      await writeFile(
+        preset,
+        JSON.stringify({
+          pipeline: [
+            {
+              name: 'SoundFont Note Player',
+              parameters: {
+                sf: selected.id,
+                pm: 60,
+                dm: 0,
+                wm: 100,
+              },
+            },
+          ],
+        })
+      );
+      const result = run();
+      if (selected === entry) {
+        expect(result.status, result.stderr).toBe(0);
+        const [active, , ...pcm] = result.stdout
+          .trim()
+          .split(/\s+/)
+          .map(Number);
+        expect(active).toBe(1);
+        expect(pcm.every(Number.isFinite)).toBe(true);
+        expect(Math.max(...pcm.map(Math.abs))).toBeGreaterThan(0.01);
+      } else {
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain(
+          'SF2/SF3 instruments are not supported'
+        );
+      }
+    }
+    for (const invalid of [
+      { ...entries[1], id: 'bad' },
+      { ...entries[1], path: join(directory, 'outside.sf2') },
+    ]) {
+      await writeFile(registry, JSON.stringify([entry, invalid]));
+      expect(run().status).not.toBe(0);
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

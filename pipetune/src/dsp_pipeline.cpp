@@ -778,6 +778,11 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
       entry.state = PresetEntryState::off;
       continue;
     }
+    if (definition->typeName == "SoundFontPlayerPlugin") {
+      warnings.push_back({.nodeIndex = index, .pluginName = std::string(node.name),
+          .reason = "MIDI input and performance are not supported"});
+      continue;
+    }
     const auto crosstalk = node.name == "Crosstalk Cancellation";
     auto measured = CrosstalkMeasurements{};
     if (crosstalk) {

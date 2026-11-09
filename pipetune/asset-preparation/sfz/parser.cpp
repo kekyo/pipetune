@@ -320,6 +320,28 @@ static bool supported(std::string_view key) {
       std::ranges::find(numericOpcodes, key, &NumericOpcode::name) != numericOpcodes.end();
 }
 
+// The resident host keeps its existing static controls. New audio-changing
+// declarations require the 2.17 script/modulation/effect/storage sections, which
+// this packer deliberately does not emit. Never silently discard those controls.
+// https://github.com/Frieve-A/effetune/tree/v2.17.0/js/sfz
+static bool unsupportedFeature(std::string_view key) {
+  if (key.ends_with("_label")) return false;
+  static const auto families = std::regex(
+      "^(eg[0-9]+_|lfo[0-9]+_|var[0-9]+_|eq[1-3]_|"
+      "amp_|ampeg_|amplfo_|pitch_|pitcheg_|pitchlfo_|fil_|fil2_|fileg_|fillfo_|"
+      "cutoff|resonance|bend|delay|offset_|loop_|load_|sample_|oscillator|"
+      "noise_|pan_|position_|off_|rt_|note_|polyphony|xf(in|out)?_|reverse_|stop_|sync_|"
+      "set_hdcc|set_realcc|global_|master_|group_|tune_|offby|offmode|filtype|"
+      "loopcount|loopend|loopmode|loopstart|looptype|looptune)"
+      "|((on|curve|smooth|step|icurve)?cc[0-9]+$)");
+  static constexpr auto scalars = std::array<std::string_view, 21>{
+      "script", "md5", "output", "effect1", "effect2", "effect3", "effect4", "group",
+      "direction", "amplitude", "width", "position", "count", "phase", "dsp_order",
+      "drive", "bitred", "decim", "pitch", "gain_random", "loopcount"};
+  return std::ranges::find(scalars, key) != scalars.end() ||
+      std::regex_search(key.begin(), key.end(), families);
+}
+
 static SfzRegion normalizeRegion(const RawRegion &raw, std::string sample, std::uint32_t seqGroup,
     std::vector<std::string> &adjustedEnvelopes) {
   auto region = SfzRegion{};
@@ -452,6 +474,8 @@ ParsedSfz parseSfz(std::string_view selectedPath, std::span<const SfzDocument> d
     const auto next = nextMarker(text, marker->end);
     const auto key = lowercase(marker->name);
     if (marker->header) {
+      if (key == "curve" || key == "effect" || key == "sample" || key == "midi")
+        throw SfzError("unsupported-feature", "SFZ header <" + key + "> is not supported by PipeTune.");
       finish();
       header = key;
       auto level = 4u;
@@ -482,6 +506,8 @@ ParsedSfz parseSfz(std::string_view selectedPath, std::span<const SfzDocument> d
         assign(*scope, "hikey", value);
         assign(*scope, "lokey", value);
       } else if (supported(key) || key == "trigger" || conditionalOpcode(key, value)) assign(*scope, key, value);
+      else if (unsupportedFeature(key))
+        throw SfzError("unsupported-feature", "SFZ opcode " + key + " is not supported by PipeTune.");
       else result.diagnostics.ignoredOpcodes.push_back(key);
     }
     marker = next;

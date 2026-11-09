@@ -54,7 +54,8 @@ static SfzReference referenceFromRegistry(std::span<const std::uint8_t> bytes, s
     if (!validId(entryId) || !yyjson_is_str(yyjson_obj_get(entry, "name")) ||
         source.find('\0') != std::string::npos || folder.find('\0') != std::string::npos ||
         !path.is_absolute() || !root.is_absolute() || relative.empty() || relative == "." ||
-        relative.is_absolute() || *relative.begin() == ".." || extension != ".sfz")
+        relative.is_absolute() || *relative.begin() == ".." ||
+        (extension != ".sfz" && extension != ".sf2" && extension != ".sf3"))
       throw std::runtime_error("SFZ registry contains an invalid reference");
     auto banks = std::vector<std::string>{};
     if (auto *paths = yyjson_obj_get(entry, "bankPaths")) {
@@ -73,7 +74,10 @@ static SfzReference referenceFromRegistry(std::span<const std::uint8_t> bytes, s
         }
       }
     }
-    if (entryId == id) selected = {root, assets::normalizeSfzPath(relative.generic_string(), {}), std::move(banks)};
+    if (entryId == id) {
+      if (extension != ".sfz") throw std::runtime_error("SF2/SF3 instruments are not supported; select an SFZ instrument");
+      selected = {root, assets::normalizeSfzPath(relative.generic_string(), {}), std::move(banks)};
+    }
   }
   if (selected.root.empty()) throw std::runtime_error("the assigned SFZ ID is not registered in EffeTune");
   return selected;
@@ -400,8 +404,8 @@ cardio::promise<SfzAssetLoadResult> loadSfzAssetAsync(const std::filesystem::pat
       if (!key.empty()) pool.entries[key] = result.prepared;
     }
   } catch (const cardio::canceled_exception &) { throw; }
-  catch (const assets::SfzError &error) { result.error = "SFZ Note Player: " + error.code + ": " + error.what(); }
-  catch (const std::exception &error) { result.error = std::string("SFZ Note Player: ") + error.what(); }
+  catch (const assets::SfzError &error) { result.error = "SoundFont Note Player: " + error.code + ": " + error.what(); }
+  catch (const std::exception &error) { result.error = std::string("SoundFont Note Player: ") + error.what(); }
   std::ranges::sort(result.files);
   result.files.erase(std::unique(result.files.begin(), result.files.end()), result.files.end());
   co_return result;
