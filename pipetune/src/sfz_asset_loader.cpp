@@ -318,7 +318,9 @@ static cardio::promise<std::shared_ptr<const SharedPreparedAsset>> prepareRegist
     if (found != metadata.end()) largestOriginal = std::max(largestOriginal, found->size);
   }
   // Reserve decoder input/packet storage and PCM growth (old/new vector plus
-  // decoder frame), or PCM plus the completed bank. A smaller process limit
+  // decoder frame), or source PCM, prepared generator cycles and the completed
+  // bank. The same allowance bounds packing, since distinct generator ranges
+  // can expand one source into many independent cycles. A smaller process limit
   // lowers the incremental decoder allowance instead of rejecting a small
   // instrument merely because its configured bank ceiling is high.
   memory.resize(overhead, maximumMemoryBytes);
@@ -358,7 +360,7 @@ static cardio::promise<std::shared_ptr<const SharedPreparedAsset>> prepareRegist
     samples.push_back({sample, std::move(audio)});
   }
   co_await preparationCheckpoint(cancellation);
-  auto bank = assets::prepareSfzBank(parsed, samples, maximumBytes);
+  auto bank = assets::prepareSfzBank(parsed, samples, pcmLimit);
   describeWarnings(parsed, bank, owned.diagnostics);
   owned.asset.info = {.channels = 1, .frames = bank.samples, .topology = 0, .head_block = 0,
       .rate_divider = 1, .path_count = 0, .input_count = 0, .processing_channels = 1,

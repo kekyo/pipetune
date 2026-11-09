@@ -198,6 +198,43 @@ static cardio::promise<bool> testAsyncSfzPreparation(const std::filesystem::path
   co_return check(changed, "a source changed after SFZ preparation must prevent publication");
 }
 
+static cardio::promise<bool> testSfzGeneratorWorkingBudget(const std::filesystem::path &directory) {
+  const auto root = directory / "generator-budget";
+  std::filesystem::create_directories(root);
+  const auto definition = root / "main.sfz";
+  {
+    auto source = std::ofstream(definition);
+    for (auto offset = 0U; offset < 1024; ++offset)
+      source << "<region> sample=*sine key=83 offset=" << offset << " end=2047\n";
+  }
+  std::ofstream(root / "sfz-references.json") <<
+      "[{\"id\":\"123456789abcdef012345678\",\"name\":\"Generator budget\",\"root\":\"" <<
+      root.string() << "\",\"path\":\"" << definition.string() << "\"}]";
+  const auto json = std::string(R"({"sf":"123456789abcdef012345678"})");
+  const auto document = std::unique_ptr<yyjson_doc, decltype(&yyjson_doc_free)>(
+      yyjson_read(json.data(), json.size(), 0), yyjson_doc_free);
+  auto *parameters = yyjson_doc_get_root(document.get());
+  const auto limited = std::move(co_await pipetune::loadSfzAssetAsync(root, parameters, 64 * 1024 * 1024,
+      {}, {}, 82 * 1024 * 1024));
+  if (!check(!limited.prepared && limited.error.find("too-large") != std::string::npos,
+      "generator expansion must fit the reserved preparation budget before allocating a bank")) {
+    std::cerr << "generator preparation: " << limited.error << " bytes=" <<
+        (limited.prepared ? limited.prepared->asset.payload.size() : 0) << '\n';
+    co_return false;
+  }
+  auto expected = std::vector<std::uint8_t>{};
+  {
+    const auto admitted = std::move(co_await pipetune::loadSfzAssetAsync(root, parameters, 64 * 1024 * 1024,
+        {}, {}, 160 * 1024 * 1024));
+    if (!check(admitted.prepared && admitted.error.empty(), admitted.error.c_str())) co_return false;
+    expected = admitted.prepared->asset.payload;
+  }
+  const auto recovered = std::move(co_await pipetune::loadSfzAssetAsync(root, parameters, 64 * 1024 * 1024,
+      {}, {}, 160 * 1024 * 1024));
+  co_return check(recovered.prepared && recovered.error.empty() && recovered.prepared->asset.payload == expected,
+      "rejected generator preparation must release its budget and preserve the complete rebuilt instrument");
+}
+
 static cardio::promise<bool> testAsyncSfzBankCandidates(const std::filesystem::path &directory) {
   const auto root = directory / "bank-candidate-instrument";
   const auto data = directory / "bank-candidate-data";
@@ -459,6 +496,7 @@ static cardio::promise<void> testAsyncPreparation(cardio::dispatcher_group_glib 
   std::ofstream(source, std::ios::binary).write(reinterpret_cast<const char *>(original.data()), original.size());
   correct = co_await testAsyncSfzPreparation(directory) && correct;
   correct = co_await testAsyncSfzBankCandidates(directory) && correct;
+  correct = co_await testSfzGeneratorWorkingBudget(directory) && correct;
   correct = co_await testAsyncRoomPreparation(directory) && correct;
   group.shutdown();
 }
