@@ -44,6 +44,8 @@ struct fixture {
     bool defer_input_notification;
     bool input_notification_pending;
     bool input_adjustment_announced;
+    bool overwrite_first_input_restore;
+    bool input_restore_overwritten;
     bool initial_input_only_profile;
     bool optical_profile_requested;
     bool omit_optical_profile;
@@ -387,6 +389,19 @@ static int set_param(void *object, uint32_t id, uint32_t flags, const struct spa
      * The prior input settings become writable again after profile rollback. */
     if (self->override_input_props_on_signal && self->input_props_override_active &&
             self->active_profile == 1 && device == 1) return 0;
+    if (self->overwrite_first_input_restore && self->active_profile == 1 && device == 1 && index == 2) {
+        /* A queued policy operation can replace our acknowledged write before
+         * a remote observer receives the updated Route. Retain that old state
+         * once, then allow the bounded restoration request to converge. */
+        self->overwrite_first_input_restore = false;
+        self->input_restore_overwritten = true;
+        printf("input-restore-overwritten\n"); fflush(stdout);
+        return 0;
+    }
+    if (self->input_restore_overwritten && self->active_profile == 1 && device == 1 && index == 2) {
+        self->input_restore_overwritten = false;
+        printf("input-restore-recovered\n"); fflush(stdout);
+    }
     bool changed = self->active_routes[device] != index || self->save[device] != save;
     self->active_routes[device] = index;
     self->save[device] = save;
@@ -552,6 +567,7 @@ int main(int argc, char **argv) {
     self.defer_input_notification = getenv("PIPETUNE_PROFILE_DEFER_INPUT_NOTIFICATION") != NULL;
     self.initial_input_only_profile = getenv("PIPETUNE_PROFILE_INITIAL_INPUT_ONLY") != NULL;
     self.omit_optical_profile = getenv("PIPETUNE_PROFILE_OMIT_OPTICAL") != NULL;
+    self.overwrite_first_input_restore = getenv("PIPETUNE_PROFILE_OVERWRITE_FIRST_INPUT_RESTORE") != NULL;
     if (getenv("PIPETUNE_PROFILE_INITIAL_SAVED_INPUT") != NULL) {
         self.volumes[1][0] = self.volumes[1][1] = 0.37f;
         self.mute[1] = self.save[1] = true;

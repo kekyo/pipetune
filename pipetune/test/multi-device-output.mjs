@@ -11,7 +11,9 @@ const [pipewire, wireplumber, driver, requestedScenario = "channels", policyFixt
   pulseServer, pulseDriver, productDaemon, presentationDirectory, systemModuleDirectory,
   productPulseServer, productPulseControl] = process.argv.slice(2);
 const regularRoutePolicy = requestedScenario.endsWith("-route-policy");
-const scenario = regularRoutePolicy ? requestedScenario.slice(0, -"-route-policy".length) : requestedScenario;
+const delayedInputRestore = requestedScenario === "product-output-change-delayed-input";
+const scenario = delayedInputRestore ? "product-output-change" :
+  regularRoutePolicy ? requestedScenario.slice(0, -"-route-policy".length) : requestedScenario;
 const productPulse = scenario === "product-direct-device-volume-pulse";
 assert.ok(pipewire && wireplumber && driver, "PipeWire, WirePlumber and probe paths are required");
 const version = spawnSync(wireplumber, ["--version"], { encoding: "utf8" });
@@ -127,7 +129,7 @@ bluez_midi_monitor.enabled = false
     writeConfiguration("wireplumber/scripts/policy-device-routes.lua",
       "-- Synthetic profile fixtures control input-route mutations explicitly.\n");
   }
-  if (!regularRoutePolicy && scenario === "product-output-profile-restore-failure") {
+  if (!regularRoutePolicy && (scenario === "product-output-profile-restore-failure" || delayedInputRestore)) {
     // This control diagnoses three explicitly observed profile overrides.
     // Default-profile selection is another actor, covered by the policy variant.
     writeConfiguration("wireplumber/scripts/policy-device-profile.lua",
@@ -144,7 +146,7 @@ bluez_midi_monitor.enabled = false
   }
 }
 `);
-  if (!regularRoutePolicy && scenario === "product-output-profile-restore-failure") {
+  if (!regularRoutePolicy && (scenario === "product-output-profile-restore-failure" || delayedInputRestore)) {
     writeConfiguration("wireplumber/scripts/device/select-profile.lua",
       "-- The control fixture supplies every external profile selection.\n");
   }
@@ -1415,6 +1417,7 @@ try {
         await waitForCardStatus((status) => !status.availableOutputProfiles.some((item) => item.card.api === "pipetune-fixture"));
         profileFixture = start("reconnected product profile fixture", pulseServer, [], {
           ...environment, PIPETUNE_PROFILE_FIXTURE: "1", PIPETUNE_PROFILE_RECREATE: "1",
+          ...(delayedInputRestore ? { PIPETUNE_PROFILE_OVERWRITE_FIRST_INPUT_RESTORE: "1" } : {}),
           ...(regularRoutePolicy ? { PIPETUNE_PROFILE_INITIAL_SAVED_INPUT: "1" } : {}),
         });
         const restored = await waitForCardStatus((status) => !status.outputProfileRestoring &&
@@ -1422,6 +1425,10 @@ try {
             item.active && item.cardProfileName === opticalProfile.cardProfileName) &&
           status.availableOutputs.some((output) => output.nodeName === "fixture.output.iec958"));
         assert.deepEqual(restored.outputConfiguration, singleSaved);
+        if (delayedInputRestore) {
+          assert.match(profileFixture.stdout, /input-restore-overwritten/u);
+          assert.match(profileFixture.stdout, /input-restore-recovered/u);
+        }
         assert.notEqual(restored.availableOutputs.find((output) => output.nodeName === "fixture.output.iec958").nodeSerial,
           opticalOutput.nodeSerial, "a reconnected card must have a new output generation");
         const staleInventory = await control({ command: "set-output", configuration: singleSaved,
