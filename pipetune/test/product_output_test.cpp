@@ -131,6 +131,7 @@ static int runProduct(const char *preset, std::string_view scenario) {
   const auto *socket = std::getenv("PIPETUNE_PRODUCT_SOCKET");
   const auto meterTest = scenario == "product-preset-meters";
   const auto sourceResume = scenario.starts_with("product-source-resume");
+  if (scenario == "product-source-resume-queued") injectProductQueuedOutput();
   const auto directTest = scenario.starts_with("product-direct");
   const auto modeVolume = scenario == "product-mode-volume";
   const auto control = directTest || meterTest || sourceResume || modeVolume || scenario == "product-controls" || scenario.starts_with("product-output-");
@@ -197,6 +198,10 @@ static int runProduct(const char *preset, std::string_view scenario) {
   std::cerr << "product:runtime-result overruns=" << result.overrunFrames
             << " underruns=" << result.underrunFrames << " errors=" << result.processingErrors << '\n';
   if (!result.success) std::cerr << result.error << '\n';
+  if (scenario == "product-source-resume-queued" && !productQueuedOutputWasInjected()) {
+    std::cerr << "the queued source-A block was not injected\n";
+    return 1;
+  }
   return result.success && result.processingErrors == 0 ? 0 : 1;
 }
 

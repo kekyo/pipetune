@@ -23,6 +23,19 @@ selecting physical devices in PipeTune.
 The minimum PipeWire version is 1.0.5. WirePlumber 0.4 and 0.5 use the same
 configuration model, with different session-policy integration where needed.
 
+PipeTune flushes each owned distribution output when it becomes paused. The
+[PipeWire 1.0.5 combine module](https://github.com/PipeWire/pipewire/blob/1.0.5/src/modules/module-combine-stream.c)
+clears its delay lines on pause but retains queued output buffers; unequal
+queues can shift one device and replay audio from a previous source activation.
+`pipewire_distribution_stream.cpp` adds the cleanup through public stream
+events and `pw_stream_flush`, as used by the
+[official loopback module](https://github.com/PipeWire/pipewire/blob/1.0.5/src/modules/module-loopback.c).
+The audio executable exports `pw_stream_new` so this policy also covers streams
+created inside the loaded combine module. Creation delegates to libpipewire
+with `RTLD_NEXT`; only streams carrying both PipeTune's managed-output marker
+and an output identity receive the listener. Destruction removes the listener.
+This uses the public ABI without modifying the system module or its private data.
+
 Each package builds EffeTune, yyjson, and PFFFT from source for one target
 architecture. The PipeTune executable explicitly loads one validated private
 shared DSP backend. Scalar is the compatibility default. SIMD CPU support is

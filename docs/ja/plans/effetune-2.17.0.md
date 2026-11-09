@@ -339,3 +339,17 @@ i686の3バックエンドでも同じPCMを確認し、MXCSRの正常・エラ�
 削除確認の一時テストは旧実装でREDになり、変更後にGREENになった。恒久テスト20件では、原本と共有PCMの容量、境界の1 byte差、未知の長さ、未使用サンプルの容量、整数の桁あふれ、全レイヤーの値と順序を上流と照合した。生成音源3種もネイティブの必要量ちょうどで発音し、1 byte不足と混在音源の超過を拒否した。予算を戻すと元のPCMへ回復した。
 
 共有・取消・依存ファイル監視のfixtureを全レイヤー保持へ更新し、ライフサイクル試験が成功した。アセット契約の全体試験も成功した。削減済みキャッシュを再利用しないよう識別子を更新し、利用者向けの容量説明を日本語と英語へ反映した。証跡は`stage6-reduction-removal-red`、`stage6-budget-red`、`stage6-capacity-green`、`stage6-lifecycle-green`、`stage6-assets-full`に保存した。
+
+### 工程4の配信キュー修正方針
+
+入力再開の追跡で、DSPと配信入力が新しい無音を出した後も、出力1だけが停止前の音を出すことを確認した。配信出力のキューは出力0が1、出力1が2バッファだった。起動時のPCM整列失敗でも同じ差が残っている。上流のcombineモジュールは停止時に遅延線を消すが、個々の出力ストリームのキューを破棄していない。対照的に公式loopbackは停止時に両ストリームをflushしている。[combineの実装](https://github.com/PipeWire/pipewire/blob/1.0.5/src/modules/module-combine-stream.c)、[loopbackの実装](https://github.com/PipeWire/pipewire/blob/1.0.5/src/modules/module-loopback.c)
+
+処理フラグとresamplerのprefillだけを変える実験では解消せず、実験用の変更を撤回した。停止時に配信出力をflushする実験では、入力再開5回とEvent実時間12回が成功した。修正は、PipeTuneが所有する配信ストリームに限って、PAUSEDへの遷移で公開APIの`pw_stream_flush`を呼ぶ処理とする。
+
+combineモジュールにはストリーム取得用の公開APIがないため、Linuxの共有モジュールから呼ばれる公開`pw_stream_new`の境界で生成を監視する。通常の生成はlibpipewireへ委譲し、PipeTuneの配信先を示すプロパティがあるストリームだけに状態リスナーを付ける。リスナーはdestroy通知で解除する。外部コードや非公開の構造体には変更・アクセスしない。音声処理を持つ実行ファイルで当該シンボルを公開する必要があるため、各配布構成でもリンクと実行を確認する。GTKはCLI側の音声処理を操作し、GTK自体にはストリーム生成がない。[公開API宣言](https://github.com/PipeWire/pipewire/blob/1.0.5/src/pipewire/stream.h)、[RTLD_NEXTの公式説明](https://man7.org/linux/man-pages/man3/dlsym.3.html)
+
+旧PCMを出力キューへ1ブロック追加する再現fixtureを先に実装する。停止・再開後の無音と新しい音のPCMでRED/GREENを確認し、既存の単一出力、複数出力、Classic/Event、時間整列、再接続も検証する。EffeTune更新とは独立した`fix:`コミットに分ける。
+
+再現fixtureは修正前に停止前の音を検出してREDとなり、停止時のflush後はGREENになった。関連する21テストも成功した。追加の反復ではEvent、時間整列、キューを残す入力再開が各5回成功した。旧配信処理だけを戻したドライバーでは時間整列のタイムアウトが2回目に再現し、出力1の余分なキューによる256フレームのずれを追跡できた。
+
+Classicの反復では、別の不一致が4回目に発生した。両デバイスのPCMは連続し、配信時の遅延差も正しいが、捕捉した2ブロックに同じ周期時刻が付いていた。時刻だけで異なるブロックを比較していないか、検証方法を追加調査する。停止時の古い音の修正と分けて扱い、全体の完了条件はまだ満たしていない。記録は`stage6-queued-resume-*`、`stage6-distribution-regression`、`stage6-distribution-repeats`、`stage6-classic-fixed-*`、`stage6-time-before-*`に保存した。
