@@ -962,6 +962,11 @@ if(BUILD_TESTING)
       ${PIPETUNE_PIPEWIRE_EXECUTABLE} $<TARGET_FILE:pipetune_device_presentation_fixture>
       $<TARGET_FILE:pipetune_output_profile_inventory_tests>)
   set_tests_properties(pipetune_output_profile_inventory PROPERTIES TIMEOUT 35)
+  add_test(NAME pipetune_output_profile_inventory_policy_routes
+    COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/output-profile-inventory.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE} $<TARGET_FILE:pipetune_device_presentation_fixture>
+      $<TARGET_FILE:pipetune_output_profile_inventory_tests> policy)
+  set_tests_properties(pipetune_output_profile_inventory_policy_routes PROPERTIES TIMEOUT 35)
   add_executable(pipetune_output_configuration_tests test/output_configuration_test.cpp)
   target_link_libraries(pipetune_output_configuration_tests PRIVATE pipetune_core)
   target_compile_options(pipetune_output_configuration_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)

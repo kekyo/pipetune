@@ -35,6 +35,7 @@ struct fixture {
     int active_profile;
     bool save_profile;
     bool output_profile_variant;
+    bool policy_routes;
     bool recreate_output_on_profile_change;
     bool omit_profile_classes;
     bool hold_output_node;
@@ -295,6 +296,7 @@ static int enum_params(void *object, int seq, uint32_t id, uint32_t start,
         id == SPA_PARAM_Route ? 2 : 1;
     uint32_t emitted = 0;
     for (uint32_t index = start; index < length && emitted < maximum; ++index) {
+        if (id == SPA_PARAM_Route && self->active_routes[index] < 0) continue;
         if (id == SPA_PARAM_EnumProfile && self->omit_optical_profile && index == 1) continue;
         if (id == SPA_PARAM_Route && self->output_profile_variant && self->active_profile == 3 && index == 0) continue;
         uint8_t buffer[4096];
@@ -342,8 +344,12 @@ static int set_param(void *object, uint32_t id, uint32_t flags, const struct spa
                 self->save[1] = false;
             }
             if (self->output_profile_variant && profile_changed && index == 1) {
-                self->active_routes[1] = self->override_profile_on_signal || self->override_input_props_on_signal ? 2 : 3;
-                /* An automatic route change must not inherit the previous
+                /* With api.acp.auto-port=false, ACP leaves the new input port
+                 * unselected until the session manager supplies its route.
+                 * Explicit override tests retain their scripted input route. */
+                self->active_routes[1] = self->override_profile_on_signal || self->override_input_props_on_signal ? 2 :
+                    self->policy_routes ? -1 : 3;
+                /* A profile change must not inherit the previous
                  * route's explicit save request and persist transient Props. */
                 self->save[1] = false;
                 self->volumes[1][0] = 0.4f;
@@ -559,6 +565,7 @@ int main(int argc, char **argv) {
         { .id = SPA_PARAM_Route, .flags = SPA_PARAM_INFO_READWRITE },
     }, .active_routes = {0, 2}, .volumes = {{1.0f, 1.0f}, {1.0f, 1.0f}} };
     self.output_profile_variant = getenv("PIPETUNE_PROFILE_FIXTURE") != NULL;
+    self.policy_routes = getenv("PIPETUNE_PROFILE_POLICY_ROUTES") != NULL;
     self.recreate_output_on_profile_change = getenv("PIPETUNE_PROFILE_RECREATE") != NULL;
     self.omit_profile_classes = getenv("PIPETUNE_PROFILE_NO_CLASSES") != NULL;
     self.monitor_optical_pcm = getenv("PIPETUNE_PROFILE_MONITOR") != NULL;

@@ -54,6 +54,8 @@ const environment = {
   PIPETUNE_PRODUCT_SOCKET: join(runtime, "product-control.sock"),
   ...(wirePlumber04 && scenario.startsWith("product-daemon-volume") ? { WIREPLUMBER_DEBUG: "3" } : {}),
   ...(regularRoutePolicy ? { WIREPLUMBER_DEBUG: "4" } : {}),
+  // WirePlumber owns port selection with its normal api.acp.auto-port=false.
+  ...(regularRoutePolicy ? { PIPETUNE_PROFILE_POLICY_ROUTES: "1" } : {}),
 };
 const writeConfiguration = (relative, contents) => {
   const components = relative.split("/");
