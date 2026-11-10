@@ -8,6 +8,7 @@
 #include <pipewire/pipewire.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <iostream>
 
 struct State {
@@ -16,6 +17,7 @@ struct State {
   std::string error;
   bool complete = false;
   unsigned step = 0;
+  bool policyRoutes = false;
   std::vector<pipetune::PipeWireInputRouteSnapshot> originalInputRoutes;
   pipetune::OutputCardIdentity card;
 };
@@ -92,7 +94,13 @@ static void changed(const pipetune::OutputInventoryResult &snapshot, void *data)
         {.card = first->card, .cardProfileName = "output:iec958-stereo+input:analog-stereo",
          .outputKey = "iec958-stereo", .allowMissingForRestore = false});
   } else if (state.step == 1 && !first->active && second->active && !second->observedOutputs.empty()) {
-    if (pipetune::pipeWireInputRoutes(*state.observer, state.card) == state.originalInputRoutes) return;
+    const auto routes = pipetune::pipeWireInputRoutes(*state.observer, state.card);
+    if (routes == state.originalInputRoutes) return;
+    if (state.policyRoutes ? !routes.empty() : routes.size() != 1 || routes[0].index != 3) {
+      state.error = "the changed profile did not respect input-route selection ownership";
+      pw_main_loop_quit(state.loop);
+      return;
+    }
     state.step = 2;
     state.error = pipetune::restorePipeWireInputRoutes(*state.observer, state.card, state.originalInputRoutes);
   } else if (state.step == 2 && !first->active && second->active &&
@@ -127,6 +135,7 @@ static void timedOut(void *data, std::uint64_t) {
 int main() {
   pw_init(nullptr, nullptr);
   auto state = State{};
+  state.policyRoutes = std::getenv("PIPETUNE_PROFILE_POLICY_ROUTES") != nullptr;
   state.loop = pw_main_loop_new(nullptr);
   if (state.loop == nullptr) return 1;
   auto *context = pw_context_new(pw_main_loop_get_loop(state.loop), nullptr, 0);

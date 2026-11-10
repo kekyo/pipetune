@@ -581,7 +581,13 @@ describe('PipeTune GTK dialog', () => {
     await session.setMixedOutputPeaks([0, 0]);
     const window = await getElement('mainWindow', 'window');
     await window.resizeTo(1200, 930);
+    // Resizing preserves the original position, which would clip the larger
+    // window at the Xvfb screen edge and crop its footer from the recording.
+    await window.moveTo(20, 20);
     await window.activate();
+    await toPass(async () => {
+      expect((await window.capture()).clipped).toBe(false);
+    });
     const bars = await Promise.all(
       [
         'output-level-1',

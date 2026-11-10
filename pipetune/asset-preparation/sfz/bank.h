@@ -10,10 +10,15 @@
 
 namespace pipetune::assets {
 
-/** Owned ETA1/table-v2 bank and the metadata needed by the native copy boundary. */
+/** Four-byte words in the resident v6/v7 table header. */
+inline constexpr auto kSfzTableHeaderWords = std::size_t{12};
+/** Four-byte fields in each resident v6/v7 region. */
+inline constexpr auto kSfzRegionWords = std::size_t{113};
+
+/** Owned ETA1/table-v6 or generator-v7 bank and metadata for the native copy boundary. */
 struct SfzBank {
   std::vector<std::uint8_t> payload; /**< Header, normalized region table, and interleaved PCM pool. */
-  std::uint64_t footprintBytes = 0; /**< Bank plus native key and round-robin indexes. */
+  std::uint64_t footprintBytes = 0; /**< Serialized bank extent; the host queries additional native preparation separately. */
   std::uint32_t samples = 0; /**< Number of four-byte words following the 32-byte outer header. */
   std::uint32_t warmupFrames = 0; /**< Minimum native preparation frames. */
   std::uint32_t regionCount = 0; /**< Regions surviving sample-position validation. */
@@ -22,10 +27,10 @@ struct SfzBank {
 };
 
 /**
- * Encodes a bank using original-rate PCM, including integer bit lanes and the native index budget.
+ * Encodes original-rate PCM in resident v6, or v7 with prepared built-in generator cycles.
  * @param regions Normalized regions in definition order.
  * @param samples Decoded sources identified by normalized paths.
- * @param maximumBytes Maximum bank and native index footprint, at most 1 GiB.
+ * @param maximumBytes Maximum serialized bank extent, at most 1 GiB.
  * @return Complete bank and non-fatal region diagnostics.
  * @throws SfzError No playable region, invalid audio, or an exceeded footprint budget.
  */

@@ -55,6 +55,19 @@ function(
   set(${OUTPUT_VARIABLE} "${resolved_processor}" PARENT_SCOPE)
 endfunction()
 
+# SFZ's cache schema requires eight-byte alignment for 64-bit members. i686
+# GCC defaults to four bytes. Keep the entire native C++ implementation and its
+# linked native tests consistent, including PrepareInfo shared by kernels.
+# PipeTune's exported boundary uses opaque handles, scalars, byte arrays and
+# uint32-only structs; no affected C++ or transport struct crosses that boundary.
+# https://gcc.gnu.org/onlinedocs/gcc/x86-Options.html#index-malign-double
+function(pipetune_configure_effetune_native_layout TARGET_NAME SCOPE NATIVE_PROCESSOR)
+  if(NATIVE_PROCESSOR MATCHES "^(i[3-6]86|x86)$")
+    target_compile_options(${TARGET_NAME} ${SCOPE}
+      "$<$<COMPILE_LANG_AND_ID:CXX,GNU>:-malign-double>")
+  endif()
+endfunction()
+
 # EffeTune's Tube Simulator keeps its GNU f64x2 helpers within one translation
 # unit. On 32-bit x86 GCC reports their file-local calling convention as a
 # psABI warning even though no vector type crosses a library ABI boundary.
@@ -171,6 +184,8 @@ function(
     PUBLIC "${EFFETUNE_DSP_DIR}/vendor/pffft/include/pffft"
     PRIVATE "${EFFETUNE_DSP_DIR}/vendor/pffft/src")
   target_compile_definitions(${TARGET_NAME} PUBLIC PFFFT_STATIC_DEFINE=1)
+  # Keep FFTs usable in live Debug graphs while retaining debug information.
+  target_compile_options(${TARGET_NAME} PRIVATE $<$<CONFIG:Debug>:-Og>)
   if(VARIANT_NAME STREQUAL "SCALAR")
     target_compile_definitions(${TARGET_NAME} PRIVATE PFFFT_SIMD_DISABLE=1)
   else()
@@ -197,12 +212,11 @@ function(
   VARIANT_ID
   NATIVE_PROCESSOR
   EFFETUNE_DSP_DIR
-  EFFETUNE_ABI_SOURCE
   OUTPUT_DIRECTORY)
   set(
     effetune_production_sources
     "${EFFETUNE_DSP_DIR}/core/allocation_guard.cpp"
-    "${EFFETUNE_ABI_SOURCE}"
+    "${EFFETUNE_DSP_DIR}/core/abi.cpp"
     "${EFFETUNE_DSP_DIR}/core/arena.cpp"
     "${EFFETUNE_DSP_DIR}/core/design_fft.cpp"
     "${EFFETUNE_DSP_DIR}/core/engine.cpp"
@@ -218,7 +232,8 @@ function(
   list(APPEND effetune_production_sources ${effetune_plugin_sources})
   list(
     APPEND effetune_production_sources
-    "${EFFETUNE_DSP_DIR}/plugins/lofi/gsm_full_rate_simulator/codec.cpp")
+    "${EFFETUNE_DSP_DIR}/plugins/lofi/gsm_full_rate_simulator/codec.cpp"
+    "${EFFETUNE_DSP_DIR}/plugins/others/sfz/sfz_effect_cost_bridge.cpp")
 
   set(backend_abi_source
       "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../src/effetune_backend_abi.c")
@@ -231,9 +246,6 @@ function(
     ${effetune_production_sources}
     "${backend_abi_source}"
     "${backend_asset_bridge_source}")
-  add_dependencies(
-    ${TARGET_NAME}
-    pipetune_effetune_backend_abi_source)
   target_include_directories(
     ${TARGET_NAME}
     PUBLIC "${EFFETUNE_DSP_DIR}/include"
@@ -244,6 +256,7 @@ function(
       "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../src")
   target_link_libraries(
     ${TARGET_NAME} PRIVATE ${PFFFT_TARGET} effetune_tree_models)
+  pipetune_configure_effetune_native_layout(${TARGET_NAME} PRIVATE "${NATIVE_PROCESSOR}")
   target_compile_definitions(
     ${TARGET_NAME}
     PRIVATE
@@ -255,6 +268,9 @@ function(
   target_compile_options(
     ${TARGET_NAME}
     PRIVATE
+      # Unoptimized note analysis can miss a live graph's processing deadline.
+      # -Og retains Debug symbols and the ET_DEBUG_BUILD allocation checks.
+      $<$<CONFIG:Debug>:-Og>
       -Wall
       -Wextra
       -Wpedantic
@@ -291,52 +307,6 @@ function(
       "LINKER:--version-script=${backend_export_map}")
 endfunction()
 
-# Copies EffeTune's file-local engine registry ABI into the build tree and
-# applies the smallest PipeTune integration hook as a normal unified diff.
-function(
-  pipetune_prepare_effetune_backend_abi
-  EFFETUNE_DSP_DIR
-  OUTPUT_VARIABLE)
-  find_program(PIPETUNE_PATCH_EXECUTABLE patch REQUIRED)
-  set(source_abi "${EFFETUNE_DSP_DIR}/core/abi.cpp")
-  set(abi_patch
-      "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../patches/effetune/abi-engine-access.patch")
-  set(generated_directory
-      "${CMAKE_CURRENT_BINARY_DIR}/generated/effetune-backend/core")
-  set(generated_abi "${generated_directory}/abi.cpp")
-  set(working_abi "${generated_directory}/abi.cpp.work")
-  add_custom_command(
-    OUTPUT "${generated_abi}"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${generated_directory}"
-    COMMAND "${CMAKE_COMMAND}" -E copy "${source_abi}" "${working_abi}"
-    COMMAND
-      "${PIPETUNE_PATCH_EXECUTABLE}"
-      --batch
-      --forward
-      --fuzz=0
-      --reject-file=-
-      --input
-      "${abi_patch}"
-      "${working_abi}"
-    COMMAND
-      "${CMAKE_COMMAND}" -E copy_if_different
-      "${working_abi}"
-      "${generated_abi}"
-    DEPENDS
-      "${source_abi}"
-      "${abi_patch}"
-      "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../src/effetune_backend_engine_access.inc"
-      "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../src/effetune_backend_engine_access.h"
-    BYPRODUCTS "${working_abi}"
-    COMMENT "Applying PipeTune's native EffeTune ABI bridge patch"
-    VERBATIM)
-  add_custom_target(
-    pipetune_effetune_backend_abi_source
-    DEPENDS "${generated_abi}")
-  set_source_files_properties("${generated_abi}" PROPERTIES GENERATED TRUE)
-  set(${OUTPUT_VARIABLE} "${generated_abi}" PARENT_SCOPE)
-endfunction()
-
 # Builds PipeTune-owned native shared artifacts from an unmodified EffeTune
 # source tree and returns the architecture-applicable target list.
 function(
@@ -357,9 +327,6 @@ function(
   pipetune_configure_effetune_mxcsr_source(
     "${EFFETUNE_DSP_DIR}/core/engine.cpp"
     "${native_processor}")
-  pipetune_prepare_effetune_backend_abi(
-    "${EFFETUNE_DSP_DIR}"
-    generated_abi_source)
 
   set(registry_source "${EFFETUNE_DSP_DIR}/core/registry.cpp")
   set_property(
@@ -376,6 +343,7 @@ function(
       "${EFFETUNE_DSP_DIR}/plugins/analyzer/rhythm_analyzer/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/analyzer/note_spectrogram/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/others/sfz_note_player/kernel.cpp"
+      "${EFFETUNE_DSP_DIR}/plugins/others/soundfont_player/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/resonator/adaptive_prediction_effect/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/eq/tonal_balance_eq/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/dynamics/attack_tonal_balance/kernel.cpp"
@@ -401,6 +369,7 @@ function(
       SOURCE
         "${EFFETUNE_DSP_DIR}/plugins/analyzer/note_spectrogram/kernel.cpp"
         "${EFFETUNE_DSP_DIR}/plugins/others/sfz_note_player/kernel.cpp"
+        "${EFFETUNE_DSP_DIR}/plugins/others/soundfont_player/kernel.cpp"
       APPEND PROPERTY COMPILE_OPTIONS
         "$<$<COMPILE_LANG_AND_ID:CXX,GNU>:-msse2;-mfpmath=sse>")
   endif()
@@ -423,7 +392,6 @@ function(
     PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR
     "${native_processor}"
     "${EFFETUNE_DSP_DIR}"
-    "${generated_abi_source}"
     "${OUTPUT_DIRECTORY}")
   pipetune_add_native_shared_backend(
     pipetune_effetune_dsp_simd_shared
@@ -433,7 +401,6 @@ function(
     PIPETUNE_EFFETUNE_BACKEND_VARIANT_SIMD_BASELINE
     "${native_processor}"
     "${EFFETUNE_DSP_DIR}"
-    "${generated_abi_source}"
     "${OUTPUT_DIRECTORY}")
 
   set(
@@ -455,7 +422,6 @@ function(
       PIPETUNE_EFFETUNE_BACKEND_VARIANT_X86_64_V3
       "${native_processor}"
       "${EFFETUNE_DSP_DIR}"
-      "${generated_abi_source}"
       "${OUTPUT_DIRECTORY}")
     list(APPEND backend_targets pipetune_effetune_dsp_x86_64_v3_shared)
   endif()
@@ -474,7 +440,6 @@ function(
       PIPETUNE_EFFETUNE_BACKEND_VARIANT_X86_64_V4
       "${native_processor}"
       "${EFFETUNE_DSP_DIR}"
-      "${generated_abi_source}"
       "${OUTPUT_DIRECTORY}")
     list(APPEND backend_targets pipetune_effetune_dsp_x86_64_v4_shared)
   endif()
@@ -493,7 +458,6 @@ function(
       PIPETUNE_EFFETUNE_BACKEND_VARIANT_ARM64_SVE
       "${native_processor}"
       "${EFFETUNE_DSP_DIR}"
-      "${generated_abi_source}"
       "${OUTPUT_DIRECTORY}")
     list(APPEND backend_targets pipetune_effetune_dsp_arm64_sve_shared)
   endif()

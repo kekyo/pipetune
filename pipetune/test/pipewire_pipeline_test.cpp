@@ -338,7 +338,7 @@ static bool testSfzReload(const std::filesystem::path &socketPath,
       root.string() << "\",\"path\":\"" << selected.string() << "\"}]";
   const auto region = std::string("<region> sample=a.wav key=83 amp_veltrack=0 loop_mode=loop_continuous");
   if (!writePresetContents(selected, "#include \"voice.sfz\"") || !writePresetContents(included, region) ||
-      !writePresetContents(path, R"({"pipeline":[{"name":"SFZ Note Player","parameters":{"sf":"0123456789abcdef01234567","mn":83,"mx":83}}]})")) return false;
+      !writePresetContents(path, R"({"pipeline":[{"name":"SoundFont Note Player","parameters":{"sf":"0123456789abcdef01234567","mn":83,"mx":83}}]})")) return false;
   const auto loaded = pipetune::parseControlResponse(pipetune::exchangeControlMessage(
       socketPath, pipetune::makeLoadPresetControlRequest(path)).response);
   if (!check(loaded.success && loaded.status.activePluginCount == 1 && loaded.status.dspLatencyFrames > 0 &&
@@ -979,8 +979,31 @@ static bool testOrderlySignalShutdown(
     return false;
   }
 
-  // The always-processing input node keeps its graph clock while DSP sleeps.
-  // Observe DSP suspension itself instead of waiting for graph deactivation.
+  // A disconnected graph does not deliver silence frames. Keep a silent
+  // application connected so this verifies DSP suspension during processing,
+  // independently of whether another desktop application is playing audio.
+  const auto inputName = "pipetune_signal_test_" + std::string(processId);
+  const auto *silencePath = std::getenv("PIPETUNE_TEST_SILENCE_WAV");
+  const auto silence = fork();
+  if (silence == 0) {
+    if (silencePath == nullptr) _exit(126);
+    execlp("pw-cat", "pw-cat", "--playback", "--target", inputName.c_str(),
+        silencePath, static_cast<char *>(nullptr));
+    _exit(127);
+  }
+  struct SilenceSource {
+    pid_t process;
+    ~SilenceSource() {
+      if (process <= 0) return;
+      kill(process, SIGTERM);
+      while (waitpid(process, nullptr, 0) < 0 && errno == EINTR) {}
+    }
+  } source{silence};
+  if (!check(silence > 0, "cannot start the silent application")) {
+    kill(child, SIGTERM);
+    waitpid(child, nullptr, 0);
+    return false;
+  }
   const auto enableIdle = pipetune::exchangeControlMessage(
       socketPath, pipetune::makeSetDspIdleControlRequest({.timeoutMilliseconds = 100}));
   const auto idlePolicy = pipetune::parseControlResponse(enableIdle.response);

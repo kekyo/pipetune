@@ -13,7 +13,7 @@ namespace pipetune {
 inline constexpr std::uint64_t kDefaultAssetMemoryBytes =
     sizeof(void *) >= 8 ? 4ull * 1024 * 1024 * 1024 : 1024ull * 1024 * 1024;
 
-/** Default per-instrument SFZ bank and index budget, in MiB. */
+/** Default per-instrument SFZ bank and native asset preparation budget, in MiB. */
 inline constexpr std::uint32_t kDefaultSfzMaxSizeMiB = 256;
 
 /**

@@ -8,9 +8,13 @@ import { once } from "node:events";
 import { createInterface } from "node:readline";
 
 const [pipewire, wireplumber, driver, requestedScenario = "channels", policyFixture,
-  pulseServer, pulseDriver, productDaemon, presentationDirectory, systemModuleDirectory] = process.argv.slice(2);
+  pulseServer, pulseDriver, productDaemon, presentationDirectory, systemModuleDirectory,
+  productPulseServer, productPulseControl] = process.argv.slice(2);
 const regularRoutePolicy = requestedScenario.endsWith("-route-policy");
-const scenario = regularRoutePolicy ? requestedScenario.slice(0, -"-route-policy".length) : requestedScenario;
+const delayedInputRestore = requestedScenario === "product-output-change-delayed-input";
+const scenario = delayedInputRestore ? "product-output-change" :
+  regularRoutePolicy ? requestedScenario.slice(0, -"-route-policy".length) : requestedScenario;
+const productPulse = scenario === "product-direct-device-volume-pulse";
 assert.ok(pipewire && wireplumber && driver, "PipeWire, WirePlumber and probe paths are required");
 const version = spawnSync(wireplumber, ["--version"], { encoding: "utf8" });
 assert.equal(version.status, 0, version.stderr);
@@ -24,7 +28,7 @@ const expectedAudioFailure = {
   disconnect: "injected device disconnect", timeout: "product PCM test timed out",
   cancel: "audio fixture canceled", "runtime-exit": "producer stopped before PCM verification",
 }[audioFailurePoint];
-const graphClockTest = ["product-output-clock", "product-output-clock-alt"].includes(scenario);
+const graphClockTest = ["product-output-clock", "product-output-clock-alt", "product-output-clock-recovery"].includes(scenario);
 const graphRate = scenario === "product-output-clock-alt" ? 44100 : 48000;
 const graphQuantum = scenario === "product-output-clock-alt" ? 512 : 256;
 
@@ -50,6 +54,8 @@ const environment = {
   PIPETUNE_PRODUCT_SOCKET: join(runtime, "product-control.sock"),
   ...(wirePlumber04 && scenario.startsWith("product-daemon-volume") ? { WIREPLUMBER_DEBUG: "3" } : {}),
   ...(regularRoutePolicy ? { WIREPLUMBER_DEBUG: "4" } : {}),
+  // WirePlumber owns port selection with its normal api.acp.auto-port=false.
+  ...(regularRoutePolicy ? { PIPETUNE_PROFILE_POLICY_ROUTES: "1" } : {}),
 };
 const writeConfiguration = (relative, contents) => {
   const components = relative.split("/");
@@ -57,6 +63,15 @@ const writeConfiguration = (relative, contents) => {
   mkdirSync(join(config, ...components), { recursive: true });
   writeFileSync(join(config, relative), contents);
 };
+if (graphClockTest) {
+  // Observe the private distribution with the same visibility as PipeTune.
+  // Only pw-dump uses this configuration; audio clients retain normal policy.
+  writeConfiguration("pipewire/pipetune-clock-observer.conf", `context.properties = {
+  application.process.binary = pipetune
+}
+context.modules = [ { name = libpipewire-module-protocol-native } ]
+`);
+}
 if (scenario === "product-output-clock-unavailable") {
   const serverConfiguration = readFileSync("/usr/share/pipewire/pipewire.conf", "utf8");
   // Keep newer versions' conditional module options intact. A missing optional
@@ -74,13 +89,26 @@ writeConfiguration("pipewire/pipewire.conf.d/99-pipetune-test.conf", `context.pr
   default.clock.max-quantum = ${graphQuantum}
 }
 `);
+if (fixedPcmTest && !scenario.endsWith("-realtime")) {
+  // Use the freewheel driver from stream creation, including before links
+  // exist. Grouping only the fake devices lets the other streams start on
+  // the real-time driver and retain different queued cycles after migration.
+  writeConfiguration("pipewire/client.conf.d/99-freewheel-test.conf", `stream.rules = [
+    {
+      matches = [ { node.name = "~.*" } ]
+      actions = { update-props = { node.group = "pipewire.freewheel" } }
+    }
+  ]
+`);
+}
 if (presentationDirectory) {
   environment.PIPEWIRE_MODULE_DIR = presentationDirectory + ":" + systemModuleDirectory;
   writeConfiguration("pipewire/pipewire.conf.d/60-pipetune-presentation.conf",
     "context.modules = [ { name = libpipewire-module-pipetune-presentation } ]\n");
 }
-if (scenario.startsWith("policy-pulse")) {
-  assert.ok(pulseServer && pulseDriver, "PulseAudio server and client probe paths are required");
+if (scenario.startsWith("policy-pulse") || productPulse) {
+  assert.ok(productPulse ? productPulseServer && productPulseControl : pulseServer && pulseDriver,
+    "PulseAudio server and client probe paths are required");
   writeConfiguration("pipewire/pipewire-pulse.conf.d/99-pipetune-test.conf", `pulse.properties = {
     server.address = [ "unix:${join(runtime, "pulse-native")}" ]
   }
@@ -103,7 +131,7 @@ bluez_midi_monitor.enabled = false
     writeConfiguration("wireplumber/scripts/policy-device-routes.lua",
       "-- Synthetic profile fixtures control input-route mutations explicitly.\n");
   }
-  if (!regularRoutePolicy && scenario === "product-output-profile-restore-failure") {
+  if (!regularRoutePolicy && (scenario === "product-output-profile-restore-failure" || delayedInputRestore)) {
     // This control diagnoses three explicitly observed profile overrides.
     // Default-profile selection is another actor, covered by the policy variant.
     writeConfiguration("wireplumber/scripts/policy-device-profile.lua",
@@ -120,7 +148,7 @@ bluez_midi_monitor.enabled = false
   }
 }
 `);
-  if (!regularRoutePolicy && scenario === "product-output-profile-restore-failure") {
+  if (!regularRoutePolicy && (scenario === "product-output-profile-restore-failure" || delayedInputRestore)) {
     writeConfiguration("wireplumber/scripts/device/select-profile.lua",
       "-- The control fixture supplies every external profile selection.\n");
   }
@@ -135,6 +163,16 @@ if (scenario.startsWith("policy") || scenario.startsWith("product")) {
   };
   if (wirePlumber04) {
     writeConfiguration("wireplumber/main.lua.d/60-pipetune-streams.lua", policy("stream-configuration"));
+    if (scenario.startsWith("product-direct-device-volume") || scenario === "product-mode-volume") {
+      // These stand-in hardware streams supply their own initial hardware gain;
+      // disable only the generic application-stream volume restoration for them.
+      writeConfiguration("wireplumber/main.lua.d/61-test-device-volumes.lua", `
+table.insert(stream_defaults.rules, {
+  matches = { { { "node.name", "matches", "pipetune_product_device_*" } } },
+  apply_properties = { ["state.restore-props"] = false },
+})
+`);
+    }
     writeConfiguration("wireplumber/scripts/pipetune-node-visibility.lua", policy("visibility"));
     writeConfiguration("wireplumber/policy.lua.d/60-pipetune-policy.lua", policy("configuration"));
     const endpointClient = policy("endpoint-client");
@@ -272,12 +310,20 @@ let testFailure;
 try {
   start("PipeWire", pipewire, []);
   await socketReady(join(runtime, remote), undefined);
-  if (scenario.startsWith("policy-pulse")) {
-    start("PulseAudio protocol server", "dbus-run-session", ["--", pulseServer]);
+  if (scenario.startsWith("policy-pulse") || productPulse) {
+    start("PulseAudio protocol server", "dbus-run-session", ["--", productPulse ? productPulseServer : pulseServer]);
     await socketReady(join(runtime, "pulse-native"), undefined);
   }
   let manager = start("WirePlumber", "dbus-run-session", ["--", wireplumber]);
-  if (scenario === "product-direct") {
+  if (scenario === "product-audio-cancel") {
+    const audio = start("cancelable audio fixture", driver, ["audio", "product-output-change"]);
+    await waitForMessage(audio, "product:devices-ready");
+    audio.child.kill("SIGTERM");
+    await waitForMessage(audio, "audio fixture canceled");
+    assert.deepEqual(await audio.completion, { code: 1, signal: null });
+    assert.equal(JSON.parse(audio.stdout).producedFrames, 0);
+  } else if (scenario.startsWith("product-direct")) {
+    const physicalVolume = scenario.startsWith("product-direct-device-volume");
     const audio = start("dual input PCM fixtures", driver, ["audio", scenario]);
     await waitForMessage(audio, "product:devices-ready");
     const preset = join(directory, "direct.effetune_preset");
@@ -285,47 +331,151 @@ try {
       { name: "Matrix", enabled: true, channel: "All", parameters: { mx: "001102p13" } },
     ] }));
     const product = start("dual input runtime", driver, ["runtime", preset, scenario]);
-    await waitForMessage(product, "product:runtime-ready");
-    audio.child.kill("SIGUSR1");
-    const mixed = [[0.125, 0.25, 0.5, 1.25], [0.375, 0.75, 0.75, 0.75],
-      [0.25, 0.5, 0.25, 0.5], [0.125, 0.25, 0.5, 0.75],
-      [0.125, 0.25, 0.5, 0.75], [0.375, 0.75, 0.5, 0.75],
-      [0.3125, 0.625, 0.25, 0.375], [0.25, 0.5, 0, 0], [0.375, 0.75, 0.5, 0.75]];
-    const dsp = [[0, 0, 0, 0], [0.25, 0.5, 0.25, 0.5], [0.25, 0.5, 0.25, 0.5],
-      [0, 0], [0, 0], [0.25, 0.5], [0.25, 0.5], [0.25, 0.5], [0.25, 0.5]];
-    for (let stage = 0; stage <= 8; ++stage) {
-      await waitForMessage(audio, `product:direct-stage-${stage}`);
-      const client = createConnection(environment.PIPETUNE_PRODUCT_SOCKET);
-      const deadline = setTimeout(() => client.destroy(), 10000);
-      let lines;
-      let matched = false;
+    if (scenario === "product-direct-device-volume-reject") {
+      let timer;
       try {
-        await once(client, "connect");
-        lines = createInterface({ input: client, crlfDelay: Infinity });
-        client.write(JSON.stringify({ command: "subscribe" }) + "\n");
-        for await (const line of lines) {
-          const status = JSON.parse(line);
-          const equal = (actual, expected) => actual?.length === expected.length &&
-            actual.every((peak, channel) => Math.abs(peak - expected[channel]) < 0.00001);
-          if (equal(status.mixedOutputPeaks, mixed[stage]) && equal(status.outputPeaks, dsp[stage]) &&
-              (stage < 4 || status.graphSampleRate === 96000)) { matched = true; break; }
+        const result = await Promise.race([product.completion, new Promise((resolve, reject) => {
+          timer = setTimeout(() => reject(new Error("runtime did not reject an unconfirmed physical gain")), 8000);
+        })]);
+        assert.equal(result.code, 1, product.stderr);
+        assert.match(product.stderr, /unity gain.*pipetune_product_device_0/u);
+      } finally { clearTimeout(timer); audio.child.kill("SIGUSR2"); }
+      await audio.completion;
+    } else {
+      await waitForMessage(product, "product:runtime-ready");
+      audio.child.kill("SIGUSR1");
+      const mixed = [[0.125, 0.25, 0.5, 1.25], [0.375, 0.75, 0.75, 0.75],
+        [0.25, 0.5, 0.25, 0.5], [0.125, 0.25, 0.5, 0.75],
+        [0.125, 0.25, 0.5, 0.75], [0.375, 0.75, 0.5, 0.75],
+        [0.1875, 0.375, 0.25, 0.375], [0, 0, 0, 0], [0.1875, 0.375, 0.25, 0.375],
+        [0.09375, 0.1875, 0.125, 0.1875], [0, 0, 0, 0], [0.375, 0.75, 0.5, 0.75]];
+      const dsp = [[0, 0, 0, 0], [0.25, 0.5, 0.25, 0.5], [0.25, 0.5, 0.25, 0.5],
+        [0, 0], [0, 0], [0.25, 0.5], [0.25, 0.5], [0.25, 0.5], [0.25, 0.5],
+        [0.25, 0.5], [0.25, 0.5], [0.25, 0.5]];
+      const desktop = async (...args) => {
+        const command = start("desktop volume control", productPulseControl, args);
+        assert.equal((await command.completion).code, 0, command.stderr);
+        return command.stdout;
+      };
+      for (let stage = 0; stage <= 11; ++stage) {
+        if (productPulse && stage >= 6) {
+          const sink = stage < 9 ? "pipetune_product_input.direct" : "pipetune_product_input";
+          if (stage === 6 || stage === 9 || stage === 11)
+            await desktop("volume", sink, stage === 6 ? "50" : stage === 9 ? "25" : "100");
+          await desktop("mute", sink, stage === 7 || stage === 10 ? "1" : "0");
         }
-        assert.ok(matched, `stage ${stage}: mixed and preset meters must report their own PCM, with the requested graph rate`);
-      } finally {
-        clearTimeout(deadline); lines?.close(); client.destroy();
+        await waitForMessage(audio, `product:direct-stage-${stage}`);
+        if (productPulse && stage >= 6) {
+          for (const sink of ["pipetune_product_input.direct", "pipetune_product_input"]) {
+            await desktop("default", sink);
+            const snapshot = JSON.parse(await desktop("list", "pipetune_product_input"));
+            assert.equal(snapshot.default, sink);
+            assert.deepEqual(snapshot.sinks.map((item) => item.name).sort(),
+              ["pipetune_product_input", "pipetune_product_input.direct"]);
+            for (const item of snapshot.sinks) {
+              assert.deepEqual(item.volumes, Array(item.name.endsWith(".direct") ? 4 : 2).fill(
+                stage <= 8 ? 32768 : stage <= 10 ? 16384 : 65536));
+              assert.equal(item.mute, stage === 7 || stage === 10);
+            }
+          }
+        }
+        const client = createConnection(environment.PIPETUNE_PRODUCT_SOCKET);
+        const deadline = setTimeout(() => client.destroy(), 10000);
+        let lines;
+        let matched = false;
+        try {
+          await once(client, "connect");
+          lines = createInterface({ input: client, crlfDelay: Infinity });
+          client.write(JSON.stringify({ command: "subscribe" }) + "\n");
+          for await (const line of lines) {
+            const status = JSON.parse(line);
+            const equal = (actual, expected) => actual?.length === expected.length &&
+              actual.every((peak, channel) => Math.abs(peak - expected[channel]) < 0.00001);
+            const expectedMix = mixed[stage].map((value) => value * (physicalVolume && stage < 6 ? 0.25 :
+              productPulse && stage >= 6 && stage <= 8 ? 0.25 : productPulse && stage >= 9 && stage <= 10 ? 0.0625 : 1));
+            if (equal(status.mixedOutputPeaks, expectedMix) && equal(status.outputPeaks, dsp[stage]) &&
+                (stage < 4 || status.graphSampleRate === 96000)) { matched = true; break; }
+          }
+          assert.ok(matched, `stage ${stage}: mixed and preset meters must report their own PCM, with the requested graph rate`);
+        } finally {
+          clearTimeout(deadline); lines?.close(); client.destroy();
+        }
+        if (stage === 2 || stage === 3) {
+          const request = stage === 2 ? { command: "bypass" } :
+            { command: "set-rate", rateMode: "fixed", sampleRate: 96000, enforcement: "force" };
+          const client = start("dual input control", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET, JSON.stringify(request)]);
+          assert.equal((await client.completion).code, 0, client.stderr);
+          assert.equal(JSON.parse(client.stdout).ok, true, client.stdout);
+        }
+        if (stage === 6 && (scenario.endsWith("-restart") || scenario.endsWith("-reconnect"))) {
+          if (scenario.endsWith("-restart")) {
+            terminate(manager, "SIGTERM");
+            await manager.completion;
+            manager = start("restarted volume policy", "dbus-run-session", ["--", wireplumber]);
+          }
+          audio.child.kill("SIGWINCH");
+          await waitForMessage(audio, "product:physical-recovery-verified");
+        }
+        audio.child.kill("SIGUSR2");
       }
-      if (stage === 2 || stage === 3) {
-        const request = stage === 2 ? { command: "bypass" } :
-          { command: "set-rate", rateMode: "fixed", sampleRate: 96000, enforcement: "force" };
-        const client = start("dual input control", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET, JSON.stringify(request)]);
-        assert.equal((await client.completion).code, 0, client.stderr);
-        assert.equal(JSON.parse(client.stdout).ok, true, client.stdout);
+      if (physicalVolume) await waitForMessage(audio, "product:physical-playback-stopped");
+      else assert.equal((await audio.completion).code, 0, audio.stderr);
+      if (scenario.endsWith("-restore-reject")) {
+        const status = start("failed restoration status", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET,
+          JSON.stringify({ command: "status" })]);
+        assert.equal((await status.completion).code, 0, status.stderr);
+        const current = JSON.parse(status.stdout);
+        const single = start("rejected volume restoration", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET,
+          JSON.stringify({ command: "set-output", configuration: { ...current.outputConfiguration, mode: "single" } })]);
+        assert.equal((await single.completion).code, 0, single.stderr);
+        const response = JSON.parse(single.stdout);
+        assert.equal(response.ok, false, single.stdout);
+        assert.match(response.error, /restored gain.*pipetune_product_device_0/u);
+        const rollback = start("restoration rollback status", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET,
+          JSON.stringify({ command: "status" })]);
+        assert.equal((await rollback.completion).code, 0, rollback.stderr);
+        assert.deepEqual(JSON.parse(rollback.stdout).outputConfiguration, current.outputConfiguration,
+          "failed restoration must roll back the output configuration");
+        audio.child.kill("SIGWINCH");
+        await waitForMessage(audio, "product:restore-rejection-released");
+      } else if (scenario.endsWith("-single")) {
+        const status = start("volume mode status", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET,
+          JSON.stringify({ command: "status" })]);
+        assert.equal((await status.completion).code, 0, status.stderr);
+        const current = JSON.parse(status.stdout);
+        const deselected = { ...current.outputConfiguration,
+          outputs: current.outputConfiguration.outputs.map((output, index) => ({ ...output, enabled: index !== 0 })) };
+        const remove = start("volume deselection", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET,
+          JSON.stringify({ command: "set-output", configuration: deselected })]);
+        assert.equal((await remove.completion).code, 0, remove.stderr);
+        const removed = JSON.parse(remove.stdout);
+        assert.equal(removed.ok, true, remove.stdout);
+        const serial = removed.availableOutputs.find((output) => output.nodeName === "pipetune_product_device_0").nodeSerial;
+        const restored = removed.outputVolumes.find((volume) => volume.nodeSerial === serial);
+        assert.deepEqual(restored.channelVolumes, [0.125, 0.25], "deselection must restore the device before reporting success");
+        const configuration = { ...deselected, mode: "single" };
+        const single = start("volume single mode", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET,
+          JSON.stringify({ command: "set-output", configuration })]);
+        assert.equal((await single.completion).code, 0, single.stderr);
+        assert.equal(JSON.parse(single.stdout).ok, true, single.stdout);
+        await waitForMessage(audio, "product:single-volume-pcm-verified");
+        assert.equal((await audio.completion).code, 0, audio.stderr);
       }
-      audio.child.kill("SIGUSR2");
+      if (scenario.endsWith("-offline-crash")) {
+        terminate(manager, "SIGTERM");
+        await manager.completion;
+      }
+      terminate(product, scenario.endsWith("-crash") ? "SIGKILL" : "SIGTERM");
+      const terminated = await product.completion;
+      if (scenario.endsWith("-crash")) assert.equal(terminated.signal, "SIGKILL", product.stderr);
+      else assert.equal(terminated.code, 0, product.stderr);
+      if (scenario.endsWith("-offline-crash"))
+        manager = start("recovered volume policy", "dbus-run-session", ["--", wireplumber]);
+      if (physicalVolume) {
+        await waitForMessage(audio, "product:physical-volumes-restored");
+        assert.equal((await audio.completion).code, 0, audio.stderr);
+      }
     }
-    assert.equal((await audio.completion).code, 0, audio.stderr);
-    terminate(product, "SIGTERM");
-    assert.equal((await product.completion).code, 0, product.stderr);
   } else if (scenario.startsWith("product-source-resume")) {
     const audio = start("source switching fixtures", driver, ["audio", scenario]);
     await waitForMessage(audio, "product:devices-ready");
@@ -654,16 +804,33 @@ try {
         path: join(root, "main.sfz"),
       }]));
       environment.XDG_CACHE_HOME = join(directory, "cache");
-      pipeline.push({ name: "SFZ Note Player", enabled: true, channel: "34", parameters: {
+      pipeline.push({ name: "SoundFont Note Player", enabled: true, channel: "34", parameters: {
         sf: "0123456789abcdef01234567", dt: scenario.startsWith("product-sfz-event") ? "Event" : "Classic",
         mn: 83, mx: 83, dm: 100, wm: 0,
       } });
     }
     writeFileSync(preset, JSON.stringify({ pipeline }));
-    const runtime = start("product runtime", driver, ["runtime", scenario === "product-bypass" ? "bypass" : preset, scenario]);
+    const runtime = start("product runtime", driver, ["runtime", ["product-bypass", "product-mode-volume"].includes(scenario) ? "bypass" : preset, scenario]);
     await waitForMessage(runtime, "product:runtime-ready");
     audio.child.kill("SIGUSR1");
-    if (graphClockTest || ["product-controls", "product-output-change", "product-output-profile-unknown",
+    if (scenario === "product-mode-volume") {
+      const status = start("mode volume status", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET,
+        JSON.stringify({ command: "status" })]);
+      assert.equal((await status.completion).code, 0, status.stderr);
+      const configuration = JSON.parse(status.stdout).outputConfiguration;
+      for (let stage = 0; stage <= 6; ++stage) {
+        await waitForMessage(audio, `product:mode-volume-stage-${stage}`);
+        if (stage < 6) {
+          const change = start("mode volume change", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET,
+            JSON.stringify({ command: "set-output", configuration: {
+              ...configuration, mode: stage % 2 === 0 ? "multiple" : "single",
+            } })]);
+          assert.equal((await change.completion).code, 0, change.stderr);
+          assert.equal(JSON.parse(change.stdout).ok, true, change.stdout);
+        }
+        audio.child.kill("SIGUSR2");
+      }
+    } else if (graphClockTest || ["product-controls", "product-output-change", "product-output-profile-unknown",
       "product-output-profile-shutdown", "product-output-profile-restore-failure",
       "product-output-profile-unavailable", "product-output-profile-settle-input", "product-output-timeout",
       "product-output-clock-unavailable", "product-output-recovery"].includes(scenario)) {
@@ -682,6 +849,25 @@ try {
         const clockUnavailable = scenario === "product-output-clock-unavailable";
         if (!graphClockTest && !clockUnavailable) return;
         const rate = stage === 0 ? graphRate : stage === 8 ? 48000 : 96000;
+        if (graphClockTest) {
+          const dump = spawnSync("pw-dump", ["--no-colors"], { encoding: "utf8",
+            env: { ...environment, PIPEWIRE_CONFIG_NAME: "pipetune-clock-observer.conf" } });
+          assert.equal(dump.status, 0, dump.stderr);
+          const graph = JSON.parse("[" + dump.stdout.replace(/\]\s*\[/gu, "],[") + "]").flat();
+          for (const name of ["pipetune_product_input.distribution",
+            "output.pipetune_product_input.distribution_pipetune_product_device_0",
+            "output.pipetune_product_input.distribution_pipetune_product_device_1"]) {
+            const node = graph.find((item) => item.type === "PipeWire:Interface:Node" && item.info?.props?.["node.name"] === name);
+            assert.ok(node, `stage ${stage} must retain distribution node ${name}`);
+            const formats = node.info.params.Format;
+            assert.equal(formats.length, 1, `${name} must have one negotiated PCM format`);
+            assert.equal(formats[0].mediaType, "audio");
+            assert.equal(formats[0].mediaSubtype, "raw");
+            // Newer combine modules negotiate an unspecified/zero raw rate,
+            // which follows the graph clock without conversion.
+            assert.equal(formats[0].rate || rate, rate, `${name} must match the graph rate at stage ${stage}`);
+          }
+        }
         const quantum = stage === 0 || stage === 8 ? graphQuantum : graphQuantum * 2;
         const expected = (0.5 * quantum + 64) * 1e9 / rate + 1e6;
         const client = createConnection(environment.PIPETUNE_PRODUCT_SOCKET);
@@ -1156,9 +1342,36 @@ try {
         const opticalRouted = structuredClone(original);
         opticalRouted.outputs[1].device = opticalOutput.device;
         opticalRouted.outputs[1].profileIntent = { card: cardProfile.card, outputKey: opticalProfile.outputKey };
+        const volumeCard = profileFixture.stdout.match(/card-bound=(\d+)/u)?.[1];
+        assert.ok(volumeCard);
+        // Keep draining WirePlumber's policy log while its async Device
+        // requests complete; synchronous children can fill that log pipe.
+        const beforeVolumeDump = start("read original hardware volume", "pw-cli", ["enum-params", volumeCard, "Route"]);
+        assert.equal((await beforeVolumeDump.completion).code, 0, beforeVolumeDump.stderr);
+        const outputRoute = beforeVolumeDump.stdout.split(/^  Object:/mu)
+          .find((route) => route.includes("Spa:Enum:Direction:Output"));
+        const routeIndex = outputRoute?.match(/Param:Route:index[^\n]*\n\s+Int (\d+)/u)?.[1];
+        assert.ok(routeIndex);
+        const attenuated = start("set original hardware volume", "pw-cli", ["set-param", volumeCard, "Route",
+          `{ index = ${routeIndex} device = 0 save = true props = { mute = true channelVolumes = [ 0.125 0.25 ] } }`]);
+        assert.equal((await attenuated.completion).code, 0, attenuated.stderr);
+        // Match an OS volume operation on the current route and wait for its
+        // observed state before asking the product to take ownership.
+        await waitForCardStatus((status) => status.outputVolumes.some((volume) =>
+          volume.nodeSerial === opticalOutput.nodeSerial && volume.muted &&
+          volume.channelVolumes[0] === 0.125 && volume.channelVolumes[1] === 0.25));
         const routed = await control({ command: "set-output", configuration: opticalRouted });
         assert.deepEqual(routed.outputConfiguration, opticalRouted);
         assert.equal(routed.configurationRevision, ++revision);
+        // Hardware volume belongs to the card Route. A Node-only update can
+        // report unity while leaving the card's attenuation and mute intact.
+        const volumeDump = start("read selected hardware volume", "pw-cli", ["enum-params", volumeCard, "Route"]);
+        assert.equal((await volumeDump.completion).code, 0, volumeDump.stderr);
+        const hardwareVolume = volumeDump.stdout.split(/^  Object:/mu)
+          .find((route) => route.includes("Spa:Enum:Direction:Output"));
+        assert.match(hardwareVolume ?? "", /Props:channelVolumes[^\n]*\n[^\n]*\n\s+Float 1\.000000\n\s+Float 1\.000000/u,
+          "selected hardware route must have unity gain");
+        assert.match(hardwareVolume ?? "", /Props:mute[^\n]*\n\s+Bool false/u, "selected hardware route must be unmuted");
         // This probe observes the selected device directly. The link group
         // excludes it from the desktop's automatic capture-endpoint routing.
         for (const channel of ["FL", "FR"]) {
@@ -1191,6 +1404,13 @@ try {
         });
         const restoredRouted = await control({ command: "set-output", configuration: original });
         assert.equal(restoredRouted.configurationRevision, ++revision);
+        const restoredDump = start("read restored hardware volume", "pw-cli", ["enum-params", volumeCard, "Route"]);
+        assert.equal((await restoredDump.completion).code, 0, restoredDump.stderr);
+        const restoredVolume = restoredDump.stdout.split(/^  Object:/mu)
+          .find((route) => route.includes("Spa:Enum:Direction:Output"));
+        assert.match(restoredVolume ?? "", /Props:channelVolumes[^\n]*\n[^\n]*\n\s+Float 0\.125000\n\s+Float 0\.250000/u,
+          "released hardware route must restore its gain");
+        assert.match(restoredVolume ?? "", /Props:mute[^\n]*\n\s+Bool true/u, "released hardware route must restore its mute");
         const singleSaved = structuredClone(original);
         singleSaved.mode = "single";
         singleSaved.outputs.push({ id: "fixture-output", enabled: true, device: opticalOutput.device,
@@ -1206,6 +1426,7 @@ try {
         await waitForCardStatus((status) => !status.availableOutputProfiles.some((item) => item.card.api === "pipetune-fixture"));
         profileFixture = start("reconnected product profile fixture", pulseServer, [], {
           ...environment, PIPETUNE_PROFILE_FIXTURE: "1", PIPETUNE_PROFILE_RECREATE: "1",
+          ...(delayedInputRestore ? { PIPETUNE_PROFILE_OVERWRITE_FIRST_INPUT_RESTORE: "1" } : {}),
           ...(regularRoutePolicy ? { PIPETUNE_PROFILE_INITIAL_SAVED_INPUT: "1" } : {}),
         });
         const restored = await waitForCardStatus((status) => !status.outputProfileRestoring &&
@@ -1213,6 +1434,10 @@ try {
             item.active && item.cardProfileName === opticalProfile.cardProfileName) &&
           status.availableOutputs.some((output) => output.nodeName === "fixture.output.iec958"));
         assert.deepEqual(restored.outputConfiguration, singleSaved);
+        if (delayedInputRestore) {
+          assert.match(profileFixture.stdout, /input-restore-overwritten/u);
+          assert.match(profileFixture.stdout, /input-restore-recovered/u);
+        }
         assert.notEqual(restored.availableOutputs.find((output) => output.nodeName === "fixture.output.iec958").nodeSerial,
           opticalOutput.nodeSerial, "a reconnected card must have a new output generation");
         const staleInventory = await control({ command: "set-output", configuration: singleSaved,
@@ -1444,14 +1669,18 @@ try {
         .map((child) => ({ name: child.name, events: child.stdout.trim().split("\n") })) };
       for (const fixture of report.routePolicy.fixtures) {
         assert.ok(fixture.events.filter((line) => line.startsWith("profile-set")).length <= 24,
-          "profile requests must remain bounded during external overrides and rollback");
+          `profile requests must remain bounded during external overrides and rollback: ${fixture.name}\n${fixture.events.join("\n")}`);
         assert.ok(fixture.events.filter((line) => line.startsWith("route-set")).length <= 64,
-          "route restoration must converge without repeated policy feedback");
+          `route restoration must converge without repeated policy feedback: ${fixture.name}\n${fixture.events.join("\n")}`);
       }
     }
     if (expectedAudioFailure) {
       assert.ok(audio.stderr.includes(expectedAudioFailure), audio.stderr);
       assert.equal(report.shutdownAcknowledged, true, "failed capture must wait for the producer to stop");
+    } else if (scenario === "product-mode-volume") {
+      assert.equal(report.stages.length, 7);
+      assert.ok(report.stages.every(([frames]) => frames >= 32768),
+        "playback must recover at the OS volume after every mode change");
     } else {
       if (scenario === "product-matrix-freewheel-delayed-observer")
         assert.ok(report.deferredFrames >= 2048, "the observer must fall behind by eight graph quanta without losing PCM");

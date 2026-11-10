@@ -107,7 +107,7 @@ test('all nine asset DSPs process together after restart, rate and channel rebui
     }
     const pipeline = [
       {
-        name: 'SFZ Note Player',
+        name: 'SoundFont Note Player',
         channel: '',
         parameters: { sf, mn: 83, mx: 83, th: 0.01, dm: 0, wm: 100 },
       },

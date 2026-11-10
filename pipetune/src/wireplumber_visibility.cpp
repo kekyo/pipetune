@@ -33,6 +33,7 @@ local pending_restores = {}
 local server_cookie = tostring(Core.get_info().cookie)
 local nodes_installed = false
 local clients_installed = false
+local volume_restoring = false
 
 -- Keep the user's configured preference separate from the effective fallback.
 -- WirePlumber owns this lease so a crashed processing client cannot strand the
@@ -52,9 +53,51 @@ local configured_key = "default.configured.audio.sink"
 local master_state = State("pipetune-master-output")
 local saved_master = master_state:load()
 local master_save = nil
+local pending_masters = {}
 
 local function finite_gain(value)
   return type(value) == "number" and value >= 0 and value <= 3.4028234663852886e38
+end
+
+local function output_name(value)
+  if value == nil then return nil end
+  local json = Json.Raw(value)
+  if json == nil or not json:is_object() then return nil end
+  local ok, parsed = pcall(function() return json:parse() end)
+  if ok and type(parsed) == "table" and type(parsed.name) == "string" then return parsed.name end
+  return nil
+end
+
+local function output_volume(name)
+  if name == nil then return nil end
+  for node in pipetune_nodes_om:iterate() do
+    if node.properties["node.name"] == name then
+      for param in node:iterate_params("Props") do
+        local props = param:parse().properties
+        if props then
+          local gain = props.volume or 1.0
+          if type(props.channelVolumes) == "table" and #props.channelVolumes > 0 then
+            local channel = 0.0
+            for _, value in ipairs(props.channelVolumes) do
+              if not finite_gain(value) then return nil end
+              channel = math.max(channel, value)
+            end
+            gain = gain * channel
+          end
+          if finite_gain(gain) then return gain, props.mute == true end
+        end
+      end
+    end
+  end
+  return nil
+end
+
+local function restore_pending_masters()
+  if default_metadata == nil or default_metadata:find(0, "default.audio.sink") == nil then return end
+  for node, restore in pairs(pending_masters) do
+    restore()
+    pending_masters[node] = nil
+  end
 end
 
 local function store_master(name, gain, muted)
@@ -78,10 +121,6 @@ local function monitor_master(node)
   if name == nil or (mode ~= "restore" and mode ~= "retained") then return end
   local restoring = mode == "restore"
   local gain = tonumber(saved_master[name .. ":gain"])
-  if not finite_gain(gain) then gain = 1.0 end
-  -- Lua preserves integers when parsing "0" or "1" from the state file.
-  -- Pod.Array requires floating-point values for its Spa:Float elements.
-  gain = gain + 0.0
   local muted = saved_master[name .. ":mute"] == "true"
   local function changed(node, id)
     if id ~= "Props" then return end
@@ -95,7 +134,7 @@ local function monitor_master(node)
             finite_gain(channels[1]) and channels[1] == channels[2] then
           -- Ignore the initial cached defaults until the requested controls
           -- have made a complete round trip through PipeTune's normalization.
-          if restoring and (props.mute ~= muted or
+          if restoring and (gain == nil or props.mute ~= muted or
               math.abs(channels[1] - gain) > math.max(1, gain) * 0.000001) then return end
           restoring = false
           store_master(name, channels[1], props.mute)
@@ -105,23 +144,28 @@ local function monitor_master(node)
   end
   node:connect("params-changed", changed)
   if restoring then
-    node:set_param("Props", Pod.Object {
-      "Spa:Pod:Object:Param:Props", "Props",
-      volume = 1.0, mute = muted,
-      channelVolumes = Pod.Array { "Spa:Float", gain, gain },
-    })
+    pending_masters[node] = function()
+      if not finite_gain(gain) then
+        gain = tonumber(saved_default["inherited-gain"])
+        muted = saved_default["inherited-mute"] == "true"
+        if not finite_gain(gain) then
+          gain, muted = output_volume(output_name(default_metadata:find(0, "default.audio.sink")))
+        end
+      end
+      -- With no previous output there is no OS volume to inherit.
+      if not finite_gain(gain) then gain, muted = 1.0, false end
+      -- State values may parse as integers; Float arrays need Lua floats.
+      gain = gain + 0.0
+      node:set_param("Props", Pod.Object {
+        "Spa:Pod:Object:Param:Props", "Props",
+        volume = 1.0, mute = muted,
+        channelVolumes = Pod.Array { "Spa:Float", gain, gain },
+      })
+    end
+    Core.sync(function(error) if error == nil then restore_pending_masters() end end)
   else
     changed(node, "Props")
   end
-end
-
-local function output_name(value)
-  if value == nil then return nil end
-  local json = Json.Raw(value)
-  if json == nil or not json:is_object() then return nil end
-  local ok, parsed = pcall(function() return json:parse() end)
-  if ok and type(parsed) == "table" and type(parsed.name) == "string" then return parsed.name end
-  return nil
 end
 
 local function save_default()
@@ -140,6 +184,9 @@ local function update_default_output()
   if name ~= nil then
     local value = Json.Object { name = name }:get_data()
     if saved_default["aggregate"] == nil then
+      local gain, muted = output_volume(output_name(default_metadata:find(0, "default.audio.sink")))
+      saved_default["inherited-gain"] = gain and string.format("%.17g", gain) or nil
+      saved_default["inherited-mute"] = muted and "true" or "false"
       saved_default["aggregate"] = value
       saved_default["previous-present"] = current ~= nil and "true" or "false"
       saved_default["previous-value"] = current
@@ -156,7 +203,7 @@ local function update_default_output()
       setting_default = false
     end
   elseif saved_default["aggregate"] ~= nil then
-    if next(public_sinks) ~= nil then return end
+    if next(public_sinks) ~= nil or volume_restoring then return end
     default_restoring = true
     if output_name(current) == output_name(saved_default["aggregate"]) or
         (saved_default["selected-managed"] == "true" and
@@ -177,6 +224,7 @@ local function update_default_output()
       end
     end)
   end
+  restore_pending_masters()
 end
 
 local function save_permissions()
@@ -274,7 +322,7 @@ local function update_output_permissions(client)
   for node_id, output in pairs(pipetune_other_outputs) do
     local key = permission_key(client, output)
     if key ~= nil then
-      local hide = next(pipetune_aggregate_owners) ~= nil and
+      local hide = (next(pipetune_aggregate_owners) ~= nil or volume_restoring) and
           not is_wireplumber(client) and not is_pipetune(client) and
           not is_node_owner(client, output.owner_id) and not owns_aggregate
       if hide then
@@ -353,6 +401,367 @@ local function update_client_by_id(id)
   end
 end
 
+-- Own physical output gains for the lifetime of selected distribution streams.
+-- Persist before changing hardware, and use Route.save=false so temporary unity
+-- is never written into WirePlumber's ordinary single-output route state.
+local device_volume_state = State("pipetune-device-volumes")
+local saved_device_volumes = device_volume_state:load()
+local volume_leases = {}
+local volume_streams = {}
+local volume_buses = {}
+local volume_devices = {}
+local volume_devices_installed = false
+local volume_links = {}
+local volume_links_installed = false
+local volume_update_pending = false
+local volume_update
+local volume_owners = {}
+local volume_owner_clients = {}
+local volume_owner_modes = {}
+
+local function queue_volume_update()
+  if volume_update_pending then return end
+  volume_update_pending = true
+  Core.sync(function(error)
+    volume_update_pending = false
+    if error == nil then volume_update() end
+  end)
+end
+
+local function read_volume(node)
+  for pod in node:iterate_params("Props") do
+    local props = pod:parse().properties
+    if props and type(props.mute) == "boolean" and type(props.channelVolumes) == "table" and
+        #props.channelVolumes > 0 and #props.channelVolumes <= 16 and finite_gain(props.volume or 1.0) then
+      local channels = {}
+      for _, gain in ipairs(props.channelVolumes) do
+        if not finite_gain(gain) then return nil end
+        table.insert(channels, gain + 0.0)
+      end
+      return { volume = (props.volume or 1.0) + 0.0, mute = props.mute, channels = channels }
+    end
+  end
+  return nil
+end
+
+local function volume_equal(actual, expected)
+  if actual == nil or expected == nil or actual.mute ~= expected.mute or
+      #actual.channels ~= #expected.channels then return false end
+  for index, value in ipairs(actual.channels) do
+    local a, b = value * actual.volume, expected.channels[index] * expected.volume
+    if math.abs(a - b) > math.max(1.0, math.abs(b)) * 0.00001 then return false end
+  end
+  return true
+end
+
+local function unity_volume(channels, muted)
+  local values = {}
+  for index = 1, channels do values[index] = 1.0 end
+  return { volume = 1.0, mute = muted, channels = values }
+end
+
+local function volume_pod(value)
+  local channels = { "Spa:Float" }
+  for _, gain in ipairs(value.channels) do table.insert(channels, gain + 0.0) end
+  return Pod.Object { "Spa:Pod:Object:Param:Props", "Props",
+    volume = value.volume + 0.0, mute = value.mute, channelVolumes = Pod.Array(channels) }
+end
+
+local function volume_failure(lease, message)
+  if lease.failure == nil then
+    lease.failure = message
+    Log.warning("PipeTune output volume: " .. message)
+  end
+  queue_volume_update()
+end
+
+local function watch_volume_request(lease, message)
+  if lease.timer then lease.timer:destroy() end
+  lease.timer = Core.timeout_add(3000, function()
+    lease.timer = nil
+    volume_failure(lease, message)
+    return false
+  end)
+end
+
+local function acknowledge_volume(lease)
+  lease.pending = nil
+  if lease.timer then lease.timer:destroy(); lease.timer = nil end
+end
+
+local function gate_volume_stream(stream, open)
+  local expected = unity_volume(stream.channels, not open)
+  if volume_equal(read_volume(stream.node), expected) then
+    acknowledge_volume(stream)
+    return true
+  end
+  if stream.failure ~= nil then return false end
+  if stream.pending == open then return false end
+  stream.pending = open
+  -- 0.4's Lua binding returns no value; only readback acknowledges a write.
+  if stream.node:set_param("Props", volume_pod(expected)) == false then
+    volume_failure(stream, "cannot gate distribution stream " .. stream.name)
+  else
+    watch_volume_request(stream, "distribution stream did not confirm its gain: " .. stream.name)
+  end
+  return false
+end
+
+local function physical_target(node)
+  local properties = node.properties
+  local device = volume_devices[tonumber(properties["device.id"])]
+  local profile_device = tonumber(properties["card.profile.device"])
+  local route = nil
+  if device and profile_device then
+    for pod in device:iterate_params("Route") do
+      local value = pod:parse().properties
+      if value and value.direction == "Output" and value.device == profile_device then route = value; break end
+    end
+  end
+  local route_name = route and route.name or ""
+  if route and route_name == "" then
+    for pod in device:iterate_params("EnumRoute") do
+      local value = pod:parse().properties
+      if value and value.direction == "Output" and value.index == route.index then route_name = value.name; break end
+    end
+    if route_name == "" then return nil end
+  end
+  local name = properties["node.name"]
+  if name == nil then return nil end
+  -- Names and route identities survive numeric ID reuse and reconnection.
+  local key = Json.Array { name, device and device.properties["device.name"] or "",
+    properties["node.device.profile.name"] or "", route_name,
+    device and (device.properties["device.serial"] or device.properties["device.bus-path"]) or "" }:get_data()
+  return { node = node, device = device, route = route, key = key, name = name }
+end
+
+local function set_physical_volume(target, value)
+  if target.route then
+    return target.device:set_param("Route", Pod.Object { "Spa:Pod:Object:Param:Route", "Route",
+      index = target.route.index, device = target.route.device, save = false, props = volume_pod(value) })
+  end
+  return target.node:set_param("Props", volume_pod(value))
+end
+
+local function save_device_volumes()
+  local ok, error = device_volume_state:save(saved_device_volumes)
+  if not ok then Log.warning("cannot save PipeTune device volumes: " .. tostring(error)) end
+  return ok
+end
+
+local function distribution_route_ready(target, selection)
+  local channels = 0
+  for _, stream in ipairs(selection.streams) do channels = math.max(channels, stream.channels) end
+  if channels == 0 then return false end
+  local ports = {}
+  for _, link in pairs(volume_links) do
+    local props = link.properties
+    if tonumber(props["link.input.node"]) == target.node["bound-id"] then
+      local stream = volume_streams[tonumber(props["link.output.node"])]
+      -- Muting distribution streams cannot silence a surviving Single-mode
+      -- or application link. Keep hardware muted until those links are gone.
+      if not stream or stream.serial ~= tostring(target.node.properties["object.serial"]) then return false end
+      ports[props["link.input.port"]] = true
+    end
+  end
+  local count = 0
+  for _ in pairs(ports) do count = count + 1 end
+  return count >= channels
+end
+
+volume_update = function()
+  if not nodes_installed or not clients_installed or not volume_devices_installed or not volume_links_installed then return end
+  local targets, desired, status, failures = {}, {}, {}, {}
+  local active_buses = {}
+  for _, bus in pairs(volume_buses) do active_buses[bus.owner] = true end
+  for node in pipetune_nodes_om:iterate() do
+    local name = node.properties["node.name"]
+    if volume_owners[name] then
+      volume_owner_clients[name] = tonumber(node.properties["client.id"])
+      volume_owner_modes[name] = node.properties["node.pipetune.public-input"] == "true"
+    end
+    if node.properties["media.class"] == "Audio/Sink" and
+        not is_internal_node(node) and node.properties["node.pipetune.public-sink"] ~= "true" then
+      local target = physical_target(node)
+      if target then targets[tostring(node.properties["object.serial"])] = target end
+    end
+  end
+  for _, stream in pairs(volume_streams) do
+    local target = targets[stream.serial]
+    volume_owners[stream.owner] = true
+    if target then
+      local selection = desired[target.key] or { target = target, streams = {}, owner = stream.owner }
+      table.insert(selection.streams, stream)
+      desired[target.key] = selection
+    else
+      gate_volume_stream(stream, false)
+      status[stream.owner] = "pending"
+    end
+    if stream.failure then failures[stream.owner] = stream.failure end
+  end
+  -- A replacement bus declares its selections before its streams are bound.
+  -- Keep those leases across stream recreation, including idle output changes.
+  for _, bus in pairs(volume_buses) do
+    for serial in string.gmatch(bus.targets, "[^,]+") do
+      local target = targets[serial]
+      if target and not desired[target.key] then
+        desired[target.key] = { target = target, streams = {}, owner = bus.owner }
+        status[bus.owner] = "pending"
+      end
+    end
+  end
+  local restoring = false
+  for _, target in pairs(targets) do
+    local selection = desired[target.key]
+    local serialized = saved_device_volumes[target.key]
+    local current = read_volume(target.node)
+    local lease = volume_leases[target.key]
+    if selection or serialized then
+      if not lease then
+        local snapshot = nil
+        if serialized then
+          local ok, decoded = pcall(function() return Json.Raw(serialized):parse() end)
+          if ok then snapshot = decoded end
+        elseif current then
+          snapshot = { owner = selection.owner, original = current }
+          saved_device_volumes[target.key] = Json.Object { owner = snapshot.owner,
+            original = Json.Object { volume = current.volume, mute = current.mute,
+              channels = Json.Array(current.channels) } }:get_data()
+          if not save_device_volumes() then saved_device_volumes[target.key] = nil; snapshot = nil end
+        end
+        if snapshot and snapshot.original and snapshot.owner then
+          lease = { snapshot = snapshot }
+          volume_leases[target.key] = lease
+        else
+          for _, stream in ipairs(selection and selection.streams or {}) do
+            gate_volume_stream(stream, false)
+            volume_failure(stream, "cannot snapshot output gain: " .. target.name)
+          end
+        end
+      end
+      if lease then
+        local owner = lease.snapshot.owner
+        volume_owners[owner] = true
+        -- ObjectManager binds replacement nodes asynchronously. An empty
+        -- stream inventory during that gap is not a deselection. The persistent
+        -- daemon client, a new bus roster, or an explicit single-mode input
+        -- distinguishes rebuilding from actual release, without a sleep timer.
+        if not selection and not active_buses[owner] and volume_owner_modes[owner] ~= false then
+          for client in pipetune_clients_om:iterate() do
+            if client_id(client) == volume_owner_clients[owner] then
+              selection = { streams = {}, owner = owner }
+              restoring = true
+              status[owner] = "pending"
+              break
+            end
+          end
+        end
+        -- Confirm hardware mute at its original gain before removing any
+        -- attenuation. Reopen only after every incoming link is managed.
+        local ready = selection and lease.prepared and distribution_route_ready(target, selection)
+        local phase = selection and (ready and "selected" or "gated") or "restoring"
+        local original = lease.snapshot.original
+        local expected = not selection and original or ready and unity_volume(#original.channels, false) or
+            { volume = original.volume, mute = true, channels = original.channels }
+        if lease.phase ~= phase then
+          acknowledge_volume(lease)
+          lease.failure = nil
+          lease.phase = phase
+        end
+        if volume_equal(current, expected) then
+          acknowledge_volume(lease)
+          if selection then
+            if not ready then
+              status[owner] = "pending"
+              if not lease.prepared then lease.prepared = true; queue_volume_update() end
+            end
+            for _, stream in ipairs(selection.streams) do
+              if not gate_volume_stream(stream, ready == true) then status[owner] = "pending" end
+            end
+          else
+            saved_device_volumes[target.key] = nil
+            if save_device_volumes() then volume_leases[target.key] = nil
+            else
+              saved_device_volumes[target.key] = serialized
+              volume_failure(lease, "cannot acknowledge restored output: " .. target.name)
+            end
+          end
+        else
+          status[owner] = "pending"
+          local gated = true
+          for _, stream in ipairs(selection and selection.streams or {}) do
+            if not gate_volume_stream(stream, false) then gated = false end
+          end
+          if gated and lease.pending == nil and lease.failure == nil then
+            lease.pending = true
+            if set_physical_volume(target, expected) == false then
+              volume_failure(lease, "cannot set output gain: " .. target.name)
+            else
+              watch_volume_request(lease, "output did not confirm " .. (phase == "gated" and "transition mute: " or
+                  selection and "unity gain: " or "restored gain: ") .. target.name)
+            end
+          end
+        end
+        if lease.failure then failures[owner] = lease.failure end
+        if not selection and volume_leases[target.key] ~= nil then restoring = true end
+      end
+    end
+  end
+  -- Keep desktop access and the default-output lease until restoration is
+  -- acknowledged. Disconnected/inactive routes retain their recovery record.
+  if volume_restoring ~= restoring then
+    volume_restoring = restoring
+    update_all_client_permissions()
+    update_default_output()
+  end
+  if default_metadata then
+    for owner in pairs(volume_owners) do
+      local serial = nil
+      for node in pipetune_nodes_om:iterate() do
+        if node.properties["node.name"] == owner .. ".distribution" then
+          serial = math.max(serial or 0, tonumber(node.properties["object.serial"]))
+        end
+      end
+      local state = failures[owner] and "error:" .. failures[owner] or
+        status[owner] or (serial and "ready:" .. tostring(serial) or "restored")
+      default_metadata:set(0, "pipetune.volume." .. owner, "Spa:String", state)
+    end
+  end
+end
+
+-- Core only keeps a weak reference. Keep this manager alive after script
+-- initialization so later cards are resolved through their hardware Routes.
+volume_devices_om = ObjectManager { Interest { type = "device" } }
+volume_devices_om:connect("object-added", function(om, device)
+  volume_devices[device["bound-id"]] = device
+  device:connect("params-changed", function(node, id)
+    if id == "Route" or id == "Profile" then queue_volume_update() end
+  end)
+  queue_volume_update()
+end)
+volume_devices_om:connect("object-removed", function(om, device)
+  volume_devices[device["bound-id"]] = nil
+  queue_volume_update()
+end)
+volume_devices_om:connect("installed", function()
+  volume_devices_installed = true
+  queue_volume_update()
+end)
+
+volume_links_om = ObjectManager { Interest { type = "link" } }
+volume_links_om:connect("object-added", function(om, link)
+  volume_links[link["bound-id"]] = link
+  queue_volume_update()
+end)
+volume_links_om:connect("object-removed", function(om, link)
+  volume_links[link["bound-id"]] = nil
+  queue_volume_update()
+end)
+volume_links_om:connect("installed", function()
+  volume_links_installed = true
+  queue_volume_update()
+end)
+
 pipetune_nodes_om = ObjectManager {
   Interest { type = "node" },
 }
@@ -363,11 +772,23 @@ pipetune_clients_om = ObjectManager {
 pipetune_nodes_om:connect("object-added", function(om, node)
   local node_id = node["bound-id"]
   local owner_id = tonumber(proxy_property(node, "client.id"))
+  if proxy_property(node, "node.pipetune.target-serial") then
+    volume_streams[node_id] = { node = node, serial = tostring(proxy_property(node, "node.pipetune.target-serial")),
+      channels = tonumber(proxy_property(node, "node.pipetune.output-channels")),
+      name = proxy_property(node, "node.pipetune.output-id"), owner = proxy_property(node, "node.pipetune.public-target") }
+  end
+  node:connect("params-changed", function(node, id) if id == "Props" then queue_volume_update() end end)
+  queue_volume_update()
   if proxy_property(node, "node.pipetune.public-sink") == "true" then
     public_sinks[node_id] = proxy_property(node, "node.name")
   end
   local aggregate = proxy_property(node, "node.pipetune.aggregate")
   if aggregate == "true" or aggregate == true then
+    local volume_owner = proxy_property(node, "node.pipetune.public-target")
+    if volume_owner then
+      volume_owners[volume_owner] = true
+      volume_buses[node_id] = { owner = volume_owner, targets = proxy_property(node, "node.pipetune.volume-targets") or "" }
+    end
     monitor_master(node)
     pipetune_aggregate_owners[node_id] = owner_id or -1
     if proxy_property(node, "node.pipetune.manage-default") == "true" then
@@ -416,7 +837,14 @@ pipetune_nodes_om:connect("object-added", function(om, node)
 end)
 
 pipetune_nodes_om:connect("object-removed", function(om, node)
+  pending_masters[node] = nil
   local node_id = node["bound-id"]
+  if volume_streams[node_id] then acknowledge_volume(volume_streams[node_id]); volume_streams[node_id] = nil end
+  volume_buses[node_id] = nil
+  -- Removal precedes graph reconciliation; keep hidden outputs inaccessible
+  -- until the saved gains of any still-live devices have been restored.
+  if next(volume_leases) ~= nil then volume_restoring = true end
+  queue_volume_update()
   if public_sinks[node_id] then
     public_sinks[node_id] = nil
     update_default_output()
@@ -454,6 +882,7 @@ pipetune_clients_om:connect("object-added", function(om, client)
 end)
 
 pipetune_clients_om:connect("object-removed", function(om, client)
+  queue_volume_update()
   local serial = proxy_property(client, "object.serial")
   if serial ~= nil then forget_permissions(tostring(serial), nil) end
 end)
@@ -482,11 +911,13 @@ end
 
 pipetune_nodes_om:connect("installed", function()
   nodes_installed = true
+  queue_volume_update()
   update_default_output()
   restore_initial_permissions()
 end)
 pipetune_clients_om:connect("installed", function()
   clients_installed = true
+  queue_volume_update()
   restore_initial_permissions()
 end)
 
@@ -495,6 +926,7 @@ local defaults_om = ObjectManager {
 }
 defaults_om:connect("object-added", function(om, metadata)
   default_metadata = metadata
+  queue_volume_update()
   metadata:connect("changed", function(m, subject, key, value_type, value)
     if subject ~= 0 then return end
     if key == configured_key and not default_restoring and not setting_default and
@@ -535,6 +967,8 @@ end)
 pipetune_nodes_om:activate()
 pipetune_clients_om:activate()
 defaults_om:activate()
+volume_devices_om:activate()
+volume_links_om:activate()
 )wpvis"};
 
 constexpr auto kWirePlumber05NodeVisibilityConfiguration =

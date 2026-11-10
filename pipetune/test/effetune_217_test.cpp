@@ -38,7 +38,7 @@ static void testAnalyzerParameters(const pipetune::DspBackendApi &api) {
               std::array{28.0F, 91.0F, 0.0F, enabled};
           check(api.instanceSetParams(engine, instance, parameters.data(), parameters.size(),
                                       rhythm ? 0xf854c585u : 0xb8518943u, 0) == ET_OK,
-                "the shared backend must accept the 2.16 four-float analyzer parameters");
+                "the shared backend must accept the 2.17 four-float analyzer parameters");
           auto audio = std::array<float, 128>{};
           audio.fill(0.125F);
           check(api.instanceProcess(engine, instance, audio.data(), 2, 64, 0) == ET_OK,
@@ -78,7 +78,7 @@ static void testMatrixReset(const pipetune::DspBackendApi &api) {
         };
         check(render() == std::array{0.25F, 0.125F, 0.0F, 0.0F},
               "a new Matrix instance must start with stereo routing");
-        // Keep inputs 1/2 and mix both into output 3 (mx = "00021112").
+        // Keep inputs 1/2 and mix both into output 3 (mx = "00021113").
         auto routes = std::array<std::uint8_t, 16>{
             1, 0, 4, 0, 0, 0, 0, 0, 2, 0, 1, 1, 0, 1, 2, 0};
         if (empty) routes[2] = 0;
@@ -102,8 +102,8 @@ static void testMatrixReset(const pipetune::DspBackendApi &api) {
 
 int main(int argc, char **argv) {
   if (argc != 2) return 2;
-  check(pipetune::effetuneVersion() == "2.16.0", "the embedded app version must be 2.16.0");
-  check(pipetune::generatedDspCatalog().size() == 112, "the app catalog must contain 112 DSPs");
+  check(pipetune::effetuneVersion() == "2.17.0", "the embedded app version must be 2.17.0");
+  check(pipetune::generatedDspCatalog().size() == 113, "the app catalog must contain 113 DSPs");
   struct Contract {
     const char *type;
     std::uint32_t hash;
@@ -114,7 +114,8 @@ int main(int argc, char **argv) {
            Contract{"RhythmAnalyzerPlugin", 0xf854c585u, 4u, 0u},
            Contract{"AnalogMeterPlugin", 0xad3d461cu, 7u, 0u},
            Contract{"AdaptivePredictionEffectPlugin", 0xebd8a6f0u, 10u, 0u},
-           Contract{"SFZNotePlayerPlugin", 0xdfb4bbc5u, 20u, 1073741824u},
+           Contract{"SFZNotePlayerPlugin", 0x3785c6edu, 21u, 1073741824u},
+           Contract{"SoundFontPlayerPlugin", 0x844a0998u, 4u, 1073741824u},
            Contract{"CassetteArtifactsPlugin", 0x328491aeu, 13u, 0u},
            Contract{"NoteSpectrogramPlugin", 0xb8518943u, 4u, 0u}}) {
     const auto *definition = pipetune::findDspByTypeName(contract.type);
@@ -139,12 +140,12 @@ int main(int argc, char **argv) {
       if (check(api.enginePrepare(engine, 48000.0F, 2u, 64u, 0u) == ET_OK,
                 "the backend must prepare its engine")) {
         const auto instance = api.instanceCreate(engine, "SFZNotePlayerPlugin");
-        if (check(instance != 0, "the backend must create SFZ Note Player")) {
-          const auto parameters = std::array<float, 20>{
-              0.1F, -60, 0, 21, 108, 64, 100, 0, 0, 0, 1, 1, 1, 0, 40, 50, 0, -1, 100, 1};
+        if (check(instance != 0, "the backend must create SoundFont Note Player")) {
+          const auto parameters = std::array<float, 21>{
+              0.1F, -60, 0, 21, 108, 64, 100, 0, 0, 0, 1, 1, 1, 0, 40, 50, 0, -1, 100, 1, -1};
           check(api.instanceSetParams(engine, instance, parameters.data(), parameters.size(),
-                                      0xdfb4bbc5u, 0u) == ET_OK,
-                "the backend must accept the 2.16 SFZ Event detection parameters");
+                                      0x3785c6edu, 0u) == ET_OK,
+                "the backend must accept the 2.17 SFZ Event detection parameters");
         }
       }
       api.engineDestroy(engine);
@@ -163,7 +164,7 @@ int main(int argc, char **argv) {
       }
       check(loaded.pipeline->process(audio, 2u, 64u, block * 64.0 / 48000.0) ==
                 pipetune::ProcessStatus::ok,
-            "the minimal 2.16 preset must process PCM");
+            "the minimal 2.17 preset must process PCM");
     }
     for (auto frame = 0u; frame < 64u; ++frame)
       check(std::abs(audio[frame] - 0.0625F) < 1e-6F &&

@@ -13,6 +13,7 @@ interface Scenario {
   metadata: Record<string, SampleInfo>;
   budget: number;
   definitionBytes: number;
+  fits: boolean;
 }
 
 const scenarios: Scenario[] = [
@@ -25,9 +26,10 @@ const scenarios: Scenario[] = [
     },
     budget: 8904,
     definitionBytes: 100,
+    fits: false,
   },
   {
-    name: 'generated samples retain every key when file layers are reduced',
+    name: 'generated and file layers are rejected together when oversized',
     text: '<region> sample=*sine key=60\n<region> sample=*noise key=61\n<region> sample=a.wav lokey=60 hikey=61',
     metadata: {
       '*sine': { size: 0, frames: 2048, channels: 1 },
@@ -36,16 +38,18 @@ const scenarios: Scenario[] = [
     },
     budget: 43000,
     definitionBytes: 100,
+    fits: false,
   },
   {
     name: 'all layers fit, sharing source PCM',
     text: '<group> sample=a.wav\n<region> key=60 lovel=1 hivel=63\n<region> key=60 lovel=64',
     metadata: { 'a.wav': { size: 100, frames: 100, channels: 1 } },
-    budget: 1236,
+    budget: 1916,
     definitionBytes: 25,
+    fits: true,
   },
   {
-    name: 'velocity 64 and source ordering break full ties',
+    name: 'equal velocity layers cannot substitute for the complete instrument',
     text: '<region> sample=z.wav lokey=60 hikey=63 lovel=32 hivel=96\n<region> sample=a.wav lokey=60 hikey=63 lovel=32 hivel=96',
     metadata: {
       'z.wav': { size: 100, frames: 100, channels: 1 },
@@ -53,9 +57,10 @@ const scenarios: Scenario[] = [
     },
     budget: 1124,
     definitionBytes: 25,
+    fits: false,
   },
   {
-    name: 'smaller decoded sample wins velocity tie',
+    name: 'a smaller sample cannot substitute for another velocity layer',
     text: '<region> sample=a.wav lokey=60 hikey=63\n<region> sample=b.wav lokey=60 hikey=63',
     metadata: {
       'a.wav': { size: 100, frames: 200, channels: 1 },
@@ -63,9 +68,10 @@ const scenarios: Scenario[] = [
     },
     budget: 1124,
     definitionBytes: 25,
+    fits: false,
   },
   {
-    name: 'velocity 63 is tried before 65',
+    name: 'all velocity ranges must fit together',
     text: '<region> sample=large.wav key=60 lovel=64 hivel=64\n<region> sample=lower.wav key=60 lovel=1 hivel=63\n<region> sample=higher.wav key=60 lovel=65 hivel=127',
     metadata: {
       'large.wav': { size: 100, frames: 1000, channels: 1 },
@@ -74,9 +80,10 @@ const scenarios: Scenario[] = [
     },
     budget: 1112,
     definitionBytes: 0,
+    fits: false,
   },
   {
-    name: 'raw source size forces reduction independently of PCM',
+    name: 'raw source size is checked independently of decoded PCM',
     text: '<region> sample=a.wav key=60\n<region> sample=b.wav key=60 lovel=65',
     metadata: {
       'a.wav': { size: 1500, frames: 50, channels: 1 },
@@ -84,36 +91,40 @@ const scenarios: Scenario[] = [
     },
     budget: 2000,
     definitionBytes: 500,
+    fits: false,
   },
   {
-    name: 'random and round robin become representative while groups survive',
+    name: 'random and round robin layers retain their original ranges and groups',
     text: '<group> seq_length=2\n<region> sample=a.wav lokey=60 hikey=62 seq_position=1 lorand=0 hirand=0.5\n<region> sample=b.wav lokey=60 hikey=62 seq_position=2 lorand=0.5 hirand=1',
     metadata: {
       'a.wav': { size: 100, frames: 100, channels: 1 },
       'b.wav': { size: 100, frames: 100, channels: 1 },
     },
-    budget: 1120,
+    budget: 4096,
     definitionBytes: 0,
+    fits: true,
   },
   {
-    name: 'nonadjacent keys cannot merge over a hole',
+    name: 'disjoint key ranges retain all layers',
     text: '<region> sample=a.wav key=60\n<region> sample=a.wav key=62\n<region> sample=b.wav key=60\n<region> sample=b.wav key=62',
     metadata: {
       'a.wav': { size: 100, frames: 100, channels: 1 },
       'b.wav': { size: 100, frames: 100, channels: 1 },
     },
-    budget: 1240,
+    budget: 4096,
     definitionBytes: 0,
+    fits: true,
   },
   {
-    name: 'unknown duration is accepted when no reduction is required',
+    name: 'unknown duration is accepted pending decoded PCM validation',
     text: '<region> sample=a.mp3 key=60',
     metadata: { 'a.mp3': { size: 100, frames: 0, channels: 0 } },
-    budget: 1024,
+    budget: 1060,
     definitionBytes: 0,
+    fits: true,
   },
   {
-    name: 'unknown duration cannot silently lose a key during reduction',
+    name: 'encoded size is checked even when duration is unknown',
     text: '<region> sample=a.wav key=60\n<region> sample=b.mp3 key=61',
     metadata: {
       'a.wav': { size: 100, frames: 100, channels: 1 },
@@ -121,13 +132,58 @@ const scenarios: Scenario[] = [
     },
     budget: 2000,
     definitionBytes: 0,
+    fits: false,
   },
   {
-    name: 'minimum complete range exceeds budget',
+    name: 'one byte below the complete key index budget fails',
     text: '<region> sample=a.wav lokey=0 hikey=127',
     metadata: { 'a.wav': { size: 100, frames: 100, channels: 1 } },
-    budget: 1619,
+    budget: 1967,
     definitionBytes: 0,
+    fits: false,
+  },
+  {
+    name: 'the complete key index fits at the exact boundary',
+    text: '<region> sample=a.wav lokey=0 hikey=127',
+    metadata: { 'a.wav': { size: 100, frames: 100, channels: 1 } },
+    budget: 1968,
+    definitionBytes: 0,
+    fits: true,
+  },
+  {
+    name: 'one byte below the shared sample bank budget fails',
+    text: '<group> sample=a.wav\n<region> key=60 lovel=1 hivel=63\n<region> key=60 lovel=64',
+    metadata: { 'a.wav': { size: 100, frames: 100, channels: 1 } },
+    budget: 1915,
+    definitionBytes: 25,
+    fits: false,
+  },
+  {
+    name: 'definition and original file sizes fit at the exact boundary',
+    text: '<region> sample=a.wav key=60',
+    metadata: { 'a.wav': { size: 1500, frames: 100, channels: 1 } },
+    budget: 2000,
+    definitionBytes: 500,
+    fits: true,
+  },
+  {
+    name: 'one byte below the original file budget fails',
+    text: '<region> sample=a.wav key=60',
+    metadata: { 'a.wav': { size: 1500, frames: 100, channels: 1 } },
+    budget: 1999,
+    definitionBytes: 500,
+    fits: false,
+  },
+  {
+    name: 'metadata for unused sources still counts toward the budget',
+    text: '<region> sample=a.wav key=60',
+    metadata: {
+      'a.wav': { size: 100, frames: 100, channels: 1 },
+      'b.wav': { size: 5000, frames: 100, channels: 1 },
+    },
+    budget: 2000,
+    definitionBytes: 0,
+    fits: false,
   },
   {
     name: 'missing metadata prevents range loss',
@@ -135,6 +191,7 @@ const scenarios: Scenario[] = [
     metadata: {},
     budget: 4096,
     definitionBytes: 0,
+    fits: false,
   },
   {
     name: 'large synthetic metadata is checked without allocating PCM',
@@ -142,12 +199,21 @@ const scenarios: Scenario[] = [
     metadata: { 'a.wav': { size: 2 ** 40, frames: 2 ** 40, channels: 2 } },
     budget: 1024 ** 3,
     definitionBytes: 0,
+    fits: false,
+  },
+  {
+    name: 'decoded byte multiplication cannot overflow the budget check',
+    text: '<region> sample=a.wav key=60',
+    metadata: { 'a.wav': { size: 100, frames: 2 ** 62, channels: 2 } },
+    budget: 1024 ** 3,
+    definitionBytes: 0,
+    fits: false,
   },
 ];
 
 test.each(scenarios)(
-  'SFZ capacity selection matches app: $name',
-  async ({ text, metadata, budget, definitionBytes }) => {
+  'complete SFZ capacity matches EffeTune 2.17: $name',
+  async ({ text, metadata, budget, definitionBytes, fits }) => {
     const source = process.env.PIPETUNE_EFFETUNE_SOURCE!;
     const parser = await import(
       /* @vite-ignore */ pathToFileURL(source + '/js/sfz/parser.js').href
@@ -160,7 +226,8 @@ test.each(scenarios)(
       readText: async () => text,
       onDiagnostic: null,
     });
-    let expected: unknown;
+    let expected:
+      { regions: Record<string, unknown>[]; reduced: boolean } | undefined;
     let failure: { code: string; message: string } | undefined;
     try {
       expected = service.selectSfzRegionsForBudget(
@@ -172,6 +239,7 @@ test.each(scenarios)(
     } catch (error) {
       failure = error as { code: string; message: string };
     }
+    expect(failure === undefined).toBe(fits);
     const chunks: Buffer[] = [];
     const word = (value: number) => {
       const bytes = Buffer.alloc(4);
@@ -208,11 +276,19 @@ test.each(scenarios)(
     } else {
       expect(native.status, native.stderr.toString()).toBe(0);
       const actual = JSON.parse(native.stdout.toString());
-      expect({
-        ...actual,
-        regions: actual.parsed.regions,
-        parsed: undefined,
-      }).toEqual(expected);
+      expect(actual.reduced).toBe(false);
+      expect(actual.parsed.regions).toHaveLength(expected!.regions.length);
+      // Capacity validation must preserve every resident field in source order.
+      // The upstream parser also supplies fields outside PipeTune's SFZ subset.
+      for (const [index, region] of actual.parsed.regions.entries()) {
+        expect(region).toEqual(
+          Object.fromEntries(
+            Object.entries(expected!.regions[index]).filter(([key]) =>
+              Object.hasOwn(region, key)
+            )
+          )
+        );
+      }
     }
   }
 );

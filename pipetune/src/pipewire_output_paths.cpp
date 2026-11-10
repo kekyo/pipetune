@@ -7,6 +7,7 @@
 #include "pipewire_graph_clock.h"
 
 #include <pipewire/pipewire.h>
+#include <spa/param/audio/format-utils.h>
 #include <spa/param/latency-utils.h>
 
 #include <algorithm>
@@ -75,6 +76,8 @@ struct PathNode {
   PathBinding binding;
   PathProperties properties;
   pw_node_state state = PW_NODE_STATE_CREATING;
+  bool canEnumerate = false;
+  std::optional<std::uint32_t> sampleRate;
 };
 
 struct PathPort {
@@ -153,8 +156,23 @@ static void scheduleSnapshot(PipeWireOutputPaths &observer) {
   observer.pending = pw_core_sync(observer.core, PW_ID_CORE, 0);
 }
 
+static std::optional<spa_fraction> effectiveSampleRate(const PipeWireOutputPaths &observer,
+                                                     std::uint32_t id, const PathNode &node) {
+  if (!node.sampleRate || node.state != PW_NODE_STATE_RUNNING) return {};
+  if (*node.sampleRate != 0) return spa_fraction{1, *node.sampleRate};
+  // An unspecified raw rate follows the current driver clock. Compare actual
+  // rates, never preferred node rates or clocks from a previous generation.
+  const auto serial = unsignedValue(property(node.properties, PW_KEY_OBJECT_SERIAL));
+  const auto clock = std::find_if(observer.clocks.begin(), observer.clocks.end(), [&](const auto &item) {
+    return item.nodeId == id && item.nodeSerial == serial;
+  });
+  if (clock == observer.clocks.end()) return {};
+  return spa_fraction{clock->rateNumerator, clock->rateDenominator};
+}
+
 static PipeWireOutputPath describePath(const PipeWireOutputPaths &observer,
-                                     std::uint32_t id, const PathNode &node) {
+                                     std::uint32_t id, const PathNode &node,
+                                     const std::optional<spa_fraction> &distributionRate) {
   auto path = PipeWireOutputPath{};
   path.outputId = property(node.properties, "node.pipetune.output-id");
   path.channelSlots = channelSlots(property(node.properties, "node.pipetune.output-slots"));
@@ -199,6 +217,10 @@ static PipeWireOutputPath describePath(const PipeWireOutputPaths &observer,
   }
   if (!complete || count != channels) return path;
   path.activity = active ? OutputPathActivity::active : OutputPathActivity::idle;
+  const auto rate = effectiveSampleRate(observer, id, node);
+  if (active && distributionRate && rate)
+    path.sampleRateMismatch = static_cast<std::uint64_t>(distributionRate->num) * rate->denom !=
+        static_cast<std::uint64_t>(rate->num) * distributionRate->denom;
   if (!active || !latencyKnown) return path;
   const auto clock = std::find_if(observer.clocks.begin(), observer.clocks.end(), [&](const auto &item) {
     return item.nodeId == id && item.nodeSerial == path.streamSerial;
@@ -217,11 +239,22 @@ static PipeWireOutputPath describePath(const PipeWireOutputPaths &observer,
 
 static void publishSnapshot(PipeWireOutputPaths &observer) {
   auto paths = std::vector<PipeWireOutputPath>{};
+  auto distributionRate = std::optional<spa_fraction>{};
+  auto distributions = 0U;
+  for (const auto &[id, node] : observer.nodes) {
+    if (property(node->properties, "node.pipetune.public-target") != observer.publicInputName ||
+        property(node->properties, "node.pipetune.aggregate") != "true") continue;
+    ++distributions;
+    distributionRate = effectiveSampleRate(observer, id, *node);
+  }
+  // A replacement briefly exports two generations. Do not compare a new leaf
+  // with an old distribution input while registry removals are still pending.
+  if (distributions != 1) distributionRate.reset();
   for (const auto &[id, node] : observer.nodes) {
     if (property(node->properties, "node.pipetune.public-target") != observer.publicInputName ||
         property(node->properties, "node.pipetune.managed-output") != "true" ||
         property(node->properties, "node.pipetune.output-id").empty()) continue;
-    paths.push_back(describePath(observer, id, *node));
+    paths.push_back(describePath(observer, id, *node, distributionRate));
   }
   if (!observer.initial && paths == observer.published) return;
   observer.initial = false;
@@ -233,6 +266,27 @@ static void nodeInfo(void *data, const pw_node_info *info) {
   auto &node = *static_cast<PathNode *>(data);
   if ((info->change_mask & PW_NODE_CHANGE_MASK_PROPS) != 0) updateProperties(node.properties, info->props);
   if ((info->change_mask & PW_NODE_CHANGE_MASK_STATE) != 0) node.state = info->state;
+  if ((info->change_mask & PW_NODE_CHANGE_MASK_PARAMS) != 0 &&
+      property(node.properties, "node.pipetune.public-target") == node.binding.owner->publicInputName &&
+      (property(node.properties, "node.pipetune.aggregate") == "true" ||
+       !property(node.properties, "node.pipetune.output-id").empty())) {
+    node.sampleRate.reset();
+    for (auto index = std::uint32_t{0}; node.canEnumerate && index < info->n_params; ++index) {
+      const auto &parameter = info->params[index];
+      if (parameter.id == SPA_PARAM_Format && (parameter.flags & SPA_PARAM_INFO_READ) != 0)
+        pw_node_enum_params(reinterpret_cast<pw_node *>(node.binding.proxy), 0, SPA_PARAM_Format, 0, 1, nullptr);
+    }
+  }
+  scheduleSnapshot(*node.binding.owner);
+}
+
+static void nodeParam(void *data, int, std::uint32_t id, std::uint32_t, std::uint32_t, const spa_pod *param) {
+  if (id != SPA_PARAM_Format) return;
+  auto &node = *static_cast<PathNode *>(data);
+  auto format = spa_audio_info_raw{};
+  node.sampleRate.reset();
+  if (param != nullptr && spa_format_audio_raw_parse(param, &format) >= 0)
+    node.sampleRate = format.rate;
   scheduleSnapshot(*node.binding.owner);
 }
 
@@ -286,11 +340,12 @@ static void globalAdded(void *data, std::uint32_t id, std::uint32_t permissions,
   if (std::strcmp(type, PW_TYPE_INTERFACE_Node) == 0) {
     auto node = std::make_unique<PathNode>();
     node->binding.owner = &observer;
+    node->canEnumerate = (permissions & PW_PERM_X) != 0;
     updateProperties(node->properties, props);
     node->binding.proxy = static_cast<pw_proxy *>(pw_registry_bind(observer.registry, id, type,
         std::min<std::uint32_t>(version, PW_VERSION_NODE), 0));
     if (node->binding.proxy == nullptr) return;
-    static const auto events = pw_node_events{.version = PW_VERSION_NODE_EVENTS, .info = nodeInfo, .param = nullptr};
+    static const auto events = pw_node_events{.version = PW_VERSION_NODE_EVENTS, .info = nodeInfo, .param = nodeParam};
     pw_node_add_listener(reinterpret_cast<pw_node *>(node->binding.proxy), &node->binding.listener, &events, node.get());
     observer.nodes[id] = std::move(node);
   } else if (std::strcmp(type, PW_TYPE_INTERFACE_Port) == 0 && props != nullptr) {

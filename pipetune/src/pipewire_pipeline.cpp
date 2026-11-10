@@ -15,9 +15,11 @@
 #include "output_peak_telemetry.h"
 #include "output_distribution.h"
 #include "pipewire_buffer_io.h"
+#include "pipewire_direct_output.h"
 #include "pipewire_latency.h"
 #include "pipewire_output_inventory.h"
 #include "pipewire_output_paths.h"
+#include "pipewire_output_volume.h"
 #include "pipewire_stream_flags.h"
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
@@ -239,7 +241,8 @@ struct PipeWireRuntime {
   std::vector<std::pair<OutputCardIdentity, std::string>> requestedProfileRestorations;
   std::vector<std::uint64_t> pendingProfileOldNodeSerials;
   std::vector<PipeWireInputRouteSnapshot> pendingProfileInputRoutes;
-  bool pendingInputRestoreRequested = false;
+  bool pendingInputRestoreScheduled = false;
+  unsigned pendingInputRestoreAttempts = 0;
   OutputProfileSelection pendingPreviousProfile;
   bool pendingProfileRollback = false;
   std::atomic<bool> pendingProfileRestoreActive{false};
@@ -256,8 +259,9 @@ struct PipeWireRuntime {
   ProfileRequestAction profileRequestAction = ProfileRequestAction::apply;
   std::string profileRequestError;
   spa_source *profileChangeSource = nullptr;
-  pw_impl_module *directOutput = nullptr;
-  spa_hook directOutputListener = {};
+  PipeWireDirectOutputPtr directOutput;
+  PipeWireOutputVolumePtr outputVolume;
+  std::atomic<bool> physicalVolumeReady{true};
   std::string directOutputArguments;
   pw_impl_module *outputDistribution = nullptr;
   spa_hook outputDistributionListener = {};
@@ -265,11 +269,12 @@ struct PipeWireRuntime {
   std::string outputDistributionArguments;
   std::uint64_t outputPolicyGeneration = 0;
   bool outputPolicyReset = false;
+  bool outputRateMismatch = false;
+  std::uint64_t retiredOutputRateSerial = 0;
   float masterVolume = 1.0F;
   bool masterMute = false;
   bool masterControlsInitialized = false;
   bool publishingMasterVolume = false;
-  std::atomic<float> masterOutputGain{0.0F};
   std::mutex outputRequestMutex;
   std::optional<cardio::promise_source<void>> outputRequestCompletion;
   std::atomic<bool> outputTransitionActive{false};
@@ -386,10 +391,8 @@ struct PipeWireRuntime {
       spa_hook_remove(&mixedOutputListener);
       pw_stream_destroy(mixedOutputStream);
     }
-    if (directOutput != nullptr) {
-      spa_hook_remove(&directOutputListener);
-      pw_impl_module_destroy(directOutput);
-    }
+    directOutput.reset();
+    outputVolume.reset();
     if (outputDistribution != nullptr) {
       spa_hook_remove(&outputDistributionListener);
       pw_impl_module_destroy(outputDistribution);
@@ -733,7 +736,30 @@ static bool setInputAlwaysProcess(PipeWireRuntime &runtime, bool enabled) {
 
 static void finishOutputChange(PipeWireRuntime &runtime);
 
+static bool outputVolumeIsReady(const PipeWireRuntime &runtime) {
+  if (!runtime.outputVolume) return true;
+  const auto multiple = runtime.options.outputConfiguration.mode == OutputMode::multiple;
+  if (!pipeWireOutputVolumeReady(*runtime.outputVolume, multiple)) return false;
+  if (!multiple) return true;
+  if (!runtime.masterControlsInitialized) return false;
+  const auto resolved = resolveConfiguredOutputs(runtime.options.outputConfiguration, runtime.availableOutputs.outputs);
+  for (const auto &output : resolved) {
+    if (!output.inventoryIndex) continue;
+    const auto serial = runtime.availableOutputs.outputs[*output.inventoryIndex].nodeSerial;
+    const auto volume = std::find_if(runtime.availableOutputs.volumes.begin(), runtime.availableOutputs.volumes.end(),
+        [&](const auto &item) { return item.nodeSerial == serial; });
+    if (volume == runtime.availableOutputs.volumes.end() || !volume->muted || *volume->muted ||
+        volume->channelVolumes.empty()) return false;
+    for (const auto gain : volume->channelVolumes)
+      if (std::abs(gain * volume->volume.value_or(1.0F) - 1.0F) > 0.00001F) return false;
+  }
+  return true;
+}
+
 static void finishReadinessCheck(PipeWireRuntime &runtime) {
+  const auto volumeReady = outputVolumeIsReady(runtime);
+  runtime.physicalVolumeReady.store(volumeReady, std::memory_order_release);
+  if (!volumeReady || runtime.completed || !runtime.error.empty()) return;
   if (!runtime.inputReady || !runtime.outputReady ||
       !runtime.inputFormatReady || !runtime.outputFormatReady ||
       !runtime.inputFormatNegotiated.load(std::memory_order_acquire) ||
@@ -1105,28 +1131,32 @@ static bool applyNegotiatedStreamRate(PipeWireRuntime &runtime, bool input,
   return true;
 }
 
-static bool publishMasterVolume(PipeWireRuntime &runtime) {
-  // Parameter callbacks own the visible controls; the audio callback receives
-  // their effective gain in one lock-free update, including mute transitions.
-  // A new daemon starts silently until the policy has restored its controls.
-  // Recreated nodes keep the already initialized in-process master state.
-  runtime.masterOutputGain.store(!runtime.masterControlsInitialized || runtime.masterMute ? 0.0F : runtime.masterVolume,
-      std::memory_order_release);
-  auto storage = std::array<std::uint8_t, 256>{};
+static bool publishInputVolume(PipeWireRuntime &runtime, pw_stream *stream, std::uint32_t channels) {
+  auto storage = std::array<std::uint8_t, 512>{};
   auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
-  const auto volumes = std::array<float, 2>{runtime.masterVolume, runtime.masterVolume};
-  const auto unity = std::array<float, 2>{1, 1};
+  auto volumes = std::array<float, 16>{}, unity = std::array<float, 16>{};
+  std::fill_n(volumes.begin(), channels, runtime.masterVolume);
+  std::fill_n(unity.begin(), channels, 1.0F);
   const auto *properties = static_cast<const spa_pod *>(spa_pod_builder_add_object(
       &builder, SPA_TYPE_OBJECT_Props, SPA_PARAM_Props,
       SPA_PROP_volume, SPA_POD_Float(1.0F),
       SPA_PROP_mute, SPA_POD_Bool(runtime.masterMute),
-      SPA_PROP_channelVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, volumes.size(), volumes.data()),
+      SPA_PROP_channelVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, channels, volumes.data()),
       SPA_PROP_softMute, SPA_POD_Bool(false),
-      SPA_PROP_softVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, unity.size(), unity.data())));
+      SPA_PROP_softVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, channels, unity.data())));
   runtime.publishingMasterVolume = true;
-  const auto result = pw_stream_set_param(runtime.inputStream, SPA_PARAM_Props, properties);
+  const auto result = pw_stream_set_param(stream, SPA_PARAM_Props, properties);
   runtime.publishingMasterVolume = false;
   return result >= 0;
+}
+
+static bool publishMasterVolume(PipeWireRuntime &runtime) {
+  // Public sinks report one master state but always feed unattenuated PCM.
+  // The mixed bus starts muted, including after recreation, until restoration.
+  if (runtime.inputStream && !publishInputVolume(runtime, runtime.inputStream, 2)) return false;
+  if (runtime.directOutput && !publishInputVolume(runtime, pipeWireDirectInput(*runtime.directOutput), runtime.options.channelCount)) return false;
+  return !runtime.outputVolume || setPipeWireOutputVolume(*runtime.outputVolume, runtime.options.channelCount,
+      runtime.masterVolume, !runtime.masterControlsInitialized || runtime.masterMute);
 }
 
 static void updateMasterVolume(PipeWireRuntime &runtime, const spa_pod *parameter) {
@@ -1134,17 +1164,22 @@ static void updateMasterVolume(PipeWireRuntime &runtime, const spa_pod *paramete
   auto volume = 1.0F;
   if (const auto *property = spa_pod_find_prop(parameter, nullptr, SPA_PROP_volume)) spa_pod_get_float(&property->value, &volume);
   if (!std::isfinite(volume) || volume < 0) return;
-  if (const auto *property = spa_pod_find_prop(parameter, nullptr, SPA_PROP_mute)) spa_pod_get_bool(&property->value, &runtime.masterMute);
+  auto muted = runtime.masterMute;
+  auto gain = runtime.masterVolume;
+  if (const auto *property = spa_pod_find_prop(parameter, nullptr, SPA_PROP_mute)) spa_pod_get_bool(&property->value, &muted);
   if (const auto *property = spa_pod_find_prop(parameter, nullptr, SPA_PROP_channelVolumes)) {
-    auto channels = std::array<float, 2>{runtime.masterVolume, runtime.masterVolume};
+    auto channels = std::array<float, 16>{};
     const auto count = spa_pod_copy_array(&property->value, SPA_TYPE_Float, channels.data(), channels.size());
-    if (count != 0 && std::all_of(channels.begin(), channels.end(), [](float gain) { return std::isfinite(gain) && gain >= 0; })) {
-      // The aggregate exposes one master gain. Normalize any stereo balance
+    if (count != 0 && std::all_of(channels.begin(), channels.begin() + count, [](float gain) { return std::isfinite(gain) && gain >= 0; })) {
+      // Both public inputs expose one master gain. Normalize any balance
       // request to the louder channel instead of inventing per-device balance.
-      runtime.masterVolume = *std::max_element(channels.begin(), channels.end());
-    }
+      gain = *std::max_element(channels.begin(), channels.begin() + count);
+    } else return;
   }
-  runtime.masterVolume *= volume;
+  gain *= volume;
+  if (!std::isfinite(gain)) return;
+  runtime.masterVolume = gain;
+  runtime.masterMute = muted;
   const auto initializing = !runtime.masterControlsInitialized;
   runtime.masterControlsInitialized = true;
   if (!publishMasterVolume(runtime)) return failRuntime(runtime, "cannot publish multiple-output master volume");
@@ -1156,6 +1191,7 @@ static void updateMasterVolume(PipeWireRuntime &runtime, const spa_pod *paramete
     if (pw_stream_update_properties(runtime.inputStream, &properties) < 0)
       return failRuntime(runtime, "cannot acknowledge master control initialization");
   }
+  finishReadinessCheck(runtime);
 }
 
 static void streamParameterChanged(void *data, std::uint32_t id,
@@ -1512,11 +1548,6 @@ static void outputProcess(void *data) {
          channel < runtime.audioBuffers->channels; ++channel) {
       auto source = scratch.subspan(
           static_cast<std::size_t>(channel) * blockFrames, blockFrames);
-      if (runtime.options.outputConfiguration.mode == OutputMode::multiple) {
-        const auto gain = runtime.masterOutputGain.load(std::memory_order_acquire);
-        if (gain == 0) std::fill(source.begin(), source.end(), 0.0F);
-        else for (auto &sample : source) sample *= gain;
-      }
       if (channel < runtime.audioBuffers->outputChannels)
         recordOutputPeak(runtime.outputPeakTelemetry, channel, source);
     }
@@ -1525,7 +1556,7 @@ static void outputProcess(void *data) {
     // physical channels beyond the prepared DSP width explicitly silent.
     for (auto channel = std::uint32_t{0}; channel < runtime.options.channelCount; ++channel) {
       auto *destination = static_cast<float *>(buffer.datas[channel].data) + outputFrame;
-      if (channel < runtime.audioBuffers->channels)
+      if (runtime.physicalVolumeReady.load(std::memory_order_acquire) && channel < runtime.audioBuffers->channels)
         std::copy_n(scratch.data() + static_cast<std::size_t>(channel) * blockFrames, blockFrames, destination);
       else std::fill_n(destination, blockFrames, 0.0F);
     }
@@ -1641,6 +1672,7 @@ static void destroyOutputStream(PipeWireRuntime &runtime) {
 }
 
 static void destroyAudioStreams(PipeWireRuntime &runtime) {
+  if (runtime.outputVolume) runtime.physicalVolumeReady.store(false, std::memory_order_release);
   // Output configuration can replace the slot count. Quiesce the monitor
   // before publishing that width, independently of the direct audio route.
   if (runtime.mixedOutputStream != nullptr)
@@ -1765,30 +1797,16 @@ static std::string ensureDirectOutput(PipeWireRuntime &runtime) {
     return {};
   }
   destroyMixedOutputMeter(runtime);
-  if (runtime.directOutput != nullptr) {
-    spa_hook_remove(&runtime.directOutputListener);
-    pw_impl_module_destroy(runtime.directOutput);
-    runtime.directOutput = nullptr;
-  }
+  runtime.directOutput.reset();
   runtime.directOutputArguments.clear();
   if (arguments.arguments.empty()) return {};
-  runtime.directOutput = pw_context_load_module(runtime.context,
-      "libpipewire-module-loopback", arguments.arguments.c_str(), nullptr);
+  runtime.directOutput = createPipeWireDirectOutput(runtime.core, arguments.arguments,
+      [](pw_stream *, const spa_pod *props, void *data) {
+        updateMasterVolume(*static_cast<PipeWireRuntime *>(data), props);
+      }, [](const std::string &error, void *data) { failRuntime(*static_cast<PipeWireRuntime *>(data), error); }, &runtime);
   if (runtime.directOutput == nullptr) return systemError("cannot create direct output", -errno);
-  static const auto events = [] {
-    auto value = pw_impl_module_events{}; value.version = PW_VERSION_IMPL_MODULE_EVENTS;
-    value.destroy = [](void *data) {
-      auto &runtime = *static_cast<PipeWireRuntime *>(data);
-      spa_hook_remove(&runtime.directOutputListener);
-      runtime.directOutput = nullptr;
-      runtime.directOutputArguments.clear();
-      failRuntime(runtime, "PipeWire direct output stopped unexpectedly");
-    };
-    return value;
-  }();
-  runtime.directOutputListener = {};
-  pw_impl_module_add_listener(runtime.directOutput, &runtime.directOutputListener, &events, &runtime);
   runtime.directOutputArguments = std::move(arguments.arguments);
+  if (!publishMasterVolume(runtime)) return "cannot initialize shared Direct controls";
   return createMixedOutputMeter(runtime);
 }
 
@@ -1840,10 +1858,37 @@ static void outputPathsChanged(const std::vector<PipeWireOutputPath> &paths, voi
     auto lock = std::scoped_lock(runtime.outputStateMutex);
     runtime.outputPathSnapshots = paths;
   }
+  runtime.outputRateMismatch = std::any_of(paths.begin(), paths.end(), [&](const auto &path) {
+    return path.streamSerial > runtime.retiredOutputRateSerial && path.sampleRateMismatch;
+  });
+  // Combine copies raw PCM without converting between its streams' rates.
+  // Recover independent renegotiations through the existing graph replacement.
+  // Forcing resample.disable on PipeWire 1.0.5 would instead break compensation:
+  // its delay buffer size is multiplied by the negotiated (then zero) raw rate.
+  // https://github.com/PipeWire/pipewire/blob/1.0.5/src/modules/module-combine-stream.c
+  if (runtime.outputRateMismatch)
+    pw_loop_signal_event(pw_main_loop_get_loop(runtime.mainLoop), runtime.outputGraphSource);
   requestControlStatusUpdate(runtime);
 }
 
 static std::string replaceOutputDistribution(PipeWireRuntime &runtime, const std::string &arguments) {
+  if (!arguments.empty() && !runtime.outputVolume) {
+    runtime.outputVolume = createPipeWireOutputVolume(runtime.core, runtime.options.filterName + ".distribution",
+        [](const std::string &error, void *data) { failRuntime(*static_cast<PipeWireRuntime *>(data), error); },
+        [](void *data) { finishReadinessCheck(*static_cast<PipeWireRuntime *>(data)); }, &runtime);
+    if (!runtime.outputVolume) return "cannot observe mixed-output volume";
+  }
+  if (runtime.outputVolume && !setPipeWireOutputVolume(*runtime.outputVolume, runtime.options.channelCount,
+      runtime.masterVolume, !runtime.masterControlsInitialized || runtime.masterMute))
+    return "cannot initialize mixed-output volume";
+  if (runtime.outputVolume) {
+    preparePipeWireOutputVolume(*runtime.outputVolume);
+    runtime.physicalVolumeReady.store(false, std::memory_order_release);
+  }
+  // Ignore late mismatch notifications from every generation being retired.
+  for (const auto &path : runtime.outputPathSnapshots)
+    runtime.retiredOutputRateSerial = std::max(runtime.retiredOutputRateSerial, path.streamSerial);
+  runtime.outputRateMismatch = false;
   // Retain the previous default-output lease until a replacement module has
   // been constructed. Explicitly removed modules must not report a failure.
   auto *replacement = arguments.empty() ? nullptr : pw_context_load_module(runtime.context,
@@ -1991,6 +2036,8 @@ static void finishProfileRestoration(PipeWireRuntime &runtime) {
     runtime.pendingProfileSettling = false;
     runtime.pendingProfileTargetObserved = false;
     runtime.pendingProfileRetryCount = 0;
+    runtime.pendingInputRestoreScheduled = false;
+    runtime.pendingInputRestoreAttempts = 0;
     runtime.pendingProfileInputRoutes.clear();
     runtime.pendingProfileOldNodeSerials.clear();
     runtime.requestedProfileRestorations.clear();
@@ -2380,7 +2427,8 @@ static void applyOutputInventory(void *data, std::uint64_t) {
   const auto arguments = makeOutputDistributionArguments(runtime.options.filterName + ".distribution",
       runtime.options.filterName, runtime.options.outputConfiguration, runtime.availableOutputs.outputs);
   if (!arguments.error.empty()) return failRuntime(runtime, arguments.error);
-  if (!runtime.outputPolicyReset && runtime.outputDistribution != nullptr && arguments.arguments == runtime.outputDistributionArguments) return;
+  if (!runtime.outputPolicyReset && !runtime.outputRateMismatch && runtime.outputDistribution != nullptr &&
+      arguments.arguments == runtime.outputDistributionArguments) return;
   if (runtime.outputPolicyReset) {
     // A restarted session manager cannot reuse the old port configuration.
     // Recreate owned streams, retaining the DSP layout and master controls.
@@ -2389,7 +2437,7 @@ static void applyOutputInventory(void *data, std::uint64_t) {
   } else {
     destroyOutputStream(runtime);
   }
-  // Device changes replace the private distribution and its feeding stream.
+  // Device or negotiated-rate changes replace the private distribution and its feeding stream.
   // Keep the public input alive so application links, the default-output lease
   // and the master controls survive across both WirePlumber versions.
   const auto distributionError = replaceOutputDistribution(runtime, arguments.arguments);
@@ -2425,19 +2473,25 @@ static bool advancePendingProfileRestorations(PipeWireRuntime &runtime) {
           }));
       if (expected && ready < *expected) return true;
       if (pipeWireInputRoutes(*runtime.outputInventory, requested.first) != runtime.pendingProfileInputRoutes) {
-        if (!runtime.pendingInputRestoreRequested) {
-          const auto error = restorePipeWireInputRoutes(*runtime.outputInventory, requested.first,
-              runtime.pendingProfileInputRoutes);
-          if (!error.empty()) {
+        if (!runtime.pendingInputRestoreScheduled && !runtime.pendingProfileSettling) {
+          // Let initial policy enumeration finish before restoring the input.
+          // Until its acknowledgement is observed, queued older writes may
+          // replace it. The timer bounds retries; observed later edits still
+          // cancel the restoration in the normal settling phase.
+          runtime.pendingInputRestoreScheduled = true;
+          auto settle = timespec{.tv_sec = 0, .tv_nsec = 300000000};
+          auto interval = timespec{};
+          const auto armed = pw_loop_update_timer(pw_main_loop_get_loop(runtime.mainLoop),
+              runtime.outputChangeTimer, &settle, &interval, false);
+          if (armed < 0) {
             runtime.pendingProfileRollback = true;
             runtime.profileTransition = {};
             runtime.profileTransition.previous.push_back(runtime.pendingPreviousProfile);
             runtime.profileTransition.previousInputs.push_back({requested.first, runtime.pendingProfileInputRoutes});
-            beginProfileRestoration(runtime, "cannot preserve input settings during profile restoration: " + error);
+            beginProfileRestoration(runtime, systemError("cannot arm pending input-settle check", armed));
             advanceProfileTransition(runtime);
             return true;
           }
-          runtime.pendingInputRestoreRequested = true;
         }
         return true;
       }
@@ -2465,7 +2519,8 @@ static bool advancePendingProfileRestorations(PipeWireRuntime &runtime) {
           ++runtime.pendingProfileRetryCount;
           runtime.pendingProfileSettling = false;
           runtime.pendingProfileTargetObserved = false;
-          runtime.pendingInputRestoreRequested = false;
+          runtime.pendingInputRestoreScheduled = false;
+          runtime.pendingInputRestoreAttempts = 0;
           auto delay = timespec{.tv_sec = kReadinessTimeoutSeconds, .tv_nsec = 0};
           auto interval = timespec{};
           pw_loop_update_timer(pw_main_loop_get_loop(runtime.mainLoop), runtime.outputChangeTimer,
@@ -2488,7 +2543,8 @@ static bool advancePendingProfileRestorations(PipeWireRuntime &runtime) {
     runtime.requestedProfileRestorations.clear();
     runtime.pendingProfileOldNodeSerials.clear();
     runtime.pendingProfileInputRoutes.clear();
-    runtime.pendingInputRestoreRequested = false;
+    runtime.pendingInputRestoreScheduled = false;
+    runtime.pendingInputRestoreAttempts = 0;
     runtime.pendingProfileRestoreActive = false;
     runtime.pendingProfileSettling = false;
     runtime.pendingProfileTargetObserved = false;
@@ -2534,7 +2590,8 @@ static bool advancePendingProfileRestorations(PipeWireRuntime &runtime) {
     for (const auto &output : runtime.availableOutputs.outputs)
       if (outputBelongsToCard(output, selection.card)) runtime.pendingProfileOldNodeSerials.push_back(output.nodeSerial);
     runtime.pendingProfileInputRoutes = pipeWireInputRoutes(*runtime.outputInventory, selection.card);
-    runtime.pendingInputRestoreRequested = false;
+    runtime.pendingInputRestoreScheduled = false;
+    runtime.pendingInputRestoreAttempts = 0;
     if (!setPipeWireOutputProfile(*runtime.outputInventory, selection).empty()) continue;
     runtime.pendingProfileRestoreActive = true;
     runtime.pendingProfileSettling = false;
@@ -2554,7 +2611,8 @@ static bool advancePendingProfileRestorations(PipeWireRuntime &runtime) {
       runtime.requestedProfileRestorations.clear();
       runtime.pendingProfileOldNodeSerials.clear();
       runtime.pendingProfileInputRoutes.clear();
-      runtime.pendingInputRestoreRequested = false;
+      runtime.pendingInputRestoreScheduled = false;
+      runtime.pendingInputRestoreAttempts = 0;
       return false;
     }
     return true;
@@ -2600,6 +2658,11 @@ static void outputInventoryChanged(const OutputInventoryResult &snapshot, void *
   }
   advanceProfileTransition(runtime);
   if (runtime.profileTransition.phase != PipeWireRuntime::ProfilePhase::idle) {
+    // A stream rebuild or rollback can still be waiting for the physical
+    // volume snapshot after its policy acknowledgement. The final inventory
+    // notification must complete it while the profile transaction is prepared.
+    if (runtime.profileTransition.phase == PipeWireRuntime::ProfilePhase::prepared && runtime.previousOutput)
+      finishReadinessCheck(runtime);
     runtime.profileRestoreDecisionPending.store(false, std::memory_order_release);
     requestControlStatusUpdate(runtime);
     return;
@@ -2611,6 +2674,7 @@ static void outputInventoryChanged(const OutputInventoryResult &snapshot, void *
   }
   runtime.profileRestoreDecisionPending.store(false, std::memory_order_release);
   requestControlStatusUpdate(runtime);
+  finishReadinessCheck(runtime);
   if (runtime.options.outputConfiguration.mode != OutputMode::multiple) return;
   const auto generation = pipeWireOutputPolicyGeneration(*runtime.outputInventory);
   if (generation != runtime.outputPolicyGeneration) {
@@ -3660,6 +3724,26 @@ static bool createMainLoop(PipeWireRuntime &runtime) {
       } else {
         const auto requested = runtime.requestedProfileRestorations.front();
         const auto *active = activeCardProfile(runtime, requested.first);
+        auto failure = std::string("timed out while restoring the saved output profile");
+        if (active != nullptr && active->cardProfileName == requested.second &&
+            runtime.pendingInputRestoreScheduled) {
+          if (runtime.pendingInputRestoreAttempts < 3) {
+            ++runtime.pendingInputRestoreAttempts;
+            const auto error = restorePipeWireInputRoutes(*runtime.outputInventory, requested.first,
+                runtime.pendingProfileInputRoutes);
+            if (error.empty()) {
+              auto settle = timespec{.tv_sec = 0, .tv_nsec = 300000000};
+              auto interval = timespec{};
+              const auto armed = pw_loop_update_timer(pw_main_loop_get_loop(runtime.mainLoop),
+                  runtime.outputChangeTimer, &settle, &interval, false);
+              if (armed >= 0) {
+                advancePendingProfileRestorations(runtime);
+                return;
+              }
+              failure = systemError("cannot arm pending input-settle check", armed);
+            } else failure = "cannot preserve input settings during profile restoration: " + error;
+          } else failure = "input settings did not settle while restoring the saved output profile";
+        }
         if (runtime.pendingProfileRetryCount < 2 && active != nullptr &&
             active->cardProfileName != requested.second) {
           auto retry = OutputProfileSelection{.card = requested.first, .cardProfileName = requested.second,
@@ -3672,7 +3756,8 @@ static bool createMainLoop(PipeWireRuntime &runtime) {
           if (error.empty()) {
             ++runtime.pendingProfileRetryCount;
             runtime.pendingProfileTargetObserved = false;
-            runtime.pendingInputRestoreRequested = false;
+            runtime.pendingInputRestoreScheduled = false;
+            runtime.pendingInputRestoreAttempts = 0;
             auto delay = timespec{.tv_sec = kReadinessTimeoutSeconds, .tv_nsec = 0};
             auto interval = timespec{};
             pw_loop_update_timer(pw_main_loop_get_loop(runtime.mainLoop), runtime.outputChangeTimer,
@@ -3685,7 +3770,7 @@ static bool createMainLoop(PipeWireRuntime &runtime) {
         runtime.profileTransition.previous.push_back(runtime.pendingPreviousProfile);
         runtime.profileTransition.previousInputs.push_back({runtime.pendingPreviousProfile.card,
             runtime.pendingProfileInputRoutes});
-        beginProfileRestoration(runtime, "timed out while restoring the saved output profile");
+        beginProfileRestoration(runtime, std::move(failure));
         advanceProfileTransition(runtime);
         return;
       }
@@ -3696,7 +3781,8 @@ static bool createMainLoop(PipeWireRuntime &runtime) {
       runtime.requestedProfileRestorations.clear();
       runtime.pendingProfileOldNodeSerials.clear();
       runtime.pendingProfileInputRoutes.clear();
-      runtime.pendingInputRestoreRequested = false;
+      runtime.pendingInputRestoreScheduled = false;
+      runtime.pendingInputRestoreAttempts = 0;
       runtime.outputTransitionActive.store(false, std::memory_order_release);
       stopProfileDeadline(runtime);
       if (runtime.options.outputConfiguration.mode == OutputMode::multiple)

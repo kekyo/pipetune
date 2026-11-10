@@ -10,7 +10,7 @@
 
 namespace pipetune::assets {
 
-/** Source file and optional audio-header dimensions; no PCM is allocated for selection. */
+/** Source file and optional audio-header dimensions; no PCM is allocated for validation. */
 struct SfzSampleMetadata {
   std::string path; /**< Normalized root-relative sample identity. */
   std::uint64_t size; /**< Encoded file byte length. */
@@ -18,25 +18,17 @@ struct SfzSampleMetadata {
   std::uint32_t channels; /**< Source channels, zero when unknown. */
 };
 
-/** Full definition or a representative layer retaining every originally playable key. */
-struct SfzSelection {
-  std::vector<SfzRegion> regions; /**< Selected regions in deterministic playback order. */
-  bool reduced; /**< Whether velocity, random, or sequence layers were simplified. */
-  std::uint32_t velocity; /**< Representative velocity, or zero if no reduction occurred. */
-  std::uint32_t keyCount; /**< Retained key count, or zero if no reduction occurred. */
-};
-
 /**
- * Selects regions using the application's original-file and bank/index budgets.
+ * Validates the complete instrument against the original-file and bank/index budgets.
  * @param regions Normalized, playable regions in source order.
  * @param metadata Encoded sizes and optional header dimensions, with unique paths.
  * @param maximumBytes Budget from one byte through 1 GiB.
  * @param definitionBytes Unique definition/include file bytes already retained.
- * @return All original regions or a deterministic representative covering all original keys.
- * @throws SfzError Invalid input or a budget unable to cover the original key range.
- * @remarks Header estimates are checked again against actual decoded PCM by the host.
+ * @throws SfzError Invalid input or a budget unable to cover every region and source.
+ * @remarks All supplied source metadata counts, even when no region uses it. Header
+ * estimates are checked again against decoded PCM and native preparation by the host.
  */
-SfzSelection selectSfzRegionsForBudget(std::span<const SfzRegion> regions,
+void validateSfzBudget(std::span<const SfzRegion> regions,
     std::span<const SfzSampleMetadata> metadata, std::uint64_t maximumBytes, std::uint64_t definitionBytes);
 
 /**

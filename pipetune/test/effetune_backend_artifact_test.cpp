@@ -94,6 +94,7 @@ struct BackendApi {
                                std::uint32_t, double) = nullptr;
   decltype(&pipetune_effetune_instance_asset_copy_v1) instanceAssetCopy = nullptr;
   decltype(&et_instance_asset_state) instanceAssetState = nullptr;
+  decltype(&et_sample_player_preparation_bytes) samplePlayerPreparationBytes = nullptr;
   decltype(&et_instance_reset) instanceReset = nullptr;
   decltype(&et_pipeline_configure) pipelineConfigure = nullptr;
   decltype(&et_pipeline_latency) pipelineLatency = nullptr;
@@ -170,6 +171,8 @@ static BackendApi loadBackend(const std::filesystem::path &path) {
   api.instanceAssetCopy = loadFunction<decltype(api.instanceAssetCopy)>(
       api.handle, "pipetune_effetune_instance_asset_copy_v1");
   api.instanceAssetState = loadFunction<decltype(api.instanceAssetState)>(api.handle, "et_instance_asset_state");
+  api.samplePlayerPreparationBytes = loadFunction<decltype(api.samplePlayerPreparationBytes)>(
+      api.handle, "et_sample_player_preparation_bytes");
   api.instanceReset = loadFunction<decltype(api.instanceReset)>(api.handle, "et_instance_reset");
   return api;
 }
@@ -263,8 +266,8 @@ static std::uint32_t findKernelIndex(const BackendApi &api,
   return count;
 }
 
-static void checkEffeTune216Catalog(const BackendApi &api) {
-  static constexpr std::array<std::string_view, 20> addedTypes = {
+static void checkEffeTune217Catalog(const BackendApi &api) {
+  static constexpr std::array<std::string_view, 21> addedTypes = {
       "GroupDelayPEQPlugin", "MDSimulatorPlugin", "ClickRemoverPlugin",
       "ClipRestorerPlugin", "HumRemoverPlugin", "NoiseReductionPlugin",
       "CrosstalkCancellationPlugin", "NoteSpectrogramPlugin",
@@ -272,12 +275,12 @@ static void checkEffeTune216Catalog(const BackendApi &api) {
       "AttackTonalBalancePlugin", "BassExtenderPlugin",
       "BassManagementPlugin", "ChromaSpiralPlugin", "TonalBalanceEQPlugin",
       "RhythmAnalyzerPlugin", "AnalogMeterPlugin",
-      "AdaptivePredictionEffectPlugin", "SFZNotePlayerPlugin"};
-  check(api.kernelCount() == 112u,
-        "EffeTune 2.16 backend catalog must contain 112 kernels");
+      "AdaptivePredictionEffectPlugin", "SFZNotePlayerPlugin", "SoundFontPlayerPlugin"};
+  check(api.kernelCount() == 113u,
+        "EffeTune 2.17 backend catalog must contain 113 kernels");
   for (const auto typeName : addedTypes) {
     check(findKernelIndex(api, typeName) < api.kernelCount(),
-          "EffeTune 2.16 backend catalog must contain every required kernel");
+          "EffeTune 2.17 backend catalog must contain every required kernel");
   }
   struct Contract {
     std::string_view type;
@@ -290,7 +293,8 @@ static void checkEffeTune216Catalog(const BackendApi &api) {
            Contract{"RhythmAnalyzerPlugin", 0xf854c585u, 4u, 0u},
            Contract{"AnalogMeterPlugin", 0xad3d461cu, 7u, 0u},
            Contract{"AdaptivePredictionEffectPlugin", 0xebd8a6f0u, 10u, 0u},
-           Contract{"SFZNotePlayerPlugin", 0xdfb4bbc5u, 20u, 1073741824u},
+           Contract{"SFZNotePlayerPlugin", 0x3785c6edu, 21u, 1073741824u},
+           Contract{"SoundFontPlayerPlugin", 0x844a0998u, 4u, 1073741824u},
            Contract{"CassetteArtifactsPlugin", 0x328491aeu, 13u, 0u},
            Contract{"NoteSpectrogramPlugin", 0xb8518943u, 4u, 0u}}) {
     const auto index = findKernelIndex(api, contract.type);
@@ -299,10 +303,10 @@ static void checkEffeTune216Catalog(const BackendApi &api) {
     check(api.kernelParamsHash(index) == contract.hash && definition != nullptr &&
               definition->floatCount == contract.floats &&
               api.kernelParamBytesCapacity(index) == 0u,
-          "EffeTune 2.16 kernels must expose their official parameter layouts");
+          "EffeTune 2.17 kernels must expose their official parameter layouts");
     for (auto slot = 0u; slot < 4u; ++slot)
       check(api.kernelAssetCapacity(index, slot) == (slot == 0u ? contract.assetBytes : 0u),
-            "EffeTune 2.16 kernels must expose their official asset capacities");
+            "EffeTune 2.17 kernels must expose their official asset capacities");
   }
   const auto phaseSelectIndex = findKernelIndex(api, "PhaseSelectEqPlugin");
   check(phaseSelectIndex < api.kernelCount(),
@@ -325,6 +329,127 @@ static void checkEffeTune216Catalog(const BackendApi &api) {
   if (multiChannelPanelIndex < api.kernelCount()) {
     check(api.kernelParamsHash(multiChannelPanelIndex) == 0x9d3d18b9u,
           "EffeTune 2.12 Multi Channel Panel must expose 16-channel parameters");
+  }
+}
+
+static void checkCallerFloatingPointState(const BackendApi &api) {
+#if defined(__i386__) || defined(__x86_64__)
+  // Inspect MXCSR even when this i686 test driver was built without SSE flags.
+  // The loaded native backend requires SSE2 independently of the driver ABI.
+  const auto read = [] {
+    auto value = std::uint32_t{};
+    __asm__ volatile("stmxcsr %0" : "=m"(value));
+    return value;
+  };
+  const auto write = [](std::uint32_t value) {
+    __asm__ volatile("ldmxcsr %0" : : "m"(value));
+  };
+  const auto engine = api.engineCreate();
+  check(engine != 0u && api.enginePrepare(engine, 48000, 2, 128, 4096) == ET_OK,
+        "floating-point state test engine must prepare");
+  const auto instance = api.instanceCreate(engine, "VolumePlugin");
+  if (engine == 0u || instance == 0u) {
+    check(false, "floating-point state test instance must be available");
+    if (engine != 0u) api.engineDestroy(engine);
+    return;
+  }
+  auto descriptor = std::array<std::uint8_t, 20>{1, 0, 0, 0, 1};
+  for (auto byte = 0u; byte < 4u; ++byte)
+    descriptor[8u + byte] = static_cast<std::uint8_t>(instance >> (byte * 8u));
+  descriptor[12] = descriptor[16] = 1;
+  descriptor[15] = 254;
+  check(api.pipelineConfigure(engine, descriptor.data(), descriptor.size()) == ET_OK,
+        "floating-point state test pipeline must configure");
+  auto audio = std::array<float, 256>{};
+  const auto original = read();
+  for (auto rounding = 0u; rounding < 4u; ++rounding) {
+    for (const auto flush : {0u, 0x40u, 0x8000u, 0x8040u}) {
+      // Preserve rounding, both flush controls, and pre-existing sticky flags.
+      // Mask exceptions so setting sticky flags cannot trap the test process.
+      const auto expected = (original & ~0xe07fu) | 0x1f80u | (rounding << 13u) | flush | 0x21u;
+      for (const auto pipeline : {false, true}) {
+        for (const auto frames : {128u, 129u}) {
+          std::fill(audio.begin(), audio.end(), std::bit_cast<float>(std::uint32_t{1}));
+          std::fill_n(api.arenaCombinedPtr(engine), audio.size(), 0.25F);
+          write(expected);
+          const auto status = pipeline
+              ? api.pipelineProcess(engine, 2, frames, 0.0, 0)
+              : api.instanceProcess(engine, instance, audio.data(), 2, frames, 0.0);
+          const auto observed = read();
+          write(original);
+          check(status == (frames == 128u ? ET_OK : ET_ERR_ARGS),
+                "floating-point state check must cover successful and rejected renders");
+          check(observed == expected,
+                "native rendering must restore the caller's complete MXCSR on success and error");
+        }
+      }
+    }
+  }
+  api.engineDestroy(engine);
+#else
+  static_cast<void>(api);
+#endif
+}
+
+static void checkDecayAndQuietInput(const BackendApi &api) {
+  for (const auto *type : {"ChorusPlugin", "FDNReverbPlugin"}) {
+    const auto engine = api.engineCreate();
+    check(engine != 0u && api.enginePrepare(engine, 48000, 2, 257, 0) == ET_OK,
+          "decay test engine must prepare");
+    const auto instance = api.instanceCreate(engine, type);
+    const auto *definition = pipetune::findDspByTypeName(type);
+    if (engine == 0u || instance == 0u || definition == nullptr) {
+      check(false, "decay test instance must be available");
+      if (engine != 0u) api.engineDestroy(engine);
+      continue;
+    }
+    const auto fdn = std::string_view(type) == "FDNReverbPlugin";
+    const auto *text = fdn ? R"({"rt":1.2,"wm":100,"dm":0})" : R"({"fb":75,"mx":100})";
+    auto *document = yyjson_read(text, std::strlen(text), 0);
+    const auto packed = pipetune::packDspParameters(*definition, yyjson_doc_get_root(document));
+    yyjson_doc_free(document);
+    check(api.instanceSetParams(engine, instance, packed.floats.data(), packed.floats.size(),
+                                definition->hash, 0) == ET_OK,
+          "wet decay parameters must apply");
+    check(api.instanceLatency(engine, instance) == 0,
+          "Chorus and FDN must not add algorithmic latency");
+    auto first = std::vector<float>();
+    auto block = std::array<float, 514>{};
+    for (auto repeat = 0u; repeat < 2u; ++repeat) {
+      check(api.instanceReset(engine, instance) == ET_OK, "decay reset must succeed");
+      auto earlyEnergy = 0.0;
+      auto finalPeak = 0.0F;
+      for (auto offset = 0u; offset < 48000u * 12u; offset += 257u) {
+        const auto frames = std::min(257u, 48000u * 12u - offset);
+        // Very small input remains present after the impulse and its long tail.
+        std::fill(block.begin(), block.end(), std::bit_cast<float>(std::uint32_t{1}));
+        if (offset == 0) block[0] = block[frames] = 0.5F;
+        check(api.instanceProcess(engine, instance, block.data(), 2, frames, offset / 48000.0) == ET_OK,
+              "decay and subnormal input must process successfully");
+        for (auto channel = 0u; channel < 2u; ++channel) {
+          for (auto frame = 0u; frame < frames; ++frame) {
+            const auto value = block[channel * frames + frame];
+            check(std::isfinite(value), "long decay and subnormal input must remain finite");
+            if (offset + frame < 48000u) {
+              earlyEnergy += static_cast<double>(value) * value;
+              if (repeat == 0u) first.push_back(value);
+            }
+            if (offset + frame >= 48000u * 11u) finalPeak = std::max(finalPeak, std::abs(value));
+          }
+        }
+        if (repeat != 0u && offset < 48000u) {
+          const auto start = static_cast<std::size_t>(offset) * 2u;
+          const auto count = std::min(frames, 48000u - offset);
+          for (auto channel = 0u; channel < 2u; ++channel)
+            for (auto frame = 0u; frame < count; ++frame)
+              check(std::abs(block[channel * frames + frame] - first[start + channel * count + frame]) < 1e-6F,
+                    "reset must reproduce the audible decay");
+        }
+      }
+      check(earlyEnergy > 1e-4 && finalPeak < 1e-8F,
+            "a wet impulse must sound and decay to silence despite subnormal input");
+    }
+    api.engineDestroy(engine);
   }
 }
 
@@ -577,9 +702,16 @@ static bool prepareGoldenAsset(const BackendApi &api, et_engine engine,
     region.loop_end = 4095;
     const auto bank = pipetune::assets::packSfzBank(std::span(&region, 1), std::span(&sample, 1),
         pipetune::assets::kMaximumSfzBytes);
+    auto additionalBytes = std::uint64_t{0};
+    const auto controlBytes = 32u + 4u * (12u + 113u * bank.regionCount);
+    if (api.samplePlayerPreparationBytes(bank.payload.data(), controlBytes, bank.payload.size(),
+        ET_ASSET_F32_MULTICH, testCase.sampleRate, testCase.channelCount,
+        std::max(32u, testCase.blockSize), 0, &additionalBytes, ET_SAMPLE_PLAYER_NOTE) != ET_OK ||
+        additionalBytes + bank.payload.size() > UINT32_MAX) return false;
     const auto info = pipetune_effetune_asset_info_v1{.channels = 1, .frames = bank.samples,
         .topology = 0, .head_block = 0, .rate_divider = 1, .path_count = 0, .input_count = 0,
-        .processing_channels = testCase.channelCount, .footprint_bytes = static_cast<std::uint32_t>(bank.footprintBytes),
+        .processing_channels = testCase.channelCount,
+        .footprint_bytes = static_cast<std::uint32_t>(bank.payload.size() + additionalBytes),
         .byte_size = static_cast<std::uint32_t>(bank.payload.size())};
     return activateGoldenAsset(api, engine, instance, testCase, info, bank.payload, 0, ET_ASSET_F32_MULTICH);
   }
@@ -947,9 +1079,7 @@ static void checkAllAbiSymbols(void *handle) {
       "et_instance_set_seed",
       "et_instance_set_params",
       "et_instance_set_param_bytes",
-      "et_instance_asset_begin",
-      "et_instance_asset_commit",
-      "et_instance_asset_abort",
+      "et_sample_player_preparation_bytes",
       "et_instance_asset_state",
       "et_instance_process",
       "et_instance_runtime_event",
@@ -1108,8 +1238,14 @@ int main(int argc, char **argv) {
                 PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
             "scalar backend must report its concrete variant");
       checkAllAbiSymbols(scalar.handle);
-      checkEffeTune216Catalog(scalar);
+      checkEffeTune217Catalog(scalar);
       checkTubeRuntimeContract(scalar);
+      checkCallerFloatingPointState(scalar);
+      checkDecayAndQuietInput(scalar);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                          pluginRoot / "modulation/chorus/golden", 10u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                          pluginRoot / "reverb/fdn_reverb/golden", 9u);
       checkUnrelatedInstanceDestruction(scalar);
       checkSfzPreviewTransitions(scalar);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
@@ -1182,6 +1318,10 @@ int main(int argc, char **argv) {
         checkAllAbiSymbols(simd.handle);
         checkCatalogsMatch(scalar, simd);
         checkTubeRuntimeContract(simd);
+        checkCallerFloatingPointState(simd);
+        checkDecayAndQuietInput(simd);
+        checkMetadataGoldens(simd, expected, pluginRoot / "modulation/chorus/golden", 10u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "reverb/fdn_reverb/golden", 9u);
         checkUnrelatedInstanceDestruction(simd);
         checkSfzPreviewTransitions(simd);
         checkMetadataGoldens(simd, expected, pluginRoot / "analyzer/rhythm_analyzer/golden", 6u);

@@ -47,9 +47,7 @@ struct DspBackendApi {
   decltype(&et_instance_set_seed) instanceSetSeed = nullptr;
   decltype(&et_instance_set_params) instanceSetParams = nullptr;
   decltype(&et_instance_set_param_bytes) instanceSetParamBytes = nullptr;
-  decltype(&et_instance_asset_begin) instanceAssetBegin = nullptr;
-  decltype(&et_instance_asset_commit) instanceAssetCommit = nullptr;
-  decltype(&et_instance_asset_abort) instanceAssetAbort = nullptr;
+  decltype(&et_sample_player_preparation_bytes) samplePlayerPreparationBytes = nullptr;
   decltype(&et_instance_asset_state) instanceAssetState = nullptr;
   decltype(&et_instance_process) instanceProcess = nullptr;
   decltype(&et_instance_runtime_event) instanceRuntimeEvent = nullptr;

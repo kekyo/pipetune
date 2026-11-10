@@ -14,7 +14,6 @@
 #include "sfz/source.h"
 #include "sfz/text.h"
 #include <algorithm>
-#include <array>
 #include <map>
 #include <sstream>
 
@@ -54,7 +53,8 @@ static SfzReference referenceFromRegistry(std::span<const std::uint8_t> bytes, s
     if (!validId(entryId) || !yyjson_is_str(yyjson_obj_get(entry, "name")) ||
         source.find('\0') != std::string::npos || folder.find('\0') != std::string::npos ||
         !path.is_absolute() || !root.is_absolute() || relative.empty() || relative == "." ||
-        relative.is_absolute() || *relative.begin() == ".." || extension != ".sfz")
+        relative.is_absolute() || *relative.begin() == ".." ||
+        (extension != ".sfz" && extension != ".sf2" && extension != ".sf3"))
       throw std::runtime_error("SFZ registry contains an invalid reference");
     auto banks = std::vector<std::string>{};
     if (auto *paths = yyjson_obj_get(entry, "bankPaths")) {
@@ -73,7 +73,10 @@ static SfzReference referenceFromRegistry(std::span<const std::uint8_t> bytes, s
         }
       }
     }
-    if (entryId == id) selected = {root, assets::normalizeSfzPath(relative.generic_string(), {}), std::move(banks)};
+    if (entryId == id) {
+      if (extension != ".sfz") throw std::runtime_error("SF2/SF3 instruments are not supported; select an SFZ instrument");
+      selected = {root, assets::normalizeSfzPath(relative.generic_string(), {}), std::move(banks)};
+    }
   }
   if (selected.root.empty()) throw std::runtime_error("the assigned SFZ ID is not registered in EffeTune");
   return selected;
@@ -105,7 +108,6 @@ static void describeWarnings(const assets::ParsedSfz &parsed, const assets::SfzB
     const auto explanation = warning.code == "invalid-regions" ? "invalid regions were omitted" :
         warning.code == "missing-samples" ? "missing sample files were omitted" :
         warning.code == "envelope-times-adjusted" ? "envelope times were adjusted to supported values" :
-        warning.code == "reduced-bank" ? "layers were reduced while preserving the complete key range" :
         warning.code == "loop-points-ignored" ? "unused invalid loop points were repaired" :
         "instrument preparation reported a warning";
     diagnostics.push_back("SFZ " + warning.code + ": " + std::to_string(warning.count) + "; " + explanation);
@@ -124,7 +126,7 @@ static void describeWarnings(const assets::ParsedSfz &parsed, const assets::SfzB
 static std::string cacheIdentity(const SfzReference &reference, std::string_view id, std::uint64_t maximumBytes,
     std::span<const AssetFileSnapshot> snapshots) {
   auto identity = std::ostringstream{};
-  identity << "effetune:01c96f00f8e93595aefab96de4bc4d210e61c53b/sfz-v2/ETA1-table-v2" << '\0'
+  identity << "effetune:d026b1664ec9444a66297efd36e251bc8aae3d05/sfz-resident-v5/ETA1-table-v6-generator-v7" << '\0'
       << assetDecoderVersion() << '\0' << reference.root.generic_string() << '\0' << reference.selected << '\0'
       << id << '\0' << maximumBytes << '\0';
   identity << "banks:" << reference.bankPaths.size() << '\0';
@@ -278,12 +280,7 @@ static cardio::promise<std::shared_ptr<const SharedPreparedAsset>> prepareRegist
   bankDefines = {};
   if (parsed.regions.empty()) throw assets::SfzError("no-regions", "The SFZ has no playable regions.");
   memory.resize(4 * definitionBytes + 8 * parsedMemory(parsed) + sourceOverhead(loadResult), maximumMemoryBytes);
-  auto selection = assets::selectSfzRegionsForBudget(parsed.regions, metadata, maximumBytes, definitionBytes);
-  parsed.regions = std::move(selection.regions);
-  if (selection.reduced) {
-    const auto warning = std::array{assets::SfzWarning{"reduced-bank", 1}};
-    parsed.warnings = assets::mergeSfzWarnings(parsed.warnings, warning);
-  }
+  assets::validateSfzBudget(parsed.regions, metadata, maximumBytes, definitionBytes);
   std::vector<assets::SfzDocument>().swap(documents);
   const auto key = cacheIdentity(reference, id, maximumBytes, loadResult.snapshots);
   loadResult.snapshots.push_back(std::move(registry.snapshot));
@@ -321,7 +318,9 @@ static cardio::promise<std::shared_ptr<const SharedPreparedAsset>> prepareRegist
     if (found != metadata.end()) largestOriginal = std::max(largestOriginal, found->size);
   }
   // Reserve decoder input/packet storage and PCM growth (old/new vector plus
-  // decoder frame), or PCM plus the completed bank. A smaller process limit
+  // decoder frame), or source PCM, prepared generator cycles and the completed
+  // bank. The same allowance bounds packing, since distinct generator ranges
+  // can expand one source into many independent cycles. A smaller process limit
   // lowers the incremental decoder allowance instead of rejecting a small
   // instrument merely because its configured bank ceiling is high.
   memory.resize(overhead, maximumMemoryBytes);
@@ -361,7 +360,7 @@ static cardio::promise<std::shared_ptr<const SharedPreparedAsset>> prepareRegist
     samples.push_back({sample, std::move(audio)});
   }
   co_await preparationCheckpoint(cancellation);
-  auto bank = assets::prepareSfzBank(parsed, samples, maximumBytes);
+  auto bank = assets::prepareSfzBank(parsed, samples, pcmLimit);
   describeWarnings(parsed, bank, owned.diagnostics);
   owned.asset.info = {.channels = 1, .frames = bank.samples, .topology = 0, .head_block = 0,
       .rate_divider = 1, .path_count = 0, .input_count = 0, .processing_channels = 1,
@@ -400,8 +399,8 @@ cardio::promise<SfzAssetLoadResult> loadSfzAssetAsync(const std::filesystem::pat
       if (!key.empty()) pool.entries[key] = result.prepared;
     }
   } catch (const cardio::canceled_exception &) { throw; }
-  catch (const assets::SfzError &error) { result.error = "SFZ Note Player: " + error.code + ": " + error.what(); }
-  catch (const std::exception &error) { result.error = std::string("SFZ Note Player: ") + error.what(); }
+  catch (const assets::SfzError &error) { result.error = "SoundFont Note Player: " + error.code + ": " + error.what(); }
+  catch (const std::exception &error) { result.error = std::string("SoundFont Note Player: ") + error.what(); }
   std::ranges::sort(result.files);
   result.files.erase(std::unique(result.files.begin(), result.files.end()), result.files.end());
   co_return result;

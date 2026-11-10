@@ -18,6 +18,15 @@ table.insert(stream_defaults.rules, {
     {
       { "node.pipetune.public-input", "equals", "true" },
     },
+    {
+      { "node.pipetune.direct", "equals", "true" },
+    },
+    {
+      { "node.pipetune.managed-output", "equals", "true" },
+    },
+    {
+      { "node.pipetune.aggregate", "equals", "true" },
+    },
   },
   apply_properties = {
     ["state.restore-props"] = false,
@@ -597,6 +606,10 @@ end
 
 function findUndefinedTarget (si_ep)
   local media_class = si_ep.properties["media.class"]
+  -- Multiple mode owns physical playback through its distribution streams.
+  -- Do not bypass a disappearing Single filter while its public input is
+  -- being replaced, even if the desktop default still names the device.
+  if media_class == "Audio/Sink" and aggregates_om:get_n_objects() > 0 then return nil end
   local target_class_assoc = {
     ["Audio/Source"] = "Audio/Source",
     ["Stream/Output/Audio"] = "Audio/Sink",
@@ -715,6 +728,7 @@ function handleLinkable (si)
     si_target = findUndefinedTarget (si)
   end
   if not si_target then
+    unhandleLinkable(si)
     Log.info (si, "... target item not found")
     return
   end
@@ -797,6 +811,14 @@ links_om = ObjectManager {
   }
 }
 
+aggregates_om = ObjectManager { Interest {
+  type = "node",
+  Constraint { "node.pipetune.aggregate", "=", "true", type = "pw" },
+} }
+aggregates_om:connect("objects-changed", function ()
+  scheduleRescan ()
+end)
+
 -- listen for default node changes if config.follow is enabled
 if config.follow then
   default_nodes:connect("changed", function (p)
@@ -824,6 +846,7 @@ endpoints_om:activate()
 linkables_om:activate()
 links_om:activate()
 streams_om:activate()
+aggregates_om:activate()
 )wp04lua"};
 
 std::string_view wirePlumber04CompatibilityPolicy() noexcept {

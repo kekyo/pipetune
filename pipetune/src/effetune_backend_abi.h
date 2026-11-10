@@ -83,6 +83,9 @@ typedef struct pipetune_effetune_asset_info_v1 {
  * @param payload_bytes Exact readable payload size.
  * @param format_tag EffeTune asset format identifier.
  * @return `ET_OK` on success, otherwise an EffeTune status code.
+ * @remarks Call only on a candidate instance outside audio processing. Beginning
+ * a transfer replaces its slot; a rejected commit aborts that candidate asset.
+ * Keep the active pipeline separate until the complete candidate is ready.
  */
 PIPETUNE_EFFETUNE_BACKEND_EXPORT et_status
 pipetune_effetune_instance_asset_copy_v1(

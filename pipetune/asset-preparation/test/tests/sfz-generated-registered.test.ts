@@ -31,7 +31,7 @@ test.each(['*sine', '*noise', '*silence'])(
         JSON.stringify({
           pipeline: [
             {
-              name: 'SFZ Note Player',
+              name: 'SoundFont Note Player',
               parameters: { sf: id, dm: 0, wm: 100, th: 0.01, mn: 83, mx: 83 },
             },
           ],
@@ -79,7 +79,13 @@ test.each(['*sine', '*noise', '*silence'])(
       expect(warm.status, warm.stderr).toBe(0);
       expect(warm.stderr).toContain('cacheHits=1');
       expect(warm.audio).toEqual(cold.audio);
-      const footprint = sample === '*noise' ? 33480 : 8904;
+      // The serialized bank fits, but native preparation also needs storage.
+      const insufficient = run(64 * 1024);
+      expect(insufficient.status).not.toBe(0);
+      const required = insufficient.stderr.match(/require ([0-9]+) bytes/);
+      expect(required, insufficient.stderr).not.toBeNull();
+      const footprint = Number(required![1]);
+      expect(footprint).toBeGreaterThan(64 * 1024);
       const bounded = run(footprint);
       expect(bounded.status, bounded.stderr).toBe(0);
       expect(bounded.audio).toEqual(cold.audio);
@@ -112,12 +118,12 @@ test.each(['*sine', '*noise', '*silence'])(
           difference.length
       );
       expect(differenceRms).toBeGreaterThan(0.05);
-      const reduced = run(footprint);
-      expect(reduced.status, reduced.stderr).toBe(0);
-      expect(reduced.stderr).toContain(
-        'SFZ reduced-bank: 1; layers were reduced'
-      );
-      expect(reduced.audio).toEqual(cold.audio);
+      const oversized = run(footprint);
+      expect(oversized.status).not.toBe(0);
+      expect(oversized.stderr).toContain('require');
+      const recovered = run(256 * 1024 * 1024);
+      expect(recovered.status, recovered.stderr).toBe(0);
+      expect(recovered.audio).toEqual(mixed.audio);
 
       await writeFile(
         path,

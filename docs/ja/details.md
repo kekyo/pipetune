@@ -174,7 +174,7 @@ Dolby段だけを使うモードでは音声が変化しない場合がありま
 
 ## 外部アセット
 
-SFZ Note Player、IR Reverb、Room EQは、デスクトップ版EffeTuneが登録したデータを
+SoundFont Note Player、IR Reverb、Room EQは、デスクトップ版EffeTuneが登録したデータを
 `$XDG_CONFIG_HOME/effetune`から読み込みます。XDG未指定時は`~/.config/effetune`です。
 プリセットに保存されるのは参照なので、プリセットだけをコピーしても音源・IR・測定は移動しません。
 同じユーザーのデスクトップ版EffeTuneに原本を登録してからPipeTuneで読み込んでください。
@@ -183,11 +183,11 @@ ARIAのバンク定義は、SFZ音源で使う変数やサンプルの配置を�
 
 | DSP | 必要な保存データ |
 | --- | --- |
-| SFZ Note Player | `sfz-references.json`、登録されたSFZルート、利用するARIAバンク定義、include先の定義と参照サンプル |
+| SoundFont Note Player | `sfz-references.json`、登録されたSFZルート、利用するARIAバンク定義、include先の定義と参照サンプル |
 | IR Reverb | `ir-library/index.json`と、そのindexが参照する単一原音またはL/R原音ペア |
 | Room EQ | `measurement-backups/<id>.json`内の対象chの応答。Correctionには全測定点のIRも必要 |
 
-保存形式は上流の[SFZ登録](https://github.com/Frieve-A/effetune/blob/v2.14.0/electron/sfz-library-ipc.js)、
+保存形式は上流の[音源登録](https://github.com/Frieve-A/effetune/blob/v2.17.0/electron/sfz-library-ipc.js)、
 [IRライブラリ](https://github.com/Frieve-A/effetune/blob/v2.13.0/electron/ir-library-ipc.js)、
 [測定バックアップ](https://github.com/Frieve-A/effetune/blob/v2.13.0/electron/measurement-backup-ipc.cjs)に従います。
 PipeTuneは原本を読み取るだけで、EffeTuneのライブラリを書き換えません。
@@ -200,26 +200,38 @@ Room EQとCrosstalk Cancellationは保存された線形IRから補正を作り�
 バックアップは追加情報も含めて1ファイル64 MiBまで読み込めます。
 上限を超えるファイルへ更新されて再読込に失敗した場合は、適用中のプリセットを保ちます。
 
-SFZは[EffeTune 2.14.0の準備処理](https://github.com/Frieve-A/effetune/blob/v2.14.0/js/sfz/service.js)に従い、
-include、領域継承、ループ、エンベロープ等を扱います。対応する外部サンプルは、
+SoundFont Note Playerは、EffeTune 2.17.0でSFZ Note Playerから改名されたDSPです。
+PipeTuneでは、入力音から検出した音符を既存のSFZ音源で鳴らします。
+SF2/SF3音源は未対応です。登録一覧に混在していてもSFZは読み込めますが、SF2/SF3を選ぶと
+読込を拒否して、それまでの音声処理を保ちます。MIDI専用のSoundFont Playerは警告して除外し、
+同じプリセットの対応済みDSPは処理を続けます。
+両DSPの違いは[公式プラグインガイド](https://github.com/Frieve-A/effetune/blob/v2.17.0/docs/i18n/ja/plugins/others.md)を参照してください。
+
+SFZのinclude、領域継承、ループ、エンベロープ等を扱います。対応する外部サンプルは、
 WAV・AIFF・FLACのmono / stereoです。
 音源ライブラリにARIAのバンク定義がある場合は、`$sample_dir`などの定義をSFZへ適用します。
 SFZ本体、include先、ARIAのXMLはUTF-8を優先して読み、不正なバイト列にはWindows-1252を適用します。
 サンプルに`*sine`、`*saw`、`*square`、`*triangle`、`*tri`、`*noise`、`*silence`を指定した
 生成波形は、外部の音声ファイルなしで再生できます。
+`*noise`は2.17.0の方式で連続生成します。
+スクリプト、追加の変調命令、内蔵エフェクト、埋込みサンプル、ストリーミング指定を含む音源は、
+未対応機能を示して読込を拒否します。
+上流の全機能との違いは[SFZの公式仕様](https://github.com/Frieve-A/effetune/blob/v2.17.0/specifications/sfz/README.md)を参照してください。
 Sample Shift（`ss`）は選ぶサンプルを最大6半音ずらします。出力する音高は同じです。
-SFZ Note Playerの音符検出方式はEffeTune 2.16.0の設定画面にあるDetection Modeで
+SoundFont Note Playerの音符検出方式はEffeTune 2.17.0の設定画面にあるDetection Modeで
 `Classic`または`Event`を選び、プリセットに保存します。PipeTuneは保存された方式を使用し、
 指定がない場合は`Classic`で再生します。`Event`は確定した音符の開始と終了を使って発音を制御し、
 `Classic`より約140 ms遅延が増えます。この遅延は他の音声経路との自動補償に含まれます。
-検出方式だけを切り替える場合、準備済みの音源は再利用されます。
-設定項目は[EffeTune 2.16.0のSFZ Note Player](https://github.com/Frieve-A/effetune/blob/v2.16.0/plugins/others/sfz_note_player.js)を参照してください。
+検出方式を切り替えるだけなら、準備済み音源の再読込は不要です。
+設定項目は[EffeTune 2.17.0のSoundFont Note Player](https://github.com/Frieve-A/effetune/blob/v2.17.0/plugins/others/sfz_note_player.js)を参照してください。
 バンク予算は既定256 MiBで、設定画面から64 / 128 / 256 / 512 / 1024 MiBを選べます。
 直接実行では`--sfz-max-size MIB`、daemon設定では`PIPETUNE_SFZ_MAX_SIZE_MIB`を使います。
-必要に応じて上流と同じ規則で再生可能な全キーを残しながらレイヤーを減らします。
-除外領域、使用可能な部分音源での欠損サンプル、縮小バンク、範囲外のエンベロープ時間の補正は
+バンク予算の対象は音源データと再生準備用の領域です。必要量は処理レートやチャンネル数によって変わります。
+全レイヤーと元ファイルの容量を確認し、予算を超える音源は読込エラーになります。
+容量不足によるレイヤーの自動削減は行いません。この扱いは
+[EffeTune 2.17.0の容量検証](https://github.com/Frieve-A/effetune/blob/v2.17.0/js/sfz/service.js)に合わせています。
+除外領域、使用可能な部分音源での欠損サンプル、範囲外のエンベロープ時間の補正は
 稼働中DSPの診断へ表示します。
-全キーを保持する最小構成でも予算に入らない音源は読込エラーになります。
 参照サンプルは登録されたルート内に置いてください。
 
 IR ReverbはWAV / IRS、AIFF、FLAC、MP3、Ogg、M4Aの原音を、インストール済みのFFmpegライブラリで
@@ -242,6 +254,8 @@ Gain・手動Delayも反映し、手動Delayは自動レイテンシー補償へ
 キャッシュは再生成できるデータで、合計2 GiBを上限に管理します。原本の代わりにはなりません。
 原本やARIAバンク定義の変更、欠損ファイルの復元は自動再読込され、破損キャッシュは再生成します。
 キャッシュに書けなくても準備に成功した音声処理は利用できます。
+2.17.0への更新後も、SFZキャッシュの移行操作は不要です。旧キャッシュは原本から自動で再生成します。
+IRとRoom EQのキャッシュ形式は変わりません。
 SFZ / IR / Room EQの再読込に失敗した場合は、それまでの音声処理を保持してエラーを表示します。
 未設定DSPは診断付きで有効のままです。無効ノード・無効Sectionでは外部ファイルを読みません。
 Crosstalk Cancellationは従来どおり、不正測定のノードを警告付きで除外します。

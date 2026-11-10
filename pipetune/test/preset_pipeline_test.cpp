@@ -1388,6 +1388,57 @@ static bool testInferredPresetChannels(const std::filesystem::path &directory) {
                "retained preset rebuild must infer the same channel layout");
 }
 
+static bool testUnsupportedMidiPlayer(const std::filesystem::path &directory) {
+  const auto path = writePreset(directory, "midi-player.effetune_preset", R"json({"pipeline":[
+    {"name":"SoundFont Player","channel":"1516","parameters":{"sf":"not-an-instrument"}},
+    {"name":"SoundFont Player","enabled":false},
+    {"name":"Section","enabled":false},
+    {"name":"SoundFont Player"},
+    {"name":"Section","enabled":true},
+    {"name":"Volume","parameters":{"vl":-6}}
+  ]})json");
+  auto result = pipetune::loadDspPipeline(path, {48000, 2, 64, true});
+  if (!check(result.pipeline != nullptr, result.error) ||
+      !check(result.pipeline->activePluginCount() == 1 && result.pipeline->maxChannels() == 2 &&
+          result.warnings.size() == 1 && result.warnings.front().pluginName == "SoundFont Player" &&
+          result.warnings.front().reason.find("MIDI input and performance are not supported") != std::string::npos,
+          "MIDI players must be diagnosed without consuming channels or suppressing supported DSP")) return false;
+  const auto entries = result.pipeline->presetEntries();
+  if (!check(entries[0].state == pipetune::PresetEntryState::ignored &&
+      entries[1].state == pipetune::PresetEntryState::off && entries[3].state == pipetune::PresetEntryState::off,
+      "disabled MIDI players must remain off without warnings")) return false;
+  auto pcm = std::array<float, 4>{0.5F, -0.25F, 0.75F, -0.125F};
+  const auto before = pcm;
+  if (!check(result.pipeline->process(pcm, 2, 2, 0) == pipetune::ProcessStatus::ok,
+      "supported DSP beside a MIDI player must process")) return false;
+  for (auto index = 0u; index < pcm.size(); ++index)
+    if (!check(approximately(pcm[index], before[index] * std::pow(10.0F, -6.0F / 20)),
+        "supported DSP beside a MIDI player must retain its gain")) return false;
+  return true;
+}
+
+static bool testSfzFixedPreparationBudget(const std::filesystem::path &directory) {
+  const auto path = writePreset(directory, "sfz-memory.effetune_preset",
+      R"({"pipeline":[{"name":"SoundFont Note Player","parameters":{"dm":100,"wm":0}}]})");
+  auto context = pipetune::PipelineLoadContext{};
+  context.assetMemoryBytes = 1024 * 1024;
+  const auto tiny = pipetune::loadDspPipeline(path, {48000, 2, 128}, context);
+  if (!check(!tiny.pipeline && tiny.error.find("combined asset memory budget") != std::string::npos,
+      "SFZ fixed preparation must be admitted even without an assigned instrument")) return false;
+  context.assetMemoryBytes = 96 * 1024 * 1024;
+  auto active = pipetune::loadDspPipeline(path, {48000, 2, 128}, context);
+  if (!check(active.pipeline != nullptr, active.error)) return false;
+  const auto rejected = pipetune::loadDspPipeline(path, {48000, 2, 128}, context);
+  if (!check(!rejected.pipeline && rejected.error.find("combined asset memory budget") != std::string::npos,
+      "an active SFZ instance and its candidate must share fixed preparation admission")) return false;
+  auto pcm = std::array<float, 256>{};
+  if (!check(active.pipeline->process(pcm, 2, 128, 0) == pipetune::ProcessStatus::ok,
+      "memory rejection must preserve the active SFZ pipeline")) return false;
+  active.pipeline.reset();
+  const auto recovered = pipetune::loadDspPipeline(path, {48000, 2, 128}, context);
+  return check(recovered.pipeline != nullptr, "destroying an SFZ instance must release its preparation reservation");
+}
+
 int main() {
   const auto directory =
       std::filesystem::temp_directory_path() /
@@ -1400,7 +1451,9 @@ int main() {
   const auto bass = testEffeTune211Processor(directory, "Bass Extender");
   const auto bassWidth = testBassExtenderProcessingWidth(directory);
   const auto visualizers = testVisualizationPresets(directory);
-  const auto passed = effects212 && analog && testPresetEntries(directory) && attack && bass && bassWidth && visualizers &&
+  const auto midi = testUnsupportedMidiPlayer(directory);
+  const auto memory = testSfzFixedPreparationBudget(directory);
+  const auto passed = memory && midi && effects212 && analog && testPresetEntries(directory) && attack && bass && bassWidth && visualizers &&
       testFirCrossoverRouting(directory) && testFirCrossoverBands(directory) &&
       testEffeTune210Pipeline(directory) && testSpatialMapper(directory) && testTvAudioSimulator(directory) &&
       testBypassPipeline() && testCanonicalPreset(directory) &&
