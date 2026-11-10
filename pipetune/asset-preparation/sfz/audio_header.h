@@ -11,7 +11,7 @@
 
 namespace pipetune::assets {
 
-/** Dimensions used by the app's pre-decode capacity selection, all zero if unknown. */
+/** Dimensions used by the app's pre-decode capacity validation, all zero if unknown. */
 struct SfzAudioHeader {
   std::uint32_t channels = 0; /**< Source channel count. */
   double sampleRate = 0; /**< Original rate obtained from the header. */
@@ -27,7 +27,7 @@ inline constexpr std::size_t kSfzAudioHeaderBytes = 1024 * 1024 + 26;
  * @param fileBytes Complete encoded file size for range validation.
  * @return Known positive dimensions, or zeros for malformed/unknown headers.
  * @remarks Compressed formats without those headers remain unknown even if a decoder
- * could estimate their duration. That distinction controls representative-layer selection.
+ * could estimate their duration; their decoded storage is validated after decoding.
  */
 SfzAudioHeader inspectSfzAudioHeader(std::span<const std::uint8_t> prefix, std::uint64_t fileBytes);
 

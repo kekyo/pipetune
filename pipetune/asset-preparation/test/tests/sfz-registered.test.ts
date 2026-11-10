@@ -51,7 +51,9 @@ test('registered SFZ instruments prepare, reuse and recover without external com
     const parameters = { sf: id, dm: 0, wm: 100, th: 0.01, mn: 83, mx: 83 };
     await writeFile(
       preset,
-      JSON.stringify({ pipeline: [{ name: 'SFZ Note Player', parameters }] })
+      JSON.stringify({
+        pipeline: [{ name: 'SoundFont Note Player', parameters }],
+      })
     );
     let limits: NodeJS.ProcessEnv = {};
     const run = (rate: number, backend: string) => {
@@ -110,11 +112,20 @@ test('registered SFZ instruments prepare, reuse and recover without external com
     expect(bounded.status, bounded.stderr).toBe(0);
     expect(bounded.audio).toEqual(cold.audio);
     expect(run(48000, 'scalar').stderr).toContain('cacheHits=1');
-    limits = { PIPETUNE_TEST_SFZ_BYTES: '19912' };
+    // Derive the architecture-specific boundary from native admission. The
+    // serialized bank fits 32 KiB, but the new preparation storage does not.
+    limits = { PIPETUNE_TEST_SFZ_BYTES: String(32 * 1024) };
+    const insufficient = run(48000, 'scalar');
+    expect(insufficient.status).not.toBe(0);
+    const required = insufficient.stderr.match(/require ([0-9]+) bytes/);
+    expect(required, insufficient.stderr).not.toBeNull();
+    const footprint = Number(required![1]);
+    expect(footprint).toBeGreaterThan(32 * 1024);
+    limits = { PIPETUNE_TEST_SFZ_BYTES: String(footprint) };
     const exact = run(48000, 'scalar');
     expect(exact.status, exact.stderr).toBe(0);
     expect(exact.audio).toEqual(cold.audio);
-    limits = { PIPETUNE_TEST_SFZ_BYTES: '19911' };
+    limits = { PIPETUNE_TEST_SFZ_BYTES: String(footprint - 1) };
     expect(run(48000, 'scalar').status).not.toBe(0);
     limits = { PIPETUNE_TEST_ASSET_MEMORY_BYTES: '1' };
     expect(run(48000, 'scalar').stderr).toContain(

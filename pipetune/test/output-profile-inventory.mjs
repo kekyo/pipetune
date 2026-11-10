@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, watch, writeFileSync } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const [pipewire, fixture, observer] = process.argv.slice(2);
+const [pipewire, fixture, observer, routeSelection = "automatic"] = process.argv.slice(2);
 assert.ok(pipewire && fixture && observer);
 const directory = mkdtempSync(join(tmpdir(), "pipetune-output-profile-"));
 const runtime = join(directory, "runtime");
@@ -21,6 +21,7 @@ const environment = {
   PIPEWIRE_REMOTE: remote,
   PIPEWIRE_CORE: remote,
   XDG_CONFIG_HOME: config,
+  ...(routeSelection === "policy" ? { PIPETUNE_PROFILE_POLICY_ROUTES: "1" } : {}),
 };
 const server = spawn(pipewire, ["-c", "pipewire.conf"], {
   env: { ...environment, PIPEWIRE_DEBUG: "0" },

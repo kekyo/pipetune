@@ -160,13 +160,10 @@ static int selectInput(std::uint64_t maximumBytes, std::uint64_t definitionBytes
     metadata.push_back({std::move(path), size, frames, readWord()});
   }
   auto parsed = parseSfz("main.sfz", documents, std::nullopt, kMaximumSfzBytes);
-  auto selection = selectSfzRegionsForBudget(parsed.regions, metadata, maximumBytes, definitionBytes);
-  parsed.regions = std::move(selection.regions);
+  validateSfzBudget(parsed.regions, metadata, maximumBytes, definitionBytes);
   std::cout << "{\"parsed\":";
   printParsed(parsed);
-  std::cout << ",\"reduced\":" << (selection.reduced ? "true" : "false");
-  if (selection.reduced) std::cout << ",\"velocity\":" << selection.velocity << ",\"keyCount\":" << selection.keyCount;
-  std::cout << "}\n";
+  std::cout << ",\"reduced\":false}\n";
   return 0;
 }
 
@@ -269,7 +266,7 @@ int main(int argc, char **argv) {
     catch (const SfzError &error) { bounded = error.code == "too-large"; }
     if (!bounded) return 1;
     const auto bank = packSfzBank(parsed.regions, samples, 256 * 1024 * 1024);
-    if (parsed.regions.size() != 1 || bank.payload.size() != 200 || bank.footprintBytes != 728) return 1;
+    if (parsed.regions.size() != 1 || bank.payload.size() != 548 || bank.footprintBytes != 548) return 1;
     std::cout << "isolated SFZ parser and bank: one region, four PCM frames\n";
     return 0;
   } catch (const SfzError &error) { std::cerr << error.code << ": " << error.what() << '\n'; return 1; }

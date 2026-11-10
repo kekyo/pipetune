@@ -23,6 +23,19 @@ selecting physical devices in PipeTune.
 The minimum PipeWire version is 1.0.5. WirePlumber 0.4 and 0.5 use the same
 configuration model, with different session-policy integration where needed.
 
+PipeTune flushes each owned distribution output when it becomes paused. The
+[PipeWire 1.0.5 combine module](https://github.com/PipeWire/pipewire/blob/1.0.5/src/modules/module-combine-stream.c)
+clears its delay lines on pause but retains queued output buffers; unequal
+queues can shift one device and replay audio from a previous source activation.
+`pipewire_distribution_stream.cpp` adds the cleanup through public stream
+events and `pw_stream_flush`, as used by the
+[official loopback module](https://github.com/PipeWire/pipewire/blob/1.0.5/src/modules/module-loopback.c).
+The audio executable exports `pw_stream_new` so this policy also covers streams
+created inside the loaded combine module. Creation delegates to libpipewire
+with `RTLD_NEXT`; only streams carrying both PipeTune's managed-output marker
+and an output identity receive the listener. Destruction removes the listener.
+This uses the public ABI without modifying the system module or its private data.
+
 Each package builds EffeTune, yyjson, and PFFFT from source for one target
 architecture. The PipeTune executable explicitly loads one validated private
 shared DSP backend. Scalar is the compatibility default. SIMD CPU support is
@@ -389,7 +402,7 @@ The generated catalog packs JSON parameters into the exact native ABI expected
 by EffeTune. Tests compare those packed parameters with EffeTune's JavaScript
 packer and compare native PCM output with EffeTune's parity corpus.
 
-The pinned EffeTune 2.13.0 registry contains 112 native kernels. PipeTune supports
+The pinned EffeTune 2.17.0 registry contains 113 native kernels. PipeTune supports
 its 16-channel Multi Channel Panel layout, individual channels through 16,
 paired routes through 15/16, and hexadecimal Matrix routes. It can load MD
 Simulator and all nine effects added in 2.5.0. It regenerates and stages the
@@ -439,7 +452,7 @@ files and their existing ancestors, so backup creation and replacement trigger
 preparation away from the audio thread. Invalid measurements omit that node and
 are reported through the existing warning/status paths.
 
-SFZ Note Player, IR Reverb, and Room EQ also resolve registered sources from the
+SoundFont Note Player, IR Reverb, and Room EQ also resolve registered sources from the
 EffeTune desktop directory. The host owns asynchronous reads, the native FFmpeg
 decoder, dependency watching, cache validation, and process-wide memory
 reservations. `asset-preparation/` owns the source-independent SFZ semantics,
@@ -447,6 +460,13 @@ IR preparation, measurement analysis, and Room EQ filter design. These C++20
 libraries have no PipeWire, GTK, filesystem, or decoder dependency; their
 in-memory drivers build independently. See [asset preparation](asset-preparation.md)
 for the upstream port map and replacement boundary.
+
+Note Player uses the stable native type `SFZNotePlayerPlugin` for asset and
+processing decisions, with the new `SoundFont Note Player` display name in
+presets. SF2/SF3 selections reject the candidate with a format diagnostic.
+The distinct MIDI-only `SoundFontPlayerPlugin` is omitted with a warning;
+it is not a visualization-only analyzer. Neither MIDI input nor SF2/SF3
+preparation is part of this integration.
 
 Preparation runs on the existing control dispatcher through cardio/GIO, outside
 the audio callback. A cancellable asynchronous mutex serializes preparation;

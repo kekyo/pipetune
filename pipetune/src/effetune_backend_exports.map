@@ -29,9 +29,7 @@ PIPETUNE_EFFETUNE_BACKEND_1 {
     et_instance_set_seed;
     et_instance_set_params;
     et_instance_set_param_bytes;
-    et_instance_asset_begin;
-    et_instance_asset_commit;
-    et_instance_asset_abort;
+    et_sample_player_preparation_bytes;
     et_instance_asset_state;
     et_instance_process;
     et_instance_runtime_event;

@@ -241,7 +241,8 @@ struct PipeWireRuntime {
   std::vector<std::pair<OutputCardIdentity, std::string>> requestedProfileRestorations;
   std::vector<std::uint64_t> pendingProfileOldNodeSerials;
   std::vector<PipeWireInputRouteSnapshot> pendingProfileInputRoutes;
-  bool pendingInputRestoreRequested = false;
+  bool pendingInputRestoreScheduled = false;
+  unsigned pendingInputRestoreAttempts = 0;
   OutputProfileSelection pendingPreviousProfile;
   bool pendingProfileRollback = false;
   std::atomic<bool> pendingProfileRestoreActive{false};
@@ -2035,6 +2036,8 @@ static void finishProfileRestoration(PipeWireRuntime &runtime) {
     runtime.pendingProfileSettling = false;
     runtime.pendingProfileTargetObserved = false;
     runtime.pendingProfileRetryCount = 0;
+    runtime.pendingInputRestoreScheduled = false;
+    runtime.pendingInputRestoreAttempts = 0;
     runtime.pendingProfileInputRoutes.clear();
     runtime.pendingProfileOldNodeSerials.clear();
     runtime.requestedProfileRestorations.clear();
@@ -2470,19 +2473,25 @@ static bool advancePendingProfileRestorations(PipeWireRuntime &runtime) {
           }));
       if (expected && ready < *expected) return true;
       if (pipeWireInputRoutes(*runtime.outputInventory, requested.first) != runtime.pendingProfileInputRoutes) {
-        if (!runtime.pendingInputRestoreRequested) {
-          const auto error = restorePipeWireInputRoutes(*runtime.outputInventory, requested.first,
-              runtime.pendingProfileInputRoutes);
-          if (!error.empty()) {
+        if (!runtime.pendingInputRestoreScheduled && !runtime.pendingProfileSettling) {
+          // Let initial policy enumeration finish before restoring the input.
+          // Until its acknowledgement is observed, queued older writes may
+          // replace it. The timer bounds retries; observed later edits still
+          // cancel the restoration in the normal settling phase.
+          runtime.pendingInputRestoreScheduled = true;
+          auto settle = timespec{.tv_sec = 0, .tv_nsec = 300000000};
+          auto interval = timespec{};
+          const auto armed = pw_loop_update_timer(pw_main_loop_get_loop(runtime.mainLoop),
+              runtime.outputChangeTimer, &settle, &interval, false);
+          if (armed < 0) {
             runtime.pendingProfileRollback = true;
             runtime.profileTransition = {};
             runtime.profileTransition.previous.push_back(runtime.pendingPreviousProfile);
             runtime.profileTransition.previousInputs.push_back({requested.first, runtime.pendingProfileInputRoutes});
-            beginProfileRestoration(runtime, "cannot preserve input settings during profile restoration: " + error);
+            beginProfileRestoration(runtime, systemError("cannot arm pending input-settle check", armed));
             advanceProfileTransition(runtime);
             return true;
           }
-          runtime.pendingInputRestoreRequested = true;
         }
         return true;
       }
@@ -2510,7 +2519,8 @@ static bool advancePendingProfileRestorations(PipeWireRuntime &runtime) {
           ++runtime.pendingProfileRetryCount;
           runtime.pendingProfileSettling = false;
           runtime.pendingProfileTargetObserved = false;
-          runtime.pendingInputRestoreRequested = false;
+          runtime.pendingInputRestoreScheduled = false;
+          runtime.pendingInputRestoreAttempts = 0;
           auto delay = timespec{.tv_sec = kReadinessTimeoutSeconds, .tv_nsec = 0};
           auto interval = timespec{};
           pw_loop_update_timer(pw_main_loop_get_loop(runtime.mainLoop), runtime.outputChangeTimer,
@@ -2533,7 +2543,8 @@ static bool advancePendingProfileRestorations(PipeWireRuntime &runtime) {
     runtime.requestedProfileRestorations.clear();
     runtime.pendingProfileOldNodeSerials.clear();
     runtime.pendingProfileInputRoutes.clear();
-    runtime.pendingInputRestoreRequested = false;
+    runtime.pendingInputRestoreScheduled = false;
+    runtime.pendingInputRestoreAttempts = 0;
     runtime.pendingProfileRestoreActive = false;
     runtime.pendingProfileSettling = false;
     runtime.pendingProfileTargetObserved = false;
@@ -2579,7 +2590,8 @@ static bool advancePendingProfileRestorations(PipeWireRuntime &runtime) {
     for (const auto &output : runtime.availableOutputs.outputs)
       if (outputBelongsToCard(output, selection.card)) runtime.pendingProfileOldNodeSerials.push_back(output.nodeSerial);
     runtime.pendingProfileInputRoutes = pipeWireInputRoutes(*runtime.outputInventory, selection.card);
-    runtime.pendingInputRestoreRequested = false;
+    runtime.pendingInputRestoreScheduled = false;
+    runtime.pendingInputRestoreAttempts = 0;
     if (!setPipeWireOutputProfile(*runtime.outputInventory, selection).empty()) continue;
     runtime.pendingProfileRestoreActive = true;
     runtime.pendingProfileSettling = false;
@@ -2599,7 +2611,8 @@ static bool advancePendingProfileRestorations(PipeWireRuntime &runtime) {
       runtime.requestedProfileRestorations.clear();
       runtime.pendingProfileOldNodeSerials.clear();
       runtime.pendingProfileInputRoutes.clear();
-      runtime.pendingInputRestoreRequested = false;
+      runtime.pendingInputRestoreScheduled = false;
+      runtime.pendingInputRestoreAttempts = 0;
       return false;
     }
     return true;
@@ -2645,6 +2658,11 @@ static void outputInventoryChanged(const OutputInventoryResult &snapshot, void *
   }
   advanceProfileTransition(runtime);
   if (runtime.profileTransition.phase != PipeWireRuntime::ProfilePhase::idle) {
+    // A stream rebuild or rollback can still be waiting for the physical
+    // volume snapshot after its policy acknowledgement. The final inventory
+    // notification must complete it while the profile transaction is prepared.
+    if (runtime.profileTransition.phase == PipeWireRuntime::ProfilePhase::prepared && runtime.previousOutput)
+      finishReadinessCheck(runtime);
     runtime.profileRestoreDecisionPending.store(false, std::memory_order_release);
     requestControlStatusUpdate(runtime);
     return;
@@ -3706,6 +3724,26 @@ static bool createMainLoop(PipeWireRuntime &runtime) {
       } else {
         const auto requested = runtime.requestedProfileRestorations.front();
         const auto *active = activeCardProfile(runtime, requested.first);
+        auto failure = std::string("timed out while restoring the saved output profile");
+        if (active != nullptr && active->cardProfileName == requested.second &&
+            runtime.pendingInputRestoreScheduled) {
+          if (runtime.pendingInputRestoreAttempts < 3) {
+            ++runtime.pendingInputRestoreAttempts;
+            const auto error = restorePipeWireInputRoutes(*runtime.outputInventory, requested.first,
+                runtime.pendingProfileInputRoutes);
+            if (error.empty()) {
+              auto settle = timespec{.tv_sec = 0, .tv_nsec = 300000000};
+              auto interval = timespec{};
+              const auto armed = pw_loop_update_timer(pw_main_loop_get_loop(runtime.mainLoop),
+                  runtime.outputChangeTimer, &settle, &interval, false);
+              if (armed >= 0) {
+                advancePendingProfileRestorations(runtime);
+                return;
+              }
+              failure = systemError("cannot arm pending input-settle check", armed);
+            } else failure = "cannot preserve input settings during profile restoration: " + error;
+          } else failure = "input settings did not settle while restoring the saved output profile";
+        }
         if (runtime.pendingProfileRetryCount < 2 && active != nullptr &&
             active->cardProfileName != requested.second) {
           auto retry = OutputProfileSelection{.card = requested.first, .cardProfileName = requested.second,
@@ -3718,7 +3756,8 @@ static bool createMainLoop(PipeWireRuntime &runtime) {
           if (error.empty()) {
             ++runtime.pendingProfileRetryCount;
             runtime.pendingProfileTargetObserved = false;
-            runtime.pendingInputRestoreRequested = false;
+            runtime.pendingInputRestoreScheduled = false;
+            runtime.pendingInputRestoreAttempts = 0;
             auto delay = timespec{.tv_sec = kReadinessTimeoutSeconds, .tv_nsec = 0};
             auto interval = timespec{};
             pw_loop_update_timer(pw_main_loop_get_loop(runtime.mainLoop), runtime.outputChangeTimer,
@@ -3731,7 +3770,7 @@ static bool createMainLoop(PipeWireRuntime &runtime) {
         runtime.profileTransition.previous.push_back(runtime.pendingPreviousProfile);
         runtime.profileTransition.previousInputs.push_back({runtime.pendingPreviousProfile.card,
             runtime.pendingProfileInputRoutes});
-        beginProfileRestoration(runtime, "timed out while restoring the saved output profile");
+        beginProfileRestoration(runtime, std::move(failure));
         advanceProfileTransition(runtime);
         return;
       }
@@ -3742,7 +3781,8 @@ static bool createMainLoop(PipeWireRuntime &runtime) {
       runtime.requestedProfileRestorations.clear();
       runtime.pendingProfileOldNodeSerials.clear();
       runtime.pendingProfileInputRoutes.clear();
-      runtime.pendingInputRestoreRequested = false;
+      runtime.pendingInputRestoreScheduled = false;
+      runtime.pendingInputRestoreAttempts = 0;
       runtime.outputTransitionActive.store(false, std::memory_order_release);
       stopProfileDeadline(runtime);
       if (runtime.options.outputConfiguration.mode == OutputMode::multiple)

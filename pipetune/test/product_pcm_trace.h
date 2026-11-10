@@ -11,6 +11,12 @@ void prepareProductPcmTrace();
 /** Keep one distribution output at 48 kHz when the test graph changes to 96 kHz. */
 void injectProductOutputRateMismatch();
 
+/** Retain an additional real PCM block on one distribution output before suspend. */
+void injectProductQueuedOutput();
+
+/** @return Whether the requested output queue injection occurred. */
+bool productQueuedOutputWasInjected();
+
 /** Write the recording after all streams and their processing threads have stopped. */
 void finishProductPcmTrace();
 

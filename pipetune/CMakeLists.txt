@@ -154,6 +154,10 @@ add_custom_command(
   DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate-dsp-catalog.mjs"
     "${PIPETUNE_EFFETUNE_DIR}/scripts/gen-dsp-params.mjs"
+    "${PIPETUNE_EFFETUNE_DIR}/scripts/gen-sfz-schema.mjs"
+    "${PIPETUNE_EFFETUNE_DIR}/scripts/gen-sfz-effects-schema.mjs"
+    "${PIPETUNE_EFFETUNE_DIR}/js/sfz/modulation-schema.js"
+    "${PIPETUNE_EFFETUNE_DIR}/js/sfz/effects.js"
     "${PIPETUNE_EFFETUNE_DIR}/dsp/bindings/common/effects-v1.overlay.json"
     "${PIPETUNE_EFFETUNE_DIR}/plugins/plugins.txt"
     "${PIPETUNE_EFFETUNE_DIR}/dsp/registry.inc"
@@ -172,6 +176,8 @@ add_subdirectory(
   "${PIPETUNE_EFFETUNE_DIR}/dsp"
   "${CMAKE_CURRENT_BINARY_DIR}/effetune-dsp")
 unset(CMAKE_PROJECT_effetune_dsp_INCLUDE)
+pipetune_configure_effetune_native_layout(
+  effetune_dsp_core PUBLIC "${PIPETUNE_NATIVE_PROCESSOR}")
 pipetune_configure_effetune_mxcsr_source(
   "${PIPETUNE_EFFETUNE_DIR}/dsp/core/engine.cpp"
   "${PIPETUNE_NATIVE_PROCESSOR}"
@@ -274,6 +280,7 @@ add_library(
   src/output_distribution.cpp
   src/pipewire_buffer_io.cpp
   src/pipewire_direct_output.cpp
+  src/pipewire_distribution_stream.cpp
   src/pipewire_graph_clock.cpp
   src/pipewire_latency.cpp
   src/pipewire_output_inventory.cpp
@@ -290,7 +297,10 @@ target_include_directories(pipetune_pipewire PUBLIC include PRIVATE src)
 target_link_libraries(
   pipetune_pipewire
   PUBLIC pipetune_core pipetune_control
-  PRIVATE PkgConfig::PIPEWIRE PkgConfig::SAMPLERATE Threads::Threads)
+  PRIVATE PkgConfig::PIPEWIRE PkgConfig::SAMPLERATE Threads::Threads ${CMAKE_DL_LIBS})
+# The system combine module creates its streams through this public boundary.
+# Keep the lifecycle policy available to dlopen() callers in audio executables.
+target_link_options(pipetune_pipewire INTERFACE -Wl,--export-dynamic-symbol=pw_stream_new)
 if(MSVC)
   target_compile_options(pipetune_pipewire PRIVATE /W4 /WX)
 else()
@@ -682,12 +692,12 @@ if(BUILD_TESTING)
   set_tests_properties(pipetune_asset_preparation_contracts PROPERTIES
     WORKING_DIRECTORY "${PIPETUNE_ASSET_TEST_DIR}" TIMEOUT 300)
 
-  add_executable(pipetune_effetune_216_tests test/effetune_216_test.cpp)
-  target_include_directories(pipetune_effetune_216_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
-  target_link_libraries(pipetune_effetune_216_tests PRIVATE pipetune_core)
-  target_compile_options(pipetune_effetune_216_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  add_dependencies(pipetune_effetune_216_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
-  add_test(NAME pipetune_effetune_216_tests COMMAND pipetune_effetune_216_tests
+  add_executable(pipetune_effetune_217_tests test/effetune_217_test.cpp)
+  target_include_directories(pipetune_effetune_217_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_link_libraries(pipetune_effetune_217_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_effetune_217_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_effetune_217_tests ${PIPETUNE_DSP_BACKEND_TARGETS})
+  add_test(NAME pipetune_effetune_217_tests COMMAND pipetune_effetune_217_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test/presets/effetune-2.13/adaptive-original.effetune_preset)
 
   add_executable(pipetune_adaptive_prediction_tests test/adaptive_prediction_test.cpp)
@@ -939,6 +949,11 @@ if(BUILD_TESTING)
       $<TARGET_FILE:pipetune_output_inventory_observer_tests>)
   set_tests_properties(pipetune_output_inventory PROPERTIES TIMEOUT 30)
   add_executable(pipetune_output_profile_inventory_tests test/output_profile_inventory_test.cpp)
+  add_executable(pipetune_output_inventory_generation_tests test/output_inventory_generation_test.cpp)
+  target_include_directories(pipetune_output_inventory_generation_tests PRIVATE src)
+  target_link_libraries(pipetune_output_inventory_generation_tests PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE)
+  target_compile_options(pipetune_output_inventory_generation_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME pipetune_output_inventory_generation COMMAND pipetune_output_inventory_generation_tests)
   target_include_directories(pipetune_output_profile_inventory_tests PRIVATE src)
   target_link_libraries(pipetune_output_profile_inventory_tests PRIVATE pipetune_pipewire PkgConfig::PIPEWIRE)
   target_compile_options(pipetune_output_profile_inventory_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -947,6 +962,11 @@ if(BUILD_TESTING)
       ${PIPETUNE_PIPEWIRE_EXECUTABLE} $<TARGET_FILE:pipetune_device_presentation_fixture>
       $<TARGET_FILE:pipetune_output_profile_inventory_tests>)
   set_tests_properties(pipetune_output_profile_inventory PROPERTIES TIMEOUT 35)
+  add_test(NAME pipetune_output_profile_inventory_policy_routes
+    COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/output-profile-inventory.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE} $<TARGET_FILE:pipetune_device_presentation_fixture>
+      $<TARGET_FILE:pipetune_output_profile_inventory_tests> policy)
+  set_tests_properties(pipetune_output_profile_inventory_policy_routes PROPERTIES TIMEOUT 35)
   add_executable(pipetune_output_configuration_tests test/output_configuration_test.cpp)
   target_link_libraries(pipetune_output_configuration_tests PRIVATE pipetune_core)
   target_compile_options(pipetune_output_configuration_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -1019,7 +1039,8 @@ if(BUILD_TESTING)
   target_link_options(pipetune_product_output_tests PRIVATE -Wl,--wrap=pw_stream_connect -Wl,--export-dynamic)
   target_compile_options(pipetune_product_output_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME pipetune_product-pcm-trace COMMAND pipetune_product_output_tests trace verify)
-  foreach(scenario product-mode-volume product-output-change-route-policy product-output-profile-restore-failure-route-policy product-output-profile-settle-input-route-policy product-output-profile-unavailable-route-policy product-matrix-realtime product-matrix-freewheel-one-output product-sfz-classic-realtime product-sfz-event-realtime product-matrix-freewheel-delayed-observer product-matrix-freewheel-fail-pcm product-matrix-freewheel-fail-disconnect product-matrix-freewheel-fail-timeout product-matrix-freewheel-fail-cancel product-matrix-freewheel-fail-runtime-exit product-matrix-freewheel-fail-before-source product-matrix-freewheel product-direct product-direct-device-volume product-direct-device-volume-single product-direct-device-volume-reject product-direct-device-volume-restore-reject product-direct-device-volume-reconnect product-direct-device-volume-restart product-direct-device-volume-crash product-direct-device-volume-offline-crash product-bypass product-matrix product-slots product-sixteen product-volume product-disconnected product-reconnect product-profile product-restart product-restart-mute product-latency product-latency-units product-latency-reconnect product-time-alignment product-sfz-classic product-sfz-event product-controls product-output-clock product-output-clock-alt product-output-clock-recovery product-output-clock-unavailable product-output-change product-output-profile-unknown product-output-profile-shutdown product-output-profile-restore-failure product-output-profile-unavailable product-output-profile-settle-input product-output-timeout product-output-status product-output-status-single product-output-recovery product-preset-meters product-source-resume product-source-resume-single)
+  add_test(NAME pipetune_product-latency-observer COMMAND pipetune_product_output_tests latency-observer verify)
+  foreach(scenario product-mode-volume product-output-change-route-policy product-output-profile-restore-failure-route-policy product-output-profile-settle-input-route-policy product-output-profile-unavailable-route-policy product-matrix-realtime product-matrix-freewheel-one-output product-sfz-classic-realtime product-sfz-event-realtime product-matrix-freewheel-delayed-observer product-matrix-freewheel-fail-pcm product-matrix-freewheel-fail-disconnect product-matrix-freewheel-fail-timeout product-matrix-freewheel-fail-cancel product-matrix-freewheel-fail-runtime-exit product-matrix-freewheel-fail-before-source product-matrix-freewheel product-direct product-direct-device-volume product-direct-device-volume-single product-direct-device-volume-reject product-direct-device-volume-restore-reject product-direct-device-volume-reconnect product-direct-device-volume-restart product-direct-device-volume-crash product-direct-device-volume-offline-crash product-bypass product-matrix product-slots product-sixteen product-volume product-disconnected product-reconnect product-profile product-restart product-restart-mute product-latency product-latency-units product-latency-reconnect product-time-alignment product-sfz-classic product-sfz-event product-controls product-output-clock product-output-clock-alt product-output-clock-recovery product-output-clock-unavailable product-output-change product-output-profile-unknown product-output-profile-shutdown product-output-profile-restore-failure product-output-profile-unavailable product-output-profile-settle-input product-output-timeout product-output-status product-output-status-single product-output-recovery product-preset-meters product-source-resume product-source-resume-single product-source-resume-queued product-output-change-delayed-input product-audio-cancel)
     add_test(NAME pipetune_${scenario}
       COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
         ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}

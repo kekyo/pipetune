@@ -23,7 +23,7 @@ test('registered SFZ rejects invalid bank path lists before preparing audio', as
     await writeFile(
       preset,
       JSON.stringify({
-        pipeline: [{ name: 'SFZ Note Player', parameters: { sf: id } }],
+        pipeline: [{ name: 'SoundFont Note Player', parameters: { sf: id } }],
       })
     );
     const run = () =>
@@ -111,7 +111,7 @@ test('Windows-1252 SFZ and include files resolve their decoded sample names and 
       JSON.stringify({
         pipeline: [
           {
-            name: 'SFZ Note Player',
+            name: 'SoundFont Note Player',
             parameters: { sf: id, dm: 0, wm: 100, mn: 83, mx: 83, th: 0.01 },
           },
         ],
@@ -193,19 +193,25 @@ test('SFZ original-byte limit includes the selected bank and excludes rejected c
     );
     const definition = '<region> sample=$voice key=60';
     await writeFile(path, definition);
+    // Admit the native generator state so this test isolates original-source
+    // accounting; the two candidate definitions together still exceed it.
+    const budget = 256 * 1024;
     await writeFile(
       join(root, 'a.bank.xml'),
-      '<Unrelated/>' + ' '.repeat(6000)
+      '<Unrelated/>' + ' '.repeat(Math.floor(budget * 0.6))
     );
     const selected =
       '<AriaBank><AriaElement path="main.sfz"/>' +
       '<Define name="$voice" value="*silence"/>';
-    await writeFile(join(root, 'z.bank.xml'), selected + ' '.repeat(6000));
+    await writeFile(
+      join(root, 'z.bank.xml'),
+      selected + ' '.repeat(Math.floor(budget * 0.6))
+    );
     const preset = join(directory, 'test.effetune_preset');
     await writeFile(
       preset,
       JSON.stringify({
-        pipeline: [{ name: 'SFZ Note Player', parameters: { sf: id } }],
+        pipeline: [{ name: 'SoundFont Note Player', parameters: { sf: id } }],
       })
     );
     const run = () =>
@@ -219,7 +225,7 @@ test('SFZ original-byte limit includes the selected bank and excludes rejected c
             PATH: '/nonexistent',
             XDG_CONFIG_HOME: directory,
             XDG_CACHE_HOME: join(directory, 'cache'),
-            PIPETUNE_TEST_SFZ_BYTES: '8904',
+            PIPETUNE_TEST_SFZ_BYTES: String(budget),
           },
         }
       );
@@ -227,7 +233,7 @@ test('SFZ original-byte limit includes the selected bank and excludes rejected c
     expect(accepted.status, accepted.stderr).toBe(0);
     await writeFile(
       join(root, 'z.bank.xml'),
-      selected.padEnd(8905 - definition.length, ' ')
+      selected.padEnd(budget + 1 - definition.length, ' ')
     );
     const rejected = run();
     expect(rejected.status).not.toBe(0);
@@ -293,7 +299,7 @@ test('ARIA bank candidates, definitions and registry changes invalidate prepared
       JSON.stringify({
         pipeline: [
           {
-            name: 'SFZ Note Player',
+            name: 'SoundFont Note Player',
             parameters: { sf: id, dm: 0, wm: 100, mn: 83, mx: 83, th: 0.01 },
           },
         ],

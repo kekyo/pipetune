@@ -12,6 +12,7 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -32,8 +33,13 @@ struct PcmChannelRecord {
 };
 
 struct PcmRecord {
+  std::uint64_t observed = 0;
   std::uint64_t time = 0;
   std::uint64_t ticks = 0;
+  std::int64_t delay = 0;
+  std::uint64_t queued = 0;
+  std::uint64_t buffered = 0;
+  std::uint32_t queuedBuffers = 0;
   std::uint32_t frames = 0;
   std::array<PcmChannelRecord, 4> channels;
 };
@@ -47,6 +53,14 @@ struct PcmStreamRecord {
   std::atomic<std::size_t> count = 0;
   std::atomic<unsigned> empty = 0;
   std::atomic<unsigned> queueErrors = 0;
+  spa_hook listener{};
+  struct State {
+    std::uint64_t observed;
+    pw_stream_state previous;
+    pw_stream_state current;
+  };
+  std::array<State, 128> states;
+  std::size_t stateCount = 0;
   std::array<PcmRecord, 4096> records;
 };
 
@@ -59,6 +73,11 @@ static decltype(&pw_stream_connect) realConnect = nullptr;
 static decltype(&pw_stream_dequeue_buffer) realDequeue = nullptr;
 static decltype(&pw_stream_queue_buffer) realQueue = nullptr;
 static bool injectOldOutputRate = false;
+static std::atomic<bool> injectQueuedOutput = false;
+static std::atomic<bool> queuedOutputInjected = false;
+
+void injectProductQueuedOutput() { injectQueuedOutput.store(true); }
+bool productQueuedOutputWasInjected() { return queuedOutputInjected.load(); }
 
 void injectProductOutputRateMismatch() {
   injectOldOutputRate = true;
@@ -89,6 +108,20 @@ static void registerProductPcmTrace(pw_stream *stream, pw_direction direction, p
     const auto *node = pw_properties_get(pw_stream_get_properties(stream), PW_KEY_NODE_NAME);
     item.node = node == nullptr ? "" : node;
     item.stream.store(stream, std::memory_order_release);
+    static const auto events = [] {
+      auto value = pw_stream_events{};
+      value.version = PW_VERSION_STREAM_EVENTS;
+      value.state_changed = [](void *data, pw_stream_state previous, pw_stream_state current, const char *) {
+        auto &item = *static_cast<PcmStreamRecord *>(data);
+        if (item.stateCount == item.states.size()) return;
+        const auto observed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        item.states[item.stateCount++] = {static_cast<std::uint64_t>(observed), previous, current};
+      };
+      value.destroy = [](void *data) { spa_hook_remove(&static_cast<PcmStreamRecord *>(data)->listener); };
+      return value;
+    }();
+    pw_stream_add_listener(stream, &item.listener, &events, &item);
     return;
   }
   streamOverflow = true;
@@ -117,11 +150,18 @@ static void recordPcm(PcmStreamRecord &stream, pw_buffer *buffer) {
   const auto index = stream.count.fetch_add(1, std::memory_order_relaxed);
   if (index >= stream.records.size()) return;
   auto &record = stream.records[index];
+  record.observed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
   record.time = buffer->time;
   auto time = pw_time{};
   auto *owner = stream.stream.load(std::memory_order_relaxed);
-  if (owner != nullptr && pw_stream_get_time_n(owner, &time, sizeof(time)) >= 0)
+  if (owner != nullptr && pw_stream_get_time_n(owner, &time, sizeof(time)) >= 0) {
     record.ticks = time.ticks;
+    record.delay = time.delay;
+    record.queued = time.queued;
+    record.buffered = time.buffered;
+    record.queuedBuffers = time.queued_buffers;
+  }
   if (buffer->buffer == nullptr || buffer->buffer->datas == nullptr) return;
   const auto count = std::min<std::size_t>(record.channels.size(), buffer->buffer->n_datas);
   for (auto channel = std::size_t{0}; channel < count; ++channel) {
@@ -178,8 +218,50 @@ extern "C" pw_buffer *pw_stream_dequeue_buffer(pw_stream *stream) {
 extern "C" int pw_stream_queue_buffer(pw_stream *stream, pw_buffer *buffer) {
   auto *record = findStream(stream);
   if (record != nullptr && record->direction == PW_DIRECTION_OUTPUT) recordPcm(*record, buffer);
+  auto *injected = static_cast<pw_buffer *>(nullptr);
+  auto validInjection = false;
+  if (injectQueuedOutput.load(std::memory_order_relaxed) && buffer->buffer &&
+      buffer->buffer->n_datas == 2) {
+    const auto *output = pw_properties_get(pw_stream_get_properties(stream), "node.pipetune.output-id");
+    const auto &first = buffer->buffer->datas[0];
+    if (output && std::string_view(output) == "pipetune_product_device_1" && first.data && first.chunk &&
+        first.chunk->offset + sizeof(float) <= first.maxsize && first.chunk->size >= sizeof(float)) {
+      auto sample = 0.0F;
+      std::memcpy(&sample, static_cast<const char *>(first.data) + first.chunk->offset, sizeof(sample));
+      if (sample > 0.24F && injectQueuedOutput.exchange(false)) {
+        auto *extra = realDequeue(stream);
+        if (extra) {
+          injected = extra;
+          auto valid = extra->buffer && extra->buffer->n_datas == 2;
+          for (auto channel = 0U; valid && channel < 2; ++channel) {
+            const auto &source = buffer->buffer->datas[channel];
+            const auto &destination = extra->buffer->datas[channel];
+            valid = source.data && source.chunk && destination.data && destination.chunk &&
+                source.chunk->offset <= source.maxsize && source.chunk->size <= source.maxsize - source.chunk->offset &&
+                source.chunk->size <= destination.maxsize;
+          }
+          if (valid) {
+            for (auto channel = 0U; channel < 2; ++channel) {
+              const auto &source = buffer->buffer->datas[channel];
+              auto &destination = extra->buffer->datas[channel];
+              std::memcpy(destination.data, static_cast<const char *>(source.data) + source.chunk->offset, source.chunk->size);
+              *destination.chunk = *source.chunk;
+              destination.chunk->offset = 0;
+            }
+            extra->size = buffer->size;
+          } else {
+            extra->size = 0;
+            if (extra->buffer) for (auto channel = 0U; channel < extra->buffer->n_datas; ++channel)
+              if (auto *chunk = extra->buffer->datas[channel].chunk) chunk->size = 0;
+          }
+          validInjection = valid;
+        }
+      }
+    }
+  }
   const auto result = realQueue(stream, buffer);
   if (record != nullptr && result < 0) record->queueErrors.fetch_add(1, std::memory_order_relaxed);
+  if (injected) queuedOutputInjected.store(realQueue(stream, injected) >= 0 && validInjection);
   return result;
 }
 
@@ -194,11 +276,19 @@ void finishProductPcmTrace() {
     output << separator << "{\"name\":" << std::quoted(stream.name) << ",\"node\":" << std::quoted(stream.node) << ",\"direction\":" << stream.direction
            << ",\"flags\":" << stream.flags << ",\"count\":" << count << ",\"empty\":" << stream.empty.load()
            << ",\"queueErrors\":" << stream.queueErrors.load() << ",\"overflow\":"
-           << (count > stream.records.size() ? "true" : "false") << ",\"records\":[";
+           << (count > stream.records.size() ? "true" : "false") << ",\"states\":[";
+    for (auto index = std::size_t{0}; index < stream.stateCount; ++index) {
+      if (index) output << ',';
+      const auto &state = stream.states[index];
+      output << '[' << state.observed << ',' << state.previous << ',' << state.current << ']';
+    }
+    output << "],\"records\":[";
     for (auto index = std::size_t{0}; index < std::min(count, stream.records.size()); ++index) {
       const auto &record = stream.records[index];
       if (index != 0) output << ',';
-      output << "{\"time\":" << record.time << ",\"ticks\":" << record.ticks << ",\"frames\":" << record.frames << ",\"channels\":[";
+      output << "{\"observed\":" << record.observed << ",\"time\":" << record.time << ",\"ticks\":" << record.ticks
+             << ",\"delay\":" << record.delay << ",\"queued\":" << record.queued << ",\"buffered\":" << record.buffered
+             << ",\"queuedBuffers\":" << record.queuedBuffers << ",\"frames\":" << record.frames << ",\"channels\":[";
       for (auto channel = std::size_t{0}; channel < record.channels.size(); ++channel) {
         const auto &values = record.channels[channel];
         if (channel != 0) output << ',';

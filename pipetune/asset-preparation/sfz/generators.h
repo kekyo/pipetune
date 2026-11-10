@@ -18,7 +18,7 @@ namespace pipetune::assets {
 bool isSfzGenerator(std::string_view sample) noexcept;
 
 /**
- * Describes a generated sample for the normal bank capacity selection.
+ * Describes a generated sample for the normal bank capacity validation.
  * @param sample Recognized generator name.
  * @return Mono PCM dimensions and zero encoded-file bytes.
  * @throws SfzError The generator is unknown.

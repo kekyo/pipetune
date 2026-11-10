@@ -194,7 +194,7 @@ stages; a mode containing only those stages can therefore sound unchanged.
 
 ## External assets
 
-SFZ Note Player, IR Reverb, and Room EQ read the data registered by EffeTune
+SoundFont Note Player, IR Reverb, and Room EQ read the data registered by EffeTune
 desktop under `$XDG_CONFIG_HOME/effetune`, or `~/.config/effetune` when the XDG
 variable is unset. A preset contains references, so copying the preset alone
 does not copy its instrument, IR, or measurement. Register the original data
@@ -205,11 +205,11 @@ locations for an SFZ instrument.
 
 | Effect | Required saved data |
 | --- | --- |
-| SFZ Note Player | `sfz-references.json`, its registered SFZ root, any ARIA bank definitions in use, included definitions, and referenced sample files |
+| SoundFont Note Player | `sfz-references.json`, its registered SFZ root, any ARIA bank definitions in use, included definitions, and referenced sample files |
 | IR Reverb | `ir-library/index.json` and the single original or L/R original pair named in that index |
 | Room EQ | `measurement-backups/<id>.json`, including the selected channel response and, for Correction, every measurement point's IR |
 
-The layouts follow the upstream [SFZ registration](https://github.com/Frieve-A/effetune/blob/v2.14.0/electron/sfz-library-ipc.js),
+The layouts follow the upstream [instrument registration](https://github.com/Frieve-A/effetune/blob/v2.17.0/electron/sfz-library-ipc.js),
 [IR library](https://github.com/Frieve-A/effetune/blob/v2.13.0/electron/ir-library-ipc.js),
 and [measurement backups](https://github.com/Frieve-A/effetune/blob/v2.13.0/electron/measurement-backup-ipc.cjs).
 PipeTune reads these originals without modifying EffeTune's library. Initial
@@ -222,30 +222,44 @@ from the saved linear IRs. See the [upstream measurement format](https://github.
 Each backup can be at most 64 MiB, including optional data. If an updated file
 exceeds that limit, reloading fails and the active preset stays in use.
 
-SFZ follows [EffeTune 2.14.0 preparation](https://github.com/Frieve-A/effetune/blob/v2.14.0/js/sfz/service.js),
-including includes, inherited regions, loops, and envelopes. WAV, AIFF, and FLAC
+SoundFont Note Player is the new name for SFZ Note Player in EffeTune 2.17.0.
+PipeTune uses existing SFZ instruments to play notes detected in the audio input.
+SF2/SF3 instruments are not supported. Their presence in the registry does not
+prevent loading an SFZ, but selecting one rejects the replacement and retains
+the active audio processing. The MIDI-only SoundFont Player is omitted with a
+warning; supported DSPs in the same preset continue processing.
+See the [official plugin guide](https://github.com/Frieve-A/effetune/blob/v2.17.0/docs/plugins/others.md)
+for the distinction between these plugins.
+
+SFZ supports includes, inherited regions, loops, and envelopes. WAV, AIFF, and FLAC
 mono/stereo samples are supported. When the registered instrument library has
 an ARIA bank definition, PipeTune applies definitions such as `$sample_dir` to
 the SFZ. The SFZ file, its includes, and ARIA XML use valid UTF-8 first and
 fall back to Windows-1252 for invalid bytes. `*sine`, `*saw`, `*square`,
 `*triangle`, `*tri`, `*noise`, and `*silence`
-generate samples without an external audio file. Sample Shift (`ss`) selects a
+generate samples without an external audio file. `*noise` uses 2.17.0's continuous
+generator. Instruments using scripts, additional modulation opcodes, built-in
+effects, embedded samples, or streaming directives are rejected with a diagnostic.
+See the [official SFZ specification](https://github.com/Frieve-A/effetune/blob/v2.17.0/specifications/sfz/README.md)
+for the upstream engine's wider feature set. Sample Shift (`ss`) selects a
 sample up to six semitones away while preserving the output pitch.
-Select `Classic` or `Event` with Detection Mode in EffeTune 2.16.0's SFZ Note
+Select `Classic` or `Event` with Detection Mode in EffeTune 2.17.0's SoundFont Note
 Player settings, then save the preset. PipeTune uses the saved mode; a preset
 without one uses `Classic`. `Event` uses confirmed note starts and ends to
 control playback and adds about 140 ms of latency compared with `Classic`.
 PipeTune includes that latency in automatic alignment with other audio paths.
 Changing only the detection mode reuses the prepared instrument.
-See [EffeTune 2.16.0's SFZ Note Player settings](https://github.com/Frieve-A/effetune/blob/v2.16.0/plugins/others/sfz_note_player.js).
+See [EffeTune 2.17.0's SoundFont Note Player settings](https://github.com/Frieve-A/effetune/blob/v2.17.0/plugins/others/sfz_note_player.js).
 The bank budget defaults to 256 MiB; select
 64, 128, 256, 512, or 1024 MiB in settings, with `--sfz-max-size MIB` for direct
-runs or `PIPETUNE_SFZ_MAX_SIZE_MIB` in the daemon configuration. When necessary,
-the upstream selection rule reduces layers while preserving the playable keys.
-Skipped regions, missing samples in a usable partial instrument, reduced
-banks, and adjustments to out-of-range envelope times are reported on the
-active DSP. An instrument that cannot retain all
-playable keys within the budget fails loading. Sample paths must stay within
+runs or `PIPETUNE_SFZ_MAX_SIZE_MIB` in the daemon configuration.
+The bank budget includes instrument data and native preparation storage;
+requirements depend on the processing rate and channel count. All layers and
+original files must fit; an oversized instrument fails loading. Layers are
+never reduced to fit the budget, following
+[EffeTune 2.17.0's capacity validation](https://github.com/Frieve-A/effetune/blob/v2.17.0/js/sfz/service.js).
+Skipped regions, missing samples in a usable partial instrument, and adjustments
+to out-of-range envelope times are reported on the active DSP. Sample paths must stay within
 the registered root.
 
 IR Reverb supports WAV/IRS, AIFF, FLAC, MP3, Ogg, and M4A originals decoded by the
@@ -279,6 +293,9 @@ reload keeps the previous audio pipeline and reports the error. An unassigned
 effect remains active with a diagnostic. Disabled nodes and disabled sections
 do not load external files. Crosstalk Cancellation retains its existing behavior:
 invalid measurements omit that node with a warning.
+
+Updating to 2.17.0 regenerates old SFZ cache entries from the originals.
+The IR and Room EQ cache formats are unchanged.
 
 Large preparations and a replacement running alongside the old pipeline share
 a native memory budget: 4 GiB on 64-bit systems and 1 GiB on 32-bit systems.
