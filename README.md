@@ -34,9 +34,7 @@ you can then immediately apply them in PipeTune to apply effects to all Linux so
 - SoundFont Note Player (formerly SFZ Note Player) loads SFZ instruments registered in EffeTune with ARIA bank definitions
   for variables and sample locations, generated waveforms, and semitone sample
   selection.
-- SF2/SF3 instruments and MIDI performance are not supported.
 - SoundFont Note Player uses the `Classic` or `Event` note detection mode saved in EffeTune.
-  Presets without a mode use `Classic`. `Event` adds about 140 ms of latency.
 - Automatically negotiates the sampling rate with the PipeWire graph, or computes the DSP at specified rates of 44.1, 48, 96, 192, or 384 kHz.
 - The DSP performs computations entirely in native code.
   You can choose between Scalar (for compatibility), automatic SIMD selection, or CPU-verified implementations for specific instruction sets.
@@ -645,6 +643,8 @@ journalctl --user -u pipetune.service
 ## Limitations
 
 - Network player functionality is not supported.
+- SF2/SF3 instruments and MIDI performance are not supported.
+- SoundFont Note Player `Event` adds about 140 ms of latency.
 
 ## More information
 
