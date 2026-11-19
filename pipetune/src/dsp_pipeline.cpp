@@ -371,6 +371,14 @@ static std::uint32_t bitWidth(std::uint32_t mask) {
   return mask == 0 ? 0u : 32u - static_cast<std::uint32_t>(std::countl_zero(mask));
 }
 
+static const char *unsupportedHostPluginReason(std::string_view typeName) {
+  if (typeName == "NetworkSendPlugin" || typeName == "NetworkReceivePlugin")
+    return "Live network audio send and receive are not supported";
+  if (typeName == "SoundFontPlayerPlugin")
+    return "MIDI input and performance are not supported";
+  return nullptr;
+}
+
 static PresetChannelLayout inferPresetChannelLayout(yyjson_val *pipelineValue) {
   auto nodes = std::vector<LayoutNode>{};
   auto layout = PresetChannelLayout{};
@@ -389,7 +397,7 @@ static PresetChannelLayout inferPresetChannelLayout(yyjson_val *pipelineValue) {
     }
     const auto *definition = findDspByDisplayName(node.name);
     if (!node.enabled || (insideSection && !sectionEnabled) || definition == nullptr ||
-        definition->visualizationOnly ||
+        definition->visualizationOnly || unsupportedHostPluginReason(definition->typeName) != nullptr ||
         (definition->requiresExternalAssets &&
          !(node.name == "IR Reverb" || definition->typeName == "SFZNotePlayerPlugin" ||
            node.name == "Room EQ" || node.name == "Bass Management" ||
@@ -778,9 +786,9 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
       entry.state = PresetEntryState::off;
       continue;
     }
-    if (definition->typeName == "SoundFontPlayerPlugin") {
+    if (const auto *reason = unsupportedHostPluginReason(definition->typeName)) {
       warnings.push_back({.nodeIndex = index, .pluginName = std::string(node.name),
-          .reason = "MIDI input and performance are not supported"});
+          .reason = reason});
       continue;
     }
     const auto crosstalk = node.name == "Crosstalk Cancellation";
