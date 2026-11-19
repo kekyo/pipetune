@@ -951,7 +951,7 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
       // supported 32..384 kHz range, 64 MiB bounds resampling tables, analyzer
       // frontends/models, voices and their preparation scratch. Account for
       // block planes and rate/channel-dependent delay lines separately.
-      // https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/plugins/others/sfz/engine.h
+      // https://github.com/Frieve-A/effetune/blob/v2.18.0/dsp/plugins/others/sfz/engine.h
       sfzFixedBytes = 64ull * 1024 * 1024 + 32ull * options.maxFrames +
           8ull * static_cast<std::uint64_t>(std::ceil(options.sampleRate)) * (options.maxChannels + 2u);
       try {

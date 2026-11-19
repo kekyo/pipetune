@@ -707,9 +707,11 @@ static bool prepareGoldenAsset(const BackendApi &api, et_engine engine,
         pipetune::assets::kMaximumSfzBytes);
     auto additionalBytes = std::uint64_t{0};
     const auto controlBytes = 32u + 4u * (12u + 113u * bank.regionCount);
+    const auto playerKind = std::string_view(testCase.typeName) == "SoundFontPlayerPlugin"
+        ? ET_SAMPLE_PLAYER_MAIN : ET_SAMPLE_PLAYER_NOTE;
     if (api.samplePlayerPreparationBytes(bank.payload.data(), controlBytes, bank.payload.size(),
         ET_ASSET_F32_MULTICH, testCase.sampleRate, testCase.channelCount,
-        std::max(32u, testCase.blockSize), 0, &additionalBytes, ET_SAMPLE_PLAYER_NOTE) != ET_OK ||
+        std::max(32u, testCase.blockSize), 0, &additionalBytes, playerKind) != ET_OK ||
         additionalBytes + bank.payload.size() > UINT32_MAX) return false;
     const auto info = pipetune_effetune_asset_info_v1{.channels = 1, .frames = bank.samples,
         .topology = 0, .head_block = 0, .rate_divider = 1, .path_count = 0, .input_count = 0,
@@ -1262,6 +1264,8 @@ int main(int argc, char **argv) {
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "others/sfz_note_player/golden", 13u);
       checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "others/soundfont_player/golden", 2u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
                            pluginRoot / "analyzer/analog_meter/golden", 6u);
       for (const auto number : {11u, 15u, 16u, 18u, 19u})
         checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
@@ -1332,6 +1336,7 @@ int main(int argc, char **argv) {
         checkMetadataGoldens(simd, expected, pluginRoot / "resonator/adaptive_prediction_effect/golden", 17u);
         checkMetadataGoldens(simd, expected, pluginRoot / "reverb/ir_reverb/golden", 13u);
         checkMetadataGoldens(simd, expected, pluginRoot / "others/sfz_note_player/golden", 13u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "others/soundfont_player/golden", 2u);
         checkMetadataGoldens(simd, expected, pluginRoot / "analyzer/analog_meter/golden", 6u);
         for (const auto number : {11u, 15u, 16u, 18u, 19u})
           checkMetadataGoldens(simd, expected, pluginRoot / "lofi/am_radio_simulator/golden", 1u, number);
