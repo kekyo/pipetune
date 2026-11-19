@@ -2,12 +2,13 @@
 
 ## Boundary and replacement policy
 
-PipeTune's native DSP engine follows the EffeTune application tag v2.18.0, commit
-`738a3eab7f2e4ff02086805d04ae00a9dcaf5065`. The C++20 libraries in
+PipeTune's native DSP engine follows the EffeTune application tag v2.18.1, commit
+`7de52ecc9158888dd437411aed438894d2ab2d1a`. The C++20 libraries in
 `asset-preparation/` adapt the JavaScript preparation needed before the upstream
 native kernels can run. The SFZ bank and generator preparation inherited from 2.17.0
-matches the 2.18.0 packer for PipeTune's supported resident instruments.
-The source identity and preparation contract are part of the cache key.
+matches the 2.18.1 packer for PipeTune's supported resident instruments.
+The cache key includes the source identity and preparation contract. PipeTune
+can reuse resident SFZ banks cached by the 2.18.0 build.
 The libraries accept values, source text, and decoded PCM in
 memory, and return prepared data, source requests, and diagnostics. They do not
 depend on PipeWire, GTK, JSON storage, XDG paths, a decoder, or the native engine.

@@ -54,7 +54,7 @@ not supported by this MVP.
 
 - Loads canonical and legacy EffeTune preset JSON from files whose extension is
   exactly `.effetune_preset`.
-- Builds all 115 kernels in the pinned EffeTune 2.18.0 native registry and supports routing through 16 planar channels.
+- Builds all 115 kernels in the pinned EffeTune 2.18.1 native registry and supports routing through 16 planar channels.
 - Presets containing Live Audio Send or Receive process local audio through the surrounding effects.
   Active markers appear as Ignored with a network audio warning. Disabled markers appear as Off.
 - Runs Spatial Mapper and TV Audio Simulator presets; see the
@@ -147,7 +147,7 @@ cd PipeTune
 git submodule update --init --recursive
 ```
 
-`deps/effetune` follows the official application tag v2.18.0.
+`deps/effetune` follows the official application tag v2.18.1.
 `deps/yyjson` is pinned to yyjson 0.12.0.
 `deps/cardio` supplies asynchronous native file operations.
 
