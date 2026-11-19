@@ -152,7 +152,8 @@ static int runProduct(const char *preset, std::string_view scenario) {
     configuration.channels.resize(2);
   }
   configuration.mode = pipetune::OutputMode::multiple;
-  if (scenario == "product-output-status-single" || meterTest || modeVolume || scenario == "product-source-resume-single")
+  if (scenario == "product-output-status-single" || meterTest || modeVolume ||
+      scenario == "product-source-resume-single" || scenario == "product-source-resume-room")
     configuration.mode = pipetune::OutputMode::single;
   if (scenario == "product-slots") {
     const auto &a = configuration.outputs[0].id;
@@ -273,6 +274,9 @@ struct AudioTest {
   bool meters = false;
   bool sourceResume = false;
   bool singleResume = false;
+  bool roomWake = false;
+  unsigned roomImpulses = 0;
+  float settledRoomImpulse = 0.0F;
   bool slots = false;
   bool volume = false;
   bool daemonVolume = false;
@@ -824,6 +828,18 @@ static void capture(void *data) {
         fail(test, "mismatched recovery profile received audio");
       if (test.sourceResume) {
         const auto selected = test.singleResume ? output.index == 2 : output.index < 2;
+        if (test.roomWake && test.stage != 2) {
+          // The direct tap is the only sample above 0.5. Compare the first
+          // impulse after sleep with a settled impulse on the same device.
+          if (selected && channel == 0 && sample > 0.5F && !test.awaitingControl) {
+            ++test.roomImpulses;
+            if (test.stage == 0) test.settledRoomImpulse = sample;
+            if (test.stage == 3 && std::abs(sample - test.settledRoomImpulse) > 0.00001F)
+              fail(test, "first Room EQ tap after sleep differs from the active filter: " +
+                  std::to_string(sample) + " versus " + std::to_string(test.settledRoomImpulse));
+          }
+          continue;
+        }
         if (selected && test.stage == 2 && test.produced > 0 && std::abs(sample) > 0.00001F)
           fail(test, "source A PCM escaped after source B started with silence");
         expected = test.stage == 2 ? 0.0F : (channel == 0 ? 0.25F : 0.5F) *
@@ -892,10 +908,16 @@ static void capture(void *data) {
   }
   if (test.sourceResume) {
     if (test.stage == 1 || test.awaitingControl || (test.singleResume ? output.index != 2 : output.index >= 2)) return;
-    output.frames = matches ? output.frames + frames : 0;
-    const auto complete = test.singleResume ? test.outputs[2].frames >= 32768 :
-        test.outputs[0].frames >= 32768 && test.outputs[1].frames >= 32768;
-    if (!complete || test.produced < 32768) return;
+    if (test.roomWake && test.stage != 2) {
+      if (test.roomImpulses < (test.stage == 0 ? 3u : 1u)) return;
+      if (std::abs(test.settledRoomImpulse - 1.0F) < 0.01F)
+        return fail(test, "the settled Room EQ impulse must distinguish correction from dry PCM");
+    } else {
+      output.frames = matches ? output.frames + frames : 0;
+      const auto complete = test.singleResume ? test.outputs[2].frames >= 32768 :
+          test.outputs[0].frames >= 32768 && test.outputs[1].frames >= 32768;
+      if (!complete || test.produced < 32768) return;
+    }
     if (test.stage == 3) return static_cast<void>(pw_main_loop_quit(test.loop));
     test.awaitingControl = true;
     std::cerr << (test.stage == 0 ? "product:source-a-heard\n" : "product:source-b-clean\n") << std::flush;
@@ -1073,6 +1095,12 @@ static void produce(void *data) {
       for (auto frame = 0U; frame < frames; ++frame)
         static_cast<float *>(plane.data)[frame] = (channel == 0 ? 0.25F : 0.5F) *
             std::sin(2.0 * std::numbers::pi * 997.0 * static_cast<double>((test.produced + frame) % 48000) / 48000.0);
+    } else if (test.roomWake) {
+      for (auto frame = 0u; frame < frames; ++frame) {
+        const auto position = test.produced + frame;
+        const auto impulse = (test.stage == 0 && position % 16384u == 0) || (test.stage == 3 && position == 0);
+        static_cast<float *>(plane.data)[frame] = channel == 0 && impulse ? 1.0F : 0.0F;
+      }
     } else if (test.sourceResume) std::fill_n(static_cast<float *>(plane.data), frames,
         test.stage == 2 ? 0.0F : (channel == 0 ? 0.25F : 0.5F) * (test.stage == 3 ? -1.0F : 1.0F));
     else std::fill_n(static_cast<float *>(plane.data), frames,
@@ -1364,7 +1392,8 @@ static int runAudio(std::string_view scenario) {
   test.matrix = scenario != "product-bypass";
   test.meters = scenario == "product-preset-meters";
   test.sourceResume = scenario.starts_with("product-source-resume");
-  test.singleResume = scenario == "product-source-resume-single";
+  test.roomWake = scenario == "product-source-resume-room";
+  test.singleResume = scenario == "product-source-resume-single" || test.roomWake;
   test.slots = scenario == "product-slots";
   test.daemonVolume = scenario.starts_with("product-daemon-volume");
   test.restoredVolume = test.daemonVolume && !scenario.ends_with("-save");
@@ -1477,6 +1506,7 @@ static int runAudio(std::string_view scenario) {
       test.awaitingControl = false;
       ++test.stage;
       test.produced = 0;
+      test.roomImpulses = 0;
       for (auto &output : test.outputs) output.frames = 0;
       if (test.stage == 2) startSource(&test, 0);
       return;

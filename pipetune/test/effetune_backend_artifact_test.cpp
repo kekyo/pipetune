@@ -1053,6 +1053,14 @@ static void checkGoldenCases(const BackendApi &api, std::uint32_t variant,
   }
 }
 
+static void checkResetFilterGoldens(const BackendApi &api, std::uint32_t variant,
+                                    const std::filesystem::path &pluginRoot) {
+  for (const auto *path : {"basics/fir_crossover", "eq/five_band_fir_peq", "eq/group_delay_eq",
+                           "eq/group_delay_peq", "eq/room_eq"})
+    checkMetadataGoldens(api, variant, pluginRoot / path / "golden", 1u);
+  checkMetadataGoldens(api, variant, pluginRoot / "spatial/crosstalk_cancellation/golden", 1u, 6u);
+}
+
 static void checkAllAbiSymbols(void *handle) {
   static constexpr std::array names = {
       "et_abi_version",
@@ -1244,6 +1252,7 @@ int main(int argc, char **argv) {
             "scalar backend must report its concrete variant");
       checkAllAbiSymbols(scalar.handle);
       checkEffeTune218Catalog(scalar);
+      checkResetFilterGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR, pluginRoot);
       checkTubeRuntimeContract(scalar);
       checkCallerFloatingPointState(scalar);
       checkDecayAndQuietInput(scalar);
@@ -1324,6 +1333,7 @@ int main(int argc, char **argv) {
               "SIMD backend must report its concrete variant");
         checkAllAbiSymbols(simd.handle);
         checkCatalogsMatch(scalar, simd);
+        checkResetFilterGoldens(simd, expected, pluginRoot);
         checkTubeRuntimeContract(simd);
         checkCallerFloatingPointState(simd);
         checkDecayAndQuietInput(simd);
