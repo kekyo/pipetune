@@ -138,7 +138,7 @@ static std::string roomCacheIdentity(const std::filesystem::path &directory,
     std::span<const AssetFileSnapshot> snapshots, std::uint32_t width, std::uint32_t head) {
   auto identity = std::ostringstream{};
   identity.imbue(std::locale::classic());
-  identity << "effetune:6791afdfc6f4e6c913b9f48c8189a44e29a09bde/room-v1/ETA1" << '\0'
+  identity << "effetune:6791afdfc6f4e6c913b9f48c8189a44e29a09bde/room-v2/ETA1" << '\0'
            << directory.lexically_normal().string() << '\0' << std::setprecision(17)
            << config.sampleRate << '/' << config.taps << '/' << static_cast<unsigned>(config.phase) << '/'
            << width << '/' << head << '/' << config.smoothing << '/' << config.lowFrequency << '/'

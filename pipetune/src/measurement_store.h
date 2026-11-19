@@ -40,13 +40,13 @@ struct MeasurementReference {
 MeasurementReference parseMeasurementReference(std::string_view reference);
 
 /**
- * Reads and validates a bounded measurement JSON through the current GIO dispatcher.
+ * Reads a bounded measurement JSON eligible for acoustic correction through the current GIO dispatcher.
  * @param store Per-preparation document and source-identity cache.
  * @param id Physical measurement ID.
  * @param maximumBytes Source size admitted before allocation.
  * @param cancellation Preparation cancellation.
  * @return Document owned by store, whose root ID matches id.
- * @throws std::runtime_error For unavailable, changed, invalid, or oversized data.
+ * @throws std::runtime_error For unavailable, changed, invalid, oversized, or effect-pipeline measurements.
  */
 cardio::promise<yyjson_doc *> readMeasurementSessionAsync(MeasurementStore &store,
     const std::string &id, std::size_t maximumBytes, cardio::cancellation cancellation);

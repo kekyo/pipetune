@@ -30,7 +30,11 @@ you can then immediately apply them in PipeTune to apply effects to all Linux so
 - You can load EffeTune preset files to apply a DSP pipeline to the audio output of the entire Linux system.
 - Loads standard and legacy EffeTune preset files with the `.effetune_preset` extension
   and applies the DSP pipeline to desktop audio.
-- Implements the EffeTune 2.17.0 DSP engine.
+- Uses the EffeTune 2.18.0 DSP engine.
+- Presets containing Live Audio Send or Receive apply the effects on either side of the markers to local PipeWire audio.
+  Each active marker reports that network audio transport is unavailable.
+- Room EQ and Crosstalk Cancellation use measurements taken with the effect pipeline bypassed.
+  [Measuring with EffeTune](https://github.com/Frieve-A/effetune/blob/v2.18.0/docs/measurement.md#measuring-with-the-effect-pipeline)
 - SoundFont Note Player (formerly SFZ Note Player) loads SFZ instruments registered in EffeTune with ARIA bank definitions
   for variables and sample locations, generated waveforms, and semitone sample
   selection.

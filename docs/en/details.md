@@ -1,5 +1,12 @@
 # Details
 
+## Presets with Live Audio Send or Receive
+
+Live Audio Send and Live Audio Receive mark where EffeTune sends or receives network audio.
+PipeTune processes local PipeWire input from the beginning of the preset. Effects on either side of a marker run in their saved order.
+An active marker appears as Ignored with a warning that network audio transport is unavailable. Disabling the marker or its Section shows it as Off.
+[EffeTune's Live Audio Send and Receive](https://github.com/Frieve-A/effetune/blob/v2.18.0/docs/plugins/control.md)
+
 ## Crosstalk Cancellation
 
 PipeTune can apply EffeTune's Crosstalk Cancellation to stereo speaker playback.
@@ -222,6 +229,14 @@ from the saved linear IRs. See the [upstream measurement format](https://github.
 Each backup can be at most 64 MiB, including optional data. If an updated file
 exceeds that limit, reloading fails and the active preset stays in use.
 
+Choose a measurement made with the effect pipeline bypassed for Room EQ or Crosstalk Cancellation.
+EffeTune 2.18.0 records an `effectPipeline` field when the measurement signal passes through effects.
+Room EQ rejects that measurement and keeps the active preset. Crosstalk Cancellation reports a warning and the other effects continue processing.
+[Measuring with EffeTune](https://github.com/Frieve-A/effetune/blob/v2.18.0/docs/measurement.md#measuring-with-the-effect-pipeline)
+
+When an active Room EQ filter resumes after DSP idle suspension, it applies correction from the first sample.
+[EffeTune Room EQ](https://github.com/Frieve-A/effetune/blob/v2.18.0/dsp/plugins/eq/room_eq/kernel.cpp)
+
 SoundFont Note Player is the new name for SFZ Note Player in EffeTune 2.17.0.
 PipeTune uses existing SFZ instruments to play notes detected in the audio input.
 SF2/SF3 instruments are not supported. Their presence in the registry does not
@@ -294,8 +309,8 @@ effect remains active with a diagnostic. Disabled nodes and disabled sections
 do not load external files. Crosstalk Cancellation retains its existing behavior:
 invalid measurements omit that node with a warning.
 
-Updating to 2.17.0 regenerates old SFZ cache entries from the originals.
-The IR and Room EQ cache formats are unchanged.
+After an upgrade from 2.17.0 to 2.18.0, Room EQ regenerates each filter from its measurement on first use.
+Subsequent loads reuse the filter. Registered SFZ instruments and IR Reverb can reuse their existing cache entries.
 
 Large preparations and a replacement running alongside the old pipeline share
 a native memory budget: 4 GiB on 64-bit systems and 1 GiB on 32-bit systems.

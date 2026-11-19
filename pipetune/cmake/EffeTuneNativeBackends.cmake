@@ -353,9 +353,11 @@ function(
       "${EFFETUNE_DSP_DIR}/plugins/lofi/tape_artifacts/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/lofi/tv_audio_simulator/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/lofi/vinyl_artifacts/kernel.cpp"
+      "${EFFETUNE_DSP_DIR}/plugins/lofi/vinyl_simulator/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/restoration/click_remover/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/restoration/clip_restorer/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/restoration/noise_reduction/kernel.cpp"
+      "${EFFETUNE_DSP_DIR}/plugins/saturation/tube_simulator/kernel.cpp"
     APPEND
     PROPERTY COMPILE_OPTIONS
              "$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-ffp-contract=off>")

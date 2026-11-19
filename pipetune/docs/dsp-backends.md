@@ -27,7 +27,7 @@ This separation preserves one known compatibility path while allowing
 PipeTune to select the highest usable optimized implementation or a
 user-pinned tier. One pipeline always uses exactly one implementation.
 
-The private backend source set follows the EffeTune application tag v2.17.0,
+The private backend source set follows the EffeTune application tag v2.18.0,
 including the graph core, `spectrum_tap.cpp`, and generated graph-capacity
 contract required by its engine.
 PipeTune's loader surface remains the routed pipeline API and now includes
@@ -41,8 +41,8 @@ is edited, and no generated patch or private Engine access is needed.
 The legacy WASM32 `et_instance_asset_begin` is not exported by PipeTune's loader.
 SFZ admission queries `et_sample_player_preparation_bytes` on the selected
 native backend using the actual rate, channel count, maximum block length,
-and a minimum physical BPM of zero. See the [native host contract](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/README.md#native-midi-sample-player-hosts)
-and [public declarations](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/include/effetune/abi.h).
+and a minimum physical BPM of zero. See the [native host contract](https://github.com/Frieve-A/effetune/blob/v2.18.0/dsp/README.md#native-midi-sample-player-hosts)
+and [public declarations](https://github.com/Frieve-A/effetune/blob/v2.18.0/dsp/include/effetune/abi.h).
 
 Debug shared backends and their PFFFT libraries use `-Og` to reduce processing
 overhead while preserving debugging support. Debug symbols, `ET_DEBUG_BUILD` allocation
@@ -177,7 +177,7 @@ and validates:
 - each kernel's parameter-byte capacity; and
 - every external-asset capacity.
 
-The pinned EffeTune 2.17.0 contract contains 113 kernels. SoundFont Note Player has
+The pinned EffeTune 2.18.0 contract contains 115 kernels. SoundFont Note Player has
 21 float parameters with hash `0x3785c6ed`, including the saved `Classic` or `Event` detection mode
 and the new `sp0` preset selector (default -1);
 an omitted mode selects `Classic`. `Event` adds seven 20 ms analysis hops to
@@ -191,13 +191,17 @@ Rhythm Analyzer accepts four floats with hash `0xf854c585`, including `dm`
 packers follow upstream coercion for omitted, valid, and invalid values.
 Note Spectrogram remains excluded from preset execution even with `ck=true`.
 `et_instance_stream_boundary` is marked app-internal upstream and is not part of
-PipeTune's loader API. These contracts follow the [upstream metadata](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/bindings/generated/effects-v1.private.json)
-and [ABI declarations](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/include/effetune/abi.h).
+PipeTune's loader API. These contracts follow the [upstream metadata](https://github.com/Frieve-A/effetune/blob/v2.18.0/dsp/bindings/generated/effects-v1.private.json)
+and [ABI declarations](https://github.com/Frieve-A/effetune/blob/v2.18.0/dsp/include/effetune/abi.h).
 
-The additional SoundFont Player has four floats with hash `0x844a0998`.
+SoundFont Player has eight floats with hash `0xf271de51` and defaults to 256 voices.
 Both players advertise a 1 GiB slot. SoundFont Player requires MIDI events and
 is omitted from PipeTune presets with an unsupported-MIDI warning. The existing
 Note Player supports SFZ only; SF2/SF3 loading remains outside this integration.
+
+Live Audio Send and Receive each have zero floats and hash `0x811c9dc5`. PipeTune reports their
+host-managed network transport as unavailable and processes local audio through the remaining effects.
+[Upstream control plugins](https://github.com/Frieve-A/effetune/blob/v2.18.0/docs/plugins/control.md)
 
 This count includes nine visualization-only analyzers excluded from preset
 execution and does not mean every registered effect is available without
@@ -209,9 +213,9 @@ their validated layouts even though PipeTune omits their execution.
 
 Tonal Balance EQ, Rhythm Analyzer, Analog Meter, TV Audio Simulator,
 Attack Tonal Balance, Adaptive Prediction, SoundFont Note Player, SoundFont Player,
-and Note Spectrogram
+Note Spectrogram, Vinyl Simulator, and Tube Simulator
 use the same source-specific `-ffp-contract=off` policy
-as the [upstream native build](https://github.com/Frieve-A/effetune/blob/v2.17.0/dsp/CMakeLists.txt).
+as the [upstream native build](https://github.com/Frieve-A/effetune/blob/v2.18.0/dsp/CMakeLists.txt).
 Artifact tests load every CPU-applicable private backend and compare all seven
 Spatial Mapper and six TV Audio Simulator golden cases, including their input
 stimuli and parameter events. Spatial Mapper's goldens originate from the
@@ -232,6 +236,12 @@ retained for every case.
 The existing references cover all 17 Adaptive Prediction and 11 Classic SoundFont
 Note Player goldens, alongside the 18 Cassette Artifacts and 13 IR Reverb goldens.
 Two EffeTune 2.15.0 Event references bring Note Player to 13 golden cases.
+The two SoundFont Player preview cases use the main player's native preparation estimate.
+The 2.18.0 reset references cover FIR Crossover, 5Band FIR PEQ, Group Delay EQ, Group Delay PEQ,
+Room EQ, and Crosstalk Cancellation. A prepared filter applies its response from the first
+sample after reset. The Room EQ PipeWire test compares that sample after idle suspension with
+the filter's settled response on the same output device.
+[Upstream Room EQ reset](https://github.com/Frieve-A/effetune/blob/v2.18.0/dsp/plugins/eq/room_eq/kernel.cpp)
 The shared-backend tests also cover ten Chorus and nine FDN Reverb goldens,
 long decays, subnormal inputs, and x86 MXCSR restoration on successful and
 rejected renders.

@@ -27,7 +27,11 @@ EffeTune上で、環境音を構成してプリセットとして保存すれば
   DSPパイプラインを適用できます。
 - `.effetune_preset`拡張子の標準形式および旧形式のEffeTuneプリセットファイルを
   読み込み、DSPパイプラインをデスクトップ音声へ適用します。
-- EffeTune 2.17.0 DSPエンジンを実装しています。
+- EffeTune 2.18.0のDSPエンジンを使用します。
+- Live Audio Send／Receiveを含むプリセットでも、前後のエフェクトをPipeWireの音声に適用できます。
+  有効なマーカーにはネットワーク送受信が未対応であることを表示します。
+- Room EQとCrosstalk Cancellationの補正には、エフェクトを通さずに取得した測定を使用します。
+  [EffeTuneの測定方法](https://github.com/Frieve-A/effetune/blob/v2.18.0/docs/measurement.md#measuring-with-the-effect-pipeline)
 - SoundFont Note Player（旧SFZ Note Player）は、音源の変数とサンプル配置を記すARIAバンク定義、生成波形、
   サンプル選択の半音調整を含む、EffeTuneで登録したSFZ音源を読み込めます。
 - SoundFont Note Playerの音符検出方式はEffeTuneで保存した`Classic`または`Event`を使用します。

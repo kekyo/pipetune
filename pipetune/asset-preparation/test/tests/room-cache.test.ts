@@ -84,6 +84,24 @@ test('Room EQ cache follows sources, settings, rates and processing width withou
     expect(warm.status, warm.stderr).toBe(0);
     expect(warm.hit).toBe(1);
     expect(warm.stdout).toBe(cold.stdout);
+    for (const effectPipeline of [
+      { pluginNames: ['Volume'] },
+      { pluginNames: [] },
+      null,
+    ]) {
+      await writeFile(
+        source,
+        JSON.stringify({ ...measurement, effectPipeline })
+      );
+      const processed = await run(base, 48000, 2, 'scalar', cache);
+      expect(processed.status).toBe(1);
+      expect(processed.stderr).toContain('effect pipeline');
+    }
+    await writeFile(source, JSON.stringify(measurement));
+    const restored = await run(base, 48000, 2, 'scalar', cache);
+    expect(restored.status, restored.stderr).toBe(0);
+    expect(restored.hit).toBe(1);
+    expect(restored.stdout).toBe(cold.stdout);
     const simd = await run(base, 48000, 2, 'simd', cache);
     expect(simd.status, simd.stderr).toBe(0);
     expect(simd.hit).toBe(1);
