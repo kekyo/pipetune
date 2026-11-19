@@ -38,7 +38,7 @@ static void testAnalyzerParameters(const pipetune::DspBackendApi &api) {
               std::array{28.0F, 91.0F, 0.0F, enabled};
           check(api.instanceSetParams(engine, instance, parameters.data(), parameters.size(),
                                       rhythm ? 0xf854c585u : 0xb8518943u, 0) == ET_OK,
-                "the shared backend must accept the 2.17 four-float analyzer parameters");
+                "the shared backend must accept the four-float analyzer parameters");
           auto audio = std::array<float, 128>{};
           audio.fill(0.125F);
           check(api.instanceProcess(engine, instance, audio.data(), 2, 64, 0) == ET_OK,
@@ -102,8 +102,8 @@ static void testMatrixReset(const pipetune::DspBackendApi &api) {
 
 int main(int argc, char **argv) {
   if (argc != 2) return 2;
-  check(pipetune::effetuneVersion() == "2.17.0", "the embedded app version must be 2.17.0");
-  check(pipetune::generatedDspCatalog().size() == 113, "the app catalog must contain 113 DSPs");
+  check(pipetune::effetuneVersion() == "2.18.0", "the embedded app version must be 2.18.0");
+  check(pipetune::generatedDspCatalog().size() == 115, "the app catalog must contain 115 DSPs");
   struct Contract {
     const char *type;
     std::uint32_t hash;
@@ -115,7 +115,9 @@ int main(int argc, char **argv) {
            Contract{"AnalogMeterPlugin", 0xad3d461cu, 7u, 0u},
            Contract{"AdaptivePredictionEffectPlugin", 0xebd8a6f0u, 10u, 0u},
            Contract{"SFZNotePlayerPlugin", 0x3785c6edu, 21u, 1073741824u},
-           Contract{"SoundFontPlayerPlugin", 0x844a0998u, 4u, 1073741824u},
+           Contract{"NetworkReceivePlugin", 0x811c9dc5u, 0u, 0u},
+           Contract{"NetworkSendPlugin", 0x811c9dc5u, 0u, 0u},
+           Contract{"SoundFontPlayerPlugin", 0xf271de51u, 8u, 1073741824u},
            Contract{"CassetteArtifactsPlugin", 0x328491aeu, 13u, 0u},
            Contract{"NoteSpectrogramPlugin", 0xb8518943u, 4u, 0u}}) {
     const auto *definition = pipetune::findDspByTypeName(contract.type);
@@ -124,6 +126,13 @@ int main(int argc, char **argv) {
               definition->assetCapacities[0] == contract.assetBytes &&
               definition->requiresExternalAssets == (contract.assetBytes != 0),
           "new app parameter and asset contracts must match the native kernels");
+  }
+
+  if (const auto *player = pipetune::findDspByDisplayName("SoundFont Player")) {
+    const auto defaults = pipetune::packDspParameters(*player, nullptr);
+    check(defaults.error.empty() &&
+              defaults.floats == std::vector<float>{0, 256, 0, 0, 1, -1, 0, 0},
+          "SoundFont Player must pack the 2.18 voice, preview and compatibility defaults");
   }
 
   const auto discovered = pipetune::discoverDspBackends();
@@ -145,7 +154,7 @@ int main(int argc, char **argv) {
               0.1F, -60, 0, 21, 108, 64, 100, 0, 0, 0, 1, 1, 1, 0, 40, 50, 0, -1, 100, 1, -1};
           check(api.instanceSetParams(engine, instance, parameters.data(), parameters.size(),
                                       0x3785c6edu, 0u) == ET_OK,
-                "the backend must accept the 2.17 SFZ Event detection parameters");
+                "the backend must accept the SFZ Event detection parameters");
         }
       }
       api.engineDestroy(engine);
@@ -164,7 +173,7 @@ int main(int argc, char **argv) {
       }
       check(loaded.pipeline->process(audio, 2u, 64u, block * 64.0 / 48000.0) ==
                 pipetune::ProcessStatus::ok,
-            "the minimal 2.17 preset must process PCM");
+            "the minimal preset must process PCM");
     }
     for (auto frame = 0u; frame < 64u; ++frame)
       check(std::abs(audio[frame] - 0.0625F) < 1e-6F &&

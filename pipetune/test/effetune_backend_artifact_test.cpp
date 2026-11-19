@@ -266,8 +266,8 @@ static std::uint32_t findKernelIndex(const BackendApi &api,
   return count;
 }
 
-static void checkEffeTune217Catalog(const BackendApi &api) {
-  static constexpr std::array<std::string_view, 21> addedTypes = {
+static void checkEffeTune218Catalog(const BackendApi &api) {
+  static constexpr std::array<std::string_view, 23> addedTypes = {
       "GroupDelayPEQPlugin", "MDSimulatorPlugin", "ClickRemoverPlugin",
       "ClipRestorerPlugin", "HumRemoverPlugin", "NoiseReductionPlugin",
       "CrosstalkCancellationPlugin", "NoteSpectrogramPlugin",
@@ -275,12 +275,13 @@ static void checkEffeTune217Catalog(const BackendApi &api) {
       "AttackTonalBalancePlugin", "BassExtenderPlugin",
       "BassManagementPlugin", "ChromaSpiralPlugin", "TonalBalanceEQPlugin",
       "RhythmAnalyzerPlugin", "AnalogMeterPlugin",
-      "AdaptivePredictionEffectPlugin", "SFZNotePlayerPlugin", "SoundFontPlayerPlugin"};
-  check(api.kernelCount() == 113u,
-        "EffeTune 2.17 backend catalog must contain 113 kernels");
+      "AdaptivePredictionEffectPlugin", "SFZNotePlayerPlugin", "SoundFontPlayerPlugin",
+      "NetworkReceivePlugin", "NetworkSendPlugin"};
+  check(api.kernelCount() == 115u,
+        "EffeTune 2.18 backend catalog must contain 115 kernels");
   for (const auto typeName : addedTypes) {
     check(findKernelIndex(api, typeName) < api.kernelCount(),
-          "EffeTune 2.17 backend catalog must contain every required kernel");
+          "EffeTune 2.18 backend catalog must contain every required kernel");
   }
   struct Contract {
     std::string_view type;
@@ -294,7 +295,9 @@ static void checkEffeTune217Catalog(const BackendApi &api) {
            Contract{"AnalogMeterPlugin", 0xad3d461cu, 7u, 0u},
            Contract{"AdaptivePredictionEffectPlugin", 0xebd8a6f0u, 10u, 0u},
            Contract{"SFZNotePlayerPlugin", 0x3785c6edu, 21u, 1073741824u},
-           Contract{"SoundFontPlayerPlugin", 0x844a0998u, 4u, 1073741824u},
+           Contract{"NetworkReceivePlugin", 0x811c9dc5u, 0u, 0u},
+           Contract{"NetworkSendPlugin", 0x811c9dc5u, 0u, 0u},
+           Contract{"SoundFontPlayerPlugin", 0xf271de51u, 8u, 1073741824u},
            Contract{"CassetteArtifactsPlugin", 0x328491aeu, 13u, 0u},
            Contract{"NoteSpectrogramPlugin", 0xb8518943u, 4u, 0u}}) {
     const auto index = findKernelIndex(api, contract.type);
@@ -303,10 +306,10 @@ static void checkEffeTune217Catalog(const BackendApi &api) {
     check(api.kernelParamsHash(index) == contract.hash && definition != nullptr &&
               definition->floatCount == contract.floats &&
               api.kernelParamBytesCapacity(index) == 0u,
-          "EffeTune 2.17 kernels must expose their official parameter layouts");
+          "EffeTune 2.18 kernels must expose their official parameter layouts");
     for (auto slot = 0u; slot < 4u; ++slot)
       check(api.kernelAssetCapacity(index, slot) == (slot == 0u ? contract.assetBytes : 0u),
-            "EffeTune 2.17 kernels must expose their official asset capacities");
+            "EffeTune 2.18 kernels must expose their official asset capacities");
   }
   const auto phaseSelectIndex = findKernelIndex(api, "PhaseSelectEqPlugin");
   check(phaseSelectIndex < api.kernelCount(),
@@ -1238,7 +1241,7 @@ int main(int argc, char **argv) {
                 PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
             "scalar backend must report its concrete variant");
       checkAllAbiSymbols(scalar.handle);
-      checkEffeTune217Catalog(scalar);
+      checkEffeTune218Catalog(scalar);
       checkTubeRuntimeContract(scalar);
       checkCallerFloatingPointState(scalar);
       checkDecayAndQuietInput(scalar);
