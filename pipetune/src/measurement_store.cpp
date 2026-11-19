@@ -55,6 +55,8 @@ cardio::promise<yyjson_doc *> readMeasurementSessionAsync(MeasurementStore &stor
   auto *root = yyjson_doc_get_root(document.get());
   if (!yyjson_is_obj(root) || text(yyjson_obj_get(root, "id")) != id)
     throw std::runtime_error("measurement ID does not match its file");
+  if (yyjson_obj_get(root, "effectPipeline") != nullptr)
+    throw std::runtime_error("measurement " + id + " was captured through the effect pipeline and cannot be used for correction");
   store.snapshots.insert_or_assign(id, AssetFileSnapshot{path, assetSha256(bytes), bytes.size()});
   auto *result = document.get();
   store.documents.emplace(id, std::move(document));
