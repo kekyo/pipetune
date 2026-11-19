@@ -2,11 +2,11 @@
 
 ## Boundary and replacement policy
 
-PipeTune's native DSP engine follows the EffeTune application tag v2.17.0, commit
-`d026b1664ec9444a66297efd36e251bc8aae3d05`. The C++20 libraries in
+PipeTune's native DSP engine follows the EffeTune application tag v2.18.0, commit
+`738a3eab7f2e4ff02086805d04ae00a9dcaf5065`. The C++20 libraries in
 `asset-preparation/` adapt the JavaScript preparation needed before the upstream
-native kernels can run. SFZ bank and generator preparation follow 2.17.0,
-while the parser and source adapters retain the existing resident SFZ subset.
+native kernels can run. The SFZ bank and generator preparation inherited from 2.17.0
+matches the 2.18.0 packer for PipeTune's supported resident instruments.
 The source identity and preparation contract are part of the cache key.
 The libraries accept values, source text, and decoded PCM in
 memory, and return prepared data, source requests, and diagnostics. They do not
@@ -83,6 +83,12 @@ desktop registrations and supply the pure modules. `measurement_store.cpp`
 shares measurement parsing and validation with Crosstalk Cancellation, while
 Crosstalk-specific topology validation remains separate.
 
+Since EffeTune 2.18.0, a backup with a root `effectPipeline` field describes a processed
+measurement. Its presence excludes the entire session from correction, including virtual channels
+and sessions with an empty plugin list. Room EQ rejects the selected source. Crosstalk Cancellation
+omits the affected node with a warning and continues watching its files.
+[Upstream measurement eligibility](https://github.com/Frieve-A/effetune/blob/v2.18.0/js/measurement-store/client.js)
+
 EffeTune 2.16.0 backups may include optional `harmonicAnalysis` beside the linear
 IR, following the [upstream storage format](https://github.com/Frieve-A/effetune/blob/v2.16.0/features/measurement/dataStorage.js).
 Room EQ and Crosstalk use the same linear data with or without that metadata.
@@ -117,9 +123,10 @@ gain/delay controls do not invalidate Room's generated FIR. A cache hit still
 requires valid originals; corrupt entries regenerate, and an unwritable cache
 does not discard a successfully prepared payload.
 
-The 2.17.0 SFZ identity is `sfz-resident-v5/ETA1-table-v6-generator-v7` under the
-pinned upstream commit. Earlier SFZ entries regenerate from originals.
-IR and Room EQ keep their existing identities. Cached SFZ footprint metadata
+The SFZ identity is `sfz-resident-v5/ETA1-table-v6-generator-v7` under its 2.17.0
+preparation-source commit. Upgrading from 2.17.0 reuses eligible SFZ and IR Reverb entries.
+Room EQ uses `room-v2/ETA1` so its first load revalidates the source and regenerates the filter.
+Subsequent loads can reuse only filters created from eligible measurements. Cached SFZ footprint metadata
 contains only the portable payload length; native preparation storage is queried
 again on the actual backend at activation.
 
