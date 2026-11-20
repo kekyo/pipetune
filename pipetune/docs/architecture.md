@@ -402,7 +402,7 @@ The generated catalog packs JSON parameters into the exact native ABI expected
 by EffeTune. Tests compare those packed parameters with EffeTune's JavaScript
 packer and compare native PCM output with EffeTune's parity corpus.
 
-The pinned EffeTune 2.18.0 registry contains 115 native kernels. PipeTune supports
+The pinned EffeTune 2.18.1 registry contains 115 native kernels. PipeTune supports
 its 16-channel Multi Channel Panel layout, individual channels through 16,
 paired routes through 15/16, and hexadecimal Matrix routes. It can load MD
 Simulator and all nine effects added in 2.5.0. It regenerates and stages the
@@ -414,7 +414,7 @@ balance selection alongside frequency and phase.
 Live Audio Send and Receive mark host-managed network transport. PipeTune reports enabled markers as
 Ignored with a warning and displays disabled markers as Off. The local graph derives its channel count,
 bus routing, and latency from the effects that actually process PipeWire audio.
-[Upstream control plugins](https://github.com/Frieve-A/effetune/blob/v2.18.0/docs/plugins/control.md)
+[Upstream control plugins](https://github.com/Frieve-A/effetune/blob/v2.18.1/docs/plugins/control.md)
 
 Tonal Balance EQ and Rhythm Analyzer use the normal preset pipeline with no
 external assets and zero reported latency. Rhythm remains active with its

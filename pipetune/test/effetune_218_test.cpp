@@ -102,7 +102,7 @@ static void testMatrixReset(const pipetune::DspBackendApi &api) {
 
 int main(int argc, char **argv) {
   if (argc != 2) return 2;
-  check(pipetune::effetuneVersion() == "2.18.0", "the embedded app version must be 2.18.0");
+  check(pipetune::effetuneVersion() == "2.18.1", "the embedded app version must be 2.18.1");
   check(pipetune::generatedDspCatalog().size() == 115, "the app catalog must contain 115 DSPs");
   struct Contract {
     const char *type;
