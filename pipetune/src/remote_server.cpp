@@ -11,6 +11,9 @@
 #include <cerrno>
 #include <cstring>
 #include <map>
+#include <cstdio>
+#include <fstream>
+#include <set>
 #include <vector>
 
 namespace pipetune {
@@ -23,6 +26,8 @@ struct RemotePeer {
 struct RemoteServer::Impl {
   RemoteEditor editor;
   SoupServer *server = nullptr;
+  std::filesystem::path root;
+  std::set<std::string, std::less<>> files;
   std::string origin, authority, token;
   std::map<SoupWebsocketConnection *, std::shared_ptr<RemotePeer>> peers;
   std::vector<cardio::promise<void>> operations;
@@ -97,6 +102,8 @@ static void publish(RemoteServer::Impl &impl) {
   }, &impl, nullptr);
   g_source_attach(impl.broadcast, g_main_context_get_thread_default());
 }
+
+bool RemoteServer::hasPeers() const noexcept { return !impl_->peers.empty(); }
 
 void RemoteServer::changed() { publish(*impl_); }
 
@@ -194,7 +201,11 @@ static void handleHttp(SoupServer *, SoupServerMessage *message, const char *pat
     soup_server_message_set_status(message, 404, nullptr);
     return;
   }
-  const auto file = std::filesystem::path(PIPETUNE_EDITOR_DIRECTORY) / relative;
+  if (!impl.files.contains(relative.native())) {
+    soup_server_message_set_status(message, 404, nullptr);
+    return;
+  }
+  const auto file = impl.root / relative;
   auto *mapping = g_mapped_file_new(file.c_str(), false, nullptr);
   if (!mapping) {
     soup_server_message_set_status(message, 404, nullptr);
@@ -227,6 +238,11 @@ std::string RemoteServer::configure(const RemoteListenerOptions &options) {
     if (!address || g_inet_address_get_family(address.get()) != G_SOCKET_FAMILY_IPV4 ||
         g_inet_address_get_is_any(address.get()) || g_inet_address_get_is_multicast(address.get()))
       return makeControlErrorResponse("specify the IPv4 address of a local interface");
+    impl.root = remoteEditorDirectory();
+    std::ifstream manifest(impl.root / "remote-files.txt");
+    impl.files.clear();
+    for (std::string name; std::getline(manifest, name);) impl.files.insert(std::move(name));
+    if (!impl.files.contains("remote.html")) return makeControlErrorResponse("remote editor assets are unavailable");
     const auto token = newToken();
     const auto listener = std::unique_ptr<SoupServer, decltype(&g_object_unref)>(soup_server_new(nullptr, nullptr), g_object_unref);
     GError *error = nullptr;

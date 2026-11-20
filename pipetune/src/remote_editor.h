@@ -6,12 +6,16 @@
 #ifndef PIPETUNE_REMOTE_EDITOR_H
 #define PIPETUNE_REMOTE_EDITOR_H
 #include <cardio.h>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
 
 namespace pipetune {
+
+/** Resolves the editor and preset assets shipped alongside the running executable. */
+std::filesystem::path remoteEditorDirectory();
 
 /** Retained recipe and master bypass from one committed processing state. */
 struct RemotePipelineSnapshot {

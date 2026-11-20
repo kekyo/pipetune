@@ -130,6 +130,8 @@ public:
    */
   ProcessStatus resetProcessingState() noexcept;
 
+  /** Applies parameter-only edits while retaining native history; false requests a prepared replacement. */
+  bool updateParameters(const std::shared_ptr<const std::string> &recipe) { return current_->updateParameters(recipe); }
   /** Returns the accepted preset recipe on the control thread. */
   std::shared_ptr<const std::string> recipe() const noexcept { return current_->recipe(); }
   /** Changes pass-through while retaining the editable chain and native state. */

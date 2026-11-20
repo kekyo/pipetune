@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { join } from "node:path";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 
 const [bin] = process.argv.slice(2);
@@ -111,6 +112,125 @@ try {
     (await next.request({ op: "get" }, "state")).pipeline,
     state.pipeline,
   );
+  const observer = await connect(rotated);
+  const current = await observer.request({ op: "get" }, "state");
+  await observer.request(
+    { op: "params", index: 0, params: { vl: 900 } },
+    null,
+    false,
+  );
+  const missing = [
+    {
+      nm: "IR Reverb",
+      en: true,
+      ir: "aaaaaaaaaaaaaaaaaaaaaaaa",
+      cr: "full",
+      lt: 128,
+    },
+  ];
+  await next.request({ op: "chain", pipeline: missing }, null, false);
+  assert.equal((await next.request({ op: "get" }, "state")).rev, current.rev);
+  // The pending candidate must lose to a later accepted edit on the same stream.
+  const canceled = next.request(
+    { op: "chain", pipeline: missing },
+    null,
+    false,
+  );
+  await next.request({ op: "params", index: 0, params: { vl: -8 } });
+  await canceled;
+  await observer.receive((m) => m.op === "state" && m.pipeline[0]?.vl === -8);
+  await observer.request({
+    op: "chain",
+    pipeline: [{ nm: "Volume", en: true, vl: -10 }],
+  });
+  await next.receive((m) => m.op === "state" && m.pipeline[0]?.vl === -10);
+  assert.equal(JSON.parse(cli("--status")).activePluginCount, 1);
+  cli("rate", "set", "96000", "suggest");
+  assert.equal(
+    (await next.request({ op: "get" }, "state")).pipeline[0].vl,
+    -10,
+  );
+  cli("dsp", "set", "scalar");
+  cli("--load-preset", preset);
+  await observer.receive((m) => m.op === "state" && m.pipeline[0]?.vl === -6);
+  await writeFile(preset, local(-3));
+  await observer.receive((m) => m.op === "state" && m.pipeline[0]?.vl === -3);
+  const library = join(process.env.XDG_CONFIG_HOME, "effetune");
+  const irDir = join(library, "ir-library"),
+    measurements = join(library, "measurement-backups"),
+    bank = join(library, "instruments");
+  for (const directory of [irDir, measurements, bank])
+    await mkdir(directory, { recursive: true });
+  const wave = Buffer.alloc(44 + 512 * 4);
+  wave.write("RIFF");
+  wave.writeUInt32LE(wave.length - 8, 4);
+  wave.write("WAVEfmt ", 8);
+  wave.writeUInt32LE(16, 16);
+  wave.writeUInt16LE(3, 20);
+  wave.writeUInt16LE(1, 22);
+  wave.writeUInt32LE(48000, 24);
+  wave.writeUInt32LE(192000, 28);
+  wave.writeUInt16LE(4, 32);
+  wave.writeUInt16LE(32, 34);
+  wave.write("data", 36);
+  wave.writeUInt32LE(wave.length - 44, 40);
+  wave.writeFloatLE(1, 44);
+  const sha256 = createHash("sha256").update(wave).digest("hex"),
+    id = sha256.slice(0, 24);
+  await writeFile(join(irDir, id + ".wav"), wave);
+  await writeFile(
+    join(irDir, "index.json"),
+    JSON.stringify({
+      version: 1,
+      entries: {
+        [id]: {
+          irId: id,
+          composition: "single",
+          bytes: wave.length,
+          originals: [
+            {
+              role: "single",
+              fileName: "impulse.wav",
+              storageName: id + ".wav",
+              sha256,
+              byteLength: wave.length,
+            },
+          ],
+        },
+      },
+    }),
+  );
+  await writeFile(join(bank, "a.wav"), wave);
+  await writeFile(join(bank, "note.sfz"), "<region> sample=a.wav key=83");
+  await writeFile(
+    join(library, "sfz-references.json"),
+    JSON.stringify([
+      { id, name: "test", root: bank, path: join(bank, "note.sfz") },
+    ]),
+  );
+  for (const side of ["left", "right"])
+    await writeFile(
+      join(measurements, side + ".json"),
+      JSON.stringify({
+        id: side,
+        averageFrequencyResponse: [
+          [20, 0],
+          [1000, 4],
+          [20000, 0],
+        ],
+      }),
+    );
+  for (const stage of [
+    { nm: "IR Reverb", ir: id, cr: "full", lt: 128 },
+    { nm: "Room EQ", ms0: "left", ms1: "right", pm: "lin", tp: 8192, lt: 128 },
+    { nm: "SoundFont Note Player", sf: id, mn: 83, mx: 83 },
+  ]) {
+    await next.request({ op: "chain", pipeline: [stage] });
+    const status = JSON.parse(cli("--status"));
+    assert.equal(status.activePluginCount, 1);
+    assert.ok(status.dspLatencyFrames > 0, stage.nm);
+  }
+  observer.socket.close();
   const disabled = once(next.socket, "close");
   cli("remote", "disable");
   assert.equal((await disabled)[0].code, 1001);

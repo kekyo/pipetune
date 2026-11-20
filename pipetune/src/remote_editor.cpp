@@ -15,6 +15,12 @@
 
 namespace pipetune {
 
+std::filesystem::path remoteEditorDirectory() {
+  const auto directory = std::filesystem::read_symlink("/proc/self/exe").parent_path();
+  return directory == PIPETUNE_BUILD_BIN ? std::filesystem::path(PIPETUNE_BUILD_EDITOR) :
+      (directory / PIPETUNE_INSTALLED_EDITOR).lexically_normal();
+}
+
 using Document = std::unique_ptr<yyjson_doc, decltype(&yyjson_doc_free)>;
 static Document parse(std::string_view json) {
   return Document(yyjson_read(json.data(), json.size(), 0), yyjson_doc_free);
@@ -44,6 +50,10 @@ static void validateChain(yyjson_val *chain) {
     const auto name = stringField(stage, "nm");
     if (yyjson_obj_get(stage, "name") || !isEditableEffect(name))
       throw std::invalid_argument("unknown effect: " + std::string(name));
+    if (const auto *def = findDspByDisplayName(name)) {
+      const auto error = validateRemoteParameters(*def, stage);
+      if (!error.empty()) throw std::invalid_argument(error);
+    }
   }
 }
 
@@ -97,7 +107,7 @@ std::string RemoteEditor::refresh() {
 
 static cardio::promise<std::map<std::string, std::string>> availablePresets(cardio::cancellation cancellation) {
   const auto user = pipetune_gtk::resolveEffeTuneUserPresetPath(g_get_user_config_dir(), g_get_home_dir());
-  const auto catalog = pipetune_gtk::loadEffeTunePresetCatalog(std::filesystem::path(PIPETUNE_EDITOR_DIRECTORY) / "presets", user.path);
+  const auto catalog = pipetune_gtk::loadEffeTunePresetCatalog(remoteEditorDirectory() / "presets", user.path);
   auto presets = std::map<std::string, std::string>{};
   for (const auto &item : catalog.choices) {
     cancellation.throw_if_cancellation_requested();

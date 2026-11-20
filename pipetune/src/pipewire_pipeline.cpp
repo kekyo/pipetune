@@ -3002,6 +3002,7 @@ static cardio::promise<PresetActivationResult> activatePreset(
   }
   runtime.pipeline.replace(std::move(loaded.pipeline));
   refreshPipeWireDspLatency(runtime);
+  if (!automaticReload && !recipe) runtime.pipeline.setMasterBypass(false);
   runtime.processingMode = ProcessingMode::preset;
   runtime.dspIdleState.replaceActivity(DspActivity::active);
   runtime.activePreset = presetPath.string();
@@ -3039,6 +3040,17 @@ static cardio::promise<std::string> applyRemoteEdit(PipeWireRuntime &runtime,
         runtime.configurationRevision.fetch_add(1);
         requestControlStatusUpdate(runtime);
       }
+      co_return std::string{};
+    }
+    {
+      auto rateLock = std::scoped_lock(runtime.rateStateMutex);
+      if (runtime.rateTransitioning) co_return "sample-rate transition is pending";
+    }
+    cancellation.throw_if_cancellation_requested();
+    if (runtime.pipeline.updateParameters(recipe)) {
+      runtime.preparationGeneration.invalidate();
+      runtime.configurationRevision.fetch_add(1);
+      requestControlStatusUpdate(runtime);
       co_return std::string{};
     }
     path = runtime.activePreset;
@@ -3665,6 +3677,10 @@ static bool createControlServer(PipeWireRuntime &runtime) {
        .onPublication = [](void *data) {
          const auto &editor = static_cast<PipeWireRuntime *>(data)->remoteEditor;
          if (editor) editor->changed();
+       },
+       .hasSubscribers = [](void *data) {
+         const auto &editor = static_cast<PipeWireRuntime *>(data)->remoteEditor;
+         return editor && editor->hasPeers();
        },
        .onShutdown = [](void *data) -> cardio::promise<void> {
          auto &editor = static_cast<PipeWireRuntime *>(data)->remoteEditor;

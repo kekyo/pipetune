@@ -52,6 +52,7 @@ struct ControlServer::Impl {
   AsyncControlDescriptorEventHandler asyncEventHandler;
   AsyncControlStatusProvider asyncStatusProvider;
   void (*onPublication)(void *);
+  bool (*hasSubscribers)(void *);
   cardio::promise<void> (*onShutdown)(void *);
   int listener;
   int stopEvent;
@@ -65,7 +66,7 @@ struct ControlServer::Impl {
         eventDescriptor(options.eventDescriptor),
         eventHandler(options.eventHandler), asyncHandler(options.asyncHandler),
         asyncEventHandler(options.asyncEventHandler), asyncStatusProvider(options.asyncStatusProvider),
-        onPublication(options.onPublication), onShutdown(options.onShutdown), listener(-1), stopEvent(-1),
+        onPublication(options.onPublication), hasSubscribers(options.hasSubscribers), onShutdown(options.onShutdown), listener(-1), stopEvent(-1),
         publishEvent(-1), ownsSocket(false), thread() {}
 
   ~Impl() {
@@ -224,7 +225,9 @@ static void collectCompletedClients(ControlService &service) {
 static cardio::promise<void> publishToSubscribers(ControlService &service) {
   if (service.implementation.onPublication) service.implementation.onPublication(service.implementation.userData);
   if (service.implementation.statusProvider == nullptr && service.implementation.asyncStatusProvider == nullptr) co_return;
-  if (std::none_of(service.jobs.begin(), service.jobs.end(),
+  const auto &impl = service.implementation;
+  if (!(impl.hasSubscribers && impl.hasSubscribers(impl.userData)) &&
+      std::none_of(service.jobs.begin(), service.jobs.end(),
                    [](const auto &job) { return job.session->subscriber; }))
     co_return;
   auto message = std::string{};
@@ -383,8 +386,7 @@ static cardio::promise<void> publishPeriodically(ControlService &service) {
           std::chrono::duration_cast<std::chrono::milliseconds>(kStatusPublicationInterval).count(),
           service.cancellation.get_cancellation());
       collectCompletedClients(service);
-      if (std::ranges::any_of(service.jobs, [](const auto &job) { return job.session->subscriber; }))
-        co_await publishToSubscribers(service);
+      co_await publishToSubscribers(service);
     }
   } catch (const cardio::canceled_exception &) {}
 }

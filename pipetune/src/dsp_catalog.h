@@ -74,6 +74,8 @@ std::string shortPipeline(std::string_view recipe);
 std::span<const DspDefinition> generatedDspCatalog();
 const DspDefinition *findDspByDisplayName(std::string_view displayName);
 const DspDefinition *findDspByTypeName(std::string_view typeName);
+/** Rejects remote numeric values that would otherwise be silently clamped or defaulted. */
+std::string validateRemoteParameters(const DspDefinition &definition, yyjson_val *parameters);
 PackedParameters packDspParameters(const DspDefinition &definition, yyjson_val *parameters);
 
 } // namespace pipetune

@@ -307,12 +307,10 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/remote-assets.stamp"
 add_custom_target(pipetune_remote_assets DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/remote-assets.stamp")
 add_dependencies(pipetune_pipewire pipetune_remote_assets)
 install(DIRECTORY "${PIPETUNE_REMOTE_ASSETS}/" DESTINATION "${CMAKE_INSTALL_DATADIR}/pipetune/remote-editor")
-if(BUILD_TESTING)
-  set(PIPETUNE_EDITOR_DIRECTORY "${PIPETUNE_REMOTE_ASSETS}")
-else()
-  set(PIPETUNE_EDITOR_DIRECTORY "${CMAKE_INSTALL_FULL_DATADIR}/pipetune/remote-editor")
-endif()
-target_compile_definitions(pipetune_pipewire PRIVATE PIPETUNE_EDITOR_DIRECTORY="${PIPETUNE_EDITOR_DIRECTORY}")
+file(RELATIVE_PATH PIPETUNE_INSTALLED_EDITOR "${CMAKE_INSTALL_FULL_BINDIR}" "${CMAKE_INSTALL_FULL_DATADIR}/pipetune/remote-editor")
+target_compile_definitions(pipetune_pipewire PRIVATE
+  PIPETUNE_BUILD_BIN="${CMAKE_BINARY_DIR}" PIPETUNE_BUILD_EDITOR="${PIPETUNE_REMOTE_ASSETS}"
+  PIPETUNE_INSTALLED_EDITOR="${PIPETUNE_INSTALLED_EDITOR}")
 target_include_directories(pipetune_pipewire PUBLIC include PRIVATE src ../pipetune-gtk/src)
 target_link_libraries(
   pipetune_pipewire

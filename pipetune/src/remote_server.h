@@ -19,6 +19,8 @@ public:
   std::string configure(const RemoteListenerOptions &options);
   /** Publishes accepted edits to connected editors, coalescing rapid changes. */
   void changed();
+  /** Reports whether authenticated editors are waiting for state changes. */
+  bool hasPeers() const noexcept;
   /** Closes all peers and waits for in-flight operations before releasing the dispatcher. */
   cardio::promise<void> shutdown();
   struct Impl;

@@ -177,6 +177,7 @@ public:
                   PipelineLoadContext context, cardio::cancellation cancellation);
 private:
   explicit DspPipeline(std::unique_ptr<Impl> implementation);
+  bool updateParameters(const std::shared_ptr<const std::string> &recipe);
   bool usesNativeDsp() const noexcept;
   std::unique_ptr<Impl> implementation_;
 
