@@ -82,4 +82,45 @@ LAN用の編集入口とエディターの配信を追加する。手元の端�
 
 ネットワーク再生中に別の端末からDSPを編集する。MPDまたはupmpdcliを停止し、通常のデスクトップ音声が引き続き処理されることを確認する。手動起動から一時的なユーザーサービスへの切り替えでは、同じ設定で再発見・再生でき、二重起動やDirectへの誤接続がないことを調べる。利用手順には、検証したOS、受信機の版と必要な出力プラグインを記載する。
 
-初版の最終完了条件は、実際のEffeTuneから選曲とDSP編集の双方を行い、その効果を同じ出力PCMで確認できること。さらに、起動方法を替えても同じ試験が通り、最後のコード変更後に`make test`で全体テストが成功することとする。実装時に実機と隔離環境の結果を区別して記録する。計画保存時点では実装と相互運用試験は未着手である。
+初版の最終完了条件は、実際のEffeTuneから選曲とDSP編集の双方を行い、その効果を同じ出力PCMで確認できること。さらに、起動方法を替えても同じ試験が通り、最後のコード変更後に`make test`で全体テストが成功することとする。実装時に実機と隔離環境の結果を区別して記録する。
+
+## 2026年11月20日の実装・検証結果
+
+PipeTuneはDSP編集と再生指示を受ける側として動作する。EffeTune 2.16.0のデスクトップ版では、再生先に「PipeTune (UPnP AV)」を選ぶと選曲からDSP編集まで利用できた。OpenHomeで同じアプリから選曲する条件には、下記の互換性問題が残った。[利用手順](../../../README_ja.md#ネットワークから曲を再生する)
+
+### 工程ごとの結果
+
+| 工程 | 確認した動作と判定 |
+| --- | --- |
+| 1 ネットワーク再生 | 専用のMPDがWAVを取得し、処理入力に送った。単一出力と、Directを既定にした複数出力で、左右の振幅がバイパス時の8192から−6 dBで4106に変化した。OpenHomeの受信機は一時停止・再開・シーク・停止に応答し、操作側の探索を閉じてから2曲目へ進んだ。EffeTuneアプリからのOpenHome選曲のみ未達。 |
+| 2 遠隔編集 | ブラウザーのペアリングリンクとデスクトップ版の「Join another EffeTune」から接続した。別ウィンドウのVolumeを−12 dBにすると、ブラウザーにも同じ値が表示され、再生中の曲の振幅は2058になった。バイパス中の編集と解除、プリセット取得、無効なトークンと接続元の拒否、トークンの更新、TLS接続も確認した。 |
+| 3 連続編集 | 残響の後段のVolumeを連続変更した。インパルス入力後の出力を、編集しないFDN Reverbに新しいゲインを掛けた参照波形と比較し、残響が継続することを確かめた。チェーンの置換と個別パラメーターの変更は同じ編集状態に反映された。ローカルでの選択とファイル再読込、48／96 kHz、DSPバックエンドの切り替えを検証した。登録済みのIR、Room EQの測定データ、SFZ音源の適用も成功した。 |
+| 4 併用と移行 | 同じ設定で手動プロセスから一時的なsystemdユーザーサービスへ移行した。再生機の識別子とキューの曲は維持され、MPDと受信機の二重起動は拒否された。受信機のミュート中と停止後のどちらも、別のデスクトップ音声に−6 dBのDSPが掛かり、振幅6144が3079になった。 |
+
+遠隔編集はメモリ上のチェーンを使う。安全に値を変更できるエフェクトでは、音声ブロックの境界で値を切り替える。アセットの準備に失敗した場合と、別の要求で準備を取り消した場合は、最後に受理したチェーンを保つ。出力チャンネル数が変わる場合も、エディターに知らせるのは出力の切り替えが確定したチェーンである。[遠隔操作の回帰試験](../../../pipetune/test/remote-control.mjs)・[残響と出力切り替えの試験](../../../pipetune/test/dsp_pipeline_slot_test.cpp)
+
+### 実際のアプリとOpenHomeの互換性
+
+EffeTune 2.16.0は選曲を確定する前に、OpenHomeの曲順が読み取り中に変化したかを`IdArrayChanged`で問い合わせる。upmpdcli 1.9.17は曲順が同じときに真を返すため、EffeTuneは再読込を求め、曲を登録できない。同じ応答の計算はupmpdcli 1.10.1のソースにもある。実際に選曲と再生を確認した組み合わせはEffeTune 2.16.0とupmpdcli 1.9.17のUPnP AVである。OpenHomeの受信・次曲の検証には、同じ版の探索・通信コードから受信機の公開操作を呼び出した。[EffeTuneのキュー照合](https://github.com/Frieve-A/effetune/blob/v2.16.0/electron/network-music-host.cjs#L291-L293)・[upmpdcli 1.9.17のソース](https://www.lesbonscomptes.com/upmpdcli/downloads/upmpdcli-1.9.17.tar.gz)・[upmpdcli 1.10.1のソース](https://www.lesbonscomptes.com/upmpdcli/downloads/upmpdcli-1.10.1.tar.gz)
+
+### 検証環境と再実行
+
+Ubuntu 24.04.5で、PipeWire 1.0.5、WirePlumber 0.4.17、PipeWire出力付きのMPD 0.23.14、upmpdcli 1.9.17を使った。ネットワークとPipeWireセッションを隔離し、仮想ステレオ出力の左右のPCMを収録した。デスクトップ版は公式のLinux AppImageをXvfbの画面で実行した。ブラウザーとアプリの編集ウィンドウはPlaywright MCPから操作した。製品同梱の2.18.1と、検証用に配置した2.16.0のエディター資材の両方で試験を通した。物理スピーカーでの聴感試験は実施していない。[EffeTune 2.16.0リリース](https://github.com/Frieve-A/effetune/releases/tag/v2.16.0)
+
+最終コード`b962458`で`CTEST_PARALLEL_LEVEL=4 make test TEST_BUILD_DIR=build/effetune-2181-debug`を実行した。全309件が成功し、CTestの実行時間は7分41秒だった。一時ディレクトリへインストールしたデーモンと同梱エディターでも、手動起動からユーザーサービスへ移行する再生・編集試験に成功した。
+
+リポジトリのルートで`make test`を実行すると、デーモンの遠隔編集とDSPの試験が走る。受信機を含む追加試験には、上記の音声ソフトウェア、Node.js 24、rootless Podman、iproute2、D-Bus、利用可能なsystemdユーザーセッションを用意する。第1引数はテスト用のビルド先、第2引数はEffeTune 2.16.0のソースディレクトリである。[隔離環境の起動](../../../pipetune/test/network-player-session.sh)・[ネットワーク再生とPCMの照合](../../../pipetune/test/network-player.mjs)
+
+```sh
+pipetune/test/network-player-session.sh build/test /path/to/effetune-2.16.0
+```
+
+実際のエディターを含めるときは、展開したAppImage内の実行ファイル、Chromium、Playwright MCPのパスを指定する。ブラウザーでゲインを調整し、デスクトップ版のライブラリから曲を選んだ後、別ウィンドウで同じチェーンを編集する。[エディターの操作試験](../../../pipetune/test/network-player-editor.mjs)
+
+```sh
+export PIPETUNE_TEST_EDITOR="$PWD/pipetune/test/network-player-editor.mjs"
+export PIPETUNE_TEST_EFFETUNE_DESKTOP=/path/to/squashfs-root/effetune
+export PIPETUNE_TEST_CHROMIUM=/path/to/chrome
+export PIPETUNE_TEST_PLAYWRIGHT_MCP=/path/to/playwright-mcp
+xvfb-run -a pipetune/test/network-player-session.sh build/test /path/to/effetune-2.16.0
+```

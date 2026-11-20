@@ -216,7 +216,13 @@ PipeTuneを動かすPCで編集を有効にします。アドレスには、そ�
 pipetune remote enable 192.168.1.20
 ```
 
-表示されたペアリングリンクをブラウザーで開くか、EffeTuneデスクトップ版の「Join another EffeTune」に入力します。音量やEQを変えると、同じPCのデスクトップ音声とネットワーク再生の両方に反映されます。リンクは `pipetune remote link` で再表示できます。`pipetune remote rotate` は接続中の端末を切断して新しいリンクを発行します。`pipetune remote disable` で待ち受けを終了します。
+表示されたペアリングリンクをブラウザーで開くか、EffeTuneデスクトップ版の「Join another EffeTune」に入力してください。音量やEQを変えると、再生用PCのデスクトップ音声とネットワーク再生の両方に反映されます。
+
+| 操作 | 再生用PCで実行するコマンド |
+| --- | --- |
+| ペアリングリンクを再表示 | `pipetune remote link` |
+| 接続中の端末を切断し、新しいリンクを発行 | `pipetune remote rotate` |
+| 待ち受けを終了 | `pipetune remote disable` |
 
 待ち受けはデーモンを起動するたびに無効になります。既定ポートは47300です。平文のHTTPは信頼できるLANで使ってください。暗号化する場合は、アドレス、ポート、証明書、秘密鍵の順に指定します。接続端末が信頼し、指定したIPアドレスに有効な証明書を用意してください。
 
@@ -224,7 +230,7 @@ pipetune remote enable 192.168.1.20
 pipetune remote enable 192.168.1.20 47300 /path/to/cert.pem /path/to/key.pem
 ```
 
-遠隔編集した値は実行中のデーモンが保持します。元のプリセットファイルは保存時の値を保ちます。
+遠隔編集した値はデーモンの実行中だけ有効です。プリセットファイルには保存時の値が残ります。
 
 ## ネットワークから曲を再生する
 
@@ -239,7 +245,7 @@ cp -n /usr/share/doc/pipetune/player/*.conf "$player_config/"
 mpd --no-daemon "$player_config/mpd.conf"
 ```
 
-別の端末で受信を始めます。`enp3s0`は操作端末と同じLANのインターフェイス名に置き換えてください。機器名は`upmpdcli.conf`で指定できます。
+次のコマンドは別の端末で実行してください。`enp3s0`には操作端末と同じLANのインターフェイス名を指定します。再生機名の設定先は`upmpdcli.conf`です。
 
 ```sh
 export UPMPD_CACHEDIR="${XDG_CACHE_HOME:-$HOME/.cache}/pipetune/player"
@@ -247,7 +253,7 @@ flock --nonblock --no-fork --verbose "$UPMPD_CACHEDIR/renderer.lock" \
   upmpdcli -m 1 -i enp3s0 -c "${XDG_CONFIG_HOME:-$HOME/.config}/pipetune/player/upmpdcli.conf"
 ```
 
-EffeTune 2.16.0では、再生先に「PipeTune (UPnP AV)」を選んでください。音楽ライブラリから曲を選び、再生中のDSPはペアリングリンクから編集できます。MPDは処理入力の`pipetune_sink`に音を送ります。複数出力モードでOSの既定がDirectでも、現在のDSPが掛かります。再生機の音量とミュートはMPDの音だけに効きます。
+EffeTune 2.16.0では、再生先に「PipeTune (UPnP AV)」を選んでください。音楽ライブラリから曲を選び、再生中のDSPはペアリングリンクから編集できます。MPDの出力先は処理入力の`pipetune_sink`です。複数出力モードでOSの既定がDirectでも、現在のDSPが掛かります。再生機の音量とミュートが効くのはMPDの音だけです。
 
 OpenHomeでは再生機が曲順を保持します。音源サーバーが動いていれば、操作端末を閉じても次の曲に進みます。ただしEffeTune 2.16.0とupmpdcli 1.9.17の組み合わせでは、曲順に変更がなくても更新を求められ、OpenHomeで選曲できません。Ubuntu 24.04.5でMPD 0.23.14のPipeWire出力を使い、同じ再生機のUPnP AVで選曲と再生を確認しました。[EffeTuneのキュー照合](https://github.com/Frieve-A/effetune/blob/v2.16.0/electron/network-music-host.cjs#L291-L293)・[upmpdcli 1.9.17のソース](https://www.lesbonscomptes.com/upmpdcli/downloads/upmpdcli-1.9.17.tar.gz)
 
