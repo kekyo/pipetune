@@ -180,6 +180,39 @@ try {
   await observer.receive((m) => m.op === "state" && m.pipeline[0]?.vl === -6);
   await writeFile(preset, local(-3));
   await observer.receive((m) => m.op === "state" && m.pipeline[0]?.vl === -3);
+
+  const metered = [
+    { nm: "Volume", en: true, vl: -7 },
+    { nm: "Level Meter", en: true, ch: "A" },
+    { nm: "Matrix", en: true, mx: "0011" },
+    { nm: "Spectrum Analyzer", en: true, dr: -80, pt: 10 },
+  ];
+  const meteredPreset = join(process.env.XDG_RUNTIME_DIR, "metered.effetune_preset");
+  await writeFile(meteredPreset, JSON.stringify(metered));
+  cli("--load-preset", meteredPreset);
+  const echoed = (await next.request({ op: "get" }, "state")).pipeline;
+  assert.deepEqual(echoed, metered);
+  // EffeTune sends the whole chain even when the user moves just the volume slider.
+  echoed[0].vl = -13;
+  await next.request({ op: "chain", pipeline: echoed });
+  assert.deepEqual((await observer.request({ op: "get" }, "state")).pipeline, echoed);
+  assert.ok(metered.every((stage) => initial.effects.includes(stage.nm)));
+  await next.request({ op: "params", index: 2, params: { mx: "0110" } });
+  echoed[2].mx = "0110";
+  assert.deepEqual((await observer.request({ op: "get" }, "state")).pipeline, echoed);
+  const meteredStatus = JSON.parse(cli("--status"));
+  assert.equal(meteredStatus.activePluginCount, 2);
+  assert.equal(meteredStatus.presetEntries[1].state, "ignored");
+
+  const library = join(process.env.XDG_CONFIG_HOME, "effetune");
+  await mkdir(library, { recursive: true });
+  await writeFile(
+    join(library, "effetune_presets.json"),
+    JSON.stringify({ Metered: { plugins: metered } }),
+  );
+  assert.ok((await next.request({ op: "listPresets" }, "presets")).names.includes("Metered"));
+  assert.deepEqual((await next.request({ op: "getPreset", name: "Metered" }, "preset")).pipeline, metered);
+
   const widePreset = join(process.env.XDG_RUNTIME_DIR, "wide.effetune_preset");
   const matrix = [{ nm: "Matrix", en: true, mx: "0213", ch: "A" }];
   await writeFile(widePreset, JSON.stringify(matrix));
@@ -209,7 +242,6 @@ try {
     "changing channel count from an editor must preserve its master bypass",
   );
   await next.request({ op: "bypass", on: false });
-  const library = join(process.env.XDG_CONFIG_HOME, "effetune");
   const irDir = join(library, "ir-library"),
     measurements = join(library, "measurement-backups"),
     bank = join(library, "instruments");

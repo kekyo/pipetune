@@ -48,7 +48,7 @@ static void validateChain(yyjson_val *chain) {
   for (std::size_t index = 0; index < yyjson_arr_size(chain); ++index) {
     auto *stage = yyjson_arr_get(chain, index);
     const auto name = stringField(stage, "nm");
-    if (yyjson_obj_get(stage, "name") || !isEditableEffect(name))
+    if (yyjson_obj_get(stage, "name") || !acceptsRemoteEffect(name))
       throw std::invalid_argument("unknown effect: " + std::string(name));
     if (const auto *def = findDspByDisplayName(name)) {
       const auto error = validateRemoteParameters(*def, stage);
@@ -86,7 +86,7 @@ static std::string state(const RemoteEditor &editor, const std::string &seq, boo
   if (hello) {
     result += ",\"appName\":\"PipeTune\",\"features\":[],\"effects\":[\"Section\"";
     for (const auto &def : generatedDspCatalog())
-      if (isEditableEffect(def.displayName) && def.displayName != "Section") result += "," + quote(def.displayName);
+      if (acceptsRemoteEffect(def.displayName) && def.displayName != "Section") result += "," + quote(def.displayName);
     result += "]";
   }
   return result + "}";

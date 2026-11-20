@@ -594,10 +594,12 @@ static yyjson_val *findPipelineRoot(yyjson_val *root) {
   return yyjson_is_arr(plugins) ? plugins : nullptr;
 }
 
-bool isEditableEffect(std::string_view name) {
+bool acceptsRemoteEffect(std::string_view name) {
   if (name == "Section") return true;
   const auto *def = findDspByDisplayName(name);
-  if (!def || def->visualizationOnly || unsupportedHostPluginReason(def->typeName)) return false;
+  if (!def || unsupportedHostPluginReason(def->typeName)) return false;
+  // EffeTune resends meters with every chain edit. The preset retains them while the DSP skips them.
+  if (def->visualizationOnly) return true;
   return !def->requiresExternalAssets || supportsGeneratedFirAsset(name) || name == "IR Reverb" ||
       name == "Bass Management" || name == "Room EQ" || name == "Crosstalk Cancellation" ||
       def->typeName == "SFZNotePlayerPlugin";
