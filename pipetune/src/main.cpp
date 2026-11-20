@@ -10,6 +10,7 @@
 #include "dsp_backend_command.h"
 #include "installed_tools.h"
 #include "output_command.h"
+#include <yyjson.h>
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
 #include "pipetune/dsp_pipeline.h"
@@ -208,7 +209,9 @@ static int runControlClient(const pipetune::CommandLineOptions &options) {
   }
 
   auto request = std::string{};
-  if (options.action == pipetune::CommandLineAction::status) {
+  if (options.action == pipetune::CommandLineAction::remote) {
+    request = pipetune::makeRemoteControlRequest(options.remote);
+  } else if (options.action == pipetune::CommandLineAction::status) {
     request = pipetune::makeStatusControlRequest();
   } else {
     auto pathError = std::string{};
@@ -235,6 +238,13 @@ static int runControlClient(const pipetune::CommandLineOptions &options) {
   if (!inspection.valid) {
     std::cerr << "pipetune: " << inspection.error << '\n';
     return 1;
+  }
+  if (options.action == pipetune::CommandLineAction::remote && inspection.success) {
+    const auto doc = std::unique_ptr<yyjson_doc, decltype(&yyjson_doc_free)>(
+        yyjson_read(exchange.response.data(), exchange.response.size(), 0), yyjson_doc_free);
+    if (const auto *link = yyjson_get_str(yyjson_obj_get(yyjson_doc_get_root(doc.get()), "link")))
+      std::cout << link << '\n';
+    return 0;
   }
   std::cout << exchange.response << '\n';
   return inspection.success ? 0 : 1;
@@ -586,6 +596,7 @@ int main(int argc, char **argv) {
       pipetune::CommandLineAction::configReset) {
     return runConfigResetCommand(parsed.options);
   }
+  if (parsed.options.action == pipetune::CommandLineAction::remote) return runControlClient(parsed.options);
   if (parsed.options.action == pipetune::CommandLineAction::setup) {
     return runSetupCommand(parsed.options);
   }

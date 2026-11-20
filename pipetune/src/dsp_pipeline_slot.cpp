@@ -185,6 +185,11 @@ DspIdleProcessResult DspPipelineSlot::processWithIdle(
             .activity = activity};
   }
 
+  if (masterBypass()) {
+    idleConfigured_ = false;
+    releaseActive();
+    return {ProcessStatus::ok, selected.generation, DspActivity::bypassed};
+  }
   if (!selected.pipeline->usesNativeDsp()) {
     idleConfigured_ = false;
     const auto status = processProtected(*selected.pipeline, planarSamples,

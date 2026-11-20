@@ -474,6 +474,25 @@ CommandLineParseResult parseCommandLine(
     options.action = CommandLineAction::version;
     return {.options = std::move(options), .error = {}};
   }
+  if (!arguments.empty() && arguments.front() == "remote") {
+    options.action = CommandLineAction::remote;
+    if (arguments.size() < 2) return parseError(options, "remote requires enable, link, rotate, or disable");
+    options.remote.operation = arguments[1];
+    if (arguments[1] == "enable") {
+      if (arguments.size() != 3 && arguments.size() != 4 && arguments.size() != 6)
+        return parseError(options, "remote enable ADDRESS [PORT [CERTIFICATE KEY]]");
+      options.remote.address = arguments[2];
+      if (arguments.size() >= 4 && (!parseUnsigned(arguments[3], options.remote.port) || options.remote.port > 65535))
+        return parseError(options, "invalid remote port");
+      if (arguments.size() == 6) {
+        options.remote.certificate = std::filesystem::absolute(arguments[4]);
+        options.remote.key = std::filesystem::absolute(arguments[5]);
+      }
+    } else if (arguments.size() != 2 || (arguments[1] != "link" && arguments[1] != "rotate" && arguments[1] != "disable")) {
+      return parseError(options, "remote requires enable, link, rotate, or disable");
+    }
+    return {std::move(options), {}};
+  }
   if (!arguments.empty() && arguments.front() == "daemon") {
     return parseDaemonCommandLine(arguments.subspan(1));
   }
@@ -664,6 +683,8 @@ CommandLineParseResult parseCommandLine(
 
 std::string_view commandLineUsage() noexcept {
   return "Usage:\n"
+         "  pipetune remote enable ADDRESS [PORT [CERTIFICATE KEY]]\n"
+         "  pipetune remote link|rotate|disable\n"
          "  pipetune daemon [--config PATH]\n"
          "  pipetune bypass [--socket PATH]\n"
          "  pipetune output list [--json]\n"

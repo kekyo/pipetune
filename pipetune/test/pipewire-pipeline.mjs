@@ -72,7 +72,7 @@ try {
     changed();
   });
   start("dbus-run-session", ["--", wireplumber]);
-  const test = start(driver, []);
+  const test = start(driver, process.argv.slice(5));
   assert.equal(await test.completion, 0, test.stdout + test.stderr);
 } finally {
   for (const record of children.toReversed()) {

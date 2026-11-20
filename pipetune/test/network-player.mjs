@@ -133,7 +133,8 @@ const wave = (seconds, level) => {
   }
   return body;
 };
-const songs = [wave(16, 8192), wave(16, 4096)];
+const firstDuration = process.env.PIPETUNE_TEST_EDITOR ? 120 : 16;
+const songs = [wave(firstDuration, 8192), wave(16, 4096)];
 const server = createServer((req, res) => {
   const data = songs[Number(req.url.slice(1, 2)) - 1];
   if (!data) {
@@ -332,11 +333,37 @@ try {
   await pcm(8192);
   text(bin, ["--load-preset", preset]);
   await pcm(4106);
+  const pair = text(bin, ["remote", "enable", local.address, "0"]).trim();
+  const editor = new WebSocket(pair.replace(/^http/u, "ws"));
+  await once(editor, "open");
+  let seq = 0;
+  const edit = async (message) => {
+    const id = ++seq;
+    const acknowledged = new Promise((resolve, reject) => {
+      const handler = (event) => {
+        const reply = JSON.parse(event.data);
+        if (reply.op !== "ack" || reply.seq !== id) return;
+        editor.removeEventListener("message", handler);
+        if (reply.ok) resolve();
+        else reject(Error(reply.error));
+      };
+      editor.addEventListener("message", handler);
+    });
+    editor.send(JSON.stringify({ ...message, seq: id }));
+    await acknowledged;
+  };
+  await edit({ op: "chain", pipeline: [{ nm: "Volume", en: true, vl: -12 }] });
+  await pcm(2058);
+  await edit({ op: "bypass", on: true });
+  await pcm(8192);
+  await edit({ op: "params", index: 0, params: { vl: -6 } });
+  await edit({ op: "bypass", on: false });
+  await pcm(4106);
   await soap(playlist, "Pause");
   await pcm(0);
   await soap(playlist, "Play");
   await pcm(4106);
-  await soap(playlist, "SeekSecondAbsolute", { Value: 14 });
+  await soap(playlist, "SeekSecondAbsolute", { Value: firstDuration - 2 });
   discovery.close();
   await pcm(2053);
   await soap(playlist, "Stop");
@@ -375,6 +402,37 @@ try {
   });
   await soap(av, "Play", { InstanceID: 0, Speed: "1" });
   await pcm(4106);
+  if (process.env.PIPETUNE_TEST_EDITOR) {
+    // The external UI driver opens the same link and changes the Volume control.
+    const info = join(directory, "editor.json");
+    await writeFile(
+      info,
+      JSON.stringify({
+        pair,
+        source,
+        preset,
+        directory,
+        playerId: [...discovery.devices.values()].find(
+          (d) =>
+            d.name.startsWith("PipeTune") &&
+            service(d, "AVTransport") &&
+            !service(d, "Playlist"),
+        ).id,
+        upstream: resolve(upstream),
+      }),
+      { mode: 0o600 },
+    );
+    const ui = start(process.execPath, [
+      resolve(process.env.PIPETUNE_TEST_EDITOR),
+      info,
+    ]);
+    ui.stdout.on("data", (bytes) => process.stdout.write(bytes));
+    assert.equal(await ui.done, 0, ui.diagnostic);
+    await pcm(2058);
+    await edit({ op: "params", index: 0, params: { vl: -6 } });
+    await pcm(4106);
+  }
+  editor.close();
   await soap(av, "Stop", { InstanceID: 0 });
   await pcm(0);
   console.log(

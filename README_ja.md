@@ -208,6 +208,24 @@ Processedの入力はCh 1、2で、Bypassではそれ以外の出力Chは無音�
 出力を増やす場合は、チャンネルを振り分けるMatrixなどをプリセットに追加してください。
 両入力の音声はそのまま加算され、混合後のピークが0 dBFSを超えることがあります。0 dBFSはデジタル音声の最大振幅を表します。
 
+## 別の端末からDSPを編集する
+
+PipeTuneを動かすPCで編集を有効にします。アドレスには、そのPCで使うLANインターフェイスのIPv4アドレスを指定してください。
+
+```sh
+pipetune remote enable 192.168.1.20
+```
+
+表示されたペアリングリンクをブラウザーで開くか、EffeTuneデスクトップ版の「Join another EffeTune」に入力します。音量やEQを変えると、同じPCのデスクトップ音声とネットワーク再生の両方に反映されます。リンクは `pipetune remote link` で再表示できます。`pipetune remote rotate` は接続中の端末を切断して新しいリンクを発行します。`pipetune remote disable` で待ち受けを終了します。
+
+待ち受けはデーモンを起動するたびに無効になります。既定ポートは47300です。平文のHTTPは信頼できるLANで使ってください。暗号化する場合は、アドレス、ポート、証明書、秘密鍵の順に指定します。接続端末が信頼し、指定したIPアドレスに有効な証明書を用意してください。
+
+```sh
+pipetune remote enable 192.168.1.20 47300 /path/to/cert.pem /path/to/key.pem
+```
+
+遠隔編集した値は実行中のデーモンが保持します。元のプリセットファイルは保存時の値を保ちます。
+
 ## ネットワークから曲を再生する
 
 EffeTuneなどの操作端末から曲を選び、PipeTuneのスピーカーで聴けます。再生用PCにPipeWire出力を持つMPDとupmpdcliを用意してください。upmpdcliがOpenHome／UPnP AVの再生指示を受け、同じPCのMPDが音源を取得します。[upmpdcliの配布元](https://www.lesbonscomptes.com/upmpdcli/pages/downloads.html)・[MPDのPipeWire出力](https://mpd.readthedocs.io/en/stable/plugins.html#pipewire)

@@ -51,6 +51,8 @@ struct ControlServer::Impl {
   AsyncControlMessageHandler asyncHandler;
   AsyncControlDescriptorEventHandler asyncEventHandler;
   AsyncControlStatusProvider asyncStatusProvider;
+  void (*onPublication)(void *);
+  cardio::promise<void> (*onShutdown)(void *);
   int listener;
   int stopEvent;
   int publishEvent;
@@ -62,7 +64,8 @@ struct ControlServer::Impl {
         statusProvider(options.statusProvider), userData(options.userData),
         eventDescriptor(options.eventDescriptor),
         eventHandler(options.eventHandler), asyncHandler(options.asyncHandler),
-        asyncEventHandler(options.asyncEventHandler), asyncStatusProvider(options.asyncStatusProvider), listener(-1), stopEvent(-1),
+        asyncEventHandler(options.asyncEventHandler), asyncStatusProvider(options.asyncStatusProvider),
+        onPublication(options.onPublication), onShutdown(options.onShutdown), listener(-1), stopEvent(-1),
         publishEvent(-1), ownsSocket(false), thread() {}
 
   ~Impl() {
@@ -219,6 +222,7 @@ static void collectCompletedClients(ControlService &service) {
 }
 
 static cardio::promise<void> publishToSubscribers(ControlService &service) {
+  if (service.implementation.onPublication) service.implementation.onPublication(service.implementation.userData);
   if (service.implementation.statusProvider == nullptr && service.implementation.asyncStatusProvider == nullptr) co_return;
   if (std::none_of(service.jobs.begin(), service.jobs.end(),
                    [](const auto &job) { return job.session->subscriber; }))
@@ -418,6 +422,7 @@ static cardio::promise<void> serve(ControlServer::Impl &implementation,
   co_await periodic;
   co_await application;
   for (auto &job : service.jobs) co_await job.completion;
+  if (implementation.onShutdown) co_await implementation.onShutdown(implementation.userData);
   group.shutdown();
 }
 

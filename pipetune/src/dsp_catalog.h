@@ -67,6 +67,10 @@ struct PackedParameters {
   std::string error;
 };
 
+/** True for effects that the native host can instantiate from a remote recipe. */
+bool isEditableEffect(std::string_view name);
+/** Serializes the loader's accepted long or short recipe in editor format. */
+std::string shortPipeline(std::string_view recipe);
 std::span<const DspDefinition> generatedDspCatalog();
 const DspDefinition *findDspByDisplayName(std::string_view displayName);
 const DspDefinition *findDspByTypeName(std::string_view typeName);

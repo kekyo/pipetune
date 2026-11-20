@@ -42,6 +42,8 @@ libgtk-3-dev
 libicu-dev
 libpipewire-0.3-dev
 libpulse-dev
+libsoup-3.0-dev
+glib-networking
 libsamplerate0-dev
 nasm
 nodejs

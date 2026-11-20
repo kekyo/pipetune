@@ -171,7 +171,6 @@ add_library(
   src/rate-operation.cpp
   src/rate-selection-model.cpp
   src/settings-transaction.cpp
-  src/preset-catalog.cpp
   src/preset-file-monitor.cpp
   src/status-model.cpp
   src/status-text.cpp

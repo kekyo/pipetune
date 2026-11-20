@@ -31,6 +31,8 @@ namespace pipetune {
  * Identifies one local control request.
  */
 enum class ControlCommand {
+  /** Configure the network editor from a same-user local client. */
+  remote,
   /** Return the running pipeline status. */
   status,
   /** Build and activate a preset without stopping audio. */
@@ -48,6 +50,18 @@ enum class ControlCommand {
   /** Keep the connection open and publish status changes. */
   subscribe
 };
+
+/** Local-only changes to the remote editor listener. */
+struct RemoteListenerOptions {
+  std::string operation = {}; /**< enable, link, rotate, or disable. */
+  std::string address = {}; /**< Local IPv4 address advertised to clients. */
+  unsigned port = 47300; /**< Listener port; zero requests an available port. */
+  std::string certificate = {}; /**< Optional absolute PEM certificate chain path. */
+  std::string key = {}; /**< Matching absolute PEM private-key path. */
+};
+
+/** Encodes a local listener administration request for the control socket. */
+std::string makeRemoteControlRequest(const RemoteListenerOptions &options);
 
 /**
  * Holds one validated control request.
@@ -73,6 +87,8 @@ struct ControlRequest {
   std::optional<std::uint64_t> expectedOutputInventoryRevision = std::nullopt;
   /** Optional revision guard for setOutput; a mismatch leaves live state intact. */
   std::optional<std::uint64_t> expectedRevision = std::nullopt;
+  /** Local pairing settings for the remote command. */
+  RemoteListenerOptions remote = {};
   /** Optional processing choice for setOutput: empty path means bypass;
    * no value preserves the current pipeline recipe. */
   std::optional<std::filesystem::path> outputPreset = std::nullopt;
@@ -134,6 +150,10 @@ struct ControlDspVariantAvailability {
 struct ControlRuntimeStatus {
   /** Current PCM processing mode. */
   ProcessingMode processingMode;
+  /** True when a remote chain has no associated preset file. */
+  bool inMemoryPreset = false;
+  /** Master bypass keeps the remote chain available for editing. */
+  bool masterBypass = false;
   /** Current preset DSP activity independently from processingMode. */
   DspActivity dspActivity = DspActivity::bypassed;
   /** Configured automatic DSP suspension policy. */

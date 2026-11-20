@@ -167,13 +167,16 @@ public:
   /** Returns the concrete native variant, or no value for a bypass pipeline. */
   std::optional<DspBackendVariant> backendVariant() const noexcept;
 
-private:
-  explicit DspPipeline(std::unique_ptr<Impl> implementation);
+  /** Returns the immutable recipe used for the next rate or backend rebuild. */
+  std::shared_ptr<const std::string> recipe() const noexcept;
+  /** Prepares an in-memory recipe on the current control dispatcher. */
   static cardio::promise<PipelineLoadResult>
   buildFromRecipe(std::shared_ptr<const std::string> presetRecipe,
                   PipelineBuildOptions options,
                   std::shared_ptr<const DspBackend> backend,
                   PipelineLoadContext context, cardio::cancellation cancellation);
+private:
+  explicit DspPipeline(std::unique_ptr<Impl> implementation);
   bool usesNativeDsp() const noexcept;
   std::unique_ptr<Impl> implementation_;
 

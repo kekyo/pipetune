@@ -230,6 +230,14 @@ routing plugin, such as Matrix, to the preset to create additional outputs.
 The two inputs are added without automatic gain control, so the mixed peak
 can exceed 0 dBFS, the maximum digital audio amplitude.
 
+## Editing DSP from another device
+
+Run `pipetune remote enable 192.168.1.20` on the playback PC, substituting the IPv4 address of its LAN interface. Open the printed pairing link in a browser or in the EffeTune desktop app’s “Join another EffeTune” window. Gain, EQ and master bypass affect both desktop audio and network playback.
+
+Use `pipetune remote link` to show the link again. `pipetune remote rotate` disconnects paired devices and issues a new link. `pipetune remote disable` closes the listener. Each daemon starts with the listener disabled. Live edits stay in memory, and the source preset retains its saved settings.
+
+The default port is 47300. Use HTTP on a trusted LAN. To serve HTTPS, run `pipetune remote enable 192.168.1.20 47300 /path/to/cert.pem /path/to/key.pem` with a certificate valid for that IP address and trusted by each client.
+
 ## Playing music from another device
 
 On the playback computer, install MPD with its PipeWire output and upmpdcli. A controller such as EffeTune selects the track. upmpdcli accepts OpenHome or UPnP AV playback commands and the local MPD instance retrieves the audio. [upmpdcli downloads](https://www.lesbonscomptes.com/upmpdcli/pages/downloads.html) · [MPD PipeWire output](https://mpd.readthedocs.io/en/stable/plugins.html#pipewire)

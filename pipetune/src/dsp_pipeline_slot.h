@@ -130,6 +130,13 @@ public:
    */
   ProcessStatus resetProcessingState() noexcept;
 
+  /** Returns the accepted preset recipe on the control thread. */
+  std::shared_ptr<const std::string> recipe() const noexcept { return current_->recipe(); }
+  /** Changes pass-through while retaining the editable chain and native state. */
+  void setMasterBypass(bool enabled) noexcept { masterBypass_.store(enabled); }
+  /** Reports master bypass independently of local preset selection. */
+  bool masterBypass() const noexcept { return masterBypass_.load(); }
+
   /** Returns the currently active DSP pipeline generation. */
   std::uint64_t activeGeneration() const noexcept;
 
@@ -249,6 +256,7 @@ private:
   void activate(DspPipeline *pipeline) noexcept;
   void reclaimSuperseded();
 
+  std::atomic<bool> masterBypass_{false};
   std::unique_ptr<DspPipeline> current_;
   std::unique_ptr<DspPipeline> stagedPrevious_;
   std::vector<std::unique_ptr<DspPipeline>> superseded_;

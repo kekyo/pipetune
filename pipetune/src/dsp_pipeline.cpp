@@ -573,6 +573,43 @@ static yyjson_val *findPipelineRoot(yyjson_val *root) {
   return yyjson_is_arr(plugins) ? plugins : nullptr;
 }
 
+bool isEditableEffect(std::string_view name) {
+  if (name == "Section") return true;
+  const auto *def = findDspByDisplayName(name);
+  if (!def || def->visualizationOnly || unsupportedHostPluginReason(def->typeName)) return false;
+  return !def->requiresExternalAssets || supportsGeneratedFirAsset(name) || name == "IR Reverb" ||
+      name == "Bass Management" || name == "Room EQ" || name == "Crosstalk Cancellation" ||
+      def->typeName == "SFZNotePlayerPlugin";
+}
+
+std::string shortPipeline(std::string_view recipe) {
+  const auto source = JsonDocument(yyjson_read(recipe.data(), recipe.size(), 0));
+  auto *nodes = findPipelineRoot(yyjson_doc_get_root(source.get()));
+  if (!nodes) throw std::invalid_argument("preset has no pipeline");
+  const auto doc = std::unique_ptr<yyjson_mut_doc, decltype(&yyjson_mut_doc_free)>(
+      yyjson_mut_doc_new(nullptr), yyjson_mut_doc_free);
+  auto *array = yyjson_mut_arr(doc.get());
+  for (std::size_t index = 0; index < yyjson_arr_size(nodes); ++index) {
+    auto node = PresetNode{};
+    auto error = std::string{};
+    if (!normalizeNode(yyjson_arr_get(nodes, index), index, node, error)) throw std::invalid_argument(error);
+    auto *item = node.parameters ? yyjson_val_mut_copy(doc.get(), node.parameters) : yyjson_mut_obj(doc.get());
+    const auto put = [&](const char *key, yyjson_mut_val *value) {
+      yyjson_mut_obj_put(item, yyjson_mut_str(doc.get(), key), value);
+    };
+    put("nm", yyjson_mut_strn(doc.get(), node.name.data(), node.name.size()));
+    put("en", yyjson_mut_bool(doc.get(), node.enabled));
+    if (node.inputBus) put("ib", yyjson_val_mut_copy(doc.get(), node.inputBus));
+    if (node.outputBus) put("ob", yyjson_val_mut_copy(doc.get(), node.outputBus));
+    if (node.channel && !yyjson_is_null(node.channel)) put("ch", yyjson_val_mut_copy(doc.get(), node.channel));
+    yyjson_mut_arr_append(array, item);
+  }
+  const auto encoded = std::unique_ptr<char, decltype(&std::free)>(
+      yyjson_mut_val_write(array, 0, nullptr), std::free);
+  if (!encoded) throw std::runtime_error("cannot encode remote pipeline");
+  return encoded.get();
+}
+
 DspPipeline::DspPipeline(std::unique_ptr<Impl> implementation)
     : implementation_(std::move(implementation)) {}
 
@@ -682,6 +719,10 @@ createBypassDspPipeline(const PipelineBuildOptions &options) {
   auto pipeline =
       std::unique_ptr<DspPipeline>(new DspPipeline(std::move(implementation)));
   return {.pipeline = std::move(pipeline), .error = {}};
+}
+
+std::shared_ptr<const std::string> DspPipeline::recipe() const noexcept {
+  return implementation_->presetRecipe;
 }
 
 cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
