@@ -124,12 +124,14 @@ On Ubuntu 24.04:
 sudo apt install \
   build-essential cmake dbus-x11 desktop-file-utils git \
   libgdk-pixbuf2.0-bin libgtk-3-dev libpipewire-0.3-dev libpulse-dev \
-  libicu-dev libsamplerate0-dev nasm nodejs pipewire-pulse pkg-config x11-utils xvfb xz-utils
+  libicu-dev libqrencode-dev libsamplerate0-dev libsoup-3.0-dev glib-networking \
+  nasm nodejs pipewire-pulse pkg-config x11-utils xvfb xz-utils
 ```
 
 Building from source requires CMake 3.24 or newer, a C++20 GCC toolchain, Node.js,
 Git, XZ, and the development files for PipeWire 1.0.5 or later, ICU,
-libsamplerate, and GTK 3. The pinned FFmpeg submodule is built as private LGPL
+libsamplerate, libsoup 3, GTK 3, and libqrencode. The GTK remote control panel uses
+libqrencode to generate pairing codes locally. The pinned FFmpeg submodule is built as private LGPL
 shared libraries; x86 builds also require NASM. Installed packages include these audio libraries
 and use a WirePlumber 0.4 or 0.5 desktop session. Node.js and the ffmpeg command
 are not runtime requirements.
