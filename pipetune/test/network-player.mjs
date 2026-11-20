@@ -10,6 +10,7 @@ import {
   writeFile,
   rm,
   stat,
+  open,
 } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -39,7 +40,7 @@ const directory = await mkdtemp(join(tmpdir(), "pipetune-player-"));
 const config = join(directory, "config");
 const runtime = join(directory, "run");
 const state = join(directory, "state");
-const bin = resolve(build, "pipetune");
+const bin = process.env.PIPETUNE_TEST_DAEMON || resolve(build, "pipetune");
 const policy = resolve(
   build,
   "pipetune-build/pipetune_wireplumber_policy_fixture",
@@ -154,7 +155,7 @@ const server = createServer((req, res) => {
   });
   res.end(req.method === "HEAD" ? undefined : data.subarray(start, end + 1));
 });
-const discovery = new Discovery();
+let discovery = new Discovery();
 try {
   await mkdir(runtime, { mode: 0o700 });
   await mkdir(join(state, "receiver"), { recursive: true });
@@ -254,16 +255,32 @@ try {
       return true;
     });
   }
-  const lastLevel = async () => {
+  const lastLevel = async (resampled = false) => {
     assert.equal(monitor.exitCode, null, monitor.diagnostic);
-    const bytes = await readFile(recording);
-    if (bytes.length < 16428) return -1;
+    const file = await open(recording, "r");
+    const bytes = Buffer.alloc(16384);
+    try {
+      const { size } = await file.stat();
+      if (size < bytes.length + 44) return -1;
+      await file.read(bytes, 0, bytes.length, size - bytes.length);
+    } finally {
+      await file.close();
+    }
+    // Sample-rate conversion rounds the square wave's edges. Compare the
+    // energy in both channels when the DSP and capture rates differ.
+    if (resampled) {
+      const squares = [0, 0];
+      for (let offset = 0; offset + 3 < bytes.length; offset += 4) {
+        squares[0] += bytes.readInt16LE(offset) ** 2;
+        squares[1] += bytes.readInt16LE(offset + 2) ** 2;
+      }
+      const [left, right] = squares.map((sum) =>
+        Math.sqrt(sum / (bytes.length / 4)),
+      );
+      return Math.abs(left - right) < 2 ? left : -1;
+    }
     const histogram = new Map();
-    for (
-      let offset = bytes.length - 16384;
-      offset + 3 < bytes.length;
-      offset += 4
-    ) {
+    for (let offset = 0; offset + 3 < bytes.length; offset += 4) {
       const value = Math.abs(bytes.readInt16LE(offset));
       if (Math.abs(value - Math.abs(bytes.readInt16LE(offset + 2))) > 2)
         continue;
@@ -271,174 +288,356 @@ try {
     }
     return [...histogram].sort((a, b) => b[1] - a[1])[0]?.[0] ?? -1;
   };
-  start("mpd", ["--no-daemon", join(config, "mpd.conf")]);
-  const receiver = start("upmpdcli", [
-    "-m",
-    "1",
-    "-i",
-    iface,
-    "-c",
-    join(config, "upmpdcli.conf"),
-  ]);
-  await discovery.start();
-  const findDevice = async (type) =>
-    waitFor("discover " + type, () => {
-      const found = [...discovery.devices.values()].find(
-        (d) => d.available && d.name.startsWith("PipeTune") && service(d, type),
-      );
-      return found && service(found, type);
-    });
-  const playlist = await findDevice("Playlist");
   server.listen(0, local.address);
   await once(server, "listening");
   const source = "http://" + local.address + ":" + server.address().port;
-  let id = 0;
-  for (const n of [1, 2]) {
-    const added = await soap(playlist, "Insert", {
-      AfterId: id,
-      Uri: source + "/" + n + ".wav",
-      Metadata: "",
-    });
-    id = Number(added.NewId);
-    assert.ok(id);
-  }
-  await soap(playlist, "Play");
-  const pcm = async (value) => {
-    try {
-      await waitFor(
-        "output PCM amplitude " + value,
-        async () => Math.abs((await lastLevel()) - value) <= 2,
+  let expectedPlayerId;
+  for (const managed of process.env.PIPETUNE_TEST_UNIT_WRAPPER
+    ? [false, true]
+    : [false]) {
+    const units = [];
+    const managerEnv = {
+      ...process.env,
+      XDG_RUNTIME_DIR: process.env.PIPETUNE_TEST_MANAGER_RUNTIME,
+      DBUS_SESSION_BUS_ADDRESS:
+        "unix:path=" + process.env.PIPETUNE_TEST_MANAGER_RUNTIME + "/bus",
+    };
+    const receiverProcess = (program, args) => {
+      if (!managed) {
+        const child = start(program, args);
+        return () => stop(child);
+      }
+      const unit =
+        "pipetune-player-test-" + process.pid + "-" + program + ".service";
+      const variables = Object.keys(env)
+        .filter(
+          (key) =>
+            [
+              "PATH",
+              "LD_LIBRARY_PATH",
+              "GIO_USE_VFS",
+              "DBUS_SESSION_BUS_ADDRESS",
+            ].includes(key) || /^(XDG_|PIPEWIRE_|UPMPD_)/u.test(key),
+        )
+        .map((key) => key + "=" + env[key]);
+      execFileSync(
+        "systemd-run",
+        [
+          "--user",
+          "--quiet",
+          "--collect",
+          "--unit",
+          unit,
+          "--property=Type=exec",
+          process.env.PIPETUNE_TEST_UNIT_WRAPPER,
+          "--enter",
+          String(process.pid),
+          "/usr/bin/env",
+          ...variables,
+          program,
+          ...args,
+        ],
+        { env: managerEnv },
       );
-    } catch (error) {
-      console.error(
-        "Last PCM level",
-        await lastLevel(),
-        "state",
-        text(bin, ["--status"]).slice(0, 2300),
-      );
-      console.error(
-        graph()
-          .map((n) => [
-            n.id,
-            n.info?.props?.["node.name"],
-            n.info?.props?.["port.alias"],
-            n.info?.["output-node-id"],
-            n.info?.["input-node-id"],
-          ])
-          .filter((a) => a.slice(1).some(Boolean)),
-      );
-      throw error;
-    }
-  };
-  await pcm(8192);
-  text(bin, ["--load-preset", preset]);
-  await pcm(4106);
-  const pair = text(bin, ["remote", "enable", local.address, "0"]).trim();
-  const editor = new WebSocket(pair.replace(/^http/u, "ws"));
-  await once(editor, "open");
-  let seq = 0;
-  const edit = async (message) => {
-    const id = ++seq;
-    const acknowledged = new Promise((resolve, reject) => {
-      const handler = (event) => {
-        const reply = JSON.parse(event.data);
-        if (reply.op !== "ack" || reply.seq !== id) return;
-        editor.removeEventListener("message", handler);
-        if (reply.ok) resolve();
-        else reject(Error(reply.error));
+      units.push(unit);
+      return () => {
+        if (!units.includes(unit)) return;
+        execFileSync("systemctl", ["--user", "stop", unit], {
+          env: managerEnv,
+        });
+        units.splice(units.indexOf(unit), 1);
       };
-      editor.addEventListener("message", handler);
-    });
-    editor.send(JSON.stringify({ ...message, seq: id }));
-    await acknowledged;
-  };
-  await edit({ op: "chain", pipeline: [{ nm: "Volume", en: true, vl: -12 }] });
-  await pcm(2058);
-  await edit({ op: "bypass", on: true });
-  await pcm(8192);
-  await edit({ op: "params", index: 0, params: { vl: -6 } });
-  await edit({ op: "bypass", on: false });
-  await pcm(4106);
-  await soap(playlist, "Pause");
-  await pcm(0);
-  await soap(playlist, "Play");
-  await pcm(4106);
-  await soap(playlist, "SeekSecondAbsolute", { Value: firstDuration - 2 });
-  discovery.close();
-  await pcm(2053);
-  await soap(playlist, "Stop");
-  await pcm(0);
-  await discovery.start();
-  const av = await findDevice("AVTransport");
-  await soap(av, "SetAVTransportURI", {
-    InstanceID: 0,
-    CurrentURI: source + "/1.wav",
-    CurrentURIMetaData: "",
-  });
-  await soap(av, "Play", { InstanceID: 0, Speed: "1" });
-  await pcm(4106);
-  await soap(av, "Stop", { InstanceID: 0 });
-  await pcm(0);
+    };
+    try {
+      text(bin, ["output", "mode", "single"]);
+      text(bin, ["bypass"]);
+      const stopMpd = receiverProcess("mpd", [
+        "--no-daemon",
+        join(config, "mpd.conf"),
+      ]);
+      const rendererLock = join(env.UPMPD_CACHEDIR, "renderer.lock");
+      const stopReceiver = receiverProcess("flock", [
+        "--nonblock",
+        "--no-fork",
+        "--verbose",
+        rendererLock,
+        "upmpdcli",
+        "-m",
+        "1",
+        "-i",
+        iface,
+        "-c",
+        join(config, "upmpdcli.conf"),
+      ]);
+      await discovery.start();
+      const findDevice = async (type) =>
+        waitFor("discover " + type, () => {
+          const found = [...discovery.devices.values()].find(
+            (d) =>
+              d.available && d.name.startsWith("PipeTune") && service(d, type),
+          );
+          return found && service(found, type);
+        });
+      const playlist = await findDevice("Playlist");
+      const found = [...discovery.devices.values()].find(
+        (d) => d.available && service(d, "Playlist") === playlist,
+      );
+      if (expectedPlayerId)
+        assert.equal(
+          found.id,
+          expectedPlayerId,
+          "the service must publish the same receiver",
+        );
+      expectedPlayerId = found.id;
+      if (managed) {
+        const ids = Buffer.from(
+          (await soap(playlist, "IdArray")).Array,
+          "base64",
+        );
+        assert.equal(
+          ids.length,
+          4,
+          "the receiver must restore the queued track across the handoff",
+        );
+        assert.equal(
+          (await soap(playlist, "Read", { Id: ids.readUInt32BE() })).Uri,
+          source + "/2.wav",
+        );
+      }
+      await soap(playlist, "DeleteAll");
+      const duplicate = start("mpd", ["--no-daemon", join(config, "mpd.conf")]);
+      await waitFor(
+        "dedicated MPD rejects duplicate listener",
+        () => duplicate.exitCode !== null,
+      );
+      assert.notEqual(duplicate.exitCode, 0);
+      assert.match(duplicate.diagnostic, /bind|already in use/iu);
+      const duplicateReceiver = start("flock", [
+        "--nonblock",
+        rendererLock,
+        "true",
+      ]);
+      assert.equal(
+        await duplicateReceiver.done,
+        1,
+        "a second renderer must not acquire its instance lock",
+      );
+      let id = 0;
+      for (const n of [1, 2]) {
+        const added = await soap(playlist, "Insert", {
+          AfterId: id,
+          Uri: source + "/" + n + ".wav",
+          Metadata: "",
+        });
+        id = Number(added.NewId);
+        assert.ok(id);
+      }
+      await soap(playlist, "Play");
+      const pcm = async (value, resampled = false) => {
+        try {
+          await waitFor(
+            "output PCM amplitude " + value,
+            async () =>
+              Math.abs((await lastLevel(resampled)) - value) <=
+              (resampled ? 0.02 * value : 2),
+          );
+        } catch (error) {
+          console.error(
+            "Last PCM level",
+            await lastLevel(resampled),
+            "state",
+            text(bin, ["--status"]).slice(0, 2300),
+          );
+          console.error(
+            graph()
+              .map((n) => [
+                n.id,
+                n.info?.props?.["node.name"],
+                n.info?.props?.["port.alias"],
+                n.info?.["output-node-id"],
+                n.info?.["input-node-id"],
+              ])
+              .filter((a) => a.slice(1).some(Boolean)),
+          );
+          throw error;
+        }
+      };
+      await pcm(8192);
+      text(bin, ["--load-preset", preset]);
+      await pcm(4106);
+      const pair = text(bin, ["remote", "enable", local.address, "0"]).trim();
+      const editor = new WebSocket(pair.replace(/^http/u, "ws"));
+      await once(editor, "open");
+      let seq = 0;
+      const edit = async (message) => {
+        const id = ++seq;
+        const acknowledged = new Promise((resolve, reject) => {
+          const handler = (event) => {
+            const reply = JSON.parse(event.data);
+            if (reply.op !== "ack" || reply.seq !== id) return;
+            editor.removeEventListener("message", handler);
+            if (reply.ok) resolve();
+            else reject(Error(reply.error));
+          };
+          editor.addEventListener("message", handler);
+        });
+        editor.send(JSON.stringify({ ...message, seq: id }));
+        await acknowledged;
+      };
+      await edit({
+        op: "chain",
+        pipeline: [{ nm: "Volume", en: true, vl: -12 }],
+      });
+      await pcm(2058);
+      await edit({ op: "bypass", on: true });
+      await pcm(8192);
+      await edit({ op: "params", index: 0, params: { vl: -6 } });
+      await edit({ op: "bypass", on: false });
+      await pcm(4106);
+      await soap(playlist, "Pause");
+      await pcm(0);
+      await soap(playlist, "Play");
+      await pcm(4106);
+      await soap(playlist, "SeekSecondAbsolute", { Value: firstDuration - 2 });
+      discovery.close();
+      await pcm(2053);
+      await soap(playlist, "Stop");
+      await pcm(0);
+      await discovery.start();
+      const av = await findDevice("AVTransport");
+      await soap(av, "SetAVTransportURI", {
+        InstanceID: 0,
+        CurrentURI: source + "/1.wav",
+        CurrentURIMetaData: "",
+      });
+      await soap(av, "Play", { InstanceID: 0, Speed: "1" });
+      await pcm(4106);
+      await soap(av, "Stop", { InstanceID: 0 });
+      await pcm(0);
 
-  text(bin, ["output", "select", name]);
-  text(bin, ["output", "mode", "multiple"]);
-  const direct = await waitFor("Direct sink", () =>
-    graph().find(
-      (node) =>
-        node.info?.props?.["node.description"] === "PipeTune Direct Output" &&
-        node.info.props["media.class"] === "Audio/Sink",
-    ),
-  );
-  text("wpctl", ["set-default", String(direct.id)]);
-  await waitFor("Direct selected", () =>
-    text("wpctl", ["inspect", "@DEFAULT_AUDIO_SINK@"]).includes(
-      "PipeTune Direct Output",
-    ),
-  );
-  await soap(av, "SetAVTransportURI", {
-    InstanceID: 0,
-    CurrentURI: source + "/1.wav",
-    CurrentURIMetaData: "",
-  });
-  await soap(av, "Play", { InstanceID: 0, Speed: "1" });
-  await pcm(4106);
-  if (process.env.PIPETUNE_TEST_EDITOR) {
-    // The external UI driver opens the same link and changes the Volume control.
-    const info = join(directory, "editor.json");
-    await writeFile(
-      info,
-      JSON.stringify({
-        pair,
-        source,
-        preset,
-        directory,
-        playerId: [...discovery.devices.values()].find(
-          (d) =>
-            d.name.startsWith("PipeTune") &&
-            service(d, "AVTransport") &&
-            !service(d, "Playlist"),
-        ).id,
-        upstream: resolve(upstream),
-      }),
-      { mode: 0o600 },
-    );
-    const ui = start(process.execPath, [
-      resolve(process.env.PIPETUNE_TEST_EDITOR),
-      info,
-    ]);
-    ui.stdout.on("data", (bytes) => process.stdout.write(bytes));
-    assert.equal(await ui.done, 0, ui.diagnostic);
-    await pcm(2058);
-    await edit({ op: "params", index: 0, params: { vl: -6 } });
-    await pcm(4106);
+      text(bin, ["output", "select", name]);
+      text(bin, ["output", "mode", "multiple"]);
+      const direct = await waitFor("Direct sink", () =>
+        graph().find(
+          (node) =>
+            node.info?.props?.["node.description"] ===
+              "PipeTune Direct Output" &&
+            node.info.props["media.class"] === "Audio/Sink",
+        ),
+      );
+      text("wpctl", ["set-default", String(direct.id)]);
+      await waitFor("Direct selected", () =>
+        text("wpctl", ["inspect", "@DEFAULT_AUDIO_SINK@"]).includes(
+          "PipeTune Direct Output",
+        ),
+      );
+      await soap(av, "SetAVTransportURI", {
+        InstanceID: 0,
+        CurrentURI: source + "/1.wav",
+        CurrentURIMetaData: "",
+      });
+      await soap(av, "Play", { InstanceID: 0, Speed: "1" });
+      await pcm(4106);
+      const volume = service(found, "Volume");
+      const originalVolume = Number((await soap(volume, "Volume")).Value);
+      await soap(volume, "SetVolume", {
+        Value: Math.round(originalVolume / 2),
+      });
+      await waitFor("the player's software mixer attenuates MPD", async () => {
+        const level = await lastLevel();
+        return level > 0 && level < 3800;
+      });
+      await soap(volume, "SetVolume", { Value: originalVolume });
+      await pcm(4106);
+      await soap(volume, "SetMute", { Value: 1 });
+      await pcm(0);
+      const desktopWave = join(directory, "desktop.wav");
+      await writeFile(desktopWave, wave(3, 6144));
+      const desktopStream = () =>
+        start("pw-cat", [
+          "--playback",
+          "--target",
+          "pipetune_sink",
+          desktopWave,
+        ]);
+      const alongsideMutedPlayer = desktopStream();
+      await pcm(3079);
+      await stop(alongsideMutedPlayer);
+      await pcm(0);
+      await soap(volume, "SetMute", { Value: 0 });
+      await pcm(4106);
+      text(bin, ["rate", "set", "96000", "suggest"]);
+      await edit({ op: "params", index: 0, params: { vl: -9 } });
+      await pcm(2907, true);
+      text(bin, ["rate", "set", "48000", "suggest"]);
+      await edit({ op: "params", index: 0, params: { vl: -6 } });
+      await pcm(4106);
+      if (process.env.PIPETUNE_TEST_EDITOR) {
+        // Only a new selection from the desktop application can restart playback.
+        await soap(av, "Stop", { InstanceID: 0 });
+        await pcm(0);
+        const info = join(directory, "editor.json");
+        await writeFile(
+          info,
+          JSON.stringify({
+            pair,
+            source,
+            directory,
+            openHomeId: found.id,
+            playerId: [...discovery.devices.values()].find(
+              (d) =>
+                d.name.startsWith("PipeTune") &&
+                service(d, "AVTransport") &&
+                !service(d, "Playlist"),
+            ).id,
+            upstream: resolve(upstream),
+          }),
+          { mode: 0o600 },
+        );
+        const ui = start(process.execPath, [
+          resolve(process.env.PIPETUNE_TEST_EDITOR),
+          info,
+        ]);
+        ui.stdout.on("data", (bytes) => process.stdout.write(bytes));
+        assert.equal(await ui.done, 0, ui.diagnostic);
+        await pcm(2058);
+        await edit({ op: "params", index: 0, params: { vl: -6 } });
+        await pcm(4106);
+      }
+      editor.close();
+      await soap(av, "Stop", { InstanceID: 0 });
+      await pcm(0);
+      console.log(
+        "OpenHome and UPnP AV: stereo PCM 8192 to 4106 (-6 dB), pause/resume/seek/stop, unattended next track and processed playback with Direct as default.",
+      );
+      await soap(playlist, "DeleteAll");
+      await soap(playlist, "Insert", {
+        AfterId: 0,
+        Uri: source + "/2.wav",
+        Metadata: "",
+      });
+      await stopReceiver();
+      await stopMpd();
+      // The receiver has stopped. A desktop stream still reaches the same DSP.
+      const desktop = desktopStream();
+      await pcm(3079);
+      await stop(desktop);
+      text(bin, ["remote", "disable"]);
+      console.log(
+        (managed ? "Transient user units" : "Manual processes") +
+          ": same renderer " +
+          found.id +
+          ", duplicate MPD and renderer rejected, desktop PCM survives receiver shutdown.",
+      );
+    } finally {
+      discovery.close();
+      discovery = new Discovery();
+      for (const unit of units.reverse())
+        execFileSync("systemctl", ["--user", "stop", unit], {
+          env: managerEnv,
+        });
+    }
   }
-  editor.close();
-  await soap(av, "Stop", { InstanceID: 0 });
-  await pcm(0);
-  console.log(
-    "OpenHome and UPnP AV: stereo PCM 8192 to 4106 (-6 dB), pause/resume/seek/stop, unattended next track and processed playback with Direct as default.",
-  );
-  await stop(receiver);
 } finally {
   discovery.close();
   server.closeAllConnections();

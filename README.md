@@ -254,11 +254,16 @@ mpd --no-daemon "$player_config/mpd.conf"
 Start the receiver in another terminal. Replace `enp3s0` with the interface on the controller's LAN. Set the device name in `upmpdcli.conf`.
 
 ```sh
-UPMPD_CACHEDIR="${XDG_CACHE_HOME:-$HOME/.cache}/pipetune/player" \
+export UPMPD_CACHEDIR="${XDG_CACHE_HOME:-$HOME/.cache}/pipetune/player"
+flock --nonblock --no-fork --verbose "$UPMPD_CACHEDIR/renderer.lock" \
   upmpdcli -m 1 -i enp3s0 -c "${XDG_CONFIG_HOME:-$HOME/.config}/pipetune/player/upmpdcli.conf"
 ```
 
-Select PipeTune as the playback destination in EffeTune and play a track from the music library. The OpenHome queue continues after the controller disconnects while the music server remains available. MPD targets the processed input, `pipetune_sink`, even when Direct is the OS default in multiple-output mode.
+In EffeTune 2.16.0, select “PipeTune (UPnP AV)” as the player. Choose a track from the music library and use the pairing link to edit the DSP during playback. MPD targets the processed input, `pipetune_sink`, even when Direct is the OS default in multiple-output mode. The player's volume and mute controls affect only MPD.
+
+OpenHome keeps the queue on the playback device and advances to the next track after the controller disconnects if the music server stays available. With EffeTune 2.16.0 and upmpdcli 1.9.17, an unchanged OpenHome queue triggers a refresh error and prevents track selection. UPnP AV track selection and playback were verified on Ubuntu 24.04.5 with MPD 0.23.14 and its PipeWire output. [EffeTune queue check](https://github.com/Frieve-A/effetune/blob/v2.16.0/electron/network-music-host.cjs#L291-L293) · [upmpdcli 1.9.17 source](https://www.lesbonscomptes.com/upmpdcli/downloads/upmpdcli-1.9.17.tar.gz)
+
+Stop upmpdcli first, then MPD, with Ctrl+C in their respective terminals. To move the receiver to user services, stop the manual instances and reuse the same user account, profiles, state file and cache. An occupied MPD port or renderer lock prevents a second instance from starting.
 
 ## Selecting an EffeTune DSP preset
 

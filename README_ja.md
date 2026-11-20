@@ -242,11 +242,16 @@ mpd --no-daemon "$player_config/mpd.conf"
 別の端末で受信を始めます。`enp3s0`は操作端末と同じLANのインターフェイス名に置き換えてください。機器名は`upmpdcli.conf`で指定できます。
 
 ```sh
-UPMPD_CACHEDIR="${XDG_CACHE_HOME:-$HOME/.cache}/pipetune/player" \
+export UPMPD_CACHEDIR="${XDG_CACHE_HOME:-$HOME/.cache}/pipetune/player"
+flock --nonblock --no-fork --verbose "$UPMPD_CACHEDIR/renderer.lock" \
   upmpdcli -m 1 -i enp3s0 -c "${XDG_CONFIG_HOME:-$HOME/.config}/pipetune/player/upmpdcli.conf"
 ```
 
-EffeTuneの再生先にPipeTuneを選び、音楽ライブラリから再生します。OpenHomeでは再生端末が曲順を保持するので、音源サーバーが動いていれば操作端末を閉じても次曲へ進みます。MPDの出力先は処理入力の`pipetune_sink`です。複数出力モードでOSの既定にDirectを選んでいても、ネットワーク再生には現在のDSPが掛かります。
+EffeTune 2.16.0では、再生先に「PipeTune (UPnP AV)」を選んでください。音楽ライブラリから曲を選び、再生中のDSPはペアリングリンクから編集できます。MPDは処理入力の`pipetune_sink`に音を送ります。複数出力モードでOSの既定がDirectでも、現在のDSPが掛かります。再生機の音量とミュートはMPDの音だけに効きます。
+
+OpenHomeでは再生機が曲順を保持します。音源サーバーが動いていれば、操作端末を閉じても次の曲に進みます。ただしEffeTune 2.16.0とupmpdcli 1.9.17の組み合わせでは、曲順に変更がなくても更新を求められ、OpenHomeで選曲できません。Ubuntu 24.04.5でMPD 0.23.14のPipeWire出力を使い、同じ再生機のUPnP AVで選曲と再生を確認しました。[EffeTuneのキュー照合](https://github.com/Frieve-A/effetune/blob/v2.16.0/electron/network-music-host.cjs#L291-L293)・[upmpdcli 1.9.17のソース](https://www.lesbonscomptes.com/upmpdcli/downloads/upmpdcli-1.9.17.tar.gz)
+
+終了するにはupmpdcli、MPDの順に、それぞれの端末でCtrl+Cを押します。手動起動からユーザーサービスへ移すときも、同じユーザーの設定と状態ファイル、キャッシュを指定してください。使用中のMPDポートや受信機のロックがあれば、二重起動はエラーになります。
 
 ## EffeTune DSPプリセット選択
 
