@@ -9,5 +9,11 @@
     "noEmit": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["support", "tests", "vite.config.ts", "vitest.config.ts"]
+  "include": [
+    "support",
+    "tests",
+    "integration",
+    "vite.config.ts",
+    "vitest.config.ts"
+  ]
 }

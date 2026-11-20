@@ -167,7 +167,9 @@ static bool checkSettingsPages(const pipetune_gtk::MainWindowUi &ui) {
       gtk_container_get_children(GTK_CONTAINER(ui.settingsStack));
   const auto count = g_list_length(children);
   g_list_free(children);
-  return check(count == 5, "settings page count differs") &&
+  return check(count == 6, "settings page count differs") &&
+         check(gtk_stack_get_child_by_name(GTK_STACK(ui.settingsStack), "remote") != nullptr,
+               "remote control settings page is missing") &&
          check(gtk_stack_get_child_by_name(GTK_STACK(ui.settingsStack), "output") != nullptr,
                "output configuration page is missing") &&
          check(gtk_stack_get_child_by_name(GTK_STACK(ui.settingsStack),
@@ -432,6 +434,14 @@ static bool checkPresetConfiguration(
 }
 
 int main(int argc, char **argv) {
+  if (argc == 2 && std::string_view(argv[1]) == "--read-clipboard") {
+    if (!gtk_init_check(&argc, &argv)) return 1;
+    auto *text = gtk_clipboard_wait_for_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD));
+    if (!text) return 1;
+    std::cout << text;
+    g_free(text);
+    return 0;
+  }
   if (argc != 2) {
     std::cerr << "locale directory is required\n";
     return 1;

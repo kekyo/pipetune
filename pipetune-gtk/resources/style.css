@@ -7,9 +7,9 @@
 }
 
 .settings-switcher button {
-  min-width: 48px;
-  padding-left: 8px;
-  padding-right: 8px;
+  min-width: 0;
+  padding-left: 4px;
+  padding-right: 4px;
 }
 
 .title {

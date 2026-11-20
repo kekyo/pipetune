@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <charconv>
 #include <cmath>
@@ -87,7 +88,27 @@ static et_status primeSfzEvent(const DspBackendApi &api, et_engine engine,
   return status;
 }
 
+// Each snapshot contains the latest change to every edited instance. The control
+// thread owns one buffer, the processing thread owns one, and an atomic index
+// exchanges the third. Only the control thread copies or destroys vectors.
+struct LiveParameters {
+  std::size_t index;
+  et_instance instance;
+  std::uint32_t hash;
+  std::vector<float> values;
+  std::uint64_t revision;
+};
+
 struct DspPipeline::Impl {
+  std::vector<et_instance> editableInstances;
+  std::vector<std::uint64_t> appliedEdits;
+  std::vector<LiveParameters> acceptedEdits;
+  std::array<std::vector<LiveParameters>, 3> buffers;
+  static constexpr unsigned dirty = 4;
+  static_assert(std::atomic<unsigned>::is_always_lock_free);
+  std::atomic<unsigned> mailbox{1};
+  unsigned writer = 2, reader = 0;
+  std::uint64_t editRevision = 0;
   std::shared_ptr<const DspBackend> backend;
   et_engine engine = 0;
   bool bypass = false;
@@ -573,6 +594,45 @@ static yyjson_val *findPipelineRoot(yyjson_val *root) {
   return yyjson_is_arr(plugins) ? plugins : nullptr;
 }
 
+bool acceptsRemoteEffect(std::string_view name) {
+  if (name == "Section") return true;
+  const auto *def = findDspByDisplayName(name);
+  if (!def || unsupportedHostPluginReason(def->typeName)) return false;
+  // EffeTune resends meters with every chain edit. The preset retains them while the DSP skips them.
+  if (def->visualizationOnly) return true;
+  return !def->requiresExternalAssets || supportsGeneratedFirAsset(name) || name == "IR Reverb" ||
+      name == "Bass Management" || name == "Room EQ" || name == "Crosstalk Cancellation" ||
+      def->typeName == "SFZNotePlayerPlugin";
+}
+
+std::string shortPipeline(std::string_view recipe) {
+  const auto source = JsonDocument(yyjson_read(recipe.data(), recipe.size(), 0));
+  auto *nodes = findPipelineRoot(yyjson_doc_get_root(source.get()));
+  if (!nodes) throw std::invalid_argument("preset has no pipeline");
+  const auto doc = std::unique_ptr<yyjson_mut_doc, decltype(&yyjson_mut_doc_free)>(
+      yyjson_mut_doc_new(nullptr), yyjson_mut_doc_free);
+  auto *array = yyjson_mut_arr(doc.get());
+  for (std::size_t index = 0; index < yyjson_arr_size(nodes); ++index) {
+    auto node = PresetNode{};
+    auto error = std::string{};
+    if (!normalizeNode(yyjson_arr_get(nodes, index), index, node, error)) throw std::invalid_argument(error);
+    auto *item = node.parameters ? yyjson_val_mut_copy(doc.get(), node.parameters) : yyjson_mut_obj(doc.get());
+    const auto put = [&](const char *key, yyjson_mut_val *value) {
+      yyjson_mut_obj_put(item, yyjson_mut_str(doc.get(), key), value);
+    };
+    put("nm", yyjson_mut_strn(doc.get(), node.name.data(), node.name.size()));
+    put("en", yyjson_mut_bool(doc.get(), node.enabled));
+    if (node.inputBus) put("ib", yyjson_val_mut_copy(doc.get(), node.inputBus));
+    if (node.outputBus) put("ob", yyjson_val_mut_copy(doc.get(), node.outputBus));
+    if (node.channel && !yyjson_is_null(node.channel)) put("ch", yyjson_val_mut_copy(doc.get(), node.channel));
+    yyjson_mut_arr_append(array, item);
+  }
+  const auto encoded = std::unique_ptr<char, decltype(&std::free)>(
+      yyjson_mut_val_write(array, 0, nullptr), std::free);
+  if (!encoded) throw std::runtime_error("cannot encode remote pipeline");
+  return encoded.get();
+}
+
 DspPipeline::DspPipeline(std::unique_ptr<Impl> implementation)
     : implementation_(std::move(implementation)) {}
 
@@ -592,6 +652,16 @@ ProcessStatus DspPipeline::process(std::span<float> planarSamples, std::uint32_t
     return ProcessStatus::ok;
   }
   const auto &api = dspBackendApi(*implementation_->backend);
+  auto &impl = *implementation_;
+  if (impl.mailbox.load(std::memory_order_acquire) & Impl::dirty) {
+    impl.reader = impl.mailbox.exchange(impl.reader, std::memory_order_acq_rel) & ~Impl::dirty;
+    for (const auto &edit : impl.buffers[impl.reader]) {
+      if (impl.appliedEdits[edit.index] == edit.revision) continue;
+      if (api.instanceSetParams(impl.engine, edit.instance, edit.values.data(), edit.values.size(), edit.hash, 0) != ET_OK)
+        return ProcessStatus::dspError;
+      impl.appliedEdits[edit.index] = edit.revision;
+    }
+  }
   auto *arena = api.arenaCombinedPtr(implementation_->engine);
   if (arena == nullptr) {
     return ProcessStatus::dspError;
@@ -684,6 +754,58 @@ createBypassDspPipeline(const PipelineBuildOptions &options) {
   return {.pipeline = std::move(pipeline), .error = {}};
 }
 
+// These fixed-latency kernels stage their generated float layout without asset
+// preparation, allocation, or a change to the pipeline's channel geometry.
+static bool supportsLiveParameters(std::string_view name) {
+  constexpr std::array names{"Volume", "Stereo Balance", "DC Offset", "Polarity Inversion", "Mute",
+      "5Band PEQ", "15Band PEQ", "15Band GEQ", "Delay", "FDN Reverb"};
+  return std::ranges::find(names, name) != names.end();
+}
+
+bool DspPipeline::updateParameters(const std::shared_ptr<const std::string> &recipe) {
+  auto &impl = *implementation_;
+  if (!impl.presetRecipe || !recipe) return false;
+  const auto beforeText = shortPipeline(*impl.presetRecipe);
+  const auto afterText = shortPipeline(*recipe);
+  const auto before = JsonDocument(yyjson_read(beforeText.data(), beforeText.size(), 0));
+  const auto after = JsonDocument(yyjson_read(afterText.data(), afterText.size(), 0));
+  auto *oldList = yyjson_doc_get_root(before.get()), *newList = yyjson_doc_get_root(after.get());
+  if (yyjson_arr_size(oldList) != yyjson_arr_size(newList)) return false;
+  auto updates = impl.acceptedEdits;
+  auto dirty = false;
+  for (std::size_t index = 0; index < yyjson_arr_size(newList); ++index) {
+    auto *oldNode = yyjson_arr_get(oldList, index), *newNode = yyjson_arr_get(newList, index);
+    if (yyjson_equals(oldNode, newNode)) continue;
+    for (const auto *field : {"nm", "en", "ib", "ob", "ch"}) {
+      auto *lhs = yyjson_obj_get(oldNode, field), *rhs = yyjson_obj_get(newNode, field);
+      if (lhs != rhs && (!lhs || !rhs || !yyjson_equals(lhs, rhs))) return false;
+    }
+    const auto instance = impl.editableInstances[index];
+    if (!instance) return false;
+    const auto *def = findDspByDisplayName(yyjson_get_str(yyjson_obj_get(newNode, "nm")));
+    auto packed = packDspParameters(*def, newNode);
+    if (!packed.error.empty()) throw std::invalid_argument(packed.error);
+    if (packed.floats == packDspParameters(*def, oldNode).floats) continue;
+    auto changed = LiveParameters{index, instance, def->hash, std::move(packed.floats), impl.editRevision + 1};
+    const auto existing = std::ranges::find(updates, index, &LiveParameters::index);
+    if (existing != updates.end()) *existing = std::move(changed);
+    else updates.push_back(std::move(changed));
+    dirty = true;
+  }
+  if (dirty) {
+    impl.buffers[impl.writer] = updates;
+    impl.acceptedEdits = std::move(updates);
+    ++impl.editRevision;
+    impl.writer = impl.mailbox.exchange(impl.writer | Impl::dirty, std::memory_order_acq_rel) & ~Impl::dirty;
+  }
+  impl.presetRecipe = recipe;
+  return true;
+}
+
+std::shared_ptr<const std::string> DspPipeline::recipe() const noexcept {
+  return implementation_->presetRecipe;
+}
+
 cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
     std::shared_ptr<const std::string> presetRecipe,
     PipelineBuildOptions options,
@@ -755,6 +877,8 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
   auto insideSection = false;
   auto sectionEnabled = true;
   const auto nodeCount = yyjson_arr_size(pipelineValue);
+  implementation->editableInstances.resize(nodeCount);
+  implementation->appliedEdits.resize(nodeCount);
   for (auto index = std::size_t{0}; index < nodeCount; ++index) {
     co_await preparationCheckpoint(cancellation);
     auto node = PresetNode{};
@@ -1076,6 +1200,7 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
           co_return fail(nodeError(index, "SFZ Event analysis initialization failed"), std::move(warnings));
       }
     }
+    if (supportsLiveParameters(node.name)) implementation->editableInstances[index] = instance;
     activeNodes.push_back({.instance = instance,
                            .inputBus = inputBus,
                            .outputBus = outputBus,

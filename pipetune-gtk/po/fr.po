@@ -112,6 +112,9 @@ msgstr "Tout"
 msgid "All settings saved"
 msgstr "Tous les paramètres sont enregistrés"
 
+msgid "Allow remote control"
+msgstr "Autoriser le contrôle à distance"
+
 msgid "Ambiguous device"
 msgstr "Appareil ambigu"
 
@@ -172,6 +175,12 @@ msgstr "Impossible d'enregistrer les paramètres"
 msgid "Cannot use saved language preference"
 msgstr "Impossible d'utiliser la préférence de langue enregistrée"
 
+msgid "Certificate"
+msgstr "Certificat"
+
+msgid "Changes apply immediately to this daemon session."
+msgstr "Les changements prennent effet immédiatement pour la session en cours du service."
+
 msgid "Changing audio outputs"
 msgstr "Modification des sorties audio"
 
@@ -212,6 +221,9 @@ msgstr "Gains des canaux : {0}"
 msgid "Channels"
 msgstr "Canaux"
 
+msgid "Choose a certificate and private key to enable HTTPS."
+msgstr "Choisissez un certificat et une clé privée pour activer HTTPS."
+
 msgid "Choose a device to add to this configuration."
 msgstr "Choisissez le périphérique à ajouter à cette configuration."
 
@@ -220,6 +232,12 @@ msgstr "Choisissez un préréglage avant d'activer le traitement DSP"
 
 msgid "Choose a standard or saved EffeTune preset…"
 msgstr "Choisissez un préréglage EffeTune standard ou enregistré…"
+
+msgid "Choose a TLS certificate"
+msgstr "Choisir un certificat TLS"
+
+msgid "Choose a TLS private key"
+msgstr "Choisir une clé privée TLS"
 
 msgid "Choose an EffeTune preset"
 msgstr "Choisissez un préréglage EffeTune"
@@ -285,8 +303,14 @@ msgstr "Service de contrôle indisponible"
 msgid "Control socket unavailable"
 msgstr "Socket de contrôle indisponible"
 
+msgid "Copied"
+msgstr "Copiée"
+
 msgid "Copy"
 msgstr "Copier"
+
+msgid "Copy URL"
+msgstr "Copier l’URL"
 
 msgid "Custom preset file"
 msgstr "Fichier de préréglage personnalisé"
@@ -461,6 +485,10 @@ msgstr "Plus tard"
 msgid "Levels after combining Processed and Direct, before device volume."
 msgstr "Niveaux après le mélange de Processed et Direct, avant le volume de l’appareil."
 
+#, brace-format
+msgid "Listening · Connected devices: {0}"
+msgstr "À l’écoute · Appareils connectés : {0}"
+
 msgid "Live Configuration"
 msgstr "Configuration en direct"
 
@@ -506,8 +534,17 @@ msgstr "Multiple — sorties choisies dans PipeTune"
 msgid "Native backend"
 msgstr "Moteur natif"
 
+msgid "Network"
+msgstr "Réseau"
+
 msgid "Never"
 msgstr "Jamais"
+
+msgid "New URL"
+msgstr "Nouvelle URL"
+
+msgid "No local IPv4 address is available."
+msgstr "Aucune adresse IPv4 locale disponible."
 
 msgid "No unconfigured output devices are available."
 msgstr "Aucun périphérique de sortie non configuré n’est disponible."
@@ -546,6 +583,9 @@ msgstr "Dépassement {0}  •  Sous-alimentation {1}  •  Traitement {2}"
 msgid "Overrun frames"
 msgstr "Images en dépassement"
 
+msgid "Pairing URL"
+msgstr "URL d’association"
+
 msgid "PCM data rate"
 msgstr "Débit de données PCM"
 
@@ -560,6 +600,9 @@ msgstr "Les paramètres en attente de la boîte de dialogue seront réappliqués
 
 msgid "PipeTune disconnected"
 msgstr "PipeTune déconnecté"
+
+msgid "PipeTune is disconnected."
+msgstr "PipeTune est déconnecté."
 
 msgid "PipeTune reconnected"
 msgstr "PipeTune reconnecté"
@@ -595,6 +638,9 @@ msgstr "Application PipeWire"
 msgid "PipeWire graph sampling frequency"
 msgstr "Fréquence d'échantillonnage du graphe PipeWire"
 
+msgid "Port"
+msgstr "Port"
+
 msgid "Preset"
 msgstr "Préréglage"
 
@@ -609,6 +655,9 @@ msgstr "Préréglage requis"
 
 msgid "Preset warnings"
 msgstr "Avertissements du préréglage"
+
+msgid "Private key"
+msgstr "Clé privée"
 
 msgid "Processing"
 msgstr "Traitement"
@@ -636,6 +685,12 @@ msgstr "Quitter"
 
 msgid "Reconnect this device, replace it, or remove it from the configuration."
 msgstr "Reconnectez ce périphérique, remplacez-le ou retirez-le de la configuration."
+
+msgid "Remote Control"
+msgstr "Contrôle à distance"
+
+msgid "Remote control is off."
+msgstr "Le contrôle à distance est désactivé."
 
 msgid "Remove from configuration"
 msgstr "Retirer de la configuration"
@@ -722,6 +777,9 @@ msgstr "Scalar"
 #, brace-format
 msgid "Scalar gain: {0}"
 msgstr "Gain global : {0}"
+
+msgid "Scan the code or open the URL on the device you want to use as a controller."
+msgstr "Scannez le code ou ouvrez l’URL sur l’appareil qui servira de télécommande."
 
 msgid "seconds"
 msgstr "secondes"
@@ -838,6 +896,9 @@ msgstr "Mise à jour des paramètres"
 
 msgid "Updating settings failed"
 msgstr "Échec de la mise à jour des paramètres"
+
+msgid "Use HTTPS"
+msgstr "Utiliser HTTPS"
 
 msgid "Use this device"
 msgstr "Utiliser ce périphérique"

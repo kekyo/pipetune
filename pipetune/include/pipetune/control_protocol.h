@@ -31,6 +31,8 @@ namespace pipetune {
  * Identifies one local control request.
  */
 enum class ControlCommand {
+  /** Configure the network editor from a same-user local client. */
+  remote,
   /** Return the running pipeline status. */
   status,
   /** Build and activate a preset without stopping audio. */
@@ -48,6 +50,29 @@ enum class ControlCommand {
   /** Keep the connection open and publish status changes. */
   subscribe
 };
+
+/** Local-only changes to the remote editor listener. */
+struct RemoteListenerOptions {
+  std::string operation = {}; /**< enable, link, rotate, or disable. */
+  std::string address = {}; /**< Local IPv4 address advertised to clients. */
+  unsigned port = 47300; /**< Listener port; zero requests an available port. */
+  std::string certificate = {}; /**< Optional absolute PEM certificate chain path. */
+  std::string key = {}; /**< Matching absolute PEM private-key path. */
+};
+
+/** Listener information visible to local status subscribers. */
+struct RemoteListenerStatus {
+  std::uint64_t revision = 0; /**< Changes when a pairing link is issued or revoked. */
+  std::string address = {}; /**< Bound local IPv4 address, empty while off. */
+  std::uint32_t port = 0; /**< Actual bound TCP port, zero while off. */
+  std::string certificate = {}; /**< TLS certificate file path for the running listener. */
+  std::string key = {}; /**< TLS private key file path for the running listener. */
+  std::uint32_t clients = 0; /**< Number of authenticated editor connections. */
+  bool operator==(const RemoteListenerStatus &) const = default;
+};
+
+/** Encodes a local listener administration request for the control socket. */
+std::string makeRemoteControlRequest(const RemoteListenerOptions &options);
 
 /**
  * Holds one validated control request.
@@ -73,6 +98,8 @@ struct ControlRequest {
   std::optional<std::uint64_t> expectedOutputInventoryRevision = std::nullopt;
   /** Optional revision guard for setOutput; a mismatch leaves live state intact. */
   std::optional<std::uint64_t> expectedRevision = std::nullopt;
+  /** Local pairing settings for the remote command. */
+  RemoteListenerOptions remote = {};
   /** Optional processing choice for setOutput: empty path means bypass;
    * no value preserves the current pipeline recipe. */
   std::optional<std::filesystem::path> outputPreset = std::nullopt;
@@ -134,6 +161,10 @@ struct ControlDspVariantAvailability {
 struct ControlRuntimeStatus {
   /** Current PCM processing mode. */
   ProcessingMode processingMode;
+  /** True when a remote chain has no associated preset file. */
+  bool inMemoryPreset = false;
+  /** Master bypass keeps the remote chain available for editing. */
+  bool masterBypass = false;
   /** Current preset DSP activity independently from processingMode. */
   DspActivity dspActivity = DspActivity::bypassed;
   /** Configured automatic DSP suspension policy. */
@@ -243,6 +274,8 @@ struct ControlRuntimeStatus {
   std::vector<float> outputPeaks = {};
   /** Recent PCM peak after combining Processed and Direct, in linear amplitude. */
   std::vector<float> mixedOutputPeaks = {};
+  /** Current listener settings, without pairing credentials. */
+  RemoteListenerStatus remoteListener = {};
 };
 
 /**
@@ -285,6 +318,8 @@ struct ControlResponseParseResult {
   std::vector<ControlWarning> warnings;
   /** Remote diagnostic, or a local protocol diagnostic when invalid. */
   std::string error;
+  /** Private pairing link returned to the local requester only. */
+  std::string pairingLink = {};
 };
 
 /**
@@ -379,11 +414,12 @@ makeLoadPresetControlRequest(const std::filesystem::path &presetPath);
  *
  * @param status Current daemon status.
  * @param warnings Nodes omitted while handling a load request.
+ * @param pairingLink Private credential issued by a local listener command.
  * @return Encoded JSON response.
  */
 std::string makeControlSuccessResponse(
     const ControlRuntimeStatus &status,
-    std::span<const ControlWarning> warnings);
+    std::span<const ControlWarning> warnings, std::string_view pairingLink = {});
 
 /**
  * Returns a subscribed status event without framing newline.

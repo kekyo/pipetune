@@ -111,6 +111,9 @@ msgstr "すべて"
 msgid "All settings saved"
 msgstr "すべての設定を保存しました"
 
+msgid "Allow remote control"
+msgstr "リモート操作を許可"
+
 msgid "Ambiguous device"
 msgstr "デバイスを特定できません"
 
@@ -171,6 +174,12 @@ msgstr "設定を保存できません"
 msgid "Cannot use saved language preference"
 msgstr "保存された言語設定を使用できません"
 
+msgid "Certificate"
+msgstr "証明書"
+
+msgid "Changes apply immediately to this daemon session."
+msgstr "変更はすぐに反映され、PipeTuneを再起動するまで有効です。"
+
 msgid "Changing audio outputs"
 msgstr "音声出力を変更中"
 
@@ -211,6 +220,9 @@ msgstr "チャンネルゲイン: {0}"
 msgid "Channels"
 msgstr "チャンネル"
 
+msgid "Choose a certificate and private key to enable HTTPS."
+msgstr "HTTPSを使うには証明書と秘密鍵を選んでください。"
+
 msgid "Choose a device to add to this configuration."
 msgstr "この構成に追加するデバイスを選択してください。"
 
@@ -219,6 +231,12 @@ msgstr "DSP処理を有効にする前にプリセットを選択してくださ
 
 msgid "Choose a standard or saved EffeTune preset…"
 msgstr "標準または保存済みのEffeTuneプリセットを選択…"
+
+msgid "Choose a TLS certificate"
+msgstr "TLS証明書を選択"
+
+msgid "Choose a TLS private key"
+msgstr "TLS秘密鍵を選択"
 
 msgid "Choose an EffeTune preset"
 msgstr "EffeTuneプリセットを選択"
@@ -284,8 +302,14 @@ msgstr "制御サービスを利用できません"
 msgid "Control socket unavailable"
 msgstr "制御ソケットを利用できません"
 
+msgid "Copied"
+msgstr "コピーしました"
+
 msgid "Copy"
 msgstr "コピー"
+
+msgid "Copy URL"
+msgstr "URLをコピー"
 
 msgid "Custom preset file"
 msgstr "カスタムプリセットファイル"
@@ -460,6 +484,10 @@ msgstr "後で"
 msgid "Levels after combining Processed and Direct, before device volume."
 msgstr "ProcessedとDirectの混合後、デバイス音量適用前のレベルです。"
 
+#, brace-format
+msgid "Listening · Connected devices: {0}"
+msgstr "待ち受け中（接続中の端末 {0} 台）"
+
 msgid "Live Configuration"
 msgstr "ライブ設定"
 
@@ -505,8 +533,17 @@ msgstr "複数 — PipeTuneで出力先を選択"
 msgid "Native backend"
 msgstr "ネイティブバックエンド"
 
+msgid "Network"
+msgstr "ネットワーク"
+
 msgid "Never"
 msgstr "なし"
+
+msgid "New URL"
+msgstr "URLを再発行"
+
+msgid "No local IPv4 address is available."
+msgstr "利用できるIPv4アドレスがありません。"
 
 msgid "No unconfigured output devices are available."
 msgstr "追加できる未登録の出力デバイスがありません。"
@@ -545,6 +582,9 @@ msgstr "オーバーラン {0}  •  アンダーラン {1}  •  処理 {2}"
 msgid "Overrun frames"
 msgstr "オーバーランフレーム"
 
+msgid "Pairing URL"
+msgstr "接続用URL"
+
 msgid "PCM data rate"
 msgstr "PCMデータレート"
 
@@ -559,6 +599,9 @@ msgstr "保留中のダイアログ設定を再適用します"
 
 msgid "PipeTune disconnected"
 msgstr "PipeTuneから切断されました"
+
+msgid "PipeTune is disconnected."
+msgstr "PipeTuneに接続していません。"
 
 msgid "PipeTune reconnected"
 msgstr "PipeTuneに再接続しました"
@@ -594,6 +637,9 @@ msgstr "PipeWire強制方式"
 msgid "PipeWire graph sampling frequency"
 msgstr "PipeWireグラフのサンプリング周波数"
 
+msgid "Port"
+msgstr "ポート"
+
 msgid "Preset"
 msgstr "プリセット"
 
@@ -608,6 +654,9 @@ msgstr "プリセットが必要です"
 
 msgid "Preset warnings"
 msgstr "プリセット警告"
+
+msgid "Private key"
+msgstr "秘密鍵"
 
 msgid "Processing"
 msgstr "処理"
@@ -635,6 +684,12 @@ msgstr "終了"
 
 msgid "Reconnect this device, replace it, or remove it from the configuration."
 msgstr "再接続するか、別のデバイスに置き換えるか、構成から削除してください。"
+
+msgid "Remote Control"
+msgstr "リモートコントロール"
+
+msgid "Remote control is off."
+msgstr "リモート操作はオフです。"
 
 msgid "Remove from configuration"
 msgstr "構成から削除"
@@ -721,6 +776,9 @@ msgstr "スカラー"
 #, brace-format
 msgid "Scalar gain: {0}"
 msgstr "デバイス全体のゲイン: {0}"
+
+msgid "Scan the code or open the URL on the device you want to use as a controller."
+msgstr "操作する端末でQRコードを読み取るか、URLを開いてください。"
 
 msgid "seconds"
 msgstr "秒"
@@ -837,6 +895,9 @@ msgstr "設定を更新中"
 
 msgid "Updating settings failed"
 msgstr "設定の更新に失敗しました"
+
+msgid "Use HTTPS"
+msgstr "HTTPSを使う"
 
 msgid "Use this device"
 msgstr "このデバイスを使用する"

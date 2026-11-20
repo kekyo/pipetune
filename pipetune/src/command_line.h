@@ -6,6 +6,7 @@
 #ifndef PIPETUNE_COMMAND_LINE_H
 #define PIPETUNE_COMMAND_LINE_H
 
+#include "pipetune/control_protocol.h"
 #include "pipetune/dsp_backend.h"
 #include "pipetune/asset_memory.h"
 #include "pipetune/sample_rate.h"
@@ -30,6 +31,8 @@ enum class CommandLineAction {
   daemon,
   /** Bypass live and startup DSP processing. */
   bypass,
+  /** Control the remote editor listener. */
+  remote,
   /** List currently available audio outputs and all profile channels. */
   outputList,
   /** Show live routing and the physical destination of every DSP channel. */
@@ -104,6 +107,8 @@ struct CommandLineOptions {
   OutputConfiguration outputConfiguration = {};
   /** Current PipeWire node names for outputSelect, in initial allocation order. */
   std::vector<std::string> outputNodes = {};
+  /** Listener settings for remote. */
+  RemoteListenerOptions remote = {};
   /** Direct-run per-instrument SFZ budget in MiB. */
   std::uint32_t sfzMaxSizeMiB = kDefaultSfzMaxSizeMiB;
 };

@@ -483,6 +483,11 @@ void stopControlSubscription(ControlClient *client) {
   implementation.subscriptionCancellable = nullptr;
 }
 
+void requestRemoteListenerAsync(ControlClient *client, const pipetune::RemoteListenerOptions &options,
+                                ControlClientReplyCallback callback, void *userData) {
+  startRequest(client, pipetune::makeRemoteControlRequest(options), callback, userData);
+}
+
 void requestControlStatusAsync(ControlClient *client,
                                ControlClientReplyCallback callback,
                                void *userData) {

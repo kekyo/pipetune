@@ -261,6 +261,10 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
       gtk_scrolled_window_get_vscrollbar(GTK_SCROLLED_WINDOW(
           requiredWidget(builder, "outputScrolledWindow", GTK_TYPE_SCROLLED_WINDOW))),
       "outputScrollbar");
+  gestament_gtk_assign_accessible_id(
+      gtk_scrolled_window_get_vscrollbar(GTK_SCROLLED_WINDOW(
+          requiredWidget(builder, "remotePage", GTK_TYPE_SCROLLED_WINDOW))),
+      "remoteScrollbar");
 #endif
   auto ui = MainWindowUi{
       .builder = builder,
@@ -367,6 +371,7 @@ MainWindowUi createMainWindowUi(GtkApplication *application,
           requiredWidget(builder, "applyButton", GTK_TYPE_BUTTON),
   };
   configureCompactComboBox(ui.presetCombo);
+  configureCompactComboBox(requiredWidget(builder, "remoteAddress", GTK_TYPE_COMBO_BOX_TEXT));
   configureCompactComboBox(ui.outputModeCombo);
   gtk_widget_show_all(
       gtk_bin_get_child(GTK_BIN(ui.presetConfigurationSection)));
@@ -440,6 +445,14 @@ void presentMainWindow(
     return;
   }
   gtk_widget_show_all(ui.window);
+  // Allow long translated tab names to share the available width in a compact window.
+  gtk_container_foreach(GTK_CONTAINER(ui.settingsSwitcher), +[](GtkWidget *button, gpointer) {
+    auto *label = gtk_bin_get_child(GTK_BIN(button));
+    if (GTK_IS_LABEL(label)) {
+      gtk_widget_set_tooltip_text(button, gtk_label_get_text(GTK_LABEL(label)));
+      gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+    }
+  }, nullptr);
   setLogDrawerVisible(
       ui, gtk_toggle_button_get_active(
               GTK_TOGGLE_BUTTON(ui.logToggleButton)) != FALSE);

@@ -94,6 +94,7 @@ find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET "libpipewire-0.3>=1.0.5")
 pkg_get_variable(PIPETUNE_PIPEWIRE_MODULE_DIR libpipewire-0.3 moduledir)
+pkg_check_modules(SOUP REQUIRED IMPORTED_TARGET "libsoup-3.0>=3.0")
 pkg_check_modules(SAMPLERATE REQUIRED IMPORTED_TARGET samplerate)
 pkg_check_modules(ASSET_GIO REQUIRED IMPORTED_TARGET "gio-2.0>=2.44")
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/PipeTuneFFmpeg.cmake")
@@ -250,6 +251,7 @@ endif()
 
 add_library(
   pipetune_control STATIC
+  ../pipetune-gtk/src/preset-catalog.cpp
   src/control_protocol.cpp
   src/control_socket.cpp)
 target_include_directories(pipetune_control PUBLIC include)
@@ -264,6 +266,8 @@ endif()
 
 add_library(
   pipetune_pipewire STATIC
+  src/remote_editor.cpp
+  src/remote_server.cpp
   src/active_preset_file_monitor.cpp
   src/autostart_override.cpp
   src/bypass_command.cpp
@@ -293,11 +297,25 @@ add_library(
   src/user_setup.cpp
   src/wireplumber_04_compat.cpp
   src/wireplumber_visibility.cpp)
-target_include_directories(pipetune_pipewire PUBLIC include PRIVATE src)
+set(PIPETUNE_REMOTE_ASSETS "${CMAKE_CURRENT_BINARY_DIR}/remote-editor")
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/remote-assets.stamp"
+  COMMAND "${PIPETUNE_NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/copy-remote-editor.mjs"
+    "${PIPETUNE_EFFETUNE_DIR}" "${PIPETUNE_REMOTE_ASSETS}"
+  COMMAND "${CMAKE_COMMAND}" -E touch "${CMAKE_CURRENT_BINARY_DIR}/remote-assets.stamp"
+  DEPENDS tools/copy-remote-editor.mjs "${PIPETUNE_EFFETUNE_DIR}/sw-precache.js"
+    "${PIPETUNE_EFFETUNE_DIR}/electron/remote-static-server.cjs" VERBATIM)
+add_custom_target(pipetune_remote_assets DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/remote-assets.stamp")
+add_dependencies(pipetune_pipewire pipetune_remote_assets)
+install(DIRECTORY "${PIPETUNE_REMOTE_ASSETS}/" DESTINATION "${CMAKE_INSTALL_DATADIR}/pipetune/remote-editor")
+file(RELATIVE_PATH PIPETUNE_INSTALLED_EDITOR "${CMAKE_INSTALL_FULL_BINDIR}" "${CMAKE_INSTALL_FULL_DATADIR}/pipetune/remote-editor")
+target_compile_definitions(pipetune_pipewire PRIVATE
+  PIPETUNE_BUILD_BIN="${CMAKE_BINARY_DIR}" PIPETUNE_BUILD_EDITOR="${PIPETUNE_REMOTE_ASSETS}"
+  PIPETUNE_INSTALLED_EDITOR="${PIPETUNE_INSTALLED_EDITOR}")
+target_include_directories(pipetune_pipewire PUBLIC include PRIVATE src ../pipetune-gtk/src)
 target_link_libraries(
   pipetune_pipewire
   PUBLIC pipetune_core pipetune_control
-  PRIVATE PkgConfig::PIPEWIRE PkgConfig::SAMPLERATE Threads::Threads ${CMAKE_DL_LIBS})
+  PRIVATE PkgConfig::SOUP PkgConfig::PIPEWIRE PkgConfig::SAMPLERATE Threads::Threads ${CMAKE_DL_LIBS})
 # The system combine module creates its streams through this public boundary.
 # Keep the lifecycle policy available to dlopen() callers in audio executables.
 target_link_options(pipetune_pipewire INTERFACE -Wl,--export-dynamic-symbol=pw_stream_new)
@@ -377,6 +395,8 @@ install(
   FILES packaging/pipetune.environment.example
   DESTINATION "${PIPETUNE_DOCUMENTATION_DIR}"
   RENAME environment.example)
+install(FILES packaging/player/mpd.conf packaging/player/upmpdcli.conf
+  DESTINATION "${PIPETUNE_DOCUMENTATION_DIR}/player")
 install(
   FILES docs/dsp-backends.md
   DESTINATION "${PIPETUNE_DOCUMENTATION_DIR}")
@@ -827,6 +847,10 @@ if(BUILD_TESTING)
   endif()
   find_program(PIPETUNE_PIPEWIRE_EXECUTABLE pipewire REQUIRED)
   find_program(PIPETUNE_WIREPLUMBER_EXECUTABLE wireplumber REQUIRED)
+  add_test(NAME pipetune_remote_control
+    COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/pipewire-pipeline.mjs
+      ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE} ${PIPETUNE_NODE_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/remote-control.mjs $<TARGET_FILE:pipetune>)
   find_program(PIPETUNE_PW_CAT_EXECUTABLE pw-cat REQUIRED)
   add_test(
     NAME pipetune_pipewire_pipeline_tests

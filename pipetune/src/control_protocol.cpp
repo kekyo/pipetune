@@ -131,6 +131,21 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
   const auto command =
       std::string_view(yyjson_get_str(commandValue),
                        yyjson_get_len(commandValue));
+  if (command == "remote") {
+    auto options = RemoteListenerOptions{};
+    if (!readRequiredString(root, "operation", options.operation)) return requestError("missing remote operation");
+    if (options.operation == "enable") {
+      auto *port = yyjson_obj_get(root, "port");
+      if (!readRequiredString(root, "address", options.address) || !yyjson_is_uint(port) ||
+          yyjson_get_uint(port) > 65535 || !readRequiredString(root, "certificate", options.certificate) ||
+          !readRequiredString(root, "key", options.key) || options.key.empty() != options.certificate.empty())
+        return requestError("invalid remote listener configuration");
+      options.port = yyjson_get_uint(port);
+    } else if (options.operation != "link" && options.operation != "rotate" && options.operation != "disable") {
+      return requestError("unknown remote operation");
+    }
+    return {.request = {.command = ControlCommand::remote, .presetPath = {}, .remote = std::move(options)}, .error = {}};
+  }
   if (command == "status") {
     if (yyjson_obj_size(root) != 1) {
       return requestError("status request accepts only the command field");
@@ -355,6 +370,18 @@ ControlRequestParseResult parseControlRequest(std::string_view json) {
                       .presetPath = std::move(preset),
                       .ratePolicy = defaultSampleRatePolicy()},
           .error = {}};
+}
+
+std::string makeRemoteControlRequest(const RemoteListenerOptions &options) {
+  auto *root = static_cast<yyjson_mut_val *>(nullptr);
+  auto doc = createObjectDocument(root);
+  if (!doc || !addString(doc.get(), root, "command", "remote") ||
+      !addString(doc.get(), root, "operation", options.operation) ||
+      !addString(doc.get(), root, "address", options.address) ||
+      !yyjson_mut_obj_add_uint(doc.get(), root, "port", options.port) ||
+      !addString(doc.get(), root, "certificate", options.certificate) ||
+      !addString(doc.get(), root, "key", options.key)) return {};
+  return writeDocument(doc.get());
 }
 
 std::string makeStatusControlRequest() {
@@ -588,7 +615,7 @@ static bool dspIdleStatusIsConsistent(
       !dspIdlePolicyIsValid(status.dspIdlePolicy) || !sfzMaxSizeMiBIsValid(status.sfzMaxSizeMiB)) {
     return false;
   }
-  if (status.processingMode == ProcessingMode::bypass) {
+  if (status.processingMode == ProcessingMode::bypass || status.masterBypass) {
     return status.dspActivity == DspActivity::bypassed;
   }
   if (status.dspActivity == DspActivity::bypassed) {
@@ -709,9 +736,9 @@ static bool outputStatusIsConsistent(const ControlRuntimeStatus &status) {
 
 static std::string makeControlStatusMessage(
     const ControlRuntimeStatus &status,
-    std::span<const ControlWarning> warnings, bool statusEvent) {
+    std::span<const ControlWarning> warnings, bool statusEvent, std::string_view pairingLink) {
   if ((status.processingMode == ProcessingMode::preset &&
-       status.activePreset.empty()) ||
+       status.activePreset.empty() && !status.inMemoryPreset) ||
       (status.processingMode == ProcessingMode::bypass &&
        !status.activePreset.empty()) ||
       !dspIdleStatusIsConsistent(status) ||
@@ -723,6 +750,17 @@ static std::string makeControlStatusMessage(
 
   yyjson_mut_val *root = nullptr;
   auto document = createObjectDocument(root);
+  const auto &listener = status.remoteListener;
+  auto *remote = document ? yyjson_mut_obj_add_obj(document.get(), root, "remoteListener") : nullptr;
+  if (!remote || !yyjson_mut_obj_add_uint(document.get(), remote, "revision", listener.revision) ||
+      !addString(document.get(), remote, "address", listener.address) ||
+      !yyjson_mut_obj_add_uint(document.get(), remote, "port", listener.port) ||
+      !addString(document.get(), remote, "certificate", listener.certificate) ||
+      !addString(document.get(), remote, "key", listener.key) ||
+      !yyjson_mut_obj_add_uint(document.get(), remote, "clients", listener.clients) ||
+      (!pairingLink.empty() && !addString(document.get(), root, "link", pairingLink))) {
+    return makeControlErrorResponse("cannot encode remote listener status");
+  }
   const auto processingMode =
       status.processingMode == ProcessingMode::bypass ? "bypass" : "preset";
   if (document == nullptr ||
@@ -731,6 +769,8 @@ static std::string makeControlStatusMessage(
        !yyjson_mut_obj_add_str(document.get(), root, "event", "status")) ||
       !yyjson_mut_obj_add_str(document.get(), root, "processingMode",
                               processingMode) ||
+      !yyjson_mut_obj_add_bool(document.get(), root, "masterBypass", status.masterBypass) ||
+      !yyjson_mut_obj_add_bool(document.get(), root, "inMemoryPreset", status.inMemoryPreset) ||
       !addString(document.get(), root, "dspActivity",
                  dspActivityName(status.dspActivity)) ||
       !yyjson_mut_obj_add_uint(document.get(), root, "sfzMaxSizeMiB", status.sfzMaxSizeMiB) ||
@@ -988,13 +1028,13 @@ static std::string makeControlStatusMessage(
 
 std::string makeControlSuccessResponse(
     const ControlRuntimeStatus &status,
-    std::span<const ControlWarning> warnings) {
-  return makeControlStatusMessage(status, warnings, false);
+    std::span<const ControlWarning> warnings, std::string_view pairingLink) {
+  return makeControlStatusMessage(status, warnings, false, pairingLink);
 }
 
 std::string makeControlStatusEvent(const ControlRuntimeStatus &status) {
   return makeControlStatusMessage(
-      status, std::span<const ControlWarning>{}, true);
+      status, std::span<const ControlWarning>{}, true, {});
 }
 
 std::string makeControlErrorResponse(std::string_view error) {
@@ -1583,6 +1623,24 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       .inputFramesReceived = 0,
       .inputLastReceivedUnixMilliseconds = 0,
   };
+  if (auto *remote = yyjson_obj_get(root, "remoteListener")) {
+    auto &listener = status.remoteListener;
+    if (!readCounterField(remote, "revision", listener.revision) ||
+        !readStringField(remote, "address", listener.address) ||
+        !readUint32Field(remote, "port", listener.port) || listener.port > 65535 ||
+        !readStringField(remote, "certificate", listener.certificate) ||
+        !readStringField(remote, "key", listener.key) ||
+        !readUint32Field(remote, "clients", listener.clients)) {
+      return responseError("invalid remote listener status");
+    }
+  }
+  auto link = std::string{};
+  if (yyjson_obj_get(root, "link") &&
+      (kind != ControlResponseKind::response || !readStringField(root, "link", link))) {
+    return responseError("invalid pairing response");
+  }
+  status.inMemoryPreset = yyjson_get_bool(yyjson_obj_get(root, "inMemoryPreset"));
+  status.masterBypass = yyjson_get_bool(yyjson_obj_get(root, "masterBypass"));
   if (!readProcessingMode(root, status.processingMode) ||
       !readDspActivity(root, status.dspActivity) ||
       !readDspIdlePolicy(root, status.dspIdlePolicy) ||
@@ -1640,7 +1698,7 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
     return responseError("successful control response has invalid status");
   }
   if ((status.processingMode == ProcessingMode::preset &&
-       status.activePreset.empty()) ||
+       status.activePreset.empty() && !status.inMemoryPreset) ||
       (status.processingMode == ProcessingMode::bypass &&
        !status.activePreset.empty()) ||
       !dspIdleStatusIsConsistent(status) ||
@@ -1689,7 +1747,8 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
           .kind = kind,
           .status = std::move(status),
           .warnings = std::move(warnings),
-          .error = {}};
+          .error = {},
+          .pairingLink = std::move(link)};
 }
 
 ControlResponseInspection inspectControlResponse(std::string_view json) {

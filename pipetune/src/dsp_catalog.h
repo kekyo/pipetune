@@ -67,9 +67,18 @@ struct PackedParameters {
   std::string error;
 };
 
+/**
+ * @param name EffeTune display name from a remote pipeline.
+ * @return True if a remote preset can contain this effect, including visualization-only stages.
+ */
+bool acceptsRemoteEffect(std::string_view name);
+/** Serializes the loader's accepted long or short recipe in editor format. */
+std::string shortPipeline(std::string_view recipe);
 std::span<const DspDefinition> generatedDspCatalog();
 const DspDefinition *findDspByDisplayName(std::string_view displayName);
 const DspDefinition *findDspByTypeName(std::string_view typeName);
+/** Rejects remote numeric values that would otherwise be silently clamped or defaulted. */
+std::string validateRemoteParameters(const DspDefinition &definition, yyjson_val *parameters);
 PackedParameters packDspParameters(const DspDefinition &definition, yyjson_val *parameters);
 
 } // namespace pipetune

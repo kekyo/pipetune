@@ -230,6 +230,51 @@ routing plugin, such as Matrix, to the preset to create additional outputs.
 The two inputs are added without automatic gain control, so the mixed peak
 can exceed 0 dBFS, the maximum digital audio amplitude.
 
+## Editing DSP from another device
+
+Open PipeTune’s settings on the playback PC and select Remote Control.
+
+1. Under Network, select the IPv4 address on the same LAN as the device you will use to edit the DSP. The default port is 47300.
+2. Turn on Allow remote control. The panel displays a pairing URL and a QR code.
+3. On the other device, scan the QR code or open the copied URL in a browser. In the EffeTune desktop app, paste the URL into “Join another EffeTune”.
+
+For EffeTune 2.16.0 on a LAN, use a private IPv4 address and choose a port other than 80 for HTTP or 443 for HTTPS. PipeTune’s default, 47300, works with either scheme. [EffeTune’s pairing URL validation](https://github.com/Frieve-A/effetune/blob/v2.16.0/electron/remote-client-window.cjs#L14-L54)
+
+Gain, EQ and master bypass affect both desktop audio and network playback. The panel shows how many devices are connected. New URL disconnects them and issues a new pairing link. The switch takes effect immediately and stays on when you close the dialog. Turn it off to stop accepting connections. Each daemon starts with the switch off.
+
+To start the same listener from the command line, run `pipetune remote enable 192.168.1.20`, substituting the IPv4 address of the playback PC.
+
+Use `pipetune remote link` to show the link again. `pipetune remote rotate` disconnects paired devices and issues a new link. `pipetune remote disable` closes the listener. Live edits stay in memory, and the source preset retains its saved settings.
+
+Use HTTP on a trusted LAN. To serve HTTPS, select Use HTTPS and choose the PEM certificate and private key files before turning the switch on. From the command line, run `pipetune remote enable 192.168.1.20 47300 /path/to/cert.pem /path/to/key.pem` with a certificate valid for that IP address and trusted by each client.
+
+## Playing music from another device
+
+On the playback computer, install MPD with its PipeWire output and upmpdcli. A controller such as EffeTune selects the track. upmpdcli accepts OpenHome or UPnP AV playback commands and the local MPD instance retrieves the audio. [upmpdcli downloads](https://www.lesbonscomptes.com/upmpdcli/pages/downloads.html) · [MPD PipeWire output](https://mpd.readthedocs.io/en/stable/plugins.html#pipewire)
+
+After setting up PipeTune, prepare the receiver configuration in the same user session. The supplied profiles use local port 16600 for MPD.
+
+```sh
+player_config="${XDG_CONFIG_HOME:-$HOME/.config}/pipetune/player"
+mkdir -p "$player_config" "$HOME/.local/state/pipetune/player" "${XDG_CACHE_HOME:-$HOME/.cache}/pipetune/player"
+cp -n /usr/share/doc/pipetune/player/*.conf "$player_config/"
+mpd --no-daemon "$player_config/mpd.conf"
+```
+
+Start the receiver in another terminal. Replace `enp3s0` with the interface on the controller's LAN. Set the device name in `upmpdcli.conf`.
+
+```sh
+export UPMPD_CACHEDIR="${XDG_CACHE_HOME:-$HOME/.cache}/pipetune/player"
+flock --nonblock --no-fork --verbose "$UPMPD_CACHEDIR/renderer.lock" \
+  upmpdcli -m 1 -i enp3s0 -c "${XDG_CONFIG_HOME:-$HOME/.config}/pipetune/player/upmpdcli.conf"
+```
+
+In EffeTune 2.16.0, select “PipeTune (UPnP AV)” as the player. Choose a track from the music library and use the pairing link to edit the DSP during playback. MPD targets the processed input, `pipetune_sink`, even when Direct is the OS default in multiple-output mode. The player's volume and mute controls affect only MPD.
+
+OpenHome keeps the queue on the playback device and advances to the next track after the controller disconnects if the music server stays available. With EffeTune 2.16.0 and upmpdcli 1.9.17, an unchanged OpenHome queue triggers a refresh error and prevents track selection. UPnP AV track selection and playback were verified on Ubuntu 24.04.5 with MPD 0.23.14 and its PipeWire output. [EffeTune queue check](https://github.com/Frieve-A/effetune/blob/v2.16.0/electron/network-music-host.cjs#L291-L293) · [upmpdcli 1.9.17 source](https://www.lesbonscomptes.com/upmpdcli/downloads/upmpdcli-1.9.17.tar.gz)
+
+Stop upmpdcli first, then MPD, with Ctrl+C in their respective terminals. To move the receiver to user services, stop the manual instances and reuse the same user account, profiles, state file and cache. An occupied MPD port or renderer lock prevents a second instance from starting.
+
 ## Selecting an EffeTune DSP preset
 
 When loading an EffeTune DSP preset into PipeTune, you can select from:

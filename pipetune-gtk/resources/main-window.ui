@@ -14,6 +14,13 @@
     <property name="step-increment">0.1</property>
     <property name="page-increment">1.0</property>
   </object>
+  <object class="GtkAdjustment" id="remotePortAdjustment">
+    <property name="lower">1</property>
+    <property name="upper">65535</property>
+    <property name="value">47300</property>
+    <property name="step-increment">1</property>
+    <property name="page-increment">10</property>
+  </object>
   <object class="GtkApplicationWindow" id="mainWindow">
     <property name="default-width">1080</property>
     <property name="default-height">680</property>
@@ -750,6 +757,228 @@
                       <packing>
                         <property name="name">output</property>
                         <property name="title" translatable="yes">Output</property>
+                      </packing>
+                    </child>
+                    <child>
+                      <object class="GtkScrolledWindow" id="remotePage">
+                        <property name="hscrollbar-policy">never</property>
+                        <property name="vscrollbar-policy">automatic</property>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">vertical</property>
+                            <property name="spacing">8</property>
+                            <property name="margin-top">10</property>
+                            <property name="margin-start">22</property>
+                            <property name="margin-end">22</property>
+                            <property name="margin-bottom">22</property>
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">horizontal</property>
+                                <property name="spacing">8</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label" translatable="yes">Allow remote control</property>
+                                    <property name="mnemonic-widget">remoteEnabled</property>
+                                    <property name="xalign">0</property>
+                                    <property name="hexpand">True</property>
+                                    <style><class name="title"/></style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkSwitch" id="remoteEnabled">
+                                    <property name="valign">center</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel">
+                                <property name="label" translatable="yes">Changes apply immediately to this daemon session.</property>
+                                <property name="xalign">0</property>
+                                <property name="wrap">True</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkBox" id="remoteEndpoint">
+                                <property name="orientation">vertical</property>
+                                <property name="spacing">8</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="spacing">8</property>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label" translatable="yes">Network</property>
+                                        <property name="mnemonic-widget">remoteAddress</property>
+                                        <property name="xalign">0</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkComboBoxText" id="remoteAddress">
+                                        <property name="hexpand">True</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label" translatable="yes">Port</property>
+                                        <property name="mnemonic-widget">remotePort</property>
+                                        <property name="xalign">0</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkSpinButton" id="remotePort">
+                                        <property name="adjustment">remotePortAdjustment</property>
+                                        <property name="numeric">True</property>
+                                        <property name="width-chars">5</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkCheckButton" id="remoteTls">
+                                    <property name="label" translatable="yes">Use HTTPS</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkBox" id="remoteTlsFiles">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">6</property>
+                                    <property name="no-show-all">True</property>
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="orientation">horizontal</property>
+                                        <property name="spacing">8</property>
+                                        <child>
+                                          <object class="GtkLabel">
+                                            <property name="label" translatable="yes">Certificate</property>
+                                            <property name="mnemonic-widget">remoteCert</property>
+                                            <property name="xalign">0</property>
+                                            <property name="width-chars">14</property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkFileChooserButton" id="remoteCert">
+                                            <property name="title" translatable="yes">Choose a TLS certificate</property>
+                                            <property name="action">open</property>
+                                            <property name="hexpand">True</property>
+                                            <property name="width-chars">14</property>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="orientation">horizontal</property>
+                                        <property name="spacing">8</property>
+                                        <child>
+                                          <object class="GtkLabel">
+                                            <property name="label" translatable="yes">Private key</property>
+                                            <property name="mnemonic-widget">remoteKey</property>
+                                            <property name="xalign">0</property>
+                                            <property name="width-chars">14</property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkFileChooserButton" id="remoteKey">
+                                            <property name="title" translatable="yes">Choose a TLS private key</property>
+                                            <property name="action">open</property>
+                                            <property name="hexpand">True</property>
+                                            <property name="width-chars">14</property>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkSeparator">
+                                <property name="orientation">horizontal</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="remoteStatus">
+                                <property name="xalign">0</property>
+                                <property name="wrap">True</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkBox" id="remotePairing">
+                                <property name="orientation">horizontal</property>
+                                <property name="spacing">14</property>
+                                <property name="no-show-all">True</property>
+                                <child>
+                                  <object class="GtkImage" id="remoteQr">
+                                    <property name="valign">start</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">7</property>
+                                    <property name="hexpand">True</property>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label" translatable="yes">Pairing URL</property>
+                                        <property name="mnemonic-widget">remoteUrl</property>
+                                        <property name="xalign">0</property>
+                                        <style><class name="title"/></style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label" translatable="yes">Scan the code or open the URL on the device you want to use as a controller.</property>
+                                        <property name="xalign">0</property>
+                                        <property name="wrap">True</property>
+                                        <property name="max-width-chars">36</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="remoteUrl">
+                                        <property name="xalign">0</property>
+                                        <property name="selectable">True</property>
+                                        <property name="wrap">True</property>
+                                        <property name="wrap-mode">char</property>
+                                        <property name="width-chars">16</property>
+                                        <property name="max-width-chars">36</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="orientation">horizontal</property>
+                                        <property name="spacing">6</property>
+                                        <child>
+                                          <object class="GtkButton" id="remoteCopy">
+                                            <property name="label" translatable="yes">Copy URL</property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkButton" id="remoteRotate">
+                                            <property name="label" translatable="yes">New URL</property>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="remoteError">
+                                <property name="xalign">0</property>
+                                <property name="wrap">True</property>
+                                <property name="selectable">True</property>
+                                <property name="no-show-all">True</property>
+                                <style><class name="status-error"/></style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                      <packing>
+                        <property name="name">remote</property>
+                        <property name="title" translatable="yes">Remote Control</property>
                       </packing>
                     </child>
                     <child>

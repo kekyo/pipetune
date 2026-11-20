@@ -113,6 +113,9 @@ msgstr "Все"
 msgid "All settings saved"
 msgstr "Все настройки сохранены"
 
+msgid "Allow remote control"
+msgstr "Разрешить удалённое управление"
+
 msgid "Ambiguous device"
 msgstr "Неоднозначное устройство"
 
@@ -173,6 +176,12 @@ msgstr "Не удалось сохранить настройки"
 msgid "Cannot use saved language preference"
 msgstr "Не удалось использовать сохранённый выбор языка"
 
+msgid "Certificate"
+msgstr "Сертификат"
+
+msgid "Changes apply immediately to this daemon session."
+msgstr "Изменения сразу вступают в силу для текущего сеанса службы."
+
 msgid "Changing audio outputs"
 msgstr "Изменение аудиовыходов"
 
@@ -213,6 +222,9 @@ msgstr "Усиление каналов: {0}"
 msgid "Channels"
 msgstr "Каналы"
 
+msgid "Choose a certificate and private key to enable HTTPS."
+msgstr "Чтобы включить HTTPS, выберите сертификат и закрытый ключ."
+
 msgid "Choose a device to add to this configuration."
 msgstr "Выберите устройство для добавления в эту конфигурацию."
 
@@ -221,6 +233,12 @@ msgstr "Выберите предустановку перед включени�
 
 msgid "Choose a standard or saved EffeTune preset…"
 msgstr "Выберите стандартную или сохранённую предустановку EffeTune…"
+
+msgid "Choose a TLS certificate"
+msgstr "Выбрать сертификат TLS"
+
+msgid "Choose a TLS private key"
+msgstr "Выбрать закрытый ключ TLS"
 
 msgid "Choose an EffeTune preset"
 msgstr "Выберите предустановку EffeTune"
@@ -286,8 +304,14 @@ msgstr "Служба управления недоступна"
 msgid "Control socket unavailable"
 msgstr "Сокет управления недоступен"
 
+msgid "Copied"
+msgstr "Скопировано"
+
 msgid "Copy"
 msgstr "Копировать"
+
+msgid "Copy URL"
+msgstr "Копировать URL"
 
 msgid "Custom preset file"
 msgstr "Файл пользовательской предустановки"
@@ -462,6 +486,10 @@ msgstr "Позже"
 msgid "Levels after combining Processed and Direct, before device volume."
 msgstr "Уровни после смешивания Processed и Direct, до регулировки громкости устройства."
 
+#, brace-format
+msgid "Listening · Connected devices: {0}"
+msgstr "Ожидание подключений · Подключено устройств: {0}"
+
 msgid "Live Configuration"
 msgstr "Текущая конфигурация"
 
@@ -507,8 +535,17 @@ msgstr "Несколько — выходы выбираются в PipeTune"
 msgid "Native backend"
 msgstr "Нативный бэкенд"
 
+msgid "Network"
+msgstr "Сеть"
+
 msgid "Never"
 msgstr "Никогда"
+
+msgid "New URL"
+msgstr "Новый URL"
+
+msgid "No local IPv4 address is available."
+msgstr "Нет доступных локальных адресов IPv4."
 
 msgid "No unconfigured output devices are available."
 msgstr "Нет доступных ненастроенных устройств вывода."
@@ -547,6 +584,9 @@ msgstr "Переполнение {0}  •  Недозагрузка {1}  •  О
 msgid "Overrun frames"
 msgstr "Кадры переполнения"
 
+msgid "Pairing URL"
+msgstr "URL для подключения"
+
 msgid "PCM data rate"
 msgstr "Скорость данных PCM"
 
@@ -561,6 +601,9 @@ msgstr "Ожидающие настройки диалога будут прим
 
 msgid "PipeTune disconnected"
 msgstr "PipeTune отключён"
+
+msgid "PipeTune is disconnected."
+msgstr "Нет соединения с PipeTune."
 
 msgid "PipeTune reconnected"
 msgstr "PipeTune подключён повторно"
@@ -596,6 +639,9 @@ msgstr "Применение PipeWire"
 msgid "PipeWire graph sampling frequency"
 msgstr "Частота дискретизации графа PipeWire"
 
+msgid "Port"
+msgstr "Порт"
+
 msgid "Preset"
 msgstr "Предустановка"
 
@@ -610,6 +656,9 @@ msgstr "Требуется предустановка"
 
 msgid "Preset warnings"
 msgstr "Предупреждения предустановки"
+
+msgid "Private key"
+msgstr "Закрытый ключ"
 
 msgid "Processing"
 msgstr "Обработка"
@@ -637,6 +686,12 @@ msgstr "Выход"
 
 msgid "Reconnect this device, replace it, or remove it from the configuration."
 msgstr "Подключите это устройство снова, замените его или удалите из конфигурации."
+
+msgid "Remote Control"
+msgstr "Удалённое управление"
+
+msgid "Remote control is off."
+msgstr "Удалённое управление выключено."
 
 msgid "Remove from configuration"
 msgstr "Удалить из конфигурации"
@@ -723,6 +778,9 @@ msgstr "Scalar"
 #, brace-format
 msgid "Scalar gain: {0}"
 msgstr "Общий коэффициент усиления: {0}"
+
+msgid "Scan the code or open the URL on the device you want to use as a controller."
+msgstr "Отсканируйте код или откройте URL на устройстве, с которого хотите управлять PipeTune."
 
 msgid "seconds"
 msgstr "секунды"
@@ -839,6 +897,9 @@ msgstr "Обновление настроек"
 
 msgid "Updating settings failed"
 msgstr "Не удалось обновить настройки"
+
+msgid "Use HTTPS"
+msgstr "Использовать HTTPS"
 
 msgid "Use this device"
 msgstr "Использовать это устройство"
