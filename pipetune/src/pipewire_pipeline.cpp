@@ -2800,6 +2800,7 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
   auto outputInventory = OutputInventoryResult{};
   auto outputInventoryReady = false;
   auto outputInventoryRevision = std::uint64_t{0};
+  auto outputProfileRestoring = false;
   auto outputProfileRestorationError = std::string{};
   auto outputTimings = std::vector<OutputTimingState>{};
   auto outputPeaks = std::vector<float>{};
@@ -2814,6 +2815,9 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
     outputInventory = runtime.availableOutputs;
     outputInventoryReady = runtime.outputInventoryReady;
     outputInventoryRevision = runtime.outputInventoryRevision;
+    // The PipeWire thread publishes a rollback diagnostic before clearing its active flag.
+    // Capture both under the same lock so a completed status carries that diagnostic.
+    outputProfileRestoring = runtime.pendingProfileRestoreActive || runtime.profileRestoreDecisionPending;
     outputProfileRestorationError = runtime.pendingProfileRestoreError;
     if (outputInventoryReady && outputInventory.error.empty() && !rateTransitioning && !runtime.previousOutput)
       outputTimings = summarizeOutputTiming(outputConfiguration, outputInventory.outputs, runtime.outputPathSnapshots);
@@ -2865,7 +2869,7 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .outputInventoryRevision = outputInventoryRevision,
           .outputInventoryReady = outputInventoryReady,
           .outputInventoryError = outputInventory.error,
-          .outputProfileRestoring = runtime.pendingProfileRestoreActive || runtime.profileRestoreDecisionPending,
+          .outputProfileRestoring = outputProfileRestoring,
           .outputProfileRestorationError = outputProfileRestorationError,
           .outputVolumes = outputInventory.error.empty() ? std::move(outputInventory.volumes) : std::vector<OutputVolumeState>{},
           .outputTimings = std::move(outputTimings),
