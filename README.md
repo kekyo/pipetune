@@ -230,6 +230,28 @@ routing plugin, such as Matrix, to the preset to create additional outputs.
 The two inputs are added without automatic gain control, so the mixed peak
 can exceed 0 dBFS, the maximum digital audio amplitude.
 
+## Playing music from another device
+
+On the playback computer, install MPD with its PipeWire output and upmpdcli. A controller such as EffeTune selects the track. upmpdcli accepts OpenHome or UPnP AV playback commands and the local MPD instance retrieves the audio. [upmpdcli downloads](https://www.lesbonscomptes.com/upmpdcli/pages/downloads.html) · [MPD PipeWire output](https://mpd.readthedocs.io/en/stable/plugins.html#pipewire)
+
+After setting up PipeTune, prepare the receiver configuration in the same user session. The supplied profiles use local port 16600 for MPD.
+
+```sh
+player_config="${XDG_CONFIG_HOME:-$HOME/.config}/pipetune/player"
+mkdir -p "$player_config" "$HOME/.local/state/pipetune/player" "${XDG_CACHE_HOME:-$HOME/.cache}/pipetune/player"
+cp -n /usr/share/doc/pipetune/player/*.conf "$player_config/"
+mpd --no-daemon "$player_config/mpd.conf"
+```
+
+Start the receiver in another terminal. Replace `enp3s0` with the interface on the controller's LAN. Set the device name in `upmpdcli.conf`.
+
+```sh
+UPMPD_CACHEDIR="${XDG_CACHE_HOME:-$HOME/.cache}/pipetune/player" \
+  upmpdcli -m 1 -i enp3s0 -c "${XDG_CONFIG_HOME:-$HOME/.config}/pipetune/player/upmpdcli.conf"
+```
+
+Select PipeTune as the playback destination in EffeTune and play a track from the music library. The OpenHome queue continues after the controller disconnects while the music server remains available. MPD targets the processed input, `pipetune_sink`, even when Direct is the OS default in multiple-output mode.
+
 ## Selecting an EffeTune DSP preset
 
 When loading an EffeTune DSP preset into PipeTune, you can select from:

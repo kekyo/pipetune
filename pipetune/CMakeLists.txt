@@ -377,6 +377,8 @@ install(
   FILES packaging/pipetune.environment.example
   DESTINATION "${PIPETUNE_DOCUMENTATION_DIR}"
   RENAME environment.example)
+install(FILES packaging/player/mpd.conf packaging/player/upmpdcli.conf
+  DESTINATION "${PIPETUNE_DOCUMENTATION_DIR}/player")
 install(
   FILES docs/dsp-backends.md
   DESTINATION "${PIPETUNE_DOCUMENTATION_DIR}")

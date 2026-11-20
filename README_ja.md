@@ -208,6 +208,28 @@ Processedの入力はCh 1、2で、Bypassではそれ以外の出力Chは無音�
 出力を増やす場合は、チャンネルを振り分けるMatrixなどをプリセットに追加してください。
 両入力の音声はそのまま加算され、混合後のピークが0 dBFSを超えることがあります。0 dBFSはデジタル音声の最大振幅を表します。
 
+## ネットワークから曲を再生する
+
+EffeTuneなどの操作端末から曲を選び、PipeTuneのスピーカーで聴けます。再生用PCにPipeWire出力を持つMPDとupmpdcliを用意してください。upmpdcliがOpenHome／UPnP AVの再生指示を受け、同じPCのMPDが音源を取得します。[upmpdcliの配布元](https://www.lesbonscomptes.com/upmpdcli/pages/downloads.html)・[MPDのPipeWire出力](https://mpd.readthedocs.io/en/stable/plugins.html#pipewire)
+
+PipeTuneのセットアップを済ませ、同じユーザーの端末で専用の設定を準備します。パッケージの設定例ではMPDのローカル接続にポート16600を使います。
+
+```sh
+player_config="${XDG_CONFIG_HOME:-$HOME/.config}/pipetune/player"
+mkdir -p "$player_config" "$HOME/.local/state/pipetune/player" "${XDG_CACHE_HOME:-$HOME/.cache}/pipetune/player"
+cp -n /usr/share/doc/pipetune/player/*.conf "$player_config/"
+mpd --no-daemon "$player_config/mpd.conf"
+```
+
+別の端末で受信を始めます。`enp3s0`は操作端末と同じLANのインターフェイス名に置き換えてください。機器名は`upmpdcli.conf`で指定できます。
+
+```sh
+UPMPD_CACHEDIR="${XDG_CACHE_HOME:-$HOME/.cache}/pipetune/player" \
+  upmpdcli -m 1 -i enp3s0 -c "${XDG_CONFIG_HOME:-$HOME/.config}/pipetune/player/upmpdcli.conf"
+```
+
+EffeTuneの再生先にPipeTuneを選び、音楽ライブラリから再生します。OpenHomeでは再生端末が曲順を保持するので、音源サーバーが動いていれば操作端末を閉じても次曲へ進みます。MPDの出力先は処理入力の`pipetune_sink`です。複数出力モードでOSの既定にDirectを選んでいても、ネットワーク再生には現在のDSPが掛かります。
+
 ## EffeTune DSPプリセット選択
 
 EffeTune DSPプリセットをPipeTuneにロードする場合、以下のファイルを選択出来ます:
