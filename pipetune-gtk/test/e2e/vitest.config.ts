@@ -3,7 +3,9 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['tests/**/*.test.ts'],
+    include: process.env.PIPETUNE_GTK_REMOTE_PANEL_DAEMON
+      ? ['integration/remote-panel.test.ts']
+      : ['tests/**/*.test.ts'],
     fileParallelism: false,
     maxWorkers: 1,
     // A case can inspect every settings page at multiple window sizes via AT-SPI.

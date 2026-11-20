@@ -68,6 +68,16 @@ using ControlClientReplyCallback =
     void (*)(const ControlClientReply &reply, void *userData);
 
 /**
+ * Changes the listener or retrieves the current private pairing link.
+ * @param client Local control client.
+ * @param options Operation and optional bind or TLS settings.
+ * @param callback Receives the confirmed listener state or error.
+ * @param userData Borrowed application callback data.
+ */
+void requestRemoteListenerAsync(ControlClient *client, const pipetune::RemoteListenerOptions &options,
+                                ControlClientReplyCallback callback, void *userData);
+
+/**
  * Creates a main-context asynchronous Unix-socket client.
  *
  * @param socketPath PipeTune control socket path.

@@ -112,6 +112,9 @@ msgstr "सभी"
 msgid "All settings saved"
 msgstr "सभी सेटिंग सहेजी गईं"
 
+msgid "Allow remote control"
+msgstr "रिमोट कंट्रोल की अनुमति दें"
+
 msgid "Ambiguous device"
 msgstr "डिवाइस की पहचान अस्पष्ट है"
 
@@ -172,6 +175,12 @@ msgstr "सेटिंग सहेजी नहीं जा सकीं"
 msgid "Cannot use saved language preference"
 msgstr "सहेजी गई भाषा वरीयता उपयोग नहीं की जा सकी"
 
+msgid "Certificate"
+msgstr "प्रमाणपत्र"
+
+msgid "Changes apply immediately to this daemon session."
+msgstr "बदलाव सेवा के मौजूदा सत्र में तुरंत लागू होते हैं।"
+
 msgid "Changing audio outputs"
 msgstr "ऑडियो आउटपुट बदले जा रहे हैं"
 
@@ -212,6 +221,9 @@ msgstr "चैनल गेन: {0}"
 msgid "Channels"
 msgstr "चैनल"
 
+msgid "Choose a certificate and private key to enable HTTPS."
+msgstr "HTTPS चालू करने के लिए प्रमाणपत्र और निजी कुंजी चुनें।"
+
 msgid "Choose a device to add to this configuration."
 msgstr "इस कॉन्फ़िगरेशन में जोड़ने के लिए डिवाइस चुनें।"
 
@@ -220,6 +232,12 @@ msgstr "DSP प्रोसेसिंग चालू करने से प�
 
 msgid "Choose a standard or saved EffeTune preset…"
 msgstr "कोई मानक या सहेजा गया EffeTune प्रीसेट चुनें…"
+
+msgid "Choose a TLS certificate"
+msgstr "TLS प्रमाणपत्र चुनें"
+
+msgid "Choose a TLS private key"
+msgstr "TLS निजी कुंजी चुनें"
 
 msgid "Choose an EffeTune preset"
 msgstr "EffeTune प्रीसेट चुनें"
@@ -285,8 +303,14 @@ msgstr "नियंत्रण सेवा अनुपलब्ध"
 msgid "Control socket unavailable"
 msgstr "नियंत्रण सॉकेट अनुपलब्ध"
 
+msgid "Copied"
+msgstr "कॉपी हो गया"
+
 msgid "Copy"
 msgstr "कॉपी करें"
+
+msgid "Copy URL"
+msgstr "URL कॉपी करें"
 
 msgid "Custom preset file"
 msgstr "कस्टम प्रीसेट फ़ाइल"
@@ -461,6 +485,10 @@ msgstr "बाद में"
 msgid "Levels after combining Processed and Direct, before device volume."
 msgstr "Processed और Direct को मिलाने के बाद, डिवाइस वॉल्यूम से पहले के स्तर।"
 
+#, brace-format
+msgid "Listening · Connected devices: {0}"
+msgstr "कनेक्शन की प्रतीक्षा · जुड़े डिवाइस: {0}"
+
 msgid "Live Configuration"
 msgstr "लाइव कॉन्फ़िगरेशन"
 
@@ -506,8 +534,17 @@ msgstr "एकाधिक — PipeTune में चुने गए आउट�
 msgid "Native backend"
 msgstr "मूल बैकएंड"
 
+msgid "Network"
+msgstr "नेटवर्क"
+
 msgid "Never"
 msgstr "कभी नहीं"
+
+msgid "New URL"
+msgstr "नया URL"
+
+msgid "No local IPv4 address is available."
+msgstr "कोई स्थानीय IPv4 पता उपलब्ध नहीं है।"
 
 msgid "No unconfigured output devices are available."
 msgstr "कोई उपलब्ध आउटपुट डिवाइस कॉन्फ़िगरेशन से बाहर नहीं है।"
@@ -546,6 +583,9 @@ msgstr "ओवररन {0}  •  अंडररन {1}  •  प्रोस�
 msgid "Overrun frames"
 msgstr "ओवररन फ़्रेम"
 
+msgid "Pairing URL"
+msgstr "पेयरिंग URL"
+
 msgid "PCM data rate"
 msgstr "PCM डेटा दर"
 
@@ -560,6 +600,9 @@ msgstr "लंबित डायलॉग सेटिंग फिर ला�
 
 msgid "PipeTune disconnected"
 msgstr "PipeTune डिस्कनेक्ट हुआ"
+
+msgid "PipeTune is disconnected."
+msgstr "PipeTune से कनेक्शन नहीं है।"
 
 msgid "PipeTune reconnected"
 msgstr "PipeTune फिर कनेक्ट हुआ"
@@ -595,6 +638,9 @@ msgstr "PipeWire प्रवर्तन"
 msgid "PipeWire graph sampling frequency"
 msgstr "PipeWire ग्राफ़ नमूनाकरण आवृत्ति"
 
+msgid "Port"
+msgstr "पोर्ट"
+
 msgid "Preset"
 msgstr "प्रीसेट"
 
@@ -609,6 +655,9 @@ msgstr "प्रीसेट आवश्यक"
 
 msgid "Preset warnings"
 msgstr "प्रीसेट चेतावनियाँ"
+
+msgid "Private key"
+msgstr "निजी कुंजी"
 
 msgid "Processing"
 msgstr "प्रोसेसिंग"
@@ -636,6 +685,12 @@ msgstr "बाहर निकलें"
 
 msgid "Reconnect this device, replace it, or remove it from the configuration."
 msgstr "इस डिवाइस को फिर से जोड़ें, बदलें या कॉन्फ़िगरेशन से हटाएँ।"
+
+msgid "Remote Control"
+msgstr "रिमोट कंट्रोल"
+
+msgid "Remote control is off."
+msgstr "रिमोट कंट्रोल बंद है।"
 
 msgid "Remove from configuration"
 msgstr "कॉन्फ़िगरेशन से हटाएँ"
@@ -722,6 +777,9 @@ msgstr "Scalar"
 #, brace-format
 msgid "Scalar gain: {0}"
 msgstr "समग्र गेन: {0}"
+
+msgid "Scan the code or open the URL on the device you want to use as a controller."
+msgstr "जिस डिवाइस से नियंत्रण करना चाहते हैं, उस पर कोड स्कैन करें या URL खोलें।"
 
 msgid "seconds"
 msgstr "सेकंड"
@@ -838,6 +896,9 @@ msgstr "सेटिंग अपडेट हो रही हैं"
 
 msgid "Updating settings failed"
 msgstr "सेटिंग अपडेट करना विफल रहा"
+
+msgid "Use HTTPS"
+msgstr "HTTPS का उपयोग करें"
 
 msgid "Use this device"
 msgstr "इस डिवाइस का उपयोग करें"

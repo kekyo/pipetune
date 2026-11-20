@@ -116,6 +116,9 @@ msgstr "الكل"
 msgid "All settings saved"
 msgstr "تم حفظ جميع الإعدادات"
 
+msgid "Allow remote control"
+msgstr "السماح بالتحكم عن بُعد"
+
 msgid "Ambiguous device"
 msgstr "تعذّر تمييز الجهاز"
 
@@ -176,6 +179,12 @@ msgstr "تعذر حفظ الإعدادات"
 msgid "Cannot use saved language preference"
 msgstr "تعذر استخدام تفضيل اللغة المحفوظ"
 
+msgid "Certificate"
+msgstr "الشهادة"
+
+msgid "Changes apply immediately to this daemon session."
+msgstr "تسري التغييرات فورًا على الجلسة الحالية للخدمة."
+
 msgid "Changing audio outputs"
 msgstr "جارٍ تغيير مخارج الصوت"
 
@@ -216,6 +225,9 @@ msgstr "كسب القنوات: {0}"
 msgid "Channels"
 msgstr "القنوات"
 
+msgid "Choose a certificate and private key to enable HTTPS."
+msgstr "اختر شهادة ومفتاحًا خاصًا لتفعيل HTTPS."
+
 msgid "Choose a device to add to this configuration."
 msgstr "اختر جهازًا لإضافته إلى هذا الإعداد."
 
@@ -224,6 +236,12 @@ msgstr "اختر إعدادًا مسبقًا قبل تمكين معالجة DSP"
 
 msgid "Choose a standard or saved EffeTune preset…"
 msgstr "اختر إعداد EffeTune قياسيًا أو محفوظًا…"
+
+msgid "Choose a TLS certificate"
+msgstr "اختيار شهادة TLS"
+
+msgid "Choose a TLS private key"
+msgstr "اختيار مفتاح TLS خاص"
 
 msgid "Choose an EffeTune preset"
 msgstr "اختر إعداد EffeTune مسبقًا"
@@ -289,8 +307,14 @@ msgstr "خدمة التحكم غير متاحة"
 msgid "Control socket unavailable"
 msgstr "مقبس التحكم غير متاح"
 
+msgid "Copied"
+msgstr "تم النسخ"
+
 msgid "Copy"
 msgstr "نسخ"
+
+msgid "Copy URL"
+msgstr "نسخ الرابط"
 
 msgid "Custom preset file"
 msgstr "ملف إعداد مسبق مخصص"
@@ -465,6 +489,10 @@ msgstr "لاحقًا"
 msgid "Levels after combining Processed and Direct, before device volume."
 msgstr "المستويات بعد مزج Processed وDirect، وقبل مستوى صوت الجهاز."
 
+#, brace-format
+msgid "Listening · Connected devices: {0}"
+msgstr "بانتظار الاتصالات · الأجهزة المتصلة: {0}"
+
 msgid "Live Configuration"
 msgstr "الإعدادات المباشرة"
 
@@ -510,8 +538,17 @@ msgstr "متعدد — تُحدّد المخارج في PipeTune"
 msgid "Native backend"
 msgstr "الواجهة الخلفية الأصلية"
 
+msgid "Network"
+msgstr "الشبكة"
+
 msgid "Never"
 msgstr "أبدًا"
+
+msgid "New URL"
+msgstr "إصدار رابط جديد"
+
+msgid "No local IPv4 address is available."
+msgstr "لا يتوفر عنوان IPv4 محلي."
 
 msgid "No unconfigured output devices are available."
 msgstr "لا توجد أجهزة إخراج متاحة غير مضافة إلى الإعداد."
@@ -550,6 +587,9 @@ msgstr "تجاوز {0}  •  نقص {1}  •  معالجة {2}"
 msgid "Overrun frames"
 msgstr "إطارات التجاوز"
 
+msgid "Pairing URL"
+msgstr "رابط الاقتران"
+
 msgid "PCM data rate"
 msgstr "معدل بيانات PCM"
 
@@ -564,6 +604,9 @@ msgstr "ستُعاد تطبيق إعدادات مربع الحوار المعل�
 
 msgid "PipeTune disconnected"
 msgstr "تم قطع اتصال PipeTune"
+
+msgid "PipeTune is disconnected."
+msgstr "الاتصال بـ PipeTune مقطوع."
 
 msgid "PipeTune reconnected"
 msgstr "أُعيد اتصال PipeTune"
@@ -599,6 +642,9 @@ msgstr "فرض PipeWire"
 msgid "PipeWire graph sampling frequency"
 msgstr "تردد أخذ العينات لمخطط PipeWire"
 
+msgid "Port"
+msgstr "المنفذ"
+
 msgid "Preset"
 msgstr "الإعداد المسبق"
 
@@ -613,6 +659,9 @@ msgstr "يلزم إعداد مسبق"
 
 msgid "Preset warnings"
 msgstr "تحذيرات الإعداد المسبق"
+
+msgid "Private key"
+msgstr "المفتاح الخاص"
 
 msgid "Processing"
 msgstr "المعالجة"
@@ -640,6 +689,12 @@ msgstr "إنهاء"
 
 msgid "Reconnect this device, replace it, or remove it from the configuration."
 msgstr "أعد توصيل هذا الجهاز أو استبدله أو أزله من الإعداد."
+
+msgid "Remote Control"
+msgstr "التحكم عن بُعد"
+
+msgid "Remote control is off."
+msgstr "التحكم عن بُعد متوقف."
 
 msgid "Remove from configuration"
 msgstr "إزالة من الإعداد"
@@ -726,6 +781,9 @@ msgstr "Scalar"
 #, brace-format
 msgid "Scalar gain: {0}"
 msgstr "الكسب العام: {0}"
+
+msgid "Scan the code or open the URL on the device you want to use as a controller."
+msgstr "امسح الرمز أو افتح الرابط على الجهاز الذي تريد استخدامه للتحكم."
 
 msgid "seconds"
 msgstr "ثوانٍ"
@@ -842,6 +900,9 @@ msgstr "جارٍ تحديث الإعدادات"
 
 msgid "Updating settings failed"
 msgstr "فشل تحديث الإعدادات"
+
+msgid "Use HTTPS"
+msgstr "استخدام HTTPS"
 
 msgid "Use this device"
 msgstr "استخدام هذا الجهاز"

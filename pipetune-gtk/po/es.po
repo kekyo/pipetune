@@ -112,6 +112,9 @@ msgstr "Todo"
 msgid "All settings saved"
 msgstr "Todos los ajustes guardados"
 
+msgid "Allow remote control"
+msgstr "Permitir el control remoto"
+
 msgid "Ambiguous device"
 msgstr "Dispositivo ambiguo"
 
@@ -172,6 +175,12 @@ msgstr "No se pueden guardar los ajustes"
 msgid "Cannot use saved language preference"
 msgstr "No se puede usar la preferencia de idioma guardada"
 
+msgid "Certificate"
+msgstr "Certificado"
+
+msgid "Changes apply immediately to this daemon session."
+msgstr "Los cambios se aplican de inmediato a la sesión actual del servicio."
+
 msgid "Changing audio outputs"
 msgstr "Cambiando las salidas de audio"
 
@@ -212,6 +221,9 @@ msgstr "Ganancias de canal: {0}"
 msgid "Channels"
 msgstr "Canales"
 
+msgid "Choose a certificate and private key to enable HTTPS."
+msgstr "Elija un certificado y una clave privada para activar HTTPS."
+
 msgid "Choose a device to add to this configuration."
 msgstr "Seleccione el dispositivo que desea añadir a esta configuración."
 
@@ -220,6 +232,12 @@ msgstr "Elija un preajuste antes de activar el procesamiento DSP"
 
 msgid "Choose a standard or saved EffeTune preset…"
 msgstr "Elija un preajuste estándar o guardado de EffeTune…"
+
+msgid "Choose a TLS certificate"
+msgstr "Elegir certificado TLS"
+
+msgid "Choose a TLS private key"
+msgstr "Elegir clave privada TLS"
 
 msgid "Choose an EffeTune preset"
 msgstr "Elija un preajuste de EffeTune"
@@ -285,8 +303,14 @@ msgstr "Servicio de control no disponible"
 msgid "Control socket unavailable"
 msgstr "Socket de control no disponible"
 
+msgid "Copied"
+msgstr "Copiada"
+
 msgid "Copy"
 msgstr "Copiar"
+
+msgid "Copy URL"
+msgstr "Copiar URL"
 
 msgid "Custom preset file"
 msgstr "Archivo de preajuste personalizado"
@@ -461,6 +485,10 @@ msgstr "Más tarde"
 msgid "Levels after combining Processed and Direct, before device volume."
 msgstr "Niveles tras mezclar Processed y Direct, antes del volumen del dispositivo."
 
+#, brace-format
+msgid "Listening · Connected devices: {0}"
+msgstr "A la escucha · Dispositivos conectados: {0}"
+
 msgid "Live Configuration"
 msgstr "Configuración en directo"
 
@@ -506,8 +534,17 @@ msgstr "Múltiple — salidas seleccionadas en PipeTune"
 msgid "Native backend"
 msgstr "Motor nativo"
 
+msgid "Network"
+msgstr "Red"
+
 msgid "Never"
 msgstr "Nunca"
+
+msgid "New URL"
+msgstr "Nueva URL"
+
+msgid "No local IPv4 address is available."
+msgstr "No hay ninguna dirección IPv4 local disponible."
 
 msgid "No unconfigured output devices are available."
 msgstr "No hay dispositivos de salida sin configurar disponibles."
@@ -546,6 +583,9 @@ msgstr "Sobrecarga {0}  •  Infracarga {1}  •  Procesamiento {2}"
 msgid "Overrun frames"
 msgstr "Fotogramas de sobrecarga"
 
+msgid "Pairing URL"
+msgstr "URL de vinculación"
+
 msgid "PCM data rate"
 msgstr "Tasa de datos PCM"
 
@@ -560,6 +600,9 @@ msgstr "Se volverán a aplicar los ajustes pendientes del diálogo"
 
 msgid "PipeTune disconnected"
 msgstr "PipeTune desconectado"
+
+msgid "PipeTune is disconnected."
+msgstr "PipeTune está desconectado."
 
 msgid "PipeTune reconnected"
 msgstr "PipeTune reconectado"
@@ -595,6 +638,9 @@ msgstr "Aplicación de PipeWire"
 msgid "PipeWire graph sampling frequency"
 msgstr "Frecuencia de muestreo del grafo de PipeWire"
 
+msgid "Port"
+msgstr "Puerto"
+
 msgid "Preset"
 msgstr "Preajuste"
 
@@ -609,6 +655,9 @@ msgstr "Se requiere un preajuste"
 
 msgid "Preset warnings"
 msgstr "Advertencias del preajuste"
+
+msgid "Private key"
+msgstr "Clave privada"
 
 msgid "Processing"
 msgstr "Procesamiento"
@@ -636,6 +685,12 @@ msgstr "Salir"
 
 msgid "Reconnect this device, replace it, or remove it from the configuration."
 msgstr "Vuelva a conectar este dispositivo, sustitúyalo o elimínelo de la configuración."
+
+msgid "Remote Control"
+msgstr "Control remoto"
+
+msgid "Remote control is off."
+msgstr "El control remoto está desactivado."
 
 msgid "Remove from configuration"
 msgstr "Eliminar de la configuración"
@@ -722,6 +777,9 @@ msgstr "Scalar"
 #, brace-format
 msgid "Scalar gain: {0}"
 msgstr "Ganancia global: {0}"
+
+msgid "Scan the code or open the URL on the device you want to use as a controller."
+msgstr "En el dispositivo que usará como mando, escanee el código o abra la URL."
 
 msgid "seconds"
 msgstr "segundos"
@@ -838,6 +896,9 @@ msgstr "Actualizando ajustes"
 
 msgid "Updating settings failed"
 msgstr "Error al actualizar los ajustes"
+
+msgid "Use HTTPS"
+msgstr "Usar HTTPS"
 
 msgid "Use this device"
 msgstr "Usar este dispositivo"
