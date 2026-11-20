@@ -285,6 +285,8 @@ struct PipeWireRuntime {
   std::optional<std::filesystem::path> requestedOutputPreset;
   std::unique_ptr<DspPipeline> requestedOutputPipeline;
   bool outputRequestCompleted = false;
+  // Local preset selection resumes processing only after its new graph commits.
+  bool resumeDspOnOutputCommit = false;
   std::atomic<bool> outputRequestsStopped{false};
   std::string outputRequestError;
   spa_source *outputChangeSource = nullptr;
@@ -2276,6 +2278,7 @@ static void finishOutputChange(PipeWireRuntime &runtime) {
   auto lock = std::scoped_lock(runtime.pipelineMutationMutex);
   if (!runtime.outputRollingBack) {
     runtime.pipeline.commitStaged();
+    if (runtime.resumeDspOnOutputCommit) runtime.pipeline.setMasterBypass(false);
     discardReplacedProfileRestorations(runtime, *runtime.previousOutput, runtime.options.outputConfiguration);
     runtime.configurationRevision.fetch_add(1, std::memory_order_release);
     runtime.retiredOverrunFrames += runtime.previousAudioBuffers->ring.overrunFrames();
@@ -2394,13 +2397,13 @@ static void outputChangeRequested(void *data, std::uint64_t) {
     runtime.previousPresetReloadPending = runtime.presetReloadPending;
     runtime.previousAudioBuffers = std::move(runtime.audioBuffers);
     runtime.audioBuffers = std::move(buffers);
-    runtime.pipeline.stageReplacement(std::move(prepared));
     if (preset.has_value()) {
-      runtime.processingMode = runtime.pipeline.recipe() ? ProcessingMode::preset : ProcessingMode::bypass;
+      runtime.processingMode = prepared->recipe() ? ProcessingMode::preset : ProcessingMode::bypass;
       runtime.activePreset = preset->string();
       runtime.configurationError.clear();
       runtime.presetReloadPending = false;
     }
+    runtime.pipeline.stageReplacement(std::move(prepared));
     runtime.options.outputConfiguration = std::move(configuration);
     runtime.options.channelCount = width;
     runtime.options.inputChannelCount = 2;
@@ -2887,7 +2890,7 @@ static cardio::promise<PresetActivationResult> applyPreparedOutput(
     PipeWireRuntime &runtime, std::unique_lock<std::mutex> pipelineLock,
     OutputConfiguration configuration, std::uint64_t expectedRevision,
     std::optional<std::filesystem::path> preset, std::unique_ptr<DspPipeline> prepared,
-    std::vector<ControlWarning> warnings, bool profileOwned);
+    std::vector<ControlWarning> warnings, bool profileOwned, bool resumeDsp);
 
 static std::shared_ptr<const DspBackend> activeDspBackend(PipeWireRuntime &runtime) {
   auto lock = std::scoped_lock(runtime.dspBackendStateMutex);
@@ -2988,7 +2991,7 @@ static cardio::promise<PresetActivationResult> activatePreset(
     const auto revision = runtime.configurationRevision.load(std::memory_order_acquire);
     auto result = std::move(co_await applyPreparedOutput(runtime, std::move(pipelineLock),
         std::move(configuration), revision, presetPath, std::move(loaded.pipeline),
-        std::move(warnings), false));
+        std::move(warnings), false, !automaticReload && !recipe));
     if (automaticReload) {
       auto guard = std::scoped_lock(runtime.pipelineMutationMutex);
       if (!result.error.empty()) runtime.configurationError = "Automatic preset reload failed: " + result.error;
@@ -3184,21 +3187,23 @@ static cardio::promise<PresetActivationResult> requestLiveOutputChange(PipeWireR
   }
   if (*expectedRevision != runtime.configurationRevision.load(std::memory_order_acquire))
     co_return PresetActivationResult{{}, "configuration changed while preparing outputs; retry the change", false};
+  const bool resumeDsp = preset.has_value();
   co_return std::move(co_await applyPreparedOutput(runtime, std::move(pipelineLock),
       std::move(configuration), *expectedRevision, std::move(preset),
-      std::move(prepared), std::move(warnings), profileOwned));
+      std::move(prepared), std::move(warnings), profileOwned, resumeDsp));
 }
 
 static cardio::promise<PresetActivationResult> applyPreparedOutput(
     PipeWireRuntime &runtime, std::unique_lock<std::mutex> pipelineLock,
     OutputConfiguration configuration, std::uint64_t expectedRevision,
     std::optional<std::filesystem::path> preset, std::unique_ptr<DspPipeline> prepared,
-    std::vector<ControlWarning> warnings, bool profileOwned) {
+    std::vector<ControlWarning> warnings, bool profileOwned, bool resumeDsp) {
   if (expectedRevision != runtime.configurationRevision.load(std::memory_order_acquire))
     co_return PresetActivationResult{{}, "configuration changed while preparing outputs; retry the change", false};
   if (!profileOwned && runtime.outputTransitionActive.load(std::memory_order_acquire))
     co_return PresetActivationResult{{}, "another output change is already pending", false};
   if (!profileOwned) runtime.outputTransitionActive.store(true, std::memory_order_release);
+  runtime.resumeDspOnOutputCommit = resumeDsp;
   pipelineLock.unlock();
   auto lock = std::unique_lock(runtime.outputRequestMutex);
   if (runtime.outputRequestsStopped) {

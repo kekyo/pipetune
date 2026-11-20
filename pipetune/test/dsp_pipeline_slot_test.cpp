@@ -593,7 +593,11 @@ static bool testStagedReplacementCanCommitAndRollback(
     return false;
   }
   auto slot = pipetune::DspPipelineSlot(std::move(initial));
+  const auto originalRecipe = slot.recipe();
   slot.stageReplacement(std::move(replacement));
+  if (!check(slot.recipe() == originalRecipe, "editors must see the last committed recipe until the output is ready")) {
+    return false;
+  }
   auto samples = std::vector<float>{0.25F};
   if (!check(slot.hasStagedReplacement(),
              "staged replacement must retain rollback state") ||

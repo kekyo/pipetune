@@ -150,11 +150,55 @@ try {
     (await next.request({ op: "get" }, "state")).pipeline[0].vl,
     -10,
   );
+  if (
+    JSON.parse(cli("--status")).availableDspBackends.some(
+      (backend) => backend.name === "simd" && backend.available,
+    )
+  ) {
+    cli("dsp", "set", "simd");
+    assert.equal(
+      (await next.request({ op: "get" }, "state")).pipeline[0].vl,
+      -10,
+    );
+  }
   cli("dsp", "set", "scalar");
+  assert.equal(
+    (await next.request({ op: "get" }, "state")).pipeline[0].vl,
+    -10,
+  );
   cli("--load-preset", preset);
   await observer.receive((m) => m.op === "state" && m.pipeline[0]?.vl === -6);
   await writeFile(preset, local(-3));
   await observer.receive((m) => m.op === "state" && m.pipeline[0]?.vl === -3);
+  const widePreset = join(process.env.XDG_RUNTIME_DIR, "wide.effetune_preset");
+  const matrix = [{ nm: "Matrix", en: true, mx: "0213", ch: "A" }];
+  await writeFile(widePreset, JSON.stringify(matrix));
+  await next.request({ op: "bypass", on: true });
+  cli("--load-preset", widePreset);
+  assert.equal(
+    (await next.request({ op: "get" }, "state")).masterBypass,
+    false,
+    "selecting a local preset must resume DSP when it changes the channel count",
+  );
+  await next.request({ op: "bypass", on: true });
+  cli("bypass");
+  assert.equal(
+    (await next.request({ op: "get" }, "state")).masterBypass,
+    false,
+  );
+  await next.request({ op: "chain", pipeline: matrix });
+  assert.equal(JSON.parse(cli("--status")).inMemoryPreset, true);
+  await next.request({ op: "bypass", on: true });
+  await next.request({
+    op: "chain",
+    pipeline: [{ nm: "Volume", en: true, vl: -6 }],
+  });
+  assert.equal(
+    (await next.request({ op: "get" }, "state")).masterBypass,
+    true,
+    "changing channel count from an editor must preserve its master bypass",
+  );
+  await next.request({ op: "bypass", on: false });
   const library = join(process.env.XDG_CONFIG_HOME, "effetune");
   const irDir = join(library, "ir-library"),
     measurements = join(library, "measurement-backups"),
