@@ -26,7 +26,7 @@ fixed installed CLI path is invoked directly without a shell, and
 
 The main window uses a persistent two-pane layout. The left pane remains
 visible while the right pane switches between Processing, Rate, DSP, Output,
-and Advanced settings. The default window size is
+Remote Control, and Advanced settings. The default window size is
 1080 × 680 pixels and its supported minimum is 900 × 560 pixels. Both panes
 scroll independently at compact sizes.
 
@@ -163,6 +163,14 @@ pending enumeration, and enumeration errors. It describes device matching, not
 audio activity or measured delay compensation. Live presence changes never
 renumber saved channels. A multiple-mode draft without an enabled device waits
 for a selection before confirmation and cannot be applied.
+
+On the Remote Control page, select the playback PC’s network and port, then
+turn on Allow remote control. Scan the QR code from another device or copy
+the pairing URL into its browser or EffeTune’s “Join another EffeTune” window.
+The page shows the number of connected devices. New URL disconnects them and
+replaces the link. To use HTTPS, choose the certificate and private key before
+turning on the listener. The switch acts immediately and stays in effect after
+closing the window or choosing Cancel. Restarting the daemon turns it off.
 
 The global **Apply** button becomes available only after the daemon has
 confirmed every requested live change. It atomically writes the complete
@@ -365,11 +373,13 @@ configuration.
 The repository-wide `make test` command installs the locked npm dependencies,
 builds the production GTK executable with stable test-only accessibility IDs,
 starts a deterministic fake control daemon that speaks the production control
-protocol, and runs the dialog under Xvfb. The scenarios verify:
+protocol, and runs the dialog under Xvfb. The remote-control test pairs the GTK
+dialog with a real daemon on an isolated PipeWire instance and decodes the QR
+code displayed in the window. The scenarios verify:
 
 - per-user setup from primary, application-menu, and hidden startup paths;
 - setup failure diagnostics followed by an ordinary control connection;
-- the persistent status pane, all five settings pages, and minimum geometry;
+- the persistent status pane, all six settings pages, and minimum geometry;
 - responsive preset and device lists, and collapsible channel assignments;
 - the DSP Load meter's accessible range, measured value, responsive
   right-aligned width, rendered fill, and hue;

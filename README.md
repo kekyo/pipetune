@@ -232,11 +232,21 @@ can exceed 0 dBFS, the maximum digital audio amplitude.
 
 ## Editing DSP from another device
 
-Run `pipetune remote enable 192.168.1.20` on the playback PC, substituting the IPv4 address of its LAN interface. Open the printed pairing link in a browser or in the EffeTune desktop app’s “Join another EffeTune” window. Gain, EQ and master bypass affect both desktop audio and network playback.
+Open PipeTune’s settings on the playback PC and select Remote Control.
 
-Use `pipetune remote link` to show the link again. `pipetune remote rotate` disconnects paired devices and issues a new link. `pipetune remote disable` closes the listener. Each daemon starts with the listener disabled. Live edits stay in memory, and the source preset retains its saved settings.
+1. Under Network, select the IPv4 address on the same LAN as the device you will use to edit the DSP. The default port is 47300.
+2. Turn on Allow remote control. The panel displays a pairing URL and a QR code.
+3. On the other device, scan the QR code or open the copied URL in a browser. In the EffeTune desktop app, paste the URL into “Join another EffeTune”.
 
-The default port is 47300. Use HTTP on a trusted LAN. To serve HTTPS, run `pipetune remote enable 192.168.1.20 47300 /path/to/cert.pem /path/to/key.pem` with a certificate valid for that IP address and trusted by each client.
+For EffeTune 2.16.0 on a LAN, use a private IPv4 address and choose a port other than 80 for HTTP or 443 for HTTPS. PipeTune’s default, 47300, works with either scheme. [EffeTune’s pairing URL validation](https://github.com/Frieve-A/effetune/blob/v2.16.0/electron/remote-client-window.cjs#L14-L54)
+
+Gain, EQ and master bypass affect both desktop audio and network playback. The panel shows how many devices are connected. New URL disconnects them and issues a new pairing link. The switch takes effect immediately and stays on when you close the dialog. Turn it off to stop accepting connections. Each daemon starts with the switch off.
+
+To start the same listener from the command line, run `pipetune remote enable 192.168.1.20`, substituting the IPv4 address of the playback PC.
+
+Use `pipetune remote link` to show the link again. `pipetune remote rotate` disconnects paired devices and issues a new link. `pipetune remote disable` closes the listener. Live edits stay in memory, and the source preset retains its saved settings.
+
+Use HTTP on a trusted LAN. To serve HTTPS, select Use HTTPS and choose the PEM certificate and private key files before turning the switch on. From the command line, run `pipetune remote enable 192.168.1.20 47300 /path/to/cert.pem /path/to/key.pem` with a certificate valid for that IP address and trusted by each client.
 
 ## Playing music from another device
 
