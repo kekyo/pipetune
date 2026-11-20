@@ -208,67 +208,6 @@ Processedの入力はCh 1、2で、Bypassではそれ以外の出力Chは無音�
 出力を増やす場合は、チャンネルを振り分けるMatrixなどをプリセットに追加してください。
 両入力の音声はそのまま加算され、混合後のピークが0 dBFSを超えることがあります。0 dBFSはデジタル音声の最大振幅を表します。
 
-## 別の端末からDSPを編集する
-
-再生用PCでPipeTuneの設定を開き、「リモートコントロール」を選びます。
-
-1. 「ネットワーク」で、操作端末と同じLANにつながるIPv4アドレスを選びます。ポートの初期値は47300です。
-2. 「リモート操作を許可」をオンにします。画面に接続用URLとQRコードが表示されます。
-3. 操作端末でQRコードを読み取るか、「URLをコピー」で取得したURLをブラウザーで開きます。EffeTuneデスクトップ版から操作する場合は「Join another EffeTune」にURLを貼り付けてください。
-
-EffeTune 2.16.0からLAN内で接続する場合は、プライベートIPv4アドレスを選び、HTTPの80番とHTTPSの443番を避けてください。初期値の47300番はどちらの方式にも使えます。[EffeTuneの接続条件](https://github.com/Frieve-A/effetune/blob/v2.16.0/electron/remote-client-window.cjs#L14-L54)
-
-操作端末で音量やEQを変えると、再生用PCのデスクトップ音声とネットワーク再生の両方に反映されます。接続中の端末数はパネルで確認できます。「URLを再発行」を押すと接続中の端末が切断され、次の接続には新しいURLが必要です。
-
-受信の許可はすぐに反映されます。設定画面を閉じても受信は続きます。終了するにはスイッチをオフにしてください。PipeTuneを再起動したときもオフに戻ります。
-
-コマンドで受信を開始するには、再生用PCのIPv4アドレスを指定してください。設定画面とコマンドで表示される接続用URLは同じです。
-
-```sh
-pipetune remote enable 192.168.1.20
-```
-
-| 操作 | 再生用PCで実行するコマンド |
-| --- | --- |
-| ペアリングリンクを再表示 | `pipetune remote link` |
-| 接続中の端末を切断し、新しいリンクを発行 | `pipetune remote rotate` |
-| 待ち受けを終了 | `pipetune remote disable` |
-
-HTTPは信頼できるLANで使ってください。HTTPSを使うには、受信をオンにする前に「HTTPSを使う」を選び、証明書と秘密鍵のPEMファイルを指定します。操作端末が信頼し、選んだIPアドレスに有効な証明書を用意してください。コマンドでも指定できます。
-
-```sh
-pipetune remote enable 192.168.1.20 47300 /path/to/cert.pem /path/to/key.pem
-```
-
-遠隔編集した値はデーモンの実行中だけ有効です。プリセットファイルには保存時の値が残ります。
-
-## ネットワークから曲を再生する
-
-EffeTuneなどの操作端末から曲を選び、PipeTuneのスピーカーで聴けます。再生用PCにPipeWire出力を持つMPDとupmpdcliを用意してください。upmpdcliがOpenHome／UPnP AVの再生指示を受け、同じPCのMPDが音源を取得します。[upmpdcliの配布元](https://www.lesbonscomptes.com/upmpdcli/pages/downloads.html)・[MPDのPipeWire出力](https://mpd.readthedocs.io/en/stable/plugins.html#pipewire)
-
-PipeTuneのセットアップを済ませ、同じユーザーの端末で専用の設定を準備します。パッケージの設定例ではMPDのローカル接続にポート16600を使います。
-
-```sh
-player_config="${XDG_CONFIG_HOME:-$HOME/.config}/pipetune/player"
-mkdir -p "$player_config" "$HOME/.local/state/pipetune/player" "${XDG_CACHE_HOME:-$HOME/.cache}/pipetune/player"
-cp -n /usr/share/doc/pipetune/player/*.conf "$player_config/"
-mpd --no-daemon "$player_config/mpd.conf"
-```
-
-次のコマンドは別の端末で実行してください。`enp3s0`には操作端末と同じLANのインターフェイス名を指定します。再生機名の設定先は`upmpdcli.conf`です。
-
-```sh
-export UPMPD_CACHEDIR="${XDG_CACHE_HOME:-$HOME/.cache}/pipetune/player"
-flock --nonblock --no-fork --verbose "$UPMPD_CACHEDIR/renderer.lock" \
-  upmpdcli -m 1 -i enp3s0 -c "${XDG_CONFIG_HOME:-$HOME/.config}/pipetune/player/upmpdcli.conf"
-```
-
-EffeTune 2.16.0では、再生先に「PipeTune (UPnP AV)」を選んでください。音楽ライブラリから曲を選び、再生中のDSPはペアリングリンクから編集できます。MPDの出力先は処理入力の`pipetune_sink`です。複数出力モードでOSの既定がDirectでも、現在のDSPが掛かります。再生機の音量とミュートが効くのはMPDの音だけです。
-
-OpenHomeでは再生機が曲順を保持します。音源サーバーが動いていれば、操作端末を閉じても次の曲に進みます。ただしEffeTune 2.16.0とupmpdcli 1.9.17の組み合わせでは、曲順に変更がなくても更新を求められ、OpenHomeで選曲できません。Ubuntu 24.04.5でMPD 0.23.14のPipeWire出力を使い、同じ再生機のUPnP AVで選曲と再生を確認しました。[EffeTuneのキュー照合](https://github.com/Frieve-A/effetune/blob/v2.16.0/electron/network-music-host.cjs#L291-L293)・[upmpdcli 1.9.17のソース](https://www.lesbonscomptes.com/upmpdcli/downloads/upmpdcli-1.9.17.tar.gz)
-
-終了するにはupmpdcli、MPDの順に、それぞれの端末でCtrl+Cを押します。手動起動からユーザーサービスへ移すときも、同じユーザーの設定と状態ファイル、キャッシュを指定してください。使用中のMPDポートや受信機のロックがあれば、二重起動はエラーになります。
-
 ## EffeTune DSPプリセット選択
 
 EffeTune DSPプリセットをPipeTuneにロードする場合、以下のファイルを選択出来ます:
@@ -536,6 +475,67 @@ PipeTuneは、入力側のサンプリング周波数変換後のPCMを判定し
 
 設定ファイルには `PIPETUNE_DSP_IDLE_TIMEOUT=ignore`、または`100`〜`5000`の
 100ms刻みの整数値として保存されます。
+
+## 別の端末からDSPを編集する (experimental)
+
+再生用PCでPipeTuneの設定を開き、「リモートコントロール」を選びます。
+
+1. 「ネットワーク」で、操作端末と同じLANにつながるIPv4アドレスを選びます。ポートの初期値は47300です。
+2. 「リモート操作を許可」をオンにします。画面に接続用URLとQRコードが表示されます。
+3. 操作端末でQRコードを読み取るか、「URLをコピー」で取得したURLをブラウザーで開きます。EffeTuneデスクトップ版から操作する場合は「Join another EffeTune」にURLを貼り付けてください。
+
+EffeTune 2.16.0からLAN内で接続する場合は、プライベートIPv4アドレスを選び、HTTPの80番とHTTPSの443番を避けてください。初期値の47300番はどちらの方式にも使えます。[EffeTuneの接続条件](https://github.com/Frieve-A/effetune/blob/v2.16.0/electron/remote-client-window.cjs#L14-L54)
+
+操作端末で音量やEQを変えると、再生用PCのデスクトップ音声とネットワーク再生の両方に反映されます。接続中の端末数はパネルで確認できます。「URLを再発行」を押すと接続中の端末が切断され、次の接続には新しいURLが必要です。
+
+受信の許可はすぐに反映されます。設定画面を閉じても受信は続きます。終了するにはスイッチをオフにしてください。PipeTuneを再起動したときもオフに戻ります。
+
+コマンドで受信を開始するには、再生用PCのIPv4アドレスを指定してください。設定画面とコマンドで表示される接続用URLは同じです。
+
+```sh
+pipetune remote enable 192.168.1.20
+```
+
+| 操作 | 再生用PCで実行するコマンド |
+| --- | --- |
+| ペアリングリンクを再表示 | `pipetune remote link` |
+| 接続中の端末を切断し、新しいリンクを発行 | `pipetune remote rotate` |
+| 待ち受けを終了 | `pipetune remote disable` |
+
+HTTPは信頼できるLANで使ってください。HTTPSを使うには、受信をオンにする前に「HTTPSを使う」を選び、証明書と秘密鍵のPEMファイルを指定します。操作端末が信頼し、選んだIPアドレスに有効な証明書を用意してください。コマンドでも指定できます。
+
+```sh
+pipetune remote enable 192.168.1.20 47300 /path/to/cert.pem /path/to/key.pem
+```
+
+遠隔編集した値はデーモンの実行中だけ有効です。プリセットファイルには保存時の値が残ります。
+
+## ネットワークから曲を再生する (experimental)
+
+EffeTuneなどの操作端末から曲を選び、PipeTuneのスピーカーで聴けます。再生用PCにPipeWire出力を持つMPDとupmpdcliを用意してください。upmpdcliがOpenHome／UPnP AVの再生指示を受け、同じPCのMPDが音源を取得します。[upmpdcliの配布元](https://www.lesbonscomptes.com/upmpdcli/pages/downloads.html)・[MPDのPipeWire出力](https://mpd.readthedocs.io/en/stable/plugins.html#pipewire)
+
+PipeTuneのセットアップを済ませ、同じユーザーの端末で専用の設定を準備します。パッケージの設定例ではMPDのローカル接続にポート16600を使います。
+
+```sh
+player_config="${XDG_CONFIG_HOME:-$HOME/.config}/pipetune/player"
+mkdir -p "$player_config" "$HOME/.local/state/pipetune/player" "${XDG_CACHE_HOME:-$HOME/.cache}/pipetune/player"
+cp -n /usr/share/doc/pipetune/player/*.conf "$player_config/"
+mpd --no-daemon "$player_config/mpd.conf"
+```
+
+次のコマンドは別の端末で実行してください。`enp3s0`には操作端末と同じLANのインターフェイス名を指定します。再生機名の設定先は`upmpdcli.conf`です。
+
+```sh
+export UPMPD_CACHEDIR="${XDG_CACHE_HOME:-$HOME/.cache}/pipetune/player"
+flock --nonblock --no-fork --verbose "$UPMPD_CACHEDIR/renderer.lock" \
+  upmpdcli -m 1 -i enp3s0 -c "${XDG_CONFIG_HOME:-$HOME/.config}/pipetune/player/upmpdcli.conf"
+```
+
+EffeTune 2.16.0では、再生先に「PipeTune (UPnP AV)」を選んでください。音楽ライブラリから曲を選び、再生中のDSPはペアリングリンクから編集できます。MPDの出力先は処理入力の`pipetune_sink`です。複数出力モードでOSの既定がDirectでも、現在のDSPが掛かります。再生機の音量とミュートが効くのはMPDの音だけです。
+
+OpenHomeでは再生機が曲順を保持します。音源サーバーが動いていれば、操作端末を閉じても次の曲に進みます。ただしEffeTune 2.16.0とupmpdcli 1.9.17の組み合わせでは、曲順に変更がなくても更新を求められ、OpenHomeで選曲できません。Ubuntu 24.04.5でMPD 0.23.14のPipeWire出力を使い、同じ再生機のUPnP AVで選曲と再生を確認しました。[EffeTuneのキュー照合](https://github.com/Frieve-A/effetune/blob/v2.16.0/electron/network-music-host.cjs#L291-L293)・[upmpdcli 1.9.17のソース](https://www.lesbonscomptes.com/upmpdcli/downloads/upmpdcli-1.9.17.tar.gz)
+
+終了するにはupmpdcli、MPDの順に、それぞれの端末でCtrl+Cを押します。手動起動からユーザーサービスへ移すときも、同じユーザーの設定と状態ファイル、キャッシュを指定してください。使用中のMPDポートや受信機のロックがあれば、二重起動はエラーになります。
 
 ## PipeTune設定のリセット
 
