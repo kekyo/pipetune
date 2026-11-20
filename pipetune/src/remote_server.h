@@ -10,13 +10,21 @@
 
 namespace pipetune {
 
+/** Result of a local listener command. */
+struct RemoteListenerResult {
+  std::string link = {}; /**< Pairing link on an active listener. */
+  std::string error = {}; /**< Reason the request could not be applied. */
+};
+
 /** Owns an opt-in HTTP(S)/WebSocket editor on the daemon's GLib control context. */
 class RemoteServer final {
 public:
-  RemoteServer(RemoteEditor::Read read, RemoteEditor::Apply apply);
+  RemoteServer(RemoteEditor::Read read, RemoteEditor::Apply apply, std::function<void()> peersChanged);
   ~RemoteServer();
   /** Changes the listener and returns a response for its local owner. */
-  std::string configure(const RemoteListenerOptions &options);
+  RemoteListenerResult configure(const RemoteListenerOptions &options);
+  /** Returns listener settings and authenticated client count on the control context. */
+  RemoteListenerStatus status() const;
   /** Publishes accepted edits to connected editors, coalescing rapid changes. */
   void changed();
   /** Reports whether authenticated editors are waiting for state changes. */

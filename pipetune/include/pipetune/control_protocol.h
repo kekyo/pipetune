@@ -60,6 +60,17 @@ struct RemoteListenerOptions {
   std::string key = {}; /**< Matching absolute PEM private-key path. */
 };
 
+/** Listener information visible to local status subscribers. */
+struct RemoteListenerStatus {
+  std::uint64_t revision = 0; /**< Changes when a pairing link is issued or revoked. */
+  std::string address = {}; /**< Bound local IPv4 address, empty while off. */
+  std::uint32_t port = 0; /**< Actual bound TCP port, zero while off. */
+  std::string certificate = {}; /**< TLS certificate file path for the running listener. */
+  std::string key = {}; /**< TLS private key file path for the running listener. */
+  std::uint32_t clients = 0; /**< Number of authenticated editor connections. */
+  bool operator==(const RemoteListenerStatus &) const = default;
+};
+
 /** Encodes a local listener administration request for the control socket. */
 std::string makeRemoteControlRequest(const RemoteListenerOptions &options);
 
@@ -263,6 +274,8 @@ struct ControlRuntimeStatus {
   std::vector<float> outputPeaks = {};
   /** Recent PCM peak after combining Processed and Direct, in linear amplitude. */
   std::vector<float> mixedOutputPeaks = {};
+  /** Current listener settings, without pairing credentials. */
+  RemoteListenerStatus remoteListener = {};
 };
 
 /**
@@ -305,6 +318,8 @@ struct ControlResponseParseResult {
   std::vector<ControlWarning> warnings;
   /** Remote diagnostic, or a local protocol diagnostic when invalid. */
   std::string error;
+  /** Private pairing link returned to the local requester only. */
+  std::string pairingLink = {};
 };
 
 /**
@@ -399,11 +414,12 @@ makeLoadPresetControlRequest(const std::filesystem::path &presetPath);
  *
  * @param status Current daemon status.
  * @param warnings Nodes omitted while handling a load request.
+ * @param pairingLink Private credential issued by a local listener command.
  * @return Encoded JSON response.
  */
 std::string makeControlSuccessResponse(
     const ControlRuntimeStatus &status,
-    std::span<const ControlWarning> warnings);
+    std::span<const ControlWarning> warnings, std::string_view pairingLink = {});
 
 /**
  * Returns a subscribed status event without framing newline.

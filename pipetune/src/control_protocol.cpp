@@ -736,7 +736,7 @@ static bool outputStatusIsConsistent(const ControlRuntimeStatus &status) {
 
 static std::string makeControlStatusMessage(
     const ControlRuntimeStatus &status,
-    std::span<const ControlWarning> warnings, bool statusEvent) {
+    std::span<const ControlWarning> warnings, bool statusEvent, std::string_view pairingLink) {
   if ((status.processingMode == ProcessingMode::preset &&
        status.activePreset.empty() && !status.inMemoryPreset) ||
       (status.processingMode == ProcessingMode::bypass &&
@@ -750,6 +750,17 @@ static std::string makeControlStatusMessage(
 
   yyjson_mut_val *root = nullptr;
   auto document = createObjectDocument(root);
+  const auto &listener = status.remoteListener;
+  auto *remote = document ? yyjson_mut_obj_add_obj(document.get(), root, "remoteListener") : nullptr;
+  if (!remote || !yyjson_mut_obj_add_uint(document.get(), remote, "revision", listener.revision) ||
+      !addString(document.get(), remote, "address", listener.address) ||
+      !yyjson_mut_obj_add_uint(document.get(), remote, "port", listener.port) ||
+      !addString(document.get(), remote, "certificate", listener.certificate) ||
+      !addString(document.get(), remote, "key", listener.key) ||
+      !yyjson_mut_obj_add_uint(document.get(), remote, "clients", listener.clients) ||
+      (!pairingLink.empty() && !addString(document.get(), root, "link", pairingLink))) {
+    return makeControlErrorResponse("cannot encode remote listener status");
+  }
   const auto processingMode =
       status.processingMode == ProcessingMode::bypass ? "bypass" : "preset";
   if (document == nullptr ||
@@ -1017,13 +1028,13 @@ static std::string makeControlStatusMessage(
 
 std::string makeControlSuccessResponse(
     const ControlRuntimeStatus &status,
-    std::span<const ControlWarning> warnings) {
-  return makeControlStatusMessage(status, warnings, false);
+    std::span<const ControlWarning> warnings, std::string_view pairingLink) {
+  return makeControlStatusMessage(status, warnings, false, pairingLink);
 }
 
 std::string makeControlStatusEvent(const ControlRuntimeStatus &status) {
   return makeControlStatusMessage(
-      status, std::span<const ControlWarning>{}, true);
+      status, std::span<const ControlWarning>{}, true, {});
 }
 
 std::string makeControlErrorResponse(std::string_view error) {
@@ -1612,6 +1623,22 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
       .inputFramesReceived = 0,
       .inputLastReceivedUnixMilliseconds = 0,
   };
+  if (auto *remote = yyjson_obj_get(root, "remoteListener")) {
+    auto &listener = status.remoteListener;
+    if (!readCounterField(remote, "revision", listener.revision) ||
+        !readStringField(remote, "address", listener.address) ||
+        !readUint32Field(remote, "port", listener.port) || listener.port > 65535 ||
+        !readStringField(remote, "certificate", listener.certificate) ||
+        !readStringField(remote, "key", listener.key) ||
+        !readUint32Field(remote, "clients", listener.clients)) {
+      return responseError("invalid remote listener status");
+    }
+  }
+  auto link = std::string{};
+  if (yyjson_obj_get(root, "link") &&
+      (kind != ControlResponseKind::response || !readStringField(root, "link", link))) {
+    return responseError("invalid pairing response");
+  }
   status.inMemoryPreset = yyjson_get_bool(yyjson_obj_get(root, "inMemoryPreset"));
   status.masterBypass = yyjson_get_bool(yyjson_obj_get(root, "masterBypass"));
   if (!readProcessingMode(root, status.processingMode) ||
@@ -1720,7 +1747,8 @@ ControlResponseParseResult parseControlResponse(std::string_view json) {
           .kind = kind,
           .status = std::move(status),
           .warnings = std::move(warnings),
-          .error = {}};
+          .error = {},
+          .pairingLink = std::move(link)};
 }
 
 ControlResponseInspection inspectControlResponse(std::string_view json) {

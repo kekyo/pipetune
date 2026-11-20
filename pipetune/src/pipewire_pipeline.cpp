@@ -2870,7 +2870,8 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .outputVolumes = outputInventory.error.empty() ? std::move(outputInventory.volumes) : std::vector<OutputVolumeState>{},
           .outputTimings = std::move(outputTimings),
           .outputPeaks = std::move(outputPeaks),
-          .mixedOutputPeaks = std::move(mixedOutputPeaks)};
+          .mixedOutputPeaks = std::move(mixedOutputPeaks),
+          .remoteListener = runtime.remoteEditor ? runtime.remoteEditor->status() : RemoteListenerStatus{}};
 }
 
 static ControlMessageResult closeControlResponse(std::string response,
@@ -3289,9 +3290,12 @@ static cardio::promise<ControlMessageResult> handleControlRequest(std::string_vi
             return RemotePipelineSnapshot{runtime.pipeline.recipe(), runtime.pipeline.masterBypass()};
           }, [&runtime](auto recipe, auto bypass, auto cancel) {
             return applyRemoteEdit(runtime, std::move(recipe), bypass, cancel);
-          });
+          }, [&runtime] { requestControlStatusUpdate(runtime); });
     }
-    co_return closeControlResponse(runtime.remoteEditor->configure(request.request.remote), false);
+    const auto result = runtime.remoteEditor->configure(request.request.remote);
+    if (!result.error.empty()) co_return closeControlResponse(makeControlErrorResponse(result.error), false);
+    co_return closeControlResponse(makeControlSuccessResponse(controlStatus(runtime), {}, result.link),
+                                  request.request.remote.operation != "link");
   }
   if (request.request.command == ControlCommand::subscribe) {
     co_return ControlMessageResult{.response = provideControlStatus(&runtime),

@@ -56,6 +56,13 @@ try {
   assert.equal(spawnSync(bin, ["remote", "link"]).status, 1);
   cli("--load-preset", preset);
   const pair = cli("remote", "enable", "127.0.0.1", "0");
+  const publicStatus = () => JSON.parse(cli("--status")).remoteListener;
+  assert.equal(publicStatus().port, Number(new URL(pair).port));
+  assert.equal(publicStatus().address, "127.0.0.1");
+  assert.equal(publicStatus().clients, 0);
+  const firstRevision = publicStatus().revision;
+  const token = new URL(pair).searchParams.get("t");
+  assert.ok(!cli("--status").includes(token), "status subscribers must not receive pairing credentials");
   assert.equal(cli("remote", "link"), pair);
   assert.match(await (await fetch(pair)).text(), /<html/iu);
   assert.equal((await fetch(new URL("/electron/main.cjs", pair))).status, 404);
@@ -65,6 +72,7 @@ try {
   );
   const editor = await connect(pair);
   const initial = await editor.request({ op: "hello", v: 1 }, "state");
+  assert.equal(publicStatus().clients, 1);
   assert.equal(initial.appName, "PipeTune");
   assert.ok(initial.effects.includes("Volume"));
   assert.deepEqual(initial.features, []);
@@ -99,6 +107,8 @@ try {
   );
   const closed = once(editor.socket, "close");
   const rotated = cli("remote", "rotate");
+  assert.ok(publicStatus().revision > firstRevision);
+  assert.equal(publicStatus().clients, 0);
   assert.equal((await closed)[0].code, 4401);
   assert.notEqual(rotated, pair);
   const invalid = new WebSocket(pair.replace(/^http/u, "ws"));
@@ -278,6 +288,7 @@ try {
   const disabled = once(next.socket, "close");
   cli("remote", "disable");
   assert.equal((await disabled)[0].code, 1001);
+  assert.equal(publicStatus().port, 0);
   const certificate = join(process.env.XDG_RUNTIME_DIR, "certificate.pem"),
     key = join(process.env.XDG_RUNTIME_DIR, "key.pem");
   execFileSync(
@@ -308,6 +319,8 @@ try {
   );
   const secure = cli("remote", "enable", "127.0.0.1", "0", certificate, key);
   assert.match(secure, /^https:/u);
+  assert.equal(publicStatus().certificate, certificate);
+  assert.equal(publicStatus().key, key);
   execFileSync(
     process.execPath,
     [

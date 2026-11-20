@@ -25,6 +25,8 @@ struct RemotePeer {
 
 struct RemoteServer::Impl {
   RemoteEditor editor;
+  RemoteListenerStatus listener;
+  std::function<void()> peersChanged;
   SoupServer *server = nullptr;
   std::filesystem::path root;
   std::set<std::string, std::less<>> files;
@@ -35,8 +37,9 @@ struct RemoteServer::Impl {
   GSource *broadcast = nullptr;
 };
 
-RemoteServer::RemoteServer(RemoteEditor::Read read, RemoteEditor::Apply apply)
+RemoteServer::RemoteServer(RemoteEditor::Read read, RemoteEditor::Apply apply, std::function<void()> peersChanged)
     : impl_(std::make_unique<Impl>()) {
+  impl_->peersChanged = std::move(peersChanged);
   impl_->editor.read = std::move(read);
   impl_->editor.apply = std::move(apply);
 }
@@ -155,6 +158,7 @@ static void connected(SoupServer *, SoupServerMessage *message, const char *, So
   auto peer = std::make_shared<RemotePeer>();
   peer->socket = {static_cast<SoupWebsocketConnection *>(g_object_ref(socket)), g_object_unref};
   impl.peers.emplace(socket, peer);
+  impl.peersChanged();
   g_signal_connect(socket, "message", G_CALLBACK(messageReceived), data);
   g_signal_connect(socket, "closed", G_CALLBACK(+[](SoupWebsocketConnection *closed, gpointer owner) {
     auto &self = *static_cast<RemoteServer::Impl *>(owner);
@@ -162,6 +166,7 @@ static void connected(SoupServer *, SoupServerMessage *message, const char *, So
     if (it != self.peers.end()) {
       it->second->cancellation.cancel();
       self.peers.erase(it);
+      self.peersChanged();
     }
   }), data);
 }
@@ -228,21 +233,33 @@ static void handleHttp(SoupServer *, SoupServerMessage *message, const char *pat
   g_mapped_file_unref(mapping);
 }
 
-std::string RemoteServer::configure(const RemoteListenerOptions &options) {
+RemoteListenerStatus RemoteServer::status() const {
+  auto value = impl_->listener;
+  value.clients = static_cast<std::uint32_t>(impl_->peers.size());
+  return value;
+}
+
+RemoteListenerResult RemoteServer::configure(const RemoteListenerOptions &options) {
   auto &impl = *impl_;
-  if (options.operation == "disable") { stop(impl); return "{\"ok\":true}"; }
+  if (options.operation == "disable") {
+    if (impl.server) {
+      stop(impl);
+      impl.listener = {.revision = impl.listener.revision + 1};
+    }
+    return {};
+  }
   if (options.operation == "enable") {
-    if (impl.server) return makeControlErrorResponse("remote editor already enabled");
+    if (impl.server) return {.error = "remote editor already enabled"};
     const auto address = std::unique_ptr<GInetAddress, decltype(&g_object_unref)>(
         g_inet_address_new_from_string(options.address.c_str()), g_object_unref);
     if (!address || g_inet_address_get_family(address.get()) != G_SOCKET_FAMILY_IPV4 ||
         g_inet_address_get_is_any(address.get()) || g_inet_address_get_is_multicast(address.get()))
-      return makeControlErrorResponse("specify the IPv4 address of a local interface");
+      return {.error = "specify the IPv4 address of a local interface"};
     impl.root = remoteEditorDirectory();
     std::ifstream manifest(impl.root / "remote-files.txt");
     impl.files.clear();
     for (std::string name; std::getline(manifest, name);) impl.files.insert(std::move(name));
-    if (!impl.files.contains("remote.html")) return makeControlErrorResponse("remote editor assets are unavailable");
+    if (!impl.files.contains("remote.html")) return {.error = "remote editor assets are unavailable"};
     const auto token = newToken();
     const auto listener = std::unique_ptr<SoupServer, decltype(&g_object_unref)>(soup_server_new(nullptr, nullptr), g_object_unref);
     GError *error = nullptr;
@@ -254,25 +271,29 @@ std::string RemoteServer::configure(const RemoteListenerOptions &options) {
     const auto endpoint = std::unique_ptr<GSocketAddress, decltype(&g_object_unref)>(
         g_inet_socket_address_new(address.get(), options.port), g_object_unref);
     if (error || !soup_server_listen(listener.get(), endpoint.get(), secure ? SOUP_SERVER_LISTEN_HTTPS : SoupServerListenOptions{}, &error)) {
-      const auto failure = makeControlErrorResponse(error ? error->message : "cannot listen");
+      const auto failure = std::string(error ? error->message : "cannot listen");
       g_clear_error(&error);
-      return failure;
+      return {.error = failure};
     }
     auto *uris = soup_server_get_uris(listener.get());
     const auto port = g_uri_get_port(static_cast<GUri *>(uris->data));
     g_slist_free_full(uris, reinterpret_cast<GDestroyNotify>(g_uri_unref));
     impl.authority = options.address + ((secure && port == 443) || (!secure && port == 80) ? "" : ":" + std::to_string(port));
     impl.origin = (secure ? "https://" : "http://") + impl.authority;
+    impl.listener = {.revision = impl.listener.revision + 1, .address = options.address,
+                     .port = static_cast<std::uint32_t>(port), .certificate = options.certificate,
+                     .key = options.key};
     impl.token = token;
     impl.server = static_cast<SoupServer *>(g_object_ref(listener.get()));
     soup_server_add_handler(impl.server, nullptr, handleHttp, &impl, nullptr);
     soup_server_add_websocket_handler(impl.server, "/", nullptr, nullptr, connected, &impl, nullptr);
   }
-  if (!impl.server) return makeControlErrorResponse("remote editor is disabled");
+  if (!impl.server) return {.error = "remote editor is disabled"};
   if (options.operation == "rotate") {
     impl.token = newToken();
+    ++impl.listener.revision;
     closePeers(impl, 4401);
   }
-  return "{\"ok\":true,\"link\":\"" + impl.origin + "/?t=" + impl.token + "\"}";
+  return {.link = impl.origin + "/?t=" + impl.token};
 }
 }
