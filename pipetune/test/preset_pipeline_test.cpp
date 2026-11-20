@@ -1417,6 +1417,55 @@ static bool testUnsupportedMidiPlayer(const std::filesystem::path &directory) {
   return true;
 }
 
+static bool testLiveAudioMarkers(const std::filesystem::path &directory) {
+  const auto mixedPath = writePreset(directory, "live-audio.effetune_preset", R"json({"pipeline":[
+    {"name":"Volume","parameters":{"vl":-3}},
+    {"name":"Live Audio Receive","channel":"1516","inputBus":3,"outputBus":0},
+    {"name":"Live Audio Send","inputBus":0,"outputBus":4},
+    {"name":"Live Audio Send"},
+    {"name":"Live Audio Receive","enabled":false},
+    {"name":"Section","enabled":false},{"name":"Live Audio Send"},
+    {"name":"Section","enabled":true},{"name":"Volume","parameters":{"vl":-7}}
+  ]})json");
+  const auto localPath = writePreset(directory, "local-volume.effetune_preset", R"json({"pipeline":[
+    {"name":"Volume","parameters":{"vl":-3}},{"name":"Volume","parameters":{"vl":-7}}
+  ]})json");
+  const auto onlyPath = writePreset(directory, "only-live-audio.effetune_preset", R"json({"pipeline":[
+    {"name":"Live Audio Send","channel":"1516","inputBus":2,"outputBus":0}
+  ]})json");
+  const auto options = pipetune::PipelineBuildOptions{48000, 2, 64, true};
+  const auto mixed = pipetune::loadDspPipeline(mixedPath, options);
+  const auto local = pipetune::loadDspPipeline(localPath, options);
+  const auto only = pipetune::loadDspPipeline(onlyPath, options);
+  if (!check(mixed.pipeline != nullptr, mixed.error) || !check(local.pipeline != nullptr, local.error) ||
+      !check(only.pipeline != nullptr, only.error)) return false;
+  if (!check(mixed.pipeline->activePluginCount() == 2 && mixed.pipeline->maxChannels() == 2 &&
+          mixed.pipeline->outputChannelCount() == 2 && mixed.pipeline->latencyFrames() == local.pipeline->latencyFrames(),
+          "live audio markers must not alter local routing, width or latency") ||
+      !check(mixed.warnings.size() == 3 && only.warnings.size() == 1,
+          "only enabled markers in enabled sections must report a warning")) return false;
+  const auto entries = mixed.pipeline->presetEntries();
+  for (auto index = std::size_t{0}; index < mixed.warnings.size(); ++index) {
+    const auto &warning = mixed.warnings[index];
+    if (!check(warning.nodeIndex == index + 1 && warning.pluginName == entries[index + 1].name &&
+            warning.reason.find("network audio") != std::string::npos &&
+            entries[index + 1].state == pipetune::PresetEntryState::ignored,
+            "each active marker must identify its unavailable network audio function")) return false;
+  }
+  if (!check(entries[4].state == pipetune::PresetEntryState::off && entries[6].state == pipetune::PresetEntryState::off,
+          "disabled markers must be shown as off")) return false;
+  const auto input = std::array<float, 4>{0.5F, -0.25F, 0.75F, -0.125F};
+  auto markedPcm = input, localPcm = input, onlyPcm = input;
+  return check(mixed.pipeline->process(markedPcm, 2, 2, 0) == pipetune::ProcessStatus::ok &&
+               local.pipeline->process(localPcm, 2, 2, 0) == pipetune::ProcessStatus::ok &&
+               markedPcm == localPcm && approximately(markedPcm[0], input[0] * std::pow(10.0F, -10.0F / 20)),
+               "local PCM must include the gains before and after the markers") &&
+         check(only.pipeline->activePluginCount() == 0 && only.pipeline->maxChannels() == 2 &&
+               only.pipeline->outputChannelCount() == 2 && only.pipeline->latencyFrames() == 0 &&
+               only.pipeline->process(onlyPcm, 2, 2, 0) == pipetune::ProcessStatus::ok && onlyPcm == input,
+               "a marker alone must pass local stereo PCM with no delay");
+}
+
 static bool testSfzFixedPreparationBudget(const std::filesystem::path &directory) {
   const auto path = writePreset(directory, "sfz-memory.effetune_preset",
       R"({"pipeline":[{"name":"SoundFont Note Player","parameters":{"dm":100,"wm":0}}]})");
@@ -1453,7 +1502,7 @@ int main() {
   const auto visualizers = testVisualizationPresets(directory);
   const auto midi = testUnsupportedMidiPlayer(directory);
   const auto memory = testSfzFixedPreparationBudget(directory);
-  const auto passed = memory && midi && effects212 && analog && testPresetEntries(directory) && attack && bass && bassWidth && visualizers &&
+  const auto passed = memory && midi && testLiveAudioMarkers(directory) && effects212 && analog && testPresetEntries(directory) && attack && bass && bassWidth && visualizers &&
       testFirCrossoverRouting(directory) && testFirCrossoverBands(directory) &&
       testEffeTune210Pipeline(directory) && testSpatialMapper(directory) && testTvAudioSimulator(directory) &&
       testBypassPipeline() && testCanonicalPreset(directory) &&

@@ -54,8 +54,9 @@ not supported by this MVP.
 
 - Loads canonical and legacy EffeTune preset JSON from files whose extension is
   exactly `.effetune_preset`.
-- Builds every enabled DSP in the pinned EffeTune 2.17.0 native registry,
-  containing 113 kernels, including bus and channel routing through 16 planar channels.
+- Builds all 115 kernels in the pinned EffeTune 2.18.1 native registry and supports routing through 16 planar channels.
+- Presets containing Live Audio Send or Receive process local audio through the surrounding effects.
+  Active markers appear as Ignored with a network audio warning. Disabled markers appear as Off.
 - Runs Spatial Mapper and TV Audio Simulator presets; see the
   [supported settings and channel conditions](../docs/en/details.md#spatial-mapper-and-tv-audio-simulator).
 - Runs Attack Tonal Balance, Bass Extender, and Bass Management IIR/Linear;
@@ -76,6 +77,8 @@ not supported by this MVP.
   PEQ, Group Delay EQ, Group Delay PEQ, and Bass Management Linear from their preset parameters.
 - Skips unknown DSPs and invalid Crosstalk measurements with warnings. Invalid
   assigned SFZ, IR Reverb, or Room EQ sources fail loading and retain the active pipeline.
+- Room EQ and Crosstalk Cancellation accept measurements made with the effect pipeline bypassed.
+  [EffeTune measurement guide](https://github.com/Frieve-A/effetune/blob/v2.18.0/docs/measurement.md#measuring-with-the-effect-pipeline)
 - Publishes a WirePlumber 0.5 smart-filter pair and a WirePlumber 0.4 endpoint
   contract with the same transparent playback behavior.
 - Keeps PipeTune's internal processing nodes out of desktop input and output
@@ -121,12 +124,14 @@ On Ubuntu 24.04:
 sudo apt install \
   build-essential cmake dbus-x11 desktop-file-utils git \
   libgdk-pixbuf2.0-bin libgtk-3-dev libpipewire-0.3-dev libpulse-dev \
-  libicu-dev libsamplerate0-dev nasm nodejs pipewire-pulse pkg-config x11-utils xvfb xz-utils
+  libicu-dev libqrencode-dev libsamplerate0-dev libsoup-3.0-dev glib-networking \
+  nasm nodejs pipewire-pulse pkg-config x11-utils xvfb xz-utils
 ```
 
 Building from source requires CMake 3.24 or newer, a C++20 GCC toolchain, Node.js,
 Git, XZ, and the development files for PipeWire 1.0.5 or later, ICU,
-libsamplerate, and GTK 3. The pinned FFmpeg submodule is built as private LGPL
+libsamplerate, libsoup 3, GTK 3, and libqrencode. The GTK remote control panel uses
+libqrencode to generate pairing codes locally. The pinned FFmpeg submodule is built as private LGPL
 shared libraries; x86 builds also require NASM. Installed packages include these audio libraries
 and use a WirePlumber 0.4 or 0.5 desktop session. Node.js and the ffmpeg command
 are not runtime requirements.
@@ -144,7 +149,7 @@ cd PipeTune
 git submodule update --init --recursive
 ```
 
-`deps/effetune` follows the official application tag v2.17.0.
+`deps/effetune` follows the official application tag v2.18.1.
 `deps/yyjson` is pinned to yyjson 0.12.0.
 `deps/cardio` supplies asynchronous native file operations.
 

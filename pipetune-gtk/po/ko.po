@@ -111,6 +111,9 @@ msgstr "모두"
 msgid "All settings saved"
 msgstr "모든 설정을 저장했습니다"
 
+msgid "Allow remote control"
+msgstr "원격 제어 허용"
+
 msgid "Ambiguous device"
 msgstr "장치를 구분할 수 없음"
 
@@ -171,6 +174,12 @@ msgstr "설정을 저장할 수 없습니다"
 msgid "Cannot use saved language preference"
 msgstr "저장된 언어 기본 설정을 사용할 수 없습니다"
 
+msgid "Certificate"
+msgstr "인증서"
+
+msgid "Changes apply immediately to this daemon session."
+msgstr "변경 사항은 현재 데몬 세션에 즉시 적용됩니다."
+
 msgid "Changing audio outputs"
 msgstr "오디오 출력 변경 중"
 
@@ -211,6 +220,9 @@ msgstr "채널 게인: {0}"
 msgid "Channels"
 msgstr "채널"
 
+msgid "Choose a certificate and private key to enable HTTPS."
+msgstr "HTTPS를 사용하려면 인증서와 개인 키를 선택하세요."
+
 msgid "Choose a device to add to this configuration."
 msgstr "이 구성에 추가할 장치를 선택하세요."
 
@@ -219,6 +231,12 @@ msgstr "DSP 처리를 활성화하기 전에 프리셋을 선택하세요"
 
 msgid "Choose a standard or saved EffeTune preset…"
 msgstr "표준 또는 저장된 EffeTune 프리셋 선택…"
+
+msgid "Choose a TLS certificate"
+msgstr "TLS 인증서 선택"
+
+msgid "Choose a TLS private key"
+msgstr "TLS 개인 키 선택"
 
 msgid "Choose an EffeTune preset"
 msgstr "EffeTune 프리셋 선택"
@@ -284,8 +302,14 @@ msgstr "제어 서비스를 사용할 수 없음"
 msgid "Control socket unavailable"
 msgstr "제어 소켓을 사용할 수 없음"
 
+msgid "Copied"
+msgstr "복사됨"
+
 msgid "Copy"
 msgstr "복사"
+
+msgid "Copy URL"
+msgstr "URL 복사"
 
 msgid "Custom preset file"
 msgstr "사용자 지정 프리셋 파일"
@@ -460,6 +484,10 @@ msgstr "나중에"
 msgid "Levels after combining Processed and Direct, before device volume."
 msgstr "Processed와 Direct를 합친 후, 장치 볼륨 적용 전의 레벨입니다."
 
+#, brace-format
+msgid "Listening · Connected devices: {0}"
+msgstr "연결 대기 중 · 연결된 기기 {0}대"
+
 msgid "Live Configuration"
 msgstr "실시간 구성"
 
@@ -505,8 +533,17 @@ msgstr "다중 — PipeTune에서 출력 선택"
 msgid "Native backend"
 msgstr "네이티브 백엔드"
 
+msgid "Network"
+msgstr "네트워크"
+
 msgid "Never"
 msgstr "없음"
+
+msgid "New URL"
+msgstr "URL 재발급"
+
+msgid "No local IPv4 address is available."
+msgstr "사용할 수 있는 로컬 IPv4 주소가 없습니다."
 
 msgid "No unconfigured output devices are available."
 msgstr "추가할 수 있는 미등록 출력 장치가 없습니다."
@@ -545,6 +582,9 @@ msgstr "오버런 {0}  •  언더런 {1}  •  처리 {2}"
 msgid "Overrun frames"
 msgstr "오버런 프레임"
 
+msgid "Pairing URL"
+msgstr "연결용 URL"
+
 msgid "PCM data rate"
 msgstr "PCM 데이터 레이트"
 
@@ -559,6 +599,9 @@ msgstr "보류 중인 대화 상자 설정이 다시 적용됩니다"
 
 msgid "PipeTune disconnected"
 msgstr "PipeTune 연결이 끊어졌습니다"
+
+msgid "PipeTune is disconnected."
+msgstr "PipeTune에 연결되지 않았습니다."
 
 msgid "PipeTune reconnected"
 msgstr "PipeTune이 다시 연결되었습니다"
@@ -594,6 +637,9 @@ msgstr "PipeWire 적용"
 msgid "PipeWire graph sampling frequency"
 msgstr "PipeWire 그래프 샘플링 주파수"
 
+msgid "Port"
+msgstr "포트"
+
 msgid "Preset"
 msgstr "프리셋"
 
@@ -608,6 +654,9 @@ msgstr "프리셋 필요"
 
 msgid "Preset warnings"
 msgstr "프리셋 경고"
+
+msgid "Private key"
+msgstr "개인 키"
 
 msgid "Processing"
 msgstr "처리"
@@ -635,6 +684,12 @@ msgstr "종료"
 
 msgid "Reconnect this device, replace it, or remove it from the configuration."
 msgstr "이 장치를 다시 연결하거나 교체하거나 구성에서 제거하세요."
+
+msgid "Remote Control"
+msgstr "원격 제어"
+
+msgid "Remote control is off."
+msgstr "원격 제어가 꺼져 있습니다."
 
 msgid "Remove from configuration"
 msgstr "구성에서 제거"
@@ -721,6 +776,9 @@ msgstr "Scalar"
 #, brace-format
 msgid "Scalar gain: {0}"
 msgstr "전체 게인: {0}"
+
+msgid "Scan the code or open the URL on the device you want to use as a controller."
+msgstr "제어에 사용할 기기에서 QR 코드를 스캔하거나 URL을 여세요."
 
 msgid "seconds"
 msgstr "초"
@@ -837,6 +895,9 @@ msgstr "설정 업데이트 중"
 
 msgid "Updating settings failed"
 msgstr "설정 업데이트 실패"
+
+msgid "Use HTTPS"
+msgstr "HTTPS 사용"
 
 msgid "Use this device"
 msgstr "이 장치 사용"

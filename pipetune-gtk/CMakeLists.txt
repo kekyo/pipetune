@@ -10,6 +10,7 @@ find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 find_package(Intl REQUIRED)
 pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-2.0 gio-unix-2.0)
+pkg_check_modules(QRENCODE REQUIRED IMPORTED_TARGET libqrencode)
 pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0 gdk-x11-3.0)
 find_program(
   PIPETUNE_GTK_GLIB_COMPILE_RESOURCES
@@ -171,7 +172,6 @@ add_library(
   src/rate-operation.cpp
   src/rate-selection-model.cpp
   src/settings-transaction.cpp
-  src/preset-catalog.cpp
   src/preset-file-monitor.cpp
   src/status-model.cpp
   src/status-text.cpp
@@ -197,6 +197,7 @@ add_library(
   src/gtk-resources.cpp
   src/launch-options.cpp
   src/main-window.cpp
+  src/remote-control-panel.cpp
   src/output-level-meter.cpp
   src/status-level-meter.cpp
   src/status-icon.cpp
@@ -207,7 +208,8 @@ target_include_directories(
   PRIVATE "${PIPETUNE_GTK_RESOURCE_DIRECTORY}")
 target_link_libraries(
   pipetune_gtk_ui_core
-  PUBLIC pipetune_gtk_core PkgConfig::GTK3)
+  PUBLIC pipetune_gtk_core PkgConfig::GTK3
+  PRIVATE PkgConfig::QRENCODE)
 if(BUILD_TESTING)
   add_dependencies(
     pipetune_gtk_ui_core pipetune_gtk_e2e_dependencies)
@@ -914,6 +916,20 @@ if(BUILD_TESTING)
     pipetune_gtk_gestament_e2e PROPERTIES
     WORKING_DIRECTORY "${PIPETUNE_GTK_E2E_DIRECTORY}"
     TIMEOUT 600)
+
+  add_test(
+    NAME pipetune_gtk_remote_panel
+    COMMAND "${CMAKE_COMMAND}" -E env
+      "PIPETUNE_GTK_BINARY=$<TARGET_FILE:pipetune-gtk>"
+      "PIPETUNE_GTK_REMOTE_PANEL_DAEMON=$<TARGET_FILE:pipetune>"
+      "PIPETUNE_GTK_CLIPBOARD_READER=$<TARGET_FILE:pipetune_gtk_main_window_tests>"
+      "PIPETUNE_GTK_E2E_SETUP_HELPER=$<TARGET_FILE:pipetune_gtk_user_setup_helper>"
+      "${PIPETUNE_GTK_NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../pipetune/test/pipewire-pipeline.mjs"
+      "${PIPETUNE_PIPEWIRE_EXECUTABLE}" "${PIPETUNE_WIREPLUMBER_EXECUTABLE}"
+      "${PIPETUNE_GTK_NPM}" exec -- vitest run --reporter=verbose)
+  set_tests_properties(pipetune_gtk_remote_panel PROPERTIES
+    WORKING_DIRECTORY "${PIPETUNE_GTK_E2E_DIRECTORY}"
+    TIMEOUT 120)
 
   add_test(
     NAME pipetune_gtk_install_layout

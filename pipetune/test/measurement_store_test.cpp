@@ -72,7 +72,8 @@ int main() {
   const auto original = std::string(std::istreambuf_iterator<char>(input), {});
   const auto preset = root / "correction.effetune_preset";
   std::ofstream(preset) << R"({"pipeline":[{"name":"Crosstalk Cancellation","parameters":{
-    "ll":"ear-l::ch=left","lr":"ear-r::ch=left","rl":"ear-l::ch=right","rr":"ear-r::ch=right","tp":1024,"lt":"128"}}]})";
+    "ll":"ear-l::ch=left","lr":"ear-r::ch=left","rl":"ear-l::ch=right","rr":"ear-r::ch=right","tp":1024,"lt":"128"}},
+    {"name":"Volume","parameters":{"vl":-6}}]})";
   const auto context = pipetune::PipelineLoadContext{root, {}};
   auto active = pipetune::loadDspPipeline(preset, {48000, 2, 128}, context);
   if (!active.pipeline) { std::cerr << active.error << '\n'; std::filesystem::remove_all(root); return 1; }
@@ -95,6 +96,19 @@ int main() {
   for (const auto sample : corrected) { check(std::isfinite(sample), "corrected PCM must be finite"); energy += sample * sample; }
   check(energy > 0 && corrected.front() == 0, "the reference must contain delayed correction, not bypassed PCM");
   const auto latency = active.pipeline->latencyFrames();
+  std::ofstream(originalFile) << R"({"effectPipeline":{"pluginNames":[]},)" << original.substr(1);
+  const auto omitted = pipetune::loadDspPipeline(preset, {48000, 2, 128}, context);
+  check(omitted.pipeline && omitted.pipeline->activePluginCount() == 1 && omitted.warnings.size() == 1 &&
+        omitted.warnings[0].pluginName == "Crosstalk Cancellation" &&
+        omitted.warnings[0].reason.find("effect pipeline") != std::string::npos &&
+        omitted.dependencyFiles.size() == 2,
+        "a processed virtual measurement must omit only crosstalk and retain both watched files");
+  if (omitted.pipeline) {
+    auto audio = std::array{1.0F, -1.0F};
+    check(omitted.pipeline->process(audio, 2, 1, 0) == pipetune::ProcessStatus::ok &&
+          std::abs(audio[0] - std::pow(10.0F, -6.0F / 20)) < 1e-6F && audio[1] == -audio[0],
+          "the remaining gain must process stereo PCM after omitting crosstalk");
+  }
   // The bound applies to the complete backup, including optional analysis data.
   constexpr auto maximumBytes = std::size_t{64} * 1024u * 1024u;
   {
@@ -113,7 +127,7 @@ int main() {
   const auto rejected = pipetune::loadDspPipeline(preset, {48000, 2, 128}, context);
   check(!rejected.pipeline && rejected.error.find("byte budget") != std::string::npos,
       "an oversized source must reject the whole correction candidate");
-  check(active.pipeline->activePluginCount() == 1 && active.pipeline->latencyFrames() == latency && render() == corrected,
+  check(active.pipeline->activePluginCount() == 2 && active.pipeline->latencyFrames() == latency && render() == corrected,
       "rejecting an oversized candidate must preserve the active correction PCM and latency");
   std::ofstream(originalFile) << original;
   auto recovered = pipetune::loadDspPipeline(preset, {48000, 2, 128}, context);

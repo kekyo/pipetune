@@ -132,6 +132,12 @@ struct ControlServerOptions {
   AsyncControlDescriptorEventHandler asyncEventHandler = nullptr;
   /** Asynchronous alternative to statusProvider. */
   AsyncControlStatusProvider asyncStatusProvider = nullptr;
+  /** Observes committed state on the service thread, also without local subscribers. */
+  void (*onPublication)(void *) = nullptr;
+  /** True while an application subscriber needs deferred status work. */
+  bool (*hasSubscribers)(void *) = nullptr;
+  /** Drains application I/O before the service dispatcher shuts down. */
+  cardio::promise<void> (*onShutdown)(void *) = nullptr;
 };
 
 struct ControlServerStartResult;

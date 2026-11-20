@@ -111,6 +111,9 @@ msgstr "全部"
 msgid "All settings saved"
 msgstr "所有设置已保存"
 
+msgid "Allow remote control"
+msgstr "允许远程控制"
+
 msgid "Ambiguous device"
 msgstr "设备标识不唯一"
 
@@ -171,6 +174,12 @@ msgstr "无法保存设置"
 msgid "Cannot use saved language preference"
 msgstr "无法使用已保存的语言首选项"
 
+msgid "Certificate"
+msgstr "证书"
+
+msgid "Changes apply immediately to this daemon session."
+msgstr "更改立即生效，直到 PipeTune 服务重新启动。"
+
 msgid "Changing audio outputs"
 msgstr "正在更改音频输出"
 
@@ -211,6 +220,9 @@ msgstr "通道增益：{0}"
 msgid "Channels"
 msgstr "声道"
 
+msgid "Choose a certificate and private key to enable HTTPS."
+msgstr "请选择证书和私钥以启用 HTTPS。"
+
 msgid "Choose a device to add to this configuration."
 msgstr "请选择要添加到此配置的设备。"
 
@@ -219,6 +231,12 @@ msgstr "启用 DSP 处理前请选择预设"
 
 msgid "Choose a standard or saved EffeTune preset…"
 msgstr "选择标准或已保存的 EffeTune 预设…"
+
+msgid "Choose a TLS certificate"
+msgstr "选择 TLS 证书"
+
+msgid "Choose a TLS private key"
+msgstr "选择 TLS 私钥"
 
 msgid "Choose an EffeTune preset"
 msgstr "选择 EffeTune 预设"
@@ -284,8 +302,14 @@ msgstr "控制服务不可用"
 msgid "Control socket unavailable"
 msgstr "控制套接字不可用"
 
+msgid "Copied"
+msgstr "已复制"
+
 msgid "Copy"
 msgstr "复制"
+
+msgid "Copy URL"
+msgstr "复制 URL"
 
 msgid "Custom preset file"
 msgstr "自定义预设文件"
@@ -460,6 +484,10 @@ msgstr "稍后"
 msgid "Levels after combining Processed and Direct, before device volume."
 msgstr "Processed 与 Direct 混合后、设备音量调整前的电平。"
 
+#, brace-format
+msgid "Listening · Connected devices: {0}"
+msgstr "正在监听 · 已连接设备：{0}"
+
 msgid "Live Configuration"
 msgstr "实时配置"
 
@@ -505,8 +533,17 @@ msgstr "多设备 — 在 PipeTune 中选择输出"
 msgid "Native backend"
 msgstr "原生后端"
 
+msgid "Network"
+msgstr "网络"
+
 msgid "Never"
 msgstr "从不"
+
+msgid "New URL"
+msgstr "重新生成 URL"
+
+msgid "No local IPv4 address is available."
+msgstr "没有可用的本地 IPv4 地址。"
 
 msgid "No unconfigured output devices are available."
 msgstr "没有可用的未配置输出设备。"
@@ -545,6 +582,9 @@ msgstr "溢出 {0}  •  欠载 {1}  •  处理 {2}"
 msgid "Overrun frames"
 msgstr "溢出帧"
 
+msgid "Pairing URL"
+msgstr "配对 URL"
+
 msgid "PCM data rate"
 msgstr "PCM 数据速率"
 
@@ -559,6 +599,9 @@ msgstr "将重新应用待处理的对话框设置"
 
 msgid "PipeTune disconnected"
 msgstr "PipeTune 已断开连接"
+
+msgid "PipeTune is disconnected."
+msgstr "未连接到 PipeTune。"
 
 msgid "PipeTune reconnected"
 msgstr "PipeTune 已重新连接"
@@ -594,6 +637,9 @@ msgstr "PipeWire 强制策略"
 msgid "PipeWire graph sampling frequency"
 msgstr "PipeWire 图采样频率"
 
+msgid "Port"
+msgstr "端口"
+
 msgid "Preset"
 msgstr "预设"
 
@@ -608,6 +654,9 @@ msgstr "需要预设"
 
 msgid "Preset warnings"
 msgstr "预设警告"
+
+msgid "Private key"
+msgstr "私钥"
 
 msgid "Processing"
 msgstr "处理"
@@ -635,6 +684,12 @@ msgstr "退出"
 
 msgid "Reconnect this device, replace it, or remove it from the configuration."
 msgstr "请重新连接此设备、替换设备或将其从配置中移除。"
+
+msgid "Remote Control"
+msgstr "远程控制"
+
+msgid "Remote control is off."
+msgstr "远程控制已关闭。"
 
 msgid "Remove from configuration"
 msgstr "从配置中移除"
@@ -721,6 +776,9 @@ msgstr "Scalar"
 #, brace-format
 msgid "Scalar gain: {0}"
 msgstr "整体增益：{0}"
+
+msgid "Scan the code or open the URL on the device you want to use as a controller."
+msgstr "在用于控制的设备上扫描二维码或打开 URL。"
 
 msgid "seconds"
 msgstr "秒"
@@ -837,6 +895,9 @@ msgstr "正在更新设置"
 
 msgid "Updating settings failed"
 msgstr "更新设置失败"
+
+msgid "Use HTTPS"
+msgstr "使用 HTTPS"
 
 msgid "Use this device"
 msgstr "使用此设备"

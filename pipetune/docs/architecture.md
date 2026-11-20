@@ -402,7 +402,7 @@ The generated catalog packs JSON parameters into the exact native ABI expected
 by EffeTune. Tests compare those packed parameters with EffeTune's JavaScript
 packer and compare native PCM output with EffeTune's parity corpus.
 
-The pinned EffeTune 2.17.0 registry contains 113 native kernels. PipeTune supports
+The pinned EffeTune 2.18.1 registry contains 115 native kernels. PipeTune supports
 its 16-channel Multi Channel Panel layout, individual channels through 16,
 paired routes through 15/16, and hexadecimal Matrix routes. It can load MD
 Simulator and all nine effects added in 2.5.0. It regenerates and stages the
@@ -410,6 +410,11 @@ convolution assets for FIR Crossover, 5Band FIR PEQ, Group Delay EQ, and Group
 Delay PEQ from their serialized design parameters. The updated Tube Simulator
 includes output-transformer magnetics, and Phase Select EQ accepts left/right
 balance selection alongside frequency and phase.
+
+Live Audio Send and Receive mark host-managed network transport. PipeTune reports enabled markers as
+Ignored with a warning and displays disabled markers as Off. The local graph derives its channel count,
+bus routing, and latency from the effects that actually process PipeWire audio.
+[Upstream control plugins](https://github.com/Frieve-A/effetune/blob/v2.18.1/docs/plugins/control.md)
 
 Tonal Balance EQ and Rhythm Analyzer use the normal preset pipeline with no
 external assets and zero reported latency. Rhythm remains active with its
@@ -460,6 +465,11 @@ IR preparation, measurement analysis, and Room EQ filter design. These C++20
 libraries have no PipeWire, GTK, filesystem, or decoder dependency; their
 in-memory drivers build independently. See [asset preparation](asset-preparation.md)
 for the upstream port map and replacement boundary.
+
+Room EQ and Crosstalk Cancellation use measurements whose root object omits `effectPipeline`.
+Room EQ rejects an ineligible selection before replacing the active graph. Crosstalk Cancellation
+keeps the measurement dependencies watched and omits the affected node with a warning.
+[Upstream measurement eligibility](https://github.com/Frieve-A/effetune/blob/v2.18.0/js/measurement-store/client.js)
 
 Note Player uses the stable native type `SFZNotePlayerPlugin` for asset and
 processing decisions, with the new `SoundFont Note Player` display name in

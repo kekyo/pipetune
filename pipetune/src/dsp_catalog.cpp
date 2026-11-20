@@ -69,6 +69,18 @@ static bool readSafeInteger(yyjson_val *value, double &output) {
   return false;
 }
 
+std::string validateRemoteParameters(const DspDefinition &definition, yyjson_val *parameters) {
+  for (const auto &element : definition.elements) {
+    auto *field = readElementSource(parameters, element);
+    if (!field || (element.kind != ParameterKind::floating && element.kind != ParameterKind::integer)) continue;
+    auto value = yyjson_get_num(field);
+    const auto valid = element.kind == ParameterKind::integer ? readSafeInteger(field, value) : yyjson_is_num(field);
+    if (!valid || !std::isfinite(value) || value < element.minimum || value > element.maximum)
+      return "invalid parameter " + std::string(element.directKey) + " for " + std::string(definition.displayName);
+  }
+  return {};
+}
+
 static float packElement(yyjson_val *value, const ParameterElement &element,
                          std::string &error) {
   if (element.kind == ParameterKind::boolean) {

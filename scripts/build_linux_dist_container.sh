@@ -326,7 +326,7 @@ copy_docs "$stage_dir"
 
 deb_arch=$(dpkg-architecture -qDEB_HOST_ARCH)
 shlib_depends=$(calculate_shlibdeps)
-runtime_depends='systemd, dbus-user-session, pipewire (>= 1.0.5), wireplumber, hicolor-icon-theme'
+runtime_depends='systemd, dbus-user-session, glib-networking, pipewire (>= 1.0.5), wireplumber, hicolor-icon-theme'
 control_dir="$stage_dir/DEBIAN"
 mkdir -p "$control_dir"
 write_control_file "$control_dir/control" "$shlib_depends, $runtime_depends"

@@ -481,7 +481,13 @@ try {
     await waitForMessage(audio, "product:devices-ready");
     const preset = join(directory, "source-resume.effetune_preset");
     const identity = Array.from({ length: 256 }, (_, index) => index === 0 || index === 17 ? 1 : 0);
-    writeFileSync(preset, JSON.stringify({ pipeline: [
+    const roomWake = scenario === "product-source-resume-room";
+    if (roomWake) writeConfiguration("effetune/measurement-backups/room.json", JSON.stringify({
+      id: "room", averageFrequencyResponse: [[20, 0], [100, 2], [800, 8], [4000, -5], [20000, 0]],
+    }));
+    writeFileSync(preset, JSON.stringify({ pipeline: roomWake ? [
+      { name: "Room EQ", channel: "All", parameters: { ms: "room", pm: "min", tp: 8192, lt: "0", fl: 20 } },
+    ] : [
       { name: "Spatial Mapper", enabled: true, channel: "All",
         parameters: { ic: 2, ep: false, dm: identity, fm: identity, rm: identity } },
       { name: "Matrix", enabled: true, channel: "All", parameters: { mx: "001102p13" } },
@@ -514,8 +520,23 @@ try {
       lines?.close();
       client.destroy();
     }
+    if (roomWake) {
+      const idle = start("enable Room EQ suspension", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET,
+        JSON.stringify({ command: "set-dsp-idle", timeoutMilliseconds: 100 })]);
+      assert.equal((await idle.completion).code, 0, idle.stderr);
+      assert.equal(JSON.parse(idle.stdout).dspIdleTimeoutMilliseconds, 100);
+    }
     audio.child.kill("SIGUSR2");
     await waitForMessage(audio, "product:source-b-clean");
+    if (roomWake) {
+      const status = start("suspended Room EQ", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET,
+        JSON.stringify({ command: "status" })]);
+      assert.equal((await status.completion).code, 0, status.stderr);
+      const current = JSON.parse(status.stdout);
+      assert.equal(current.dspActivity, "sleeping");
+      assert.equal(current.activePluginCount, 1);
+      assert.equal(current.dspLatencyFrames, 0);
+    }
     audio.child.kill("SIGUSR2");
     assert.equal((await audio.completion).code, 0, audio.stderr);
     terminate(product, "SIGTERM");

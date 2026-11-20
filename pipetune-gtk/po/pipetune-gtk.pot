@@ -107,6 +107,9 @@ msgstr ""
 msgid "All settings saved"
 msgstr ""
 
+msgid "Allow remote control"
+msgstr ""
+
 msgid "Ambiguous device"
 msgstr ""
 
@@ -167,6 +170,12 @@ msgstr ""
 msgid "Cannot use saved language preference"
 msgstr ""
 
+msgid "Certificate"
+msgstr ""
+
+msgid "Changes apply immediately to this daemon session."
+msgstr ""
+
 msgid "Changing audio outputs"
 msgstr ""
 
@@ -207,6 +216,9 @@ msgstr ""
 msgid "Channels"
 msgstr ""
 
+msgid "Choose a certificate and private key to enable HTTPS."
+msgstr ""
+
 msgid "Choose a device to add to this configuration."
 msgstr ""
 
@@ -214,6 +226,12 @@ msgid "Choose a preset before enabling DSP processing"
 msgstr ""
 
 msgid "Choose a standard or saved EffeTune preset…"
+msgstr ""
+
+msgid "Choose a TLS certificate"
+msgstr ""
+
+msgid "Choose a TLS private key"
 msgstr ""
 
 msgid "Choose an EffeTune preset"
@@ -280,7 +298,13 @@ msgstr ""
 msgid "Control socket unavailable"
 msgstr ""
 
+msgid "Copied"
+msgstr ""
+
 msgid "Copy"
+msgstr ""
+
+msgid "Copy URL"
 msgstr ""
 
 msgid "Custom preset file"
@@ -456,6 +480,10 @@ msgstr ""
 msgid "Levels after combining Processed and Direct, before device volume."
 msgstr ""
 
+#, brace-format
+msgid "Listening · Connected devices: {0}"
+msgstr ""
+
 msgid "Live Configuration"
 msgstr ""
 
@@ -501,7 +529,16 @@ msgstr ""
 msgid "Native backend"
 msgstr ""
 
+msgid "Network"
+msgstr ""
+
 msgid "Never"
+msgstr ""
+
+msgid "New URL"
+msgstr ""
+
+msgid "No local IPv4 address is available."
 msgstr ""
 
 msgid "No unconfigured output devices are available."
@@ -541,6 +578,9 @@ msgstr ""
 msgid "Overrun frames"
 msgstr ""
 
+msgid "Pairing URL"
+msgstr ""
+
 msgid "PCM data rate"
 msgstr ""
 
@@ -554,6 +594,9 @@ msgid "Pending dialog settings will be reapplied"
 msgstr ""
 
 msgid "PipeTune disconnected"
+msgstr ""
+
+msgid "PipeTune is disconnected."
 msgstr ""
 
 msgid "PipeTune reconnected"
@@ -590,6 +633,9 @@ msgstr ""
 msgid "PipeWire graph sampling frequency"
 msgstr ""
 
+msgid "Port"
+msgstr ""
+
 msgid "Preset"
 msgstr ""
 
@@ -603,6 +649,9 @@ msgid "Preset required"
 msgstr ""
 
 msgid "Preset warnings"
+msgstr ""
+
+msgid "Private key"
 msgstr ""
 
 msgid "Processing"
@@ -630,6 +679,12 @@ msgid "Quit"
 msgstr ""
 
 msgid "Reconnect this device, replace it, or remove it from the configuration."
+msgstr ""
+
+msgid "Remote Control"
+msgstr ""
+
+msgid "Remote control is off."
 msgstr ""
 
 msgid "Remove from configuration"
@@ -716,6 +771,9 @@ msgstr ""
 
 #, brace-format
 msgid "Scalar gain: {0}"
+msgstr ""
+
+msgid "Scan the code or open the URL on the device you want to use as a controller."
 msgstr ""
 
 msgid "seconds"
@@ -832,6 +890,9 @@ msgid "Updating settings"
 msgstr ""
 
 msgid "Updating settings failed"
+msgstr ""
+
+msgid "Use HTTPS"
 msgstr ""
 
 msgid "Use this device"

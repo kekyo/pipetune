@@ -58,10 +58,26 @@ ProcessStatus DspPipelineSlot::process(std::span<float> planarSamples,
       .status;
 }
 
+static bool validIdleProcessBuffer(
+    const DspPipeline &pipeline, std::span<const float> planarSamples,
+    std::uint32_t channelCount, std::uint32_t frameCount,
+    double timeSeconds) noexcept {
+  return channelCount != 0 && channelCount <= pipeline.maxChannels() &&
+         frameCount != 0 && frameCount <= pipeline.maxFrames() &&
+         std::isfinite(timeSeconds) &&
+         planarSamples.size() ==
+             static_cast<std::size_t>(channelCount) * frameCount;
+}
+
 DspPipelineProcessResult DspPipelineSlot::processWithGeneration(
     std::span<float> planarSamples, std::uint32_t channelCount,
     std::uint32_t frameCount, double timeSeconds) noexcept {
   const auto selected = protectActive();
+  if (masterBypass()) {
+    const auto valid = validIdleProcessBuffer(*selected.pipeline, planarSamples, channelCount, frameCount, timeSeconds);
+    releaseActive();
+    return {valid ? ProcessStatus::ok : ProcessStatus::invalidBuffer, selected.generation};
+  }
   const auto status = processProtected(*selected.pipeline, planarSamples,
                                        channelCount, frameCount,
                                        timeSeconds);
@@ -115,17 +131,6 @@ ProcessStatus DspPipelineSlot::processProtected(
 
 void DspPipelineSlot::releaseActive() noexcept {
   hazard_.store(nullptr, std::memory_order_seq_cst);
-}
-
-static bool validIdleProcessBuffer(
-    const DspPipeline &pipeline, std::span<const float> planarSamples,
-    std::uint32_t channelCount, std::uint32_t frameCount,
-    double timeSeconds) noexcept {
-  return channelCount != 0 && channelCount <= pipeline.maxChannels() &&
-         frameCount != 0 && frameCount <= pipeline.maxFrames() &&
-         std::isfinite(timeSeconds) &&
-         planarSamples.size() ==
-             static_cast<std::size_t>(channelCount) * frameCount;
 }
 
 static bool hasOnlyExactZeroSamples(
@@ -185,6 +190,11 @@ DspIdleProcessResult DspPipelineSlot::processWithIdle(
             .activity = activity};
   }
 
+  if (masterBypass()) {
+    idleConfigured_ = false;
+    releaseActive();
+    return {ProcessStatus::ok, selected.generation, DspActivity::bypassed};
+  }
   if (!selected.pipeline->usesNativeDsp()) {
     idleConfigured_ = false;
     const auto status = processProtected(*selected.pipeline, planarSamples,

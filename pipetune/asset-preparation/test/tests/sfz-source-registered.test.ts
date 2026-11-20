@@ -193,9 +193,9 @@ test('SFZ original-byte limit includes the selected bank and excludes rejected c
     );
     const definition = '<region> sample=$voice key=60';
     await writeFile(path, definition);
-    // Admit the native generator state so this test isolates original-source
-    // accounting; the two candidate definitions together still exceed it.
-    const budget = 256 * 1024;
+    // Leave room for the generator's native state. The selected XML and SFZ
+    // fill the source limit exactly, so counting the other candidate must fail.
+    const budget = 1024 * 1024;
     await writeFile(
       join(root, 'a.bank.xml'),
       '<Unrelated/>' + ' '.repeat(Math.floor(budget * 0.6))
@@ -205,7 +205,7 @@ test('SFZ original-byte limit includes the selected bank and excludes rejected c
       '<Define name="$voice" value="*silence"/>';
     await writeFile(
       join(root, 'z.bank.xml'),
-      selected + ' '.repeat(Math.floor(budget * 0.6))
+      selected.padEnd(budget - definition.length, ' ')
     );
     const preset = join(directory, 'test.effetune_preset');
     await writeFile(

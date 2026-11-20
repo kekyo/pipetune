@@ -13,6 +13,7 @@
 #include "launch-options.h"
 #include "localization.h"
 #include "main-window.h"
+#include "remote-control-panel.h"
 #include "output-mapping-model.h"
 #include "status-text.h"
 #include "preset-catalog.h"
@@ -176,6 +177,7 @@ struct GtkRuntime {
   MainWindowUi ui;
   GdkPixbuf *statusColorIcon;
   GdkPixbuf *statusGrayscaleIcon;
+  RemoteControlPanel *remotePanel = nullptr;
   std::string outputEditError = {};
   std::vector<OutputDeviceWidgets> outputDeviceRows = {};
   std::vector<OutputChannelWidgets> outputReservedChannels = {};
@@ -1505,6 +1507,9 @@ static void render(GtkRuntime *runtime) {
       runtime->state.runtime.mixedOutputPeaks,
       runtime->state.connection == ControlConnectionState::connected);
   renderSettingsControls(runtime);
+  updateRemoteControlPanel(runtime->remotePanel, runtime->controlClient,
+      runtime->state.connection == ControlConnectionState::connected && runtime->state.hasRuntimeStatus
+          ? &runtime->state.runtime.remoteListener : nullptr);
   renderActionLog(runtime);
 }
 
@@ -2892,12 +2897,14 @@ static void createMainWindowPresentation(GtkRuntime *runtime) {
   runtime->ui = createMainWindowUi(
       runtime->application, pipetune::version(),
       pipetune::effetuneVersion());
+  runtime->remotePanel = createRemoteControlPanel(runtime->ui.builder);
   connectMainWindowSignals(runtime);
 }
 
 static void destroyMainWindowPresentation(GtkRuntime *runtime) noexcept {
   runtime->statusRows.clear();
   runtime->statusLoadMeter = {};
+  destroyRemoteControlPanel(std::exchange(runtime->remotePanel, nullptr));
   destroyMainWindowUi(runtime->ui);
 }
 

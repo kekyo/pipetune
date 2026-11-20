@@ -301,6 +301,8 @@ static std::string commandName(pipetune::ControlCommand command) {
     return "setOutput";
   case pipetune::ControlCommand::subscribe:
     return "subscribe";
+  case pipetune::ControlCommand::remote:
+    return "remote";
   }
   return "unknown";
 }
@@ -353,6 +355,10 @@ static pipetune::ControlMessageResult handleRequest(
     const auto previous = std::pair(state.liveConfig,
                                     state.configurationRevision);
     switch (parsed.request.command) {
+    case pipetune::ControlCommand::remote:
+      return closeResponse(pipetune::makeControlErrorResponse(
+                               "remote listener unavailable in the GTK fixture"),
+                           false);
     case pipetune::ControlCommand::loadPreset:
       state.liveConfig.presetFound = true;
       state.liveConfig.presetPath = parsed.request.presetPath;

@@ -419,6 +419,44 @@ static bool testIgnoredIdlePolicyKeepsDspActive(
                "ignored idle policy must preserve generated output");
 }
 
+static bool testEditPreservesReverbTail(const std::filesystem::path &directory) {
+  const auto path = directory / "remote-tail.effetune_preset";
+  const auto recipe = [](int gain) {
+    return std::string(R"([{"nm":"FDN Reverb","rt":2,"dm":0,"wm":100,"md":0},{"nm":"Volume","vl":)") +
+        std::to_string(gain) + "}]";
+  };
+  std::ofstream(path) << recipe(0);
+  const auto reference = loadPipeline(path);
+  auto slot = pipetune::DspPipelineSlot(loadPipeline(path));
+  if (!reference) return false;
+  auto tailEnergy = 0.0, errorEnergy = 0.0;
+  for (unsigned block = 0; block < 500; ++block) {
+    // An editor can send several full chain snapshots between two audio callbacks.
+    if (block == 100) for (const auto gain : {-2, -4, -6}) {
+      const auto value = std::make_shared<const std::string>(recipe(gain));
+      if (!slot.updateParameters(value)) {
+        std::ofstream(path) << *value;
+        slot.replace(loadPipeline(path));
+      }
+    }
+    auto dry = std::array<float, 64>{};
+    if (block == 0) dry[0] = dry[32] = 1;
+    auto edited = dry;
+    const auto time = block * 32.0 / 48000;
+    if (reference->process(dry, 2, 32, time) != pipetune::ProcessStatus::ok ||
+        slot.process(edited, 2, 32, time) != pipetune::ProcessStatus::ok) return false;
+    if (block < 120) continue; // Volume's native gain ramp has settled.
+    for (std::size_t i = 0; i < dry.size(); ++i) {
+      const auto expected = dry[i] * std::pow(10.0, -6.0 / 20);
+      tailEnergy += expected * expected;
+      const auto difference = edited[i] - expected;
+      errorEnergy += difference * difference;
+    }
+  }
+  return check(tailEnergy > 1e-6 && errorEnergy < tailEnergy * 1e-8,
+      "the pre-edit FDN reverb tail must keep sounding at the last edited gain");
+}
+
 static bool testEngineResetClearsDelayState(
     const std::filesystem::path &presetPath) {
   auto reference = loadPipeline(presetPath);
@@ -555,7 +593,11 @@ static bool testStagedReplacementCanCommitAndRollback(
     return false;
   }
   auto slot = pipetune::DspPipelineSlot(std::move(initial));
+  const auto originalRecipe = slot.recipe();
   slot.stageReplacement(std::move(replacement));
+  if (!check(slot.recipe() == originalRecipe, "editors must see the last committed recipe until the output is ready")) {
+    return false;
+  }
   auto samples = std::vector<float>{0.25F};
   if (!check(slot.hasStagedReplacement(),
              "staged replacement must retain rollback state") ||
@@ -992,7 +1034,7 @@ int main() {
   const auto dcOffset = writeDcOffsetPreset(directory);
   const auto delay = writeDelayPreset(directory);
   const auto tubeSimulator = writeTubeSimulatorPreset(directory);
-  const auto passed = testMatrixResetRoutes(directory) && testMatrixIdleResume(directory) &&
+  const auto passed = testEditPreservesReverbTail(directory) && testMatrixResetRoutes(directory) && testMatrixIdleResume(directory) &&
                       testMeasurementIdlePolicy(directory) && testBassManagementIdlePolicy(directory) && testAttackBassIdlePolicy(directory) && testTvIdlePolicy(directory) && testReplacementChangesPcm(positive, negative) &&
                       testBypassDoesNotReportDspWork() &&
                       testActivePipelineLatencyTracksReplacement(

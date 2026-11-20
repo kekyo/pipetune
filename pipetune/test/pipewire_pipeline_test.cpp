@@ -395,24 +395,25 @@ static bool testRoomReload(const std::filesystem::path &socketPath,
       loaded.status.presetEntries.front().state == pipetune::PresetEntryState::enabled,
       "per-channel Room EQ must load on the live control path")) return false;
   auto revision = loaded.status.configurationRevision;
-  {
-    // A valid JSON backup can exceed the shared reader's budget as optional
-    // analysis grows. Reject the new file without replacing the active filter.
-    const auto oversized = original + std::string(64u * 1024u * 1024u + 1u - original.size(), ' ');
-    if (!replacePresetContents(left, oversized)) return false;
-    const auto rejected = waitForStatus(socketPath, [](const auto &status) {
-      return status.configurationError.find("byte budget") != std::string::npos;
+  // A valid JSON backup can exceed the byte budget or describe an already
+  // processed measurement. Neither candidate may replace the active filter.
+  for (const auto &[contents, reason] : std::array{
+      std::pair{original + std::string(64u * 1024u * 1024u + 1u - original.size(), ' '), "byte budget"},
+      std::pair{std::string(R"({"effectPipeline":{"pluginNames":["Volume"]},)") + original.substr(1), "effect pipeline"}}) {
+    if (!replacePresetContents(left, contents)) return false;
+    const auto rejected = waitForStatus(socketPath, [reason](const auto &status) {
+      return status.configurationError.find(reason) != std::string::npos;
     });
     if (!check(rejected && rejected->configurationRevision == revision &&
                    rejected->activePreset == path.string() && rejected->activePluginCount == 1 &&
                    rejected->dspLatencyFrames == 4224,
-               "an oversized backup must retain the active Room EQ and its latency")) return false;
+               "an ineligible backup must retain the active Room EQ and its latency")) return false;
     if (!replacePresetContents(left, original)) return false;
     const auto recovered = waitForStatus(socketPath, [revision](const auto &status) {
       return status.configurationError.empty() && status.configurationRevision > revision;
     });
     if (!check(recovered && recovered->activePluginCount == 1 && recovered->dspLatencyFrames == 4224,
-               "repairing an oversized backup must recover automatic Room EQ reload")) return false;
+               "repairing the backup must recover automatic Room EQ reload")) return false;
     revision = recovered->configurationRevision;
   }
   for (const auto &source : {left, right}) {

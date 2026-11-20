@@ -24,6 +24,7 @@
 #include "pipetune/control_protocol.h"
 #include "pipetune/control_socket.h"
 #include "sample_rate_converter.h"
+#include "remote_server.h"
 #include "preparation_generation.h"
 #include "preparation_dispatcher.h"
 #include "preparation_termination.h"
@@ -184,6 +185,7 @@ struct PipeWireRuntime {
   std::string rateRequestError;
   std::string rateError;
   std::unique_ptr<ActivePresetFileMonitor> presetFileMonitor;
+  std::unique_ptr<RemoteServer> remoteEditor;
   std::unique_ptr<ControlServer> controlServer;
   pw_main_loop *mainLoop;
   pw_context *context;
@@ -283,6 +285,8 @@ struct PipeWireRuntime {
   std::optional<std::filesystem::path> requestedOutputPreset;
   std::unique_ptr<DspPipeline> requestedOutputPipeline;
   bool outputRequestCompleted = false;
+  // Local preset selection resumes processing only after its new graph commits.
+  bool resumeDspOnOutputCommit = false;
   std::atomic<bool> outputRequestsStopped{false};
   std::string outputRequestError;
   spa_source *outputChangeSource = nullptr;
@@ -2274,6 +2278,7 @@ static void finishOutputChange(PipeWireRuntime &runtime) {
   auto lock = std::scoped_lock(runtime.pipelineMutationMutex);
   if (!runtime.outputRollingBack) {
     runtime.pipeline.commitStaged();
+    if (runtime.resumeDspOnOutputCommit) runtime.pipeline.setMasterBypass(false);
     discardReplacedProfileRestorations(runtime, *runtime.previousOutput, runtime.options.outputConfiguration);
     runtime.configurationRevision.fetch_add(1, std::memory_order_release);
     runtime.retiredOverrunFrames += runtime.previousAudioBuffers->ring.overrunFrames();
@@ -2392,13 +2397,13 @@ static void outputChangeRequested(void *data, std::uint64_t) {
     runtime.previousPresetReloadPending = runtime.presetReloadPending;
     runtime.previousAudioBuffers = std::move(runtime.audioBuffers);
     runtime.audioBuffers = std::move(buffers);
-    runtime.pipeline.stageReplacement(std::move(prepared));
     if (preset.has_value()) {
-      runtime.processingMode = preset->empty() ? ProcessingMode::bypass : ProcessingMode::preset;
+      runtime.processingMode = prepared->recipe() ? ProcessingMode::preset : ProcessingMode::bypass;
       runtime.activePreset = preset->string();
       runtime.configurationError.clear();
       runtime.presetReloadPending = false;
     }
+    runtime.pipeline.stageReplacement(std::move(prepared));
     runtime.options.outputConfiguration = std::move(configuration);
     runtime.options.channelCount = width;
     runtime.options.inputChannelCount = 2;
@@ -2795,6 +2800,7 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
   auto outputInventory = OutputInventoryResult{};
   auto outputInventoryReady = false;
   auto outputInventoryRevision = std::uint64_t{0};
+  auto outputProfileRestoring = false;
   auto outputProfileRestorationError = std::string{};
   auto outputTimings = std::vector<OutputTimingState>{};
   auto outputPeaks = std::vector<float>{};
@@ -2809,12 +2815,19 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
     outputInventory = runtime.availableOutputs;
     outputInventoryReady = runtime.outputInventoryReady;
     outputInventoryRevision = runtime.outputInventoryRevision;
+    // The PipeWire thread publishes a rollback diagnostic before clearing its active flag.
+    // Capture both under the same lock so a completed status carries that diagnostic.
+    outputProfileRestoring = runtime.pendingProfileRestoreActive || runtime.profileRestoreDecisionPending;
     outputProfileRestorationError = runtime.pendingProfileRestoreError;
     if (outputInventoryReady && outputInventory.error.empty() && !rateTransitioning && !runtime.previousOutput)
       outputTimings = summarizeOutputTiming(outputConfiguration, outputInventory.outputs, runtime.outputPathSnapshots);
   }
   return {.processingMode = runtime.processingMode,
-          .dspActivity = idleState.activity,
+          .inMemoryPreset = runtime.processingMode == ProcessingMode::preset && runtime.activePreset.empty(),
+          .masterBypass = runtime.pipeline.masterBypass(),
+          .dspActivity = runtime.pipeline.masterBypass() ? DspActivity::bypassed :
+              (runtime.processingMode == ProcessingMode::preset && idleState.activity == DspActivity::bypassed ?
+               DspActivity::active : idleState.activity),
           .dspIdlePolicy = idleState.policy,
           .sfzMaxSizeMiB = runtime.options.sfzMaxSizeMiB,
           .activePreset = runtime.activePreset,
@@ -2856,12 +2869,13 @@ static ControlRuntimeStatus controlStatus(PipeWireRuntime &runtime) {
           .outputInventoryRevision = outputInventoryRevision,
           .outputInventoryReady = outputInventoryReady,
           .outputInventoryError = outputInventory.error,
-          .outputProfileRestoring = runtime.pendingProfileRestoreActive || runtime.profileRestoreDecisionPending,
+          .outputProfileRestoring = outputProfileRestoring,
           .outputProfileRestorationError = outputProfileRestorationError,
           .outputVolumes = outputInventory.error.empty() ? std::move(outputInventory.volumes) : std::vector<OutputVolumeState>{},
           .outputTimings = std::move(outputTimings),
           .outputPeaks = std::move(outputPeaks),
-          .mixedOutputPeaks = std::move(mixedOutputPeaks)};
+          .mixedOutputPeaks = std::move(mixedOutputPeaks),
+          .remoteListener = runtime.remoteEditor ? runtime.remoteEditor->status() : RemoteListenerStatus{}};
 }
 
 static ControlMessageResult closeControlResponse(std::string response,
@@ -2881,7 +2895,7 @@ static cardio::promise<PresetActivationResult> applyPreparedOutput(
     PipeWireRuntime &runtime, std::unique_lock<std::mutex> pipelineLock,
     OutputConfiguration configuration, std::uint64_t expectedRevision,
     std::optional<std::filesystem::path> preset, std::unique_ptr<DspPipeline> prepared,
-    std::vector<ControlWarning> warnings, bool profileOwned);
+    std::vector<ControlWarning> warnings, bool profileOwned, bool resumeDsp);
 
 static std::shared_ptr<const DspBackend> activeDspBackend(PipeWireRuntime &runtime) {
   auto lock = std::scoped_lock(runtime.dspBackendStateMutex);
@@ -2894,7 +2908,8 @@ static std::shared_ptr<const DspBackend> activeDspBackend(PipeWireRuntime &runti
 
 static cardio::promise<PresetActivationResult> activatePreset(
     PipeWireRuntime &runtime, std::filesystem::path presetPath,
-    bool automaticReload, cardio::cancellation cancellation) {
+    bool automaticReload, cardio::cancellation cancellation,
+    std::shared_ptr<const std::string> recipe = {}) {
   auto pipelineLock =
       std::unique_lock<std::mutex>(runtime.pipelineMutationMutex);
   {
@@ -2932,8 +2947,13 @@ static cardio::promise<PresetActivationResult> activatePreset(
        .maxFrames = runtime.options.maxFrames,
        .inferChannelsFromPreset = runtime.options.inferChannelsFromPreset};
   pipelineLock.unlock();
-  auto loaded = std::move(co_await loadDspPipelineAsync(presetPath, build, std::move(backend),
-      defaultPipelineLoadContext(runtime.options.sfzMaxSizeMiB), preparation.ticket.source.get_cancellation()));
+  auto context = defaultPipelineLoadContext(runtime.options.sfzMaxSizeMiB);
+  const auto cancel = preparation.ticket.source.get_cancellation();
+  auto loaded = PipelineLoadResult{};
+  if (recipe)
+    loaded = std::move(co_await DspPipeline::buildFromRecipe(recipe, build, std::move(backend), std::move(context), cancel));
+  else
+    loaded = std::move(co_await loadDspPipelineAsync(presetPath, build, std::move(backend), std::move(context), cancel));
   pipelineLock.lock();
   if (!runtime.preparationGeneration.current(preparation.ticket)) throw cardio::canceled_exception();
   if (loaded.pipeline == nullptr) {
@@ -2954,6 +2974,11 @@ static cardio::promise<PresetActivationResult> activatePreset(
             .deferred = false};
   }
 
+  if (recipe) {
+    for (const auto &warning : loaded.warnings)
+      if (warning.state == PresetEntryState::ignored)
+        co_return PresetActivationResult{{}, warning.pluginName + ": " + warning.reason, false};
+  }
   auto warnings = std::vector<ControlWarning>{};
   warnings.reserve(loaded.warnings.size());
   for (auto &warning : loaded.warnings) {
@@ -2971,7 +2996,7 @@ static cardio::promise<PresetActivationResult> activatePreset(
     const auto revision = runtime.configurationRevision.load(std::memory_order_acquire);
     auto result = std::move(co_await applyPreparedOutput(runtime, std::move(pipelineLock),
         std::move(configuration), revision, presetPath, std::move(loaded.pipeline),
-        std::move(warnings), false));
+        std::move(warnings), false, !automaticReload && !recipe));
     if (automaticReload) {
       auto guard = std::scoped_lock(runtime.pipelineMutationMutex);
       if (!result.error.empty()) runtime.configurationError = "Automatic preset reload failed: " + result.error;
@@ -2985,6 +3010,7 @@ static cardio::promise<PresetActivationResult> activatePreset(
   }
   runtime.pipeline.replace(std::move(loaded.pipeline));
   refreshPipeWireDspLatency(runtime);
+  if (!automaticReload && !recipe) runtime.pipeline.setMasterBypass(false);
   runtime.processingMode = ProcessingMode::preset;
   runtime.dspIdleState.replaceActivity(DspActivity::active);
   runtime.activePreset = presetPath.string();
@@ -2998,13 +3024,48 @@ static cardio::promise<PresetActivationResult> activatePreset(
       runtime.configurationError += "Skipped " + warning.pluginName + ": " + warning.reason;
     }
   }
-  if (runtime.presetFileMonitor != nullptr) {
+  if (runtime.presetFileMonitor && presetPath.empty()) runtime.presetFileMonitor->clear();
+  if (runtime.presetFileMonitor && !presetPath.empty()) {
     const auto monitorError = runtime.presetFileMonitor->setPaths(presetPath, runtime.pipeline.dependencyFiles());
     if (!monitorError.empty()) {
       runtime.configurationError = monitorError;
     }
   }
   co_return PresetActivationResult{.warnings = std::move(warnings), .error = {}, .deferred = false};
+}
+
+static cardio::promise<std::string> applyRemoteEdit(PipeWireRuntime &runtime,
+    std::shared_ptr<const std::string> recipe, std::optional<bool> bypass, cardio::cancellation cancellation) {
+  std::filesystem::path path;
+  {
+    auto lock = std::scoped_lock(runtime.pipelineMutationMutex);
+    if (runtime.outputTransitionActive.load()) co_return "output transition is pending";
+    if (bypass.has_value()) {
+      if (*bypass != runtime.pipeline.masterBypass()) {
+        runtime.pipeline.setMasterBypass(*bypass);
+        runtime.dspIdleState.replaceActivity(*bypass || runtime.processingMode == ProcessingMode::bypass ?
+            DspActivity::bypassed : DspActivity::active);
+        runtime.configurationRevision.fetch_add(1);
+        requestControlStatusUpdate(runtime);
+      }
+      co_return std::string{};
+    }
+    {
+      auto rateLock = std::scoped_lock(runtime.rateStateMutex);
+      if (runtime.rateTransitioning) co_return "sample-rate transition is pending";
+    }
+    cancellation.throw_if_cancellation_requested();
+    if (runtime.pipeline.updateParameters(recipe)) {
+      runtime.preparationGeneration.invalidate();
+      runtime.configurationRevision.fetch_add(1);
+      requestControlStatusUpdate(runtime);
+      co_return std::string{};
+    }
+    path = runtime.activePreset;
+  }
+  auto applied = std::move(co_await activatePreset(runtime, std::move(path), false, cancellation, std::move(recipe)));
+  if (applied.error.empty()) requestControlStatusUpdate(runtime);
+  co_return std::move(applied.error);
 }
 
 static cardio::promise<bool> retryPendingPresetReload(PipeWireRuntime &runtime, cardio::cancellation cancellation) {
@@ -3131,21 +3192,23 @@ static cardio::promise<PresetActivationResult> requestLiveOutputChange(PipeWireR
   }
   if (*expectedRevision != runtime.configurationRevision.load(std::memory_order_acquire))
     co_return PresetActivationResult{{}, "configuration changed while preparing outputs; retry the change", false};
+  const bool resumeDsp = preset.has_value();
   co_return std::move(co_await applyPreparedOutput(runtime, std::move(pipelineLock),
       std::move(configuration), *expectedRevision, std::move(preset),
-      std::move(prepared), std::move(warnings), profileOwned));
+      std::move(prepared), std::move(warnings), profileOwned, resumeDsp));
 }
 
 static cardio::promise<PresetActivationResult> applyPreparedOutput(
     PipeWireRuntime &runtime, std::unique_lock<std::mutex> pipelineLock,
     OutputConfiguration configuration, std::uint64_t expectedRevision,
     std::optional<std::filesystem::path> preset, std::unique_ptr<DspPipeline> prepared,
-    std::vector<ControlWarning> warnings, bool profileOwned) {
+    std::vector<ControlWarning> warnings, bool profileOwned, bool resumeDsp) {
   if (expectedRevision != runtime.configurationRevision.load(std::memory_order_acquire))
     co_return PresetActivationResult{{}, "configuration changed while preparing outputs; retry the change", false};
   if (!profileOwned && runtime.outputTransitionActive.load(std::memory_order_acquire))
     co_return PresetActivationResult{{}, "another output change is already pending", false};
   if (!profileOwned) runtime.outputTransitionActive.store(true, std::memory_order_release);
+  runtime.resumeDspOnOutputCommit = resumeDsp;
   pipelineLock.unlock();
   auto lock = std::unique_lock(runtime.outputRequestMutex);
   if (runtime.outputRequestsStopped) {
@@ -3222,6 +3285,21 @@ static cardio::promise<ControlMessageResult> handleControlRequest(std::string_vi
   const auto request = parseControlRequest(message);
   if (!request.error.empty()) {
     co_return closeControlResponse(makeControlErrorResponse(request.error), false);
+  }
+  if (request.request.command == ControlCommand::remote) {
+    if (!runtime.remoteEditor) {
+      runtime.remoteEditor = std::make_unique<RemoteServer>(
+          [&runtime] {
+            auto lock = std::scoped_lock(runtime.pipelineMutationMutex);
+            return RemotePipelineSnapshot{runtime.pipeline.recipe(), runtime.pipeline.masterBypass()};
+          }, [&runtime](auto recipe, auto bypass, auto cancel) {
+            return applyRemoteEdit(runtime, std::move(recipe), bypass, cancel);
+          }, [&runtime] { requestControlStatusUpdate(runtime); });
+    }
+    const auto result = runtime.remoteEditor->configure(request.request.remote);
+    if (!result.error.empty()) co_return closeControlResponse(makeControlErrorResponse(result.error), false);
+    co_return closeControlResponse(makeControlSuccessResponse(controlStatus(runtime), {}, result.link),
+                                  request.request.remote.operation != "link");
   }
   if (request.request.command == ControlCommand::subscribe) {
     co_return ControlMessageResult{.response = provideControlStatus(&runtime),
@@ -3457,6 +3535,7 @@ static cardio::promise<ControlMessageResult> handleControlRequest(std::string_vi
     }
     runtime.pipeline.replace(std::move(created.pipeline));
     refreshPipeWireDspLatency(runtime);
+    runtime.pipeline.setMasterBypass(false);
     runtime.processingMode = ProcessingMode::bypass;
     runtime.dspIdleState.replaceActivity(DspActivity::bypassed);
     runtime.activePreset.clear();
@@ -3607,7 +3686,19 @@ static bool createControlServer(PipeWireRuntime &runtime) {
        .eventHandler = nullptr,
        .asyncHandler = handleControlRequest,
        .asyncEventHandler = handlePresetFileMonitorEvent,
-       .asyncStatusProvider = maintainControlStatus});
+       .asyncStatusProvider = maintainControlStatus,
+       .onPublication = [](void *data) {
+         const auto &editor = static_cast<PipeWireRuntime *>(data)->remoteEditor;
+         if (editor) editor->changed();
+       },
+       .hasSubscribers = [](void *data) {
+         const auto &editor = static_cast<PipeWireRuntime *>(data)->remoteEditor;
+         return editor && editor->hasPeers();
+       },
+       .onShutdown = [](void *data) -> cardio::promise<void> {
+         auto &editor = static_cast<PipeWireRuntime *>(data)->remoteEditor;
+         if (editor) { co_await editor->shutdown(); editor.reset(); }
+       }});
   if (started.server == nullptr) {
     runtime.presetFileMonitor.reset();
     failRuntime(runtime,

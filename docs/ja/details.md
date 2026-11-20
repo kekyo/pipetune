@@ -1,5 +1,13 @@
 # 詳細
 
+## Live Audio Send／Receiveを含むプリセット
+
+Live Audio SendとLive Audio Receiveは、EffeTuneでネットワーク音声を送受信する位置を示すマーカーです。
+PipeTuneはPipeWireの音声をプリセットの先頭から処理するため、マーカーの前後に置いたエフェクトが順番どおりにかかります。
+有効なマーカーの表示は「無視」です。ネットワーク送受信が未対応であることも警告で確認できます。
+マーカーや所属するSectionを無効にしたときの表示は「オフ」です。
+[EffeTuneのLive Audio Send／Receive](https://github.com/Frieve-A/effetune/blob/v2.18.0/docs/i18n/ja/plugins/control.md)
+
 ## Crosstalk Cancellation
 
 EffeTuneで設定したCrosstalk Cancellationを、ステレオスピーカー再生に適用できます。
@@ -200,6 +208,15 @@ Room EQとCrosstalk Cancellationは保存された線形IRから補正を作り�
 バックアップは追加情報も含めて1ファイル64 MiBまで読み込めます。
 上限を超えるファイルへ更新されて再読込に失敗した場合は、適用中のプリセットを保ちます。
 
+Room EQとCrosstalk Cancellationの補正には、エフェクトを通さずに取得した測定を選んでください。
+EffeTune 2.18.0でエフェクトを通した測定の目印は、測定JSONの`effectPipeline`です。
+その測定を選ぶとRoom EQは読み込みを拒否し、適用中の音声処理を続けます。
+Crosstalk Cancellationは警告を表示してそのエフェクトを省き、残りの処理を続けます。
+[EffeTuneの測定方法](https://github.com/Frieve-A/effetune/blob/v2.18.0/docs/measurement.md#measuring-with-the-effect-pipeline)
+
+Room EQの補正を有効にしたままDSPが無音で休止した場合、再開後の先頭サンプルから補正がかかります。
+[EffeTuneのRoom EQ](https://github.com/Frieve-A/effetune/blob/v2.18.0/dsp/plugins/eq/room_eq/kernel.cpp)
+
 SoundFont Note Playerは、EffeTune 2.17.0でSFZ Note Playerから改名されたDSPです。
 PipeTuneでは、入力音から検出した音符を既存のSFZ音源で鳴らします。
 SF2/SF3音源は未対応です。登録一覧に混在していてもSFZは読み込めますが、SF2/SF3を選ぶと
@@ -254,8 +271,8 @@ Gain・手動Delayも反映し、手動Delayは自動レイテンシー補償へ
 キャッシュは再生成できるデータで、合計2 GiBを上限に管理します。原本の代わりにはなりません。
 原本やARIAバンク定義の変更、欠損ファイルの復元は自動再読込され、破損キャッシュは再生成します。
 キャッシュに書けなくても準備に成功した音声処理は利用できます。
-2.17.0への更新後も、SFZキャッシュの移行操作は不要です。旧キャッシュは原本から自動で再生成します。
-IRとRoom EQのキャッシュ形式は変わりません。
+2.17.0から2.18.0への更新後、Room EQが測定からフィルターを作り直すのは初回だけです。
+2回目からは作成済みのフィルターを使用します。登録済みSFZ音源とIR Reverbのキャッシュは引き続き使用できます。
 SFZ / IR / Room EQの再読込に失敗した場合は、それまでの音声処理を保持してエラーを表示します。
 未設定DSPは診断付きで有効のままです。無効ノード・無効Sectionでは外部ファイルを読みません。
 Crosstalk Cancellationは従来どおり、不正測定のノードを警告付きで除外します。
