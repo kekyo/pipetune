@@ -8,6 +8,8 @@
 #include "autostart_override.h"
 #include "pipetune/startup_config.h"
 
+#include <algorithm>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -89,6 +91,7 @@ static pipetune::UserManagementPaths makePaths(
       .pipeWirePresentationPath = directory / "config" / "pipewire" /
           "pipewire.conf.d" / "60-pipetune-presentation.conf",
       .setupStatePath = directory / "state" / "pipetune" / "setup-state",
+      .audioSessionDirectory = directory / "runtime",
       .managementLockPath =
           directory / "state" / "pipetune" / "management.lock",
       .systemctlExecutable = "/test/systemctl",
@@ -349,6 +352,163 @@ static bool testSetupPreservesConfigurationAndRestoresAutostart(
                    runner.invocations[7], "/test/pipetune-gtk",
                    {"--hidden"}, pipetune::ProcessWaitMode::detached),
                "setup must finish by launching GTK hidden");
+}
+
+static bool testVirtualOutputSetupAvoidsSessionPolicy(
+    const std::filesystem::path &directory) {
+  const auto paths = makePaths(directory / "virtual-output");
+  auto runner = FakeProcessRunner{.results = {}, .invocations = {}};
+  const auto request = pipetune::UserSetupRequest{
+      .effectiveUserId = 1000,
+      .force = false,
+      .launchGtk = false,
+      .presetSpecified = false,
+      .presetPath = {},
+      .paths = paths,
+      .processRunner = fakeRunProcess,
+      .processUserData = &runner,
+      .virtualOutput = true};
+  const auto first = pipetune::executeUserSetup(request);
+  if (!check(first.success, first.error)) return false;
+  const auto managed = std::array{
+      paths.wirePlumberPolicyPath,
+      paths.wirePlumber04StreamConfigurationPath,
+      paths.wirePlumberClientScriptPath,
+      paths.wirePlumberDeviceScriptPath,
+      paths.wirePlumber04VisibilityScriptPath,
+      paths.wirePlumber05PolicyPath,
+      paths.wirePlumber05VisibilityScriptPath,
+      paths.pipeWirePresentationPath};
+  for (const auto &path : managed) {
+    if (!check(!std::filesystem::exists(path),
+               "virtual output setup must not install session-wide policy")) return false;
+  }
+  if (!check(std::ranges::none_of(runner.invocations, audioStackRestartMatches),
+             "virtual output setup must not restart the audio services")) return false;
+  runner.invocations.clear();
+  const auto repeated = pipetune::executeUserSetup(request);
+  if (!check(repeated.success, repeated.error) ||
+      !check(std::ranges::none_of(runner.invocations, audioStackRestartMatches),
+             "repeated virtual output setup must not restart the audio services")) return false;
+  runner.invocations.clear();
+  auto ordinaryRequest = request;
+  ordinaryRequest.virtualOutput = false;
+  const auto ordinary = pipetune::executeUserSetup(ordinaryRequest);
+  if (!check(ordinary.success, ordinary.error) ||
+      !check(std::ranges::none_of(runner.invocations, audioStackRestartMatches),
+             "ordinary setup must retain the virtual output selection")) return false;
+  for (const auto &path : managed)
+    if (!check(!std::filesystem::exists(path),
+               "ordinary setup must preserve virtual output without session policy")) return false;
+  return true;
+}
+
+static bool testVirtualOutputMigrationWaitsForNewSession(
+    const std::filesystem::path &directory) {
+  const auto paths = makePaths(directory / "virtual-migration");
+  writeFile(paths.wirePlumberPolicyPath, "legacy endpoint policy");
+  writeFile(paths.pipeWirePresentationPath, "legacy server module");
+  std::filesystem::create_directories(paths.audioSessionDirectory);
+  auto runner = FakeProcessRunner{.results = {}, .invocations = {}};
+  const auto request = pipetune::UserSetupRequest{
+      .effectiveUserId = 1000, .force = false, .launchGtk = true,
+      .presetSpecified = false, .presetPath = {}, .paths = paths,
+      .processRunner = fakeRunProcess, .processUserData = &runner,
+      .virtualOutput = true};
+  auto forced = true;
+  if (!check(!pipetune::readVirtualOutputSelection(paths, true, forced).empty(),
+             "explicit virtual startup must require migration of installed policies")) return false;
+  const auto migrated = pipetune::executeUserSetup(request);
+  if (!check(migrated.success, migrated.error)) return false;
+  if (!check(!std::filesystem::exists(paths.wirePlumberPolicyPath) &&
+             !std::filesystem::exists(paths.pipeWirePresentationPath),
+             "migration must remove previous on-disk policies")) return false;
+  for (const auto &invocation : runner.invocations)
+    if (!check(!audioStackRestartMatches(invocation) &&
+               !invocationMatches(invocation, "/test/systemctl",
+                   {"--user", "restart", "pipetune.service"}, pipetune::ProcessWaitMode::wait) &&
+               !invocationMatches(invocation, "/test/pipetune-gtk",
+                   {"--hidden"}, pipetune::ProcessWaitMode::detached),
+               "migration must leave active audio and GTK untouched")) return false;
+  auto virtualOutput = true;
+  const auto sameSession = pipetune::readVirtualOutputSelection(
+      paths, false, virtualOutput);
+  if (!check(sameSession.empty() && !virtualOutput,
+             "the current audio session must retain its legacy routing")) return false;
+  if (!check(!pipetune::readVirtualOutputSelection(paths, true, forced).empty(),
+             "explicit virtual startup must also wait for the legacy session to end")) return false;
+  writeFile(paths.audioSessionDirectory / "new-session-socket", "active");
+  const auto updatedDirectory = pipetune::readVirtualOutputSelection(
+      paths, false, virtualOutput);
+  if (!check(updatedDirectory.empty() && !virtualOutput,
+             "runtime directory changes must not activate virtual routing")) return false;
+  runner.invocations.clear();
+  auto repeatedRequest = request;
+  repeatedRequest.virtualOutput = false;
+  const auto repeated = pipetune::executeUserSetup(repeatedRequest);
+  if (!check(repeated.success && repeated.deferredVirtualOutput,
+             "ordinary setup must preserve the pending migration")) return false;
+  for (const auto &invocation : runner.invocations)
+    if (!check(!audioStackRestartMatches(invocation) &&
+               !invocationMatches(invocation, "/test/systemctl",
+                   {"--user", "restart", "pipetune.service"}, pipetune::ProcessWaitMode::wait),
+               "repeated setup must leave active legacy playback untouched")) return false;
+  // A new runtime filesystem can reuse the previous mount's device and inode.
+  // Model a clean session with an empty directory at exactly the same path.
+  for (const auto &entry : std::filesystem::directory_iterator(paths.audioSessionDirectory))
+    std::filesystem::remove_all(entry.path());
+  const auto newSession = pipetune::readVirtualOutputSelection(
+      paths, false, virtualOutput);
+  return check(newSession.empty() && virtualOutput,
+               "a new audio session must activate virtual output");
+}
+
+static bool testVirtualOutputMigrationRollbackKeepsLegacy(
+    const std::filesystem::path &directory) {
+  const auto paths = makePaths(directory / "virtual-migration-rollback");
+  writeFile(paths.wirePlumberPolicyPath, "legacy endpoint policy");
+  writeFile(paths.pipeWirePresentationPath, "legacy server module");
+  std::filesystem::create_directories(paths.audioSessionDirectory);
+  auto runner = FakeProcessRunner{
+      .results = {processResult(0), processResult(0), processResult(0),
+                  processResult(1)},
+      .invocations = {}};
+  const auto migrated = pipetune::executeUserSetup(
+      {.effectiveUserId = 1000, .force = false, .launchGtk = true,
+       .presetSpecified = false, .presetPath = {}, .paths = paths,
+       .processRunner = fakeRunProcess, .processUserData = &runner,
+       .virtualOutput = true});
+  if (!check(!migrated.success, "failed migration must report an error") ||
+      !check(readFile(paths.wirePlumberPolicyPath) == "legacy endpoint policy" &&
+             readFile(paths.pipeWirePresentationPath) == "legacy server module",
+             "failed migration must restore the legacy policy files") ||
+      !check(!std::filesystem::exists(paths.setupStatePath),
+             "failed migration must restore the previous routing selection"))
+    return false;
+  for (const auto &invocation : runner.invocations)
+    if (!check(!audioStackRestartMatches(invocation) &&
+               !invocationMatches(invocation, "/test/systemctl",
+                   {"--user", "restart", "pipetune.service"}, pipetune::ProcessWaitMode::wait),
+               "rollback must leave the active legacy audio session untouched")) return false;
+  return true;
+}
+
+static bool testVirtualOutputMigrationRequiresSessionIdentity(
+    const std::filesystem::path &directory) {
+  auto paths = makePaths(directory / "virtual-migration-no-session");
+  writeFile(paths.wirePlumberPolicyPath, "legacy endpoint policy");
+  paths.audioSessionDirectory.clear();
+  auto runner = FakeProcessRunner{.results = {}, .invocations = {}};
+  const auto result = pipetune::executeUserSetup(
+      {.effectiveUserId = 1000, .force = false, .launchGtk = false,
+       .presetSpecified = false, .presetPath = {}, .paths = paths,
+       .processRunner = fakeRunProcess, .processUserData = &runner,
+       .virtualOutput = true});
+  return check(!result.success && !result.error.empty(),
+               "migration needs the active session identity") &&
+      check(readFile(paths.wirePlumberPolicyPath) == "legacy endpoint policy" &&
+            runner.invocations.empty(),
+            "unidentified active sessions must retain their previous policy");
 }
 
 static bool testSetupSkipsCurrentStateAndForceRepeats(
@@ -731,6 +891,10 @@ int main() {
   passed = testWirePlumberCompatibilityPaths(directory) && passed;
   passed =
       testSetupPreservesConfigurationAndRestoresAutostart(directory) && passed;
+  passed = testVirtualOutputSetupAvoidsSessionPolicy(directory) && passed;
+  passed = testVirtualOutputMigrationWaitsForNewSession(directory) && passed;
+  passed = testVirtualOutputMigrationRollbackKeepsLegacy(directory) && passed;
+  passed = testVirtualOutputMigrationRequiresSessionIdentity(directory) && passed;
   passed = testSetupSkipsCurrentStateAndForceRepeats(directory) && passed;
   passed = testUpgradeReloadsPresentation(directory) && passed;
   passed = testExplicitPresetAndValidation(directory) && passed;

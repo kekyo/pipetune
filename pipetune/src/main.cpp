@@ -109,7 +109,7 @@ resolveInstalledUserManagementPaths() {
   const auto *xdgDataHome = std::getenv("XDG_DATA_HOME");
   const auto *xdgStateHome = std::getenv("XDG_STATE_HOME");
   const auto *home = std::getenv("HOME");
-  return pipetune::resolveUserManagementPaths(
+  auto resolved = pipetune::resolveUserManagementPaths(
       xdgConfigHome == nullptr ? std::string_view{}
                                : std::string_view(xdgConfigHome),
       xdgDataHome == nullptr ? std::string_view{}
@@ -121,6 +121,13 @@ resolveInstalledUserManagementPaths() {
       std::filesystem::path{
           std::string(pipetune::installedSystemctlPath)},
       std::filesystem::path{std::string(pipetune::installedGtkPath)});
+  if (resolved.error.empty()) {
+    const auto *runtime = std::getenv("PIPEWIRE_RUNTIME_DIR");
+    if (runtime == nullptr || *runtime == '\0') runtime = std::getenv("XDG_RUNTIME_DIR");
+    if (runtime != nullptr && *runtime != '\0')
+      resolved.paths.audioSessionDirectory = runtime;
+  }
+  return resolved;
 }
 
 static void printUserManagementWarnings(
@@ -160,13 +167,17 @@ static int runSetupCommand(
        .presetPath = std::move(presetPath),
        .paths = paths.paths,
        .processRunner = runUserManagementProcess,
-       .processUserData = nullptr});
+       .processUserData = nullptr,
+       .virtualOutput = options.virtualOutput});
   printUserManagementWarnings(result.warnings);
   if (!result.success) {
     std::cerr << "pipetune: " << result.error << '\n';
     return 1;
   }
-  std::cout << "PipeTune is enabled and running for the current user.\n";
+  if (result.deferredVirtualOutput)
+    std::cout << "PipeTune is enabled. Virtual output will start in the next clean audio session.\n";
+  else
+    std::cout << "PipeTune is enabled and running for the current user.\n";
   return 0;
 }
 
@@ -251,6 +262,14 @@ static int runControlClient(const pipetune::CommandLineOptions &options) {
 }
 
 static int runDaemon(const pipetune::CommandLineOptions &options) {
+  auto virtualOutput = false;
+  const auto paths = resolveInstalledUserManagementPaths();
+  const auto routingError = paths.error.empty()
+      ? pipetune::readVirtualOutputSelection(paths.paths, options.virtualOutput, virtualOutput) : paths.error;
+  if (!routingError.empty()) {
+    std::cerr << "pipetune: " << routingError << '\n';
+    return 1;
+  }
   const auto signalError = pipetune::blockPipeWireTerminationSignals();
   if (!signalError.empty()) { std::cerr << "pipetune: " << signalError << '\n'; return 1; }
   auto configPath = options.configPath;
@@ -331,7 +350,8 @@ static int runDaemon(const pipetune::CommandLineOptions &options) {
        .inputChannelCount = 2,
        .outputConfiguration = std::move(prepared.outputConfiguration),
        .sfzMaxSizeMiB = prepared.sfzMaxSizeMiB,
-       .inferChannelsFromPreset = true},
+       .inferChannelsFromPreset = true,
+       .virtualOutput = virtualOutput},
       pipetune::PipeWireRunMode::untilInterrupted);
   if (!result.success) {
     std::cerr << "pipetune: " << result.error << '\n';

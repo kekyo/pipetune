@@ -1074,7 +1074,7 @@ if(BUILD_TESTING)
     set_tests_properties(pipetune_${scenario} PROPERTIES TIMEOUT 45)
   endforeach()
   foreach(scenario product-virtual-one-output product-virtual-reconnect product-virtual-sole-reconnect
-                   product-virtual-crash product-direct-virtual)
+                   product-virtual-crash product-virtual-cli product-direct-virtual)
     add_test(NAME pipetune_${scenario}
       COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
         ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}

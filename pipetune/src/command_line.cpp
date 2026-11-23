@@ -55,6 +55,10 @@ static CommandLineParseResult parseDaemonCommandLine(
   auto sawConfig = false;
   for (auto index = std::size_t{0}; index < arguments.size(); ++index) {
     const auto argument = arguments[index];
+    if (argument == "--virtual-output" && !options.virtualOutput) {
+      options.virtualOutput = true;
+      continue;
+    }
     if (argument != "--config") {
       return parseError(std::move(options),
                         "unknown daemon option: " + std::string(argument));
@@ -341,6 +345,10 @@ static CommandLineParseResult parseSetupCommandLine(
       }
       sawForce = true;
       options.forceSetup = true;
+      continue;
+    }
+    if (argument == "--virtual-output" && !options.virtualOutput) {
+      options.virtualOutput = true;
       continue;
     }
     if (argument == "--no-launch-gtk") {
@@ -685,7 +693,7 @@ std::string_view commandLineUsage() noexcept {
   return "Usage:\n"
          "  pipetune remote enable ADDRESS [PORT [CERTIFICATE KEY]]\n"
          "  pipetune remote link|rotate|disable\n"
-         "  pipetune daemon [--config PATH]\n"
+         "  pipetune daemon [--config PATH] [--virtual-output]\n"
          "  pipetune bypass [--socket PATH]\n"
          "  pipetune output list [--json]\n"
          "  pipetune output get [--json] [--socket PATH]\n"
@@ -700,7 +708,7 @@ std::string_view commandLineUsage() noexcept {
          "  pipetune dsp get [--json] [--socket PATH]\n"
          "  pipetune dsp set scalar|simd [--variant VARIANT] [--socket PATH]\n"
          "  pipetune config reset [-y|--yes]\n"
-         "  pipetune setup [-f|--force] [--no-launch-gtk] [--preset FILE]\n"
+         "  pipetune setup [-f|--force] [--no-launch-gtk] [--preset FILE] [--virtual-output]\n"
          "  pipetune unsetup [--purge]\n"
          "  pipetune --preset FILE [--channels COUNT]\n"
          "           [--dsp-backend scalar|simd]\n"
