@@ -35,13 +35,17 @@ using PipeWireVolumeChanged = void (*)(void *data);
  * @param error Required error handler.
  * @param changed Required readiness notification handler.
  * @param data Borrowed callback context, outliving the controller.
+ * @param managePhysicalVolume Wait for session-policy acknowledgments about physical devices.
  * @return Controller, or null if registry creation fails.
  */
 PipeWireOutputVolumePtr createPipeWireOutputVolume(pw_core *core, const std::string &name,
-    PipeWireVolumeError error, PipeWireVolumeChanged changed, void *data);
+    PipeWireVolumeError error, PipeWireVolumeChanged changed, void *data, bool managePhysicalVolume);
 
 /** Invalidates acknowledgments before replacing or removing the distribution bus. */
 void preparePipeWireOutputVolume(PipeWireOutputVolume &volume);
+
+/** Returns the serial of the replacement bus, or zero until it appears in the registry. */
+std::uint64_t pipeWireDistributionSerial(const PipeWireOutputVolume &volume);
 
 /** Checks physical-gain acquisition for the new bus, or completed restoration in single mode. */
 bool pipeWireOutputVolumeReady(const PipeWireOutputVolume &volume, bool multiple);

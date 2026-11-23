@@ -243,7 +243,8 @@ static void publishSnapshot(PipeWireOutputPaths &observer) {
   auto distributions = 0U;
   for (const auto &[id, node] : observer.nodes) {
     if (property(node->properties, "node.pipetune.public-target") != observer.publicInputName ||
-        property(node->properties, "node.pipetune.aggregate") != "true") continue;
+        (property(node->properties, "node.pipetune.aggregate") != "true" &&
+         property(node->properties, "node.pipetune.virtual-output") != "true")) continue;
     ++distributions;
     distributionRate = effectiveSampleRate(observer, id, *node);
   }
@@ -269,6 +270,7 @@ static void nodeInfo(void *data, const pw_node_info *info) {
   if ((info->change_mask & PW_NODE_CHANGE_MASK_PARAMS) != 0 &&
       property(node.properties, "node.pipetune.public-target") == node.binding.owner->publicInputName &&
       (property(node.properties, "node.pipetune.aggregate") == "true" ||
+       property(node.properties, "node.pipetune.virtual-output") == "true" ||
        !property(node.properties, "node.pipetune.output-id").empty())) {
     node.sampleRate.reset();
     for (auto index = std::uint32_t{0}; node.canEnumerate && index < info->n_params; ++index) {

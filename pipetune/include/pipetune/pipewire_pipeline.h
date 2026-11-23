@@ -29,7 +29,7 @@ namespace pipetune {
 using PipeWireReadyCallback = void (*)(void *userData);
 
 /**
- * Configures the PipeWire nodes forming one policy-linked DSP filter.
+ * Configures the PipeWire input, DSP and output routing.
  */
 struct PipeWirePipelineOptions {
   /** Stable PipeWire node name exposed as the filter input. */
@@ -78,6 +78,8 @@ struct PipeWirePipelineOptions {
   std::uint32_t sfzMaxSizeMiB = kDefaultSfzMaxSizeMiB;
   /** Infer DSP and meter widths from loaded presets, independently of device routing. */
   bool inferChannelsFromPreset = false;
+  /** Publish a selectable sink and leave device volumes and defaults to the desktop. */
+  bool virtualOutput = false;
 };
 
 /**
@@ -107,7 +109,7 @@ struct PipeWireRunResult {
 };
 
 /**
- * Publishes a WirePlumber-recognized input/output filter node pair.
+ * Publishes the Processed input and routes its DSP output to the configured devices.
  *
  * The supplied DSP pipeline must have been prepared for the same sample rate,
  * at least channelCount channels, and at least maxFrames frames. A fixed rate
@@ -116,11 +118,13 @@ struct PipeWireRunResult {
  * DSP channels receive silence on every block, including while bypassed;
  * only the preset can create audio in those processed output channels.
  * Ownership is retained for the complete run so control requests can replace
- * the pipeline. In single mode, WirePlumber owns target selection and volume
- * policy. Multiple mode requires two input channels and channelCount equal to
+ * the pipeline. The default single-mode filter follows the OS-selected output.
+ * With virtualOutput, the desktop selects the Processed input explicitly and
+ * the stream waits for a device assignment in multiple mode.
+ * Multiple mode requires two input channels and channelCount equal to
  * outputDspChannelCount(outputConfiguration). It exposes a stereo processed
- * input and a direct input covering the configured slots. The processed gain
- * follows DSP; Direct bypasses that processing and retains its own volume.
+ * input and a direct input covering the configured slots. Direct bypasses DSP.
+ * Both inputs expose the common volume applied after mixing.
  * Both paths share the rate policy and mix before distributing output channels to
  * uniquely matched devices. Missing or disabled outputs receive no fallback.
  * This function blocks according to mode and does not allocate in PipeWire process

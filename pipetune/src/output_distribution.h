@@ -25,22 +25,24 @@ struct OutputDistributionArguments {
  * @param publicInputName Public playback target retained during stream rebuilds.
  * @param configuration Valid saved routing, including disabled/reserved slots.
  * @param inventory Current device descriptions and runtime object generations.
+ * @param virtualOutput Keep physical controls and default selection with the desktop.
  * @return combine-stream arguments with latency compensation, or an error.
  */
 OutputDistributionArguments makeOutputDistributionArguments(
     const std::string &nodeName, const std::string &publicInputName, const OutputConfiguration &configuration,
-    std::span<const AvailableOutput> inventory);
+    std::span<const AvailableOutput> inventory, bool virtualOutput = false);
 
 /**
  * Publishes a numbered direct input connected to the shared output mixer.
  * @param publicInputName Stable processed-input name; the direct name adds `.direct`.
  * @param channels Fixed output slot count, including disconnected slots.
  * @param policy Common sample-rate preference and graph enforcement.
+ * @param virtualOutput Publish Direct without requesting session policy management.
  * @return Direct stream pair properties, or a validation/encoding error.
  */
 OutputDistributionArguments makeDirectOutputArguments(
     const std::string &publicInputName, std::uint32_t channels,
-    const SampleRatePolicy &policy);
+    const SampleRatePolicy &policy, bool virtualOutput = false);
 
 } // namespace pipetune
 

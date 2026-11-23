@@ -43,6 +43,7 @@ struct PipeWireOutputVolume {
   std::uint64_t previousSerial = 0;
   std::string statusKey;
   std::string status;
+  bool managePhysicalVolume = true;
   void *data = nullptr;
   std::uint32_t channels = 2;
   float gain = 1.0F;
@@ -69,11 +70,16 @@ void preparePipeWireOutputVolume(PipeWireOutputVolume &volume) {
   volume.status.clear();
 }
 
-bool pipeWireOutputVolumeReady(const PipeWireOutputVolume &volume, bool multiple) {
-  if (!multiple) return volume.nodes.empty() && volume.status == "restored";
+std::uint64_t pipeWireDistributionSerial(const PipeWireOutputVolume &volume) {
   auto serial = volume.previousSerial;
   for (const auto &[id, binding] : volume.nodes) serial = std::max(serial, binding->serial);
-  return serial > volume.previousSerial && volume.status == "ready:" + std::to_string(serial);
+  return serial > volume.previousSerial ? serial : 0;
+}
+
+bool pipeWireOutputVolumeReady(const PipeWireOutputVolume &volume, bool multiple) {
+  if (!multiple) return volume.nodes.empty() && (!volume.managePhysicalVolume || volume.status == "restored");
+  const auto serial = pipeWireDistributionSerial(volume);
+  return serial != 0 && (!volume.managePhysicalVolume || volume.status == "ready:" + std::to_string(serial));
 }
 
 static bool applyVolume(const PipeWireOutputVolume &volume, pw_node *node) {
@@ -98,9 +104,10 @@ bool setPipeWireOutputVolume(PipeWireOutputVolume &volume, std::uint32_t channel
 }
 
 PipeWireOutputVolumePtr createPipeWireOutputVolume(pw_core *core, const std::string &name,
-    PipeWireVolumeError error, PipeWireVolumeChanged changed, void *data) {
+    PipeWireVolumeError error, PipeWireVolumeChanged changed, void *data, bool managePhysicalVolume) {
   auto volume = PipeWireOutputVolumePtr(new PipeWireOutputVolume());
   volume->name = name; volume->error = error; volume->changed = changed; volume->data = data;
+  volume->managePhysicalVolume = managePhysicalVolume;
   volume->statusKey = "pipetune.volume." + name.substr(0, name.size() - std::strlen(".distribution"));
   volume->registry = pw_core_get_registry(core, PW_VERSION_REGISTRY, 0);
   if (!volume->registry || !error || !changed) return {};
@@ -109,7 +116,7 @@ PipeWireOutputVolumePtr createPipeWireOutputVolume(pw_core *core, const std::str
     value.global = [](void *data, std::uint32_t id, std::uint32_t, const char *type,
         std::uint32_t version, const spa_dict *props) {
       auto &volume = *static_cast<PipeWireOutputVolume *>(data);
-      if (std::strcmp(type, PW_TYPE_INTERFACE_Metadata) == 0 && props && !volume.metadata) {
+      if (volume.managePhysicalVolume && std::strcmp(type, PW_TYPE_INTERFACE_Metadata) == 0 && props && !volume.metadata) {
         const auto *name = spa_dict_lookup(props, PW_KEY_METADATA_NAME);
         if (!name || std::strcmp(name, "default") != 0) return;
         volume.metadata = static_cast<pw_metadata *>(pw_registry_bind(volume.registry, id, type,

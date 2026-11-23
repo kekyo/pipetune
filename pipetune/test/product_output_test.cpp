@@ -147,7 +147,9 @@ static int runProduct(const char *preset, std::string_view scenario) {
     if (!appended.error.empty()) return 1;
     configuration = std::move(appended.configuration);
   }
-  if (scenario == "product-matrix-freewheel-one-output") {
+  if (scenario == "product-matrix-freewheel-one-output" || scenario == "product-virtual-one-output" ||
+      scenario == "product-virtual-sole-reconnect" ||
+      scenario == "product-virtual-crash") {
     configuration.outputs.resize(1);
     configuration.channels.resize(2);
   }
@@ -194,7 +196,10 @@ static int runProduct(const char *preset, std::string_view scenario) {
       .channelCount = width, .maxFrames = 8192, .ringCapacityFrames = 16384,
       .readyCallback = runtimeReady, .readyUserData = nullptr,
       .inputChannelCount = 2, .outputConfiguration = configuration,
-      .inferChannelsFromPreset = directTest || meterTest || sourceResume},
+      .inferChannelsFromPreset = directTest || meterTest || sourceResume,
+      .virtualOutput = scenario == "product-virtual-one-output" || scenario == "product-virtual-crash" ||
+          scenario == "product-virtual-reconnect" || scenario == "product-virtual-sole-reconnect" ||
+          scenario == "product-direct-virtual"},
       pipetune::PipeWireRunMode::untilInterrupted);
   std::cerr << "product:runtime-result overruns=" << result.overrunFrames
             << " underruns=" << result.underrunFrames << " errors=" << result.processingErrors << '\n';
@@ -293,6 +298,11 @@ struct AudioTest {
   bool fixedLatency = false;
   bool freewheel = false;
   bool oneOutput = false;
+  bool soleReconnect = false;
+  std::uint64_t unplugFrame = 0;
+  bool useDesktopDefault = false;
+  bool virtualCrash = false;
+  bool virtualVolumeConfigured = false;
   bool delayObserver = false;
   bool observationDeferred = false;
   std::uint32_t deferredAt = 0;
@@ -540,7 +550,10 @@ static void consumeLatencyBlock(TestOutput &output, const LatencyBlock &block) {
   for (auto index = 0U; index < 2; ++index) {
     const auto id = "pipetune_product_device_" + std::to_string(index);
     const auto path = std::find_if(test.paths.begin(), test.paths.end(),
-        [&](const auto &item) { return item.outputId == id; });
+        [&](const auto &item) {
+          if (test.useDesktopDefault) return item.targetNodeId == pw_stream_get_node_id(test.outputs[index].stream);
+          return item.outputId == id;
+        });
     if (single && index == 1) {
       if (path != test.paths.end()) return;
     } else {
@@ -797,11 +810,16 @@ static void capture(void *data) {
       expected = output.index == 2 ? (channel == 0 ? 0.25F : 0.5F) : 0.0F;
     if (test.modeVolume)
       expected = output.index == 0 ? (channel == 0 ? 0.03125F : 0.0625F) : 0.0F;
+    if (test.virtualCrash && test.stage == 1 && output.index == 1) expected = 0.0F;
+    if (test.virtualCrash && test.stage == 1 && output.index == 0)
+      expected = (channel == 0 ? 0.25F * 0.5F : 0.5F * 0.25F);
     const auto tone = test.graphClock && expected != 0.0F;
     auto toneEnergy = 0.0;
     for (auto frame = 0U; frame < frames; ++frame) {
       auto sample = 0.0F;
       std::memcpy(&sample, static_cast<const char *>(plane.data) + plane.chunk->offset + frame * sizeof(float), sizeof(float));
+      if (test.soleReconnect && output.index != 0 && sample != 0.0F)
+        return fail(test, "audio from the sole selected device reached another output");
       // Keep observing while the control request is in flight. Waiting only
       // for steady PCM would miss a burst while physical gain is changing.
       if (test.modeVolume && std::abs(sample) > std::abs(expected) + 0.00001F)
@@ -818,6 +836,8 @@ static void capture(void *data) {
       if (test.profile && test.stage == 3 && output.index == 0 && sample != 0)
         fail(test, "profile mismatch received audio");
       if (test.disconnected && sample != 0) fail(test, "unresolved or disabled output received fallback audio");
+      if (test.virtualCrash && test.stage == 1 && output.index == 1 && sample != 0)
+        fail(test, "direct playback leaked to another physical output");
       // A Single-to-Multiple change may drain already queued Single audio.
       // The next verified steady window ends that transition allowance.
       if (!test.meters && !test.sourceResume && !(test.singleVolume && test.stage == 13) && output.index == 2 && sample != 0 &&
@@ -969,9 +989,24 @@ static void capture(void *data) {
   }
   // The product deliberately fades in after its initial bridge delay. Require
   // exact continuous PCM after the first complete block reaches unity gain.
+  if (test.virtualCrash && test.stage == 1 && output.index == 0 && !matches) {
+    output.matched = false;
+    output.frames = 0;
+    return;
+  }
   if (output.matched && frames != 0 && !matches) return fail(test, "steady product output differs on device " + std::to_string(output.index));
   if (matches && frames != 0) { output.matched = true; output.frames += frames; }
-  if ((test.outputs[0].frames >= 32768 || (test.reconnect && !test.restart && (test.stage == 2 || (test.profile && test.stage == 3)))) && test.outputs[1].frames >= 32768 &&
+  if (test.virtualCrash && test.stage == 1) {
+    if (test.outputs[0].frames >= 32768) {
+      test.stageFrames[1] = {test.outputs[0].frames, test.outputs[1].frames};
+      std::cerr << "product:direct-pcm-finished\n" << std::flush;
+      pw_main_loop_quit(test.loop);
+    }
+    return;
+  }
+  if (test.soleReconnect && (test.stage == 2 || output.index != 0)) return;
+  if ((test.outputs[0].frames >= 32768 || (test.reconnect && !test.restart && (test.stage == 2 || (test.profile && test.stage == 3)))) &&
+      (test.soleReconnect || test.outputs[1].frames >= 32768) &&
       (!test.outputChange || test.stage != 8 || test.outputs[2].frames >= 32768)) {
     if (test.graphClock || test.clockUnavailable || test.clockReconnect) {
       if (!test.clockSnapshot) return;
@@ -1112,6 +1147,13 @@ static void produce(void *data) {
   queued->size = frames;
   if (pw_stream_queue_buffer(test.source, queued) < 0) return callbackFailure(test, "cannot queue source buffer");
   test.produced += frames;
+  // While the only assigned sink is absent, measure playback at the source.
+  // Unassigned sinks can be idle. Their callbacks reject any leaked samples.
+  if (test.soleReconnect && test.stage == 2 && test.outputs[0].stream == nullptr &&
+      test.produced - test.unplugFrame >= 32768) {
+    ++test.stage;
+    pw_loop_signal_event(pw_main_loop_get_loop(test.loop), test.graphEvent);
+  }
   test.sourceFrames.store(static_cast<std::uint32_t>(test.produced), std::memory_order_release);
   if (test.disconnected && test.produced >= 65536) pw_main_loop_quit(test.loop);
 }
@@ -1175,7 +1217,7 @@ static void startSource(void *data, int) {
   if (test.direct && test.stage == 0) return startDirectSource(test);
   if (test.failurePoint == "before-source") return fail(test, "injected failure before source start");
   if (test.source != nullptr) return fail(test, "source started twice");
-  auto *properties = test.modeVolume ? pw_properties_new(
+  auto *properties = test.modeVolume || test.useDesktopDefault ? pw_properties_new(
       PW_KEY_NODE_NAME, "pipetune_product_signal", PW_KEY_MEDIA_CATEGORY, "Playback",
       PW_KEY_MEDIA_ROLE, "Music", nullptr) : pw_properties_new(
       PW_KEY_NODE_NAME, "pipetune_product_signal", PW_KEY_TARGET_OBJECT, test.inputName.c_str(),
@@ -1294,7 +1336,7 @@ static bool createTestOutput(TestOutput &output) {
       "node.want-driver", "true", "node.pause-on-idle", "false",
       "audio.channels", "2", "audio.position", "[ FL FR ]",
       "state.restore-props", "false",
-      "node.param.Props", output.test->modeVolume ?
+      "node.param.Props", output.test->virtualCrash ? "{}" : output.test->modeVolume ?
           "{ volume = 1.0 mute = false channelVolumes = [ 0.125 0.125 ] }" : output.test->recreatedPhysical && output.index == 0 ?
           "{ volume = 1.0 mute = false channelVolumes = [ 0.75 0.875 ] }" : output.test->physicalVolume ? (output.index == 0 ?
           "{ volume = 1.0 mute = false channelVolumes = [ 0.125 0.25 ] }" : output.index == 1 ?
@@ -1374,6 +1416,7 @@ static void changeOutputGraph(void *data, std::uint64_t) {
     output.stream = nullptr;
     output.ready = false;
   }
+  if (test.soleReconnect && test.stage == 2) test.unplugFrame = test.produced;
   if (test.stage != 2 && !createTestOutput(output)) fail(test, "cannot reconnect test output");
 }
 
@@ -1386,6 +1429,7 @@ static int runAudio(std::string_view scenario) {
   test.pulseVolume = scenario == "product-direct-device-volume-pulse";
   test.singleVolume = scenario == "product-direct-device-volume-single";
   test.modeVolume = scenario == "product-mode-volume";
+  test.useDesktopDefault = scenario == "product-virtual-cli";
   test.rejectPhysicalVolume = scenario == "product-direct-device-volume-reject";
   test.rejectPhysicalRestore = scenario == "product-direct-device-volume-restore-reject";
   test.reconnectPhysical = scenario == "product-direct-device-volume-reconnect";
@@ -1404,20 +1448,27 @@ static int runAudio(std::string_view scenario) {
   test.profile = scenario == "product-profile";
   test.restartMuted = scenario == "product-restart-mute";
   test.restart = scenario == "product-restart" || test.restartMuted;
-  test.reconnect = scenario == "product-reconnect" || test.profile || test.restart;
+  test.soleReconnect = scenario == "product-virtual-sole-reconnect";
+  test.reconnect = scenario == "product-reconnect" || scenario == "product-virtual-reconnect" || test.soleReconnect ||
+      test.profile || test.restart;
   test.intentionalDelay = scenario == "product-time-alignment";
   test.latencyReconnect = scenario == "product-latency-reconnect";
   test.latencyUnits = scenario == "product-latency-units";
-  test.fixedLatency = scenario.starts_with("product-sfz-") || scenario.starts_with("product-matrix-freewheel") || scenario == "product-matrix-realtime";
+  test.fixedLatency = scenario.starts_with("product-sfz-") || scenario.starts_with("product-matrix-freewheel") ||
+      scenario == "product-matrix-realtime" || scenario == "product-virtual-one-output" || test.useDesktopDefault ||
+      scenario == "product-virtual-crash";
   test.freewheel = test.fixedLatency && !scenario.ends_with("-realtime");
-  test.oneOutput = scenario == "product-matrix-freewheel-one-output";
+  test.oneOutput = test.useDesktopDefault || scenario == "product-matrix-freewheel-one-output" || scenario == "product-virtual-one-output" ||
+      scenario == "product-virtual-crash";
+  test.virtualCrash = scenario == "product-virtual-crash";
+  if (test.virtualCrash) test.physicalVolume = true;
   test.delayObserver = scenario == "product-matrix-freewheel-delayed-observer";
   if (scenario.starts_with("product-matrix-freewheel-fail-"))
     test.failurePoint = scenario.substr(std::string_view("product-matrix-freewheel-fail-").size());
   test.latency = scenario == "product-latency" || test.latencyUnits || test.intentionalDelay || test.latencyReconnect || test.fixedLatency;
   test.graphClock = scenario == "product-output-clock" || scenario == "product-output-clock-alt" || scenario == "product-output-clock-recovery";
   test.clockUnavailable = scenario == "product-output-clock-unavailable";
-  test.clockReconnect = scenario == "product-reconnect";
+  test.clockReconnect = scenario == "product-reconnect" || scenario == "product-virtual-reconnect";
   test.initialGraphRate = scenario.ends_with("-alt") ? 44100 : 48000;
   test.graphQuantum = scenario.ends_with("-alt") ? 512 : 256;
   test.controls = scenario == "product-controls" || test.graphClock;
@@ -1436,8 +1487,41 @@ static int runAudio(std::string_view scenario) {
   }
   // Block and register the control signal before PipeWire creates data threads.
   auto *signal = pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGUSR1, startSource, &test);
-  auto *recover = test.physicalVolume ? pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGWINCH, [](void *data, int) {
+  auto *recover = (test.physicalVolume || test.virtualCrash) ? pw_loop_add_signal(pw_main_loop_get_loop(test.loop), SIGWINCH, [](void *data, int) {
     auto &test = *static_cast<AudioTest *>(data);
+    if (test.virtualCrash) {
+      if (!test.awaitingControl || test.stage != 0) return fail(test, "unexpected direct playback stage");
+      if (!test.virtualVolumeConfigured) {
+        test.virtualVolumeConfigured = true;
+        for (auto index = 0U; index < 2; ++index) {
+          auto storage = std::array<std::uint8_t, 256>{};
+          auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
+          const auto gain = index == 0 ? std::array<float, 2>{0.5F, 0.25F} :
+              std::array<float, 2>{1.0F, 1.0F};
+          const auto *parameter = static_cast<const spa_pod *>(spa_pod_builder_add_object(
+              &builder, SPA_TYPE_OBJECT_Props, SPA_PARAM_Props,
+              SPA_PROP_mute, SPA_POD_Bool(index == 1),
+              SPA_PROP_channelVolumes, SPA_POD_Array(sizeof(float), SPA_TYPE_Float, 2, gain.data())));
+          if (pw_stream_set_param(test.outputs[index].stream, SPA_PARAM_Props, parameter) < 0)
+            return fail(test, "cannot set physical output volume for direct playback");
+        }
+        std::cerr << "product:physical-volume-requested\n" << std::flush;
+        return;
+      }
+      spa_hook_remove(&test.sourceListener);
+      pw_stream_destroy(test.source);
+      test.source = nullptr;
+      test.inputName = "pipetune_product_device_0";
+      test.fixedLatency = false;
+      test.latency = false;
+      pw_loop_destroy_source(pw_main_loop_get_loop(test.loop), test.captureEvent);
+      test.captureEvent = nullptr;
+      test.awaitingControl = false;
+      test.stage = 1;
+      for (auto &output : test.outputs) { output.frames = 0; output.matched = false; }
+      startSource(&test, 0);
+      return;
+    }
     if (test.rejectPhysicalRestore && test.stage == 12) {
       test.rejectPhysicalRestore = false;
       std::cerr << "product:restore-rejection-released\n" << std::flush;

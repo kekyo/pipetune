@@ -266,6 +266,7 @@ struct PipeWireRuntime {
   std::atomic<bool> physicalVolumeReady{true};
   std::string directOutputArguments;
   pw_impl_module *outputDistribution = nullptr;
+  bool waitingForVirtualBus = false;
   spa_hook outputDistributionListener = {};
   spa_source *outputGraphSource = nullptr;
   std::string outputDistributionArguments;
@@ -361,6 +362,7 @@ struct PipeWireRuntime {
         inputReady(false), outputReady(false), inputFormatReady(false),
         outputFormatReady(false), inputAlwaysProcess(true),
         readyNotified(false), completed(false), error() {
+    masterControlsInitialized = options.virtualOutput;
     if (processingMode == ProcessingMode::preset &&
         (!dspBackendState.effectiveBackend.has_value() ||
          !dspBackendState.effectiveVariant.has_value() ||
@@ -740,11 +742,15 @@ static bool setInputAlwaysProcess(PipeWireRuntime &runtime, bool enabled) {
 
 static void finishOutputChange(PipeWireRuntime &runtime);
 
+static bool usesDistribution(const PipeWirePipelineOptions &options) {
+  return options.virtualOutput || options.outputConfiguration.mode == OutputMode::multiple;
+}
+
 static bool outputVolumeIsReady(const PipeWireRuntime &runtime) {
   if (!runtime.outputVolume) return true;
-  const auto multiple = runtime.options.outputConfiguration.mode == OutputMode::multiple;
+  const auto multiple = usesDistribution(runtime.options);
   if (!pipeWireOutputVolumeReady(*runtime.outputVolume, multiple)) return false;
-  if (!multiple) return true;
+  if (!multiple || runtime.options.virtualOutput) return true;
   if (!runtime.masterControlsInitialized) return false;
   const auto resolved = resolveConfiguredOutputs(runtime.options.outputConfiguration, runtime.availableOutputs.outputs);
   for (const auto &output : resolved) {
@@ -1202,7 +1208,7 @@ static void streamParameterChanged(void *data, std::uint32_t id,
                                    const spa_pod *parameter) {
   auto &context = *static_cast<StreamCallbackContext *>(data);
   auto &runtime = *context.runtime;
-  if (id == SPA_PARAM_Props && context.input && runtime.options.outputConfiguration.mode == OutputMode::multiple) {
+  if (id == SPA_PARAM_Props && context.input && usesDistribution(runtime.options)) {
     updateMasterVolume(runtime, parameter);
     return;
   }
@@ -1615,8 +1621,11 @@ static FilterGraphProperties currentFilterGraphProperties(
        .channelCount = runtime.options.channelCount,
        .forceRate = forceRate,
        .inputChannelCount = streamChannelCount(runtime.options, true),
-       .multipleOutputs = runtime.options.outputConfiguration.mode == OutputMode::multiple});
-  if (runtime.options.outputConfiguration.mode == OutputMode::multiple)
+       .multipleOutputs = runtime.options.outputConfiguration.mode == OutputMode::multiple,
+       .virtualOutput = runtime.options.virtualOutput,
+       .distributionSerial = runtime.options.virtualOutput && runtime.outputVolume
+           ? pipeWireDistributionSerial(*runtime.outputVolume) : 0});
+  if (!runtime.options.virtualOutput && runtime.options.outputConfiguration.mode == OutputMode::multiple)
     graph.input.emplace_back("node.pipetune.master-state", runtime.masterControlsInitialized ? "retained" : "restore");
   return graph;
 }
@@ -1635,7 +1644,7 @@ static std::string connectStream(PipeWireRuntime &runtime, pw_stream *stream,
     policy = runtime.configuredRatePolicy;
   }
   const auto channelCount = streamChannelCount(runtime.options, direction == PW_DIRECTION_INPUT);
-  const auto numbered = direction == PW_DIRECTION_OUTPUT && runtime.options.outputConfiguration.mode == OutputMode::multiple;
+  const auto numbered = direction == PW_DIRECTION_OUTPUT && usesDistribution(runtime.options);
   auto info = makeRawFormat(channelCount, preferredRate, numbered);
   const spa_pod *format =
       policy.mode == SampleRateMode::fixed
@@ -1675,13 +1684,16 @@ static void destroyOutputStream(PipeWireRuntime &runtime) {
   runtime.outputStreamSampleRate.store(0, std::memory_order_release);
 }
 
-static void destroyAudioStreams(PipeWireRuntime &runtime) {
+static void destroyAudioStreams(PipeWireRuntime &runtime, bool keepInput = false) {
   if (runtime.outputVolume) runtime.physicalVolumeReady.store(false, std::memory_order_release);
   // Output configuration can replace the slot count. Quiesce the monitor
   // before publishing that width, independently of the direct audio route.
   if (runtime.mixedOutputStream != nullptr)
     static_cast<void>(pw_stream_set_active(runtime.mixedOutputStream, false));
   destroyOutputStream(runtime);
+  // Device assignments change the output width. The public Processed input
+  // stays stereo, so existing desktop playback can keep its links throughout.
+  if (keepInput) return;
   if (runtime.inputStream != nullptr) {
     if (runtime.inputListenerInstalled) {
       spa_hook_remove(&runtime.inputListener);
@@ -1739,9 +1751,11 @@ static void destroyMixedOutputMeter(PipeWireRuntime &runtime) {
 }
 
 static std::string createMixedOutputMeter(PipeWireRuntime &runtime) {
+  const auto target = runtime.options.virtualOutput ? std::to_string(pipeWireDistributionSerial(*runtime.outputVolume))
+      : runtime.options.filterName + ".distribution";
   runtime.mixedOutputStream = pw_stream_new(runtime.core, "PipeTune mixed output meter",
       pw_properties_new(PW_KEY_NODE_NAME, (runtime.options.filterName + ".mixed-meter").c_str(),
-          PW_KEY_TARGET_OBJECT, (runtime.options.filterName + ".distribution").c_str(),
+          PW_KEY_TARGET_OBJECT, target.c_str(), PW_KEY_NODE_DONT_RECONNECT, runtime.options.virtualOutput ? "true" : "false",
           PW_KEY_STREAM_CAPTURE_SINK, "true", PW_KEY_STREAM_MONITOR, "true", "stream.dont-remix", "true",
           "node.passive", "true", "node.dont-fallback", "true", "node.dont-move", "true", "node.linger", "true",
           "node.pipetune.internal", "true", nullptr));
@@ -1790,10 +1804,17 @@ static std::string ensureDirectOutput(PipeWireRuntime &runtime) {
   if (runtime.options.outputConfiguration.mode == OutputMode::multiple) {
     auto policy = SampleRatePolicy{};
     { auto lock = std::scoped_lock(runtime.rateStateMutex); policy = runtime.configuredRatePolicy; }
-    arguments = makeDirectOutputArguments(runtime.options.filterName, runtime.options.channelCount, policy);
+    // In virtual routing the Processed playback stream supplies the clock
+    // request. Direct follows that clock and retains its application links.
+    arguments = makeDirectOutputArguments(runtime.options.filterName, runtime.options.channelCount,
+        runtime.options.virtualOutput ? defaultSampleRatePolicy() : policy, runtime.options.virtualOutput);
     if (!arguments.error.empty()) return arguments.error;
   }
   if (arguments.arguments == runtime.directOutputArguments) {
+    if (runtime.options.virtualOutput && runtime.directOutput && !runtime.mixedOutputStream) {
+      const auto error = attachPipeWireDirectPlayback(*runtime.directOutput, pipeWireDistributionSerial(*runtime.outputVolume));
+      return error.empty() ? createMixedOutputMeter(runtime) : error;
+    }
     if (runtime.mixedOutputStream != nullptr) {
       const auto result = pw_stream_set_active(runtime.mixedOutputStream, true);
       if (result < 0) return systemError("cannot resume mixed output meter", result);
@@ -1807,7 +1828,8 @@ static std::string ensureDirectOutput(PipeWireRuntime &runtime) {
   runtime.directOutput = createPipeWireDirectOutput(runtime.core, arguments.arguments,
       [](pw_stream *, const spa_pod *props, void *data) {
         updateMasterVolume(*static_cast<PipeWireRuntime *>(data), props);
-      }, [](const std::string &error, void *data) { failRuntime(*static_cast<PipeWireRuntime *>(data), error); }, &runtime);
+      }, [](const std::string &error, void *data) { failRuntime(*static_cast<PipeWireRuntime *>(data), error); }, &runtime,
+      runtime.options.virtualOutput ? pipeWireDistributionSerial(*runtime.outputVolume) : 0);
   if (runtime.directOutput == nullptr) return systemError("cannot create direct output", -errno);
   runtime.directOutputArguments = std::move(arguments.arguments);
   if (!publishMasterVolume(runtime)) return "cannot initialize shared Direct controls";
@@ -1815,6 +1837,7 @@ static std::string ensureDirectOutput(PipeWireRuntime &runtime) {
 }
 
 static std::string createAudioStreams(PipeWireRuntime &runtime) {
+  if (runtime.waitingForVirtualBus) return {};
   const auto graph = currentFilterGraphProperties(runtime);
   auto *inputProperties = makePipeWireProperties(graph.input);
   if (inputProperties == nullptr) {
@@ -1842,7 +1865,7 @@ static std::string createAudioStreams(PipeWireRuntime &runtime) {
     destroyAudioStreams(runtime);
     return inputError;
   }
-  if (runtime.options.outputConfiguration.mode == OutputMode::multiple && !publishMasterVolume(runtime)) {
+  if (usesDistribution(runtime.options) && !publishMasterVolume(runtime)) {
     destroyAudioStreams(runtime);
     return "cannot initialize multiple-output master volume";
   }
@@ -1875,17 +1898,39 @@ static void outputPathsChanged(const std::vector<PipeWireOutputPath> &paths, voi
   requestControlStatusUpdate(runtime);
 }
 
+static std::string resumeConfiguredStreams(PipeWireRuntime &runtime);
+
+static void distributionVolumeChanged(void *data) {
+  auto &runtime = *static_cast<PipeWireRuntime *>(data);
+  if (runtime.completed || !runtime.error.empty()) return;
+  if (runtime.waitingForVirtualBus && pipeWireDistributionSerial(*runtime.outputVolume) != 0) {
+    runtime.waitingForVirtualBus = false;
+    const auto error = resumeConfiguredStreams(runtime);
+    if (!error.empty()) return failRuntime(runtime, error);
+    // Inventory and user requests may have arrived before the new bus did.
+    auto *loop = pw_main_loop_get_loop(runtime.mainLoop);
+    pw_loop_signal_event(loop, runtime.outputGraphSource);
+    pw_loop_signal_event(loop, runtime.outputChangeSource);
+  }
+  finishReadinessCheck(runtime);
+}
+
 static std::string replaceOutputDistribution(PipeWireRuntime &runtime, const std::string &arguments) {
   if (!arguments.empty() && !runtime.outputVolume) {
     runtime.outputVolume = createPipeWireOutputVolume(runtime.core, runtime.options.filterName + ".distribution",
         [](const std::string &error, void *data) { failRuntime(*static_cast<PipeWireRuntime *>(data), error); },
-        [](void *data) { finishReadinessCheck(*static_cast<PipeWireRuntime *>(data)); }, &runtime);
+        distributionVolumeChanged, &runtime, !runtime.options.virtualOutput);
     if (!runtime.outputVolume) return "cannot observe mixed-output volume";
   }
   if (runtime.outputVolume && !setPipeWireOutputVolume(*runtime.outputVolume, runtime.options.channelCount,
       runtime.masterVolume, !runtime.masterControlsInitialized || runtime.masterMute))
     return "cannot initialize mixed-output volume";
   if (runtime.outputVolume) {
+    if (runtime.options.virtualOutput && runtime.directOutput) {
+      const auto error = detachPipeWireDirectPlayback(*runtime.directOutput);
+      if (!error.empty()) return error;
+      destroyMixedOutputMeter(runtime);
+    }
     preparePipeWireOutputVolume(*runtime.outputVolume);
     runtime.physicalVolumeReady.store(false, std::memory_order_release);
   }
@@ -1904,6 +1949,7 @@ static std::string replaceOutputDistribution(PipeWireRuntime &runtime, const std
     pw_impl_module_destroy(runtime.outputDistribution);
   }
   runtime.outputDistribution = replacement;
+  runtime.waitingForVirtualBus = runtime.options.virtualOutput && replacement != nullptr;
   runtime.outputDistributionArguments = arguments;
   if (replacement != nullptr) {
     static const auto events = [] {
@@ -2295,18 +2341,41 @@ static void finishOutputChange(PipeWireRuntime &runtime) {
   requestControlStatusUpdate(runtime);
 }
 
+static OutputDistributionArguments distributionArguments(const PipeWireRuntime &runtime,
+                                                         const OutputConfiguration &configuration) {
+  if (!runtime.options.virtualOutput && configuration.mode != OutputMode::multiple) return {};
+  return makeOutputDistributionArguments(runtime.options.filterName + ".distribution",
+      runtime.options.filterName, configuration, runtime.availableOutputs.outputs, runtime.options.virtualOutput);
+}
+
+static std::string resumeConfiguredStreams(PipeWireRuntime &runtime) {
+  if (runtime.inputStream == nullptr) return createAudioStreams(runtime);
+  // The retained input will not receive another format event just because
+  // its DSP buffers changed. Configure the new converters while it is idle.
+  const auto rate = runtime.inputStreamSampleRate.load(std::memory_order_acquire);
+  if (runtime.inputFormatReady && runtime.rateBridgeStreamRate == 0 && !applyNegotiatedStreamRate(runtime, true, rate))
+    return "cannot restore the negotiated input rate after output reconfiguration";
+  const auto error = createOutputStream(runtime, currentFilterGraphProperties(runtime));
+  if (!error.empty()) return error;
+  const auto directError = ensureDirectOutput(runtime);
+  if (!directError.empty()) return directError;
+  // Negotiate the replacement even if no desktop application is playing yet.
+  if (!setInputAlwaysProcess(runtime, true)) return "cannot schedule the Processed input";
+  const auto active = pw_stream_set_active(runtime.inputStream, true);
+  return active < 0 ? systemError("cannot resume capture after output reconfiguration", active) : std::string{};
+}
+
 static std::string rebuildOutputStreams(PipeWireRuntime &runtime) {
-  if (runtime.options.outputConfiguration.mode == OutputMode::multiple) {
-    const auto arguments = makeOutputDistributionArguments(runtime.options.filterName + ".distribution",
-        runtime.options.filterName, runtime.options.outputConfiguration, runtime.availableOutputs.outputs);
+  if (usesDistribution(runtime.options)) {
+    const auto arguments = distributionArguments(runtime, runtime.options.outputConfiguration);
     if (!arguments.error.empty()) return arguments.error;
     const auto error = replaceOutputDistribution(runtime, arguments.arguments);
-    if (!error.empty()) return error;
+    if (!error.empty() || runtime.waitingForVirtualBus) return error;
   }
-  const auto streamError = createAudioStreams(runtime);
+  const auto streamError = resumeConfiguredStreams(runtime);
   if (!streamError.empty()) return streamError;
   // In single mode, restore OS selection only after its new filter exists.
-  if (runtime.options.outputConfiguration.mode == OutputMode::single)
+  if (!usesDistribution(runtime.options))
     return replaceOutputDistribution(runtime, {});
   return {};
 }
@@ -2314,6 +2383,7 @@ static std::string rebuildOutputStreams(PipeWireRuntime &runtime) {
 static void outputChangeRequested(void *data, std::uint64_t) {
   auto &runtime = *static_cast<PipeWireRuntime *>(data);
   if (runtime.completed || !runtime.error.empty()) return;
+  if (runtime.waitingForVirtualBus && runtime.outputFailure.empty()) return;
   auto lock = std::unique_lock(runtime.pipelineMutationMutex);
   if (runtime.profileTransition.phase == PipeWireRuntime::ProfilePhase::prepared &&
       !runtime.previousOutput.has_value()) {
@@ -2323,7 +2393,7 @@ static void outputChangeRequested(void *data, std::uint64_t) {
   if (runtime.previousOutput.has_value()) {
     if (runtime.outputRollingBack || runtime.outputFailure.empty()) return;
     runtime.outputRollingBack = true;
-    destroyAudioStreams(runtime);
+    destroyAudioStreams(runtime, runtime.options.virtualOutput);
     runtime.retiredOverrunFrames += runtime.audioBuffers->ring.overrunFrames();
     runtime.retiredUnderrunFrames += runtime.audioBuffers->ring.underrunFrames();
     runtime.audioBuffers = std::move(runtime.previousAudioBuffers);
@@ -2360,9 +2430,7 @@ static void outputChangeRequested(void *data, std::uint64_t) {
       return completeOutputRequest(runtime, "output device inventory is unavailable");
     const auto width = outputDspChannelCount(configuration);
     if (!preset.has_value() && configuration.mode == runtime.options.outputConfiguration.mode && width == runtime.options.channelCount) {
-      const auto arguments = configuration.mode == OutputMode::multiple ?
-          makeOutputDistributionArguments(runtime.options.filterName + ".distribution",
-              runtime.options.filterName, configuration, runtime.availableOutputs.outputs) : OutputDistributionArguments{};
+      const auto arguments = distributionArguments(runtime, configuration);
       if (!arguments.error.empty()) return completeOutputRequest(runtime, arguments.error);
       if (arguments.arguments == runtime.outputDistributionArguments) {
         // Labels and retained choices in single mode do not alter the graph.
@@ -2387,7 +2455,7 @@ static void outputChangeRequested(void *data, std::uint64_t) {
     } catch (const std::exception &exception) {
       return completeOutputRequest(runtime, std::string("cannot prepare output audio buffers: ") + exception.what());
     }
-    destroyAudioStreams(runtime);
+    destroyAudioStreams(runtime, runtime.options.virtualOutput);
     runtime.previousOutput = runtime.options.outputConfiguration;
     runtime.previousOutputWidth = runtime.options.channelCount;
     runtime.previousOutputRate = sampleRate;
@@ -2420,6 +2488,7 @@ static void outputChangeRequested(void *data, std::uint64_t) {
   const auto timerResult = pw_loop_update_timer(pw_main_loop_get_loop(runtime.mainLoop),
       runtime.outputChangeTimer, &delay, &interval, false);
   if (timerResult < 0) return failRuntime(runtime, systemError("cannot arm output-change deadline", timerResult));
+  lock.unlock();
   const auto error = rebuildOutputStreams(runtime);
   if (!error.empty()) failRuntime(runtime, error);
 }
@@ -2427,10 +2496,9 @@ static void outputChangeRequested(void *data, std::uint64_t) {
 static void applyOutputInventory(void *data, std::uint64_t) {
   auto &runtime = *static_cast<PipeWireRuntime *>(data);
   if (runtime.profileTransition.phase != PipeWireRuntime::ProfilePhase::idle) return;
-  if (runtime.completed || runtime.options.outputConfiguration.mode != OutputMode::multiple) return;
+  if (runtime.completed || runtime.waitingForVirtualBus || !usesDistribution(runtime.options)) return;
   if (!runtime.availableOutputs.error.empty()) return failRuntime(runtime, runtime.availableOutputs.error);
-  const auto arguments = makeOutputDistributionArguments(runtime.options.filterName + ".distribution",
-      runtime.options.filterName, runtime.options.outputConfiguration, runtime.availableOutputs.outputs);
+  const auto arguments = distributionArguments(runtime, runtime.options.outputConfiguration);
   if (!arguments.error.empty()) return failRuntime(runtime, arguments.error);
   if (!runtime.outputPolicyReset && !runtime.outputRateMismatch && runtime.outputDistribution != nullptr &&
       arguments.arguments == runtime.outputDistributionArguments) return;
@@ -2447,6 +2515,7 @@ static void applyOutputInventory(void *data, std::uint64_t) {
   // and the master controls survive across both WirePlumber versions.
   const auto distributionError = replaceOutputDistribution(runtime, arguments.arguments);
   if (!distributionError.empty()) return failRuntime(runtime, distributionError);
+  if (runtime.waitingForVirtualBus) return;
   const auto error = runtime.inputStream == nullptr ? createAudioStreams(runtime) :
       createOutputStream(runtime, currentFilterGraphProperties(runtime));
   if (!error.empty()) return failRuntime(runtime, error);
@@ -2680,7 +2749,7 @@ static void outputInventoryChanged(const OutputInventoryResult &snapshot, void *
   runtime.profileRestoreDecisionPending.store(false, std::memory_order_release);
   requestControlStatusUpdate(runtime);
   finishReadinessCheck(runtime);
-  if (runtime.options.outputConfiguration.mode != OutputMode::multiple) return;
+  if (!usesDistribution(runtime.options)) return;
   const auto generation = pipeWireOutputPolicyGeneration(*runtime.outputInventory);
   if (generation != runtime.outputPolicyGeneration) {
     runtime.outputPolicyGeneration = generation;
@@ -3916,7 +3985,7 @@ static bool createAudioClient(PipeWireRuntime &runtime) {
     failRuntime(runtime, "cannot observe audio outputs");
     return false;
   }
-  if (runtime.options.outputConfiguration.mode == OutputMode::multiple) return true;
+  if (usesDistribution(runtime.options)) return true;
   const auto error = createAudioStreams(runtime);
   if (!error.empty()) {
     failRuntime(runtime, error);

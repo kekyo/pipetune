@@ -15,13 +15,14 @@ namespace pipetune {
 
 OutputDistributionArguments makeOutputDistributionArguments(
     const std::string &nodeName, const std::string &publicInputName, const OutputConfiguration &configuration,
-    std::span<const AvailableOutput> inventory) {
+    std::span<const AvailableOutput> inventory, bool virtualOutput) {
   const auto error = validateOutputConfiguration(configuration);
   if (!error.empty()) return {{}, error};
   if (nodeName.empty() || nodeName.find('\0') != std::string::npos || publicInputName.empty() ||
-      publicInputName.find('\0') != std::string::npos || configuration.mode != OutputMode::multiple)
+      publicInputName.find('\0') != std::string::npos || (!virtualOutput && configuration.mode != OutputMode::multiple))
     return {{}, "output distribution requires a node name and multiple mode"};
-  const auto resolved = resolveConfiguredOutputs(configuration, inventory);
+  const auto resolved = configuration.mode == OutputMode::multiple
+      ? resolveConfiguredOutputs(configuration, inventory) : std::vector<ResolvedOutput>{};
   auto volumeTargets = std::string{};
   for (const auto &output : resolved) {
     if (!output.inventoryIndex) continue;
@@ -48,8 +49,6 @@ OutputDistributionArguments makeOutputDistributionArguments(
       !yyjson_mut_obj_add_bool(document.get(), root, "combine.latency-compensate", true) ||
       !yyjson_mut_obj_add_bool(document.get(), combined, "node.virtual", true) ||
       !yyjson_mut_obj_add_bool(document.get(), combined, "node.pipetune.internal", true) ||
-      !yyjson_mut_obj_add_bool(document.get(), combined, "node.pipetune.aggregate", true) ||
-      !yyjson_mut_obj_add_bool(document.get(), combined, "node.pipetune.manage-default", true) ||
       !add(combined, "node.param.Props", "{ volume = 1.0 mute = true }") ||
       !yyjson_mut_obj_add_bool(document.get(), combined, "monitor.channel-volumes", true) ||
       !yyjson_mut_obj_add_bool(document.get(), combined, "state.restore-props", false) ||
@@ -59,10 +58,19 @@ OutputDistributionArguments makeOutputDistributionArguments(
       !yyjson_mut_obj_add_bool(document.get(), stream, "node.dont-fallback", true) ||
       !yyjson_mut_obj_add_bool(document.get(), stream, "node.dont-move", true) ||
       !yyjson_mut_obj_add_bool(document.get(), stream, "node.pipetune.managed-output", true) ||
-      !add(stream, "node.param.Props", "{ volume = 1.0 mute = true }") ||
+      !add(stream, "node.param.Props", virtualOutput ? "{ volume = 1.0 mute = false }" : "{ volume = 1.0 mute = true }") ||
       !yyjson_mut_obj_add_bool(document.get(), stream, "state.restore-props", false) ||
       !add(stream, "node.pipetune.public-target", publicInputName) ||
       !add(stream, "media.role", "PipeTune-Filter-Output")) return allocationError;
+  if (virtualOutput) {
+    // The desktop retains ownership of device controls. In particular, old
+    // policy still loaded during migration must never acquire these outputs.
+    if (!add(combined, "media.class", "Stream/Input/Audio") ||
+        !yyjson_mut_obj_add_bool(document.get(), combined, "node.autoconnect", false) ||
+        !yyjson_mut_obj_add_bool(document.get(), combined, "node.pipetune.virtual-output", true) ||
+        !yyjson_mut_obj_add_bool(document.get(), stream, "node.dont-reconnect", true)) return allocationError;
+  } else if (!yyjson_mut_obj_add_bool(document.get(), combined, "node.pipetune.aggregate", true) ||
+             !yyjson_mut_obj_add_bool(document.get(), combined, "node.pipetune.manage-default", true)) return allocationError;
   for (auto slot = 0U; slot < outputDspChannelCount(configuration); ++slot) {
     const auto position = "AUX" + std::to_string(slot);
     if (!yyjson_mut_arr_add_strcpy(document.get(), positions, position.c_str())) return allocationError;
@@ -98,6 +106,7 @@ OutputDistributionArguments makeOutputDistributionArguments(
           !yyjson_mut_arr_add_strcpy(document.get(), target, output.device.channelPositions[channel].c_str())) return allocationError;
     }
     if (!add(create, "node.pipetune.output-slots", channelSlots)) return allocationError;
+    if (virtualOutput && !add(create, "target.object", std::to_string(available.nodeSerial))) return allocationError;
   }
   auto length = std::size_t{0};
   auto *encoded = yyjson_mut_write(document.get(), YYJSON_WRITE_ESCAPE_UNICODE, &length);
@@ -128,7 +137,7 @@ static std::vector<std::string> directInputPositions(std::uint32_t channels) {
 
 OutputDistributionArguments makeDirectOutputArguments(
     const std::string &publicInputName, std::uint32_t channels,
-    const SampleRatePolicy &policy) {
+    const SampleRatePolicy &policy, bool virtualOutput) {
   if (publicInputName.empty() || publicInputName.find('\0') != std::string::npos ||
       channels < 2 || channels > 16 || !sampleRatePolicyIsValid(policy))
     return {{}, "invalid direct output configuration"};
@@ -149,7 +158,7 @@ OutputDistributionArguments makeDirectOutputArguments(
       !add(capture, "node.name", publicInputName + ".direct") ||
       !add(capture, "media.class", "Audio/Sink") ||
       !yyjson_mut_obj_add_bool(document.get(), capture, "node.virtual", true) ||
-      !yyjson_mut_obj_add_bool(document.get(), capture, "node.pipetune.public-sink", true) ||
+      !yyjson_mut_obj_add_bool(document.get(), capture, virtualOutput ? "node.pipetune.virtual-output" : "node.pipetune.public-sink", true) ||
       !yyjson_mut_obj_add_bool(document.get(), capture, "node.pipetune.direct", true) ||
       !yyjson_mut_obj_add_bool(document.get(), capture, "state.restore-props", false) ||
       !add(capture, "channelmix.min-volume", "1.0") ||
@@ -165,6 +174,7 @@ OutputDistributionArguments makeDirectOutputArguments(
       !yyjson_mut_obj_add_bool(document.get(), playback, "node.dont-move", true) ||
       !yyjson_mut_obj_add_bool(document.get(), playback, "node.linger", true) ||
       !yyjson_mut_obj_add_bool(document.get(), playback, "stream.dont-remix", true)) return error;
+  if (virtualOutput && !add(capture, "priority.session", "50")) return error;
   const auto inputPositions = directInputPositions(channels);
   for (auto *properties : {capture, playback}) {
     if (!add(properties, "audio.format", "F32P") ||

@@ -14,13 +14,19 @@ const regularRoutePolicy = requestedScenario.endsWith("-route-policy");
 const delayedInputRestore = requestedScenario === "product-output-change-delayed-input";
 const scenario = delayedInputRestore ? "product-output-change" :
   regularRoutePolicy ? requestedScenario.slice(0, -"-route-policy".length) : requestedScenario;
+const soleReconnect = scenario === "product-virtual-sole-reconnect";
+const virtualOutputTest = soleReconnect || ["product-virtual-one-output", "product-virtual-reconnect",
+  "product-virtual-crash", "product-virtual-cli", "product-direct-virtual"].includes(scenario);
 const productPulse = scenario === "product-direct-device-volume-pulse";
 assert.ok(pipewire && wireplumber && driver, "PipeWire, WirePlumber and probe paths are required");
 const version = spawnSync(wireplumber, ["--version"], { encoding: "utf8" });
 assert.equal(version.status, 0, version.stderr);
 const wirePlumber04 = /libwireplumber 0\.4\./u.test(version.stdout);
-const fixedPcmTest = scenario.startsWith("product-sfz-") || scenario.startsWith("product-matrix-freewheel") || scenario === "product-matrix-realtime";
-const onePcmOutput = scenario === "product-matrix-freewheel-one-output";
+const fixedPcmTest = scenario.startsWith("product-sfz-") || scenario.startsWith("product-matrix-freewheel") ||
+  scenario === "product-matrix-realtime" || scenario === "product-virtual-one-output" ||
+  scenario === "product-virtual-crash" || scenario === "product-virtual-cli";
+const onePcmOutput = scenario === "product-matrix-freewheel-one-output" ||
+  scenario === "product-virtual-one-output" || scenario === "product-virtual-crash";
 const audioFailurePoint = scenario.startsWith("product-matrix-freewheel-fail-")
   ? scenario.slice("product-matrix-freewheel-fail-".length) : "";
 const expectedAudioFailure = {
@@ -154,7 +160,7 @@ bluez_midi_monitor.enabled = false
   }
 }
 
-if (scenario.startsWith("policy") || scenario.startsWith("product")) {
+if (scenario.startsWith("policy") || scenario.startsWith("product") && !virtualOutputTest) {
   assert.ok(policyFixture, "the PipeTune WirePlumber policy fixture is required");
   const policy = (part) => {
     const result = spawnSync(policyFixture, [part], { encoding: "utf8" });
@@ -315,7 +321,44 @@ try {
     await socketReady(join(runtime, "pulse-native"), undefined);
   }
   let manager = start("WirePlumber", "dbus-run-session", ["--", wireplumber]);
-  if (scenario === "product-audio-cancel") {
+  if (scenario === "product-virtual-cli") {
+    const audio = start("desktop playback", driver, ["audio", scenario],
+      { ...environment, PIPETUNE_PRODUCT_INPUT: "pipetune_sink" });
+    await waitForMessage(audio, "product:devices-ready");
+    const socketDirectory = join(runtime, "pipetune");
+    mkdirSync(socketDirectory, { recursive: true, mode: 0o700 });
+    const daemon = start("virtual output daemon", productDaemon, ["daemon", "--virtual-output"]);
+    await socketReady(join(socketDirectory, "control.sock"));
+    const select = start("select device", productDaemon, ["output", "select", "pipetune_product_device_0"]);
+    assert.equal((await select.completion).code, 0, select.stderr);
+    const inventory = start("device list", productDaemon, ["output", "list", "--json"]);
+    assert.equal((await inventory.completion).code, 0, inventory.stderr);
+    assert.ok(!inventory.stdout.includes('"pipetune_sink'), "PipeTune must only offer downstream devices");
+    const dump = spawnSync("pw-dump", ["--no-colors"], { env: environment, encoding: "utf8" });
+    assert.equal(dump.status, 0, dump.stderr);
+    const graph = JSON.parse("[" + dump.stdout.replace(/\]\s*\[/gu, "],[") + "]").flat();
+    const sink = graph.find((item) => item.info?.props?.["node.name"] === "pipetune_sink");
+    const desktopSinks = graph.filter((item) => item.info?.props?.["media.class"] === "Audio/Sink");
+    assert.ok(!desktopSinks.some((item) => item.info.props["node.name"] === "pipetune_sink.distribution"),
+      "an application must not be offered the internal channel bus as a playback device");
+    const prefer = start("desktop output choice", "wpctl", ["set-default", String(sink.id)]);
+    assert.equal((await prefer.completion).code, 0, prefer.stderr);
+    const clear = start("release device", productDaemon, ["output", "mode", "single"]);
+    assert.equal((await clear.completion).code, 0, clear.stderr);
+    audio.child.kill("SIGUSR1");
+    const reconnect = start("resume device", productDaemon, ["output", "select", "pipetune_product_device_0"]);
+    assert.equal((await reconnect.completion).code, 0, reconnect.stderr);
+    const choice = spawnSync("wpctl", ["inspect", "@DEFAULT_AUDIO_SINK@"], { env: environment, encoding: "utf8" });
+    assert.equal(choice.status, 0, choice.stderr);
+    assert.match(choice.stdout, new RegExp(`object.serial = "${sink.info.props["object.serial"]}"`, "u"),
+      "the running application's default sink must survive a device assignment change");
+    await waitForMessage(audio, "product:pcm-finished");
+    terminate(daemon, "SIGKILL");
+    assert.equal((await daemon.completion).signal, "SIGKILL");
+    audio.child.kill("SIGUSR2");
+    assert.equal((await audio.completion).code, 0, audio.stderr);
+    assert.ok(JSON.parse(audio.stdout).receivedFrames[0] >= 32768);
+  } else if (scenario === "product-audio-cancel") {
     const audio = start("cancelable audio fixture", driver, ["audio", "product-output-change"]);
     await waitForMessage(audio, "product:devices-ready");
     audio.child.kill("SIGTERM");
@@ -815,7 +858,7 @@ try {
     const pipeline = [
       { name: "Matrix", enabled: true, channel: "All", parameters: { mx: scenario === "product-slots" ? "001102p1304" : onePcmOutput ? "0011" : "001102p13" } },
     ];
-    if (["product-volume", "product-reconnect", "product-profile", "product-restart", "product-restart-mute"].includes(scenario)) pipeline.push({ name: "DC Offset", enabled: true, channel: "All", parameters: { of: 0.125 } });
+    if (soleReconnect || ["product-volume", "product-reconnect", "product-virtual-reconnect", "product-profile", "product-restart", "product-restart-mute"].includes(scenario)) pipeline.push({ name: "DC Offset", enabled: true, channel: "All", parameters: { of: 0.125 } });
     if (scenario === "product-time-alignment") pipeline.push({ name: "Time Alignment", enabled: true, channel: "34", parameters: { dl: 1 } });
     if (scenario.startsWith("product-sfz-")) {
       const root = join(config, "effetune");
@@ -833,6 +876,11 @@ try {
     writeFileSync(preset, JSON.stringify({ pipeline }));
     const runtime = start("product runtime", driver, ["runtime", ["product-bypass", "product-mode-volume"].includes(scenario) ? "bypass" : preset, scenario]);
     await waitForMessage(runtime, "product:runtime-ready");
+    if (virtualOutputTest) {
+      assert.equal(existsSync(join(config, "wireplumber", "policy.lua.d", "60-pipetune-policy.lua")), false);
+      assert.equal(existsSync(join(config, "wireplumber", "wireplumber.conf.d", "60-pipetune-visibility.conf")), false);
+      assert.equal(existsSync(join(config, "pipewire", "pipewire.conf.d", "60-pipetune-presentation.conf")), false);
+    }
     audio.child.kill("SIGUSR1");
     if (scenario === "product-mode-volume") {
       const status = start("mode volume status", driver, ["control", environment.PIPETUNE_PRODUCT_SOCKET,
@@ -1678,8 +1726,49 @@ try {
         if (audioFailurePoint === "cancel" && !audio.stderr.includes("product:audio-failed")) audio.child.kill("SIGTERM");
       }
       if (audioFailurePoint !== "runtime-exit") await waitForMessage(audio, "product:pcm-finished");
-      await stopRuntime();
-      audio.child.kill("SIGUSR2");
+      if (virtualOutputTest) {
+        const dump = spawnSync("pw-dump", ["--no-colors"], { encoding: "utf8", env: environment });
+        assert.equal(dump.status, 0, dump.stderr);
+        const nodes = JSON.parse("[" + dump.stdout.replace(/\]\s*\[/gu, "],[") + "]").flat()
+          .filter((item) => item.type === "PipeWire:Interface:Node");
+        const names = nodes.map((item) => item.info?.props?.["node.name"]);
+        assert.ok(names.includes("pipetune_product_input"), "the Processed sink must be available to applications");
+        assert.ok(names.includes("pipetune_product_device_0"), "the selected physical output must remain visible");
+        assert.ok(names.includes("pipetune_product_device_1"), "other physical outputs must remain visible");
+      }
+      if (scenario === "product-virtual-crash") {
+        audio.child.kill("SIGWINCH");
+        await waitForMessage(audio, "product:physical-volume-requested");
+        const verifyPhysicalControls = () => {
+          const dump = spawnSync("pw-dump", ["--no-colors"], { encoding: "utf8", env: environment });
+          assert.equal(dump.status, 0, dump.stderr);
+          const graph = JSON.parse("[" + dump.stdout.replace(/\]\s*\[/gu, "],[") + "]").flat();
+          const nodes = ["pipetune_product_device_0", "pipetune_product_device_1"].map((name) => {
+            const node = graph.find((item) => item.type === "PipeWire:Interface:Node" &&
+              item.info?.props?.["node.name"] === name);
+            assert.ok(node, `physical output ${name} must remain visible`);
+            return node;
+          });
+          const props = nodes.map((node) => {
+            const result = spawnSync("pw-cli", ["enum-params", String(node.id), "Props"],
+              { encoding: "utf8", env: environment });
+            assert.equal(result.status, 0, result.stderr);
+            return result.stdout;
+          });
+          assert.match(props[0], /Props:channelVolumes[^\n]*\n[^\n]*\n\s+Float 0\.500000\n\s+Float 0\.250000/u);
+          assert.match(props[0], /Props:mute[^\n]*\n\s+Bool false/u);
+          assert.match(props[1], /Props:mute[^\n]*\n\s+Bool true/u);
+        };
+        verifyPhysicalControls();
+        terminate(runtime, "SIGKILL");
+        assert.equal((await runtime.completion).signal, "SIGKILL");
+        verifyPhysicalControls();
+        audio.child.kill("SIGWINCH");
+        await waitForMessage(audio, "product:direct-pcm-finished");
+      } else {
+        await stopRuntime();
+        audio.child.kill("SIGUSR2");
+      }
     }
     const result = await audio.completion;
     assert.equal(result.code, expectedAudioFailure ? 1 : 0, `${audio.stdout}\n${audio.stderr}`);
@@ -1709,14 +1798,18 @@ try {
       else if (fixedPcmTest)
         assert.ok(report.compensationFrames[0] >= 62 && report.compensationFrames[0] <= 63,
           "Matrix-only freewheel must verify tagged PCM and the declared output delay");
-      assert.ok(report.receivedFrames.every((frames, device) => scenario === "product-disconnected" || (onePcmOutput && device === 1) ? frames === 0 : frames >= 32768));
+      const receivedFrames = scenario === "product-virtual-crash" ? report.stages.at(-1) : report.receivedFrames;
+      assert.ok(receivedFrames.every((frames, device) => scenario === "product-disconnected" ||
+        ((onePcmOutput || soleReconnect) && device === 1) ? frames === 0 : frames >= 32768));
       assert.ok(report.producedFrames >= 32768);
-      assert.equal(report.stages.length, scenario === "product-output-recovery" ? 12 : graphClockTest || ["product-controls", "product-output-change"].includes(scenario) ? 9 : scenario === "product-profile" ? 5 : ["product-restart", "product-latency", "product-latency-units", "product-latency-reconnect", "product-time-alignment", "product-output-timeout"].includes(scenario) ? 3 :
-        ["product-volume", "product-reconnect", "product-restart-mute"].includes(scenario) ? 4 : 1);
+      assert.equal(report.stages.length, scenario === "product-virtual-crash" ? 2 :
+        scenario === "product-output-recovery" ? 12 : graphClockTest || ["product-controls", "product-output-change"].includes(scenario) ? 9 : scenario === "product-profile" ? 5 : ["product-restart", "product-latency", "product-latency-units", "product-latency-reconnect", "product-time-alignment", "product-output-timeout"].includes(scenario) ? 3 :
+        soleReconnect || ["product-volume", "product-reconnect", "product-virtual-reconnect", "product-restart-mute"].includes(scenario) ? 4 : 1);
       assert.ok(report.stages.every((stage, index) => stage.every((frames, device) =>
-        scenario === "product-disconnected" || (onePcmOutput && device === 1) || (scenario === "product-output-change" && index === 7) || (scenario === "product-latency-reconnect" && index === 1 && device === 1) ||
+        scenario === "product-disconnected" || (onePcmOutput && device === 1) || (soleReconnect && (device === 1 || index === 2)) || (scenario === "product-output-change" && index === 7) || (scenario === "product-latency-reconnect" && index === 1 && device === 1) ||
         (scenario === "product-output-recovery" && ([2,9,10].includes(index) || ([1,3,7].includes(index) && device === 0))) ||
-        ((["product-reconnect", "product-profile"].includes(scenario) && index === 2 || scenario === "product-profile" && index === 3) && device === 0) ? frames === 0 : frames >= 32768)));
+        ((["product-reconnect", "product-virtual-reconnect", "product-profile"].includes(scenario) && index === 2 ||
+          scenario === "product-profile" && index === 3) && device === 0) ? frames === 0 : frames >= 32768)));
       if (scenario === "product-latency-reconnect") {
         assert.equal(report.compensationFrames[1], -1, "a missing output has no measured relative delay");
         for (const index of [0, 2]) assert.ok(report.compensationFrames[index] >= 62 && report.compensationFrames[index] <= 63);
@@ -1727,7 +1820,7 @@ try {
         assert.deepEqual(report.graphRates, [graphRate, ...Array(7).fill(96000), 48000]);
         assert.deepEqual(report.graphQuanta, [graphQuantum, ...Array(7).fill(graphQuantum * 2), graphQuantum]);
       }
-      if (scenario === "product-reconnect") {
+      if (scenario === "product-reconnect" || scenario === "product-virtual-reconnect") {
         assert.ok(report.clockGenerations.every((serial) => serial > 0));
         assert.notEqual(report.clockGenerations[0], report.clockGenerations[1]);
       }
