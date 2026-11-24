@@ -111,6 +111,8 @@ struct CommandLineOptions {
   RemoteListenerOptions remote = {};
   /** Direct-run per-instrument SFZ budget in MiB. */
   std::uint32_t sfzMaxSizeMiB = kDefaultSfzMaxSizeMiB;
+  /** Use physical outputs selected in PipeTune with the stock session policy. */
+  bool virtualOutput = false;
 };
 
 /**

@@ -88,6 +88,11 @@ static bool testControlActions() {
 }
 
 static bool testDaemonAction() {
+  for (const auto command : {std::string_view{"daemon"}, std::string_view{"setup"}}) {
+    const auto virtualOutput = pipetune::parseCommandLine(
+        std::array<std::string_view, 2>{command, "--virtual-output"});
+    if (!check(virtualOutput.error.empty(), virtualOutput.error)) return false;
+  }
   constexpr auto defaults = std::array<std::string_view, 1>{"daemon"};
   constexpr auto configured = std::array<std::string_view, 3>{
       "daemon", "--config", "/tmp/pipetune/environment"};

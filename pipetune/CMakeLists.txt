@@ -1073,6 +1073,15 @@ if(BUILD_TESTING)
         $<TARGET_FILE_DIR:pipetune_presentation> ${PIPETUNE_PIPEWIRE_MODULE_DIR})
     set_tests_properties(pipetune_${scenario} PROPERTIES TIMEOUT 45)
   endforeach()
+  foreach(scenario product-virtual-one-output product-virtual-reconnect product-virtual-sole-reconnect
+                   product-virtual-crash product-virtual-cli product-direct-virtual)
+    add_test(NAME pipetune_${scenario}
+      COMMAND ${PIPETUNE_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/multi-device-output.mjs
+        ${PIPETUNE_PIPEWIRE_EXECUTABLE} ${PIPETUNE_WIREPLUMBER_EXECUTABLE}
+        $<TARGET_FILE:pipetune_product_output_tests> ${scenario}
+        "" "" "" $<TARGET_FILE:pipetune>)
+    set_tests_properties(pipetune_${scenario} PROPERTIES TIMEOUT 60)
+  endforeach()
   # This case includes two reconnect restorations and mapped PCM.
   set_tests_properties(pipetune_product-output-change pipetune_product-output-change-route-policy PROPERTIES TIMEOUT 90)
   foreach(scenario product-daemon product-daemon-volume product-daemon-volume-zero)

@@ -7,6 +7,7 @@
 #define PIPETUNE_PIPEWIRE_DIRECT_OUTPUT_H
 
 #include <memory>
+#include <cstdint>
 #include <string>
 
 struct pw_core;
@@ -36,11 +37,26 @@ using PipeWireDirectError = void (*)(const std::string &error, void *data);
  * @param control Required synchronous input control handler.
  * @param error Required connection failure handler.
  * @param data Borrowed callback context, outliving the result.
+ * @param targetSerial Exact distribution serial; zero preserves legacy name targeting.
  * @return Connected pair, or null on allocation/configuration failure.
  * @remarks Audio is copied without gain, remixing, or an additional clock domain.
  */
 PipeWireDirectOutputPtr createPipeWireDirectOutput(pw_core *core, const std::string &arguments,
-    PipeWireDirectControl control, PipeWireDirectError error, void *data);
+    PipeWireDirectControl control, PipeWireDirectError error, void *data,
+    std::uint64_t targetSerial = 0);
+
+/** Stops only playback and keeps the public Direct input connected.
+ * @return Empty on success or an error describing the failed PipeWire operation.
+ */
+std::string detachPipeWireDirectPlayback(PipeWireDirectOutput &output);
+
+/** Reconnects playback to one exact distribution generation.
+ * @param output Direct pair whose public input remains connected.
+ * @param targetSerial Nonzero object serial of the ready distribution bus.
+ * @return Empty on success or an error describing the failed PipeWire operation.
+ */
+std::string attachPipeWireDirectPlayback(PipeWireDirectOutput &output,
+    std::uint64_t targetSerial);
 
 /** Returns the borrowed public input for publishing common controls. */
 pw_stream *pipeWireDirectInput(PipeWireDirectOutput &output) noexcept;

@@ -47,6 +47,8 @@ struct UserManagementPaths {
   std::filesystem::path pipeWirePresentationPath;
   /** Versioned completion state for conditional setup. */
   std::filesystem::path setupStatePath;
+  /** Runtime directory whose lifetime bounds one user audio session. */
+  std::filesystem::path audioSessionDirectory;
   /** Advisory lock serializing setup and unsetup for one user. */
   std::filesystem::path managementLockPath;
   /** Absolute systemctl executable path. */
@@ -112,7 +114,19 @@ struct UserSetupRequest {
   ProcessRunner processRunner;
   /** Opaque process runner argument. */
   void *processUserData;
+  /** Select the stock-session virtual output, also for later service starts. */
+  bool virtualOutput = false;
 };
+
+/**
+ * Reads the per-user routing selection made by setup.
+ * @param paths Setup state, managed policies and current runtime directory.
+ * @param requested Whether the daemon was started with --virtual-output.
+ * @param enabled Receives true when virtual output can run in this session.
+ * @return Empty on success, including when setup has never been run.
+ */
+std::string readVirtualOutputSelection(const UserManagementPaths &paths,
+                                       bool requested, bool &enabled);
 
 /**
  * Describes one unsetup request.
@@ -140,6 +154,8 @@ struct UserManagementResult {
   std::vector<std::string> warnings;
   /** Fatal or partial-completion diagnostic. */
   std::string error;
+  /** True when a live legacy audio session must end before virtual routing starts. */
+  bool deferredVirtualOutput = false;
 };
 
 /**

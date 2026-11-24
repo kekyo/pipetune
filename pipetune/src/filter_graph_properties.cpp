@@ -50,7 +50,10 @@ FilterGraphProperties makeFilterGraphProperties(
   result.input.emplace_back("node.description", options.nodeDescription);
   result.input.emplace_back("node.virtual", "true");
   result.input.emplace_back("node.always-process", "true");
-  if (options.multipleOutputs) {
+  if (options.virtualOutput) {
+    result.input.emplace_back("node.pipetune.virtual-output", "true");
+    result.input.emplace_back("priority.session", "100");
+  } else if (options.multipleOutputs) {
     result.input.emplace_back("node.pipetune.public-sink", "true");
     result.input.emplace_back("node.pipetune.aggregate", "true");
     result.input.emplace_back("node.pipetune.public-input", "true");
@@ -73,8 +76,10 @@ FilterGraphProperties makeFilterGraphProperties(
   result.output.emplace_back("media.role", "PipeTune-Filter-Output");
   result.output.emplace_back("node.passive", "true");
   result.output.emplace_back("stream.dont-remix", "true");
-  if (options.multipleOutputs) {
-    result.output.emplace_back("target.object", options.nodeName + ".distribution");
+  if (options.multipleOutputs || options.virtualOutput) {
+    result.outputReconnect = !options.virtualOutput;
+    result.output.emplace_back("target.object", options.virtualOutput ?
+        std::to_string(options.distributionSerial) : options.nodeName + ".distribution");
     result.output.emplace_back("node.pipetune.managed-output", "true");
     result.output.emplace_back("node.dont-fallback", "true");
     result.output.emplace_back("node.dont-move", "true");

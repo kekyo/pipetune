@@ -34,6 +34,10 @@ struct FilterGraphPropertyOptions {
   std::uint32_t inputChannelCount = 0;
   /** True to expose one public input and target the private output distributor. */
   bool multipleOutputs = false;
+  /** Use an ordinary desktop sink without PipeTune's session policy. */
+  bool virtualOutput = false;
+  /** PipeWire serial of the registered virtual distribution bus. */
+  std::uint64_t distributionSerial = 0;
 };
 
 /** Properties and connection behavior for one filter node pair. */

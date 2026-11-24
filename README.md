@@ -128,6 +128,20 @@ PipeTune GTK starts hidden at desktop login and registers its icon when the
 tray becomes available. If the tray later disappears without a replacement,
 the settings window opens so you can still control PipeTune.
 
+### Using a virtual output
+
+Virtual output routing lets you select PipeTune in the desktop sound settings and choose the speaker or USB DAC in PipeTune. WirePlumber's standard configuration manages the devices, and physical outputs remain visible in the OS. Run this as your desktop user:
+
+```sh
+pipetune setup --virtual-output
+```
+
+When switching from the original routing, setup removes its previous audio configuration files. It leaves the current audio session and running PipeTune daemon in place, so playback continues through the original routing. To use virtual output routing, sign out of every desktop session for this user, then sign in again. If other sessions or a lingering user service keep the audio session alive, restart the PC. Ordinary `pipetune setup` calls and automatic setup through GTK retain the virtual output selection.
+
+After the new routing starts, find the device's node name with `pipetune output list` and assign it with `pipetune output select 'NODE_NAME'`. This uses Multiple mode even for one device. Then choose `PipeTune Processed Audio` as the default in the desktop sound settings. Applications using the default output will play through the DSP. If PipeTune produces no sound, before assigning a device, or after returning to Single mode, choose a physical output in the desktop settings for direct playback.
+
+The desktop controls each physical device's volume and mute. PipeTune does not force these values and leaves them in place when it exits. PipeTune's volume affects only audio sent through PipeTune. To try this routing without registering the service, run `pipetune daemon --virtual-output` in an audio session with the standard configuration.
+
 ## PipeTune settings window
 
 The PipeTune settings window always displays PipeTune's status, divided into
@@ -165,9 +179,9 @@ depend on the output mode.
 
 ### Single mode
 
-Single mode is the default. Choose a physical output, such as speakers or
-headphones, in the OS sound settings. PipeTune's DSP processing is inserted
-automatically into application audio before it reaches the selected output.
+The original routing starts in Single mode. Choose a physical output, such as
+speakers or headphones, in the OS sound settings. PipeTune inserts DSP
+processing into application audio before it reaches the selected output.
 
 ```mermaid
 flowchart LR
@@ -180,9 +194,12 @@ flowchart LR
     apps --> input --> dsp --> volume --> device
 ```
 
-The OS shows physical output names and hides PipeTune's internal input.
-Use the OS sound settings to change devices, volume, or mute. Bypass skips
-DSP processing while keeping the same output path.
+In the original routing, the OS shows physical outputs and hides PipeTune's
+internal input. Use the OS sound settings to change devices, volume, or mute.
+Bypass skips DSP processing while keeping the same output path. In virtual
+output routing, choose a physical output in the OS for direct playback in
+Single mode. The virtual output remains visible, but Single mode does not use
+PipeTune's device assignments.
 
 ### Multiple mode
 
@@ -194,7 +211,9 @@ PipeTune. The OS sound settings show two outputs that receive application audio:
 - `PipeTune Direct Output` accepts the configured number of output channels.
   It bypasses PipeTune's DSP and sends each Ch to the output Ch with the same number.
 
-Processed is the initial default when you first switch to multiple mode.
+Processed becomes the initial default when you first switch to Multiple mode
+with the original routing. With virtual output routing, choose Processed in
+the OS sound settings.
 Choose Direct when an application supplies multichannel audio. Both inputs
 can play simultaneously.
 
@@ -204,7 +223,7 @@ flowchart LR
     dsp["EffeTune DSP or bypass"]
     direct["PipeTune Direct Output<br/>multichannel input"]
     mix["PipeWire mix"]
-    volume["Shared OS volume and mute"]
+    volume["PipeTune volume and mute"]
     mapping["PipeTune channel mapping"]
     devices["Selected audio devices"]
 
@@ -213,15 +232,17 @@ flowchart LR
     mix --> volume --> mapping --> devices
 ```
 
-OS output volume and mute apply once to all channels after mixing.
-Processed and Direct share these controls, so switching inputs preserves the
-volume. This volume does not attenuate either input before mixing. Application
-volume controls and the preset's Volume remain independently adjustable.
+In the original routing, the OS volume and mute controls for Processed and
+Direct are linked and apply once to all channels after mixing. In virtual
+output routing, the OS also controls each physical device's volume and mute.
+Application volume controls and the preset's Volume remain independently
+adjustable in either routing.
 
-Selected physical outputs stay unmuted at an effective gain of 1 for controls
-exposed by PipeWire. This means the devices neither attenuate nor amplify the
-signal. Use the shared OS volume to adjust overall loudness.
-Returning to single mode restores each physical output's original volume and mute.
+In the original routing, selected physical outputs stay unmuted at an effective
+gain of 1. This means the devices neither attenuate nor amplify the signal.
+Use the shared OS volume to adjust overall loudness. Returning to Single mode
+restores each physical output's original volume and mute. Virtual output
+routing does not change the physical outputs' volume or mute.
 
 Bypass skips DSP processing for Processed only and does not affect Direct.
 Processed input uses Ch 1 and Ch 2; its other output channels are silent in
@@ -272,13 +293,16 @@ assignments for each device.
 ### Level meters
 
 The upper `DSP output levels` meters show each channel's peak after preset
-processing. These values are measured before the shared OS volume, so you can
-check DSP output even when the OS is muted in multiple mode. Direct input is
+processing. These values are measured before the original routing's shared
+volume or the virtual output routing's physical device volume. You can check
+DSP output even when the OS is muted. Direct input is
 not included in these meters.
 
 Multiple mode adds `Mixed output levels` below them. These show the combined
-Processed and Direct signals after the shared OS volume and mute have been
-applied. Use these meters to check the signal when only Direct is playing.
+Processed and Direct signals. In the original routing, they measure after the
+shared volume and mute; in virtual output routing, they measure before physical
+device volume and mute. Use these meters to check the signal when only Direct
+is playing.
 
 Levels are measured in dBFS, where 0 is the maximum digital audio amplitude.
 Bars cover −60 through 0 dBFS; values outside that range still appear numerically.
@@ -350,7 +374,8 @@ Editing the dialog does not change playback or OS profiles. `Apply configuration
 
 The main window's `Apply` saves the confirmed settings without applying the outputs again. Its `Cancel` restores the output configuration and profiles captured when the main window opened or last saved. Failed changes keep the draft and diagnostic visible. If a preset cannot handle the new channel count, cancel the device dialog, select a compatible preset or Bypass in the main window, and try the configuration again. Reconnecting never submits a pending device draft automatically. If another application changes the settings, cancel the device dialog and reopen the main window to review the current state.
 
-The selected device's details display its reported mute and gain levels, separate from the OS’s overall volume.
+The selected device's details display its reported mute and gain levels. In
+the original routing, these are separate from the OS shared volume.
 If the gain varies by channel, the minimum and maximum values are shown.
 These are read-only; unreported control values or unconnected devices are displayed as “Unknown.”
 Hover your mouse over a value to view its description.
@@ -375,11 +400,15 @@ excluded.
 The JSON includes device identity separately from the temporary
 PipeWire node ID, plus a diagnostic for layouts that cannot be selected, such as outputs exceeding the sixteen-channel DSP limit.
 
-Single mode keeps physical output selection in the OS sound settings and hides PipeTune's internal outputs.
+In the original routing, Single mode keeps physical output selection in the OS
+and hides PipeTune's internal outputs. In virtual output routing, choose a
+physical output for direct playback in Single mode. The virtual output remains
+visible.
 Multiple mode shows both `PipeTune Processed Audio` and `PipeTune Direct
-Output` as OS outputs. Processed is the initial default. If you later select
-Direct in the OS, that choice is respected across mode switches and PipeTune
-restarts. Both inputs can play simultaneously. Choose their physical output
+Output` as OS outputs. Processed is the initial default in the original
+routing; choose it explicitly in virtual output routing. If you later select
+Direct in the OS while using the original routing, that choice is respected
+across mode switches and PipeTune restarts. Both inputs can play simultaneously. Choose their physical output
 devices in PipeTune's `Output` page or with the commands below.
 
 Input device selection and controls remain available in both
@@ -399,20 +428,24 @@ Later selections preserve those numbers and labels: deselected outputs keep
 their slots, and new outputs are appended. The sixteen-channel limit includes
 reserved slots. Switching to single mode retains the multiple-output choices.
 
-In multiple mode, the OS volume and mute controls for Processed and Direct are
+In the original routing's Multiple mode, the OS volume and mute controls for
+Processed and Direct are
 linked. Either control applies the same volume once, after mixing the two
 signals. Switching between inputs preserves the volume. Application volume,
 per-application volume, and the preset's Volume remain available independently.
 Simultaneous playback adds the signals without automatic gain control.
 
-Selected physical outputs stay unmuted at an effective gain of 1 for controls
+In the original routing, selected physical outputs stay unmuted at an effective
+gain of 1 for controls
 exposed by PipeWire. This removes hidden device attenuation so the shared OS
 volume controls all outputs. Deselecting a device, returning to single mode,
 or stopping the daemon restores each device's original volume and mute.
 If applying or restoring a volume cannot be confirmed, an error identifies
-the affected output.
+the affected output. In virtual output routing, PipeTune leaves each physical
+device's volume and mute unchanged, including after the daemon exits.
 
-A new daemon restores the saved shared volume and mute. If no saved value
+In the original routing, a new daemon restores the saved shared volume and
+mute. If no saved value
 exists, it inherits the OS output volume and mute from before the switch.
 Reconnection and WirePlumber restart preserve the running shared volume.
 
@@ -428,7 +461,8 @@ affected output until the saved configuration matches again or you explicitly
 reassign it.
 
 `get` also shows each available device's reported mute, scalar gain, and channel
-gains in dB, separately from the OS master volume. `0.0 dB` is unity gain and
+gains in dB. In the original routing, these are separate from the OS shared
+volume. `0.0 dB` is unity gain and
 `-inf dB` is silence; `unknown` means the device has not reported that control.
 The JSON response retains linear gains in `outputVolumes`. These are device
 reports, not measurements of the sound leaving the speakers.

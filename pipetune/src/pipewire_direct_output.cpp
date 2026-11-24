@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
 
 namespace pipetune {
@@ -29,6 +30,9 @@ struct PipeWireDirectOutput {
   PipeWireDirectError error = nullptr;
   void *data = nullptr;
   std::uint32_t channels = 0;
+  spa_audio_info_raw outputFormat = {};
+  std::atomic<bool> playbackAttached = false;
+  std::uint64_t targetSerial = 0;
 };
 
 void PipeWireDirectOutputDeleter::operator()(PipeWireDirectOutput *pair) const noexcept {
@@ -49,6 +53,7 @@ pw_stream *pipeWireDirectInput(PipeWireDirectOutput &output) noexcept { return o
 
 static void processDirect(void *data) {
   auto &pair = *static_cast<PipeWireDirectOutput *>(data);
+  if (!pair.playbackAttached.load(std::memory_order_acquire)) return;
   // Capture only schedules this callback. It never returns buffers itself,
   // so ownership stays on this data loop until copying and recycling finish.
   auto *input = static_cast<pw_buffer *>(nullptr);
@@ -100,6 +105,13 @@ static void processDirect(void *data) {
   if (output) pw_stream_queue_buffer(pair.output, output);
 }
 
+static void discardDirectCapture(PipeWireDirectOutput &pair) {
+  while (auto *buffer = pw_stream_dequeue_buffer(pair.input)) {
+    if (buffer->buffer) retirePipeWireCaptureBuffer(*buffer->buffer);
+    pw_stream_queue_buffer(pair.input, buffer);
+  }
+}
+
 static void forwardLatency(pw_stream *other, const spa_pod *parameter) {
   auto latency = spa_latency_info{};
   if (parameter == nullptr || spa_latency_parse(parameter, &latency) < 0) return;
@@ -109,14 +121,27 @@ static void forwardLatency(pw_stream *other, const spa_pod *parameter) {
   pw_stream_update_params(other, params, 1);
 }
 
-static void directState(void *data, pw_stream_state old, pw_stream_state state, const char *error) {
+static void directState(void *data, pw_stream_state old, pw_stream_state state,
+                        const char *error, bool playback) {
   auto &pair = *static_cast<PipeWireDirectOutput *>(data);
   if (pipeWireStateTransitionInvalidatesQueuedAudio(old, state)) {
     pw_stream_flush(pair.input, false);
-    pw_stream_flush(pair.output, false);
+    if (pair.playbackAttached.load(std::memory_order_acquire))
+      pw_stream_flush(pair.output, false);
   }
+  if (playback && !pair.playbackAttached.load(std::memory_order_acquire)) return;
   if (state == PW_STREAM_STATE_ERROR || state == PW_STREAM_STATE_UNCONNECTED)
     pair.error(std::string("Direct output: ") + (error ? error : "stream disconnected"), pair.data);
+}
+
+static void directInputState(void *data, pw_stream_state old, pw_stream_state state,
+                             const char *error) {
+  directState(data, old, state, error, false);
+}
+
+static void directPlaybackState(void *data, pw_stream_state old, pw_stream_state state,
+                                const char *error) {
+  directState(data, old, state, error, true);
 }
 
 static bool directFormat(pw_properties *props, spa_audio_info_raw &info) {
@@ -139,7 +164,8 @@ static bool directFormat(pw_properties *props, spa_audio_info_raw &info) {
 }
 
 PipeWireDirectOutputPtr createPipeWireDirectOutput(pw_core *core, const std::string &arguments,
-    PipeWireDirectControl control, PipeWireDirectError error, void *data) {
+    PipeWireDirectControl control, PipeWireDirectError error, void *data,
+    std::uint64_t targetSerial) {
   using Properties = std::unique_ptr<pw_properties, decltype(&pw_properties_free)>;
   auto all = Properties(pw_properties_new_string(arguments.c_str()), pw_properties_free);
   if (!all || !control || !error) return {};
@@ -152,6 +178,8 @@ PipeWireDirectOutputPtr createPipeWireDirectOutput(pw_core *core, const std::str
   auto inputFormat = spa_audio_info_raw{}, outputFormat = spa_audio_info_raw{};
   if (!directFormat(inputProps.get(), inputFormat) || !directFormat(outputProps.get(), outputFormat) ||
       inputFormat.channels != outputFormat.channels) return {};
+  if (targetSerial != 0)
+    pw_properties_set(outputProps.get(), PW_KEY_TARGET_OBJECT, std::to_string(targetSerial).c_str());
   const auto *name = pw_properties_get(inputProps.get(), PW_KEY_NODE_NAME);
   if (!name) return {};
   const auto group = std::string(name) + ".group";
@@ -165,27 +193,32 @@ PipeWireDirectOutputPtr createPipeWireDirectOutput(pw_core *core, const std::str
   pw_properties_set(outputProps.get(), "channelmix.lock-volumes", "true");
   auto pair = PipeWireDirectOutputPtr(new PipeWireDirectOutput());
   pair->control = control; pair->error = error; pair->data = data; pair->channels = inputFormat.channels;
+  pair->outputFormat = outputFormat;
+  pair->targetSerial = targetSerial;
   pair->input = pw_stream_new(core, "PipeTune direct input", inputProps.release());
   pair->output = pw_stream_new(core, "PipeTune direct output", outputProps.release());
   if (!pair->input || !pair->output) return {};
   static const auto inputEvents = [] {
     auto events = pw_stream_events{}; events.version = PW_VERSION_STREAM_EVENTS;
-    events.state_changed = directState;
+    events.state_changed = directInputState;
     events.process = [](void *data) {
       auto &pair = *static_cast<PipeWireDirectOutput *>(data);
-      pw_stream_trigger_process(pair.output);
+      if (pair.playbackAttached.load(std::memory_order_acquire))
+        pw_stream_trigger_process(pair.output);
+      else discardDirectCapture(pair);
     };
     events.param_changed = [](void *data, std::uint32_t id, const spa_pod *param) {
       auto &pair = *static_cast<PipeWireDirectOutput *>(data);
       if (id == SPA_PARAM_Props && pw_stream_get_node_id(pair.input) != PW_ID_ANY)
         pair.control(pair.input, param, pair.data);
-      else if (id == SPA_PARAM_Latency) forwardLatency(pair.output, param);
+      else if (id == SPA_PARAM_Latency && pair.playbackAttached.load(std::memory_order_acquire))
+        forwardLatency(pair.output, param);
     };
     return events;
   }();
   static const auto outputEvents = [] {
     auto events = pw_stream_events{}; events.version = PW_VERSION_STREAM_EVENTS;
-    events.state_changed = directState; events.process = processDirect;
+    events.state_changed = directPlaybackState; events.process = processDirect;
     events.param_changed = [](void *data, std::uint32_t id, const spa_pod *param) {
       if (id == SPA_PARAM_Latency) forwardLatency(static_cast<PipeWireDirectOutput *>(data)->input, param);
     };
@@ -199,12 +232,49 @@ PipeWireDirectOutputPtr createPipeWireDirectOutput(pw_core *core, const std::str
   auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
   const spa_pod *parameters[] = {spa_format_audio_raw_build(&builder, SPA_PARAM_EnumFormat, &outputFormat)};
   if (pw_stream_connect(pair->output, PW_DIRECTION_OUTPUT, PW_ID_ANY,
-      makePipeWireStreamFlags(PW_DIRECTION_OUTPUT, true, true), parameters, 1) < 0) return {};
+      makePipeWireStreamFlags(PW_DIRECTION_OUTPUT, true, targetSerial == 0), parameters, 1) < 0) return {};
+  pair->playbackAttached.store(true, std::memory_order_release);
   builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
   parameters[0] = spa_format_audio_raw_build(&builder, SPA_PARAM_EnumFormat, &inputFormat);
   if (pw_stream_connect(pair->input, PW_DIRECTION_INPUT, PW_ID_ANY,
       makePipeWireStreamFlags(PW_DIRECTION_INPUT, true, true), parameters, 1) < 0) return {};
   return pair;
+}
+
+std::string detachPipeWireDirectPlayback(PipeWireDirectOutput &pair) {
+  if (!pair.playbackAttached.exchange(false, std::memory_order_acq_rel)) return {};
+  const auto result = pw_stream_disconnect(pair.output);
+  if (result < 0) {
+    pair.playbackAttached.store(true, std::memory_order_release);
+    return "cannot detach Direct playback: " + std::string(std::strerror(-result));
+  }
+  pair.targetSerial = 0;
+  return {};
+}
+
+std::string attachPipeWireDirectPlayback(PipeWireDirectOutput &pair,
+                                         std::uint64_t targetSerial) {
+  if (targetSerial == 0) return "Direct playback requires a distribution serial";
+  if (pair.playbackAttached.load(std::memory_order_acquire))
+    return pair.targetSerial == targetSerial ? std::string{} :
+        "Direct playback must be detached before changing the distribution";
+  const auto serial = std::to_string(targetSerial);
+  const auto property = spa_dict_item{PW_KEY_TARGET_OBJECT, serial.c_str()};
+  const auto properties = spa_dict{0, 1, &property};
+  const auto update = pw_stream_update_properties(pair.output, &properties);
+  if (update < 0)
+    return "cannot select Direct playback distribution: " + std::string(std::strerror(-update));
+  auto storage = std::array<std::uint8_t, 1024>{};
+  auto builder = SPA_POD_BUILDER_INIT(storage.data(), storage.size());
+  const spa_pod *parameters[] = {
+      spa_format_audio_raw_build(&builder, SPA_PARAM_EnumFormat, &pair.outputFormat)};
+  const auto connect = pw_stream_connect(pair.output, PW_DIRECTION_OUTPUT, PW_ID_ANY,
+      makePipeWireStreamFlags(PW_DIRECTION_OUTPUT, true, false), parameters, 1);
+  if (connect < 0)
+    return "cannot attach Direct playback: " + std::string(std::strerror(-connect));
+  pair.targetSerial = targetSerial;
+  pair.playbackAttached.store(true, std::memory_order_release);
+  return {};
 }
 
 } // namespace pipetune

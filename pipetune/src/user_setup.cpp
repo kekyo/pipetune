@@ -32,6 +32,8 @@ constexpr auto kSetupChannels = std::uint32_t{2};
 constexpr auto kSetupMaximumFrames = std::uint32_t{8192};
 constexpr auto kMaximumSnapshotBytes = std::size_t{64 * 1024};
 constexpr auto kSetupStateSchema = std::string_view{"1"};
+constexpr auto kVirtualOutputSelection = std::string_view{"routing=virtual-output\n"};
+constexpr auto kPendingRoutingMarker = "pipetune-legacy-routing-active";
 
 struct FileSnapshot {
   bool exists;
@@ -251,6 +253,31 @@ static FileSnapshot snapshotFile(const std::filesystem::path &path) {
           .error = {}};
 }
 
+std::string readVirtualOutputSelection(const UserManagementPaths &paths,
+                                       bool requested, bool &enabled) {
+  const auto state = snapshotFile(paths.setupStatePath);
+  if (!state.error.empty()) return state.error;
+  enabled = requested || state.contents.find(kVirtualOutputSelection) != std::string::npos;
+  if (!enabled) return {};
+  if (!paths.audioSessionDirectory.empty()) {
+    const auto marker = snapshotFile(paths.audioSessionDirectory / kPendingRoutingMarker);
+    if (!marker.error.empty()) return marker.error;
+    if (marker.exists) {
+      enabled = false;
+      return requested ? "virtual output will be available after the current user audio session ends" : "";
+    }
+  }
+  if (requested) {
+    for (const auto &file : makeAudioPolicyFiles(paths)) {
+      auto error = std::error_code{};
+      if (std::filesystem::exists(file.path, error))
+        return "run pipetune setup --virtual-output to migrate the installed audio policy";
+      if (error) return "cannot inspect " + std::string(file.description) + ": " + error.message();
+    }
+  }
+  return {};
+}
+
 static std::string writeAll(int descriptor, std::string_view contents) {
   auto offset = std::size_t{0};
   while (offset < contents.size()) {
@@ -373,7 +400,8 @@ static void rollbackSetup(const UserSetupRequest &request,
                           const FileSnapshot &setupStateSnapshot,
                           std::span<const ManagedFileState> audioPolicyFiles,
                           bool restartAudioStack,
-                          bool serviceMutationStarted, bool wasEnabled,
+                          bool serviceMutationStarted, bool serviceActivityMutationStarted,
+                          bool wasEnabled,
                           bool wasActive,
                           std::vector<std::string> &warnings) {
   if (restoreConfiguration) {
@@ -411,6 +439,7 @@ static void rollbackSetup(const UserSetupRequest &request,
         request, {"--user", "disable", "pipetune.service"},
         "setup rollback could not disable pipetune.service", warnings);
   }
+  if (!serviceActivityMutationStarted) return;
   if (wasActive) {
     appendProcessRollbackWarning(
         request, {"--user", "restart", "pipetune.service"},
@@ -490,6 +519,7 @@ UserManagementPathResult resolveUserManagementPaths(
                   "60-pipetune-presentation.conf",
               .setupStatePath =
                   xdgStateRoot / "pipetune" / "setup-state",
+              .audioSessionDirectory = {},
               .managementLockPath =
                   xdgStateRoot / "pipetune" / "management.lock",
               .systemctlExecutable = systemctlExecutable,
@@ -553,7 +583,6 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
             .error = audioPolicyInspectionError};
   }
 
-  const auto expectedSetupState = currentSetupStateContents();
   const auto setupStateSnapshot = snapshotFile(request.paths.setupStatePath);
   if (!setupStateSnapshot.error.empty()) {
     return {.success = false,
@@ -561,9 +590,27 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
             .error = "cannot inspect setup completion state: " +
                      setupStateSnapshot.error};
   }
+  const auto virtualOutput = request.virtualOutput ||
+      setupStateSnapshot.contents.find(kVirtualOutputSelection) != std::string::npos;
+  const auto previousAudioPolicy = std::any_of(audioPolicyFiles.begin(), audioPolicyFiles.end(),
+      [](const auto &file) { return file.snapshot.exists; });
+  if (virtualOutput && previousAudioPolicy && request.paths.audioSessionDirectory.empty())
+    return {.success = false, .warnings = std::move(warnings),
+            .error = "cannot identify the current user audio session for migration"};
+  auto expectedSetupState = currentSetupStateContents();
+  const auto markerPath = request.paths.audioSessionDirectory / kPendingRoutingMarker;
+  auto marker = FileSnapshot{};
+  if (virtualOutput) {
+    expectedSetupState += kVirtualOutputSelection;
+    if (!request.paths.audioSessionDirectory.empty()) {
+      marker = snapshotFile(markerPath);
+      if (!marker.error.empty()) return {.success = false, .warnings = std::move(warnings), .error = marker.error};
+    }
+    for (auto &file : audioPolicyFiles) file.needsUpdate = file.snapshot.exists;
+  }
+  const auto deferredVirtualOutput = virtualOutput && (previousAudioPolicy || marker.exists);
   const auto setupStateCurrent =
-      setupStateSnapshot.exists &&
-      setupStateSnapshot.contents == expectedSetupState;
+      setupStateSnapshot.exists && setupStateSnapshot.contents == expectedSetupState;
 
   auto configurationSnapshot =
       FileSnapshot{.exists = false, .contents = {}, .mode = 0600, .error = {}};
@@ -610,7 +657,7 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
       !isPipeTuneManagedAutostartMask(request.paths.autostartPath)) {
     return {.success = true,
             .warnings = std::move(warnings),
-            .error = {}};
+            .error = {}, .deferredVirtualOutput = deferredVirtualOutput};
   }
 
   if (request.presetSpecified) {
@@ -624,13 +671,20 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
   }
 
   auto serviceMutationStarted = false;
+  auto serviceActivityMutationStarted = false;
   auto audioPolicyMutated = false;
   auto audioStackRestartAttempted = false;
   auto setupStateMutated = false;
+  auto markerCreated = false;
   const auto failSetup = [&](std::string error) {
+    if (markerCreated) {
+      const auto restoreError = restoreFileSnapshot(markerPath, marker);
+      if (!restoreError.empty()) warnings.push_back(restoreError);
+    }
     rollbackSetup(request, request.presetSpecified, configurationSnapshot,
                   setupStateMutated, setupStateSnapshot, audioPolicyFiles,
                   audioStackRestartAttempted, serviceMutationStarted,
+                  serviceActivityMutationStarted,
                   wasEnabled, wasActive, warnings);
     return UserManagementResult{.success = false,
                                 .warnings = std::move(warnings),
@@ -645,24 +699,33 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
     return failSetup(processFailure("cannot reload systemd user units", reload));
   }
 
+  // This marker survives service restarts but expires with the login's runtime
+  // filesystem, even when a later mount reuses its device and inode numbers.
+  if (deferredVirtualOutput && !marker.exists) {
+    const auto error = restoreFileSnapshot(markerPath, {.exists = true, .contents = {}, .mode = 0600, .error = {}});
+    if (!error.empty()) return failSetup("cannot mark the current audio session: " + error);
+    markerCreated = true;
+  }
   for (auto &file : audioPolicyFiles) {
     if (!file.needsUpdate) {
       continue;
     }
     const auto fileError = restoreFileSnapshot(
         file.path,
-        {.exists = true,
+        {.exists = !virtualOutput,
          .contents = std::string(file.contents),
          .mode = 0600,
          .error = {}});
     if (!fileError.empty()) {
-      return failSetup("cannot install " + std::string(file.description) +
+      return failSetup("cannot update " + std::string(file.description) +
                        ": " + fileError);
     }
     file.mutated = true;
     audioPolicyMutated = true;
   }
-  if (audioPolicyMutated || !setupStateCurrent || request.force) {
+  if (deferredVirtualOutput)
+    warnings.emplace_back("PipeTune will switch to the virtual output after the current PipeWire session ends.");
+  if (!virtualOutput && (audioPolicyMutated || !setupStateCurrent || request.force)) {
     // The server retains its loaded module until it restarts, even when an
     // upgrade leaves the configuration text unchanged.
     audioStackRestartAttempted = true;
@@ -674,6 +737,14 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
     }
   }
 
+  // The service reads the selected routing mode as it starts. Roll this
+  // snapshot back before restarting the old service on a later failure.
+  const auto setupStateError = restoreFileSnapshot(
+      request.paths.setupStatePath,
+      {.exists = true, .contents = expectedSetupState, .mode = 0600, .error = {}});
+  if (!setupStateError.empty())
+    return failSetup("cannot save setup completion state: " + setupStateError);
+  setupStateMutated = true;
   serviceMutationStarted = true;
   const auto enable = invokeProcess(
       request.processRunner, request.processUserData,
@@ -682,21 +753,24 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
   if (!processSucceeded(enable)) {
     return failSetup(processFailure("cannot enable pipetune.service", enable));
   }
-  const auto restart = invokeProcess(
-      request.processRunner, request.processUserData,
-      request.paths.systemctlExecutable,
-      {"--user", "restart", "pipetune.service"}, ProcessWaitMode::wait);
-  if (!processSucceeded(restart)) {
-    return failSetup(processFailure("cannot restart pipetune.service", restart));
-  }
-  const auto active = invokeProcess(
-      request.processRunner, request.processUserData,
-      request.paths.systemctlExecutable,
-      {"--user", "is-active", "--quiet", "pipetune.service"},
-      ProcessWaitMode::wait);
-  if (!processSucceeded(active)) {
-    return failSetup(
-        processFailure("pipetune.service did not become active", active));
+  if (!deferredVirtualOutput) {
+    serviceActivityMutationStarted = true;
+    const auto restart = invokeProcess(
+        request.processRunner, request.processUserData,
+        request.paths.systemctlExecutable,
+        {"--user", "restart", "pipetune.service"}, ProcessWaitMode::wait);
+    if (!processSucceeded(restart)) {
+      return failSetup(processFailure("cannot restart pipetune.service", restart));
+    }
+    const auto active = invokeProcess(
+        request.processRunner, request.processUserData,
+        request.paths.systemctlExecutable,
+        {"--user", "is-active", "--quiet", "pipetune.service"},
+        ProcessWaitMode::wait);
+    if (!processSucceeded(active)) {
+      return failSetup(
+          processFailure("pipetune.service did not become active", active));
+    }
   }
 
   auto autostart = restoreGtkAutostart(
@@ -708,19 +782,7 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
     return failSetup(autostart.error);
   }
 
-  const auto setupStateError = restoreFileSnapshot(
-      request.paths.setupStatePath,
-      {.exists = true,
-       .contents = expectedSetupState,
-       .mode = 0600,
-       .error = {}});
-  if (!setupStateError.empty()) {
-    return failSetup("cannot save setup completion state: " +
-                     setupStateError);
-  }
-  setupStateMutated = true;
-
-  if (request.launchGtk) {
+  if (request.launchGtk && !deferredVirtualOutput) {
     const auto gtk = invokeProcess(
         request.processRunner, request.processUserData,
         request.paths.gtkExecutable, {"--hidden"},
@@ -731,7 +793,7 @@ UserManagementResult executeUserSetup(const UserSetupRequest &request) {
   }
   return {.success = true,
           .warnings = std::move(warnings),
-          .error = {}};
+          .error = {}, .deferredVirtualOutput = deferredVirtualOutput};
 }
 
 static std::string removeConfigFile(const std::filesystem::path &path) {
