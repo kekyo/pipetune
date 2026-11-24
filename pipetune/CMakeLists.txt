@@ -221,6 +221,7 @@ add_library(
   src/ir_asset_loader.cpp
   src/sfz_asset_loader.cpp
   src/room_asset_loader.cpp
+  src/speaker_correction_asset.cpp
   src/measurement_store.cpp
   src/output_configuration.cpp
   src/output_configuration_json.cpp
@@ -712,12 +713,12 @@ if(BUILD_TESTING)
   set_tests_properties(pipetune_asset_preparation_contracts PROPERTIES
     WORKING_DIRECTORY "${PIPETUNE_ASSET_TEST_DIR}" TIMEOUT 300)
 
-  add_executable(pipetune_effetune_218_tests test/effetune_218_test.cpp)
-  target_include_directories(pipetune_effetune_218_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
-  target_link_libraries(pipetune_effetune_218_tests PRIVATE pipetune_core)
-  target_compile_options(pipetune_effetune_218_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  add_dependencies(pipetune_effetune_218_tests pipetune_test_dsp_backend_copies)
-  add_test(NAME pipetune_effetune_218_tests COMMAND pipetune_effetune_218_tests
+  add_executable(pipetune_effetune_integration_tests test/effetune_integration_test.cpp)
+  target_include_directories(pipetune_effetune_integration_tests PRIVATE src "${PIPETUNE_EFFETUNE_DIR}/dsp/include")
+  target_link_libraries(pipetune_effetune_integration_tests PRIVATE pipetune_core)
+  target_compile_options(pipetune_effetune_integration_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(pipetune_effetune_integration_tests pipetune_test_dsp_backend_copies)
+  add_test(NAME pipetune_effetune_integration_tests COMMAND pipetune_effetune_integration_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/test/presets/effetune-2.13/adaptive-original.effetune_preset)
 
   add_executable(pipetune_adaptive_prediction_tests test/adaptive_prediction_test.cpp)

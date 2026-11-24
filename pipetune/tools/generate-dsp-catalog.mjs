@@ -79,7 +79,7 @@ const visualizationOnlyTypes = new Set([
 ]);
 
 const nativeAssetCapacity = asset => {
-  if (asset.capacity === '32 MiB convolution cap') {
+  if (asset.capacity === '32 MiB convolution cap' || asset.capacity === '32 MiB asset admission cap') {
     return 32 * 1024 * 1024;
   }
   if (asset.capacity === '1 GiB bank and index cap') {

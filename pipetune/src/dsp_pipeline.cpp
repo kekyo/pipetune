@@ -12,6 +12,7 @@
 #include "ir_asset_loader.h"
 #include "sfz_asset_loader.h"
 #include "room_asset_loader.h"
+#include "speaker_correction_asset.h"
 #include "asset_file.h"
 #include "preparation_dispatcher.h"
 #include "measurement_store.h"
@@ -343,6 +344,11 @@ static bool parseChannel(yyjson_val *value, std::int8_t &output) {
   return false;
 }
 
+static std::uint32_t firstSelectedChannel(std::int8_t channelSpec) {
+  if (channelSpec >= 16) return static_cast<std::uint32_t>(channelSpec - 16) * 2u;
+  return channelSpec >= 0 ? static_cast<std::uint32_t>(channelSpec) : 0u;
+}
+
 static std::uint32_t selectedProcessingChannels(std::int8_t channelSpec,
                                                 std::uint32_t maxChannels) {
   if (channelSpec == -2) {
@@ -421,7 +427,7 @@ static PresetChannelLayout inferPresetChannelLayout(yyjson_val *pipelineValue) {
         definition->visualizationOnly || unsupportedHostPluginReason(definition->typeName) != nullptr ||
         (definition->requiresExternalAssets &&
          !(node.name == "IR Reverb" || definition->typeName == "SFZNotePlayerPlugin" ||
-           node.name == "Room EQ" || node.name == "Bass Management" ||
+           node.name == "Room EQ" || node.name == "Bass Management" || node.name == "Distortion Correction" ||
            node.name == "Crosstalk Cancellation" || supportsGeneratedFirAsset(node.name)))) continue;
     auto inputBus = std::uint8_t{0};
     auto outputBus = std::uint8_t{0};
@@ -481,9 +487,7 @@ static PresetChannelLayout inferPresetChannelLayout(yyjson_val *pipelineValue) {
   auto busMasks = std::array<std::uint32_t, 5>{3u, 0u, 0u, 0u, 0u};
   for (const auto &node : nodes) {
     const auto source = busMasks[node.inputBus];
-    const auto first = node.channelSpec >= 16 ?
-        static_cast<std::uint32_t>(node.channelSpec - 16) * 2u :
-        node.channelSpec >= 0 ? static_cast<std::uint32_t>(node.channelSpec) : 0u;
+    const auto first = firstSelectedChannel(node.channelSpec);
     const auto selection = node.channelSpec == -2 ?
         ((1u << layout.processingChannels) - 1u) :
         ((1u << selectedProcessingChannels(node.channelSpec, layout.processingChannels)) - 1u) << first;
@@ -602,7 +606,7 @@ bool acceptsRemoteEffect(std::string_view name) {
   if (def->visualizationOnly) return true;
   return !def->requiresExternalAssets || supportsGeneratedFirAsset(name) || name == "IR Reverb" ||
       name == "Bass Management" || name == "Room EQ" || name == "Crosstalk Cancellation" ||
-      def->typeName == "SFZNotePlayerPlugin";
+      name == "Distortion Correction" || def->typeName == "SFZNotePlayerPlugin";
 }
 
 std::string shortPipeline(std::string_view recipe) {
@@ -940,7 +944,9 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
     const auto irReverb = node.name == "IR Reverb";
     const auto sfzPlayer = definition->typeName == "SFZNotePlayerPlugin";
     const auto roomEq = node.name == "Room EQ";
-    const auto generatedAssetDsp = irReverb || sfzPlayer || roomEq || bassManagement || crosstalk || supportsGeneratedFirAsset(node.name);
+    const auto speakerCorrection = node.name == "Distortion Correction";
+    const auto generatedAssetDsp = irReverb || sfzPlayer || roomEq || bassManagement || crosstalk ||
+                                   speakerCorrection || supportsGeneratedFirAsset(node.name);
     if (definition->requiresExternalAssets && !generatedAssetDsp) {
       warnings.push_back({.nodeIndex = index,
                           .pluginName = std::string(node.name),
@@ -988,17 +994,27 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
     auto ownedAsset = PreparedDspAsset{};
     auto sharedAsset = std::shared_ptr<const SharedPreparedAsset>{};
     if (generatedAssetDsp) {
-      if (!irReverb && !sfzPlayer && !roomEq) {
+      if (!irReverb && !sfzPlayer && !roomEq && !speakerCorrection) {
         try { generatedMemory = AssetMemoryReservation(512ull * 1024 * 1024, context.assetMemoryBytes); }
         catch (const std::exception &error) { co_return fail(nodeError(index, error.what()), std::move(warnings)); }
       }
       const auto processingChannels =
           selectedProcessingChannels(channelSpec, options.maxChannels);
-      if (irReverb || sfzPlayer || roomEq) {
-        const auto firstChannel = channelSpec >= 16 ? static_cast<std::uint32_t>(channelSpec - 16) * 2u :
-                                  channelSpec >= 0 ? static_cast<std::uint32_t>(channelSpec) : 0u;
-        const auto availableChannels = firstChannel < options.maxChannels &&
-            processingChannels <= options.maxChannels - firstChannel ? processingChannels : 0u;
+      const auto firstChannel = firstSelectedChannel(channelSpec);
+      const auto availableChannels = firstChannel < options.maxChannels &&
+          processingChannels <= options.maxChannels - firstChannel ? processingChannels : 0u;
+      if (speakerCorrection) {
+        if (!replacePackedParameter(packed, "_scf", static_cast<float>(firstChannel)) ||
+            !replacePackedParameter(packed, "_scc", static_cast<float>(availableChannels)))
+          co_return fail(nodeError(index, "Distortion Correction channel parameters are unavailable"), std::move(warnings));
+        auto loaded = std::move(co_await loadSpeakerCorrectionAsync(context.measurementDirectory,
+            node.parameters, options.maxChannels, generatedMemory, context.assetMemoryBytes, cancellation));
+        if (!loaded.file.empty() && std::ranges::find(implementation->dependencyFiles, loaded.file) == implementation->dependencyFiles.end())
+          implementation->dependencyFiles.push_back(std::move(loaded.file));
+        if (loaded.snapshot) sourceSnapshots.push_back(std::move(*loaded.snapshot));
+        if (loaded.checkedVolume) replacePackedParameter(packed, "dv", *loaded.checkedVolume);
+        ownedAsset = std::move(loaded.asset);
+      } else if (irReverb || sfzPlayer || roomEq) {
         const auto collect = [&](auto &loaded) {
           if (loaded.cacheHit) ++cachedAssetCount;
           for (const auto &file : loaded.files)
@@ -1052,7 +1068,7 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
         co_return fail(nodeError(index, generatedAsset.error),
                          std::move(warnings));
       }
-      if (!bassManagement && !irReverb && !sfzPlayer && !generatedAsset.payload.empty() &&
+      if (!bassManagement && !irReverb && !sfzPlayer && !speakerCorrection && !generatedAsset.payload.empty() &&
           (!replacePackedParameter(
                packed, "lt", packedHeadBlock(generatedAsset.info.head_block)) ||
            !replacePackedParameter(
@@ -1166,7 +1182,7 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
                                              "native DSP rejected the generated FIR asset"),
             std::move(warnings));
       }
-      if (irReverb || sfzPlayer || roomEq) {
+      if (irReverb || sfzPlayer || roomEq || speakerCorrection || node.name == "Headphone EQ") {
         const auto width = sfzPlayer ? selectedProcessingChannels(channelSpec, options.maxChannels) :
                                       generatedAsset.info.processing_channels;
         auto silence = std::vector<float>(width * options.maxFrames);

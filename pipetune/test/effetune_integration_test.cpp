@@ -102,8 +102,8 @@ static void testMatrixReset(const pipetune::DspBackendApi &api) {
 
 int main(int argc, char **argv) {
   if (argc != 2) return 2;
-  check(pipetune::effetuneVersion() == "2.18.1", "the embedded app version must be 2.18.1");
-  check(pipetune::generatedDspCatalog().size() == 115, "the app catalog must contain 115 DSPs");
+  check(pipetune::effetuneVersion() == "2.19.0", "the embedded app version must be 2.19.0");
+  check(pipetune::generatedDspCatalog().size() == 117, "the app catalog must contain 117 DSPs");
   struct Contract {
     const char *type;
     std::uint32_t hash;
@@ -117,7 +117,10 @@ int main(int argc, char **argv) {
            Contract{"SFZNotePlayerPlugin", 0x3785c6edu, 21u, 1073741824u},
            Contract{"NetworkReceivePlugin", 0x811c9dc5u, 0u, 0u},
            Contract{"NetworkSendPlugin", 0x811c9dc5u, 0u, 0u},
-           Contract{"SoundFontPlayerPlugin", 0xf271de51u, 8u, 1073741824u},
+           Contract{"SoundFontPlayerPlugin", 0x25427170u, 13u, 1073741824u},
+           Contract{"FifteenBandPEQPlugin", 0x5b2fb687u, 76u, 0u},
+           Contract{"HeadphoneEQPlugin", 0xaf58b189u, 2u, 33554432u},
+           Contract{"SpeakerDistortionCorrectionPlugin", 0x25d6dbd8u, 4u, 33554432u},
            Contract{"CassetteArtifactsPlugin", 0x328491aeu, 13u, 0u},
            Contract{"NoteSpectrogramPlugin", 0xb8518943u, 4u, 0u}}) {
     const auto *definition = pipetune::findDspByTypeName(contract.type);
@@ -131,8 +134,8 @@ int main(int argc, char **argv) {
   if (const auto *player = pipetune::findDspByDisplayName("SoundFont Player")) {
     const auto defaults = pipetune::packDspParameters(*player, nullptr);
     check(defaults.error.empty() &&
-              defaults.floats == std::vector<float>{0, 256, 0, 0, 1, -1, 0, 0},
-          "SoundFont Player must pack the 2.18 voice, preview and compatibility defaults");
+              defaults.floats == std::vector<float>{0, 256, 0, 0, 1, -1, 0, 0, 1, 1, 1, 0, 0},
+          "SoundFont Player must pack the voice, preview and MIDI defaults");
   }
 
   const auto discovered = pipetune::discoverDspBackends();

@@ -62,7 +62,8 @@ struct RoomEqConfiguration {
   double lowFrequency = 20; /**< Lower correction limit in hertz. */
   double highFrequency = 16000; /**< Upper correction limit in hertz. */
   double maxBoostDb = 6; /**< Maximum automatic positive correction in decibels. */
-  double correctionAmount = 1; /**< Automatic correction multiplier, zero through one. */
+  double correctionAmount = 1; /**< Signed automatic correction multiplier, from -1 to 1. */
+  bool limitPeakGain = false; /**< Lower the combined correction and additional EQ to at most 0 dB. */
   std::vector<RoomEqBand> eqBands; /**< Additional EQ, independent of correction amount. */
   double directWindowMs = 6; /**< Direct-response observation window, 1 through 50 ms. */
   std::optional<double> phaseLowFrequency; /**< Manual phase boundary; absent selects three cycles per window. */

@@ -8,6 +8,7 @@
 #include "dsp_backend_loader.h"
 #include "bass_management_config.h"
 #include "crosstalk_fir.h"
+#include "room-eq/design.h"
 
 #include <algorithm>
 #include <array>
@@ -1301,15 +1302,73 @@ PreparedDspAsset designCrosstalkAsset(const CrosstalkMeasurements &measurements,
   return result;
 }
 
+static PreparedDspAsset designHeadphoneEq(yyjson_val *parameters, float sampleRate,
+                                         std::uint32_t processingChannels) {
+  auto result = PreparedDspAsset{};
+  constexpr std::array rates{44100.0F, 48000.0F, 88200.0F, 96000.0F, 176400.0F, 192000.0F};
+  if (std::ranges::find(rates, sampleRate) == rates.end()) {
+    result.omissionReason = "Headphone EQ does not support this sample rate";
+    return result;
+  }
+  auto config = assets::RoomEqConfiguration{};
+  config.sampleRate = static_cast<std::uint32_t>(sampleRate);
+  constexpr std::array taps{8192u, 16384u, 32768u, 65536u, 131072u};
+  config.taps = assetTapCount(parameters, taps, 32768u);
+  config.phase = assetString(parameters, "pm", "min") == "lin" ?
+      assets::RoomEqPhase::Linear : assets::RoomEqPhase::Minimum;
+  config.highFrequency = assetNumber(parameters, "uf", 1000, 20000, 10000);
+  config.maxBoostDb = assetNumber(parameters, "mb", 0, 18, 6);
+  config.correctionAmount = assetNumber(parameters, "ca", -100, 100, 100) / 100;
+  config.smoothing = assetNumber(parameters, "sm", 0.02, 1, 0.17);
+  config.limitPeakGain = assetBoolean(parameters, "ah", true);
+  constexpr std::array centers{100, 316, 1000, 3160, 10000};
+  for (auto index = std::size_t{0}; index < centers.size(); ++index) {
+    const auto suffix = "a" + std::to_string(index);
+    const auto shape = assetString(parameters, "t" + suffix, "pk");
+    const auto type = shape == "ls" ? assets::RoomEqBandType::LowShelf :
+                      shape == "hs" ? assets::RoomEqBandType::HighShelf : assets::RoomEqBandType::Peak;
+    config.eqBands.push_back({type, assetBoolean(parameters, "e" + suffix, true),
+        assetNumber(parameters, "f" + suffix, 20, 20000, centers[index]),
+        assetNumber(parameters, "g" + suffix, -20, 20, 0),
+        assetNumber(parameters, "q" + suffix, 0.1, type == assets::RoomEqBandType::Peak ? 10 : 2, 1)});
+  }
+
+  // EffeTune saves one level per 1/24-octave grid point, including both endpoints.
+  auto source = assets::RoomEqSource{};
+  auto *measured = assetObjectMember(parameters, "mr");
+  auto *target = assetObjectMember(parameters, "mt");
+  constexpr auto steps = 240u; // ceil(24 * log2(20000 / 20))
+  if (yyjson_arr_size(measured) == steps + 1 && yyjson_arr_size(target) == steps + 1) {
+    yyjson_arr_iter measuredIt = yyjson_arr_iter_with(measured);
+    yyjson_arr_iter targetIt = yyjson_arr_iter_with(target);
+    for (auto i = 0u; i <= steps; ++i) {
+      auto *m = yyjson_arr_iter_next(&measuredIt);
+      auto *t = yyjson_arr_iter_next(&targetIt);
+      if (!yyjson_is_num(m) || !yyjson_is_num(t)) break;
+      source.response.push_back({20 * std::pow(1000.0, static_cast<double>(i) / steps),
+                                 yyjson_get_num(m) - yyjson_get_num(t)});
+    }
+    source.assigned = source.response.size() == steps + 1;
+  }
+  const auto design = assets::designRoomEq(config, std::span(&source, 1));
+  result.filterDelaySamples = design.filterDelaySamples;
+  buildGeneratedFirPayload(result, design.channels, config.sampleRate, kMonoTopology, {},
+                           processingChannels, 0, assetHeadBlock(parameters));
+  return result;
+}
+
 bool supportsGeneratedFirAsset(std::string_view displayName) noexcept {
   return displayName == "FIR Crossover" || displayName == "5Band FIR PEQ" ||
          displayName == "Group Delay EQ" ||
-         displayName == "Group Delay PEQ";
+         displayName == "Group Delay PEQ" || displayName == "Headphone EQ";
 }
 
 PreparedDspAsset designGeneratedFirAsset(
     std::string_view displayName, yyjson_val *parameters, float sampleRate,
     std::uint32_t processingChannels, const DspBackendApi &api) {
+  if (displayName == "Headphone EQ") {
+    return designHeadphoneEq(parameters, sampleRate, processingChannels);
+  }
   if (displayName == "FIR Crossover") {
     return designFirCrossover(parameters, sampleRate, processingChannels, api);
   }

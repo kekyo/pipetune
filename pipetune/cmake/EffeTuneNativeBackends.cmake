@@ -344,6 +344,7 @@ function(
       "${EFFETUNE_DSP_DIR}/plugins/analyzer/note_spectrogram/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/others/sfz_note_player/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/others/soundfont_player/kernel.cpp"
+      "${EFFETUNE_DSP_DIR}/plugins/others/speaker_distortion_correction/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/resonator/adaptive_prediction_effect/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/eq/tonal_balance_eq/kernel.cpp"
       "${EFFETUNE_DSP_DIR}/plugins/dynamics/attack_tonal_balance/kernel.cpp"

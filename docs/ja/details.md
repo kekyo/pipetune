@@ -180,9 +180,18 @@ Holdで音を生成するには学習済みの信号が必要です。予測のG
 EffeTuneで保存した選択を反映します。Noise ReductionがOffの場合はDolby段を通過するため、
 Dolby段だけを使うモードでは音声が変化しない場合があります。
 
+## Headphone EQ
+
+Headphone EQは、ヘッドホンの測定カーブと目標カーブをプリセットに保存します。
+PipeTuneで同じ補正を使うには、EffeTuneで両方のカーブを読み込んでからプリセットを保存してください。
+補正量を負にすると、ヘッドホンの特性と目標との差を音に加えます。
+Auto Headroomを有効にすると、Target Adjustによる調整も含めて最大ゲインが0 dBを超えないように出力を下げます。
+対応サンプリング周波数は44.1、48、88.2、96、176.4、192 kHzです。
+[EffeTuneのHeadphone EQ](https://github.com/Frieve-A/effetune/blob/v2.19.0/docs/i18n/ja/plugins/eq.md#headphone-eq)
+
 ## 外部アセット
 
-SoundFont Note Player、IR Reverb、Room EQは、デスクトップ版EffeTuneが登録したデータを
+SoundFont Note Player、IR Reverb、Room EQ、Distortion Correctionは、デスクトップ版EffeTuneが登録したデータを
 `$XDG_CONFIG_HOME/effetune`から読み込みます。XDG未指定時は`~/.config/effetune`です。
 プリセットに保存されるのは参照なので、プリセットだけをコピーしても音源・IR・測定は移動しません。
 同じユーザーのデスクトップ版EffeTuneに原本を登録してからPipeTuneで読み込んでください。
@@ -194,6 +203,13 @@ ARIAのバンク定義は、SFZ音源で使う変数やサンプルの配置を�
 | SoundFont Note Player | `sfz-references.json`、登録されたSFZルート、利用するARIAバンク定義、include先の定義と参照サンプル |
 | IR Reverb | `ir-library/index.json`と、そのindexが参照する単一原音またはL/R原音ペア |
 | Room EQ | `measurement-backups/<id>.json`内の対象chの応答。Correctionには全測定点のIRも必要 |
+| Distortion Correction | `measurement-backups/<id>.json`に保存したスピーカーの歪み補正モデル（`speakerModel`） |
+
+Distortion Correctionを使うには、EffeTuneでスピーカーの歪みを測定し、その測定を選んでプリセットを保存してください。
+PipeTuneは44.1 kHz以上で、選択したチャンネルに偶数次と奇数次の歪み補正を適用します。
+Autoは、偶数次と奇数次のそれぞれについて、測定時に判定したチャンネルごとの設定を使うモードです。
+測定を選んでいない場合は、音声をそのまま通します。
+[EffeTuneのDistortion Correction](https://github.com/Frieve-A/effetune/blob/v2.19.0/docs/i18n/ja/plugins/others.md#distortion-correction)
 
 保存形式は上流の[音源登録](https://github.com/Frieve-A/effetune/blob/v2.17.0/electron/sfz-library-ipc.js)、
 [IRライブラリ](https://github.com/Frieve-A/effetune/blob/v2.13.0/electron/ir-library-ipc.js)、
@@ -273,7 +289,7 @@ Gain・手動Delayも反映し、手動Delayは自動レイテンシー補償へ
 キャッシュに書けなくても準備に成功した音声処理は利用できます。
 2.17.0から2.18.0への更新後、Room EQが測定からフィルターを作り直すのは初回だけです。
 2回目からは作成済みのフィルターを使用します。登録済みSFZ音源とIR Reverbのキャッシュは引き続き使用できます。
-SFZ / IR / Room EQの再読込に失敗した場合は、それまでの音声処理を保持してエラーを表示します。
+SFZ、IR Reverb、Room EQ、Distortion Correctionの再読み込みに失敗した場合は、それまでの音声処理を続け、エラーを表示します。
 未設定DSPは診断付きで有効のままです。無効ノード・無効Sectionでは外部ファイルを読みません。
 Crosstalk Cancellationは従来どおり、不正測定のノードを警告付きで除外します。
 

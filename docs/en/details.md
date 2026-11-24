@@ -199,9 +199,18 @@ supports All, Encode Only, Encode + Artifacts, Artifacts + Decode, and Decode On
 PipeTune uses the mode saved in EffeTune. Noise Reduction Off bypasses the Dolby
 stages; a mode containing only those stages can therefore sound unchanged.
 
+## Headphone EQ
+
+Headphone EQ stores the headphone measurement and target curves in the preset.
+Load both curves in EffeTune and save the preset to use the same correction in PipeTune.
+A negative correction amount adds the headphone's deviation from the target to the signal.
+Auto Headroom lowers the output to keep the filter's peak gain at or below 0 dB, including Target Adjust.
+Supported sample rates are 44.1, 48, 88.2, 96, 176.4, and 192 kHz.
+[EffeTune Headphone EQ](https://github.com/Frieve-A/effetune/blob/v2.19.0/docs/plugins/eq.md#headphone-eq)
+
 ## External assets
 
-SoundFont Note Player, IR Reverb, and Room EQ read the data registered by EffeTune
+SoundFont Note Player, IR Reverb, Room EQ, and Distortion Correction read the data registered by EffeTune
 desktop under `$XDG_CONFIG_HOME/effetune`, or `~/.config/effetune` when the XDG
 variable is unset. A preset contains references, so copying the preset alone
 does not copy its instrument, IR, or measurement. Register the original data
@@ -215,6 +224,13 @@ locations for an SFZ instrument.
 | SoundFont Note Player | `sfz-references.json`, its registered SFZ root, any ARIA bank definitions in use, included definitions, and referenced sample files |
 | IR Reverb | `ir-library/index.json` and the single original or L/R original pair named in that index |
 | Room EQ | `measurement-backups/<id>.json`, including the selected channel response and, for Correction, every measurement point's IR |
+| Distortion Correction | The fitted speaker model (`speakerModel`) saved in `measurement-backups/<id>.json` |
+
+To use Distortion Correction, measure your speakers in EffeTune, select that measurement, and save the preset.
+At sample rates of 44.1 kHz and above, PipeTune applies even- and odd-order correction to the selected channels.
+Set either correction to Auto to use the measurement's decision for each speaker.
+With no measurement selected, the effect passes audio through.
+[EffeTune Distortion Correction](https://github.com/Frieve-A/effetune/blob/v2.19.0/docs/plugins/others.md#distortion-correction)
 
 The layouts follow the upstream [instrument registration](https://github.com/Frieve-A/effetune/blob/v2.17.0/electron/sfz-library-ipc.js),
 [IR library](https://github.com/Frieve-A/effetune/blob/v2.13.0/electron/ir-library-ipc.js),
@@ -303,8 +319,8 @@ PipeTune caches prepared assets under `$XDG_CACHE_HOME/pipetune/assets-v1`, or
 replaces the originals. Changes to originals or ARIA bank definitions and
 missing-file restoration trigger
 automatic reload. Damaged cache entries are regenerated; a cache write failure
-does not prevent playback of a successfully prepared asset. A failed SFZ/IR/Room
-reload keeps the previous audio pipeline and reports the error. An unassigned
+does not prevent playback of a successfully prepared asset. If SFZ, IR Reverb, Room EQ, or
+Distortion Correction fails to reload, PipeTune keeps the active pipeline and reports the error. An unassigned
 effect remains active with a diagnostic. Disabled nodes and disabled sections
 do not load external files. Crosstalk Cancellation retains its existing behavior:
 invalid measurements omit that node with a warning.

@@ -266,8 +266,8 @@ static std::uint32_t findKernelIndex(const BackendApi &api,
   return count;
 }
 
-static void checkEffeTune218Catalog(const BackendApi &api) {
-  static constexpr std::array<std::string_view, 23> addedTypes = {
+static void checkEffeTuneCatalog(const BackendApi &api) {
+  static constexpr std::array<std::string_view, 25> addedTypes = {
       "GroupDelayPEQPlugin", "MDSimulatorPlugin", "ClickRemoverPlugin",
       "ClipRestorerPlugin", "HumRemoverPlugin", "NoiseReductionPlugin",
       "CrosstalkCancellationPlugin", "NoteSpectrogramPlugin",
@@ -276,12 +276,12 @@ static void checkEffeTune218Catalog(const BackendApi &api) {
       "BassManagementPlugin", "ChromaSpiralPlugin", "TonalBalanceEQPlugin",
       "RhythmAnalyzerPlugin", "AnalogMeterPlugin",
       "AdaptivePredictionEffectPlugin", "SFZNotePlayerPlugin", "SoundFontPlayerPlugin",
-      "NetworkReceivePlugin", "NetworkSendPlugin"};
-  check(api.kernelCount() == 115u,
-        "EffeTune 2.18 backend catalog must contain 115 kernels");
+      "NetworkReceivePlugin", "NetworkSendPlugin", "HeadphoneEQPlugin", "SpeakerDistortionCorrectionPlugin"};
+  check(api.kernelCount() == 117u,
+        "EffeTune 2.19 backend catalog must contain 117 kernels");
   for (const auto typeName : addedTypes) {
     check(findKernelIndex(api, typeName) < api.kernelCount(),
-          "EffeTune 2.18 backend catalog must contain every required kernel");
+          "EffeTune 2.19 backend catalog must contain every required kernel");
   }
   struct Contract {
     std::string_view type;
@@ -297,7 +297,10 @@ static void checkEffeTune218Catalog(const BackendApi &api) {
            Contract{"SFZNotePlayerPlugin", 0x3785c6edu, 21u, 1073741824u},
            Contract{"NetworkReceivePlugin", 0x811c9dc5u, 0u, 0u},
            Contract{"NetworkSendPlugin", 0x811c9dc5u, 0u, 0u},
-           Contract{"SoundFontPlayerPlugin", 0xf271de51u, 8u, 1073741824u},
+           Contract{"SoundFontPlayerPlugin", 0x25427170u, 13u, 1073741824u},
+           Contract{"FifteenBandPEQPlugin", 0x5b2fb687u, 76u, 0u},
+           Contract{"HeadphoneEQPlugin", 0xaf58b189u, 2u, 33554432u},
+           Contract{"SpeakerDistortionCorrectionPlugin", 0x25d6dbd8u, 4u, 33554432u},
            Contract{"CassetteArtifactsPlugin", 0x328491aeu, 13u, 0u},
            Contract{"NoteSpectrogramPlugin", 0xb8518943u, 4u, 0u}}) {
     const auto index = findKernelIndex(api, contract.type);
@@ -306,10 +309,10 @@ static void checkEffeTune218Catalog(const BackendApi &api) {
     check(api.kernelParamsHash(index) == contract.hash && definition != nullptr &&
               definition->floatCount == contract.floats &&
               api.kernelParamBytesCapacity(index) == 0u,
-          "EffeTune 2.18 kernels must expose their official parameter layouts");
+          "EffeTune 2.19 kernels must expose their official parameter layouts");
     for (auto slot = 0u; slot < 4u; ++slot)
       check(api.kernelAssetCapacity(index, slot) == (slot == 0u ? contract.assetBytes : 0u),
-            "EffeTune 2.18 kernels must expose their official asset capacities");
+            "EffeTune 2.19 kernels must expose their official asset capacities");
   }
   const auto phaseSelectIndex = findKernelIndex(api, "PhaseSelectEqPlugin");
   check(phaseSelectIndex < api.kernelCount(),
@@ -1251,7 +1254,11 @@ int main(int argc, char **argv) {
                 PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
             "scalar backend must report its concrete variant");
       checkAllAbiSymbols(scalar.handle);
-      checkEffeTune218Catalog(scalar);
+      checkEffeTuneCatalog(scalar);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "eq/fifteen_band_peq/golden", 1u, 9u);
+      checkMetadataGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR,
+                           pluginRoot / "eq/headphone_eq/golden", 2u);
       checkResetFilterGoldens(scalar, PIPETUNE_EFFETUNE_BACKEND_VARIANT_SCALAR, pluginRoot);
       checkTubeRuntimeContract(scalar);
       checkCallerFloatingPointState(scalar);
@@ -1333,6 +1340,8 @@ int main(int argc, char **argv) {
               "SIMD backend must report its concrete variant");
         checkAllAbiSymbols(simd.handle);
         checkCatalogsMatch(scalar, simd);
+        checkMetadataGoldens(simd, expected, pluginRoot / "eq/fifteen_band_peq/golden", 1u, 9u);
+        checkMetadataGoldens(simd, expected, pluginRoot / "eq/headphone_eq/golden", 2u);
         checkResetFilterGoldens(simd, expected, pluginRoot);
         checkTubeRuntimeContract(simd);
         checkCallerFloatingPointState(simd);
