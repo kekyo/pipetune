@@ -74,7 +74,7 @@ RoomEqDesign designRoomEq(const RoomEqConfiguration &configuration, std::span<co
   if (config.sampleRate < 1000 || config.sampleRate > 768000 || sources.empty() || sources.size() > 16 ||
       !finiteRange(config.smoothing, 0.02, 1) || !finiteRange(config.lowFrequency, 20, 20000) ||
       !finiteRange(config.highFrequency, config.lowFrequency, 20000) ||
-      !finiteRange(config.maxBoostDb, 0, 18) || !finiteRange(config.correctionAmount, 0, 1) ||
+      !finiteRange(config.maxBoostDb, 0, 18) || !finiteRange(config.correctionAmount, -1, 1) ||
       !finiteRange(config.directWindowMs, 1, 50) || !finiteRange(config.phaseCorrectionAmount, 0, 1) ||
       !finiteRange(config.reverbAmount, 0, 1) || !finiteRange(config.reverbWindowMs, 20, 1000) ||
       !finiteRange(config.reverbMaxFrequency, 20, 20000) || !finiteRange(config.reverbSmoothing, 0.02, 1) ||
@@ -154,10 +154,15 @@ RoomEqDesign designRoomEq(const RoomEqConfiguration &configuration, std::span<co
     auto automatic = std::vector<double>(frequencies.size());
     for (auto index = std::size_t{0}; index < frequencies.size(); ++index)
       if (frequencies[index] > config.lowFrequency && frequencies[index] < high)
-        automatic[index] = softLimitBoost(levelDb - measured[index], config.maxBoostDb);
+        automatic[index] = softLimitBoost(config.correctionAmount < 0 ?
+            measured[index] - levelDb : levelDb - measured[index], config.maxBoostDb);
     auto correction = smooth(frequencies, automatic, config.smoothing);
     for (auto index = std::size_t{0}; index < correction.size(); ++index)
-      correction[index] = correction[index] * config.correctionAmount + eq[index];
+      correction[index] = correction[index] * std::abs(config.correctionAmount) + eq[index];
+    if (config.limitPeakGain) {
+      const auto peakDb = std::max(0.0, *std::ranges::max_element(correction));
+      for (auto &value : correction) value -= peakDb;
+    }
     auto magnitudes = interpolate(frequencies, correction, bins);
     for (auto &value : magnitudes) value = dbToGain(value);
     auto rendered = room_eq::RenderedFilter{};

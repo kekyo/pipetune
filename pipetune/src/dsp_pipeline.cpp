@@ -1166,7 +1166,7 @@ cardio::promise<PipelineLoadResult> DspPipeline::buildFromRecipe(
                                              "native DSP rejected the generated FIR asset"),
             std::move(warnings));
       }
-      if (irReverb || sfzPlayer || roomEq) {
+      if (irReverb || sfzPlayer || roomEq || node.name == "Headphone EQ") {
         const auto width = sfzPlayer ? selectedProcessingChannels(channelSpec, options.maxChannels) :
                                       generatedAsset.info.processing_channels;
         auto silence = std::vector<float>(width * options.maxFrames);
