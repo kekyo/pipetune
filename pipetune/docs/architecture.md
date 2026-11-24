@@ -402,19 +402,20 @@ The generated catalog packs JSON parameters into the exact native ABI expected
 by EffeTune. Tests compare those packed parameters with EffeTune's JavaScript
 packer and compare native PCM output with EffeTune's parity corpus.
 
-The pinned EffeTune 2.18.1 registry contains 115 native kernels. PipeTune supports
+The pinned EffeTune 2.19.0 registry contains 117 native kernels. PipeTune supports
 its 16-channel Multi Channel Panel layout, individual channels through 16,
 paired routes through 15/16, and hexadecimal Matrix routes. It can load MD
 Simulator and all nine effects added in 2.5.0. It regenerates and stages the
 convolution assets for FIR Crossover, 5Band FIR PEQ, Group Delay EQ, and Group
-Delay PEQ from their serialized design parameters. The updated Tube Simulator
+Delay PEQ from their serialized design parameters. Headphone EQ uses the measurement
+and target curves embedded in the preset. The updated Tube Simulator
 includes output-transformer magnetics, and Phase Select EQ accepts left/right
 balance selection alongside frequency and phase.
 
 Live Audio Send and Receive mark host-managed network transport. PipeTune reports enabled markers as
 Ignored with a warning and displays disabled markers as Off. The local graph derives its channel count,
 bus routing, and latency from the effects that actually process PipeWire audio.
-[Upstream control plugins](https://github.com/Frieve-A/effetune/blob/v2.18.1/docs/plugins/control.md)
+[Upstream control plugins](https://github.com/Frieve-A/effetune/blob/v2.19.0/docs/plugins/control.md)
 
 Tonal Balance EQ and Rhythm Analyzer use the normal preset pipeline with no
 external assets and zero reported latency. Rhythm remains active with its
@@ -457,7 +458,7 @@ files and their existing ancestors, so backup creation and replacement trigger
 preparation away from the audio thread. Invalid measurements omit that node and
 are reported through the existing warning/status paths.
 
-SoundFont Note Player, IR Reverb, and Room EQ also resolve registered sources from the
+SoundFont Note Player, IR Reverb, Room EQ, and Distortion Correction also read data from the
 EffeTune desktop directory. The host owns asynchronous reads, the native FFmpeg
 decoder, dependency watching, cache validation, and process-wide memory
 reservations. `asset-preparation/` owns the source-independent SFZ semantics,
@@ -465,6 +466,10 @@ IR preparation, measurement analysis, and Room EQ filter design. These C++20
 libraries have no PipeWire, GTK, filesystem, or decoder dependency; their
 in-memory drivers build independently. See [asset preparation](asset-preparation.md)
 for the upstream port map and replacement boundary.
+
+Distortion Correction uses the fitted coefficients in the measurement backup. It maps
+selected channels to their physical speaker indices so a preset can apply correction to
+a single speaker or pair. [Upstream playback contract](https://github.com/Frieve-A/effetune/blob/v2.19.0/plugins/others/speaker_distortion_correction.js)
 
 Room EQ and Crosstalk Cancellation use measurements whose root object omits `effectPipeline`.
 Room EQ rejects an ineligible selection before replacing the active graph. Crosstalk Cancellation
@@ -675,8 +680,7 @@ later explicit activation presents the existing singleton window.
   and [0.5 adapter](https://github.com/PipeWire/wireplumber/blob/0.5.8/modules/module-si-audio-adapter.c).
 - FIR Crossover requires an even output bus from 4 through 16 channels.
   PipeTune omits it with a warning when the active layout is incompatible.
-- Presets contain references rather than external source data. SFZ, IR Reverb,
-  and Room EQ require the desktop registration, originals, and measurement
+- SFZ, IR Reverb, Room EQ, and Distortion Correction require the desktop registration, originals, or measurement
   backups described in the [user documentation](../../docs/en/details.md#external-assets).
   Browser-only records are not accessible through these desktop storage
   contracts.

@@ -30,7 +30,9 @@ you can then immediately apply them in PipeTune to apply effects to all Linux so
 - You can load EffeTune preset files to apply a DSP pipeline to the audio output of the entire Linux system.
 - Loads standard and legacy EffeTune preset files with the `.effetune_preset` extension
   and applies the DSP pipeline to desktop audio.
-- Uses the EffeTune 2.18.1 DSP engine.
+- Uses the EffeTune 2.19.0 DSP engine, including the master gain saved by 15Band PEQ.
+- Headphone EQ corrects headphone frequency response using the measurement and target curves saved in the preset.
+- Distortion Correction applies the speaker distortion correction measured in EffeTune to each selected channel.
 - Presets containing Live Audio Send or Receive apply the effects on either side of the markers to local PipeWire audio.
   Each active marker reports that network audio transport is unavailable.
 - Room EQ and Crosstalk Cancellation use measurements taken with the effect pipeline bypassed.

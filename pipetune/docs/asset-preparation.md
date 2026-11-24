@@ -2,11 +2,11 @@
 
 ## Boundary and replacement policy
 
-PipeTune's native DSP engine follows the EffeTune application tag v2.18.1, commit
-`7de52ecc9158888dd437411aed438894d2ab2d1a`. The C++20 libraries in
+PipeTune's native DSP engine follows the EffeTune application tag v2.19.0, commit
+`0ffa5c709ed1f1c99e5c94149ccd45c15e501e9d`. The C++20 libraries in
 `asset-preparation/` adapt the JavaScript preparation needed before the upstream
 native kernels can run. The SFZ bank and generator preparation inherited from 2.17.0
-matches the 2.18.1 packer for PipeTune's supported resident instruments.
+matches the 2.19.0 packer for PipeTune's supported resident instruments.
 The cache key includes the source identity and preparation contract. PipeTune
 can reuse resident SFZ banks cached by the 2.18.0 build.
 The libraries accept values, source text, and decoded PCM in
@@ -31,8 +31,8 @@ Source links below identify the application tag from which each module's
 behavior was adapted. SFZ parsing and source handling originated in v2.14.0;
 the parser now rejects the unsupported feature families introduced by 2.17.0.
 Bank and generator preparation and whole-instrument capacity validation follow
-v2.17.0. The unchanged SFZ helpers, IR,
-and Room EQ adaptations retain their v2.13.0 origin. The adapted modules retain the upstream MIT attribution and
+v2.17.0. The remaining SFZ helpers, IR preparation, and Room EQ originated in v2.13.0.
+The shared filter designer also follows v2.19.0 for Headphone EQ. The adapted modules retain the upstream MIT attribution and
 `LICENSE.effetune` files.
 
 | PipeTune module | Upstream contract | Responsibility |
@@ -49,7 +49,7 @@ and Room EQ adaptations retain their v2.13.0 origin. The adapted modules retain 
 | `ir/preparation.cpp` | [ir-preparation.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/ir-library/ir-preparation.js), [ir-plugin-contract.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/ir-library/ir-plugin-contract.js), [ir-true-stereo-pair.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/ir-library/ir-true-stereo-pair.js) | Original channel layout, true-stereo pairing, trim/direct-cut/decay, and capacity-aware IR preparation |
 | `common/convolution.cpp` | [ir-asset-payload.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/ir-library/ir-asset-payload.js) | Convolution payload layout and native convolver footprint |
 | `common/resample.cpp` | [resample.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/utils/measurement-dsp/resample.js) | Measurement IR resampling with the upstream Kaiser-window contract |
-| `room-eq/design.cpp`, `room-eq/numeric.cpp` | [design-core.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/room-eq/design-core.js), [smoothing.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/utils/measurement-dsp/smoothing.js) | Settings, log-grid amplitude correction, Gaussian smoothing, additional EQ, minimum/linear synthesis, and diagnostics |
+| `room-eq/design.cpp`, `room-eq/numeric.cpp` | [design-core.js](https://github.com/Frieve-A/effetune/blob/v2.19.0/js/room-eq/design-core.js), [smoothing.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/utils/measurement-dsp/smoothing.js) | Log-grid amplitude correction, Gaussian smoothing, additional EQ, minimum/linear synthesis, and Headphone EQ's signed correction and automatic headroom |
 | `room-eq/fft.cpp` | [fft.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/utils/measurement-dsp/fft.js) | Mixed-radix transforms, real packing, and float32 twiddles with double working values |
 | `room-eq/analysis.cpp` | [design-core.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/room-eq/design-core.js), [onset.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/utils/measurement-dsp/onset.js) | Complete measurement IR analysis, onset/reference scale, and multi-point power mean |
 | `room-eq/group_delay.cpp` | [group-delay-analysis.js](https://github.com/Frieve-A/effetune/blob/v2.13.0/js/room-eq/group-delay-analysis.js) | Excess/group-delay observations and reliability |
@@ -78,6 +78,12 @@ uses libsamplerate in that adapter. Measurement analysis uses the separate pure
 Kaiser resampler above; it must not silently inherit the playback algorithm.
 
 ## Host contracts
+
+Headphone EQ uses the measured and target curves embedded in the preset. Distortion Correction
+reads the fitted speaker model from the measurement backup, including a newer checked amplifier
+volume when present. Both effects prepare their data before the first audio block.
+[Headphone EQ](https://github.com/Frieve-A/effetune/blob/v2.19.0/plugins/eq/headphone_eq.js)
+and [Distortion Correction](https://github.com/Frieve-A/effetune/blob/v2.19.0/plugins/others/speaker_distortion_correction.js)
 
 `sfz_asset_loader.cpp`, `ir_asset_loader.cpp`, and `room_asset_loader.cpp` resolve
 desktop registrations and supply the pure modules. `measurement_store.cpp`

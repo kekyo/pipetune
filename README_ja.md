@@ -27,7 +27,9 @@ EffeTune上で、環境音を構成してプリセットとして保存すれば
   DSPパイプラインを適用できます。
 - `.effetune_preset`拡張子の標準形式および旧形式のEffeTuneプリセットファイルを
   読み込み、DSPパイプラインをデスクトップ音声へ適用します。
-- EffeTune 2.18.1のDSPエンジンを使用します。
+- EffeTune 2.19.0のDSPエンジンを使用し、15Band PEQのマスターゲインを反映します。
+- Headphone EQは、プリセットに保存した測定カーブと目標カーブを使ってヘッドホンの周波数特性を補正します。
+- Distortion Correctionは、EffeTuneで測定したスピーカーの歪みをチャンネルごとに補正します。
 - Live Audio Send／Receiveを含むプリセットでも、前後のエフェクトをPipeWireの音声に適用できます。
   有効なマーカーにはネットワーク送受信が未対応であることを表示します。
 - Room EQとCrosstalk Cancellationの補正には、エフェクトを通さずに取得した測定を使用します。

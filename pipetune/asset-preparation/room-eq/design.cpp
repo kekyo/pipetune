@@ -4,7 +4,8 @@
  * https://github.com/kekyo/pipetune/
  */
 /* Port of EffeTune v2.13.0 js/room-eq/design-core.js and
- * js/utils/measurement-dsp/smoothing.js. Copyright (c) 2025-2026
+ * js/utils/measurement-dsp/smoothing.js, with v2.19.0 signed correction and headroom.
+ * Copyright (c) 2025-2026
  * Yoshiyuki Kobayashi. MIT; see LICENSE.effetune.
  */
 #include "design.h"

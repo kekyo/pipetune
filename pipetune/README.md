@@ -54,7 +54,9 @@ not supported by this MVP.
 
 - Loads canonical and legacy EffeTune preset JSON from files whose extension is
   exactly `.effetune_preset`.
-- Builds all 115 kernels in the pinned EffeTune 2.18.1 native registry and supports routing through 16 planar channels.
+- Builds all 117 kernels in the pinned EffeTune 2.19.0 native registry and supports routing through 16 planar channels.
+- Applies Headphone EQ from the curves saved in a preset, Distortion Correction from a saved speaker measurement,
+  and the 15Band PEQ master gain.
 - Presets containing Live Audio Send or Receive process local audio through the surrounding effects.
   Active markers appear as Ignored with a network audio warning. Disabled markers appear as Off.
 - Runs Spatial Mapper and TV Audio Simulator presets; see the
@@ -76,7 +78,7 @@ not supported by this MVP.
 - Generates and stages convolution coefficients for FIR Crossover, 5Band FIR
   PEQ, Group Delay EQ, Group Delay PEQ, and Bass Management Linear from their preset parameters.
 - Skips unknown DSPs and invalid Crosstalk measurements with warnings. Invalid
-  assigned SFZ, IR Reverb, or Room EQ sources fail loading and retain the active pipeline.
+  assigned SFZ, IR Reverb, Room EQ, or Distortion Correction sources fail loading and retain the active pipeline.
 - Room EQ and Crosstalk Cancellation accept measurements made with the effect pipeline bypassed.
   [EffeTune measurement guide](https://github.com/Frieve-A/effetune/blob/v2.18.0/docs/measurement.md#measuring-with-the-effect-pipeline)
 - Publishes a WirePlumber 0.5 smart-filter pair and a WirePlumber 0.4 endpoint
@@ -149,7 +151,7 @@ cd PipeTune
 git submodule update --init --recursive
 ```
 
-`deps/effetune` follows the official application tag v2.18.1.
+`deps/effetune` follows the official application tag v2.19.0.
 `deps/yyjson` is pinned to yyjson 0.12.0.
 `deps/cardio` supplies asynchronous native file operations.
 
