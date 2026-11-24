@@ -77,6 +77,15 @@ try {
   assert.ok(initial.effects.includes("Volume"));
   assert.deepEqual(initial.features, []);
   assert.deepEqual(initial.pipeline, [{ nm: "Volume", en: true, vl: -6 }]);
+  const corrections = [
+    { nm: "Headphone EQ", en: true, tp: 8192, lt: "0" },
+    { nm: "15Band PEQ", en: true, mg: -3 },
+    { nm: "Distortion Correction", en: true },
+  ];
+  assert.ok(corrections.every(stage => initial.effects.includes(stage.nm)));
+  await editor.request({ op: "chain", pipeline: corrections });
+  assert.deepEqual((await editor.request({ op: "get" }, "state")).pipeline, corrections);
+  assert.equal(JSON.parse(cli("--status")).activePluginCount, 3);
   await editor.request({
     op: "chain",
     pipeline: [{ nm: "Volume", en: true, vl: -12 }],

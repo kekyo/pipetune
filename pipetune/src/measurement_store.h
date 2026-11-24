@@ -69,6 +69,14 @@ struct MeasuredImpulse {
   double referenceScale = 1;
 };
 
+/**
+ * Decodes a measurement backup's base64 little-endian float32 array.
+ * @param encoded Stored PCM or model coefficients.
+ * @param samples Empty destination, usable only on success.
+ * @return True for a nonempty array of finite samples.
+ */
+bool decodeMeasurementSamples(std::string_view encoded, std::vector<float> &samples);
+
 /** One point-ordered impulse without Crosstalk's timing and ear constraints. */
 struct MeasuredPointImpulse {
   std::uint64_t pointId = 0; /**< Original nonnegative point identity. */

@@ -106,7 +106,7 @@ static int base64Digit(char c) {
   return c == '+' ? 62 : c == '/' ? 63 : -1;
 }
 
-static bool decodeSamples(std::string_view encoded, std::vector<float> &samples) {
+bool decodeMeasurementSamples(std::string_view encoded, std::vector<float> &samples) {
   if (encoded.empty() || encoded.size() % 4 != 0) return false;
   auto bytes = std::vector<std::uint8_t>{};
   bytes.reserve(encoded.size() / 4u * 3u);
@@ -198,7 +198,7 @@ std::vector<MeasuredPointImpulse> measurementImpulseResponses(yyjson_val *root, 
     if (safeInteger(trim)) impulse.trimStartSamples = static_cast<std::int64_t>(yyjson_get_num(trim));
     auto *scale = yyjson_obj_get(record, "refScale");
     impulse.referenceScale = yyjson_is_num(scale) && std::isfinite(yyjson_get_num(scale)) ? yyjson_get_num(scale) : 1;
-    if (!decodeSamples(text(yyjson_obj_get(record, "data")), impulse.samples) ||
+    if (!decodeMeasurementSamples(text(yyjson_obj_get(record, "data")), impulse.samples) ||
         static_cast<std::uint64_t>(impulse.onsetIndex) >= impulse.samples.size())
       throw std::invalid_argument("invalid measurement impulse samples or onset");
   }
@@ -251,7 +251,7 @@ static std::string extractImpulse(yyjson_val *root, std::string_view id,
   out.onsetIndex = static_cast<std::int64_t>(yyjson_get_num(onset));
   const auto scale = yyjson_get_num(yyjson_obj_get(selected, "refScale"));
   out.referenceScale = std::isfinite(scale) && scale > 1e-12 ? scale : 1;
-  if (!decodeSamples(text(yyjson_obj_get(selected, "data")), out.samples) ||
+  if (!decodeMeasurementSamples(text(yyjson_obj_get(selected, "data")), out.samples) ||
       static_cast<std::uint64_t>(out.onsetIndex) >= out.samples.size()) return "invalid impulse response samples or onset";
   return {};
 }

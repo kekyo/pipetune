@@ -221,6 +221,7 @@ add_library(
   src/ir_asset_loader.cpp
   src/sfz_asset_loader.cpp
   src/room_asset_loader.cpp
+  src/speaker_correction_asset.cpp
   src/measurement_store.cpp
   src/output_configuration.cpp
   src/output_configuration_json.cpp
